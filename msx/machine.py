@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from msx.cpu.z80 import Z80
 from msx.io import IOBus
@@ -10,8 +11,12 @@ from msx.psg import PSG
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
 
+if TYPE_CHECKING:
+    from msx.debug.logger import DebugLogger
+
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
+HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
 @dataclass
@@ -20,6 +25,9 @@ class Machine:
     vdp: VDP
     memory: Memory
     io: IOBus
+    _logger: DebugLogger | None = field(default=None, repr=False)
+    _last_pc: int = field(default=0, init=False, repr=False)
+    _pc_repeat: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cpu.read_byte = self.memory.read
@@ -41,7 +49,24 @@ class Machine:
     def run_frame(self) -> bytearray:
         cycles = 0
         while cycles < CYCLES_PER_FRAME:
+            pc = self.cpu.registers.PC
             cycles += self.step()
+            if self._logger is not None:
+                # PC-loop hang: skip normal HALT (halted + interrupts enabled)
+                if not (self.cpu.halted and self.cpu.iff1):
+                    if pc == self._last_pc:
+                        self._pc_repeat += 1
+                        if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
+                            self._logger.on_hang_pc_loop(pc)
+                    else:
+                        self._pc_repeat = 0
+                    self._last_pc = pc
+
+        # HALT+DI hang: check once per frame
+        if self._logger is not None:
+            if self.cpu.halted and not self.cpu.iff1:
+                self._logger.on_hang_halt_di(self.cpu.registers.PC)
+
         return render_frame(self.vdp)
 
 
