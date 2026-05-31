@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from msx.cpu.registers import Registers
+
+if TYPE_CHECKING:
+    from msx.debug.logger import DebugLogger
 
 
 def _noop_read(_port: int) -> int:
@@ -27,6 +30,7 @@ class Z80:
     im: int = 0
     int_pending: bool = False
     nmi_pending: bool = False
+    _logger: DebugLogger | None = field(default=None, repr=False)
 
     def reset(self) -> None:
         self.registers.reset()
@@ -94,5 +98,8 @@ class Z80:
         if self.halted:
             return 4
 
+        pc = self.registers.PC
         opcode = self._fetch()
+        if self._logger is not None:
+            self._logger.on_step(pc, opcode)
         return opcodes_main.execute(self, opcode)
