@@ -1,4 +1,4 @@
-"""Entry point: python -m py_msx_emulator [rom_path] [cartridge_path]"""
+"""Entry point: python . [rom_path] [cartridge_path]"""
 from __future__ import annotations
 
 import sys
