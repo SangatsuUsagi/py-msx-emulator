@@ -963,13 +963,13 @@ def execute(cpu: Z80, opcode: int) -> int:
         return 19
 
     # --- IN / OUT ---
-    if opcode == 0xDB:  # IN A, (n)
+    if opcode == 0xDB:  # IN A, (n)  — MSX decodes only low 8 bits of port
         n = cpu._fetch()
-        r.A = cpu.read_port((r.A << 8) | n)
+        r.A = cpu.read_port(n)
         return 11
-    if opcode == 0xD3:  # OUT (n), A
+    if opcode == 0xD3:  # OUT (n), A — MSX decodes only low 8 bits of port
         n = cpu._fetch()
-        cpu.write_port((r.A << 8) | n, r.A)
+        cpu.write_port(n, r.A)
         return 11
 
     print(f"[Z80] undefined opcode {opcode:02X} at PC={((r.PC - 1) & 0xFFFF):04X}", file=sys.stderr)
