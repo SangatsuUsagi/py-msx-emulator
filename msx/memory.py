@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 
@@ -6,31 +8,41 @@ class Memory:
     rom: bytes
     ram: bytearray
     cartridge: bytes | None
-    slot_register: int = 0
+    # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
+    # 0b11_01_01_00 = 0xD4
+    slot_register: int = 0xD4
+
+    def _slot(self, addr: int) -> int:
+        page = (addr >> 14) & 0x03
+        return (self.slot_register >> (page * 2)) & 0x03
 
     def read(self, addr: int) -> int:
         addr = addr & 0xFFFF
-        # Cartridge region checked before ROM: 0x4000-0xBFFF is slot 1/2
-        if 0x4000 <= addr <= 0xBFFF:
+        slot = self._slot(addr)
+        if slot == 0:
+            return self.rom[addr] if addr < len(self.rom) else 0xFF
+        if slot == 1:
             if self.cartridge is not None:
                 offset = addr - 0x4000
-                return self.cartridge[offset] if offset < len(self.cartridge) else 0xFF
+                return self.cartridge[offset] if 0 <= offset < len(self.cartridge) else 0xFF
             return 0xFF
-        if addr <= 0x3FFF:
-            return self.rom[addr] if addr < len(self.rom) else 0xFF
-        if addr >= 0xC000:
-            return self.ram[(addr - 0xC000) & 0x3FFF]
-        return 0xFF
+        if slot == 2:
+            return 0xFF
+        # slot 3: RAM — page-local offset
+        return self.ram[addr & 0x3FFF]
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
         value = value & 0xFF
-        if addr <= 0x3FFF:
-            return  # ROM page 0 is read-only
-        if 0x4000 <= addr <= 0xBFFF:
+        slot = self._slot(addr)
+        if slot == 0:
+            return  # BIOS ROM is read-only
+        if slot == 1:
             return  # cartridge ROM is read-only
-        if addr >= 0xC000:
-            self.ram[(addr - 0xC000) & 0x3FFF] = value
+        if slot == 2:
+            return  # open bus, ignore
+        # slot 3: RAM
+        self.ram[addr & 0x3FFF] = value
 
     def read_port_a8(self) -> int:
         return self.slot_register & 0xFF
