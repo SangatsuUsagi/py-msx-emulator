@@ -18,10 +18,10 @@ def make_cpu(rom: list[int]) -> tuple[Z80, list[tuple[int, int]], list[int]]:
 
 
 def test_out_n_a() -> None:
-    cpu, writes, _ = make_cpu([0xD3, 0xA1])  # OUT (0xA1), A
+    cpu, writes, _ = make_cpu([0xD3, 0xA1])  # OUT (0xA1), A — port is 8-bit (MSX I/O decode)
     cpu.registers.A = 0x0F
     cpu.step()
-    assert (0x0FA1, 0x0F) in writes
+    assert (0xA1, 0x0F) in writes
 
 
 def test_in_a_n() -> None:
