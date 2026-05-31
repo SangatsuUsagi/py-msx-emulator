@@ -1,6 +1,7 @@
 """Z80 main opcode table (256 entries) plus CB/DD/ED/FD prefix dispatch."""
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from msx.cpu import flags as F
@@ -248,6 +249,13 @@ def _sra(cpu: Z80, v: int) -> int:
     return result
 
 
+def _sll(cpu: Z80, v: int) -> int:
+    c = (v >> 7) & 1
+    result = ((v << 1) | 1) & 0xFF  # undocumented: bit 0 forced to 1
+    cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    return result
+
+
 def _srl(cpu: Z80, v: int) -> int:
     c = v & 1
     result = (v >> 1) & 0xFF
@@ -264,9 +272,7 @@ def _execute_cb(cpu: Z80) -> int:
     cycles = 8 if reg != 6 else 15
 
     if row == 0:
-        ops = [_rlc, _rrc, _rl, _rr, _sla, _sra, _srl, _srl]
-        # bit==6 is SRL (same as bit==7 effectively, both are SRL)
-        fn = [_rlc, _rrc, _rl, _rr, _sla, _sra, _srl, _srl][bit]
+        fn = [_rlc, _rrc, _rl, _rr, _sla, _sra, _sll, _srl][bit]
         result = fn(cpu, v)
         _set_r(cpu, reg, result)
     elif row == 1:  # BIT
@@ -437,7 +443,7 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
         row = cb_op >> 6
         bit = (cb_op >> 3) & 7
         if row == 0:
-            fns = [_rlc, _rrc, _rl, _rr, _sla, _sra, _srl, _srl]
+            fns = [_rlc, _rrc, _rl, _rr, _sla, _sra, _sll, _srl]
             result = fns[bit](cpu, v)
             cpu.write_byte(ea, result)
         elif row == 1:
@@ -470,8 +476,8 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
         else: r.IXL = _dec8(cpu, r.IXL)
         return 8
 
-    # Unimplemented: fall through as NOP-equivalent
-    return 4
+    # prefix absorbed — delegate to normal dispatch (real Z80 behavior)
+    return execute(cpu, op)
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +652,7 @@ def _execute_ed(cpu: Z80) -> int:
             return 21
         return 16
 
-    # Unimplemented ED opcode — treat as NOP
+    print(f"[Z80] undefined ED opcode ED {op:02X} at PC={((r.PC - 2) & 0xFFFF):04X}", file=sys.stderr)
     return 8
 
 
@@ -966,5 +972,5 @@ def execute(cpu: Z80, opcode: int) -> int:
         cpu.write_port((r.A << 8) | n, r.A)
         return 11
 
-    # Unimplemented — treat as NOP
+    print(f"[Z80] undefined opcode {opcode:02X} at PC={((r.PC - 1) & 0xFFFF):04X}", file=sys.stderr)
     return 4
