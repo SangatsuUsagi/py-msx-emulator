@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.debug.logger import DebugLogger
 
 
 @dataclass
@@ -11,6 +15,7 @@ class Memory:
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
+    _logger: DebugLogger | None = field(default=None, repr=False)
 
     def _slot(self, addr: int) -> int:
         page = (addr >> 14) & 0x03
@@ -48,4 +53,7 @@ class Memory:
         return self.slot_register & 0xFF
 
     def write_port_a8(self, value: int) -> None:
+        old = self.slot_register
         self.slot_register = value & 0xFF
+        if self._logger is not None:
+            self._logger.on_slot_register_write(old, self.slot_register, pc=0)
