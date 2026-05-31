@@ -1,7 +1,6 @@
 """Z80 main opcode table (256 entries) plus CB/DD/ED/FD prefix dispatch."""
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
 from msx.cpu import flags as F
@@ -652,7 +651,8 @@ def _execute_ed(cpu: Z80) -> int:
             return 21
         return 16
 
-    print(f"[Z80] undefined ED opcode ED {op:02X} at PC={((r.PC - 2) & 0xFFFF):04X}", file=sys.stderr)
+    if cpu._logger is not None:
+        cpu._logger.on_undefined_opcode((r.PC - 2) & 0xFFFF, op)
     return 8
 
 
@@ -972,5 +972,6 @@ def execute(cpu: Z80, opcode: int) -> int:
         cpu.write_port(n, r.A)
         return 11
 
-    print(f"[Z80] undefined opcode {opcode:02X} at PC={((r.PC - 1) & 0xFFFF):04X}", file=sys.stderr)
+    if cpu._logger is not None:
+        cpu._logger.on_undefined_opcode((r.PC - 1) & 0xFFFF, opcode)
     return 4
