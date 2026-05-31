@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
 from msx.cpu.z80 import Z80
+from msx.debug.logger import DebugLogger
 from msx.io import IOBus
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
-
-if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
@@ -72,22 +68,29 @@ class Machine:
         return result
 
 
-def make_machine(rom: bytes, cartridge: bytes | None = None) -> Machine:
+def make_machine(
+    rom: bytes,
+    cartridge: bytes | None = None,
+    logger: DebugLogger | None = None,
+) -> Machine:
     memory = Memory(
         rom=rom,
         ram=bytearray(16384),
         cartridge=cartridge,
         slot_register=0x00,
+        _logger=logger,
     )
     psg = PSG()
     ppi = PPI(memory=memory)
-    vdp = VDP()
-    io = IOBus()
+    vdp = VDP(_logger=logger)
+    io = IOBus(_logger=logger)
     io.register_read(0x98, 0x99, vdp.read_port)
     io.register_write(0x98, 0x99, vdp.write_port)
     io.register_read(0xA0, 0xA2, psg.read_port)
     io.register_write(0xA0, 0xA2, psg.write_port)
     io.register_read(0xA8, 0xAB, ppi.read_port)
     io.register_write(0xA8, 0xAB, ppi.write_port)
-    cpu = Z80(read_byte=memory.read, write_byte=memory.write)
-    return Machine(cpu=cpu, vdp=vdp, memory=memory, io=io)
+    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
+    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, _logger=logger)
+    io._get_pc = lambda: cpu.registers.PC
+    return machine
