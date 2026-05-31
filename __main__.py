@@ -1,13 +1,25 @@
-"""Entry point: python . [rom_path] [cartridge_path]"""
+"""Entry point: python . [--debug] [--log FILE] [rom_path] [cartridge_path]"""
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 
 def main() -> None:
-    rom_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("roms/cbios_main_msx1.rom")
-    cart_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    parser = argparse.ArgumentParser(description="py-msx-emulator")
+    parser.add_argument("rom", nargs="?", default="roms/cbios_main_msx1.rom",
+                        help="ROM image path (default: roms/cbios_main_msx1.rom)")
+    parser.add_argument("cartridge", nargs="?", default=None,
+                        help="Cartridge ROM path")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable diagnostic logging")
+    parser.add_argument("--log", metavar="FILE",
+                        help="Write diagnostic log to FILE (requires --debug)")
+    args = parser.parse_args()
+
+    rom_path = Path(args.rom)
+    cart_path = Path(args.cartridge) if args.cartridge else None
 
     if not rom_path.exists():
         print(f"error: ROM not found: {rom_path}", file=sys.stderr)
@@ -18,11 +30,17 @@ def main() -> None:
     rom = rom_path.read_bytes()
     cartridge = cart_path.read_bytes() if cart_path else None
 
+    from msx.debug.logger import DebugLogger
     from msx.machine import make_machine
     from frontend.sdl2_frontend import run
 
-    machine = make_machine(rom=rom, cartridge=cartridge)
-    run(machine)
+    logger = DebugLogger(log_path=args.log) if args.debug else None
+    try:
+        machine = make_machine(rom=rom, cartridge=cartridge, logger=logger)
+        run(machine)
+    finally:
+        if logger is not None:
+            logger.close()
 
 
 if __name__ == "__main__":
