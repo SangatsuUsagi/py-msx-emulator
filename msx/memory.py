@@ -8,7 +8,9 @@ class Memory:
     rom: bytes
     ram: bytearray
     cartridge: bytes | None
-    slot_register: int = 0
+    # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
+    # 0b11_01_01_00 = 0xD4
+    slot_register: int = 0xD4
 
     def _slot(self, addr: int) -> int:
         page = (addr >> 14) & 0x03
