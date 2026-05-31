@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+import pytest
+
+from msx.debug.logger import DebugLogger
+from msx.memory import Memory
+from msx.vdp.vdp import VDP
+
+
+# ---------------------------------------------------------------------------
+# Slot register write → [BOOT] log
+# ---------------------------------------------------------------------------
+
+def test_slot_register_write_logged(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = DebugLogger()
+    mem = Memory(
+        rom=bytes(32768), ram=bytearray(16384), cartridge=None,
+        slot_register=0x00, _logger=logger,
+    )
+    mem.write_port_a8(0xE0)
+    captured = capsys.readouterr()
+    assert "[BOOT]" in captured.err
+    assert "0x00" in captured.err
+    assert "0xE0" in captured.err
+
+
+def test_slot_register_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=None)
+    mem.write_port_a8(0xE0)
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# VDP R1 BL transition → [BOOT] log
+# ---------------------------------------------------------------------------
+
+def test_vdp_display_enable_logged(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = DebugLogger()
+    vdp = VDP(_logger=logger)
+    # Write register 1 with BL=1 (0x40) via port 0x99 two-byte sequence
+    vdp.write_port(0x99, 0x40)  # low byte
+    vdp.write_port(0x99, 0x81)  # 0x80 | reg 1
+    captured = capsys.readouterr()
+    assert "[BOOT]" in captured.err
+    assert "display enabled" in captured.err
+
+
+def test_vdp_mode_change_logged(capsys: pytest.CaptureFixture[str]) -> None:
+    logger = DebugLogger()
+    vdp = VDP(_logger=logger)
+    # Set M1=1 (Text mode) via R1: value 0x10 = M1 bit
+    vdp.write_port(0x99, 0x10)  # low byte
+    vdp.write_port(0x99, 0x81)  # 0x80 | reg 1
+    captured = capsys.readouterr()
+    assert "[BOOT]" in captured.err
+    assert "Text" in captured.err
+
+
+def test_vdp_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
+    vdp = VDP()
+    vdp.write_port(0x99, 0x40)
+    vdp.write_port(0x99, 0x81)
+    captured = capsys.readouterr()
+    assert captured.err == ""

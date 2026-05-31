@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from msx.debug.logger import DebugLogger
 
 
 @dataclass
@@ -13,6 +16,8 @@ class VDP:
     status: int = 0
     read_buf: int = 0
     on_interrupt: Callable[[], None] | None = None
+    _logger: DebugLogger | None = field(default=None, repr=False)
+    _frame_count: int = field(default=0, init=False, repr=False)
 
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
@@ -27,7 +32,10 @@ class VDP:
                 self.latch = None
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
-                    self.regs[value & 0x07] = low
+                    reg = value & 0x07
+                    self.regs[reg] = low
+                    if self._logger is not None:
+                        self._logger.on_vdp_reg_write(reg, low, self._frame_count)
                 else:
                     # VRAM address setup
                     self.addr = ((value & 0x3F) << 8) | low
