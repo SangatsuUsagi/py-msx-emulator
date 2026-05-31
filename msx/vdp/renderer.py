@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.vdp.vdp import VDP
+
+_W = 256
+_H = 192
+
+
+def render_frame(vdp: VDP) -> bytearray:
+    r0 = vdp.regs[0]
+    r1 = vdp.regs[1]
+    border = vdp.regs[7] & 0x0F
+
+    if not (r1 & 0x40):  # BL (Blank) bit clear → blank display
+        buf = bytearray([border] * (_W * _H))
+        _finalize(vdp)
+        return buf
+
+    m1 = (r1 >> 4) & 1
+    m2 = (r1 >> 3) & 1
+    m3 = (r0 >> 1) & 1
+
+    buf = bytearray(_W * _H)
+
+    if m1:
+        _render_text(vdp, buf)
+    elif m3:
+        _render_g2(vdp, buf)
+        _render_sprites(vdp, buf)
+    elif m2:
+        _render_mc(vdp, buf)
+        _render_sprites(vdp, buf)
+    else:
+        _render_g1(vdp, buf)
+        _render_sprites(vdp, buf)
+
+    _finalize(vdp)
+    return buf
+
+
+def _finalize(vdp: VDP) -> None:
+    vdp.status |= 0x80
+    if (vdp.regs[1] & 0x20) and vdp.on_interrupt is not None:
+        vdp.on_interrupt()
+
+
+def _backdrop(vdp: VDP) -> int:
+    return vdp.regs[7] & 0x0F
+
+
+def _color(c: int, backdrop: int) -> int:
+    return backdrop if c == 0 else c
+
+
+# ---------------------------------------------------------------------------
+# Graphic 1 (SCREEN 1) — 32×24 tiles, colour per 8-tile group
+# ---------------------------------------------------------------------------
+
+def _render_g1(vdp: VDP, buf: bytearray) -> None:
+    name_base = (vdp.regs[2] & 0x0F) << 10
+    pat_base = (vdp.regs[4] & 0x07) << 11
+    col_base = vdp.regs[3] << 6
+    bd = _backdrop(vdp)
+
+    for row in range(24):
+        for col in range(32):
+            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            cb = vdp.vram[(col_base + tile // 8) & 0x3FFF]
+            fg = _color((cb >> 4) & 0x0F, bd)
+            bg = _color(cb & 0x0F, bd)
+            for py in range(8):
+                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                y = row * 8 + py
+                bx = col * 8
+                for px in range(8):
+                    buf[y * _W + bx + px] = fg if (pat >> (7 - px)) & 1 else bg
+
+
+# ---------------------------------------------------------------------------
+# Graphic 2 (SCREEN 2) — 32×24 tiles, per-row per-tile colour
+# ---------------------------------------------------------------------------
+
+def _render_g2(vdp: VDP, buf: bytearray) -> None:
+    name_base = (vdp.regs[2] & 0x0F) << 10
+    pat_base = (vdp.regs[4] & 0x04) << 11
+    col_base = (vdp.regs[3] & 0x80) << 6
+    bd = _backdrop(vdp)
+
+    for row in range(24):
+        band = row // 8
+        for col in range(32):
+            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            for py in range(8):
+                offset = band * 0x800 + tile * 8 + py
+                pat = vdp.vram[(pat_base + offset) & 0x3FFF]
+                cb = vdp.vram[(col_base + offset) & 0x3FFF]
+                fg = _color((cb >> 4) & 0x0F, bd)
+                bg = _color(cb & 0x0F, bd)
+                y = row * 8 + py
+                bx = col * 8
+                for px in range(8):
+                    buf[y * _W + bx + px] = fg if (pat >> (7 - px)) & 1 else bg
+
+
+# ---------------------------------------------------------------------------
+# Text (SCREEN 0) — 40×24 chars, 6 pixels wide, no sprites
+# ---------------------------------------------------------------------------
+
+def _render_text(vdp: VDP, buf: bytearray) -> None:
+    name_base = (vdp.regs[2] & 0x0F) << 10
+    pat_base = (vdp.regs[4] & 0x07) << 11
+    fg = _color((vdp.regs[7] >> 4) & 0x0F, 1)
+    bg = vdp.regs[7] & 0x0F
+    border = bg
+
+    for i in range(_W * _H):
+        buf[i] = border
+
+    for row in range(24):
+        for col in range(40):
+            tile = vdp.vram[(name_base + row * 40 + col) & 0x3FFF]
+            for py in range(8):
+                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                y = row * 8 + py
+                for px in range(6):
+                    c = fg if (pat >> (7 - px)) & 1 else bg
+                    buf[y * _W + 8 + col * 6 + px] = c
+
+
+# ---------------------------------------------------------------------------
+# Multicolor (SCREEN 3) — 64×48 blocks of 4×4 pixels
+# ---------------------------------------------------------------------------
+
+def _render_mc(vdp: VDP, buf: bytearray) -> None:
+    name_base = (vdp.regs[2] & 0x0F) << 10
+    pat_base = (vdp.regs[4] & 0x07) << 11
+    bd = _backdrop(vdp)
+
+    for row in range(24):
+        for col in range(32):
+            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            for py in range(8):
+                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                lc = _color((pat >> 4) & 0x0F, bd)
+                rc = _color(pat & 0x0F, bd)
+                y = row * 8 + py
+                bx = col * 8
+                for px in range(4):
+                    buf[y * _W + bx + px] = lc
+                for px in range(4, 8):
+                    buf[y * _W + bx + px] = rc
+
+
+# ---------------------------------------------------------------------------
+# Sprite rendering — shared across G1, G2, MC
+# ---------------------------------------------------------------------------
+
+def _render_sprites(vdp: VDP, buf: bytearray) -> None:
+    r1 = vdp.regs[1]
+    si = (r1 >> 1) & 1
+    mag = r1 & 1
+    pat_size = 16 if si else 8
+    render_size = pat_size * (2 if mag else 1)
+
+    sat_base = (vdp.regs[5] & 0x7F) << 7
+    spt_base = (vdp.regs[6] & 0x07) << 11
+
+    line_count = [0] * _H
+    fifth_set = False
+    sprite_painted = bytearray(_W * _H)
+    coincidence = False
+
+    for i in range(32):
+        y_byte = vdp.vram[(sat_base + i * 4) & 0x3FFF]
+        if y_byte == 0xD0:
+            break
+
+        x_byte = vdp.vram[(sat_base + i * 4 + 1) & 0x3FFF]
+        pat_idx = vdp.vram[(sat_base + i * 4 + 2) & 0x3FFF]
+        attr = vdp.vram[(sat_base + i * 4 + 3) & 0x3FFF]
+        color = attr & 0x0F
+        if attr & 0x80:
+            x_byte = (x_byte - 32) & 0xFF
+
+        y_top = (y_byte + 1) & 0xFF
+
+        for line in range(_H):
+            sprite_row = (line - y_top) & 0xFF
+            if sprite_row >= render_size:
+                continue
+
+            if line_count[line] >= 4:
+                if not fifth_set:
+                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    fifth_set = True
+                continue
+
+            line_count[line] += 1
+
+            if color == 0:
+                continue
+
+            src_row = sprite_row // 2 if mag else sprite_row
+            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
+            scale = 2 if mag else 1
+
+            for bit_i in range(len(pixels)):
+                if not pixels[bit_i]:
+                    continue
+                for s in range(scale):
+                    px = (x_byte + bit_i * scale + s) & 0xFF
+                    if px >= _W:
+                        continue
+                    coord = line * _W + px
+                    if sprite_painted[coord]:
+                        coincidence = True
+                    else:
+                        sprite_painted[coord] = 1
+                        buf[coord] = color
+
+    if coincidence:
+        vdp.status |= 0x20
+
+
+def _sprite_row_pixels(
+    vdp: VDP, spt_base: int, pat_idx: int, si: int, src_row: int
+) -> list[int]:
+    if si == 0:
+        b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
+        return [(b >> (7 - bit)) & 1 for bit in range(8)]
+
+    base = pat_idx & 0xFC
+    if src_row < 8:
+        left = vdp.vram[(spt_base + base * 8 + src_row) & 0x3FFF]
+        right = vdp.vram[(spt_base + (base + 1) * 8 + src_row) & 0x3FFF]
+    else:
+        r = src_row - 8
+        left = vdp.vram[(spt_base + (base + 2) * 8 + r) & 0x3FFF]
+        right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
+
+    row: list[int] = [(left >> (7 - b)) & 1 for b in range(8)]
+    row += [(right >> (7 - b)) & 1 for b in range(8)]
+    return row
