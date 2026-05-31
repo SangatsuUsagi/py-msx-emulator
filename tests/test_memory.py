@@ -86,9 +86,10 @@ def test_slot_register_read_back() -> None:
     assert mem.read_port_a8() == 0x09
 
 
-def test_slot_register_dataclass_default_zero() -> None:
+def test_slot_register_dataclass_default_msx1_layout() -> None:
+    # Default is standard MSX1 layout: page3=slot3(RAM), page1+2=slot1(cart)
     mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=None)
-    assert mem.read_port_a8() == 0x00
+    assert mem.read_port_a8() == 0xD4
 
 
 # ---------------------------------------------------------------------------
