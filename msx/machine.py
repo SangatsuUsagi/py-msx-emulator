@@ -67,7 +67,9 @@ class Machine:
             if self.cpu.halted and not self.cpu.iff1:
                 self._logger.on_hang_halt_di(self.cpu.registers.PC)
 
-        return render_frame(self.vdp)
+        result = render_frame(self.vdp)
+        self.vdp._frame_count += 1
+        return result
 
 
 def make_machine(rom: bytes, cartridge: bytes | None = None) -> Machine:
