@@ -1,0 +1,96 @@
+from msx.cpu.z80 import Z80
+from msx.io import IOBus
+from msx.machine import CYCLES_PER_FRAME, Machine, make_machine
+from msx.memory import Memory
+from msx.vdp.vdp import VDP
+
+# 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
+_NOP_ROM = bytes(32768)
+_HALT_ROM = bytes([0x76] + [0x00] * 32767)
+
+
+def _make_machine(rom: bytes = _NOP_ROM) -> Machine:
+    return make_machine(rom=rom)
+
+
+def test_memory_connected_to_cpu() -> None:
+    rom = bytes([0x3E, 0xAB] + [0x00] * 32766)  # LD A, 0xAB at 0x0000
+    m = _make_machine(rom=rom)
+    assert m.cpu.read_byte(0x0000) == 0x3E
+    assert m.memory.read(0x0001) == 0xAB
+
+
+def test_step_returns_positive_t_states() -> None:
+    rom = bytes([0x00] * 32768)  # NOP
+    m = _make_machine(rom=rom)
+    t = m.step()
+    assert t > 0
+
+
+def test_step_nop_returns_4() -> None:
+    rom = bytes([0x00] * 32768)  # NOP = 4 T-states
+    m = _make_machine(rom=rom)
+    assert m.step() == 4
+
+
+def test_run_frame_returns_correct_size() -> None:
+    m = _make_machine()
+    buf = m.run_frame()
+    assert len(buf) == 256 * 192
+
+
+def test_run_frame_executes_at_least_cycles_per_frame() -> None:
+    nop_count = [0]
+    original_step = Machine.step
+
+    m = _make_machine()
+    total = [0]
+
+    original = m.step
+
+    def counting_step() -> int:
+        t = original()
+        total[0] += t
+        return t
+
+    m.step = counting_step  # type: ignore[method-assign]
+    m.run_frame()
+    assert total[0] >= CYCLES_PER_FRAME
+
+
+def test_vblank_sets_int_pending_when_ie_set() -> None:
+    m = _make_machine()
+    m.vdp.regs[1] = 0x60  # BL=1, IE=1
+    m.run_frame()
+    assert m.cpu.int_pending
+
+
+def test_reset_clears_cpu_state() -> None:
+    m = _make_machine()
+    m.cpu.iff1 = True
+    m.cpu.registers.PC = 0x1234
+    m.reset()
+    assert m.cpu.registers.PC == 0x0000
+    assert not m.cpu.iff1
+
+
+def test_reset_clears_vdp_status() -> None:
+    m = _make_machine()
+    m.vdp.status = 0xFF
+    m.reset()
+    assert m.vdp.status == 0
+
+
+def test_make_machine_io_routes_vdp_write() -> None:
+    m = _make_machine()
+    m.io.write_port(0x99, 0x00)  # VDP address latch byte 1
+    m.io.write_port(0x99, 0x40)  # VDP address = 0x0000, write mode
+    m.io.write_port(0x98, 0xAB)  # write to VRAM
+    assert m.vdp.vram[0x0000] == 0xAB
+
+
+def test_make_machine_io_routes_psg() -> None:
+    m = _make_machine()
+    m.io.write_port(0xA0, 0x07)   # latch reg 7
+    m.io.write_port(0xA1, 0x38)   # write 0x38 to reg 7
+    assert m.io.read_port(0xA2) == 0x38
