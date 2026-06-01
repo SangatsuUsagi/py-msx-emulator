@@ -1,9 +1,10 @@
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -42,7 +43,7 @@ def test_ld_sp_hl() -> None:
 def test_ld_nn_hl() -> None:
     rom = bytes([0x22, 0x00, 0xC0] + [0] * 32765)  # LD (0xC000), HL
     ram = bytearray(16384)
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xBEEF
     cpu.step()
@@ -55,7 +56,7 @@ def test_ld_hl_nn_indirect() -> None:
     ram[0] = 0x34
     ram[1] = 0x12
     rom = bytes([0x2A, 0x00, 0xC0] + [0] * 32765)  # LD HL, (0xC000)
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.step()
     assert cpu.registers.HL == 0x1234

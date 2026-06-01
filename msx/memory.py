@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
+    from msx.mapper import Mapper
 
 
 @dataclass
 class Memory:
     rom: bytes
     ram: bytearray
-    cartridge: bytes | None
+    _mapper: "Mapper" = field(repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
@@ -27,10 +28,7 @@ class Memory:
         if slot == 0:
             return self.rom[addr] if addr < len(self.rom) else 0xFF
         if slot == 1:
-            if self.cartridge is not None:
-                offset = addr - 0x4000
-                return self.cartridge[offset] if 0 <= offset < len(self.cartridge) else 0xFF
-            return 0xFF
+            return self._mapper.read(addr)
         if slot == 2:
             return 0xFF
         # slot 3: RAM — page-local offset
@@ -43,7 +41,8 @@ class Memory:
         if slot == 0:
             return  # BIOS ROM is read-only
         if slot == 1:
-            return  # cartridge ROM is read-only
+            self._mapper.write(addr, value)
+            return
         if slot == 2:
             return  # open bus, ignore
         # slot 3: RAM

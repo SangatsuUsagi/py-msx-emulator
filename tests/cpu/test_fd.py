@@ -1,9 +1,10 @@
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -17,7 +18,7 @@ def test_ld_a_iy_d() -> None:
     rom = bytes([0xFD, 0x7E, 0x01] + [0] * 32765)  # LD A, (IY+1)
     ram = bytearray(16384)
     ram[1] = 0x77  # (0xC000 + 1) = 0xC001 maps to ram[1]
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.IY = 0xC000
     cpu.step()

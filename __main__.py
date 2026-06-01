@@ -18,6 +18,8 @@ def main() -> None:
                         help="Write diagnostic log to FILE (requires --debug)")
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Emulation speed multiplier (default: 1.0)")
+    parser.add_argument("--mapper", choices=["flat", "ascii8", "ascii16", "konami"],
+                        default="flat", help="Cartridge mapper type (default: flat)")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)
@@ -38,7 +40,7 @@ def main() -> None:
 
     logger = DebugLogger(log_path=args.log) if args.debug else None
     try:
-        machine = make_machine(rom=rom, cartridge=cartridge, logger=logger)
+        machine = make_machine(rom=rom, cartridge=cartridge, logger=logger, mapper=args.mapper)
         run(machine, speed=args.speed)
     finally:
         if logger is not None:
