@@ -23,6 +23,7 @@ class Machine:
     vdp: VDP
     memory: Memory
     io: IOBus
+    psg: PSG
     input: InputState = field(default_factory=InputState)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
@@ -109,6 +110,6 @@ def make_machine(
     io.register_read(0xA8, 0xAB, ppi.read_port)
     io.register_write(0xA8, 0xAB, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, input=input_state, _logger=logger)
+    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, input=input_state, _logger=logger)
     io._get_pc = lambda: cpu.registers.PC
     return machine

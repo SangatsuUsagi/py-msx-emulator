@@ -5,6 +5,7 @@ import sys
 
 from msx.frame_timer import FrameTimer
 from msx.machine import Machine
+from msx.psg import SAMPLES_PER_FRAME
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -52,7 +53,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
     win_w = _W * scale
     win_h = _H * scale
 
-    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO) != 0:
+    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO) != 0:
         print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
         sys.exit(1)
 
@@ -81,6 +82,23 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
         _H,
     )
 
+    # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
+    # Fall back gracefully if unavailable — video and input remain functional.
+    audio_dev = 0
+    desired = sdl2.SDL_AudioSpec()
+    desired.freq = 44100
+    desired.format = sdl2.AUDIO_S16LSB
+    desired.channels = 1
+    desired.samples = 1024
+    desired.callback = None
+    desired.userdata = None
+    audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
+    if audio_dev == 0:
+        print(f"SDL audio warning: {sdl2.SDL_GetError().decode()} — continuing without audio",
+              file=sys.stderr)
+    else:
+        sdl2.SDL_PauseAudioDevice(audio_dev, 0)
+
     frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
@@ -104,6 +122,11 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
         index_buf = machine.run_frame()
         rgb_buf = _index_to_rgb24(index_buf)
 
+        # Generate and queue audio
+        if audio_dev > 0:
+            audio_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+            sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
+
         # Upload to texture
         pixels_ptr = ctypes.c_void_p()
         pitch = ctypes.c_int()
@@ -122,6 +145,8 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
             title = f"py-msx-emulator  [{frame_timer.fps_measured:.0f} fps]".encode()
             sdl2.SDL_SetWindowTitle(window, title)
 
+    if audio_dev > 0:
+        sdl2.SDL_CloseAudioDevice(audio_dev)
     sdl2.SDL_DestroyTexture(texture)
     sdl2.SDL_DestroyRenderer(renderer)
     sdl2.SDL_DestroyWindow(window)
