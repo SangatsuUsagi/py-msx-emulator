@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# pygame key constants as integers so pygame is not a hard dependency at import time
-# Values match pygame.K_* constants
+# SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
+# ASCII-range keys share values between SDL2 and pygame; special keys use SDL2 SDLK_* values.
+# SDL2 uses 0x40000000 | SDL_SCANCODE for non-ASCII keys.
 _K_BACKSPACE = 8
 _K_TAB = 9
 _K_RETURN = 13
@@ -54,23 +55,24 @@ _K_x = 120
 _K_y = 121
 _K_z = 122
 _K_DELETE = 127
-_K_UP = 273
-_K_DOWN = 274
-_K_RIGHT = 275
-_K_LEFT = 276
-_K_INSERT = 277
-_K_HOME = 278
-_K_F1 = 282
-_K_F2 = 283
-_K_F3 = 284
-_K_F4 = 285
-_K_F5 = 286
-_K_LSHIFT = 304
-_K_RSHIFT = 303
-_K_LCTRL = 306
-_K_RCTRL = 305
-_K_CAPSLOCK = 301
-_K_LALT = 308
+# SDL2 SDLK values for non-ASCII keys (0x40000000 | SDL_SCANCODE_*)
+_K_CAPSLOCK = 1073741881   # SDL_SCANCODE_CAPSLOCK = 57
+_K_F1       = 1073741882   # SDL_SCANCODE_F1 = 58
+_K_F2       = 1073741883
+_K_F3       = 1073741884
+_K_F4       = 1073741885
+_K_F5       = 1073741886
+_K_HOME     = 1073741898   # SDL_SCANCODE_HOME = 74
+_K_INSERT   = 1073741897   # SDL_SCANCODE_INSERT = 73
+_K_LEFT     = 1073741904   # SDL_SCANCODE_LEFT = 80
+_K_RIGHT    = 1073741903   # SDL_SCANCODE_RIGHT = 79
+_K_DOWN     = 1073741905   # SDL_SCANCODE_DOWN = 81
+_K_UP       = 1073741906   # SDL_SCANCODE_UP = 82
+_K_LCTRL    = 1073742048   # SDL_SCANCODE_LCTRL = 224
+_K_LSHIFT   = 1073742049   # SDL_SCANCODE_LSHIFT = 225
+_K_LALT     = 1073742050   # SDL_SCANCODE_LALT = 226
+_K_RCTRL    = 1073742052   # SDL_SCANCODE_RCTRL = 228
+_K_RSHIFT   = 1073742053   # SDL_SCANCODE_RSHIFT = 229
 
 # MSX keyboard matrix: KEY_MATRIX[pygame_key] = (row, bit)
 # Active-low: bit cleared = key pressed

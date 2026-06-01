@@ -91,6 +91,9 @@ def run(machine: Machine, scale: int = 3) -> None:
             elif event.type == sdl2.SDL_KEYDOWN:
                 if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
                     running = False
+                machine.input.key_down(event.key.keysym.sym)
+            elif event.type == sdl2.SDL_KEYUP:
+                machine.input.key_up(event.key.keysym.sym)
 
         if not running:
             break
