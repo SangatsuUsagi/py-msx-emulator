@@ -100,17 +100,17 @@ def test_16x16_top_row_uses_pattern_pair() -> None:
     vdp.regs[1] = 0x42   # SI=1 (bit 1), BL=1 → 16×16 sprites
     # Sprite 0: Y=0 (y_top=1), X=0, pattern 0, colour=15
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
-    # For 16×16: base = pat_idx & 0xFC = 0
-    # Top row 0: left = SPT[base*8+0], right = SPT[(base+1)*8+0]
-    vdp.vram[_SPT + 0 * 8 + 0] = 0x80   # left half: pixel 0 set
-    vdp.vram[_SPT + 1 * 8 + 0] = 0x01   # right half: pixel 7 (=15 in 16px) set
+    # TMS9918A 16×16 layout: base+0=upper-left, base+1=lower-left,
+    #                          base+2=upper-right, base+3=lower-right
+    vdp.vram[_SPT + 0 * 8 + 0] = 0x80   # upper-left: pixel 0 set
+    vdp.vram[_SPT + 2 * 8 + 0] = 0x01   # upper-right: pixel 7 (=15 in 16px) set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
     buf = render_frame(vdp)
 
-    assert buf[1 * 256 + 0] == 15    # left half pixel 0
-    assert buf[1 * 256 + 15] == 15   # right half pixel 15
-    assert buf[1 * 256 + 8] == 1     # right half pixel 8 (bit 7 of right = 0)
+    assert buf[1 * 256 + 0] == 15    # upper-left pixel 0
+    assert buf[1 * 256 + 15] == 15   # upper-right pixel 15
+    assert buf[1 * 256 + 8] == 1     # upper-right pixel 8 (bit 7 of upper-right = 0)
 
 
 def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
@@ -118,8 +118,8 @@ def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
     vdp.regs[1] = 0x42   # SI=1
     # Y=0 → top=1; rows 0–7 = top half, rows 8–15 = bottom half
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
-    # Bottom-left (base+2), row 0 of bottom half (src_row-8=0):
-    vdp.vram[_SPT + 2 * 8 + 0] = 0x80   # pixel 0 of bottom-left
+    # TMS9918A layout: base+1=lower-left, row 0 of bottom half (src_row-8=0):
+    vdp.vram[_SPT + 1 * 8 + 0] = 0x80   # lower-left: pixel 0 set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
     buf = render_frame(vdp)
