@@ -3,9 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from msx.input import InputState
 from msx.joystick import AXIS_DEAD_ZONE, JoystickManager
@@ -48,15 +46,6 @@ def make_manager(is_gc: bool = True) -> tuple[JoystickManager, InputState, Magic
     return mgr, inp, sdl
 
 
-def open_gc_device(mgr: JoystickManager, sdl: MagicMock, device_index: int) -> int:
-    """Open a GameController device and return its instance_id."""
-    mgr.open_device(device_index)
-    # Reconstruct the instance_id used by open_device
-    handle = sdl.SDL_GameControllerOpen.return_value
-    joy = sdl.SDL_GameControllerGetJoystick(handle)
-    return sdl.SDL_JoystickInstanceID(joy)
-
-
 def gc_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespace:
     ev = SimpleNamespace(type=etype)
     ev.cdevice = SimpleNamespace(which=which)
@@ -79,7 +68,6 @@ def joy_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespa
 # ---------------------------------------------------------------------------
 
 def _setup_gc(sdl: MagicMock, device_indices: list[int], instance_ids: list[int]) -> list[MagicMock]:
-    """Wire up SDL mocks for multiple GC opens; returns handle list."""
     handles = [MagicMock(name=f"gc_{i}") for i in device_indices]
     joys = [MagicMock(name=f"j_{i}") for i in device_indices]
     sdl.SDL_GameControllerOpen.side_effect = handles
@@ -110,7 +98,7 @@ def test_third_device_ignored() -> None:
     _setup_gc(sdl, [0, 1, 2], [100, 101, 102])
     mgr.open_device(0)
     mgr.open_device(1)
-    mgr.open_device(2)  # should be ignored
+    mgr.open_device(2)
     assert sdl.SDL_GameControllerOpen.call_count == 2
 
 
@@ -120,21 +108,21 @@ def test_close_all_releases_bits_and_frees_slots() -> None:
     mgr.open_device(0)
     mgr.open_device(1)
 
-    inp.joystick_button_down(0, 0)
-    inp.joystick_button_down(1, 5)
-    assert inp.joystick & (1 << 0) == 0
-    assert inp.joystick & (1 << 5) == 0
+    inp.joystick_button_down(0, 0)  # Joy1 Up
+    inp.joystick_button_down(1, 0)  # Joy2 Up
+    assert inp.joy1 & (1 << 0) == 0
+    assert inp.joy2 & (1 << 0) == 0
 
     mgr.close_all()
 
     assert mgr._slots[0] is None
     assert mgr._slots[1] is None
-    assert inp.joystick & (1 << 0) != 0
-    assert inp.joystick & (1 << 5) != 0
+    assert inp.joy1 & (1 << 0) != 0
+    assert inp.joy2 & (1 << 0) != 0
 
 
 # ---------------------------------------------------------------------------
-# 4.2  Hot-plug: pressed bit released on removal; port freed for reconnect
+# 4.2  Hot-plug
 # ---------------------------------------------------------------------------
 
 def test_hot_plug_removal_releases_pressed_bits() -> None:
@@ -142,12 +130,12 @@ def test_hot_plug_removal_releases_pressed_bits() -> None:
     _setup_gc(sdl, [0], [42])
     mgr.open_device(0)
     inp.joystick_button_down(0, 0)  # Joy1 Up pressed
-    assert inp.joystick & 0x01 == 0
+    assert inp.joy1 & 0x01 == 0
 
     ev = gc_event(sdl, sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
     mgr.handle_event(ev)
 
-    assert inp.joystick & 0x01 != 0  # released
+    assert inp.joy1 & 0x01 != 0  # released
     assert mgr._slots[0] is None
 
 
@@ -156,12 +144,12 @@ def test_reconnected_device_reuses_free_port() -> None:
     handles = _setup_gc(sdl, [0, 0], [42, 43])
     mgr.open_device(0)
     mgr.close_device(42)
-    mgr.open_device(0)  # reconnect
+    mgr.open_device(0)
     assert mgr._slots[0] is handles[1]
 
 
 # ---------------------------------------------------------------------------
-# 4.3  GameController D-pad events
+# 4.3  GameController D-pad and button events
 # ---------------------------------------------------------------------------
 
 def _open_single_gc(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 42) -> None:
@@ -169,39 +157,49 @@ def _open_single_gc(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 42)
     mgr.open_device(0)
 
 
-def test_gc_dpad_up_down_sets_joy1_up_bit() -> None:
+def test_gc_dpad_up_sets_joy1_up_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
     ev = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11)  # DPAD_UP
     mgr.handle_event(ev)
-    assert inp.joystick & 0x01 == 0  # bit 0 pressed
+    assert inp.joy1 & 0x01 == 0  # bit 0 pressed
 
 
-def test_gc_dpad_up_up_releases_joy1_up_bit() -> None:
+def test_gc_dpad_up_release_clears_joy1_up_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev_down = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11)
-    ev_up = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=11)
-    mgr.handle_event(ev_down)
-    mgr.handle_event(ev_up)
-    assert inp.joystick & 0x01 != 0  # bit 0 released
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=11))
+    assert inp.joy1 & 0x01 != 0  # bit 0 released
 
 
 def test_gc_dpad_other_bits_unaffected() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11)  # DPAD_UP → bit 0
-    mgr.handle_event(ev)
-    # Bits 1-7 should remain unaffected (all 1)
-    assert inp.joystick & 0xFE == 0xFE
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
+    assert inp.joy1 & 0x3E == 0x3E  # bits 1-5 unaffected
 
 
 def test_gc_button_a_sets_trigger_a_bit4() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=0)  # Button A
-    mgr.handle_event(ev)
-    assert inp.joystick & (1 << 4) == 0  # bit 4 pressed
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=0))
+    assert inp.joy1 & (1 << 4) == 0  # bit 4 (Trigger A) pressed
+
+
+def test_gc_button_b_sets_trigger_b_bit5() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    assert inp.joy1 & (1 << 5) == 0  # bit 5 (Trigger B) pressed
+
+
+def test_gc_button_b_release_clears_trigger_b() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=1))
+    assert inp.joy1 & (1 << 5) != 0  # bit 5 released
 
 
 # ---------------------------------------------------------------------------
@@ -209,44 +207,39 @@ def test_gc_button_a_sets_trigger_a_bit4() -> None:
 # ---------------------------------------------------------------------------
 
 def test_axis_above_deadzone_up_sets_up_bit() -> None:
-    # On macOS SDL2, positive Y axis = stick pushed up
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)  # positive = up
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)
     mgr.handle_event(ev)
-    assert inp.joystick & 0x01 == 0  # bit 0 (up) pressed
+    assert inp.joy1 & 0x01 == 0  # bit 0 (up) pressed
 
 
 def test_axis_negative_deadzone_sets_down_bit() -> None:
-    # On macOS SDL2, negative Y axis = stick pushed down
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)  # negative = down
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)
     mgr.handle_event(ev)
-    assert inp.joystick & 0x02 == 0  # bit 1 (down) pressed
+    assert inp.joy1 & 0x02 == 0  # bit 1 (down) pressed
 
 
 def test_axis_within_deadzone_does_not_set_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=1000)
-    mgr.handle_event(ev)
-    assert inp.joystick & 0x01 != 0  # bit 0 not pressed
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=1000))
+    assert inp.joy1 & 0x01 != 0
 
 
 def test_axis_returns_to_deadzone_releases_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev_push = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)
-    ev_release = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=0)
-    mgr.handle_event(ev_push)
-    assert inp.joystick & 0x01 == 0
-    mgr.handle_event(ev_release)
-    assert inp.joystick & 0x01 != 0
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000))
+    assert inp.joy1 & 0x01 == 0
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=0))
+    assert inp.joy1 & 0x01 != 0
 
 
 # ---------------------------------------------------------------------------
-# 4.5  Raw Joystick hat events
+# 4.5  Raw Joystick hat and button events
 # ---------------------------------------------------------------------------
 
 def _open_single_joy(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 55) -> None:
@@ -259,36 +252,36 @@ def _open_single_joy(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 55
 def test_hat_up_sets_up_bit() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    ev = joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP)
-    mgr.handle_event(ev)
-    assert inp.joystick & 0x01 == 0  # bit 0 pressed
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
+    assert inp.joy1 & 0x01 == 0
 
 
 def test_hat_diagonal_sets_two_bits() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    diagonal = sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP
-    ev = joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=diagonal)
-    mgr.handle_event(ev)
-    assert inp.joystick & 0x01 == 0  # up
-    assert inp.joystick & 0x04 == 0  # left
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP))
+    assert inp.joy1 & 0x01 == 0  # up
+    assert inp.joy1 & 0x04 == 0  # left
 
 
 def test_hat_centered_releases_all_direction_bits() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    ev_up = joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP)
-    mgr.handle_event(ev_up)
-    assert inp.joystick & 0x01 == 0
-
-    ev_center = joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=0)
-    mgr.handle_event(ev_center)
-    assert inp.joystick & 0x0F == 0x0F  # bits 0-3 all released
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
+    assert inp.joy1 & 0x01 == 0
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=0))
+    assert inp.joy1 & 0x0F == 0x0F  # bits 0-3 all released
 
 
 def test_raw_joy_button0_sets_trigger_a() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    ev = joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=0)
-    mgr.handle_event(ev)
-    assert inp.joystick & (1 << 4) == 0  # bit 4 pressed
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=0))
+    assert inp.joy1 & (1 << 4) == 0  # bit 4 (Trigger A) pressed
+
+
+def test_raw_joy_button1_sets_trigger_b() -> None:
+    mgr, inp, sdl = make_manager(is_gc=False)
+    _open_single_joy(mgr, sdl)
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=1))
+    assert inp.joy1 & (1 << 5) == 0  # bit 5 (Trigger B) pressed
