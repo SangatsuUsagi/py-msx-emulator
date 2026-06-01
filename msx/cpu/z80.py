@@ -83,7 +83,8 @@ class Z80:
             self.halted = False
             self.iff1 = False
             self.iff2 = False
-            if self.im == 1:
+            if self.im == 0 or self.im == 1:
+                # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
                 self.registers.PC = 0x0038
                 return 13
