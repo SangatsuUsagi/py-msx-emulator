@@ -5,6 +5,7 @@ import struct
 import sys
 
 from msx.frame_timer import FrameTimer
+from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 
@@ -54,7 +55,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
     win_w = _W * scale
     win_h = _H * scale
 
-    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO) != 0:
+    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER) != 0:
         print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
         sys.exit(1)
 
@@ -94,6 +95,8 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
     else:
         sdl2.SDL_PauseAudioDevice(audio_dev, 0)
 
+    joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
+
     frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
@@ -109,6 +112,20 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
                 machine.input.key_down(event.key.keysym.sym)
             elif event.type == sdl2.SDL_KEYUP:
                 machine.input.key_up(event.key.keysym.sym)
+            elif event.type in (
+                sdl2.SDL_CONTROLLERDEVICEADDED,
+                sdl2.SDL_CONTROLLERDEVICEREMOVED,
+                sdl2.SDL_JOYDEVICEADDED,
+                sdl2.SDL_JOYDEVICEREMOVED,
+                sdl2.SDL_CONTROLLERBUTTONDOWN,
+                sdl2.SDL_CONTROLLERBUTTONUP,
+                sdl2.SDL_CONTROLLERAXISMOTION,
+                sdl2.SDL_JOYBUTTONDOWN,
+                sdl2.SDL_JOYBUTTONUP,
+                sdl2.SDL_JOYAXISMOTION,
+                sdl2.SDL_JOYHATMOTION,
+            ):
+                joy_manager.handle_event(event)
 
         if not running:
             break
@@ -156,6 +173,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
             title = f"py-msx-emulator  [{frame_timer.fps_measured:.0f} fps]".encode()
             sdl2.SDL_SetWindowTitle(window, title)
 
+    joy_manager.close_all()
     if audio_dev > 0:
         sdl2.SDL_CloseAudioDevice(audio_dev)
     sdl2.SDL_DestroyTexture(texture)
