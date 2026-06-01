@@ -208,18 +208,28 @@ def test_gc_button_a_sets_trigger_a_bit4() -> None:
 # 4.4  Analog axis dead-zone
 # ---------------------------------------------------------------------------
 
-def test_axis_above_deadzone_sets_direction_bit() -> None:
+def test_axis_above_deadzone_up_sets_up_bit() -> None:
+    # On macOS SDL2, positive Y axis = stick pushed up
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)  # up
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)  # positive = up
     mgr.handle_event(ev)
-    assert inp.joystick & 0x01 == 0  # bit 0 pressed
+    assert inp.joystick & 0x01 == 0  # bit 0 (up) pressed
+
+
+def test_axis_negative_deadzone_sets_down_bit() -> None:
+    # On macOS SDL2, negative Y axis = stick pushed down
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)  # negative = down
+    mgr.handle_event(ev)
+    assert inp.joystick & 0x02 == 0  # bit 1 (down) pressed
 
 
 def test_axis_within_deadzone_does_not_set_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-1000)
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=1000)
     mgr.handle_event(ev)
     assert inp.joystick & 0x01 != 0  # bit 0 not pressed
 
@@ -227,7 +237,7 @@ def test_axis_within_deadzone_does_not_set_bit() -> None:
 def test_axis_returns_to_deadzone_releases_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev_push = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)
+    ev_push = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)
     ev_release = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=0)
     mgr.handle_event(ev_push)
     assert inp.joystick & 0x01 == 0
