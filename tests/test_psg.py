@@ -1,3 +1,4 @@
+from msx.input import InputState
 from msx.psg import PSG
 
 
@@ -35,6 +36,30 @@ def test_latch_masked_to_4_bits() -> None:
 def test_unmapped_read_returns_ff() -> None:
     psg = PSG()
     assert psg.read_port(0xA0) == 0xFF
+
+
+def test_reg14_returns_joystick_when_input_attached() -> None:
+    state = InputState()
+    state.joystick = 0xFE
+    psg = PSG(_input=state)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) == 0xFE
+
+
+def test_reg14_returns_register_value_when_no_input() -> None:
+    psg = PSG()
+    psg.write_port(0xA0, 14)
+    psg.write_port(0xA1, 0x00)
+    assert psg.read_port(0xA2) == 0x00
+
+
+def test_reg14_not_overridden_for_other_regs() -> None:
+    state = InputState()
+    state.joystick = 0xFE
+    psg = PSG(_input=state)
+    psg.write_port(0xA0, 7)
+    psg.write_port(0xA1, 0x38)
+    assert psg.read_port(0xA2) == 0x38
 
 
 def test_sequential_register_writes() -> None:
