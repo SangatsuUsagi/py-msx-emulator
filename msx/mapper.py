@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from msx.scc import SCC
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -130,6 +133,58 @@ class KonamiMapper:
             self._banks[1] = value % self._num_pages()
         elif 0x8000 <= addr < 0xA000:
             self._banks[2] = value % self._num_pages()
+        elif 0xA000 <= addr < 0xC000:
+            self._banks[3] = value % self._num_pages()
+        # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
+
+
+@dataclass
+class KonamiSCCMapper:
+    """Konami SCC mapper: same 8 KB bank switching as KonamiMapper, extended
+    with SCC mode.
+
+    When the window-2 bank register is set to 0x3F, the address range
+    0x9800–0x9FFF is redirected to SCC registers instead of ROM.
+    """
+
+    rom: bytes
+    scc: "SCC"
+    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _scc_mode: bool = field(default=False, init=False, repr=False)
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // _PAGE_8K)
+
+    def read(self, addr: int) -> int:
+        if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
+            return self.scc.read(addr - 0x9800)
+        if addr < 0x6000:
+            window, base = 0, 0x4000
+        elif addr < 0x8000:
+            window, base = 1, 0x6000
+        elif addr < 0xA000:
+            window, base = 2, 0x8000
+        else:
+            window, base = 3, 0xA000
+        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        # SCC register writes take priority over bank-register writes.
+        if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
+            self.scc.write(addr - 0x9800, value)
+            return
+        if 0x6000 <= addr < 0x8000:
+            self._banks[1] = value % self._num_pages()
+        elif 0x8000 <= addr < 0xA000:
+            # Window 2 bank register: 0x3F enables SCC mode; any other value disables it.
+            if value == 0x3F:
+                self._scc_mode = True
+            else:
+                self._scc_mode = False
+                self._banks[2] = value % self._num_pages()
         elif 0xA000 <= addr < 0xC000:
             self._banks[3] = value % self._num_pages()
         # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
