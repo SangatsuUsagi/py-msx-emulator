@@ -8,6 +8,7 @@ from msx.io import IOBus
 from msx.machine import Machine, HANG_PC_REPEAT_THRESHOLD
 from msx.mapper import FlatMapper
 from msx.memory import Memory
+from msx.psg import PSG
 from msx.vdp.vdp import VDP
 
 
@@ -17,7 +18,7 @@ def make_machine(opcodes: list[int], logger: DebugLogger | None = None) -> Machi
     io = IOBus()
     cpu = Z80(read_byte=memory.read, write_byte=memory.write)
     vdp = VDP()
-    return Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, _logger=logger)
+    return Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, psg=PSG(), _logger=logger)
 
 
 # ---------------------------------------------------------------------------
