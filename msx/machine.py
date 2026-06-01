@@ -5,6 +5,7 @@ from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, Mapper
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
@@ -70,15 +71,29 @@ class Machine:
         return result
 
 
+def _make_mapper(mapper_type: str, cartridge: bytes | None) -> Mapper:
+    if mapper_type == "flat":
+        return FlatMapper(cartridge)
+    rom_bytes = cartridge if cartridge is not None else b""
+    if mapper_type == "ascii8":
+        return Ascii8Mapper(rom_bytes)
+    if mapper_type == "ascii16":
+        return Ascii16Mapper(rom_bytes)
+    if mapper_type == "konami":
+        return KonamiMapper(rom_bytes)
+    raise ValueError(f"unknown mapper type: {mapper_type!r}")
+
+
 def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
     logger: DebugLogger | None = None,
+    mapper: str = "flat",
 ) -> Machine:
     memory = Memory(
         rom=rom,
         ram=bytearray(16384),
-        cartridge=cartridge,
+        _mapper=_make_mapper(mapper, cartridge),
         slot_register=0x00,
         _logger=logger,
     )

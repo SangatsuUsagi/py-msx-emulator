@@ -2,6 +2,7 @@ from msx.cpu.z80 import Z80
 from msx.input import InputState
 from msx.io import IOBus
 from msx.machine import CYCLES_PER_FRAME, Machine, make_machine
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
 from msx.memory import Memory
 from msx.vdp.vdp import VDP
 
@@ -102,3 +103,24 @@ def test_make_machine_exposes_input_state() -> None:
     assert isinstance(m.input, InputState)
     assert all(row == 0xFF for row in m.input.matrix)
     assert m.input.joystick == 0xFF
+
+
+def test_make_machine_default_mapper_is_flat() -> None:
+    cart = bytes([0xAB] + [0] * 32767)
+    m = make_machine(rom=_NOP_ROM, cartridge=cart)
+    assert isinstance(m.memory._mapper, FlatMapper)
+
+
+def test_make_machine_mapper_ascii8() -> None:
+    m = make_machine(rom=_NOP_ROM, mapper="ascii8")
+    assert isinstance(m.memory._mapper, Ascii8Mapper)
+
+
+def test_make_machine_mapper_ascii16() -> None:
+    m = make_machine(rom=_NOP_ROM, mapper="ascii16")
+    assert isinstance(m.memory._mapper, Ascii16Mapper)
+
+
+def test_make_machine_mapper_konami() -> None:
+    m = make_machine(rom=_NOP_ROM, mapper="konami")
+    assert isinstance(m.memory._mapper, KonamiMapper)

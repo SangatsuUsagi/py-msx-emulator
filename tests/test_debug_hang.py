@@ -6,13 +6,14 @@ from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.io import IOBus
 from msx.machine import Machine, HANG_PC_REPEAT_THRESHOLD
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.vdp.vdp import VDP
 
 
 def make_machine(opcodes: list[int], logger: DebugLogger | None = None) -> Machine:
     rom = bytes(opcodes + [0x00] * (32768 - len(opcodes)))
-    memory = Memory(rom=rom, ram=bytearray(16384), cartridge=None)
+    memory = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None))
     io = IOBus()
     cpu = Z80(read_byte=memory.read, write_byte=memory.write)
     vdp = VDP()
