@@ -1,9 +1,10 @@
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> tuple[Z80, list[tuple[int, int]], list[int]]:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
     writes: list[tuple[int, int]] = []
     reads: list[int] = [0x42]
 

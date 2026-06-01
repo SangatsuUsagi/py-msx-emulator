@@ -1,4 +1,5 @@
 import pytest
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 
 # Standard MSX1 boot slot layout:
@@ -14,7 +15,7 @@ def make_mem(rom: bytes | None = None, cartridge: bytes | None = None,
              slot_register: int = _MSX1_SLOTS) -> Memory:
     if rom is None:
         rom = bytes(32768)
-    return Memory(rom=rom, ram=bytearray(16384), cartridge=cartridge,
+    return Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(cartridge),
                   slot_register=slot_register)
 
 
@@ -88,7 +89,7 @@ def test_slot_register_read_back() -> None:
 
 def test_slot_register_dataclass_default_msx1_layout() -> None:
     # Default is standard MSX1 layout: page3=slot3(RAM), page1+2=slot1(cart)
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None))
     assert mem.read_port_a8() == 0xD4
 
 
@@ -100,28 +101,28 @@ def test_page1_slot0_reads_bios_rom() -> None:
     rom = bytes(0x4001)
     rom = bytes([0] * 0x4000 + [0xBB])
     # slot_register: page 1 (bits 3:2) = slot 0 → reads BIOS ROM
-    mem = Memory(rom=rom, ram=bytearray(16384), cartridge=None, slot_register=0x00)
+    mem = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None), slot_register=0x00)
     assert mem.read(0x4000) == 0xBB
 
 
 def test_page1_slot1_reads_cartridge() -> None:
     cart = bytes([0xCC] + [0] * 32767)
     # bits 3:2 = 0b01 → page 1 = slot 1 = cartridge
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=cart,
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(cart),
                  slot_register=0x04)
     assert mem.read(0x4000) == 0xCC
 
 
 def test_slot2_open_bus_returns_ff() -> None:
     # bits 1:0 = 0b10 → page 0 = slot 2 = open bus
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=None,
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None),
                  slot_register=0x02)
     assert mem.read(0x0000) == 0xFF
 
 
 def test_slot2_open_bus_write_is_noop() -> None:
     # page 0 = slot 2
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), cartridge=None,
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None),
                  slot_register=0x02)
     mem.write(0x0000, 0xAB)  # should not raise
 
@@ -129,6 +130,39 @@ def test_slot2_open_bus_write_is_noop() -> None:
 def test_initial_slot_register_all_pages_slot0() -> None:
     # Default slot_register=0: all pages → slot 0 (BIOS ROM)
     rom = bytes([0xAA] + [0] * 32767)
-    mem = Memory(rom=rom, ram=bytearray(16384), cartridge=None, slot_register=0x00)
+    mem = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None), slot_register=0x00)
     assert mem.read(0x0000) == 0xAA
     assert mem.read(0x4000) == 0x00  # ROM byte at 0x4000
+
+
+# ---------------------------------------------------------------------------
+# Mapper delegation tests
+# ---------------------------------------------------------------------------
+
+def test_slot1_read_delegates_to_mapper() -> None:
+    from msx.mapper import Ascii8Mapper
+    _PAGE_8K = 8192
+    rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(_PAGE_8K)])
+    mapper = Ascii8Mapper(rom)
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=mapper,
+                 slot_register=_MSX1_SLOTS)
+    assert mem.read(0x4000) == 0  # page 0
+
+
+def test_slot1_write_delegates_to_mapper() -> None:
+    from msx.mapper import Ascii8Mapper
+    _PAGE_8K = 8192
+    rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(_PAGE_8K)])
+    mapper = Ascii8Mapper(rom)
+    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=mapper,
+                 slot_register=_MSX1_SLOTS)
+    mem.write(0x6000, 3)  # bank switch via mapper write
+    assert mem.read(0x4000) == 3  # window 0 now shows page 3
+
+
+def test_non_slot1_regions_unchanged() -> None:
+    rom = bytes([0xAB] + [0] * 32767)
+    mem = make_mem(rom=rom)
+    assert mem.read(0x0000) == 0xAB  # BIOS ROM still works
+    mem.write(0xC000, 0x77)
+    assert mem.read(0xC000) == 0x77  # RAM still works
