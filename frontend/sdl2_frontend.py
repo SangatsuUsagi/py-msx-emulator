@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 
+from msx.frame_timer import FrameTimer
 from msx.machine import Machine
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
@@ -40,7 +41,7 @@ def _index_to_rgb24(src: bytearray) -> bytearray:
     return dst
 
 
-def run(machine: Machine, scale: int = 3) -> None:
+def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
     try:
         import sdl2
         import sdl2.ext
@@ -80,6 +81,7 @@ def run(machine: Machine, scale: int = 3) -> None:
         _H,
     )
 
+    frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
 
@@ -113,6 +115,12 @@ def run(machine: Machine, scale: int = 3) -> None:
         sdl2.SDL_RenderClear(renderer)
         sdl2.SDL_RenderCopy(renderer, texture, None, None)
         sdl2.SDL_RenderPresent(renderer)
+
+        # Frame pacing
+        frame_timer.tick()
+        if frame_timer.fps_measured > 0:
+            title = f"py-msx-emulator  [{frame_timer.fps_measured:.0f} fps]".encode()
+            sdl2.SDL_SetWindowTitle(window, title)
 
     sdl2.SDL_DestroyTexture(texture)
     sdl2.SDL_DestroyRenderer(renderer)
