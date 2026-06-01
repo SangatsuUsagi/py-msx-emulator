@@ -193,7 +193,12 @@ _NUM_ROWS = 11
 @dataclass
 class InputState:
     matrix: list[int] = field(default_factory=lambda: [0xFF] * _NUM_ROWS)
-    joystick: int = 0xFF
+    _joy_kbd: int = field(default=0xFF, init=False, repr=False)
+    _joy_hw: int = field(default=0xFF, init=False, repr=False)
+
+    @property
+    def joystick(self) -> int:
+        return self._joy_kbd & self._joy_hw
 
     def key_down(self, key: int) -> None:
         if key in KEY_MATRIX:
@@ -201,7 +206,7 @@ class InputState:
             self.matrix[row] &= ~(1 << bit) & 0xFF
         if key in JOY_MAP:
             bit = JOY_MAP[key]
-            self.joystick &= ~(1 << bit) & 0xFF
+            self._joy_kbd &= ~(1 << bit) & 0xFF
 
     def key_up(self, key: int) -> None:
         if key in KEY_MATRIX:
@@ -209,4 +214,10 @@ class InputState:
             self.matrix[row] |= (1 << bit)
         if key in JOY_MAP:
             bit = JOY_MAP[key]
-            self.joystick |= (1 << bit)
+            self._joy_kbd |= (1 << bit)
+
+    def joystick_button_down(self, port: int, bit: int) -> None:
+        self._joy_hw &= ~(1 << bit) & 0xFF
+
+    def joystick_button_up(self, port: int, bit: int) -> None:
+        self._joy_hw |= (1 << bit)
