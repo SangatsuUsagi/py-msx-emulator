@@ -5,10 +5,11 @@ from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, Mapper
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper, Mapper
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
+from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
 
@@ -24,6 +25,7 @@ class Machine:
     memory: Memory
     io: IOBus
     psg: PSG
+    scc: SCC | None = field(default=None)
     input: InputState = field(default_factory=InputState)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
@@ -72,7 +74,7 @@ class Machine:
         return result
 
 
-def _make_mapper(mapper_type: str, cartridge: bytes | None) -> Mapper:
+def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
     if mapper_type == "flat":
         return FlatMapper(cartridge)
     rom_bytes = cartridge if cartridge is not None else b""
@@ -82,6 +84,10 @@ def _make_mapper(mapper_type: str, cartridge: bytes | None) -> Mapper:
         return Ascii16Mapper(rom_bytes)
     if mapper_type == "konami":
         return KonamiMapper(rom_bytes)
+    if mapper_type == "konami-scc":
+        if scc is None:
+            raise ValueError("konami-scc mapper requires an SCC instance")
+        return KonamiSCCMapper(rom_bytes, scc=scc)
     raise ValueError(f"unknown mapper type: {mapper_type!r}")
 
 
@@ -91,10 +97,11 @@ def make_machine(
     logger: DebugLogger | None = None,
     mapper: str = "flat",
 ) -> Machine:
+    scc: SCC | None = SCC() if mapper == "konami-scc" else None
     memory = Memory(
         rom=rom,
         ram=bytearray(16384),
-        _mapper=_make_mapper(mapper, cartridge),
+        _mapper=_make_mapper(mapper, cartridge, scc=scc),
         slot_register=0x00,
         _logger=logger,
     )
@@ -110,6 +117,9 @@ def make_machine(
     io.register_read(0xA8, 0xAB, ppi.read_port)
     io.register_write(0xA8, 0xAB, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, input=input_state, _logger=logger)
+    machine = Machine(
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc,
+        input=input_state, _logger=logger,
+    )
     io._get_pc = lambda: cpu.registers.PC
     return machine

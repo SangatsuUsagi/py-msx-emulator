@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import struct
 import sys
 
 from msx.frame_timer import FrameTimer
@@ -116,9 +117,25 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
         index_buf = machine.run_frame()
         rgb_buf = _index_to_rgb24(index_buf)
 
-        # Generate and queue audio
+        # Generate and queue audio (PSG + SCC mixed if SCC present)
         if audio_dev > 0:
-            audio_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+            psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+            if machine.scc is not None:
+                scc_buf = machine.scc.generate_samples(SAMPLES_PER_FRAME)
+                mixed = bytearray(len(psg_buf))
+                for i in range(SAMPLES_PER_FRAME):
+                    offset = i * 2
+                    psg_s = struct.unpack_from("<h", psg_buf, offset)[0]
+                    scc_s = struct.unpack_from("<h", scc_buf, offset)[0]
+                    total = psg_s + scc_s
+                    if total > 32767:
+                        total = 32767
+                    elif total < -32768:
+                        total = -32768
+                    struct.pack_into("<h", mixed, offset, total)
+                audio_buf = mixed
+            else:
+                audio_buf = psg_buf
             sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
 
         # Upload to texture
