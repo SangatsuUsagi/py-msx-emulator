@@ -4,12 +4,13 @@ import pytest
 
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 
 
 def make_cpu(opcodes: list[int], logger: DebugLogger | None = None) -> Z80:
     rom = bytes(opcodes + [0x00] * (32768 - len(opcodes)))
-    mem = Memory(rom=rom, ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write, _logger=logger)
 
 

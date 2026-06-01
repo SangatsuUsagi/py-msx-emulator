@@ -1,10 +1,11 @@
+from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.cpu.z80 import Z80
 from msx.cpu import flags as F
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), cartridge=None)
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -12,7 +13,7 @@ def test_ldi() -> None:
     rom = bytes([0xED, 0xA0] + [0] * 32766)
     ram = bytearray(16384)
     ram[0] = 0xAB  # source at 0xC000
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.DE = 0xC010
@@ -31,7 +32,7 @@ def test_ldir() -> None:
     ram[0] = 0x01
     ram[1] = 0x02
     ram[2] = 0x03
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.DE = 0xC010
@@ -87,7 +88,7 @@ def test_ldd() -> None:
     rom = bytes([0xED, 0xA8] + [0] * 32766)
     ram = bytearray(16384)
     ram[5] = 0x55
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC005
     cpu.registers.DE = 0xC010
@@ -103,7 +104,7 @@ def test_reti() -> None:
     ram = bytearray(16384)
     ram[0x3FFE] = 0x00
     ram[0x3FFF] = 0x10
-    mem = Memory(rom=rom, ram=ram, cartridge=None)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE
     cpu.iff2 = True
