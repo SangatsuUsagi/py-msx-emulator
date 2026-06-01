@@ -7,14 +7,14 @@ from msx.input import InputState
 
 AXIS_DEAD_ZONE: int = 8192
 
-# Joy1 uses bits 0-4; Joy2 uses bits 5-7.
-_PORT_BIT_OFFSET = [0, 5]
-_PORT_BIT_COUNT = [5, 3]
+# Each port uses bits 0-5: up(0) down(1) left(2) right(3) trigA(4) trigB(5)
+_PORT_BIT_OFFSET = [0, 0]
+_PORT_BIT_COUNT = [6, 6]
 
-# GameController button → bit offset within port
+# GameController button → bit index within the port's 6-bit joystick state
 _GC_BUTTON_BIT = {
-    0: 4,   # SDL_CONTROLLER_BUTTON_A  → Trigger A (bit 4 / bit 7)
-    1: 4,   # SDL_CONTROLLER_BUTTON_B  → Trigger A
+    0: 4,   # SDL_CONTROLLER_BUTTON_A  → Trigger A
+    1: 5,   # SDL_CONTROLLER_BUTTON_B  → Trigger B
     11: 0,  # SDL_CONTROLLER_BUTTON_DPAD_UP
     12: 1,  # SDL_CONTROLLER_BUTTON_DPAD_DOWN
     13: 2,  # SDL_CONTROLLER_BUTTON_DPAD_LEFT
@@ -165,9 +165,13 @@ class JoystickManager:
         port = self._port_for_instance(event.jbutton.which)
         if port is None:
             return
-        if int(event.jbutton.button) not in (0, 1):
+        btn = int(event.jbutton.button)
+        if btn == 0:
+            bit = 4  # Trigger A
+        elif btn == 1:
+            bit = 5  # Trigger B
+        else:
             return
-        bit = _PORT_BIT_OFFSET[port] + 4
         if event.type == sdl.SDL_JOYBUTTONDOWN:
             self._input.joystick_button_down(port, bit)
         else:

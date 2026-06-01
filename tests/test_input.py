@@ -1,6 +1,6 @@
 from msx.input import (
     InputState, KEY_MATRIX, JOY_MAP,
-    _K_a, _K_SPACE, _K_w, _K_s,
+    _K_a, _K_SPACE, _K_w, _K_s, _K_x,
     _K_UP, _K_DOWN, _K_LEFT, _K_RIGHT,
 )
 
@@ -14,9 +14,14 @@ def test_default_matrix_all_released() -> None:
     assert all(row == 0xFF for row in state.matrix)
 
 
-def test_default_joystick_all_released() -> None:
+def test_default_joy1_all_released() -> None:
     state = make_input()
-    assert state.joystick == 0xFF
+    assert state.joy1 == 0x3F
+
+
+def test_default_joy2_all_released() -> None:
+    state = make_input()
+    assert state.joy2 == 0x3F
 
 
 def test_key_down_clears_matrix_bit() -> None:
@@ -51,24 +56,24 @@ def test_key_up_space_restores_matrix_bit() -> None:
 
 def test_key_down_clears_joystick_bit() -> None:
     state = make_input()
-    bit = JOY_MAP[_K_w]
+    _port, bit = JOY_MAP[_K_w]
     state.key_down(_K_w)
-    assert state.joystick & (1 << bit) == 0
+    assert state.joy1 & (1 << bit) == 0
 
 
 def test_key_up_sets_joystick_bit() -> None:
     state = make_input()
-    bit = JOY_MAP[_K_w]
+    _port, bit = JOY_MAP[_K_w]
     state.key_down(_K_w)
     state.key_up(_K_w)
-    assert state.joystick & (1 << bit) != 0
+    assert state.joy1 & (1 << bit) != 0
 
 
 def test_key_down_down_clears_joystick_down_bit() -> None:
     state = make_input()
-    bit = JOY_MAP[_K_s]
+    _port, bit = JOY_MAP[_K_s]
     state.key_down(_K_s)
-    assert state.joystick & (1 << bit) == 0
+    assert state.joy1 & (1 << bit) == 0
 
 
 def test_unknown_key_noop_matrix() -> None:
@@ -83,7 +88,8 @@ def test_unknown_key_noop_joystick() -> None:
     state = make_input()
     state.key_down(9999)
     state.key_up(9999)
-    assert state.joystick == 0xFF
+    assert state.joy1 == 0x3F
+    assert state.joy2 == 0x3F
 
 
 def test_multiple_keys_down() -> None:
@@ -112,10 +118,10 @@ def test_cursor_keys_clear_row8_bits() -> None:
 
 
 def test_cursor_keys_joy1_in_joymap() -> None:
-    assert JOY_MAP[_K_UP] == 0
-    assert JOY_MAP[_K_DOWN] == 1
-    assert JOY_MAP[_K_LEFT] == 2
-    assert JOY_MAP[_K_RIGHT] == 3
+    assert JOY_MAP[_K_UP]    == (0, 0)
+    assert JOY_MAP[_K_DOWN]  == (0, 1)
+    assert JOY_MAP[_K_LEFT]  == (0, 2)
+    assert JOY_MAP[_K_RIGHT] == (0, 3)
 
 
 def test_other_bits_unaffected_on_key_down() -> None:
@@ -126,40 +132,56 @@ def test_other_bits_unaffected_on_key_down() -> None:
     assert state.matrix[row] & mask == mask
 
 
-def test_joystick_button_down_clears_bit() -> None:
+def test_joystick_button_down_clears_joy1_bit() -> None:
     state = make_input()
     state.joystick_button_down(0, 0)
-    assert state.joystick & (1 << 0) == 0
+    assert state.joy1 & (1 << 0) == 0
 
 
-def test_joystick_button_up_sets_bit() -> None:
+def test_joystick_button_up_sets_joy1_bit() -> None:
     state = make_input()
     state.joystick_button_down(0, 0)
     state.joystick_button_up(0, 0)
-    assert state.joystick & (1 << 0) != 0
+    assert state.joy1 & (1 << 0) != 0
 
 
 def test_joystick_button_down_other_bits_unaffected() -> None:
     state = make_input()
     state.joystick_button_down(0, 2)
-    mask = ~(1 << 2) & 0xFF
-    assert state.joystick & mask == mask
+    mask = ~(1 << 2) & 0x3F
+    assert state.joy1 & mask == mask
+
+
+def test_joystick_button_down_joy2() -> None:
+    state = make_input()
+    state.joystick_button_down(1, 0)
+    assert state.joy2 & (1 << 0) == 0
+    assert state.joy1 == 0x3F  # joy1 unaffected
 
 
 def test_joystick_button_down_and_keyboard_stack() -> None:
     state = make_input()
-    state.key_down(_K_w)          # keyboard presses bit 0
+    state.key_down(_K_w)               # keyboard presses Joy1 Up (bit 0)
     state.joystick_button_down(0, 0)   # hardware also presses bit 0
-    assert state.joystick & (1 << 0) == 0
+    assert state.joy1 & (1 << 0) == 0
     state.joystick_button_up(0, 0)     # hardware releases
-    assert state.joystick & (1 << 0) == 0  # keyboard still holds it
-    state.key_up(_K_w)            # keyboard releases
-    assert state.joystick & (1 << 0) != 0  # now fully released
+    assert state.joy1 & (1 << 0) == 0  # keyboard still holds it
+    state.key_up(_K_w)
+    assert state.joy1 & (1 << 0) != 0  # now fully released
 
 
-def test_joystick_button_port_param_ignored() -> None:
+def test_trigger_b_keyboard_mapping() -> None:
     state = make_input()
-    state.joystick_button_down(1, 0)
-    assert state.joystick & (1 << 0) == 0
-    state.joystick_button_up(1, 0)
-    assert state.joystick & (1 << 0) != 0
+    assert JOY_MAP[_K_x] == (0, 5)   # Joy1 Trigger B
+    state.key_down(_K_x)
+    assert state.joy1 & (1 << 5) == 0  # bit 5 pressed
+    state.key_up(_K_x)
+    assert state.joy1 & (1 << 5) != 0
+
+
+def test_trigger_b_hardware() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 5)
+    assert state.joy1 & (1 << 5) == 0
+    state.joystick_button_up(0, 5)
+    assert state.joy1 & (1 << 5) != 0
