@@ -232,13 +232,15 @@ def _sprite_row_pixels(
         b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
         return [(b >> (7 - bit)) & 1 for bit in range(8)]
 
+    # TMS9918A 16x16 layout: base+0=upper-left, base+1=lower-left,
+    #                          base+2=upper-right, base+3=lower-right
     base = pat_idx & 0xFC
     if src_row < 8:
         left = vdp.vram[(spt_base + base * 8 + src_row) & 0x3FFF]
-        right = vdp.vram[(spt_base + (base + 1) * 8 + src_row) & 0x3FFF]
+        right = vdp.vram[(spt_base + (base + 2) * 8 + src_row) & 0x3FFF]
     else:
         r = src_row - 8
-        left = vdp.vram[(spt_base + (base + 2) * 8 + r) & 0x3FFF]
+        left = vdp.vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
         right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
 
     row: list[int] = [(left >> (7 - b)) & 1 for b in range(8)]
