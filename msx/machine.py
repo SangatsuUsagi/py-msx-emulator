@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
+from msx.input import InputState
 from msx.io import IOBus
 from msx.memory import Memory
 from msx.ppi import PPI
@@ -21,6 +22,7 @@ class Machine:
     vdp: VDP
     memory: Memory
     io: IOBus
+    input: InputState = field(default_factory=InputState)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
@@ -80,8 +82,9 @@ def make_machine(
         slot_register=0x00,
         _logger=logger,
     )
-    psg = PSG()
-    ppi = PPI(memory=memory)
+    input_state = InputState()
+    psg = PSG(_input=input_state)
+    ppi = PPI(memory=memory, _input=input_state)
     vdp = VDP(_logger=logger)
     io = IOBus(_logger=logger)
     io.register_read(0x98, 0x99, vdp.read_port)
@@ -91,6 +94,6 @@ def make_machine(
     io.register_read(0xA8, 0xAB, ppi.read_port)
     io.register_write(0xA8, 0xAB, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, _logger=logger)
+    machine = Machine(cpu=cpu, vdp=vdp, memory=memory, io=io, input=input_state, _logger=logger)
     io._get_pc = lambda: cpu.registers.PC
     return machine
