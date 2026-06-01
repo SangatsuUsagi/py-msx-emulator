@@ -124,3 +124,42 @@ def test_other_bits_unaffected_on_key_down() -> None:
     state.key_down(_K_a)
     mask = ~(1 << bit) & 0xFF
     assert state.matrix[row] & mask == mask
+
+
+def test_joystick_button_down_clears_bit() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 0)
+    assert state.joystick & (1 << 0) == 0
+
+
+def test_joystick_button_up_sets_bit() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 0)
+    state.joystick_button_up(0, 0)
+    assert state.joystick & (1 << 0) != 0
+
+
+def test_joystick_button_down_other_bits_unaffected() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 2)
+    mask = ~(1 << 2) & 0xFF
+    assert state.joystick & mask == mask
+
+
+def test_joystick_button_down_and_keyboard_stack() -> None:
+    state = make_input()
+    state.key_down(_K_w)          # keyboard presses bit 0
+    state.joystick_button_down(0, 0)   # hardware also presses bit 0
+    assert state.joystick & (1 << 0) == 0
+    state.joystick_button_up(0, 0)     # hardware releases
+    assert state.joystick & (1 << 0) == 0  # keyboard still holds it
+    state.key_up(_K_w)            # keyboard releases
+    assert state.joystick & (1 << 0) != 0  # now fully released
+
+
+def test_joystick_button_port_param_ignored() -> None:
+    state = make_input()
+    state.joystick_button_down(1, 0)
+    assert state.joystick & (1 << 0) == 0
+    state.joystick_button_up(1, 0)
+    assert state.joystick & (1 << 0) != 0
