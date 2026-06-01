@@ -85,13 +85,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     audio_dev = 0
-    desired = sdl2.SDL_AudioSpec()
-    desired.freq = 44100
-    desired.format = sdl2.AUDIO_S16LSB
-    desired.channels = 1
-    desired.samples = 1024
-    desired.callback = None
-    desired.userdata = None
+    desired = sdl2.SDL_AudioSpec(44100, sdl2.AUDIO_S16LSB, 1, 1024)
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
         print(f"SDL audio warning: {sdl2.SDL_GetError().decode()} — continuing without audio",
