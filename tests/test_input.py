@@ -1,4 +1,8 @@
-from msx.input import InputState, KEY_MATRIX, JOY_MAP, _K_a, _K_SPACE, _K_w, _K_s
+from msx.input import (
+    InputState, KEY_MATRIX, JOY_MAP,
+    _K_a, _K_SPACE, _K_w, _K_s,
+    _K_UP, _K_DOWN, _K_LEFT, _K_RIGHT,
+)
 
 
 def make_input() -> InputState:
@@ -90,6 +94,28 @@ def test_multiple_keys_down() -> None:
     row_sp, bit_sp = KEY_MATRIX[_K_SPACE]
     assert state.matrix[row_a] & (1 << bit_a) == 0
     assert state.matrix[row_sp] & (1 << bit_sp) == 0
+
+
+def test_cursor_keys_in_row8() -> None:
+    assert KEY_MATRIX[_K_UP] == (8, 5)
+    assert KEY_MATRIX[_K_DOWN] == (8, 6)
+    assert KEY_MATRIX[_K_LEFT] == (8, 4)
+    assert KEY_MATRIX[_K_RIGHT] == (8, 7)
+
+
+def test_cursor_keys_clear_row8_bits() -> None:
+    state = make_input()
+    state.key_down(_K_UP)
+    assert state.matrix[8] & (1 << 5) == 0
+    state.key_down(_K_LEFT)
+    assert state.matrix[8] & (1 << 4) == 0
+
+
+def test_cursor_keys_joy1_in_joymap() -> None:
+    assert JOY_MAP[_K_UP] == 0
+    assert JOY_MAP[_K_DOWN] == 1
+    assert JOY_MAP[_K_LEFT] == 2
+    assert JOY_MAP[_K_RIGHT] == 3
 
 
 def test_other_bits_unaffected_on_key_down() -> None:
