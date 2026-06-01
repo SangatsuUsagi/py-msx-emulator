@@ -77,21 +77,18 @@ _K_RSHIFT   = 1073742053   # SDL_SCANCODE_RSHIFT = 229
 # MSX keyboard matrix: KEY_MATRIX[pygame_key] = (row, bit)
 # Active-low: bit cleared = key pressed
 #
-# MSX keyboard matrix layout (11 rows × 8 bits):
-# Row 0:  bit7=7  bit6=6  bit5=5  bit4=4  bit3=3  bit2=2  bit1=1  bit0=0
-# Row 1:  bit7=;  bit6=]  bit5=[  bit4=\  bit3==  bit2=-  bit1=9  bit0=8
-# Row 2:  bit7=B  bit6=A  bit5=`  bit4=ESC bit3=BS bit2=/  bit1=.  bit0=,
-# Row 3:  bit7=J  bit6=I  bit5=H  bit4=G  bit3=F  bit2=E  bit1=D  bit0=C
-# Row 4:  bit7=R  bit6=Q  bit5=P  bit4=O  bit3=N  bit2=M  bit1=L  bit0=K
-# Row 5:  bit7=Z  bit6=Y  bit5=X  bit4=W  bit3=V  bit2=U  bit1=T  bit0=S
-# Row 6:  bit7=F3 bit6=F2 bit5=F1 bit4=DEAD bit3=CAPS bit2=GRAPH bit1=CTRL bit0=SHIFT
-# Row 7:  bit7=RET bit6=SEL bit5=BS(dup) bit4=STOP bit3=TAB bit2=DEL bit1=INS bit0=HOME
-# Row 8:  bit0=SPACE
+# MSX keyboard matrix layout (11 rows × 8 bits, per MSX Technical Handbook):
+# Row 0:  bit7=7    bit6=6    bit5=5    bit4=4    bit3=3    bit2=2    bit1=1    bit0=0
+# Row 1:  bit7=;    bit6=]    bit5=[    bit4=\    bit3==    bit2=-    bit1=9    bit0=8
+# Row 2:  bit7=B    bit6=A    bit5=`    bit4=ESC  bit3=BS   bit2=/    bit1=.    bit0=,
+# Row 3:  bit7=J    bit6=I    bit5=H    bit4=G    bit3=F    bit2=E    bit1=D    bit0=C
+# Row 4:  bit7=R    bit6=Q    bit5=P    bit4=O    bit3=N    bit2=M    bit1=L    bit0=K
+# Row 5:  bit7=Z    bit6=Y    bit5=X    bit4=W    bit3=V    bit2=U    bit1=T    bit0=S
+# Row 6:  bit7=F3   bit6=F2   bit5=F1   bit4=DEAD bit3=CAPS bit2=GRP  bit1=CTRL bit0=SHIFT
+# Row 7:  bit7=RET  bit6=SEL  bit5=BS   bit4=STOP bit3=TAB  bit2=ESC  bit1=F5   bit0=F4
+# Row 8:  bit7=RIGHT bit6=DOWN bit5=UP  bit4=LEFT bit3=DEL  bit2=INS  bit1=HOME bit0=SPACE
 # Row 9:  bit7=NUM9 bit6=NUM8 bit5=NUM7 bit4=NUM6 bit3=NUM5 bit2=NUM4 bit1=NUM3 bit0=NUM2
 # Row 10: bit7=NUM. bit6=NUM, bit5=NUM- bit4=NUM+ bit3=NUM* bit2=NUM/ bit1=NUM1 bit0=NUM0
-#
-# Note: actual MSX row 7 mapping per hardware spec (TMS9918A era):
-#   bit7=RETURN, bit6=RIGHT, bit5=DOWN, bit4=UP, bit3=LEFT, bit2=DEL, bit1=INS, bit0=HOME
 KEY_MATRIX: dict[int, tuple[int, int]] = {
     # Row 0: digits 0-7
     _K_0: (0, 0),
@@ -146,7 +143,7 @@ KEY_MATRIX: dict[int, tuple[int, int]] = {
     _K_x: (5, 5),
     _K_y: (5, 6),
     _K_z: (5, 7),
-    # Row 6: modifiers and F-keys
+    # Row 6: modifiers and F-keys F1-F3
     _K_LSHIFT: (6, 0),
     _K_RSHIFT: (6, 0),
     _K_LCTRL: (6, 1),
@@ -155,18 +152,20 @@ KEY_MATRIX: dict[int, tuple[int, int]] = {
     _K_F1: (6, 5),
     _K_F2: (6, 6),
     _K_F3: (6, 7),
-    # Row 7: cursor and editing
-    _K_HOME: (7, 0),
-    _K_INSERT: (7, 1),
-    _K_DELETE: (7, 2),
+    # Row 7: return, tab, F4, F5
+    _K_F4: (7, 0),
+    _K_F5: (7, 1),
     _K_TAB: (7, 3),
-    _K_LEFT: (7, 4),
-    _K_UP: (7, 5),
-    _K_DOWN: (7, 6),
-    _K_RIGHT: (7, 7),  # actually col 6 on some MSX keyboards; using 7 here
     _K_RETURN: (7, 7),
-    # Row 8: space
+    # Row 8: cursor keys, editing keys, space (MSX Technical Handbook layout)
     _K_SPACE: (8, 0),
+    _K_HOME: (8, 1),
+    _K_INSERT: (8, 2),
+    _K_DELETE: (8, 3),
+    _K_LEFT: (8, 4),
+    _K_UP: (8, 5),
+    _K_DOWN: (8, 6),
+    _K_RIGHT: (8, 7),
 }
 
 # JOY_MAP[pygame_key] = bit index in InputState.joystick (active-low)
@@ -180,12 +179,12 @@ JOY_MAP: dict[int, int] = {
     _K_d: 3,        # Joy1 Right
     _K_z: 4,        # Joy1 Trigger A
     _K_COMMA: 4,    # Joy1 Trigger A (alternate)
-    _K_UP: 5,       # Joy2 Up
-    _K_DOWN: 6,     # Joy2 Down
+    _K_UP: 0,       # Joy1 Up (alternate, same as W)
+    _K_DOWN: 1,     # Joy1 Down (alternate, same as S)
+    _K_LEFT: 2,     # Joy1 Left (alternate, same as A)
+    _K_RIGHT: 3,    # Joy1 Right (alternate, same as D)
     _K_x: 7,        # Joy2 Trigger A
     _K_PERIOD: 7,   # Joy2 Trigger A (alternate)
-    _K_LEFT: 2,     # Joy1 Left (alternate)
-    _K_RIGHT: 3,    # Joy1 Right (alternate)
 }
 
 _NUM_ROWS = 11
