@@ -1,4 +1,5 @@
 from msx.cpu.z80 import Z80
+from msx.input import InputState
 from msx.io import IOBus
 from msx.machine import CYCLES_PER_FRAME, Machine, make_machine
 from msx.memory import Memory
@@ -94,3 +95,10 @@ def test_make_machine_io_routes_psg() -> None:
     m.io.write_port(0xA0, 0x07)   # latch reg 7
     m.io.write_port(0xA1, 0x38)   # write 0x38 to reg 7
     assert m.io.read_port(0xA2) == 0x38
+
+
+def test_make_machine_exposes_input_state() -> None:
+    m = _make_machine()
+    assert isinstance(m.input, InputState)
+    assert all(row == 0xFF for row in m.input.matrix)
+    assert m.input.joystick == 0xFF
