@@ -102,7 +102,8 @@ def test_make_machine_exposes_input_state() -> None:
     m = _make_machine()
     assert isinstance(m.input, InputState)
     assert all(row == 0xFF for row in m.input.matrix)
-    assert m.input.joystick == 0xFF
+    assert m.input.joy1 == 0x3F
+    assert m.input.joy2 == 0x3F
 
 
 def test_make_machine_default_mapper_is_flat() -> None:

@@ -50,7 +50,13 @@ class PSG:
     def read_port(self, port: int) -> int:
         if port == 0xA2:
             if self.latch == _REG_IO_PORT_A and self._input is not None:
-                return self._input.joystick
+                # PSG register 15 bit 6 = JOY_SELECT: 0→Joy1 dirs, 1→Joy2 dirs on bits 0-3
+                joy_select = (self.regs[15] >> 6) & 1
+                joy1 = self._input.joy1
+                joy2 = self._input.joy2
+                dir_bits = (joy1 if joy_select == 0 else joy2) & 0x0F
+                trig_bits = (joy1 & 0x30) | ((joy2 & 0x30) << 2)
+                return dir_bits | trig_bits
             return self.regs[self.latch]
         return 0xFF
 

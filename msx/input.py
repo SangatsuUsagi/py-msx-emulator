@@ -168,23 +168,26 @@ KEY_MATRIX: dict[int, tuple[int, int]] = {
     _K_RIGHT: (8, 7),
 }
 
-# JOY_MAP[pygame_key] = bit index in InputState.joystick (active-low)
-# PSG register 14 (Port A):
-#   bit0=Joy1 Up, bit1=Joy1 Down, bit2=Joy1 Left, bit3=Joy1 Right,
-#   bit4=Joy1 Trigger A, bit5=Joy2 Up, bit6=Joy2 Down, bit7=Joy2 Trigger A
-JOY_MAP: dict[int, int] = {
-    _K_w: 0,        # Joy1 Up
-    _K_s: 1,        # Joy1 Down
-    _K_a: 2,        # Joy1 Left
-    _K_d: 3,        # Joy1 Right
-    _K_z: 4,        # Joy1 Trigger A
-    _K_COMMA: 4,    # Joy1 Trigger A (alternate)
-    _K_UP: 0,       # Joy1 Up (alternate, same as W)
-    _K_DOWN: 1,     # Joy1 Down (alternate, same as S)
-    _K_LEFT: 2,     # Joy1 Left (alternate, same as A)
-    _K_RIGHT: 3,    # Joy1 Right (alternate, same as D)
-    _K_x: 7,        # Joy2 Trigger A
-    _K_PERIOD: 7,   # Joy2 Trigger A (alternate)
+# JOY_MAP[key] = (port, bit)  port 0=Joy1, 1=Joy2
+# Per-joystick bit layout (matches PSG register 14 per-port view):
+#   bit0=Up, bit1=Down, bit2=Left, bit3=Right, bit4=Trigger A, bit5=Trigger B
+#
+# PSG register 14 is composed dynamically by PSG.read_port using JOY_SELECT
+# (PSG register 15 bit 6):  0 → Joy1 directions on bits 0-3, 1 → Joy2
+# Trigger bits are always present: bits 4-5 = Joy1, bits 6-7 = Joy2.
+JOY_MAP: dict[int, tuple[int, int]] = {
+    _K_w:      (0, 0),  # Joy1 Up
+    _K_s:      (0, 1),  # Joy1 Down
+    _K_a:      (0, 2),  # Joy1 Left
+    _K_d:      (0, 3),  # Joy1 Right
+    _K_z:      (0, 4),  # Joy1 Trigger A
+    _K_COMMA:  (0, 4),  # Joy1 Trigger A (alternate)
+    _K_x:      (0, 5),  # Joy1 Trigger B
+    _K_PERIOD: (0, 5),  # Joy1 Trigger B (alternate)
+    _K_UP:     (0, 0),  # Joy1 Up (alternate)
+    _K_DOWN:   (0, 1),  # Joy1 Down (alternate)
+    _K_LEFT:   (0, 2),  # Joy1 Left (alternate)
+    _K_RIGHT:  (0, 3),  # Joy1 Right (alternate)
 }
 
 _NUM_ROWS = 11
@@ -193,31 +196,50 @@ _NUM_ROWS = 11
 @dataclass
 class InputState:
     matrix: list[int] = field(default_factory=lambda: [0xFF] * _NUM_ROWS)
-    _joy_kbd: int = field(default=0xFF, init=False, repr=False)
-    _joy_hw: int = field(default=0xFF, init=False, repr=False)
+    # Per-joystick 6-bit active-low state: bits 0-5 = up/down/left/right/trigA/trigB
+    _joy1_kbd: int = field(default=0x3F, init=False, repr=False)
+    _joy1_hw:  int = field(default=0x3F, init=False, repr=False)
+    _joy2_kbd: int = field(default=0x3F, init=False, repr=False)
+    _joy2_hw:  int = field(default=0x3F, init=False, repr=False)
 
     @property
-    def joystick(self) -> int:
-        return self._joy_kbd & self._joy_hw
+    def joy1(self) -> int:
+        return self._joy1_kbd & self._joy1_hw
+
+    @property
+    def joy2(self) -> int:
+        return self._joy2_kbd & self._joy2_hw
 
     def key_down(self, key: int) -> None:
         if key in KEY_MATRIX:
             row, bit = KEY_MATRIX[key]
             self.matrix[row] &= ~(1 << bit) & 0xFF
         if key in JOY_MAP:
-            bit = JOY_MAP[key]
-            self._joy_kbd &= ~(1 << bit) & 0xFF
+            port, bit = JOY_MAP[key]
+            if port == 0:
+                self._joy1_kbd &= ~(1 << bit) & 0x3F
+            else:
+                self._joy2_kbd &= ~(1 << bit) & 0x3F
 
     def key_up(self, key: int) -> None:
         if key in KEY_MATRIX:
             row, bit = KEY_MATRIX[key]
             self.matrix[row] |= (1 << bit)
         if key in JOY_MAP:
-            bit = JOY_MAP[key]
-            self._joy_kbd |= (1 << bit)
+            port, bit = JOY_MAP[key]
+            if port == 0:
+                self._joy1_kbd |= (1 << bit)
+            else:
+                self._joy2_kbd |= (1 << bit)
 
     def joystick_button_down(self, port: int, bit: int) -> None:
-        self._joy_hw &= ~(1 << bit) & 0xFF
+        if port == 0:
+            self._joy1_hw &= ~(1 << bit) & 0x3F
+        else:
+            self._joy2_hw &= ~(1 << bit) & 0x3F
 
     def joystick_button_up(self, port: int, bit: int) -> None:
-        self._joy_hw |= (1 << bit)
+        if port == 0:
+            self._joy1_hw |= (1 << bit)
+        else:
+            self._joy2_hw |= (1 << bit)
