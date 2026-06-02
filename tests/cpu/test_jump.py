@@ -5,7 +5,7 @@ from msx.cpu import flags as F
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -68,7 +68,7 @@ def test_djnz_no_branch() -> None:
 
 def test_call_ret() -> None:
     rom = bytes([0xCD, 0x06, 0x00] + [0x00] * 3 + [0xC9] + [0] * 32761)
-    ram = bytearray(16384)
+    ram = bytearray(32768)
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF

@@ -5,14 +5,14 @@ from msx.cpu import flags as F
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
 def test_ldi() -> None:
     rom = bytes([0xED, 0xA0] + [0] * 32766)
-    ram = bytearray(16384)
-    ram[0] = 0xAB  # source at 0xC000
+    ram = bytearray(32768)
+    ram[0x4000] = 0xAB  # source at 0xC000: addr - 0x8000 = 0x4000
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
@@ -28,10 +28,10 @@ def test_ldi() -> None:
 
 def test_ldir() -> None:
     rom = bytes([0xED, 0xB0] + [0] * 32766)
-    ram = bytearray(16384)
-    ram[0] = 0x01
-    ram[1] = 0x02
-    ram[2] = 0x03
+    ram = bytearray(32768)
+    ram[0x4000] = 0x01  # 0xC000: addr - 0x8000
+    ram[0x4001] = 0x02
+    ram[0x4002] = 0x03
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
@@ -86,8 +86,8 @@ def test_ld_a_i() -> None:
 
 def test_ldd() -> None:
     rom = bytes([0xED, 0xA8] + [0] * 32766)
-    ram = bytearray(16384)
-    ram[5] = 0x55
+    ram = bytearray(32768)
+    ram[0x4005] = 0x55  # 0xC005: addr - 0x8000
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC005
@@ -101,9 +101,9 @@ def test_ldd() -> None:
 
 def test_reti() -> None:
     rom = bytes([0xED, 0x4D] + [0] * 32766)
-    ram = bytearray(16384)
-    ram[0x3FFE] = 0x00
-    ram[0x3FFF] = 0x10
+    ram = bytearray(32768)
+    ram[0x7FFE] = 0x00  # 0xFFFE: addr - 0x8000
+    ram[0x7FFF] = 0x10
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE

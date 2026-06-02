@@ -100,7 +100,7 @@ def make_machine(
     scc: SCC | None = SCC() if mapper == "konami-scc" else None
     memory = Memory(
         rom=rom,
-        ram=bytearray(16384),
+        ram=bytearray(32768),
         _mapper=_make_mapper(mapper, cartridge, scc=scc),
         slot_register=0x00,
         _logger=logger,
