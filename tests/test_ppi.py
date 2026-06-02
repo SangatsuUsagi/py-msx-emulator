@@ -5,7 +5,7 @@ from msx.ppi import PPI
 
 
 def make_ppi(slot_register: int = 0, input_state: InputState | None = None) -> PPI:
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=slot_register)
     return PPI(memory=mem, _input=input_state)
 
@@ -22,7 +22,7 @@ def test_slot_register_initial_value() -> None:
 
 
 def test_slot_register_propagates_to_memory() -> None:
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
     ppi = PPI(memory=mem)
     ppi.write_port(0xA8, 0xD4)
     assert mem.slot_register == 0xD4

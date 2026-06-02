@@ -31,8 +31,9 @@ class Memory:
             return self._mapper.read(addr)
         if slot == 2:
             return 0xFF
-        # slot 3: RAM — page-local offset
-        return self.ram[addr & 0x3FFF]
+        # slot 3: 32 KB RAM mapped to 0x8000-0xFFFF; addr - 0x8000 gives the array index.
+        # Pages 0/1 selecting slot 3 are not a standard MSX1 use case and are not supported.
+        return self.ram[addr - 0x8000]
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
@@ -46,7 +47,7 @@ class Memory:
         if slot == 2:
             return  # open bus, ignore
         # slot 3: RAM
-        self.ram[addr & 0x3FFF] = value
+        self.ram[addr - 0x8000] = value
 
     def read_port_a8(self) -> int:
         return self.slot_register & 0xFF

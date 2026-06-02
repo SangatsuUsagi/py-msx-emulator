@@ -15,7 +15,7 @@ def make_mem(rom: bytes | None = None, cartridge: bytes | None = None,
              slot_register: int = _MSX1_SLOTS) -> Memory:
     if rom is None:
         rom = bytes(32768)
-    return Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(cartridge),
+    return Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(cartridge),
                   slot_register=slot_register)
 
 
@@ -50,6 +50,46 @@ def test_ram_mirror() -> None:
     mem = make_mem()
     mem.write(0xE000, 0x55)
     assert mem.read(0xE000) == 0x55
+
+
+# ---------------------------------------------------------------------------
+# 32 KB RAM: page 2 (0x8000-0xBFFF) via slot 3
+# slot_register: page2(bits5:4)=11 → slot3, page3(bits7:6)=11 → slot3
+# 0b11_11_01_00 = 0xF4
+# ---------------------------------------------------------------------------
+_PAGE2_AND_3_RAM = 0xF4  # page2+page3 = slot3 (RAM), page1=slot1(cart), page0=slot0(BIOS)
+
+
+def test_ram_page2_round_trip() -> None:
+    mem = make_mem(slot_register=_PAGE2_AND_3_RAM)
+    mem.write(0x8000, 0xAB)
+    assert mem.read(0x8000) == 0xAB
+
+
+def test_ram_page2_top_round_trip() -> None:
+    mem = make_mem(slot_register=_PAGE2_AND_3_RAM)
+    mem.write(0xBFFF, 0xCD)
+    assert mem.read(0xBFFF) == 0xCD
+
+
+def test_ram_page2_and_page3_independent() -> None:
+    # page2 RAM and page3 RAM are separate 16 KB banks
+    mem = make_mem(slot_register=_PAGE2_AND_3_RAM)
+    mem.write(0x8000, 0x11)
+    mem.write(0xC000, 0x22)
+    assert mem.read(0x8000) == 0x11
+    assert mem.read(0xC000) == 0x22
+
+
+def test_ram_page2_shadowed_by_cartridge() -> None:
+    # With standard 0xD4 layout, page2 is slot1 (cartridge), not RAM.
+    # Writing to 0x8000 goes to the mapper (no-op for FlatMapper); RAM is not affected.
+    cart = bytes(32768)
+    mem = make_mem(cartridge=cart, slot_register=_MSX1_SLOTS)  # page2 = slot1
+    mem.write(0x8000, 0x99)
+    # Switch page2 to slot3 to verify RAM was not written
+    mem.write_port_a8(_PAGE2_AND_3_RAM)
+    assert mem.read(0x8000) == 0x00  # RAM untouched
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +129,7 @@ def test_slot_register_read_back() -> None:
 
 def test_slot_register_dataclass_default_msx1_layout() -> None:
     # Default is standard MSX1 layout: page3=slot3(RAM), page1+2=slot1(cart)
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
     assert mem.read_port_a8() == 0xD4
 
 
@@ -101,28 +141,28 @@ def test_page1_slot0_reads_bios_rom() -> None:
     rom = bytes(0x4001)
     rom = bytes([0] * 0x4000 + [0xBB])
     # slot_register: page 1 (bits 3:2) = slot 0 → reads BIOS ROM
-    mem = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None), slot_register=0x00)
+    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None), slot_register=0x00)
     assert mem.read(0x4000) == 0xBB
 
 
 def test_page1_slot1_reads_cartridge() -> None:
     cart = bytes([0xCC] + [0] * 32767)
     # bits 3:2 = 0b01 → page 1 = slot 1 = cartridge
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(cart),
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(cart),
                  slot_register=0x04)
     assert mem.read(0x4000) == 0xCC
 
 
 def test_slot2_open_bus_returns_ff() -> None:
     # bits 1:0 = 0b10 → page 0 = slot 2 = open bus
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=0x02)
     assert mem.read(0x0000) == 0xFF
 
 
 def test_slot2_open_bus_write_is_noop() -> None:
     # page 0 = slot 2
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=0x02)
     mem.write(0x0000, 0xAB)  # should not raise
 
@@ -130,7 +170,7 @@ def test_slot2_open_bus_write_is_noop() -> None:
 def test_initial_slot_register_all_pages_slot0() -> None:
     # Default slot_register=0: all pages → slot 0 (BIOS ROM)
     rom = bytes([0xAA] + [0] * 32767)
-    mem = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None), slot_register=0x00)
+    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None), slot_register=0x00)
     assert mem.read(0x0000) == 0xAA
     assert mem.read(0x4000) == 0x00  # ROM byte at 0x4000
 
@@ -144,7 +184,7 @@ def test_slot1_read_delegates_to_mapper() -> None:
     _PAGE_8K = 8192
     rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(_PAGE_8K)])
     mapper = Ascii8Mapper(rom)
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=mapper,
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=mapper,
                  slot_register=_MSX1_SLOTS)
     assert mem.read(0x4000) == 0  # page 0
 
@@ -154,7 +194,7 @@ def test_slot1_write_delegates_to_mapper() -> None:
     _PAGE_8K = 8192
     rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(_PAGE_8K)])
     mapper = Ascii8Mapper(rom)
-    mem = Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=mapper,
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=mapper,
                  slot_register=_MSX1_SLOTS)
     mem.write(0x6000, 3)  # bank switch via mapper write
     assert mem.read(0x4000) == 3  # window 0 now shows page 3

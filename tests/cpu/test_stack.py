@@ -4,7 +4,7 @@ from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF
     return cpu
@@ -64,9 +64,9 @@ def test_ex_de_hl() -> None:
 
 def test_ex_sp_hl() -> None:
     rom = bytes([0xE3] + [0] * 32767)
-    ram = bytearray(16384)
-    ram[0x3FFE] = 0x34
-    ram[0x3FFF] = 0x12
+    ram = bytearray(32768)
+    ram[0x7FFE] = 0x34  # 0xFFFE: addr - 0x8000 = 0x7FFE
+    ram[0x7FFF] = 0x12
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE

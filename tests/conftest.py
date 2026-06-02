@@ -7,7 +7,7 @@ from msx.cpu.z80 import Z80
 
 @pytest.fixture
 def bare_memory() -> Memory:
-    return Memory(rom=bytes(32768), ram=bytearray(16384), _mapper=FlatMapper(None))
+    return Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
 
 
 @pytest.fixture
