@@ -5,7 +5,7 @@ from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(16384), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -45,8 +45,8 @@ def test_ld_a_n() -> None:
 
 def test_ld_a_hl() -> None:
     rom = bytes(32768)
-    ram = bytearray(16384)
-    ram[0] = 0x7F  # (0xC000)
+    ram = bytearray(32768)
+    ram[0x4000] = 0x7F  # (0xC000): addr - 0x8000 = 0x4000
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
@@ -60,7 +60,7 @@ def test_ld_a_hl() -> None:
 
 def test_ld_hl_r() -> None:
     rom = bytes([0x77] + [0]*32767)  # LD (HL), A
-    ram = bytearray(16384)
+    ram = bytearray(32768)
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
@@ -71,7 +71,7 @@ def test_ld_hl_r() -> None:
 
 def test_ld_hl_n() -> None:
     rom = bytes([0x36, 0xAB] + [0]*32766)  # LD (HL), 0xAB
-    ram = bytearray(16384)
+    ram = bytearray(32768)
     mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
