@@ -14,7 +14,7 @@ from msx.vdp.vdp import VDP
 
 def make_machine(opcodes: list[int], logger: DebugLogger | None = None) -> Machine:
     rom = bytes(opcodes + [0x00] * (32768 - len(opcodes)))
-    memory = Memory(rom=rom, ram=bytearray(16384), _mapper=FlatMapper(None))
+    memory = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None))
     io = IOBus()
     cpu = Z80(read_byte=memory.read, write_byte=memory.write)
     vdp = VDP()
