@@ -5,12 +5,7 @@ import datetime
 import struct
 import sys
 
-try:
-    from PIL import Image as _PIL_Image
-    _PILLOW_AVAILABLE = True
-except ImportError:
-    _PIL_Image = None  # type: ignore[assignment]
-    _PILLOW_AVAILABLE = False
+from PIL import Image as _PIL_Image
 
 from msx.frame_timer import FrameTimer
 from msx.joystick import JoystickManager
@@ -52,21 +47,11 @@ def _index_to_rgb24(src: bytearray) -> bytearray:
     return dst
 
 
-def _save_screenshot(rgb_buf: bytearray, sdl2: object) -> None:
+def _save_screenshot(rgb_buf: bytearray) -> None:
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    if _PILLOW_AVAILABLE:
-        path = f"screenshot_{stamp}.png"
-        img = _PIL_Image.frombytes("RGB", (256, 192), bytes(rgb_buf))
-        img.save(path)
-    else:
-        path = f"screenshot_{stamp}.bmp"
-        surface = sdl2.SDL_CreateRGBSurfaceFrom(  # type: ignore[attr-defined]
-            ctypes.cast(ctypes.c_char_p(bytes(rgb_buf)), ctypes.c_void_p),
-            256, 192, 24, 256 * 3,
-            0x0000FF, 0x00FF00, 0xFF0000, 0,
-        )
-        sdl2.SDL_SaveBMP(surface, path.encode())  # type: ignore[attr-defined]
-        sdl2.SDL_FreeSurface(surface)  # type: ignore[attr-defined]
+    path = f"screenshot_{stamp}.png"
+    img = _PIL_Image.frombytes("RGB", (256, 192), bytes(rgb_buf))
+    img.save(path)
     print(f"screenshot saved: {path}")
 
 
@@ -143,7 +128,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = 
                     if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
                         print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
                 elif event.key.keysym.sym == sdl2.SDLK_F10:
-                    _save_screenshot(rgb_buf, sdl2)
+                    _save_screenshot(rgb_buf)
                 else:
                     machine.input.key_down(event.key.keysym.sym)
             elif event.type == sdl2.SDL_KEYUP:
