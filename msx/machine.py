@@ -52,14 +52,14 @@ class Machine:
 
     def run_frame(self) -> bytearray:
         cycles = 0
-        step = self.step  # bind once to eliminate per-call attribute lookup
+        cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
         if self._logger is None:
             while cycles < CYCLES_PER_FRAME:
-                cycles += step()
+                cycles += cpu_step()
         else:
             while cycles < CYCLES_PER_FRAME:
                 pc = self.cpu.registers.PC
-                cycles += step()
+                cycles += cpu_step()
                 # PC-loop hang: skip normal HALT (halted + interrupts enabled)
                 if not (self.cpu.halted and self.cpu.iff1):
                     if pc == self._last_pc:
