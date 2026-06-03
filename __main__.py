@@ -19,9 +19,10 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--mapper",
-                        choices=["Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC"],
-                        default="Mirrored",
-                        help="Cartridge mapper type (default: Mirrored)")
+                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
+                                 "Konami", "KonamiSCC"],
+                        default="auto",
+                        help="Cartridge mapper type (default: auto — detect from ROM database)")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)
