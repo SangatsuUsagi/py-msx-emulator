@@ -43,19 +43,11 @@ def test_run_frame_returns_correct_size() -> None:
 
 
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:
-    m = _make_machine()
-    total = [0]
-
-    original = m.step
-
-    def counting_step() -> int:
-        t = original()
-        total[0] += t
-        return t
-
-    m.step = counting_step  # type: ignore[method-assign]
+    # NOP ROM: each instruction is 4 T-states, so at least CYCLES_PER_FRAME // 4 NOPs
+    # must execute, advancing PC by that many positions.
+    m = _make_machine(rom=_NOP_ROM)
     m.run_frame()
-    assert total[0] >= CYCLES_PER_FRAME
+    assert m.cpu.registers.PC >= CYCLES_PER_FRAME // 4
 
 
 def test_vblank_sets_int_pending_when_ie_set() -> None:
