@@ -41,10 +41,13 @@ def main() -> None:
     from msx.machine import make_machine
     from frontend.sdl2_frontend import run
 
+    from msx.romdb import lookup_title
+
+    game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
     try:
         machine = make_machine(rom=rom, cartridge=cartridge, logger=logger, mapper=args.mapper)
-        run(machine, speed=args.speed)
+        run(machine, speed=args.speed, game_title=game_title)
     finally:
         if logger is not None:
             logger.close()
