@@ -44,7 +44,7 @@ def _index_to_rgb24(src: bytearray) -> bytearray:
     return dst
 
 
-def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
+def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = "py-msx-emulator") -> None:
     try:
         import sdl2
         import sdl2.ext
@@ -60,7 +60,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
         sys.exit(1)
 
     window = sdl2.SDL_CreateWindow(
-        b"py-msx-emulator",
+        game_title.encode("utf-8"),
         sdl2.SDL_WINDOWPOS_CENTERED,
         sdl2.SDL_WINDOWPOS_CENTERED,
         win_w,
@@ -170,7 +170,7 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0) -> None:
         # Frame pacing
         frame_timer.tick()
         if frame_timer.fps_measured > 0:
-            title = f"py-msx-emulator  [{frame_timer.fps_measured:.0f} fps]".encode()
+            title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
             sdl2.SDL_SetWindowTitle(window, title)
 
     joy_manager.close_all()
