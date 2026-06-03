@@ -1,3 +1,4 @@
+import pytest
 from msx.cpu.z80 import Z80
 from msx.input import InputState
 from msx.io import IOBus
@@ -107,21 +108,87 @@ def test_make_machine_exposes_input_state() -> None:
 
 
 def test_make_machine_default_mapper_is_flat() -> None:
+    # Explicit Mirrored (no auto-detection needed)
     cart = bytes([0xAB] + [0] * 32767)
-    m = make_machine(rom=_NOP_ROM, cartridge=cart)
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="Mirrored")
     assert isinstance(m.memory._mapper, FlatMapper)
 
 
 def test_make_machine_mapper_ascii8() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="ascii8")
+    m = make_machine(rom=_NOP_ROM, mapper="ASCII8")
     assert isinstance(m.memory._mapper, Ascii8Mapper)
 
 
 def test_make_machine_mapper_ascii16() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="ascii16")
+    m = make_machine(rom=_NOP_ROM, mapper="ASCII16")
     assert isinstance(m.memory._mapper, Ascii16Mapper)
 
 
 def test_make_machine_mapper_konami() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="konami")
+    m = make_machine(rom=_NOP_ROM, mapper="Konami")
     assert isinstance(m.memory._mapper, KonamiMapper)
+
+
+# ---------------------------------------------------------------------------
+# auto-detection
+# ---------------------------------------------------------------------------
+
+def test_auto_no_cartridge_uses_flat(monkeypatch: pytest.MonkeyPatch) -> None:
+    import msx.romdb as romdb
+    monkeypatch.setattr(romdb, "_db", {})
+    m = make_machine(rom=_NOP_ROM, mapper="auto")
+    assert isinstance(m.memory._mapper, FlatMapper)
+    assert m.scc is None
+
+
+def test_auto_unknown_cartridge_falls_back_to_mirrored(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import msx.romdb as romdb
+    monkeypatch.setattr(romdb, "_db", {})  # empty DB → always miss
+    cart = bytes([0x01, 0x02])
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, FlatMapper)
+    assert m.scc is None
+    assert "not found in ROM database" in capsys.readouterr().err
+
+
+def test_auto_unsupported_db_mapper_falls_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import hashlib
+    import msx.romdb as romdb
+    cart = b"\xDE\xAD"
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "Page2"}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, FlatMapper)
+    stderr = capsys.readouterr().err
+    assert "Page2" in stderr
+
+
+def test_auto_known_konamisco_selects_scc_mapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import msx.romdb as romdb
+    from msx.mapper import KonamiSCCMapper
+    cart = bytes(65536)  # dummy 64 KB
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KonamiSCC"}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, KonamiSCCMapper)
+    assert m.scc is not None
+
+
+def test_auto_known_konami_selects_konami_mapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import msx.romdb as romdb
+    cart = bytes(65536)
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "Konami"}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, KonamiMapper)
+    assert m.scc is None

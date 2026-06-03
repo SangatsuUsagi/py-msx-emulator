@@ -18,8 +18,11 @@ def main() -> None:
                         help="Write diagnostic log to FILE (requires --debug)")
     parser.add_argument("--speed", type=float, default=1.0,
                         help="Emulation speed multiplier (default: 1.0)")
-    parser.add_argument("--mapper", choices=["flat", "ascii8", "ascii16", "konami", "konami-scc"],
-                        default="flat", help="Cartridge mapper type (default: flat)")
+    parser.add_argument("--mapper",
+                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
+                                 "Konami", "KonamiSCC"],
+                        default="auto",
+                        help="Cartridge mapper type (default: auto — detect from ROM database)")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)

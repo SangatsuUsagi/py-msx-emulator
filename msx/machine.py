@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
@@ -9,6 +10,7 @@ from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, Ko
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
+import msx.romdb as romdb
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
@@ -74,19 +76,40 @@ class Machine:
         return result
 
 
+_SUPPORTED_MAPPERS = frozenset({"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC"})
+
+
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+    """Resolve 'auto' to a concrete mapper type string via the ROM database."""
+    if mapper != "auto":
+        return mapper
+    if cartridge is None:
+        return "Mirrored"
+    found = romdb.lookup(cartridge)
+    if found is None:
+        print("warning: cartridge not found in ROM database, using Mirrored mapper",
+              file=sys.stderr)
+        return "Mirrored"
+    if found not in _SUPPORTED_MAPPERS:
+        print(f"warning: unsupported mapper type {found!r} from ROM database, "
+              "using Mirrored mapper", file=sys.stderr)
+        return "Mirrored"
+    return found
+
+
 def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
-    if mapper_type == "flat":
+    if mapper_type in ("Mirrored", "Normal"):
         return FlatMapper(cartridge)
     rom_bytes = cartridge if cartridge is not None else b""
-    if mapper_type == "ascii8":
+    if mapper_type == "ASCII8":
         return Ascii8Mapper(rom_bytes)
-    if mapper_type == "ascii16":
+    if mapper_type == "ASCII16":
         return Ascii16Mapper(rom_bytes)
-    if mapper_type == "konami":
+    if mapper_type == "Konami":
         return KonamiMapper(rom_bytes)
-    if mapper_type == "konami-scc":
+    if mapper_type == "KonamiSCC":
         if scc is None:
-            raise ValueError("konami-scc mapper requires an SCC instance")
+            raise ValueError("KonamiSCC mapper requires an SCC instance")
         return KonamiSCCMapper(rom_bytes, scc=scc)
     raise ValueError(f"unknown mapper type: {mapper_type!r}")
 
@@ -95,13 +118,14 @@ def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
     logger: DebugLogger | None = None,
-    mapper: str = "flat",
+    mapper: str = "auto",
 ) -> Machine:
-    scc: SCC | None = SCC() if mapper == "konami-scc" else None
+    resolved = _resolve_mapper_type(mapper, cartridge)
+    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
     memory = Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=_make_mapper(mapper, cartridge, scc=scc),
+        _mapper=_make_mapper(resolved, cartridge, scc=scc),
         slot_register=0x00,
         _logger=logger,
     )
