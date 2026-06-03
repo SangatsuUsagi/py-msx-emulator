@@ -52,10 +52,14 @@ class Machine:
 
     def run_frame(self) -> bytearray:
         cycles = 0
-        while cycles < CYCLES_PER_FRAME:
-            pc = self.cpu.registers.PC
-            cycles += self.step()
-            if self._logger is not None:
+        step = self.step  # bind once to eliminate per-call attribute lookup
+        if self._logger is None:
+            while cycles < CYCLES_PER_FRAME:
+                cycles += step()
+        else:
+            while cycles < CYCLES_PER_FRAME:
+                pc = self.cpu.registers.PC
+                cycles += step()
                 # PC-loop hang: skip normal HALT (halted + interrupts enabled)
                 if not (self.cpu.halted and self.cpu.iff1):
                     if pc == self._last_pc:
@@ -66,8 +70,7 @@ class Machine:
                         self._pc_repeat = 0
                     self._last_pc = pc
 
-        # HALT+DI hang: check once per frame
-        if self._logger is not None:
+            # HALT+DI hang: check once per frame
             if self.cpu.halted and not self.cpu.iff1:
                 self._logger.on_hang_halt_di(self.cpu.registers.PC)
 
