@@ -45,3 +45,95 @@ def test_ld_sp_iy() -> None:
     cpu.registers.IY = 0xD000
     cpu.step()
     assert cpu.registers.SP == 0xD000
+
+
+# ---------------------------------------------------------------------------
+# Undocumented opcodes: IYH / IYL register access (mirror of DD tests)
+# ---------------------------------------------------------------------------
+
+def test_ld_iyh_n() -> None:
+    cpu = make_cpu([0xFD, 0x26, 0x42])  # LD IYH, 0x42
+    cpu.registers.IY = 0x0000
+    t = cpu.step()
+    assert cpu.registers.IYH == 0x42
+    assert cpu.registers.IYL == 0x00
+    assert t == 11
+
+
+def test_ld_iyl_n() -> None:
+    cpu = make_cpu([0xFD, 0x2E, 0xAB])  # LD IYL, 0xAB
+    cpu.registers.IY = 0x0000
+    t = cpu.step()
+    assert cpu.registers.IYL == 0xAB
+    assert cpu.registers.IYH == 0x00
+    assert t == 11
+
+
+def test_ld_a_iyh() -> None:
+    cpu = make_cpu([0xFD, 0x7C])  # LD A, IYH
+    cpu.registers.IY = 0xABCD
+    t = cpu.step()
+    assert cpu.registers.A == 0xAB
+    assert t == 8
+
+
+def test_ld_a_iyl() -> None:
+    cpu = make_cpu([0xFD, 0x7D])  # LD A, IYL
+    cpu.registers.IY = 0xABCD
+    t = cpu.step()
+    assert cpu.registers.A == 0xCD
+    assert t == 8
+
+
+def test_ld_d_iyh() -> None:
+    cpu = make_cpu([0xFD, 0x54])  # LD D, IYH
+    cpu.registers.IY = 0xAB00
+    t = cpu.step()
+    assert cpu.registers.D == 0xAB
+    assert t == 8
+
+
+def test_ld_iyh_a() -> None:
+    cpu = make_cpu([0xFD, 0x67])  # LD IYH, A
+    cpu.registers.A = 0x99
+    cpu.registers.IY = 0x0000
+    t = cpu.step()
+    assert cpu.registers.IYH == 0x99
+    assert t == 8
+
+
+def test_ld_iyl_iyh() -> None:
+    cpu = make_cpu([0xFD, 0x6C])  # LD IYL, IYH
+    cpu.registers.IY = 0x1234
+    t = cpu.step()
+    assert cpu.registers.IYL == 0x12
+    assert cpu.registers.IYH == 0x12
+    assert t == 8
+
+
+def test_add_a_iyh() -> None:
+    cpu = make_cpu([0xFD, 0x84])  # ADD A, IYH
+    cpu.registers.A = 0x10
+    cpu.registers.IY = 0x0500  # IYH=0x05
+    t = cpu.step()
+    assert cpu.registers.A == 0x15
+    assert t == 8
+
+
+def test_and_iyh_zero() -> None:
+    cpu = make_cpu([0xFD, 0xA4])  # AND IYH
+    cpu.registers.A = 0xF0
+    cpu.registers.IY = 0x0F00  # IYH=0x0F
+    t = cpu.step()
+    assert cpu.registers.A == 0x00
+    assert cpu.registers.F & 0x40  # Z set
+    assert t == 8
+
+
+def test_sub_iyl() -> None:
+    cpu = make_cpu([0xFD, 0x95])  # SUB IYL
+    cpu.registers.A = 0x10
+    cpu.registers.IY = 0x0003  # IYL=0x03
+    t = cpu.step()
+    assert cpu.registers.A == 0x0D
+    assert t == 8
