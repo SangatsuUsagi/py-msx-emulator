@@ -487,6 +487,156 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
         else: r.IXL = _dec8(cpu, r.IXL)
         return 8
 
+    # Undocumented: LD IXH/IXL, n  (DD 26 / DD 2E) — 11 T-states
+    xh = r.IYH if use_iy else r.IXH
+    xl = r.IYL if use_iy else r.IXL
+    if op == 0x26:
+        n = cpu._fetch()
+        if use_iy:
+            r.IYH = n
+        else:
+            r.IXH = n
+        return 11
+    if op == 0x2E:
+        n = cpu._fetch()
+        if use_iy:
+            r.IYL = n
+        else:
+            r.IXL = n
+        return 11
+
+    # Undocumented: LD r, IXH  (DD 44/4C/54/5C/7C) — 8 T-states
+    if op in (0x44, 0x4C, 0x54, 0x5C, 0x7C):
+        if op == 0x44:
+            r.B = xh
+        elif op == 0x4C:
+            r.C = xh
+        elif op == 0x54:
+            r.D = xh
+        elif op == 0x5C:
+            r.E = xh
+        else:
+            r.A = xh
+        return 8
+
+    # Undocumented: LD r, IXL  (DD 45/4D/55/5D/7D) — 8 T-states
+    if op in (0x45, 0x4D, 0x55, 0x5D, 0x7D):
+        if op == 0x45:
+            r.B = xl
+        elif op == 0x4D:
+            r.C = xl
+        elif op == 0x55:
+            r.D = xl
+        elif op == 0x5D:
+            r.E = xl
+        else:
+            r.A = xl
+        return 8
+
+    # Undocumented: LD IXH, r  (DD 60/61/62/63/64/65/67) — 8 T-states
+    # 0x66 = LD H,(IX+d) handled above; excluded from this group
+    if op in (0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x67):
+        if op == 0x60:
+            val = r.B
+        elif op == 0x61:
+            val = r.C
+        elif op == 0x62:
+            val = r.D
+        elif op == 0x63:
+            val = r.E
+        elif op == 0x64:
+            val = xh  # self-copy
+        elif op == 0x65:
+            val = xl
+        else:
+            val = r.A
+        if use_iy:
+            r.IYH = val
+        else:
+            r.IXH = val
+        return 8
+
+    # Undocumented: LD IXL, r  (DD 68/69/6A/6B/6C/6D/6F) — 8 T-states
+    # 0x6E = LD L,(IX+d) handled above; excluded from this group
+    if op in (0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6F):
+        if op == 0x68:
+            val = r.B
+        elif op == 0x69:
+            val = r.C
+        elif op == 0x6A:
+            val = r.D
+        elif op == 0x6B:
+            val = r.E
+        elif op == 0x6C:
+            val = xh
+        elif op == 0x6D:
+            val = xl  # self-copy
+        else:
+            val = r.A
+        if use_iy:
+            r.IYL = val
+        else:
+            r.IXL = val
+        return 8
+
+    # Undocumented: ADD/ADC A, IXH/IXL
+    if op == 0x84:
+        r.A = _add8(cpu, r.A, xh)
+        return 8
+    if op == 0x85:
+        r.A = _add8(cpu, r.A, xl)
+        return 8
+    if op == 0x8C:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _add8(cpu, r.A, xh, c)
+        return 8
+    if op == 0x8D:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _add8(cpu, r.A, xl, c)
+        return 8
+
+    # Undocumented: SUB/SBC A, IXH/IXL
+    if op == 0x94:
+        r.A = _sub8(cpu, r.A, xh)
+        return 8
+    if op == 0x95:
+        r.A = _sub8(cpu, r.A, xl)
+        return 8
+    if op == 0x9C:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _sub8(cpu, r.A, xh, c)
+        return 8
+    if op == 0x9D:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _sub8(cpu, r.A, xl, c)
+        return 8
+
+    # Undocumented: AND/XOR/OR/CP IXH/IXL
+    if op == 0xA4:
+        _and8(cpu, xh)
+        return 8
+    if op == 0xA5:
+        _and8(cpu, xl)
+        return 8
+    if op == 0xAC:
+        _xor8(cpu, xh)
+        return 8
+    if op == 0xAD:
+        _xor8(cpu, xl)
+        return 8
+    if op == 0xB4:
+        _or8(cpu, xh)
+        return 8
+    if op == 0xB5:
+        _or8(cpu, xl)
+        return 8
+    if op == 0xBC:
+        _cp8(cpu, xh)
+        return 8
+    if op == 0xBD:
+        _cp8(cpu, xl)
+        return 8
+
     # prefix absorbed — delegate to normal dispatch (real Z80 behavior)
     return _DISPATCH[op](cpu)
 
