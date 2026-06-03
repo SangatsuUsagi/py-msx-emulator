@@ -113,15 +113,15 @@ def test_make_machine_default_mapper_is_flat() -> None:
 
 
 def test_make_machine_mapper_ascii8() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="ascii8")
+    m = make_machine(rom=_NOP_ROM, mapper="ASCII8")
     assert isinstance(m.memory._mapper, Ascii8Mapper)
 
 
 def test_make_machine_mapper_ascii16() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="ascii16")
+    m = make_machine(rom=_NOP_ROM, mapper="ASCII16")
     assert isinstance(m.memory._mapper, Ascii16Mapper)
 
 
 def test_make_machine_mapper_konami() -> None:
-    m = make_machine(rom=_NOP_ROM, mapper="konami")
+    m = make_machine(rom=_NOP_ROM, mapper="Konami")
     assert isinstance(m.memory._mapper, KonamiMapper)
