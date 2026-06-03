@@ -43,9 +43,6 @@ def test_run_frame_returns_correct_size() -> None:
 
 
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:
-    nop_count = [0]
-    original_step = Machine.step
-
     m = _make_machine()
     total = [0]
 
