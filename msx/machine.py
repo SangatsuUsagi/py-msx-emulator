@@ -75,18 +75,18 @@ class Machine:
 
 
 def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
-    if mapper_type == "flat":
+    if mapper_type in ("Mirrored", "Normal"):
         return FlatMapper(cartridge)
     rom_bytes = cartridge if cartridge is not None else b""
-    if mapper_type == "ascii8":
+    if mapper_type == "ASCII8":
         return Ascii8Mapper(rom_bytes)
-    if mapper_type == "ascii16":
+    if mapper_type == "ASCII16":
         return Ascii16Mapper(rom_bytes)
-    if mapper_type == "konami":
+    if mapper_type == "Konami":
         return KonamiMapper(rom_bytes)
-    if mapper_type == "konami-scc":
+    if mapper_type == "KonamiSCC":
         if scc is None:
-            raise ValueError("konami-scc mapper requires an SCC instance")
+            raise ValueError("KonamiSCC mapper requires an SCC instance")
         return KonamiSCCMapper(rom_bytes, scc=scc)
     raise ValueError(f"unknown mapper type: {mapper_type!r}")
 
@@ -95,9 +95,9 @@ def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
     logger: DebugLogger | None = None,
-    mapper: str = "flat",
+    mapper: str = "Mirrored",
 ) -> Machine:
-    scc: SCC | None = SCC() if mapper == "konami-scc" else None
+    scc: SCC | None = SCC() if mapper == "KonamiSCC" else None
     memory = Memory(
         rom=rom,
         ram=bytearray(32768),
