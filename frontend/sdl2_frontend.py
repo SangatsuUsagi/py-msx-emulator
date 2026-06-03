@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import ctypes
+import datetime
 import struct
 import sys
+
+try:
+    from PIL import Image as _PIL_Image
+    _PILLOW_AVAILABLE = True
+except ImportError:
+    _PIL_Image = None  # type: ignore[assignment]
+    _PILLOW_AVAILABLE = False
 
 from msx.frame_timer import FrameTimer
 from msx.joystick import JoystickManager
@@ -42,6 +50,24 @@ def _index_to_rgb24(src: bytearray) -> bytearray:
         dst[i * 3 + 1] = g
         dst[i * 3 + 2] = b
     return dst
+
+
+def _save_screenshot(rgb_buf: bytearray, sdl2: object) -> None:
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    if _PILLOW_AVAILABLE:
+        path = f"screenshot_{stamp}.png"
+        img = _PIL_Image.frombytes("RGB", (256, 192), bytes(rgb_buf))
+        img.save(path)
+    else:
+        path = f"screenshot_{stamp}.bmp"
+        surface = sdl2.SDL_CreateRGBSurfaceFrom(  # type: ignore[attr-defined]
+            ctypes.cast(ctypes.c_char_p(bytes(rgb_buf)), ctypes.c_void_p),
+            256, 192, 24, 256 * 3,
+            0x0000FF, 0x00FF00, 0xFF0000, 0,
+        )
+        sdl2.SDL_SaveBMP(surface, path.encode())  # type: ignore[attr-defined]
+        sdl2.SDL_FreeSurface(surface)  # type: ignore[attr-defined]
+    print(f"screenshot saved: {path}")
 
 
 def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = "py-msx-emulator") -> None:
@@ -100,6 +126,8 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = 
     frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
+    _fullscreen = False
+    rgb_buf: bytearray = bytearray(_W * _H * 3)
 
     while running:
         # Process events
@@ -109,7 +137,15 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = 
             elif event.type == sdl2.SDL_KEYDOWN:
                 if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
                     running = False
-                machine.input.key_down(event.key.keysym.sym)
+                elif event.key.keysym.sym == sdl2.SDLK_F11:
+                    _fullscreen = not _fullscreen
+                    flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
+                    if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+                        print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                elif event.key.keysym.sym == sdl2.SDLK_F10:
+                    _save_screenshot(rgb_buf, sdl2)
+                else:
+                    machine.input.key_down(event.key.keysym.sym)
             elif event.type == sdl2.SDL_KEYUP:
                 machine.input.key_up(event.key.keysym.sym)
             elif event.type in (
