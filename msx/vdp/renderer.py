@@ -258,4 +258,6 @@ def _sprite_row_pixels(
         left = vdp.vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
         right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
 
-    return bytes((left >> (7 - b)) & 1 for b in range(8)) + bytes((right >> (7 - b)) & 1 for b in range(8))
+    left_bits = bytes((left >> (7 - b)) & 1 for b in range(8))
+    right_bits = bytes((right >> (7 - b)) & 1 for b in range(8))
+    return left_bits + right_bits
