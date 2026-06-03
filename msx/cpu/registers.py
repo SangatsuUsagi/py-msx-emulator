@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(slots=True)
 class Registers:
-    AF: int = 0xFFFF
+    # 8-bit primary fields — direct access, no property overhead
+    A: int = 0xFF
+    F: int = 0xFF
     BC: int = 0xFFFF
     DE: int = 0xFFFF
     HL: int = 0xFFFF
@@ -13,7 +15,9 @@ class Registers:
     PC: int = 0x0000
     I: int = 0x00
     R: int = 0x00
-    AF_: int = 0xFFFF
+    # Shadow registers
+    A_: int = 0xFF
+    F_: int = 0xFF
     BC_: int = 0xFFFF
     DE_: int = 0xFFFF
     HL_: int = 0xFFFF
@@ -21,7 +25,8 @@ class Registers:
     def reset(self) -> None:
         self.PC = 0x0000
         self.SP = 0xFFFF
-        self.AF = 0xFFFF
+        self.A = 0xFF
+        self.F = 0xFF
         self.BC = 0xFFFF
         self.DE = 0xFFFF
         self.HL = 0xFFFF
@@ -29,27 +34,32 @@ class Registers:
         self.IY = 0xFFFF
         self.I = 0x00
         self.R = 0x00
-        self.AF_ = 0xFFFF
+        self.A_ = 0xFF
+        self.F_ = 0xFF
         self.BC_ = 0xFFFF
         self.DE_ = 0xFFFF
         self.HL_ = 0xFFFF
 
+    # AF as a computed 16-bit pair (used by PUSH AF, POP AF, EX AF,AF')
     @property
-    def A(self) -> int:
-        return (self.AF >> 8) & 0xFF
+    def AF(self) -> int:
+        return (self.A << 8) | self.F
 
-    @A.setter
-    def A(self, v: int) -> None:
-        self.AF = ((v & 0xFF) << 8) | (self.AF & 0xFF)
+    @AF.setter
+    def AF(self, v: int) -> None:
+        self.A = (v >> 8) & 0xFF
+        self.F = v & 0xFF
 
     @property
-    def F(self) -> int:
-        return self.AF & 0xFF
+    def AF_(self) -> int:
+        return (self.A_ << 8) | self.F_
 
-    @F.setter
-    def F(self, v: int) -> None:
-        self.AF = (self.AF & 0xFF00) | (v & 0xFF)
+    @AF_.setter
+    def AF_(self, v: int) -> None:
+        self.A_ = (v >> 8) & 0xFF
+        self.F_ = v & 0xFF
 
+    # 8-bit halves of BC/DE/HL — properties for register-indexed instructions
     @property
     def B(self) -> int:
         return (self.BC >> 8) & 0xFF
