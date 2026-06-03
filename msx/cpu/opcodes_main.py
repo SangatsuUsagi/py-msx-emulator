@@ -9,6 +9,18 @@ if TYPE_CHECKING:
     from msx.cpu.z80 import Z80
 
 # ---------------------------------------------------------------------------
+# Module-level opcode dispatch constants (avoids per-call dict allocation)
+# ---------------------------------------------------------------------------
+
+# Maps INC r / DEC r opcode → register index (B=0,C=1,D=2,E=3,H=4,L=5,(HL)=6,A=7)
+_INC_OPS: dict[int, int] = {
+    0x04: 0, 0x0C: 1, 0x14: 2, 0x1C: 3, 0x24: 4, 0x2C: 5, 0x34: 6, 0x3C: 7,
+}
+_DEC_OPS: dict[int, int] = {
+    0x05: 0, 0x0D: 1, 0x15: 2, 0x1D: 3, 0x25: 4, 0x2D: 5, 0x35: 6, 0x3D: 7,
+}
+
+# ---------------------------------------------------------------------------
 # Helpers: flag computation
 # ---------------------------------------------------------------------------
 
@@ -751,14 +763,12 @@ def execute(cpu: Z80, opcode: int) -> int:
         return 7
 
     # --- INC r / DEC r ---
-    inc_map = {0x04:0, 0x0C:1, 0x14:2, 0x1C:3, 0x24:4, 0x2C:5, 0x34:6, 0x3C:7}
-    dec_map = {0x05:0, 0x0D:1, 0x15:2, 0x1D:3, 0x25:4, 0x2D:5, 0x35:6, 0x3D:7}
-    if opcode in inc_map:
-        idx = inc_map[opcode]
+    if opcode in _INC_OPS:
+        idx = _INC_OPS[opcode]
         _set_r(cpu, idx, _inc8(cpu, _get_r(cpu, idx)))
         return 11 if idx == 6 else 4
-    if opcode in dec_map:
-        idx = dec_map[opcode]
+    if opcode in _DEC_OPS:
+        idx = _DEC_OPS[opcode]
         _set_r(cpu, idx, _dec8(cpu, _get_r(cpu, idx)))
         return 11 if idx == 6 else 4
 
@@ -793,10 +803,11 @@ def execute(cpu: Z80, opcode: int) -> int:
         nn = cpu._fetch_word()
         r.A = cpu.read_byte(nn); return 13
 
-    # --- 16-bit ADD / INC / DEC ---
-    add16_map = {0x09: r.BC, 0x19: r.DE, 0x29: r.HL, 0x39: r.SP}
-    if opcode in add16_map:
-        r.HL = _add16(cpu, r.HL, add16_map[opcode]); return 11
+    # --- 16-bit ADD HL, rr ---
+    if opcode == 0x09: r.HL = _add16(cpu, r.HL, r.BC); return 11
+    if opcode == 0x19: r.HL = _add16(cpu, r.HL, r.DE); return 11
+    if opcode == 0x29: r.HL = _add16(cpu, r.HL, r.HL); return 11
+    if opcode == 0x39: r.HL = _add16(cpu, r.HL, r.SP); return 11
 
     if opcode == 0x03: r.BC = (r.BC + 1) & 0xFFFF; return 6
     if opcode == 0x13: r.DE = (r.DE + 1) & 0xFFFF; return 6
