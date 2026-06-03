@@ -17,7 +17,7 @@ def _noop_write(_port: int, _value: int) -> None:
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class Z80:
     read_byte: Callable[[int], int]
     write_byte: Callable[[int, int], None]
