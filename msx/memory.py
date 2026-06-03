@@ -24,7 +24,7 @@ class Memory:
 
     def read(self, addr: int) -> int:
         addr = addr & 0xFFFF
-        slot = self._slot(addr)
+        slot = (self.slot_register >> ((addr >> 14) * 2)) & 0x03  # page 0-3 → slot 0-3
         if slot == 0:
             return self.rom[addr] if addr < len(self.rom) else 0xFF
         if slot == 1:
@@ -38,7 +38,7 @@ class Memory:
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
         value = value & 0xFF
-        slot = self._slot(addr)
+        slot = (self.slot_register >> ((addr >> 14) * 2)) & 0x03  # page 0-3 → slot 0-3
         if slot == 0:
             return  # BIOS ROM is read-only
         if slot == 1:
