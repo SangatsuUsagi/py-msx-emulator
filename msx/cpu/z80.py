@@ -9,6 +9,9 @@ if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
 
 
+_execute: Callable[[Z80, int], int] | None = None
+
+
 def _noop_read(_port: int) -> int:
     return 0xFF
 
@@ -68,7 +71,11 @@ class Z80:
         return (hi << 8) | lo
 
     def step(self) -> int:
-        from msx.cpu import opcodes_main  # deferred to break import cycle
+        global _execute
+        if _execute is None:
+            from msx.cpu import opcodes_main
+            _execute = opcodes_main.execute
+        execute = _execute
 
         if self.nmi_pending:
             self.nmi_pending = False
@@ -103,4 +110,4 @@ class Z80:
         opcode = self._fetch()
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
-        return opcodes_main.execute(self, opcode)
+        return execute(self, opcode)

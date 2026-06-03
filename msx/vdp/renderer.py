@@ -8,6 +8,20 @@ if TYPE_CHECKING:
 _W = 256
 _H = 192
 
+# Precomputed tile-row lookup: _ROW_BYTES[pat][fg][bg] → 8-byte slice.
+# Eliminates the 8-iteration per-pixel Python loop in G1/G2 renderers.
+# Memory cost: 256 × 16 × 16 × 8 bytes ≈ 512 KB, built once at import time.
+_ROW_BYTES: list[list[list[bytes]]] = [
+    [
+        [
+            bytes((fg if (pat >> (7 - px)) & 1 else bg) for px in range(8))
+            for bg in range(16)
+        ]
+        for fg in range(16)
+    ]
+    for pat in range(256)
+]
+
 
 def render_frame(vdp: VDP) -> bytearray:
     r0 = vdp.regs[0]
@@ -71,12 +85,12 @@ def _render_g1(vdp: VDP, buf: bytearray) -> None:
             cb = vdp.vram[(col_base + tile // 8) & 0x3FFF]
             fg = _color((cb >> 4) & 0x0F, bd)
             bg = _color(cb & 0x0F, bd)
+            pat_base_tile = pat_base + tile * 8
+            bx = col * 8
             for py in range(8):
-                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
-                y = row * 8 + py
-                bx = col * 8
-                for px in range(8):
-                    buf[y * _W + bx + px] = fg if (pat >> (7 - px)) & 1 else bg
+                pat = vdp.vram[(pat_base_tile + py) & 0x3FFF]
+                row_start = (row * 8 + py) * _W + bx
+                buf[row_start:row_start + 8] = _ROW_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
@@ -91,18 +105,19 @@ def _render_g2(vdp: VDP, buf: bytearray) -> None:
 
     for row in range(24):
         band = row // 8
+        band_offset = band * 0x800
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            tile_offset = band_offset + tile * 8
+            bx = col * 8
             for py in range(8):
-                offset = band * 0x800 + tile * 8 + py
+                offset = tile_offset + py
                 pat = vdp.vram[(pat_base + offset) & 0x3FFF]
                 cb = vdp.vram[(col_base + offset) & 0x3FFF]
                 fg = _color((cb >> 4) & 0x0F, bd)
                 bg = _color(cb & 0x0F, bd)
-                y = row * 8 + py
-                bx = col * 8
-                for px in range(8):
-                    buf[y * _W + bx + px] = fg if (pat >> (7 - px)) & 1 else bg
+                row_start = (row * 8 + py) * _W + bx
+                buf[row_start:row_start + 8] = _ROW_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
