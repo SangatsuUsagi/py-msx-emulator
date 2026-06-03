@@ -42,10 +42,20 @@ def test_flat_no_cartridge_returns_ff() -> None:
     assert m.read(0x5000) == 0xFF
 
 
-def test_flat_address_beyond_rom_returns_ff() -> None:
-    cart = bytes(0x1000)
+def test_flat_8kb_rom_mirrors_in_32kb_space() -> None:
+    # 8 KB ROM: read at offset 8192 (= 0x4000 + 0x2000) should mirror back to offset 0.
+    cart = bytes([0xAB] + [0] * (8192 - 1))
     m = FlatMapper(cart)
-    assert m.read(0x5001) == 0xFF
+    assert m.read(0x4000) == 0xAB
+    assert m.read(0x6000) == 0xAB  # 0x6000 - 0x4000 = 0x2000 = 8192 ≡ 0 mod 8192
+
+
+def test_flat_16kb_rom_mirrors_in_32kb_space() -> None:
+    # 16 KB ROM: read at 0x4000 + 16384 should mirror to 0x4000.
+    cart = bytes([0xCD] + [0] * (16384 - 1))
+    m = FlatMapper(cart)
+    assert m.read(0x4000) == 0xCD
+    assert m.read(0x8000) == 0xCD  # 0x8000 - 0x4000 = 16384 ≡ 0 mod 16384
 
 
 # ---------------------------------------------------------------------------

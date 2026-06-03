@@ -22,12 +22,11 @@ class FlatMapper:
     cartridge: bytes | None
 
     def read(self, addr: int) -> int:
-        if self.cartridge is None:
+        if not self.cartridge:
             return 0xFF
-        offset = addr - 0x4000
-        if 0 <= offset < len(self.cartridge):
-            return self.cartridge[offset]
-        return 0xFF
+        # Mirror the ROM across the full cartridge region (e.g., 8 KB ROM repeats in 32 KB space).
+        offset = (addr - 0x4000) % len(self.cartridge)
+        return self.cartridge[offset]
 
     def write(self, addr: int, value: int) -> None:
         pass
