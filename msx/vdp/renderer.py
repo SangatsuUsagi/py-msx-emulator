@@ -222,8 +222,8 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
             scale = 2 if mag else 1
 
-            for bit_i in range(len(pixels)):
-                if not pixels[bit_i]:
+            for bit_i, pixel in enumerate(pixels):
+                if not pixel:
                     continue
                 for s in range(scale):
                     px = (x_byte + bit_i * scale + s) & 0xFF
@@ -242,10 +242,10 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
 def _sprite_row_pixels(
     vdp: VDP, spt_base: int, pat_idx: int, si: int, src_row: int
-) -> list[int]:
+) -> bytes:
     if si == 0:
         b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
-        return [(b >> (7 - bit)) & 1 for bit in range(8)]
+        return bytes((b >> (7 - bit)) & 1 for bit in range(8))
 
     # TMS9918A 16x16 layout: base+0=upper-left, base+1=lower-left,
     #                          base+2=upper-right, base+3=lower-right
@@ -258,6 +258,4 @@ def _sprite_row_pixels(
         left = vdp.vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
         right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
 
-    row: list[int] = [(left >> (7 - b)) & 1 for b in range(8)]
-    row += [(right >> (7 - b)) & 1 for b in range(8)]
-    return row
+    return bytes((left >> (7 - b)) & 1 for b in range(8)) + bytes((right >> (7 - b)) & 1 for b in range(8))
