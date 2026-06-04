@@ -23,6 +23,8 @@ def main() -> None:
                                  "Konami", "KonamiSCC"],
                         default="auto",
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from the most recent save state (saves/latest.state)")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)
@@ -37,17 +39,16 @@ def main() -> None:
     rom = rom_path.read_bytes()
     cartridge = cart_path.read_bytes() if cart_path else None
 
+    from frontend.sdl2_frontend import run
     from msx.debug.logger import DebugLogger
     from msx.machine import make_machine
-    from frontend.sdl2_frontend import run
-
     from msx.romdb import lookup_title
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
     try:
         machine = make_machine(rom=rom, cartridge=cartridge, logger=logger, mapper=args.mapper)
-        run(machine, speed=args.speed, game_title=game_title)
+        run(machine, speed=args.speed, game_title=game_title, resume=args.resume)
     finally:
         if logger is not None:
             logger.close()
