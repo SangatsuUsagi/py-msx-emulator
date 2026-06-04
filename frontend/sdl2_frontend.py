@@ -11,6 +11,7 @@ from msx.frame_timer import FrameTimer
 from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
+from msx.state import load_state, save_state
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -55,7 +56,13 @@ def _save_screenshot(rgb_buf: bytearray) -> None:
     print(f"screenshot saved: {path}")
 
 
-def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = "py-msx-emulator") -> None:
+def run(
+    machine: Machine,
+    scale: int = 3,
+    speed: float = 1.0,
+    game_title: str = "py-msx-emulator",
+    resume: bool = False,
+) -> None:
     try:
         import sdl2
         import sdl2.ext
@@ -108,6 +115,12 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = 
 
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
 
+    if resume:
+        try:
+            load_state(machine)
+        except Exception as exc:
+            print(f"resume failed: {exc}", file=sys.stderr)
+
     frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
@@ -127,6 +140,13 @@ def run(machine: Machine, scale: int = 3, speed: float = 1.0, game_title: str = 
                     flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
                     if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
                         print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                elif event.key.keysym.sym == sdl2.SDLK_F8:
+                    save_state(machine, rgb_buf, game_title)
+                elif event.key.keysym.sym == sdl2.SDLK_F9:
+                    try:
+                        load_state(machine)
+                    except Exception as exc:
+                        print(f"load failed: {exc}", file=sys.stderr)
                 elif event.key.keysym.sym == sdl2.SDLK_F10:
                     _save_screenshot(rgb_buf)
                 else:
