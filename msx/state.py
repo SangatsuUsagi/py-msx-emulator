@@ -233,9 +233,9 @@ def _update_symlink(link: Path, target: Path) -> None:
 # --- public API ---------------------------------------------------------------
 
 def _sanitise_title(title: str) -> str:
-    """Replace spaces with underscores and strip non-ASCII-alphanumeric chars."""
+    """Replace spaces with underscores and strip filesystem-unsafe characters."""
     title = title.replace(" ", "_")
-    return re.sub(r"[^A-Za-z0-9_\-]", "", title) or "save"
+    return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
 def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
@@ -270,21 +270,27 @@ def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
     return state_path
 
 
-def load_state(machine: "Machine") -> None:
-    """Restore machine state from saves/latest.state.
+def load_state(machine: "Machine", path: Path | None = None) -> None:
+    """Restore machine state from a save file.
 
     Args:
         machine: Running machine to restore into (callbacks remain intact).
+        path: Explicit .state file to load. When None, loads saves/latest.state.
 
     Raises:
-        FileNotFoundError: If saves/latest.state does not exist.
+        FileNotFoundError: If the target file does not exist.
         ValueError: If format version or mapper class does not match.
     """
-    link = Path("saves") / "latest.state"
-    if not link.exists():
-        raise FileNotFoundError("no save state found: saves/latest.state does not exist")
+    if path is None:
+        link = Path("saves") / "latest.state"
+        if not link.exists():
+            raise FileNotFoundError("no save state found: saves/latest.state does not exist")
+        resolved = link.resolve()
+    else:
+        if not path.exists():
+            raise FileNotFoundError(f"save state not found: {path}")
+        resolved = path
 
-    resolved = link.resolve()
     with open(resolved, "rb") as f:
         snap: MachineSnapshot = pickle.load(f)
 

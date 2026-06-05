@@ -23,8 +23,8 @@ def main() -> None:
                                  "Konami", "KonamiSCC"],
                         default="auto",
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
-    parser.add_argument("--resume", action="store_true",
-                        help="Resume from the most recent save state (saves/latest.state)")
+    parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
+                        help="Resume from a save state (default: saves/latest.state)")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)

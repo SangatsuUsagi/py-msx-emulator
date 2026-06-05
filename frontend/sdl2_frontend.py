@@ -4,6 +4,7 @@ import ctypes
 import datetime
 import struct
 import sys
+from pathlib import Path
 
 from PIL import Image as _PIL_Image
 
@@ -61,7 +62,7 @@ def run(
     scale: int = 3,
     speed: float = 1.0,
     game_title: str = "py-msx-emulator",
-    resume: bool = False,
+    resume: str | None = None,
 ) -> None:
     try:
         import sdl2
@@ -115,9 +116,9 @@ def run(
 
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
 
-    if resume:
+    if resume is not None:
         try:
-            load_state(machine)
+            load_state(machine, path=Path(resume) if resume else None)
         except Exception as exc:
             print(f"resume failed: {exc}", file=sys.stderr)
 
