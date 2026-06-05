@@ -69,9 +69,18 @@ def test_save_state_creates_saves_dir(machine, tmp_path, monkeypatch):
 
 def test_save_state_title_sanitised(machine, saves_dir):
     rgb = bytearray(256 * 192 * 3)
+    # Spaces become underscores; non-ASCII (e.g. Japanese) is now preserved;
+    # filesystem-unsafe characters are stripped.
     path = save_state(machine, rgb, "グラディウス Gradius")
     assert " " not in path.name
-    assert "グ" not in path.name
+    assert "グラディウス_Gradius" in path.name
+
+def test_save_state_title_strips_unsafe_chars(machine, saves_dir):
+    rgb = bytearray(256 * 192 * 3)
+    path = save_state(machine, rgb, 'bad/name:file*?"')
+    assert "/" not in path.name
+    assert ":" not in path.name
+    assert "*" not in path.name
 
 
 # --- load_state ---------------------------------------------------------------
