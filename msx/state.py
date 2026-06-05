@@ -233,9 +233,9 @@ def _update_symlink(link: Path, target: Path) -> None:
 # --- public API ---------------------------------------------------------------
 
 def _sanitise_title(title: str) -> str:
-    """Replace spaces with underscores and strip non-ASCII-alphanumeric chars."""
+    """Replace spaces with underscores and strip filesystem-unsafe characters."""
     title = title.replace(" ", "_")
-    return re.sub(r"[^A-Za-z0-9_\-]", "", title) or "save"
+    return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
 def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
