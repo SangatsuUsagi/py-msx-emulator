@@ -195,3 +195,35 @@ def test_auto_known_konami_selects_konami_mapper(
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, KonamiMapper)
     assert m.scc is None
+
+
+# ---------------------------------------------------------------------------
+# Slot 2 cartridge wiring
+# ---------------------------------------------------------------------------
+
+def test_make_machine_no_cartridge2_slot2_open_bus() -> None:
+    m = make_machine(rom=_NOP_ROM)
+    # page 1 → slot 2: slot_register bits 3:2 = 0b10 → 0x08
+    m.memory.slot_register = 0x08
+    assert m.memory.read(0x4000) == 0xFF
+
+
+def test_make_machine_cartridge2_wired_to_slot2() -> None:
+    cart2 = b"\xBB" + b"\x00" * 32767
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Mirrored")
+    # page 1 → slot 2
+    m.memory.slot_register = 0x08
+    assert m.memory.read(0x4000) == 0xBB
+
+
+def test_make_machine_mapper2_konamisco_falls_back_to_konami(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import hashlib
+    import msx.romdb as romdb
+    cart2 = bytes(65536)
+    sha1 = hashlib.sha1(cart2).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KonamiSCC"}})
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="auto")
+    assert isinstance(m.memory._mapper2, KonamiMapper)
+    assert "KonamiSCC" in capsys.readouterr().err
