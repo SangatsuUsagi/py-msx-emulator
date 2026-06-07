@@ -50,7 +50,7 @@ class Machine:
     def step(self) -> int:
         return self.cpu.step()
 
-    def run_frame(self) -> bytearray:
+    def run_frame(self, skip_render: bool = False) -> bytearray:
         cycles = 0
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
         if self._logger is None:
@@ -74,7 +74,7 @@ class Machine:
             if self.cpu.halted and not self.cpu.iff1:
                 self._logger.on_hang_halt_di(self.cpu.registers.PC)
 
-        result = render_frame(self.vdp)
+        result = render_frame(self.vdp, skip_render=skip_render)
         self.vdp._frame_count += 1
         return result
 
