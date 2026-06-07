@@ -25,6 +25,9 @@ def main() -> None:
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
                         help="Resume from a save state (default: saves/latest.state)")
+    parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
+                        dest="frame_skip",
+                        help="Frame skip mode: auto (default) or none to disable")
     args = parser.parse_args()
 
     rom_path = Path(args.rom)
@@ -48,7 +51,8 @@ def main() -> None:
     logger = DebugLogger(log_path=args.log) if args.debug else None
     try:
         machine = make_machine(rom=rom, cartridge=cartridge, logger=logger, mapper=args.mapper)
-        run(machine, speed=args.speed, game_title=game_title, resume=args.resume)
+        run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
+            frame_skip=args.frame_skip)
     finally:
         if logger is not None:
             logger.close()
