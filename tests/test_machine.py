@@ -42,6 +42,20 @@ def test_run_frame_returns_correct_size() -> None:
     assert len(buf) == 256 * 192
 
 
+def test_run_frame_skip_render_returns_empty_buffer() -> None:
+    m = _make_machine()
+    buf = m.run_frame(skip_render=True)
+    assert len(buf) == 0
+
+
+def test_run_frame_skip_render_still_fires_vblank() -> None:
+    rom = bytes([0xFB] + [0x00] * 32767)  # EI then NOP — enable interrupts
+    m = _make_machine(rom=rom)
+    m.vdp.regs[1] = 0x60  # BL=1, IE=1
+    m.run_frame(skip_render=True)
+    assert m.cpu.int_pending
+
+
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:
     # NOP ROM: each instruction is 4 T-states, so at least CYCLES_PER_FRAME // 4 NOPs
     # must execute, advancing PC by that many positions.

@@ -37,6 +37,7 @@ TMS9918A_PALETTE: tuple[tuple[int, int, int], ...] = (
 
 _W = 256
 _H = 192
+_MAX_FRAME_SKIP: int = 4
 
 
 def _index_to_rgb24(src: bytearray) -> bytearray:
@@ -63,6 +64,7 @@ def run(
     speed: float = 1.0,
     game_title: str = "py-msx-emulator",
     resume: str | None = None,
+    frame_skip: str = "auto",
 ) -> None:
     try:
         import sdl2
@@ -127,6 +129,7 @@ def run(
     running = True
     _fullscreen = False
     rgb_buf: bytearray = bytearray(_W * _H * 3)
+    _skip_counter: int = 0
 
     while running:
         # Process events
@@ -172,11 +175,13 @@ def run(
         if not running:
             break
 
-        # Run one frame
-        index_buf = machine.run_frame()
-        rgb_buf = _index_to_rgb24(index_buf)
+        # Run one frame (skip VDP pixel rendering when behind schedule)
+        skip_this_frame = _skip_counter > 0
+        index_buf = machine.run_frame(skip_render=skip_this_frame)
+        if not skip_this_frame:
+            rgb_buf = _index_to_rgb24(index_buf)
 
-        # Generate and queue audio (PSG + SCC mixed if SCC present)
+        # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
         if audio_dev > 0:
             psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
             if machine.scc is not None:
@@ -197,20 +202,27 @@ def run(
                 audio_buf = psg_buf
             sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
 
-        # Upload to texture
-        pixels_ptr = ctypes.c_void_p()
-        pitch = ctypes.c_int()
-        sdl2.SDL_LockTexture(texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch))
-        ctypes.memmove(pixels_ptr, bytes(rgb_buf), len(rgb_buf))
-        sdl2.SDL_UnlockTexture(texture)
+        # Upload to texture only when frame was rendered
+        if not skip_this_frame:
+            pixels_ptr = ctypes.c_void_p()
+            pitch = ctypes.c_int()
+            sdl2.SDL_LockTexture(texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch))
+            ctypes.memmove(pixels_ptr, bytes(rgb_buf), len(rgb_buf))
+            sdl2.SDL_UnlockTexture(texture)
 
-        # Render
+        # Render (always — redisplays previous texture on skipped frames)
         sdl2.SDL_RenderClear(renderer)
         sdl2.SDL_RenderCopy(renderer, texture, None, None)
         sdl2.SDL_RenderPresent(renderer)
 
-        # Frame pacing
-        frame_timer.tick()
+        # Frame pacing + skip counter update
+        elapsed = frame_timer.tick()
+        if frame_skip == "auto":
+            if elapsed > frame_timer._frame_interval * 1.05:
+                _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
+            else:
+                _skip_counter = max(_skip_counter - 1, 0)
+
         if frame_timer.fps_measured > 0:
             title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
             sdl2.SDL_SetWindowTitle(window, title)
