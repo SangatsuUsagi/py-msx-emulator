@@ -7,12 +7,15 @@ if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
     from msx.mapper import Mapper
 
+from msx.mapper import FlatMapper
+
 
 @dataclass
 class Memory:
     rom: bytes
     ram: bytearray
     _mapper: "Mapper" = field(repr=False)
+    _mapper2: "Mapper" = field(default_factory=lambda: FlatMapper(None), repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
@@ -30,7 +33,7 @@ class Memory:
         if slot == 1:
             return self._mapper.read(addr)
         if slot == 2:
-            return 0xFF
+            return self._mapper2.read(addr)
         # slot 3: 32 KB RAM mapped to 0x8000-0xFFFF; addr - 0x8000 gives the array index.
         # Pages 0/1 selecting slot 3 are not a standard MSX1 use case and are not supported.
         return self.ram[addr - 0x8000]
@@ -45,7 +48,8 @@ class Memory:
             self._mapper.write(addr, value)
             return
         if slot == 2:
-            return  # open bus, ignore
+            self._mapper2.write(addr, value)
+            return
         # slot 3: RAM
         self.ram[addr - 0x8000] = value
 
