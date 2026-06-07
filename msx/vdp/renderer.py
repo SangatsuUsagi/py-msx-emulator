@@ -23,7 +23,11 @@ _ROW_BYTES: list[list[list[bytes]]] = [
 ]
 
 
-def render_frame(vdp: VDP) -> bytearray:
+def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
+    if skip_render:
+        _finalize(vdp)
+        return bytearray(0)
+
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
     border = vdp.regs[7] & 0x0F
