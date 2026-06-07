@@ -122,13 +122,24 @@ def make_machine(
     cartridge: bytes | None = None,
     logger: DebugLogger | None = None,
     mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
+
+    resolved2 = _resolve_mapper_type(mapper2, cartridge2)
+    if resolved2 == "KonamiSCC":
+        print("warning: KonamiSCC is not supported for slot 2, using Konami mapper",
+              file=sys.stderr)
+        resolved2 = "Konami"
+    mapper2_instance = _make_mapper(resolved2, cartridge2)
+
     memory = Memory(
         rom=rom,
         ram=bytearray(32768),
         _mapper=_make_mapper(resolved, cartridge, scc=scc),
+        _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
     )
