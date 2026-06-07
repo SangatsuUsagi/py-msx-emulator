@@ -206,3 +206,38 @@ def test_non_slot1_regions_unchanged() -> None:
     assert mem.read(0x0000) == 0xAB  # BIOS ROM still works
     mem.write(0xC000, 0x77)
     assert mem.read(0xC000) == 0x77  # RAM still works
+
+
+# ---------------------------------------------------------------------------
+# Slot 2 with _mapper2
+# page 1 (0x4000-0x7FFF) → slot 2: slot_register bits 3:2 = 0b10 → 0x08
+# ---------------------------------------------------------------------------
+_PAGE1_SLOT2 = 0x08  # page 0=slot0, page 1=slot2, page 2=slot0, page 3=slot0
+
+
+def test_slot2_no_cartridge_returns_ff() -> None:
+    # _mapper2 defaults to FlatMapper(None); slot 2 reads return 0xFF
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=_PAGE1_SLOT2)
+    assert mem.read(0x4000) == 0xFF
+
+
+def test_slot2_cartridge_read() -> None:
+    # _mapper2 = FlatMapper with actual ROM; slot 2 reads return ROM data
+    cart2 = b"\xAB" + b"\x00" * 32767
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 _mapper2=FlatMapper(cart2), slot_register=_PAGE1_SLOT2)
+    assert mem.read(0x4000) == 0xAB
+
+
+def test_slot1_and_slot2_independent() -> None:
+    # page 1 → slot 1 (_mapper), page 2 → slot 2 (_mapper2)
+    # slot_register: page0=slot0(00), page1=slot1(01), page2=slot2(10), page3=slot3(11)
+    # = 0b11_10_01_00 = 0xE4
+    cart1 = b"\x11" + b"\x00" * 32767
+    cart2 = b"\x00" * 16384 + b"\x22" + b"\x00" * 16383  # byte at 0x8000 offset = index 0x4000
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768),
+                 _mapper=FlatMapper(cart1), _mapper2=FlatMapper(cart2),
+                 slot_register=0xE4)
+    assert mem.read(0x4000) == 0x11   # slot 1 → _mapper
+    assert mem.read(0x8000) == 0x22   # slot 2 → _mapper2
