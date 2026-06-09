@@ -53,16 +53,21 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
     if m5:
         if m4 and m2:
-            _render_g7(vdp, buf, h)   # SCREEN 8 (Graphic 7)
+            _render_g7(vdp, buf, h)              # SCREEN 8 (Graphic 7)
+            _render_sprites_mode2(vdp, buf, h)
         elif m4:
-            _render_g5(vdp, buf, h)   # SCREEN 6 (Graphic 5)
+            _render_g5(vdp, buf, h)              # SCREEN 6 (Graphic 5)
+            _render_sprites_mode2(vdp, buf, h)
         else:
-            _render_g4(vdp, buf, h)   # SCREEN 5 (Graphic 4)
+            _render_g4(vdp, buf, h)              # SCREEN 5 (Graphic 4)
+            _render_sprites_mode2(vdp, buf, h)
     elif m4:
         if m2:
-            _render_g6(vdp, buf, h)   # SCREEN 7 (Graphic 6)
+            _render_g6(vdp, buf, h)              # SCREEN 7 (Graphic 6)
+            _render_sprites_mode2(vdp, buf, h)
         else:
-            _render_g2(vdp, buf)      # SCREEN 4 (Graphic 3) — same tiles as G2; sprites deferred to Phase 7
+            _render_g2(vdp, buf)                 # SCREEN 4 (Graphic 3) — G2 tiles
+            _render_sprites_mode2(vdp, buf, h)
     elif m1:
         _render_text(vdp, buf)
     elif m3:
@@ -252,6 +257,89 @@ def _render_sprites(vdp: "V9938", buf: bytearray) -> None:
                     else:
                         sprite_painted[coord] = 1
                         buf[coord] = color
+
+    if coincidence:
+        vdp.status |= 0x20
+
+
+def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
+    """Sprite mode 2 for SCREEN 4–8.
+
+    Colour table at sat_base+0x200, 16 bytes per sprite (one per scanline).
+    Colour byte: bit5=OR mode, bits3:0=palette colour.
+    EC (early clock) in SAT attr bit7 shifts X by -32.
+    """
+    r1 = vdp.regs[1]
+    si  = (r1 >> 1) & 1
+    mag = r1 & 1
+    pat_size    = 16 if si else 8
+    render_size = pat_size * (2 if mag else 1)
+
+    sat_base = (((vdp.regs[11] & 3) << 15) | ((vdp.regs[5] & 0x7F) << 7)) & 0x1FFFF
+    spt_base = (vdp.regs[6] & 0x07) << 11
+    col_base = (sat_base + 0x200) & 0x1FFFF
+
+    line_count = [0] * h
+    ninth_set  = False
+    sprite_buf = bytearray(h * _W)  # 0 = transparent
+    coincidence = False
+
+    for i in range(32):
+        y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
+        if y_byte == 0xD0:
+            break
+
+        x_byte  = vdp.vram[(sat_base + i * 4 + 1) & 0x1FFFF]
+        pat_idx = vdp.vram[(sat_base + i * 4 + 2) & 0x1FFFF]
+        attr    = vdp.vram[(sat_base + i * 4 + 3) & 0x1FFFF]
+
+        if attr & 0x80:  # EC early clock: whole-sprite X shift
+            x_byte = (x_byte - 32) & 0xFF
+
+        y_top = (y_byte + 1) & 0xFF
+
+        for line in range(h):
+            sprite_row = (line - y_top) & 0xFF
+            if sprite_row >= render_size:
+                continue
+
+            if line_count[line] >= 8:
+                if not ninth_set:
+                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    ninth_set = True
+                continue
+
+            line_count[line] += 1
+
+            src_row = sprite_row // 2 if mag else sprite_row
+            col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
+            color   = col_entry & 0x0F
+            or_mode = bool(col_entry & 0x20)
+
+            if color == 0:
+                continue  # transparent regardless of OR mode
+
+            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
+            scale  = 2 if mag else 1
+
+            for bit_i, pixel in enumerate(pixels):
+                if not pixel:
+                    continue
+                for s in range(scale):
+                    px = (x_byte + bit_i * scale + s) & 0xFF
+                    if px >= _W:
+                        continue
+                    coord = line * _W + px
+                    if sprite_buf[coord]:
+                        coincidence = True
+                        if or_mode:
+                            sprite_buf[coord] |= color
+                    else:
+                        sprite_buf[coord] = color
+
+    for idx, sc in enumerate(sprite_buf):
+        if sc:
+            buf[idx] = sc
 
     if coincidence:
         vdp.status |= 0x20
