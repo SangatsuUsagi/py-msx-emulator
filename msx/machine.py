@@ -10,9 +10,13 @@ from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, Ko
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
+from msx.ram_mapper import RamMapper
 import msx.romdb as romdb
+from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
+from msx.vdp.v9938 import V9938
+from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
@@ -74,8 +78,12 @@ class Machine:
             if self.cpu.halted and not self.cpu.iff1:
                 self._logger.on_hang_halt_di(self.cpu.registers.PC)
 
-        result = render_frame(self.vdp, skip_render=skip_render)
-        self.vdp._frame_count += 1
+        if isinstance(self.vdp, V9938):
+            result = render_frame_v9938(self.vdp, skip_render=skip_render)
+            # V9938 render_frame already increments _frame_count
+        else:
+            result = render_frame(self.vdp, skip_render=skip_render)
+            self.vdp._frame_count += 1
         return result
 
 
@@ -154,6 +162,62 @@ def make_machine(
     io.register_write(0xA0, 0xA2, psg.write_port)
     io.register_read(0xA8, 0xAB, ppi.read_port)
     io.register_write(0xA8, 0xAB, ppi.write_port)
+    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
+    machine = Machine(
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc,
+        input=input_state, _logger=logger,
+    )
+    io._get_pc = lambda: cpu.registers.PC
+    return machine
+
+
+def make_machine_msx2(
+    rom: bytes,
+    extrom: bytes,
+    *,
+    cartridge: bytes | None = None,
+    mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+    logger: DebugLogger | None = None,
+) -> Machine:
+    resolved = _resolve_mapper_type(mapper, cartridge)
+    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
+
+    resolved2 = _resolve_mapper_type(mapper2, cartridge2)
+    if resolved2 == "KonamiSCC":
+        print("warning: KonamiSCC is not supported for slot 2, using Konami mapper",
+              file=sys.stderr)
+        resolved2 = "Konami"
+    mapper2_instance = _make_mapper(resolved2, cartridge2)
+
+    ram_mapper = RamMapper()
+    memory = Memory(
+        rom=rom,
+        ram=bytearray(32768),
+        _mapper=_make_mapper(resolved, cartridge, scc=scc),
+        _mapper2=mapper2_instance,
+        slot_register=0x00,
+        _logger=logger,
+        extrom=extrom,
+        ram_mapper=ram_mapper,
+    )
+    input_state = InputState()
+    psg = PSG(_input=input_state)
+    ppi = PPI(memory=memory, _input=input_state)
+    vdp = V9938()
+    rtc = RTC()
+    io = IOBus(_logger=logger)
+    io.register_read(0x98, 0x9B, vdp.read_port)
+    io.register_write(0x98, 0x9B, vdp.write_port)
+    io.register_read(0xA0, 0xA2, psg.read_port)
+    io.register_write(0xA0, 0xA2, psg.write_port)
+    io.register_read(0xA8, 0xAB, ppi.read_port)
+    io.register_write(0xA8, 0xAB, ppi.write_port)
+    io.register_read(0xB4, 0xB5, rtc.read_port)
+    io.register_write(0xB4, 0xB5, rtc.write_port)
+    io.register_read(0xFC, 0xFF, ram_mapper.read_port)
+    io.register_write(0xFC, 0xFF, ram_mapper.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     machine = Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc,
