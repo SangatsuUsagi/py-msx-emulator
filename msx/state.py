@@ -5,16 +5,18 @@ import datetime
 import os
 import pickle
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image as _PIL_Image
 
+from msx.vdp.v9938 import V9938
+
 if TYPE_CHECKING:
     from msx.machine import Machine
 
-CURRENT_FORMAT_VERSION: int = 1
+CURRENT_FORMAT_VERSION: int = 2
 
 # Mapper fields that hold ROM data — too large to snapshot, not mutable.
 _MAPPER_SKIP_FIELDS: frozenset[str] = frozenset({"rom", "cartridge", "scc"})
@@ -23,6 +25,7 @@ _MAPPER_SKIP_FIELDS: frozenset[str] = frozenset({"rom", "cartridge", "scc"})
 @dataclass
 class MachineSnapshot:
     format_version: int
+    machine_type: str  # "msx1" or "msx2"
     # CPU
     cpu_regs: dict[str, int]
     cpu_halted: bool
@@ -50,6 +53,10 @@ class MachineSnapshot:
     psg_synth: dict[str, object]
     # SCC (None when absent)
     scc_state: dict[str, object] | None
+    # MSX2-only (None for MSX1)
+    vdp_palette: list[int] | None = None
+    ram_mapper_ram: bytearray | None = None
+    ram_mapper_banks: list[int] | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -141,14 +148,30 @@ def _restore_scc(machine: "Machine", d: dict[str, object] | None) -> None:
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
+    is_msx2 = isinstance(machine.vdp, V9938)
     mapper = machine.memory._mapper
     mapper_state = {
         k: (list(v) if isinstance(v, list) else v)
         for k, v in mapper.__dict__.items()
         if k not in _MAPPER_SKIP_FIELDS
     }
+    if is_msx2:
+        vdp_latch = machine.vdp._latch
+        vdp_addr = machine.vdp._addr
+        vdp_read_buf = machine.vdp._read_buf
+        vdp_palette: list[int] | None = list(machine.vdp.palette)
+        ram_mapper_ram: bytearray | None = bytearray(machine.memory.ram_mapper.ram)
+        ram_mapper_banks: list[int] | None = list(machine.memory.ram_mapper.banks)
+    else:
+        vdp_latch = machine.vdp.latch
+        vdp_addr = machine.vdp.addr
+        vdp_read_buf = machine.vdp.read_buf
+        vdp_palette = None
+        ram_mapper_ram = None
+        ram_mapper_banks = None
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
+        machine_type="msx2" if is_msx2 else "msx1",
         cpu_regs=_cpu_regs_to_dict(machine),
         cpu_halted=machine.cpu.halted,
         cpu_iff1=machine.cpu.iff1,
@@ -163,14 +186,17 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_vram=bytearray(machine.vdp.vram),
         vdp_regs=list(machine.vdp.regs),
         vdp_status=machine.vdp.status,
-        vdp_latch=machine.vdp.latch,
-        vdp_addr=machine.vdp.addr,
-        vdp_read_buf=machine.vdp.read_buf,
+        vdp_latch=vdp_latch,
+        vdp_addr=vdp_addr,
+        vdp_read_buf=vdp_read_buf,
         vdp_frame_count=machine.vdp._frame_count,
         psg_regs=list(machine.psg.regs),
         psg_latch=machine.psg.latch,
         psg_synth=_psg_synth_to_dict(machine),
         scc_state=_scc_to_dict(machine),
+        vdp_palette=vdp_palette,
+        ram_mapper_ram=ram_mapper_ram,
+        ram_mapper_banks=ram_mapper_banks,
     )
 
 
@@ -179,6 +205,13 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         raise ValueError(
             f"incompatible state file: version {snap.format_version}, "
             f"expected {CURRENT_FORMAT_VERSION}"
+        )
+    is_msx2 = isinstance(machine.vdp, V9938)
+    expected_type = "msx2" if is_msx2 else "msx1"
+    if snap.machine_type != expected_type:
+        raise ValueError(
+            f"machine type mismatch: running {expected_type!r}, "
+            f"saved {snap.machine_type!r}"
         )
     mapper = machine.memory._mapper
     if type(mapper).__name__ != snap.mapper_class:
@@ -204,10 +237,18 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
     machine.vdp.status = snap.vdp_status
-    machine.vdp.latch = snap.vdp_latch
-    machine.vdp.addr = snap.vdp_addr
-    machine.vdp.read_buf = snap.vdp_read_buf
     machine.vdp._frame_count = snap.vdp_frame_count
+    if is_msx2:
+        machine.vdp._latch = snap.vdp_latch
+        machine.vdp._addr = snap.vdp_addr
+        machine.vdp._read_buf = snap.vdp_read_buf
+        machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
+        machine.memory.ram_mapper.ram[:] = snap.ram_mapper_ram  # type: ignore[index]
+        machine.memory.ram_mapper.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
+    else:
+        machine.vdp.latch = snap.vdp_latch
+        machine.vdp.addr = snap.vdp_addr
+        machine.vdp.read_buf = snap.vdp_read_buf
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
