@@ -19,6 +19,10 @@ class VDP:
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
 
+    @property
+    def display_height(self) -> int:
+        return 192
+
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
         if port == 0x98:
