@@ -36,7 +36,6 @@ TMS9918A_PALETTE: tuple[tuple[int, int, int], ...] = (
 )
 
 _W = 256
-_H = 192
 _MAX_FRAME_SKIP: int = 4
 
 
@@ -50,10 +49,10 @@ def _index_to_rgb24(src: bytearray) -> bytearray:
     return dst
 
 
-def _save_screenshot(rgb_buf: bytearray) -> None:
+def _save_screenshot(rgb_buf: bytearray, h: int) -> None:
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = f"screenshot_{stamp}.png"
-    img = _PIL_Image.frombytes("RGB", (256, 192), bytes(rgb_buf))
+    img = _PIL_Image.frombytes("RGB", (_W, h), bytes(rgb_buf))
     img.save(path)
     print(f"screenshot saved: {path}")
 
@@ -73,8 +72,9 @@ def run(
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
 
+    h = machine.vdp.display_height
     win_w = _W * scale
-    win_h = _H * scale
+    win_h = h * scale
 
     if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER) != 0:
         print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
@@ -102,7 +102,7 @@ def run(
         sdl2.SDL_PIXELFORMAT_RGB24,
         sdl2.SDL_TEXTUREACCESS_STREAMING,
         _W,
-        _H,
+        h,
     )
 
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
@@ -128,7 +128,7 @@ def run(
     event = sdl2.SDL_Event()
     running = True
     _fullscreen = False
-    rgb_buf: bytearray = bytearray(_W * _H * 3)
+    rgb_buf: bytearray = bytearray(_W * h * 3)
     _skip_counter: int = 0
 
     while running:
@@ -152,7 +152,7 @@ def run(
                     except Exception as exc:
                         print(f"load failed: {exc}", file=sys.stderr)
                 elif event.key.keysym.sym == sdl2.SDLK_F10:
-                    _save_screenshot(rgb_buf)
+                    _save_screenshot(rgb_buf, h)
                 else:
                     machine.input.key_down(event.key.keysym.sym)
             elif event.type == sdl2.SDL_KEYUP:
