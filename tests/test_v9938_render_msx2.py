@@ -1,4 +1,4 @@
-"""Tests for V9938 MSX2-specific screen modes: SCREEN 5 and SCREEN 8."""
+"""Tests for V9938 MSX2-specific screen modes: SCREEN 4–8."""
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import grb332_to_rgb, render_frame
 
@@ -190,3 +190,169 @@ def test_grb332_example_byte() -> None:
     assert r == 6 * 36   # = 216
     assert g == 7 * 36   # = 252
     assert b == 3 * 85   # = 255
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 4 (Graphic 3): same tile background as SCREEN 2
+# ---------------------------------------------------------------------------
+
+def _set_screen4(vdp: V9938) -> None:
+    """SCREEN 4: M4=1, M5=0, M2=0."""
+    _enable(vdp)
+    vdp.regs[0] = 0x08  # M4=bit3
+
+
+def test_screen4_buffer_size_192() -> None:
+    vdp = V9938()
+    _set_screen4(vdp)
+    assert len(render_frame(vdp)) == 256 * 192
+
+
+def test_screen4_renders_g2_tiles() -> None:
+    """SCREEN 4 background uses same G2 tile logic as SCREEN 2."""
+    vdp = V9938()
+    _set_screen4(vdp)
+
+    vdp.regs[2] = 0x01   # name_base = 0x0400
+    vdp.regs[3] = 0x80   # col_base  = 0x2000
+    vdp.regs[4] = 0x00   # pat_base  = 0x0000
+
+    vdp.vram[0x0400] = 0       # name[0,0] = tile 0
+    vdp.vram[0x0000] = 0xFF    # pattern row 0: all fg
+    vdp.vram[0x2000] = 0x65    # colour: fg=6, bg=5
+
+    buf = render_frame(vdp)
+    assert buf[0] == 6
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 6 (Graphic 5): 2-bpp, 512 virtual width → 256 output
+# ---------------------------------------------------------------------------
+
+def _set_screen6(vdp: V9938) -> None:
+    """SCREEN 6: M5=1, M4=1, M2=0."""
+    _enable(vdp)
+    vdp.regs[0] = 0x18  # M5=bit4, M4=bit3
+
+
+def test_screen6_buffer_size_192() -> None:
+    vdp = V9938()
+    _set_screen6(vdp)
+    assert len(render_frame(vdp)) == 256 * 192
+
+
+def test_screen6_buffer_size_212_when_ln_set() -> None:
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[9] = 0x80
+    assert len(render_frame(vdp)) == 256 * 212
+
+
+def test_screen6_even_output_pixel_from_high_pair() -> None:
+    """Output pixel 0 (even) samples virtual pixel 0 — bits 7:6 of first byte."""
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x00
+    # bits 7:6 = 0b11 = colour 3; bits 5:4 = 0b10 = colour 2; etc.
+    vdp.vram[0] = 0b11_10_01_00
+
+    buf = render_frame(vdp)
+    assert buf[0] == 3   # output pixel 0: bits 7:6
+
+
+def test_screen6_odd_output_pixel_from_second_pair() -> None:
+    """Output pixel 1 (odd) samples virtual pixel 2 — bits 3:2 of first byte."""
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x00
+    vdp.vram[0] = 0b11_10_01_00
+
+    buf = render_frame(vdp)
+    assert buf[1] == 1   # output pixel 1: bits 3:2
+
+
+def test_screen6_second_output_byte() -> None:
+    """Output pixels 2 and 3 come from VRAM byte 1."""
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x00
+    vdp.vram[0] = 0x00
+    vdp.vram[1] = 0b10_01_11_00
+
+    buf = render_frame(vdp)
+    assert buf[2] == 2   # bits 7:6 of byte 1
+    assert buf[3] == 3   # bits 3:2 of byte 1
+
+
+def test_screen6_vram_base_from_r2() -> None:
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x02   # base = 2 × 0x800 = 0x1000
+
+    vdp.vram[0x0000] = 0xFF   # decoy — must not appear
+    vdp.vram[0x1000] = 0b11_00_00_00   # pixel 0 = colour 3
+
+    buf = render_frame(vdp)
+    assert buf[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 7 (Graphic 6): 4-bpp, 512 virtual width → 256 output
+# ---------------------------------------------------------------------------
+
+def _set_screen7(vdp: V9938) -> None:
+    """SCREEN 7: M5=0, M4=1, M2=1."""
+    _enable(vdp)
+    vdp.regs[0] = 0x08        # M4=bit3
+    vdp.regs[1] |= 0x08       # M2=bit3
+
+
+def test_screen7_buffer_size_192() -> None:
+    vdp = V9938()
+    _set_screen7(vdp)
+    assert len(render_frame(vdp)) == 256 * 192
+
+
+def test_screen7_output_pixel_is_high_nibble() -> None:
+    """Each output pixel takes the high nibble of its VRAM byte."""
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x00
+    vdp.vram[0] = 0xAB   # high nibble=0xA=10, low nibble=0xB (ignored)
+
+    buf = render_frame(vdp)
+    assert buf[0] == 0x0A
+
+
+def test_screen7_second_pixel_independent_byte() -> None:
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x00
+    vdp.vram[0] = 0xAB
+    vdp.vram[1] = 0xCD   # output pixel 1 = high nibble of byte 1
+
+    buf = render_frame(vdp)
+    assert buf[1] == 0x0C
+
+
+def test_screen7_vram_base_from_r2() -> None:
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x01   # base = 1 × 0x800 = 0x0800
+
+    vdp.vram[0x0000] = 0xFF   # decoy
+    vdp.vram[0x0800] = 0x5E   # high nibble = 5
+
+    buf = render_frame(vdp)
+    assert buf[0] == 5
+
+
+def test_screen7_second_row_offset() -> None:
+    """Row 1 starts at base + 256 bytes (256 bytes per row)."""
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x00
+    vdp.vram[256] = 0x70   # row 1, first byte: high nibble = 7
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 7
