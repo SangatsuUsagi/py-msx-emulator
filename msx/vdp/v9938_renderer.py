@@ -54,11 +54,15 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     if m5:
         if m4 and m2:
             _render_g7(vdp, buf, h)   # SCREEN 8 (Graphic 7)
-        elif not m4:
+        elif m4:
+            _render_g5(vdp, buf, h)   # SCREEN 6 (Graphic 5)
+        else:
             _render_g4(vdp, buf, h)   # SCREEN 5 (Graphic 4)
-        # SCREEN 6 (m5=1, m4=1, m2=0) — Phase 6
     elif m4:
-        pass  # SCREEN 4, 7 — Phase 6
+        if m2:
+            _render_g6(vdp, buf, h)   # SCREEN 7 (Graphic 6)
+        else:
+            _render_g2(vdp, buf)      # SCREEN 4 (Graphic 3) — same tiles as G2; sprites deferred to Phase 7
     elif m1:
         _render_text(vdp, buf)
     elif m3:
@@ -289,6 +293,37 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
             b = vdp.vram[(row_base + x // 2) & 0x1FFFF]
             buf[bx + x]     = (b >> 4) & 0x0F
             buf[bx + x + 1] = b & 0x0F
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 6 (Graphic 5) — 2-bpp, 512 virtual width, rendered 256 wide
+# ---------------------------------------------------------------------------
+
+def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
+    """SCREEN 6: 2-bpp, 4 virtual pixels per byte; sample even pixels → 256 wide."""
+    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    for y in range(h):
+        row_base = base + y * 128
+        bx = y * _W
+        for ox in range(_W):
+            b = vdp.vram[(row_base + ox // 2) & 0x1FFFF]
+            shift = 6 if (ox % 2 == 0) else 2
+            buf[bx + ox] = (b >> shift) & 0x03
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 7 (Graphic 6) — 4-bpp, 512 virtual width, rendered 256 wide
+# ---------------------------------------------------------------------------
+
+def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
+    """SCREEN 7: 4-bpp, 2 virtual pixels per byte; sample even pixels → 256 wide."""
+    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    for y in range(h):
+        row_base = base + y * _W
+        bx = y * _W
+        for ox in range(_W):
+            b = vdp.vram[(row_base + ox) & 0x1FFFF]
+            buf[bx + ox] = (b >> 4) & 0x0F
 
 
 # ---------------------------------------------------------------------------
