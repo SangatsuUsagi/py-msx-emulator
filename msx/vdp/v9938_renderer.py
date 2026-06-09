@@ -38,13 +38,6 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     r1 = vdp.regs[1]
     border = vdp.regs[7] & 0x0F
 
-    # V9938-specific extended modes (SCREEN 4–8) — implemented in later phases.
-    m4 = (r0 >> 3) & 1
-    m5 = (r0 >> 4) & 1
-    if m4 or m5:
-        _finalize(vdp)
-        return bytearray([border] * (_W * h))
-
     if not (r1 & 0x40):  # BL clear → blank display
         _finalize(vdp)
         return bytearray([border] * (_W * h))
@@ -52,11 +45,21 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
     m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 3) & 1
+    m5 = (r0 >> 4) & 1
 
     # Pre-fill with border; tile renderers only write the first _TILE_H rows.
     buf = bytearray([border] * (_W * h))
 
-    if m1:
+    if m5:
+        if m4 and m2:
+            _render_g7(vdp, buf, h)   # SCREEN 8 (Graphic 7)
+        elif not m4:
+            _render_g4(vdp, buf, h)   # SCREEN 5 (Graphic 4)
+        # SCREEN 6 (m5=1, m4=1, m2=0) — Phase 6
+    elif m4:
+        pass  # SCREEN 4, 7 — Phase 6
+    elif m1:
         _render_text(vdp, buf)
     elif m3:
         _render_g2(vdp, buf)
@@ -270,3 +273,45 @@ def _sprite_row_pixels(
         bytes((left  >> (7 - b)) & 1 for b in range(8))
         + bytes((right >> (7 - b)) & 1 for b in range(8))
     )
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 5 (Graphic 4) — 4-bpp bitmap, two palette indices per byte
+# ---------------------------------------------------------------------------
+
+def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
+    """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
+    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    for y in range(h):
+        row_base = base + y * 128
+        bx = y * _W
+        for x in range(0, _W, 2):
+            b = vdp.vram[(row_base + x // 2) & 0x1FFFF]
+            buf[bx + x]     = (b >> 4) & 0x0F
+            buf[bx + x + 1] = b & 0x0F
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 8 (Graphic 7) — 8-bpp GRB332, raw bytes, no palette
+# ---------------------------------------------------------------------------
+
+def grb332_to_rgb(byte: int) -> tuple[int, int, int]:
+    """Convert a GRB332 pixel byte to (R, G, B) 8-bit channels.
+
+    Bits 7:5 = G, bits 4:2 = R, bits 1:0 = B.
+    3-bit channels scale × 36; 2-bit B channel scales × 85.
+    """
+    g = (byte >> 5) & 0x07
+    r = (byte >> 2) & 0x07
+    b = byte & 0x03
+    return (r * 36, g * 36, b * 85)
+
+
+def _render_g7(vdp: "V9938", buf: bytearray, h: int) -> None:
+    """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
+    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    for y in range(h):
+        row_base = base + y * _W
+        bx = y * _W
+        for x in range(_W):
+            buf[bx + x] = vdp.vram[(row_base + x) & 0x1FFFF]
