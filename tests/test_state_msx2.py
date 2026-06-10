@@ -116,6 +116,49 @@ def test_old_format_version_rejected(saves_dir):
 
 
 # ---------------------------------------------------------------------------
+# sub_slot_reg round-trip
+# ---------------------------------------------------------------------------
+
+def test_msx2_roundtrip_sub_slot_reg(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.memory.sub_slot_reg = 0xA5
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.memory.sub_slot_reg = 0x00
+    load_state(machine)
+
+    assert machine.memory.sub_slot_reg == 0xA5
+
+
+def test_msx1_sub_slot_reg_none_in_snapshot(saves_dir):
+    """MSX1 snapshots store sub_slot_reg=None and don't touch Memory.sub_slot_reg."""
+    machine = make_machine(_ROM)
+    state_path = save_state(machine, _RGB_MSX1, "test")
+
+    with open(state_path, "rb") as f:
+        snap = pickle.load(f)
+    assert snap.sub_slot_reg is None
+
+
+# ---------------------------------------------------------------------------
+# format_version 2 rejected (version bump to 3)
+# ---------------------------------------------------------------------------
+
+def test_format_version_2_rejected(saves_dir):
+    machine = make_machine(_ROM)
+    state_path = save_state(machine, _RGB_MSX1, "test")
+
+    with open(state_path, "rb") as f:
+        snap = pickle.load(f)
+    snap.format_version = 2
+    with open(state_path, "wb") as f:
+        pickle.dump(snap, f)
+
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)
+
+
+# ---------------------------------------------------------------------------
 # MSX1 save/load unaffected
 # ---------------------------------------------------------------------------
 
