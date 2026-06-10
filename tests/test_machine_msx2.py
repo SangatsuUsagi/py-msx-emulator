@@ -33,21 +33,32 @@ def test_msx2_returns_machine_instance() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Ext ROM accessible via memory (slot 0 page 2 = 0x8000)
+# logrom → slot 0 / page 2 (0x8000–0xBFFF)
+# extrom (cbios_sub) → slot 3 / sub-slot 0 / page 0 (0x0000–0x3FFF)
 # ---------------------------------------------------------------------------
 
-def test_msx2_extrom_accessible_at_0x8000() -> None:
-    """With slot_register=0x00 (all pages slot 0), ext ROM is at 0x8000–0xBFFF."""
-    extrom = bytes([0xAB] + [0x00] * (16384 - 1))
-    machine = make_machine_msx2(_DUMMY_ROM, extrom)
+def test_msx2_logrom_accessible_at_0x8000() -> None:
+    """logrom is placed at slot 0 / page 2 (accessible when slot_register=0x00)."""
+    logrom = bytes([0xAB] + [0x00] * (16384 - 1))
+    machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_ROM, logrom=logrom)
     assert machine.memory.read(0x8000) == 0xAB
 
 
-def test_msx2_extrom_write_is_noop() -> None:
-    extrom = bytes([0xCC] + [0x00] * (16384 - 1))
-    machine = make_machine_msx2(_DUMMY_ROM, extrom)
+def test_msx2_logrom_write_is_noop() -> None:
+    logrom = bytes([0xCC] + [0x00] * (16384 - 1))
+    machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_ROM, logrom=logrom)
     machine.memory.write(0x8000, 0xFF)
     assert machine.memory.read(0x8000) == 0xCC
+
+
+def test_msx2_extrom_accessible_at_slot3_subslot0() -> None:
+    """extrom (cbios_sub) is at slot 3 / sub-slot 0 / page 0 (0x0000–0x3FFF)."""
+    extrom = bytes([0xDD] + [0x00] * (16384 - 1))
+    machine = make_machine_msx2(_DUMMY_ROM, extrom)
+    # Map page 0 to slot 3 (slot_register bits 1:0 = 11)
+    machine.memory.slot_register = 0x03  # page0=slot3, pages1-3=slot0
+    # sub_slot_reg=0x00 (default): page0 → sub-slot 0 → extrom
+    assert machine.memory.read(0x0000) == 0xDD
 
 
 # ---------------------------------------------------------------------------

@@ -23,10 +23,18 @@ class Memory:
     _logger: DebugLogger | None = field(default=None, repr=False)
     extrom: bytes | None = field(default=None, repr=False)
     ram_mapper: "RamMapper | None" = field(default=None, repr=False)
+    # MSX slot 3 secondary slot register: bits 7:6=page3, 5:4=page2, 3:2=page1, 1:0=page0
+    sub_slot_reg: int = 0x00
+    sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
+    sub0_rom: bytes | None = field(default=None, repr=False)
+    sub1_rom: bytes | None = field(default=None, repr=False)
 
     def _slot(self, addr: int) -> int:
         page = (addr >> 14) & 0x03
         return (self.slot_register >> (page * 2)) & 0x03
+
+    def _page3_is_slot3(self) -> bool:
+        return self.sub_slot_enabled and ((self.slot_register >> 6) & 0x03) == 3
 
     def read(self, addr: int) -> int:
         addr = addr & 0xFFFF
@@ -41,6 +49,18 @@ class Memory:
         if slot == 2:
             return self._mapper2.read(addr)
         # slot 3
+        # Secondary slot register intercept at 0xFFFF (only when page 3 = slot 3)
+        if addr == 0xFFFF and self._page3_is_slot3():
+            return (~self.sub_slot_reg) & 0xFF
+        page = (addr >> 14) & 0x03
+        sub = (self.sub_slot_reg >> (page * 2)) & 0x03
+        if sub == 0 and self.sub0_rom is not None:
+            if addr <= 0x3FFF:
+                return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
+            return 0xFF  # sub0_rom present but addr out of its page-0 range
+        elif sub == 1:
+            return 0xFF
+        # sub-slots 0 (no sub0_rom, backward compat), 2, and 3 → RAM mapper
         if self.ram_mapper is not None:
             return self.ram_mapper.read(addr)
         # MSX1: 32 KB RAM at 0x8000-0xFFFF only
@@ -59,6 +79,17 @@ class Memory:
             self._mapper2.write(addr, value)
             return
         # slot 3
+        # Secondary slot register intercept at 0xFFFF (only when page 3 = slot 3)
+        if addr == 0xFFFF and self._page3_is_slot3():
+            self.sub_slot_reg = value & 0xFF
+            return
+        page = (addr >> 14) & 0x03
+        sub = (self.sub_slot_reg >> (page * 2)) & 0x03
+        if sub == 1:
+            return  # reserved, ignore
+        if sub == 0 and self.sub0_rom is not None:
+            return  # sub0_rom is read-only
+        # sub-slots 0 (fallback), 2, and 3 → RAM mapper
         if self.ram_mapper is not None:
             self.ram_mapper.write(addr, value)
             return
