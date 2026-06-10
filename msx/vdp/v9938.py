@@ -1,7 +1,8 @@
 """V9938 VDP for MSX2.
 
-128 KB VRAM, 28 control registers, 16-colour programmable palette.
-Ports 0x98–0x9B.
+128 KB VRAM, 28 control registers, 16-colour programmable palette,
+hardware command engine (HMMV, HMMM, HMMC, LMMC, STOP).
+Ports 0x98–0x9C.
 """
 from __future__ import annotations
 
@@ -31,16 +32,41 @@ _TMS_PALETTE: tuple[int, ...] = (
     0b111_111_111,  # 15 white
 )
 
+# Command codes in R46 upper nibble
+_CMD_STOP = 0x0
+_CMD_LMMC = 0xB
+_CMD_HMMV = 0xC
+_CMD_HMMM = 0xD
+_CMD_HMMC = 0xF
+
+# S2 status bits
+_S2_CE = 0x01   # command executing
+_S2_TR = 0x80   # transfer ready (CPU may send next byte)
+
 
 @dataclass
 class V9938:
-    """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette."""
+    """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
+    hardware command engine."""
 
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_TMS_PALETTE))
     on_interrupt: Callable[[], None] | None = None
+    # Command engine
+    cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
+    _status2: int = field(default=0, init=False, repr=False)
+    _cmd_active: bool = field(default=False, init=False, repr=False)
+    _cmd_code: int = field(default=0, init=False, repr=False)
+    _cmd_dx: int = field(default=0, init=False, repr=False)
+    _cmd_dy: int = field(default=0, init=False, repr=False)
+    _cmd_nx: int = field(default=0, init=False, repr=False)
+    _cmd_ny: int = field(default=0, init=False, repr=False)
+    _cmd_x: int = field(default=0, init=False, repr=False)
+    _cmd_y: int = field(default=0, init=False, repr=False)
+    _cmd_log: int = field(default=0, init=False, repr=False)
+    # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
     _latch: int | None = field(default=None, init=False, repr=False)
     _pal_latch: int | None = field(default=None, init=False, repr=False)
@@ -51,6 +77,10 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
+
+    # ------------------------------------------------------------------
+    # Port I/O
+    # ------------------------------------------------------------------
 
     def write_port(self, port: int, value: int) -> None:
         value &= 0xFF
@@ -88,8 +118,15 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
+            elif 28 <= ptr <= 42:
+                self.cmd_regs[ptr - 28] = value
+            elif ptr == 43:
+                self.cmd_regs[14] = value
+                self._dispatch_command()
             if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
+        elif port == 0x9C:
+            self._cmd_data_write(value)
 
     def read_port(self, port: int) -> int:
         if port == 0x98:
@@ -98,8 +135,84 @@ class V9938:
             self._addr = (self._addr + 1) & 0x1FFFF
             return result
         if port == 0x99:
+            if self.regs[15] == 2:
+                return self._status2
             result = self.status
             self.status &= ~0x80  # clear F flag
             self._latch = None
             return result & 0xFF
         return 0xFF
+
+    # ------------------------------------------------------------------
+    # Command engine helpers
+    # ------------------------------------------------------------------
+
+    def _vram_byte_addr(self, x: int, y: int) -> int:
+        """G4 byte address for pixel (x, y): 256-pixel wide, 2 pixels/byte."""
+        return (y * 128 + x // 2) & 0x1FFFF
+
+    def _dispatch_command(self) -> None:
+        """Execute or start the command written to R46 (cmd_regs[14])."""
+        cmr = self.cmd_regs[14]
+        cmd = (cmr >> 4) & 0xF
+        log = cmr & 0xF
+
+        sx = self.cmd_regs[0] | ((self.cmd_regs[1] & 0x01) << 8)
+        sy = self.cmd_regs[2] | ((self.cmd_regs[3] & 0x03) << 8)
+        dx = self.cmd_regs[4] | ((self.cmd_regs[5] & 0x01) << 8)
+        dy = self.cmd_regs[6] | ((self.cmd_regs[7] & 0x03) << 8)
+        nx = self.cmd_regs[8] | ((self.cmd_regs[9] & 0x01) << 8)
+        ny = self.cmd_regs[10] | ((self.cmd_regs[11] & 0x03) << 8)
+        clr = self.cmd_regs[12]
+
+        self._cmd_active = False
+        self._status2 &= ~(_S2_CE | _S2_TR)
+
+        if cmd == _CMD_STOP or cmd not in (_CMD_LMMC, _CMD_HMMV, _CMD_HMMM, _CMD_HMMC):
+            return
+
+        if cmd == _CMD_HMMV:
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    addr = self._vram_byte_addr(dx + col, dy + row)
+                    self.vram[addr] = clr
+            return
+
+        if cmd == _CMD_HMMM:
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    src = self._vram_byte_addr(sx + col, sy + row)
+                    dst = self._vram_byte_addr(dx + col, dy + row)
+                    self.vram[dst] = self.vram[src]
+            return
+
+        # HMMC (0xF) or LMMC (0xB): CPU-feed transfer
+        self._cmd_active = True
+        self._cmd_code = cmd
+        self._cmd_dx = dx
+        self._cmd_dy = dy
+        self._cmd_nx = nx if nx else 512
+        self._cmd_ny = ny if ny else 1024
+        self._cmd_x = 0
+        self._cmd_y = 0
+        self._cmd_log = log
+        self._status2 |= _S2_CE | _S2_TR
+
+    def _cmd_data_write(self, value: int) -> None:
+        """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
+        if not self._cmd_active:
+            return
+        px = self._cmd_dx + self._cmd_x
+        py = self._cmd_dy + self._cmd_y
+        addr = self._vram_byte_addr(px, py)
+        skip = (self._cmd_log == 0x8 and value == 0)  # TIMP: skip transparent
+        if not skip:
+            self.vram[addr] = value
+        # advance cursor
+        self._cmd_x += 1
+        if self._cmd_x >= self._cmd_nx:
+            self._cmd_x = 0
+            self._cmd_y += 1
+            if self._cmd_y >= self._cmd_ny:
+                self._cmd_active = False
+                self._status2 &= ~(_S2_CE | _S2_TR)
