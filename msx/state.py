@@ -16,7 +16,7 @@ from msx.vdp.v9938 import V9938
 if TYPE_CHECKING:
     from msx.machine import Machine
 
-CURRENT_FORMAT_VERSION: int = 2
+CURRENT_FORMAT_VERSION: int = 3
 
 # Mapper fields that hold ROM data — too large to snapshot, not mutable.
 _MAPPER_SKIP_FIELDS: frozenset[str] = frozenset({"rom", "cartridge", "scc"})
@@ -57,6 +57,7 @@ class MachineSnapshot:
     vdp_palette: list[int] | None = None
     ram_mapper_ram: bytearray | None = None
     ram_mapper_banks: list[int] | None = None
+    sub_slot_reg: int | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -162,6 +163,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_palette: list[int] | None = list(machine.vdp.palette)
         ram_mapper_ram: bytearray | None = bytearray(machine.memory.ram_mapper.ram)
         ram_mapper_banks: list[int] | None = list(machine.memory.ram_mapper.banks)
+        sub_slot_reg: int | None = machine.memory.sub_slot_reg
     else:
         vdp_latch = machine.vdp.latch
         vdp_addr = machine.vdp.addr
@@ -169,6 +171,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_palette = None
         ram_mapper_ram = None
         ram_mapper_banks = None
+        sub_slot_reg = None
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type="msx2" if is_msx2 else "msx1",
@@ -197,6 +200,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_palette=vdp_palette,
         ram_mapper_ram=ram_mapper_ram,
         ram_mapper_banks=ram_mapper_banks,
+        sub_slot_reg=sub_slot_reg,
     )
 
 
@@ -245,6 +249,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
         machine.memory.ram_mapper.ram[:] = snap.ram_mapper_ram  # type: ignore[index]
         machine.memory.ram_mapper.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
+        if snap.sub_slot_reg is not None:
+            machine.memory.sub_slot_reg = snap.sub_slot_reg
     else:
         machine.vdp.latch = snap.vdp_latch
         machine.vdp.addr = snap.vdp_addr
