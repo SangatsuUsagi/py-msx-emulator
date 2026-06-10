@@ -105,10 +105,10 @@ def _render_g2(vdp: VDP, buf: bytearray) -> None:
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base = (vdp.regs[4] & 0x04) << 11
     col_base = (vdp.regs[3] & 0x80) << 6
-    # TMS9918A G2 colour table masking: R3[6:0] control which address bits vary.
-    # Bits that are 0 in R3[6:0] are aliased to the base, collapsing the three
-    # screen-band colour tables into one when R3[6:0] < 0x7F (e.g. 0x1F).
+    # TMS9918A G2 band masking: R3[6:0] / R4[1:0] control which sector-select
+    # address bits vary. 0 bits collapse band1/2 tables onto band0.
     col_mask = ((vdp.regs[3] & 0x7F) << 6) | 0x3F
+    pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
     bd = _backdrop(vdp)
 
     for row in range(24):
@@ -120,7 +120,7 @@ def _render_g2(vdp: VDP, buf: bytearray) -> None:
             bx = col * 8
             for py in range(8):
                 offset = tile_offset + py
-                pat = vdp.vram[(pat_base + offset) & 0x3FFF]
+                pat = vdp.vram[(pat_base + (offset & pat_mask)) & 0x3FFF]
                 cb = vdp.vram[(col_base + (offset & col_mask)) & 0x3FFF]
                 fg = _color((cb >> 4) & 0x0F, bd)
                 bg = _color(cb & 0x0F, bd)
