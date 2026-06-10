@@ -40,11 +40,15 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
     m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
 
-    buf = bytearray(_W * _H)
+    h = vdp.display_height
+    buf = bytearray(_W * h)
 
     if m1:
         _render_text(vdp, buf)
+    elif m3 and m4:
+        _render_g4(vdp, buf)
     elif m3:
         _render_g2(vdp, buf)
         _render_sprites(vdp, buf)
@@ -175,6 +179,22 @@ def _render_mc(vdp: VDP, buf: bytearray) -> None:
                     buf[y * _W + bx + px] = lc
                 for px in range(4, 8):
                     buf[y * _W + bx + px] = rc
+
+
+# ---------------------------------------------------------------------------
+# Graphic 4 / SCREEN 5 — 256×(192 or 212) bitmap, 4-bit packed pixels
+# ---------------------------------------------------------------------------
+
+def _render_g4(vdp: VDP, buf: bytearray) -> None:
+    display_base = (vdp.regs[2] >> 4 & 3) << 15
+    h = vdp.display_height
+    for y in range(h):
+        row_start = y * _W
+        vram_row = display_base + y * 128
+        for x in range(0, _W, 2):
+            byte = vdp.vram[(vram_row + x // 2) & 0x1FFFF]
+            buf[row_start + x] = (byte >> 4) & 0xF
+            buf[row_start + x + 1] = byte & 0xF
 
 
 # ---------------------------------------------------------------------------
