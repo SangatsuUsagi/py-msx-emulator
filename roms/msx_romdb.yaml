@@ -3497,3 +3497,1047 @@ roms:
     year: 1989
     mapper: ASCII8
     size: 131072
+  00c70cf37c71cb8f99567ae407ff6dd52c4774c2:
+    title_jp: 天国よいとこ
+    title_en: Tengoku Yoitoko - Heaven
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  02c3ec94190c6fce6fa4984d92be48b2697e7706:
+    title_jp: レリクス
+    title_en: Relics
+    system: MSX2
+    year: 1986
+    mapper: ASCII8
+    size: 262144
+  05280f0a26ac5c42ab63b80a487bb909683e7461:
+    title_jp: ドラゴンクエスト2 悪霊の神々
+    title_en: Dragon Quest 2
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  094d11ebf8a20b6bfc07902c7f136bdd18b1e7ca:
+    title_jp: ずっこけやじきた隠密道中
+    title_en: Zukkoke Yajikita Onmitsudoutyuu
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  0c62591033aa4e5e6b9eeb21eb2e5e60dcd8ee8e:
+    title_jp: クォース
+    title_en: Quarth
+    system: MSX2
+    year: 1990
+    mapper: KonamiSCC
+    size: 131072
+  0cc6c30c6918fcf780e57d40f58a4cf2a82225cd:
+    title_jp: 伊忍道 打倒信長
+    title_en: Inindo - Way of the Ninja
+    system: MSX
+    year: 1991
+    mapper: KoeiSRAM32
+    size: 1048576
+  0eb3a48a8ab90826726f0c06daadf4bf13390758:
+    title_jp: 雀聖
+    title_en: Jyansei
+    system: MSX2
+    year: 1986
+    mapper: ASCII16
+    size: 131072
+  0f10d77d1536993b8455b3b47278ca5782ef9275:
+    title_jp: アウトラン
+    title_en: Outrun
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  108e9164ef6cf1ffe6e3c5303bfbbc3bd807b6df:
+    title_jp: 釣リキチ三平 釣り仙人編
+    title_en: Turikichi Sampei Turisennin-Hen
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 262144
+  10c38f91d8f5db2438414ea58f26dcac78352088:
+    title_jp: 大戦略
+    title_en: Daisenryaku - Great Strategy
+    system: MSX2
+    year: 1986
+    mapper: ASCII16SRAM2
+    size: 131072
+  12f6f31f495bfb384c9ca9067bfbf8f98af6adf9:
+    title_jp: アレスタ
+    title_en: Aleste
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 262144
+  13fbb273a95481330d33c9edc4263e30ccf1774d:
+    title_jp: ハイスクール奇面組
+    title_en: High School Kimengumi
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  1545566bd7decb1612009daa2daa71758fa6e4a1:
+    title_jp: アメリカンサッカー
+    title_en: American Soccer
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 65536
+  1642891b693df616f27431299352e1d7750ac94b:
+    title_jp: アルカノイド2
+    title_en: Arkanoid 2
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  18be429f8b5c7bc4775c99292110aa09341cd644:
+    title_jp: ウルティマ 恐怖のエクソダス
+    title_en: Ultima III - Exodus
+    system: MSX2
+    year: 1987
+    mapper: ASCII8SRAM8
+    size: 262144
+  1ba6b699b4e34c23ee60db4e58e1265dc03f0b50:
+    title_jp: DIRES
+    title_en: Dires
+    system: MSX2
+    year: 1987
+    mapper: ASCII8SRAM2
+    size: 131072
+  1c17e58f1a602e07f185bce1aa8589fae76e8b44:
+    title_jp: 未来
+    title_en: Mirai - Future
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  1cbd5c7849f97dea1e3375a842f784ff9283310c:
+    title_jp: "燃えろ!!熱闘野球'88"
+    title_en: "Moero!! Nettou Yakyuu '88"
+    system: MSX2
+    year: 1988
+    mapper: NettouYakyuu
+    size: 262144
+  1f17e46190635a3214057d33ad4a768939d5a071:
+    title_jp: アクロジェット
+    title_en: Acrojet
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  1f26dfa026b116c80c951a995633b4c2f7fa033d:
+    title_jp: 牙龍王
+    title_en: Garyuuou - Dragon King
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  1f3f586255dd49b0f912bf41e07e88fe3eb3fb61:
+    title_jp: "ぎゅわんぶらぁ自己中心派2 自称!強豪雀士編"
+    title_en: Gambler Jikichushinpa 2
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  219e9acc2c023c25a8bbe9fb7d1764ffcff66034:
+    title_jp: 井出洋介名人の実戦麻雀
+    title_en: Ide Yousuke no Jissen Mahjong
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  22f5998b4de47bf2ccc077d5881ac448e6b0484d:
+    title_jp: ランペルール
+    title_en: "L'Empereur"
+    system: MSX2
+    year: 1990
+    mapper: KoeiSRAM32
+    size: 524288
+  23e702084e3031158a50a0560746767bbc1b7bee:
+    title_jp: ザナック
+    title_en: Zanac-Ex
+    system: MSX2
+    year: 1986
+    mapper: ASCII16
+    size: 131072
+  24384e63bfe450bce6abd327eae3e27969025379:
+    title_jp: スクランブルフォーメション
+    title_en: Scramble Formation
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  25022c4f5cfc805e93026fd5fda781e9a1807474:
+    title_jp: 牌の魔術師
+    title_en: Hai no Majutsushi - Mahjong 2
+    system: MSX2
+    year: 1989
+    mapper: Majutsushi
+    size: 131072
+  25ffc7e8ca90274566c31e10b5998cca6522673a:
+    title_jp: 三國志2
+    title_en: Sangokushi 2
+    system: MSX2
+    year: 1991
+    mapper: KoeiSRAM32
+    size: 1048576
+  2a3c7ad70e34989fa5170028bad760e65ebe9d57:
+    title_jp: スーパーランボースペシャル
+    title_en: Super Rambo Special
+    system: MSX2
+    year: 1986
+    mapper: ASCII16
+    size: 131072
+  2a4aef32db28c059c30f5f972f1c09708ef6ce62:
+    title_jp: 大航海時代
+    title_en: Daikoukai Jidai
+    system: MSX2
+    year: 1990
+    mapper: KoeiSRAM32
+    size: 524288
+  2e2543ac99193f76b4f35463142294c016f0cf3d:
+    title_jp: 棋聖
+    title_en: Kisei
+    system: MSX2
+    year: 1987
+    mapper: ASCII8SRAM2
+    size: 131072
+  2fc050dbc44ba9dfb72299129d48e5e5e1c892c3:
+    title_jp: スターヴァージン
+    title_en: Star Virgin
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  3194153a9c93aa24b37804a764f112bdef091bf8:
+    title_jp: 死霊戦線
+    title_en: Siryousensen - War Of The Dead
+    system: MSX2
+    year: 1987
+    mapper: ASCII8SRAM8
+    size: 262144
+  3202af113265e67e130a0b948dc167a9f9e9cc79:
+    title_jp: スーパーランナー
+    title_en: Super Runner
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  32151ddc4303290c09889bf8107493dd34296043:
+    title_jp: ハードボール
+    title_en: Hardball
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  32dd4df2b39461c0694f6bb84de0709478a69d31:
+    title_jp: 学園物語
+    title_en: Gakuen Monogatari - High School Story
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 262144
+  338460029d65ebce0d9119d811187a35c866a958:
+    title_jp: 釣リキチ三平 ブルーマリン編
+    title_en: Turikichi Sampei Burumarine-Hen
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  34635bf3518c7b33164f3d96da769c7a01102d28:
+    title_jp: ウィザードリィ
+    title_en: Wizardry
+    system: MSX2
+    year: 1988
+    mapper: Wizardry
+    size: 524288
+  39bc111c953bdf25683db7ff4c0bad79b5c49958:
+    title_jp: F15ストライクイーグル
+    title_en: F15 Strike Eagle
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  39d500fbf22168be2a12ac89ff5a50131bb1c30b:
+    title_jp: 谷川浩司の将棋指南2
+    title_en: Shougi Sinan 2
+    system: MSX2
+    year: 1988
+    mapper: ASCII8SRAM8
+    size: 131072
+  3e57fad130be79223068ab29f1e77ecb7f2ad237:
+    title_jp: ヤシャ
+    title_en: Yaksa
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  414fd2a22076f45502c2329b45bda9f8730dcaae:
+    title_jp: 太陽の神殿 ASTEKA2
+    title_en: Taiyou no Shinden - Asteka II
+    system: MSX2
+    year: 1987
+    mapper: ASCII8SRAM8
+    size: 262144
+  4164dcdfe0613d0f4c53b6f3581548bbbad5eb43:
+    title_jp: スーパーロードランナー
+    title_en: Super Lode Runner
+    system: MSX2
+    year: 1987
+    mapper: SuperLodeRunner
+    size: 131072
+  418f6248221c79039fe6c44fc5a9514842e3ec71:
+    title_jp: プロジェクトA2 史上最大の標的
+    title_en: Project A2
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  475c3af7495922759a5f424d2e22d7e4073d5992:
+    title_jp: ヨーロッパ戦線
+    title_en: Europe War
+    system: MSX2
+    year: 1992
+    mapper: KoeiSRAM32
+    size: 1048576
+  4c44939a95a20d701f60830499254e5dabedeeaa:
+    title_jp: マッドライダー
+    title_en: Mad Rider
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  4ff2aad8371e382e203c7f29b665612a8c9d937c:
+    title_jp: ウシャス
+    title_en: The Treasure Of Usas
+    system: MSX2
+    year: 1987
+    mapper: Konami
+    size: 131072
+  522a53034cf40448d441683f3308fcb4b65e6d7c:
+    title_jp: ロイヤルブラッド
+    title_en: Royal Blood
+    system: MSX2
+    year: 1991
+    mapper: KoeiSRAM32
+    size: 1048576
+  523330d609ca0e527f3e28a078635b3d28489ec9:
+    title_jp: コロニスリフト
+    title_en: Koronis Rift
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 262144
+  55183b7b7df66950dbb65ef1065d7d987e0fdf5a:
+    title_jp: 反生命戦機 アンドロギュヌス
+    title_en: Andorogynus
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 262144
+  5577e483caca553cfbfc0cba26f3ab2444569f81:
+    title_jp: ドラゴンクエスト
+    title_en: Dragon Quest 1
+    system: MSX2
+    year: 1986
+    mapper: ASCII8
+    size: 131072
+  55fb4e3d3a762b613b635ee9745d92f0f3711272:
+    title_jp: めぞん一刻 完結編 さよなら、そして...
+    title_en: Maison Ikkoku Final
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 524288
+  59f679c5ebf75de98b5e909da9182dbd80413364:
+    title_jp: リターンオブジェルダ
+    title_en: Return of Jelda
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  5c278deb1390eb45c79b7667b1ea1c54183123ac:
+    title_jp: 忍者くん 阿修羅の章
+    title_en: Ninja Kun - Ashura no Sho
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  5ec8811254dc762c6852289a08acf22954404f0d:
+    title_jp: 王家の谷 エルギーザの封印
+    title_en: "King's Valley 2 - The Seal Of El Giza"
+    system: MSX2
+    year: 1988
+    mapper: KonamiSCC
+    size: 131072
+  5ef7d03b138a2023f6def241b671c666f97ed83b:
+    title_jp: 悪魔城ドラキュラ
+    title_en: Vampire Killer - Akumajō Dracula
+    system: MSX2
+    year: 1986
+    mapper: Konami
+    size: 131072
+  5fd07ed5b7c0492d42ed91a54a0fe80ce6e4e40d:
+    title_jp: A列車で行こう
+    title_en: A-Train
+    system: MSX2
+    year: 1989
+    mapper: ASCII16SRAM8
+    size: 131072
+  6420d61002da325403fcb6f41afb1d348eeba3b4:
+    title_jp: 維新の嵐
+    title_en: Isin no Arashi
+    system: MSX2
+    year: 1989
+    mapper: KoeiSRAM32
+    size: 524288
+  66508bbdc3b133b9a69ea96789bc134eea46796a:
+    title_jp: 居眠り流阿佐田哲也のA級麻雀
+    title_en: A-Class Mahjong
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  6d7a8ea1b283ecc1cc94c359e5f053a6e82ab3f5:
+    title_jp: ドラゴンスレイヤー4 ドラスレファミリー
+    title_en: Dragon Slayer 4
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  6dd28797f9d1fe7cc041077ebe77d08f2ccc0937:
+    title_jp: 奇々怪界
+    title_en: Kikikaikai - Mystery
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  6fd90e7573abdb5a7bd6e4e8dc44db80fc163e30:
+    title_jp: アシュギーネ 復讐の炎
+    title_en: AshGuine Story III
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  721a2ded692d34d864d0440ac347c60880942d19:
+    title_jp: 熱血柔道
+    title_en: Nekketsu Judo
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 262144
+  74d1c7f66242335c736da29413037bd23384efaa:
+    title_jp: 蒼き狼と白き牝鹿 元朝秘史
+    title_en: Genchohisi
+    system: MSX2
+    year: 1992
+    mapper: KoeiSRAM32
+    size: 1048576
+  77d95640c80bc4868d04a913f9dbf4b5f6d877d2:
+    title_jp: 上海
+    title_en: Shanghai
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  78507f3f8b8601d99bbedb6517bec6cddf0bd5b4:
+    title_jp: パチプロ伝説
+    title_en: Pachipro Densetsu
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  795d47c6aae378d0d5bedc9f104a597bcc1ee16b:
+    title_jp: スーパートリトーン
+    title_en: Super Tritorn
+    system: MSX2
+    year: 1986
+    mapper: ASCII8
+    size: 131072
+  7ed1308179c41ae62cfb46124ab0ce22d8b0513b:
+    title_jp: ビクトリアスナイン2 高校野球編
+    title_en: Victorious Nine 2
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  81143d2a8ef7cc593a604f3cc890312b42bdff01:
+    title_jp: プロフェッショナル麻雀悟空
+    title_en: Professional Mahjong Gokuh
+    system: MSX2
+    year: 1988
+    mapper: ASCII16SRAM2
+    size: 131072
+  87a7fa43602f74c47151e79f1aaf7f641331ba51:
+    title_jp: ダブルビジョン
+    title_en: Double Vision
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  89943ae938fb308f4b5149ebc0cbea597b9b0223:
+    title_jp: 信長の野望 戦国群雄伝
+    title_en: Nobunaga no Yabou - Senkokugunyuden
+    system: MSX2
+    year: 1989
+    mapper: KoeiSRAM32
+    size: 524288
+  8a4bcf0f38c9f243443a4d4865278f695bd83dc8:
+    title_jp: 蒼き狼と白き牝鹿 ジンギスカン
+    title_en: Genghis Khan
+    system: MSX2
+    year: 1988
+    mapper: KoeiSRAM32
+    size: 524288
+  8cbfd94324f297a418e7eec6920dfead7b9bed08:
+    title_jp: フリートコマンダー2 黄昏の海域
+    title_en: Fleet Commander 2
+    system: MSX2
+    year: 1990
+    mapper: ASCII8
+    size: 262144
+  90003c78975d00b1e5612fd00dffabb70d616ecd:
+    title_jp: 魂斗羅
+    title_en: Gryzor - Contra
+    system: MSX2
+    year: 1989
+    mapper: KonamiSCC
+    size: 131072
+  920f141db0d42952130855ac1dce446c327e7d9c:
+    title_jp: ハッカー
+    title_en: Hacker
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  924fcf87b3747dae06e621975903ee73c42016f2:
+    title_jp: ファミリービリヤード
+    title_en: Family Billiards
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 65536
+  92bada2d019fcd6eee6d332a8068a9ddfa30d518:
+    title_jp: うる星やつら 恋のサバイバルパーティ
+    title_en: Urusei Yatsura
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 524288
+  93b07e3cd5ae2f00b36824a74f83a3ef0d65d0d5:
+    title_jp: 激突ペナントレース2
+    title_en: Gekitotsu Pennant Race 2
+    system: MSX2
+    year: 1989
+    mapper: KonamiSCC
+    size: 131072
+  970e26f3c2c085e39267115991add6ccc6e9ff80:
+    title_jp: プロ野球ファミリースタジアム ペナントレース
+    title_en: Family Stadium
+    system: MSX2
+    year: 1989
+    mapper: ASCII16
+    size: 262144
+  a0c486d0f25a3dc586717d5d3e1f5a46d36735fc:
+    title_jp: ケンペレンチェス
+    title_en: Kenpelen Chess
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  a21adba681956ec35816af673a9d4f6c7743253a:
+    title_jp: クリムゾン
+    title_en: Crimson
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  a322d4e572467be5e1b452214143f88db526b49f:
+    title_jp: ゾンビハンター
+    title_en: Zombie Hunter
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 131072
+  a52021f1b257c7c35d626d5d642134091c45e4f4:
+    title_jp: メタルギア
+    title_en: Metal Gear
+    system: MSX2
+    year: 1987
+    mapper: Konami
+    size: 131072
+  a57f8ec4f89ab84936f46821969de6bca9f46d8e:
+    title_jp: りっくとみっくの大冒険
+    title_en: "Rick & Mick's Adventure"
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  a58ca651f4c12bf07cf3840d5e37b534f5fc075e:
+    title_jp: ファンタジーゾーン2 オパオパの涙
+    title_en: Fantasy Zone 2 - The Tears Of Opa-Opa
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 262144
+  a8059dc1820b461418713acf2af14f3a25734bd3:
+    title_jp: アルギースの翼
+    title_en: Arugiisu no Yoku
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  ab087d04eb5c2c8894758c7cee32ccafd80989a7:
+    title_jp: 悶々怪物
+    title_en: Mon Mon Monster
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 131072
+  ae6ad52d5ebcad7722ea070109a286fe13b06cb7:
+    title_jp: プレデター
+    title_en: Predator
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  af310ee21b5534f32ea92c0ae34a44d828d157a7:
+    title_jp: テトリス
+    title_en: Tetris
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  af567ea6e27912d6d5bf1c8e9bc18e9b393fd1ab:
+    title_jp: メタルギア2 ソリッドスネーク
+    title_en: Metal Gear 2 - Solid Snake
+    system: MSX2
+    year: 1990
+    mapper: KonamiSCC
+    size: 524288
+  afb693fd0a138cfc59a2bf81eabd7ca2abd4e162:
+    title_jp: レプリカート
+    title_en: Replicart
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  b11c0ded529af18c29ec46b9e0a795ed0405e7ec:
+    title_jp: ドルイド
+    title_en: Druid
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  b2ce0bc86f82f727db956dfbbe2a3fd0cb72f5fc:
+    title_jp: 提督の決断
+    title_en: Teitoku no Ketsudan
+    system: MSX2
+    year: 1991
+    mapper: KoeiSRAM32
+    size: 1048576
+  b63fc17c1d004ca4d7f3b1ef8962210a779ca665:
+    title_jp: ロマンシア
+    title_en: Dragon Slayer 3 - Romancia
+    system: MSX2
+    year: 1986
+    mapper: ASCII16
+    size: 131072
+  b7104477c8801fe54d1ba91f3a77ac6e4f399f52:
+    title_jp: ぺんぎんくんウォーズ2
+    title_en: Penguin-Kun Wars 2
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 262144
+  b74f759ba3837968a04e9b64321b47cf087e76ff:
+    title_jp: 棋太平
+    title_en: Gitahei
+    system: MSX2
+    year: 1986
+    mapper: ASCII8
+    size: 131072
+  bb99fe7702733ab0f9e8856e91f5ddcb55d30b5f:
+    title_jp: ガーリーブロック
+    title_en: Girly Block
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  bd70b00ccb8fafca883c7160585e9c5920cca58f:
+    title_jp: ダイナマイトボウル
+    title_en: Dynamite Bowl
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  c1923ab5c5dcaf67af3e23fd1ac42e2d4c61aca7:
+    title_jp: 殺人倶楽部
+    title_en: Satujinkurakubu - Murder Club
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 524288
+  c4a919f31d20008b5d6540aa5d2be59aa4cef5cf:
+    title_jp: ルパン三世 バビロンの黄金伝説
+    title_en: Arsene Lupin 3rd - Babiron no Ougon Densetsu
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  c6227431bfbc3aa921120ec3da7f6429a1a799a0:
+    title_jp: 雀友
+    title_en: Janyu Mah-Jong
+    system: MSX
+    year: 1987
+    mapper: Mirrored
+    size: 32768
+  c74a5a6164536750d6b3ea90e19798ab6fad79d7:
+    title_jp: 聖飢魔2スペシャル 悪魔の逆襲
+    title_en: Seikima 2 Special
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  c82c6e054313f4c8864e64897baea8b63776020d:
+    title_jp: クインプル
+    title_en: Quinpl
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  c9135b1e451193bd4c06d8143eaca934cc89fe05:
+    title_jp: 1942
+    title_en: 1942
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  c9c272ffa69d3e0af5be42e7636b02dc2af6ea8c:
+    title_jp: オーガ
+    title_en: Ogre
+    system: MSX2
+    year: 1986
+    mapper: ASCII16
+    size: 131072
+  caeca37113c56e696d7053d90f5f9f3e02de8ad1:
+    title_jp: エルスリード
+    title_en: Elthlead
+    system: MSX2
+    year: 1988
+    mapper: ASCII8SRAM2
+    size: 131072
+  cb6bd26961387def757c7faeec7563d77d404d01:
+    title_jp: 信長の野望 武将風雲録
+    title_en: Nobunaga no Yabou - Bushouhuunroku
+    system: MSX2
+    year: 1991
+    mapper: KoeiSRAM32
+    size: 1048576
+  cd8ee800822ff0cd295621faafafc73be4bacad0:
+    title_jp: アイドロン
+    title_en: Eidolon
+    system: MSX2
+    year: 1986
+    mapper: ASCII8
+    size: 131072
+  cdeadd6cf7bf5b53aa7d901446b0ce586542c580:
+    title_jp: ファイアボール
+    title_en: Fire Ball
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 131072
+  d17acc97bf2f853a5fff58da733e4cd53cdaa3ed:
+    title_jp: イシターの復活
+    title_en: The Return of Ishtar
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 262144
+  d1cc2a77fb17608d542c50e2a1404cf5b4231521:
+    title_jp: スーパー大戦略
+    title_en: Super Daisenryaku
+    system: MSX2
+    year: 1988
+    mapper: ASCII16SRAM2
+    size: 262144
+  d4da7236bd09d735dcb92127c73e43b3ca94dd7f:
+    title_jp: ダーウィン4078
+    title_en: Darwin 4078
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  d526249c1a35cf1174300df75bc28662f579290a:
+    title_jp: ZOIDS 中央大陸の戦い
+    title_en: Zoids
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  d53a8efefe3714269538a91e5256c2938fe13239:
+    title_jp: ミシシッピー殺人事件
+    title_en: Missisippi Satsujin Jiken
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  d5902afbd8dfb1ea96fc8cf4d62cf6e4fa40d4f7:
+    title_jp: パックマニア
+    title_en: Pac-Mania
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 262144
+  d723f2eb1c887db5448fd56be5e7c57e60d88e63:
+    title_jp: 火の鳥 鳳凰編
+    title_en: Firebird - Hi no Tori Hououhen
+    system: MSX2
+    year: 1987
+    mapper: Konami
+    size: 131072
+  d78d763e72e23418f31dc3ce91deea1e8ee10490:
+    title_jp: ファミリーボクシング
+    title_en: Family Boxing
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  dab5a9f93a35fcb92c01e4250b01928fe8bd294b:
+    title_jp: 三國志
+    title_en: Sangokushi 1 - Romance Of Three Kingdoms
+    system: MSX2
+    year: 1988
+    mapper: KoeiSRAM32
+    size: 524288
+  dc56cff1211bacd94f59e188e44a58d6f40a0c26:
+    title_jp: マース
+    title_en: Strategic Mars
+    system: MSX2
+    year: 1989
+    mapper: ASCII16
+    size: 131072
+  de0eb1c46c47924879e2a49f9eafba0ab344fe5f:
+    title_jp: 魔界島 七つの島大冒険
+    title_en: Makaijima - Higemaru
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  de251a0af1df3be18469578dc00d414e572ee33e:
+    title_jp: 水滸伝 天命の誓い
+    title_en: Suikoden
+    system: MSX2
+    year: 1989
+    mapper: KoeiSRAM32
+    size: 524288
+  e003d57d2102e8fdf5d9eea7bd78a3cf67d75778:
+    title_jp: ラビリンス 魔王の迷宮
+    title_en: Labyrinth
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  e065238580b9e118b6c9e789d797cdd99e0a1c69:
+    title_jp: 怒
+    title_en: Ikari
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 262144
+  e22a6317747903475095008d0d5ad9427ddb34af:
+    title_jp: THEプロ野球 激突ペナントレース
+    title_en: Gekitotsu Pennant Race
+    system: MSX2
+    year: 1988
+    mapper: KonamiSCC
+    size: 131072
+  e3036a7bc6ed3ece1c85d5e37fb2ff39ba98ba47:
+    title_jp: トップルジップ
+    title_en: Topple Zip
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  e36e16acfdfa76fa72b218da2bebc668db39d21e:
+    title_jp: ザ・コックピット
+    title_en: The Cockpit
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  e6c01bd90cf0b2793282fc53e9a3150a6d7804c5:
+    title_jp: マラヤの秘宝
+    title_en: Malaya no Hihou
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 131072
+  e73946f1f26589d77926276ca4f9dbee60c53fde:
+    title_jp: バブルボブル
+    title_en: Bubble Bobble
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  e89fc7437d8f9aed1640689a32ebbf047699b147:
+    title_jp: ルパン三世 カリオストロの城
+    title_en: Arsene Lupin 3rd - Cariostoro no Siro
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  e8e416977f5dae3635362c513bba004ea89a0bf4:
+    title_jp: アークティック
+    title_en: Arctic
+    system: MSX2
+    year: 1989
+    mapper: ASCII16
+    size: 131072
+  ead699582641d103a94775a08121ecc336b99eae:
+    title_jp: ヒーローオブランス
+    title_en: Heroes of The Lance
+    system: MSX2
+    year: 1991
+    mapper: ASCII8SRAM8
+    size: 524288
+  ebe20c85c5314957fafc223c26bf393847e3bb03:
+    title_jp: うっでぃぽこ
+    title_en: Woody Poco
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  ecbf33a376a7a108176f8d1009d042e01519241c:
+    title_jp: ドラゴンバスター
+    title_en: Dragon Buster
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  ee501fde62b25ddd1c82798ee1b233b8813e717b:
+    title_jp: めぞん一刻 想いでのフォトグラフ
+    title_en: Maison Ikkoku
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  efdf63f01293251dc593163a42f31556fd042282:
+    title_jp: アシュギーネ 虚空の牙城
+    title_en: AshGuine Story II
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  efed48854beb2803d9f2b5644edff2aacf7c6af9:
+    title_jp: 幽霊君
+    title_en: Yuureikun - Mr.Ghost
+    system: MSX2
+    year: 1989
+    mapper: ASCII8
+    size: 262144
+  f12ad34dc3b4279da0fc7094f3d50d6b8bb517dc:
+    title_jp: ファミクルパロディック
+    title_en: Famicle Parodic
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  f182d4785e3eed00292f7ff4795c9dcc6c990a0a:
+    title_jp: ハイドライド3
+    title_en: Hydlide 3 - The Space Memories
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 524288
+  f4da2be2ee712ba2e7cccf56fcd15483fe0023ed:
+    title_jp: 画楽多
+    title_en: Garakuta
+    system: MSX2
+    year: 1988
+    mapper: ASCII16
+    size: 65536
+  f52690157a51c662ffdf4ae3592ada93d7be4032:
+    title_jp: プロ野球FAN テレネットスタジアム
+    title_en: Pro Baseball Fan
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 262144
+  f57b46154cf0711e3f5218e00f67c375d95d1d5d:
+    title_jp: 伝説の聖戦士 アシュギーネ
+    title_en: AshGuine Story I
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  f6199f48ff994fc9a8e33a8581bb3bb16dd301ab:
+    title_jp: スペースマンボウ
+    title_en: Space Manbow
+    system: MSX2
+    year: 1989
+    mapper: KonamiSCC
+    size: 262144
+  f787271597abbcb1297e4e8a4a9561959a195649:
+    title_jp: ラスタンサーガ
+    title_en: Rastan Saga
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  f84d7fc089b31440cac1f4fbee3d45b2f6c90e37:
+    title_jp: ゼビウス ファードラウト伝説
+    title_en: Xevious - Fardraut Saga
+    system: MSX2
+    year: 1989
+    mapper: ASCII16
+    size: 262144
+  f9486dd810d6321bad4bc9d7703a67d630167f98:
+    title_jp: 京都龍の寺殺人事件
+    title_en: Kyotoryu no Tera Satsujin Jiken
+    system: MSX2
+    year: 1988
+    mapper: ASCII8
+    size: 262144
+  facb967717c21fed9b375481908aa337b3361c45:
+    title_jp: ホールインワンスペシャル
+    title_en: Hole In One Special
+    system: MSX2
+    year: 1987
+    mapper: ASCII16
+    size: 131072
+  fbfdd89ec183ceae63d3d66b0ab45faa951b525a:
+    title_jp: 信長の野望 全国版
+    title_en: Nobunaga no Yabou - Zenkokuhan
+    system: MSX2
+    year: 1987
+    mapper: KoeiSRAM32
+    size: 524288
+  fc9adbd816109f7705f342c01f168bb09ca4b2ff:
+    title_jp: ディープフォレスト
+    title_en: Deep Forest
+    system: MSX2
+    year: 1987
+    mapper: ASCII8
+    size: 131072
+  fd71df03b0e9f3caf701ecfc6d5232060cab3b13:
+    title_jp: がんばれゴエモン からくり道中
+    title_en: Ganbare Goemon - Samurai
+    system: MSX2
+    year: 1987
+    mapper: Konami
+    size: 131072
+  fe4bd35e87dd50fddd255172129b9bec38691188:
+    title_jp: キングコング2
+    title_en: King Kong 2
+    system: MSX2
+    year: 1986
+    mapper: Konami
+    size: 131072
+
