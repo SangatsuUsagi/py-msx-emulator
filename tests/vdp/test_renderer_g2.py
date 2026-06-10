@@ -16,7 +16,7 @@ def make_g2_vdp() -> VDP:
     vdp.regs[1] = 0x40   # BL=1 (display on)
     vdp.regs[2] = 0x06   # name table at 0x1800
     vdp.regs[4] = 0x00   # pattern gen at 0x0000
-    vdp.regs[3] = 0x80   # colour table at 0x2000
+    vdp.regs[3] = 0xFF   # colour table at 0x2000, no band aliasing (full mask)
     vdp.regs[7] = 0x01   # backdrop = colour 1
     return vdp
 
