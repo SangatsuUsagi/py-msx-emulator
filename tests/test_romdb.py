@@ -64,6 +64,32 @@ def test_lookup_empty_bytes_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
     assert romdb.lookup(b"") is None
 
 
+def test_lookup_system_msx2(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reload()
+    cart = b"\x11"
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"system": "MSX2", "mapper": "KonamiSCC"}})
+    assert romdb.lookup_system(cart) == "MSX2"
+
+
+def test_lookup_system_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reload()
+    cart = b"\x22"
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"system": "MSX", "mapper": "Mirrored"}})
+    assert romdb.lookup_system(cart) == "MSX"
+
+
+def test_lookup_system_unknown_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reload()
+    monkeypatch.setattr(romdb, "_db", {})
+    assert romdb.lookup_system(b"\x33\x44") is None
+
+
+def test_lookup_system_empty_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert romdb.lookup_system(b"") is None
+
+
 def test_lookup_uses_db_file_sha1(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify that lookup() computes SHA1 correctly (not CRC32, etc.)."""
     _reload()
