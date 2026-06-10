@@ -10,6 +10,25 @@ _DEFAULT_MSX1_BIOS = Path("roms/cbios_main_msx1.rom")
 _DEFAULT_MSX2_BIOS = Path("roms/cbios_main_msx2.rom")
 _DEFAULT_MSX2_EXT  = Path("roms/cbios_sub.rom")
 
+# Pairs each known C-BIOS main ROM filename with its companion logo ROM.
+_LOGO_ROM_MAP: dict[str, str] = {
+    "cbios_main_msx1.rom":    "cbios_logo_msx1.rom",
+    "cbios_main_msx1_jp.rom": "cbios_logo_msx1.rom",
+    "cbios_main_msx1_eu.rom": "cbios_logo_msx1.rom",
+    "cbios_main_msx1_br.rom": "cbios_logo_msx1.rom",
+    "cbios_main_msx2.rom":    "cbios_logo_msx2.rom",
+    "cbios_main_msx2+.rom":   "cbios_logo_msx2+.rom",
+}
+
+
+def _find_logo_rom(bios_path: Path) -> bytes | None:
+    """Return the C-BIOS logo ROM bytes for the given main BIOS, or None."""
+    logo_name = _LOGO_ROM_MAP.get(bios_path.name)
+    if logo_name is None:
+        return None
+    logo_path = bios_path.parent / logo_name
+    return logo_path.read_bytes() if logo_path.exists() else None
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="py-msx-emulator")
@@ -98,9 +117,15 @@ def main() -> None:
     else:
         display_mapper = "auto"
 
+    # --- Auto-detect logo ROM (C-BIOS companion ROM at slot0/page2) ---
+    logrom: bytes | None = _find_logo_rom(bios_path)
+
     # --- Startup configuration summary ---
     print(f"machine : {'MSX2' if is_msx2 else 'MSX1'}")
     print(f"bios    : {bios_path}")
+    if logrom is not None:
+        logo_name = _LOGO_ROM_MAP.get(bios_path.name, "?")
+        print(f"logo    : {bios_path.parent / logo_name}")
     if is_msx2:
         print(f"ext     : {extrom_path}")
     print(f"mapper  : {display_mapper}")
@@ -123,7 +148,7 @@ def main() -> None:
         else:
             machine = make_machine(rom=bios, cartridge=cartridge, logger=logger,
                                    mapper=args.mapper, cartridge2=cartridge2,
-                                   mapper2=args.mapper2)
+                                   mapper2=args.mapper2, logrom=logrom)
         run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
             frame_skip=args.frame_skip)
     finally:
