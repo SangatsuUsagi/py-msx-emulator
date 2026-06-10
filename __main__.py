@@ -11,13 +11,15 @@ _DEFAULT_MSX2_BIOS = Path("roms/cbios_main_msx2.rom")
 _DEFAULT_MSX2_EXT  = Path("roms/cbios_sub.rom")
 
 # Pairs each known C-BIOS main ROM filename with its companion logo ROM.
+# MSX2 logo ROMs are intentionally absent: cbios_logo_msx2.rom uses V9938
+# hardware commands (LMMC/HMMM) which are not yet emulated. Loading the MSX2
+# logo ROM causes its OTIR init block to wrap R17 and corrupt R0=0x06 back to
+# 0x00, leaving the display blank. Re-enable once V9938 commands are implemented.
 _LOGO_ROM_MAP: dict[str, str] = {
     "cbios_main_msx1.rom":    "cbios_logo_msx1.rom",
     "cbios_main_msx1_jp.rom": "cbios_logo_msx1.rom",
     "cbios_main_msx1_eu.rom": "cbios_logo_msx1.rom",
     "cbios_main_msx1_br.rom": "cbios_logo_msx1.rom",
-    "cbios_main_msx2.rom":    "cbios_logo_msx2.rom",
-    "cbios_main_msx2+.rom":   "cbios_logo_msx2+.rom",
 }
 
 
