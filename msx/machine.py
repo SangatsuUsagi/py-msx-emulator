@@ -177,6 +177,7 @@ def make_machine_msx2(
     rom: bytes,
     extrom: bytes,
     *,
+    logrom: bytes | None = None,
     cartridge: bytes | None = None,
     mapper: str = "auto",
     cartridge2: bytes | None = None,
@@ -201,7 +202,9 @@ def make_machine_msx2(
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
-        extrom=extrom,
+        extrom=logrom,          # slot 0 / page 2: logo ROM
+        sub0_rom=extrom,        # slot 3 / sub-slot 0: cbios_sub.rom (extension BIOS)
+        sub_slot_enabled=True,
         ram_mapper=ram_mapper,
     )
     input_state = InputState()
