@@ -143,6 +143,7 @@ def main() -> None:
     try:
         if is_msx2:
             machine = make_machine_msx2(rom=bios, extrom=extrom,  # type: ignore[arg-type]
+                                        logrom=logrom,
                                         cartridge=cartridge, logger=logger, mapper=args.mapper,
                                         cartridge2=cartridge2, mapper2=args.mapper2)
         else:
