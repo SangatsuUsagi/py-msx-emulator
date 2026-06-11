@@ -53,6 +53,7 @@ _CMD_POINT = 0x4
 _CMD_PSET = 0x5
 _CMD_LMMV = 0x8
 _CMD_LMMM = 0x9
+_CMD_LMCM = 0xA
 _CMD_LMMC = 0xB
 _CMD_HMMV = 0xC
 _CMD_HMMM = 0xD
@@ -87,6 +88,7 @@ class V9938:
     _cmd_y: int = field(default=0, init=False, repr=False)
     _cmd_log: int = field(default=0, init=False, repr=False)
     _status7: int = field(default=0, init=False, repr=False)  # POINT result
+    _lmcm_buf: list[int] = field(default_factory=list, init=False, repr=False)
     # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
     _latch: int | None = field(default=None, init=False, repr=False)
@@ -165,6 +167,8 @@ class V9938:
             self.status &= ~0x80  # clear F flag
             self._latch = None
             return result & 0xFF
+        if port == 0x9C:
+            return self._cmd_data_read()
         return 0xFF
 
     # ------------------------------------------------------------------
@@ -214,7 +218,7 @@ class V9938:
 
         if cmd == _CMD_STOP or cmd not in (
             _CMD_POINT, _CMD_PSET,
-            _CMD_LMMV, _CMD_LMMM, _CMD_LMMC,
+            _CMD_LMMV, _CMD_LMMM, _CMD_LMCM, _CMD_LMMC,
             _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
         ):
             return
@@ -225,6 +229,20 @@ class V9938:
 
         if cmd == _CMD_PSET:
             self._vram_pixel_write(dx, dy, clr & 0xF, log)
+            return
+
+        if cmd == _CMD_LMCM:
+            self._lmcm_buf = []
+            rows = ny if ny else 1024
+            cols = nx if nx else 512
+            for row in range(rows):
+                for col in range(0, cols, 2):
+                    hi = self._vram_pixel_read(sx + col, sy + row)
+                    lo = self._vram_pixel_read(sx + col + 1, sy + row) if col + 1 < cols else 0
+                    self._lmcm_buf.append((hi << 4) | lo)
+            self._cmd_active = True
+            self._cmd_code = cmd
+            self._status2 |= _S2_CE | _S2_TR
             return
 
         if cmd == _CMD_LMMV:
@@ -280,7 +298,7 @@ class V9938:
 
     def _cmd_data_write(self, value: int) -> None:
         """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
-        if not self._cmd_active:
+        if not self._cmd_active or self._cmd_code == _CMD_LMCM:
             return
         px = self._cmd_dx + self._cmd_x
         py = self._cmd_dy + self._cmd_y
@@ -299,3 +317,13 @@ class V9938:
             if self._cmd_y >= self._cmd_ny:
                 self._cmd_active = False
                 self._status2 &= ~(_S2_CE | _S2_TR)
+
+    def _cmd_data_read(self) -> int:
+        """Return next buffered byte for an active LMCM transfer."""
+        if not self._cmd_active or self._cmd_code != _CMD_LMCM or not self._lmcm_buf:
+            return 0xFF
+        byte = self._lmcm_buf.pop(0)
+        if not self._lmcm_buf:
+            self._cmd_active = False
+            self._status2 &= ~(_S2_CE | _S2_TR)
+        return byte
