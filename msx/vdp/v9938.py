@@ -54,6 +54,7 @@ _CMD_LMMM = 0x9
 _CMD_LMMC = 0xB
 _CMD_HMMV = 0xC
 _CMD_HMMM = 0xD
+_CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
 # S2 status bits
@@ -208,7 +209,7 @@ class V9938:
 
         if cmd == _CMD_STOP or cmd not in (
             _CMD_LMMV, _CMD_LMMM, _CMD_LMMC,
-            _CMD_HMMV, _CMD_HMMM, _CMD_HMMC,
+            _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
         ):
             return
 
@@ -238,6 +239,16 @@ class V9938:
                 for col in range(nx if nx else 512):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, dy + row)
+                    self.vram[dst] = self.vram[src]
+            return
+
+        if cmd == _CMD_YMMM:
+            # Y-strip copy: SX→DX for NY rows; NX ignored (copies to screen edge)
+            cols = 256 - max(sx, dx)
+            for row in range(ny if ny else 1024):
+                for col in range(cols):
+                    src = self._vram_byte_addr(sx + col, sy + row)
+                    dst = self._vram_byte_addr(dx + col, sy + row)
                     self.vram[dst] = self.vram[src]
             return
 
