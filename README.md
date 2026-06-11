@@ -4,7 +4,7 @@ A functionally accurate MSX1 emulator written in pure Python, driven by machine-
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-498%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-513%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -37,7 +37,7 @@ py-msx-emulator is a functional MSX1 emulator targeting accurate hardware reprod
 - **AY-3-8910 PSG** — 16 registers, 3 tone channels, noise channel, envelope generator with 8 waveform shapes, quasi-logarithmic amplitude table, 44100 Hz PCM sample output at 735 samples/frame
 - **Konami SCC** — 5-channel wavetable synthesiser with 4 waveform banks (32 samples each), 12-bit frequency and 4-bit volume per channel, mixed into the audio output alongside PSG
 - **i8255 PPI** — slot-select register (port 0xA8), 11-row × 8-bit MSX keyboard matrix (port 0xA9), row selection (port 0xAA)
-- **MSX slot system** — 4-page × 4-slot dispatch, BIOS ROM in slot 0, cartridge in slot 1, optional second cartridge in slot 2, 32 KB RAM in slot 3
+- **MSX slot system** — 4-page × 4-slot dispatch, BIOS ROM in slot 0 (pages 0–1), companion logo ROM auto-loaded at slot 0 / page 2 (0x8000–0xBFFF) when `cbios_logo_msx1.rom` is present alongside the BIOS, cartridge in slot 1, optional second cartridge in slot 2, 32 KB RAM in slot 3
 - **Cartridge mappers** — Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC; auto-detected from a SHA1-based ROM database
 - **SDL2 frontend** — 768×576 window (256×192 × scale 3), TMS9918A hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
 - **Physical joystick** — SDL2 GameController and raw joystick APIs, hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
@@ -148,7 +148,8 @@ The following capabilities have specs defined:
 |------|--------|
 | Implementation | `msx/memory.py` |
 | Address space | Flat 64 KB (0x0000–0xFFFF), four 16 KB pages |
-| Slot 0 | BIOS ROM (read-only) |
+| Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
+| Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; auto-loaded from same directory as BIOS; returns 0xFF if absent |
 | Slot 1 | Cartridge ROM via mapper |
 | Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded |
 | Slot 3 | 32 KB RAM at 0x8000–0xFFFF |
@@ -235,9 +236,12 @@ This emulator does not bundle a BIOS ROM. You must supply one yourself.
 **C-BIOS** is a free, open-source MSX BIOS replacement and the recommended choice:
 
 1. Download the latest release from [https://cbios.sourceforge.net/](https://cbios.sourceforge.net/)
-2. Extract the archive and copy the following file into the `roms/` directory of this repository:
-   - `cbios_main_msx1.rom`
-3. The CLI defaults to `roms/cbios_main_msx1.rom`. Pass a different path as the first positional argument if needed.
+2. Extract the archive and copy the following files into the `roms/` directory of this repository:
+   - `cbios_main_msx1.rom` (required)
+   - `cbios_logo_msx1.rom` (optional — enables the C-BIOS boot logo)
+3. The CLI auto-selects `roms/cbios_main_msx1.rom` as the default BIOS. Use `--biosrom` to override.
+
+When `cbios_logo_msx1.rom` is present in the same directory as the main BIOS, it is automatically mapped at slot 0 / page 2 (0x8000–0xBFFF) as the companion logo ROM. Without it, the emulator still runs but the boot logo is absent.
 
 > **Legal note:** do not use a copyrighted MSX BIOS dump extracted from a commercial machine. C-BIOS is the recommended free and legal alternative. The `roms/` directory is excluded from version control by `.gitignore`.
 
@@ -270,40 +274,46 @@ pip install -r requirements.txt
 ### Running the emulator
 
 ```bash
-# MSX BASIC only (no cartridge)
-python . roms/cbios_main_msx1.rom
+# MSX BASIC only (no cartridge); BIOS auto-detected from roms/
+python .
 
 # With a game cartridge
-python . roms/cbios_main_msx1.rom path/to/game.rom
+python . path/to/game.rom
+
+# Override BIOS path
+python . --biosrom path/to/custom_bios.rom
+
+# With cartridge and custom BIOS
+python . path/to/game.rom --biosrom path/to/custom_bios.rom
 
 # Double emulation speed
-python . roms/cbios_main_msx1.rom path/to/game.rom --speed 2.0
+python . path/to/game.rom --speed 2.0
 
 # Dual cartridge (slot 1 and slot 2)
-python . roms/cbios_main_msx1.rom path/to/game1.rom --slot2 path/to/game2.rom
+python . path/to/game1.rom --slot2 path/to/game2.rom
 
 # Dual cartridge with explicit mapper types
-python . roms/cbios_main_msx1.rom path/to/game1.rom --mapper KonamiSCC --slot2 path/to/game2.rom --mapper2 Konami
+python . path/to/game1.rom --mapper KonamiSCC --slot2 path/to/game2.rom --mapper2 Konami
 
 # Force a specific mapper type
-python . roms/cbios_main_msx1.rom path/to/game.rom --mapper KonamiSCC
+python . path/to/game.rom --mapper KonamiSCC
 
 # Resume from the most recent save state
-python . roms/cbios_main_msx1.rom path/to/game.rom --resume
+python . path/to/game.rom --resume
 
 # Resume from a specific save file
-python . roms/cbios_main_msx1.rom path/to/game.rom --resume saves/salamander_20260605_120000.state
+python . path/to/game.rom --resume saves/salamander_20260605_120000.state
 
 # Enable debug logging
-python . roms/cbios_main_msx1.rom path/to/game.rom --debug --log trace.log
+python . path/to/game.rom --debug --log trace.log
 ```
 
 ### Command-line options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `rom` | `roms/cbios_main_msx1.rom` | Path to the MSX BIOS ROM |
 | `cartridge` | _(none)_ | Path to the cartridge ROM |
+| `--biosrom BIOS_PATH` | `roms/cbios_main_msx1.rom` | Main BIOS ROM path (overrides auto-selected default) |
 | `--speed FLOAT` | `1.0` | Emulation speed multiplier |
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
@@ -370,7 +380,7 @@ print(hex(machine.cpu.registers.A))
 
 ## Running tests
 
-The test suite covers all major components with 498 tests spanning unit tests for individual opcodes and hardware registers, integration tests that wire multiple components together, and scenario-level tests whose conditions are derived directly from the component specs.
+The test suite covers all major components with 513 tests spanning unit tests for individual opcodes and hardware registers, integration tests that wire multiple components together, and scenario-level tests whose conditions are derived directly from the component specs.
 
 ```bash
 # Run all tests
@@ -414,7 +424,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 486 tests (not included in the public repository)
+├── tests/                 # Test suite — 513 tests (not included in the public repository)
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
