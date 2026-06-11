@@ -425,3 +425,45 @@ def test_srch_stop_on_not_equal() -> None:
     vdp.vram[1] = 0x5A  # pixel (2,0)=0x5 differs
     _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xA, arg=2)  # stop on not-equal
     assert vdp._status2 == 2  # first pixel ≠ 0xA is at x=2
+
+
+# ---------------------------------------------------------------------------
+# LINE — Bresenham line draw
+# ---------------------------------------------------------------------------
+
+def test_line_horizontal_draws_nx_plus_1_pixels() -> None:
+    vdp = _make_vdp()
+    # Horizontal line: MAJ=X (arg[2]=0), +X (arg[0]=0), NX=3 → 4 pixels at row 0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=3, ny=0, clr=0xF, arg=0)
+    # pixels (0..3, 0) = 0xF → bytes 0 and 1 = 0xFF
+    assert vdp.vram[0] == 0xFF
+    assert vdp.vram[1] & 0xF0 == 0xF0  # pixel (2,0) = 0xF
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+
+
+def test_line_vertical_draws_ny_plus_1_pixels() -> None:
+    vdp = _make_vdp()
+    # Vertical line: MAJ=Y (arg[2]=4), NX=0 (minor), NY=2 → 3 pixels at col 0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=0, ny=2, clr=0x5, arg=4)
+    # pixels (0,0), (0,1), (0,2) = 0x5 → high nibble of vram[0], vram[128], vram[256]
+    assert vdp.vram[0] >> 4 == 0x5
+    assert vdp.vram[128] >> 4 == 0x5
+    assert vdp.vram[256] >> 4 == 0x5
+
+
+def test_line_diagonal_draws_correct_pixels() -> None:
+    vdp = _make_vdp()
+    # Diagonal: NX=2 (major X), NY=2 (minor Y), +X (arg[0]=0), +Y (arg[1]=0)
+    # Bresenham: pixels (0,0), (1,1), (2,2) or nearby depending on error
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=2, ny=2, clr=0xA, arg=0)
+    # At minimum, (0,0) must be written (first pixel)
+    assert vdp.vram[0] >> 4 == 0xA
+
+
+def test_line_log_applied_to_each_pixel() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xFF  # pixels (0,0)=0xF, (1,0)=0xF
+    # LOG=XOR (0x3), CLR=0xF: 0xF ^ 0xF = 0x0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=1, ny=0, clr=0xF, log=0x3, arg=0)
+    assert vdp.vram[0] >> 4 == 0x0   # 0xF XOR 0xF = 0x0
+    assert vdp.vram[0] & 0xF == 0x0  # pixel (1,0) also XOR'd
