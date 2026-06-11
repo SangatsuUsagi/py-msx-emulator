@@ -124,6 +124,7 @@ def make_machine(
     mapper: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
+    logrom: bytes | None = None,
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -142,6 +143,7 @@ def make_machine(
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
+        logrom=logrom,
     )
     input_state = InputState()
     psg = PSG(_input=input_state)
