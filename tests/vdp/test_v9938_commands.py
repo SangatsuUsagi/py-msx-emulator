@@ -345,3 +345,47 @@ def test_point_odd_pixel_returns_low_nibble() -> None:
     _dispatch_cmd(vdp, cmd_code=0x4, sx=1, sy=0)
     vdp.regs[15] = 7
     assert vdp.read_port(0x99) == 0xF
+
+
+# ---------------------------------------------------------------------------
+# LMCM — VRAM-to-CPU block read
+# ---------------------------------------------------------------------------
+
+def test_lmcm_sets_ce_and_tr_on_dispatch() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAB
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
+    assert vdp._status2 & 0x01  # CE set
+    assert vdp._status2 & 0x80  # TR set
+    assert vdp._cmd_active
+
+
+def test_lmcm_port_9c_read_returns_buffered_bytes() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAB  # pixel (0,0)=0xA, pixel (1,0)=0xB
+    vdp.vram[1] = 0xCD  # pixel (2,0)=0xC, pixel (3,0)=0xD
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)
+    assert vdp.read_port(0x9C) == 0xAB
+    assert vdp.read_port(0x9C) == 0xCD
+
+
+def test_lmcm_clears_ce_after_last_byte() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x12
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
+    vdp.read_port(0x9C)  # read the single byte
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert not vdp._cmd_active
+
+
+def test_lmcm_port_9c_read_when_inactive_returns_ff() -> None:
+    vdp = _make_vdp()
+    assert vdp.read_port(0x9C) == 0xFF
+
+
+def test_lmcm_write_to_9c_ignored_during_lmcm() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAB
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
+    vdp.write_port(0x9C, 0xFF)  # write while LMCM active → ignored
+    assert vdp.vram[0] == 0xAB  # unchanged
