@@ -49,6 +49,8 @@ _TMS_PALETTE: tuple[int, ...] = (
 
 # Command codes in R46 upper nibble
 _CMD_STOP = 0x0
+_CMD_LMMV = 0x8
+_CMD_LMMM = 0x9
 _CMD_LMMC = 0xB
 _CMD_HMMV = 0xC
 _CMD_HMMM = 0xD
@@ -204,7 +206,24 @@ class V9938:
         self._cmd_active = False
         self._status2 &= ~(_S2_CE | _S2_TR)
 
-        if cmd == _CMD_STOP or cmd not in (_CMD_LMMC, _CMD_HMMV, _CMD_HMMM, _CMD_HMMC):
+        if cmd == _CMD_STOP or cmd not in (
+            _CMD_LMMV, _CMD_LMMM, _CMD_LMMC,
+            _CMD_HMMV, _CMD_HMMM, _CMD_HMMC,
+        ):
+            return
+
+        if cmd == _CMD_LMMV:
+            clr_px = clr & 0xF
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    self._vram_pixel_write(dx + col, dy + row, clr_px, log)
+            return
+
+        if cmd == _CMD_LMMM:
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    src_pix = self._vram_pixel_read(sx + col, sy + row)
+                    self._vram_pixel_write(dx + col, dy + row, src_pix, log)
             return
 
         if cmd == _CMD_HMMV:
