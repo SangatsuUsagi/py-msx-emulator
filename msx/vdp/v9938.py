@@ -1,7 +1,7 @@
 """V9938 VDP for MSX2.
 
 128 KB VRAM, 28 control registers, 16-colour programmable palette,
-hardware command engine (HMMV, HMMM, HMMC, LMMC, STOP).
+hardware command engine (full V9938 command set).
 Ports 0x98–0x9C.
 """
 from __future__ import annotations
@@ -11,6 +11,21 @@ from typing import Callable
 
 _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
+
+
+def _apply_log(src: int, dst: int, log_op: int) -> int:
+    """Apply V9938 logical operation (LOG[2:0]) at 4-bit pixel level."""
+    if log_op == 0:
+        return src
+    if log_op == 1:
+        return src & dst
+    if log_op == 2:
+        return src | dst
+    if log_op == 3:
+        return src ^ dst
+    if log_op == 4:
+        return (~src) & 0xF
+    return src
 
 # TMS9918A-compatible initial palette, 9-bit packed as (R<<6)|(G<<3)|B.
 _TMS_PALETTE: tuple[int, ...] = (
@@ -34,9 +49,12 @@ _TMS_PALETTE: tuple[int, ...] = (
 
 # Command codes in R46 upper nibble
 _CMD_STOP = 0x0
+_CMD_LMMV = 0x8
+_CMD_LMMM = 0x9
 _CMD_LMMC = 0xB
 _CMD_HMMV = 0xC
 _CMD_HMMM = 0xD
+_CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
 # S2 status bits
@@ -118,11 +136,12 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
-            elif 28 <= ptr <= 42:
-                self.cmd_regs[ptr - 28] = value
-            elif ptr == 43:
+            elif 32 <= ptr <= 45:
+                self.cmd_regs[ptr - 32] = value
+            elif ptr == 46:
                 self.cmd_regs[14] = value
-                self._dispatch_command()
+                if not self._cmd_active:
+                    self._dispatch_command()
             if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
         elif port == 0x9C:
@@ -151,6 +170,26 @@ class V9938:
         """G4 byte address for pixel (x, y): 256-pixel wide, 2 pixels/byte."""
         return (y * 128 + x // 2) & 0x1FFFF
 
+    def _vram_pixel_read(self, x: int, y: int) -> int:
+        """Return 4-bit pixel at (x, y) in G4 VRAM."""
+        byte = self.vram[self._vram_byte_addr(x, y)]
+        return (byte >> 4) if (x & 1) == 0 else (byte & 0xF)
+
+    def _vram_pixel_write(self, x: int, y: int, color: int, log: int) -> None:
+        """Write 4-bit pixel at (x, y) with V9938 LOG operation."""
+        src = color & 0xF
+        if (log & 0x8) and src == 0:  # transparent: skip zero source pixels
+            return
+        addr = self._vram_byte_addr(x, y)
+        existing = self.vram[addr]
+        hi = (x & 1) == 0
+        dst = (existing >> 4) if hi else (existing & 0xF)
+        result = _apply_log(src, dst, log & 0x7) & 0xF
+        if hi:
+            self.vram[addr] = (result << 4) | (existing & 0x0F)
+        else:
+            self.vram[addr] = (existing & 0xF0) | result
+
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14])."""
         cmr = self.cmd_regs[14]
@@ -168,7 +207,24 @@ class V9938:
         self._cmd_active = False
         self._status2 &= ~(_S2_CE | _S2_TR)
 
-        if cmd == _CMD_STOP or cmd not in (_CMD_LMMC, _CMD_HMMV, _CMD_HMMM, _CMD_HMMC):
+        if cmd == _CMD_STOP or cmd not in (
+            _CMD_LMMV, _CMD_LMMM, _CMD_LMMC,
+            _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
+        ):
+            return
+
+        if cmd == _CMD_LMMV:
+            clr_px = clr & 0xF
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    self._vram_pixel_write(dx + col, dy + row, clr_px, log)
+            return
+
+        if cmd == _CMD_LMMM:
+            for row in range(ny if ny else 1024):
+                for col in range(nx if nx else 512):
+                    src_pix = self._vram_pixel_read(sx + col, sy + row)
+                    self._vram_pixel_write(dx + col, dy + row, src_pix, log)
             return
 
         if cmd == _CMD_HMMV:
@@ -183,6 +239,16 @@ class V9938:
                 for col in range(nx if nx else 512):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, dy + row)
+                    self.vram[dst] = self.vram[src]
+            return
+
+        if cmd == _CMD_YMMM:
+            # Y-strip copy: SX→DX for NY rows; NX ignored (copies to screen edge)
+            cols = 256 - max(sx, dx)
+            for row in range(ny if ny else 1024):
+                for col in range(cols):
+                    src = self._vram_byte_addr(sx + col, sy + row)
+                    dst = self._vram_byte_addr(dx + col, sy + row)
                     self.vram[dst] = self.vram[src]
             return
 
@@ -204,12 +270,15 @@ class V9938:
             return
         px = self._cmd_dx + self._cmd_x
         py = self._cmd_dy + self._cmd_y
-        addr = self._vram_byte_addr(px, py)
-        skip = (self._cmd_log == 0x8 and value == 0)  # TIMP: skip transparent
-        if not skip:
-            self.vram[addr] = value
-        # advance cursor
-        self._cmd_x += 1
+        if self._cmd_code == _CMD_LMMC:
+            # Pixel-level write with LOG: high nibble → px, low nibble → px+1
+            self._vram_pixel_write(px, py, (value >> 4) & 0xF, self._cmd_log)
+            self._vram_pixel_write(px + 1, py, value & 0xF, self._cmd_log)
+        else:
+            # HMMC: high-speed byte copy, no logical operation
+            self.vram[self._vram_byte_addr(px, py)] = value
+        # advance cursor: G4 = 2 pixels/byte
+        self._cmd_x += 2
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1
