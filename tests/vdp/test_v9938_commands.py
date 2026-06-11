@@ -298,3 +298,50 @@ def test_ymmm_uses_sy_not_dy_for_destination_row() -> None:
     _dispatch_cmd(vdp, cmd_code=0xE, sx=0, sy=1, dx=2, dy=0, ny=1)
     # destination: (DX=2, SY=1) → _vram_byte_addr(2, 1) = 128 + 1 = 129
     assert vdp.vram[129] == 0x55
+
+
+# ---------------------------------------------------------------------------
+# PSET — single pixel write
+# ---------------------------------------------------------------------------
+
+def test_pset_writes_pixel_at_dx_dy() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0x5, dx=0, dy=0, clr=0xA)
+    # pixel (0,0) = high nibble of vram[0]
+    assert (vdp.vram[0] >> 4) == 0xA
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+
+
+def test_pset_odd_pixel_uses_low_nibble() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0x5, dx=1, dy=0, clr=0xB)
+    assert (vdp.vram[0] & 0x0F) == 0xB
+
+
+def test_pset_log_applied() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xF0  # pixel (0,0) = 0xF
+    _dispatch_cmd(vdp, cmd_code=0x5, dx=0, dy=0, clr=0xA, log=0x1)  # AND
+    assert (vdp.vram[0] >> 4) == (0xF & 0xA)  # 0xA
+
+
+# ---------------------------------------------------------------------------
+# POINT — single pixel read into S2
+# ---------------------------------------------------------------------------
+
+def test_point_reads_pixel_into_s7() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x7F  # pixel (0,0)=0x7, pixel (1,0)=0xF
+    _dispatch_cmd(vdp, cmd_code=0x4, sx=0, sy=0)
+    # POINT result in S#7 (read via R15=7)
+    vdp.regs[15] = 7
+    assert vdp.read_port(0x99) == 0x7
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+
+
+def test_point_odd_pixel_returns_low_nibble() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x7F  # pixel (1,0) = low nibble = 0xF
+    _dispatch_cmd(vdp, cmd_code=0x4, sx=1, sy=0)
+    vdp.regs[15] = 7
+    assert vdp.read_port(0x99) == 0xF
