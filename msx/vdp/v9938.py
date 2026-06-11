@@ -51,6 +51,7 @@ _TMS_PALETTE: tuple[int, ...] = (
 _CMD_STOP = 0x0
 _CMD_POINT = 0x4
 _CMD_PSET = 0x5
+_CMD_SRCH = 0x6
 _CMD_LMMV = 0x8
 _CMD_LMMM = 0x9
 _CMD_LMCM = 0xA
@@ -217,7 +218,7 @@ class V9938:
         self._status2 &= ~(_S2_CE | _S2_TR)
 
         if cmd == _CMD_STOP or cmd not in (
-            _CMD_POINT, _CMD_PSET,
+            _CMD_POINT, _CMD_PSET, _CMD_SRCH,
             _CMD_LMMV, _CMD_LMMM, _CMD_LMCM, _CMD_LMMC,
             _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
         ):
@@ -229,6 +230,26 @@ class V9938:
 
         if cmd == _CMD_PSET:
             self._vram_pixel_write(dx, dy, clr & 0xF, log)
+            return
+
+        if cmd == _CMD_SRCH:
+            arg = self.cmd_regs[13]
+            direction = -1 if (arg & 1) else 1
+            stop_on_ne = bool(arg & 2)
+            clr_px = clr & 0xF
+            x = sx
+            found = False
+            while 0 <= x < 256:
+                pix = self._vram_pixel_read(x, sy)
+                hit = (pix != clr_px) if stop_on_ne else (pix == clr_px)
+                if hit:
+                    found = True
+                    break
+                x += direction
+            if found:
+                self._status2 = x & 0xFF           # found X in S2
+            else:
+                self._status2 = 0x10               # BD flag: not found
             return
 
         if cmd == _CMD_LMCM:

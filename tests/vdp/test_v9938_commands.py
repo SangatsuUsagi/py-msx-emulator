@@ -28,12 +28,12 @@ def _write_cmd_reg(vdp: V9938, reg: int, value: int) -> None:
 
 def _dispatch_cmd(vdp: V9938, cmd_code: int, log: int = 0,
                   dx: int = 0, dy: int = 0, nx: int = 1, ny: int = 1,
-                  sx: int = 0, sy: int = 0, clr: int = 0) -> None:
+                  sx: int = 0, sy: int = 0, clr: int = 0, arg: int = 0) -> None:
     """Set up and dispatch a V9938 command."""
     _write_reg(vdp, 17, 0x80 | 32)  # AII=1, ptr=R32 (SX low)
     for val in [sx & 0xFF, 0, sy & 0xFF, (sy >> 8) & 0x03,
                 dx & 0xFF, 0, dy & 0xFF, (dy >> 8) & 0x03,
-                nx & 0xFF, 0, ny & 0xFF, 0, clr, 0]:
+                nx & 0xFF, 0, ny & 0xFF, 0, clr, arg & 0xFF]:
         vdp.write_port(0x9B, val)
     # Write CMR (R46) via ptr=46 to trigger dispatch
     _write_reg(vdp, 17, 0x80 | 46)  # AII=1, ptr=46 (R46)
@@ -389,3 +389,39 @@ def test_lmcm_write_to_9c_ignored_during_lmcm() -> None:
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
     vdp.write_port(0x9C, 0xFF)  # write while LMCM active → ignored
     assert vdp.vram[0] == 0xAB  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# SRCH — horizontal color search
+# ---------------------------------------------------------------------------
+
+def test_srch_finds_matching_pixel_right() -> None:
+    vdp = _make_vdp()
+    vdp.vram[2] = 0x05  # pixel (4,0)=0x0, pixel (5,0)=0x5
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0x5, arg=0)
+    # pixel (5,0) = 0x5 matches CLR → found at x=5
+    assert vdp._status2 == 5
+    assert vdp._status2 & 0x10 == 0  # BD not set
+
+
+def test_srch_bd_flag_when_not_found() -> None:
+    vdp = _make_vdp()
+    # vram all zeros; CLR=0xF → never matches
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xF, arg=0)
+    assert vdp._status2 & 0x10  # BD flag set
+
+
+def test_srch_left_direction() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xA0  # pixel (0,0)=0xA
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=4, sy=0, clr=0xA, arg=1)  # direction=left
+    # scan left from x=4: x=4(0), 3(0), 2(0), 1(0), 0 → 0xA match at x=0
+    assert vdp._status2 == 0
+
+
+def test_srch_stop_on_not_equal() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAA  # pixels (0,0)=0xA, (1,0)=0xA
+    vdp.vram[1] = 0x5A  # pixel (2,0)=0x5 differs
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xA, arg=2)  # stop on not-equal
+    assert vdp._status2 == 2  # first pixel ≠ 0xA is at x=2
