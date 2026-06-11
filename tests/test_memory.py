@@ -241,3 +241,43 @@ def test_slot1_and_slot2_independent() -> None:
                  slot_register=0xE4)
     assert mem.read(0x4000) == 0x11   # slot 1 → _mapper
     assert mem.read(0x8000) == 0x22   # slot 2 → _mapper2
+
+
+# ---------------------------------------------------------------------------
+# Logo ROM (slot 0, page 2: 0x8000-0xBFFF)
+# ---------------------------------------------------------------------------
+
+def test_logrom_read_at_page2() -> None:
+    logrom = b"\xAB" + b"\x00" * (0x4000 - 1)
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=0x00, logrom=logrom)
+    assert mem.read(0x8000) == 0xAB
+
+
+def test_logrom_read_within_range() -> None:
+    logrom = b"\x00" * 0x10 + b"\xCD" + b"\x00" * (0x4000 - 0x11)
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=0x00, logrom=logrom)
+    assert mem.read(0x8010) == 0xCD
+
+
+def test_logrom_beyond_end_returns_ff() -> None:
+    logrom = b"\x00" * 0x10  # only 16 bytes
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=0x00, logrom=logrom)
+    assert mem.read(0x8010) == 0xFF
+
+
+def test_logrom_none_returns_ff_for_slot0_page2() -> None:
+    rom = bytes(32768)  # 32 KB BIOS, nothing above 0x7FFF
+    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=0x00)
+    assert mem.read(0x8000) == 0xFF
+
+
+def test_logrom_write_is_ignored() -> None:
+    logrom = bytearray(b"\xAB" + b"\x00" * (0x4000 - 1))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
+                 slot_register=0x00, logrom=bytes(logrom))
+    mem.write(0x8000, 0xFF)
+    assert mem.read(0x8000) == 0xAB

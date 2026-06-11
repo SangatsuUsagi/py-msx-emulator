@@ -20,6 +20,7 @@ class Memory:
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
     _logger: DebugLogger | None = field(default=None, repr=False)
+    logrom: bytes | None = field(default=None, repr=False)
 
     def _slot(self, addr: int) -> int:
         page = (addr >> 14) & 0x03
@@ -29,6 +30,9 @@ class Memory:
         addr = addr & 0xFFFF
         slot = (self.slot_register >> ((addr >> 14) * 2)) & 0x03  # page 0-3 → slot 0-3
         if slot == 0:
+            if self.logrom is not None and 0x8000 <= addr <= 0xBFFF:
+                off = addr - 0x8000
+                return self.logrom[off] if off < len(self.logrom) else 0xFF
             return self.rom[addr] if addr < len(self.rom) else 0xFF
         if slot == 1:
             return self._mapper.read(addr)
