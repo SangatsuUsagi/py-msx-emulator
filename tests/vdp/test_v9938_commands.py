@@ -28,12 +28,12 @@ def _write_cmd_reg(vdp: V9938, reg: int, value: int) -> None:
 
 def _dispatch_cmd(vdp: V9938, cmd_code: int, log: int = 0,
                   dx: int = 0, dy: int = 0, nx: int = 1, ny: int = 1,
-                  sx: int = 0, sy: int = 0, clr: int = 0) -> None:
+                  sx: int = 0, sy: int = 0, clr: int = 0, arg: int = 0) -> None:
     """Set up and dispatch a V9938 command."""
     _write_reg(vdp, 17, 0x80 | 32)  # AII=1, ptr=R32 (SX low)
     for val in [sx & 0xFF, 0, sy & 0xFF, (sy >> 8) & 0x03,
                 dx & 0xFF, 0, dy & 0xFF, (dy >> 8) & 0x03,
-                nx & 0xFF, 0, ny & 0xFF, 0, clr, 0]:
+                nx & 0xFF, 0, ny & 0xFF, 0, clr, arg & 0xFF]:
         vdp.write_port(0x9B, val)
     # Write CMR (R46) via ptr=46 to trigger dispatch
     _write_reg(vdp, 17, 0x80 | 46)  # AII=1, ptr=46 (R46)
@@ -389,3 +389,81 @@ def test_lmcm_write_to_9c_ignored_during_lmcm() -> None:
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
     vdp.write_port(0x9C, 0xFF)  # write while LMCM active → ignored
     assert vdp.vram[0] == 0xAB  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# SRCH — horizontal color search
+# ---------------------------------------------------------------------------
+
+def test_srch_finds_matching_pixel_right() -> None:
+    vdp = _make_vdp()
+    vdp.vram[2] = 0x05  # pixel (4,0)=0x0, pixel (5,0)=0x5
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0x5, arg=0)
+    # pixel (5,0) = 0x5 matches CLR → found at x=5
+    assert vdp._status2 == 5
+    assert vdp._status2 & 0x10 == 0  # BD not set
+
+
+def test_srch_bd_flag_when_not_found() -> None:
+    vdp = _make_vdp()
+    # vram all zeros; CLR=0xF → never matches
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xF, arg=0)
+    assert vdp._status2 & 0x10  # BD flag set
+
+
+def test_srch_left_direction() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xA0  # pixel (0,0)=0xA
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=4, sy=0, clr=0xA, arg=1)  # direction=left
+    # scan left from x=4: x=4(0), 3(0), 2(0), 1(0), 0 → 0xA match at x=0
+    assert vdp._status2 == 0
+
+
+def test_srch_stop_on_not_equal() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAA  # pixels (0,0)=0xA, (1,0)=0xA
+    vdp.vram[1] = 0x5A  # pixel (2,0)=0x5 differs
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xA, arg=2)  # stop on not-equal
+    assert vdp._status2 == 2  # first pixel ≠ 0xA is at x=2
+
+
+# ---------------------------------------------------------------------------
+# LINE — Bresenham line draw
+# ---------------------------------------------------------------------------
+
+def test_line_horizontal_draws_nx_plus_1_pixels() -> None:
+    vdp = _make_vdp()
+    # Horizontal line: MAJ=X (arg[2]=0), +X (arg[0]=0), NX=3 → 4 pixels at row 0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=3, ny=0, clr=0xF, arg=0)
+    # pixels (0..3, 0) = 0xF → bytes 0 and 1 = 0xFF
+    assert vdp.vram[0] == 0xFF
+    assert vdp.vram[1] & 0xF0 == 0xF0  # pixel (2,0) = 0xF
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+
+
+def test_line_vertical_draws_ny_plus_1_pixels() -> None:
+    vdp = _make_vdp()
+    # Vertical line: MAJ=Y (arg[2]=4), NX=0 (minor), NY=2 → 3 pixels at col 0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=0, ny=2, clr=0x5, arg=4)
+    # pixels (0,0), (0,1), (0,2) = 0x5 → high nibble of vram[0], vram[128], vram[256]
+    assert vdp.vram[0] >> 4 == 0x5
+    assert vdp.vram[128] >> 4 == 0x5
+    assert vdp.vram[256] >> 4 == 0x5
+
+
+def test_line_diagonal_draws_correct_pixels() -> None:
+    vdp = _make_vdp()
+    # Diagonal: NX=2 (major X), NY=2 (minor Y), +X (arg[0]=0), +Y (arg[1]=0)
+    # Bresenham: pixels (0,0), (1,1), (2,2) or nearby depending on error
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=2, ny=2, clr=0xA, arg=0)
+    # At minimum, (0,0) must be written (first pixel)
+    assert vdp.vram[0] >> 4 == 0xA
+
+
+def test_line_log_applied_to_each_pixel() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xFF  # pixels (0,0)=0xF, (1,0)=0xF
+    # LOG=XOR (0x3), CLR=0xF: 0xF ^ 0xF = 0x0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=1, ny=0, clr=0xF, log=0x3, arg=0)
+    assert vdp.vram[0] >> 4 == 0x0   # 0xF XOR 0xF = 0x0
+    assert vdp.vram[0] & 0xF == 0x0  # pixel (1,0) also XOR'd
