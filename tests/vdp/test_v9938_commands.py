@@ -273,3 +273,28 @@ def test_lmmm_timp_skips_zero_src_pixels() -> None:
     # pixel 0: src=0x0 transparent → dst nibble A unchanged
     # pixel 1: src=0x5 non-zero → dst nibble B → 0x5
     assert vdp.vram[2] == 0xA5
+
+
+# ---------------------------------------------------------------------------
+# YMMM — high-speed Y-strip VRAM copy
+# ---------------------------------------------------------------------------
+
+def test_ymmm_copies_rows_from_sx_to_dx() -> None:
+    vdp = _make_vdp()
+    # Write source data at row 0, columns 0-1 (byte 0: pixels 0-1)
+    vdp.vram[0] = 0xAB
+    vdp.vram[1] = 0xCD
+    # YMMM from SX=0 to DX=4, NY=2 rows (copies rows 0 and 1)
+    _dispatch_cmd(vdp, cmd_code=0xE, sx=0, sy=0, dx=4, dy=0, ny=2)
+    # dst row 0: _vram_byte_addr(4, 0)=2, _vram_byte_addr(6, 0)=3
+    assert vdp.vram[2] == 0xAB
+    assert vdp.vram[3] == 0xCD
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+
+
+def test_ymmm_uses_sy_not_dy_for_destination_row() -> None:
+    vdp = _make_vdp()
+    vdp.vram[128] = 0x55  # row 1 source
+    _dispatch_cmd(vdp, cmd_code=0xE, sx=0, sy=1, dx=2, dy=0, ny=1)
+    # destination: (DX=2, SY=1) → _vram_byte_addr(2, 1) = 128 + 1 = 129
+    assert vdp.vram[129] == 0x55
