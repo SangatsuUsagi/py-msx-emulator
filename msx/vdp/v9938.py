@@ -118,11 +118,12 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
-            elif 28 <= ptr <= 42:
-                self.cmd_regs[ptr - 28] = value
-            elif ptr == 43:
+            elif 32 <= ptr <= 45:
+                self.cmd_regs[ptr - 32] = value
+            elif ptr == 46:
                 self.cmd_regs[14] = value
-                self._dispatch_command()
+                if not self._cmd_active:
+                    self._dispatch_command()
             if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
         elif port == 0x9C:
@@ -208,8 +209,8 @@ class V9938:
         skip = (self._cmd_log == 0x8 and value == 0)  # TIMP: skip transparent
         if not skip:
             self.vram[addr] = value
-        # advance cursor
-        self._cmd_x += 1
+        # advance cursor: G4 = 2 pixels/byte
+        self._cmd_x += 2
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1

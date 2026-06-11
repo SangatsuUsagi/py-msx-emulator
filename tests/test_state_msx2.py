@@ -159,6 +159,66 @@ def test_format_version_2_rejected(saves_dir):
 
 
 # ---------------------------------------------------------------------------
+# format_version 3 rejected (version bump to 4)
+# ---------------------------------------------------------------------------
+
+def test_format_version_3_rejected(saves_dir):
+    machine = make_machine(_ROM)
+    state_path = save_state(machine, _RGB_MSX1, "test")
+
+    with open(state_path, "rb") as f:
+        snap = pickle.load(f)
+    snap.format_version = 3
+    with open(state_path, "wb") as f:
+        pickle.dump(snap, f)
+
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)
+
+
+# ---------------------------------------------------------------------------
+# cmd_regs / status2 round-trip
+# ---------------------------------------------------------------------------
+
+def test_msx2_roundtrip_cmd_regs(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.vdp.cmd_regs[0] = 0x12   # SX low
+    machine.vdp.cmd_regs[4] = 0xAB   # DX low
+    machine.vdp.cmd_regs[14] = 0xF0  # CMR
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp.cmd_regs[0] = 0
+    machine.vdp.cmd_regs[4] = 0
+    machine.vdp.cmd_regs[14] = 0
+    load_state(machine)
+
+    assert machine.vdp.cmd_regs[0] == 0x12
+    assert machine.vdp.cmd_regs[4] == 0xAB
+    assert machine.vdp.cmd_regs[14] == 0xF0
+
+
+def test_msx2_roundtrip_status2(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.vdp._status2 = 0x81  # CE=1, TR=1
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp._status2 = 0
+    load_state(machine)
+
+    assert machine.vdp._status2 == 0x81
+
+
+def test_msx1_cmd_regs_none_in_snapshot(saves_dir):
+    machine = make_machine(_ROM)
+    state_path = save_state(machine, _RGB_MSX1, "test")
+
+    with open(state_path, "rb") as f:
+        snap = pickle.load(f)
+    assert snap.cmd_regs is None
+    assert snap.status2 is None
+
+
+# ---------------------------------------------------------------------------
 # MSX1 save/load unaffected
 # ---------------------------------------------------------------------------
 
