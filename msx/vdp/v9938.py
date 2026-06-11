@@ -49,6 +49,8 @@ _TMS_PALETTE: tuple[int, ...] = (
 
 # Command codes in R46 upper nibble
 _CMD_STOP = 0x0
+_CMD_POINT = 0x4
+_CMD_PSET = 0x5
 _CMD_LMMV = 0x8
 _CMD_LMMM = 0x9
 _CMD_LMMC = 0xB
@@ -84,6 +86,7 @@ class V9938:
     _cmd_x: int = field(default=0, init=False, repr=False)
     _cmd_y: int = field(default=0, init=False, repr=False)
     _cmd_log: int = field(default=0, init=False, repr=False)
+    _status7: int = field(default=0, init=False, repr=False)  # POINT result
     # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
     _latch: int | None = field(default=None, init=False, repr=False)
@@ -156,6 +159,8 @@ class V9938:
         if port == 0x99:
             if self.regs[15] == 2:
                 return self._status2
+            if self.regs[15] == 7:
+                return self._status7
             result = self.status
             self.status &= ~0x80  # clear F flag
             self._latch = None
@@ -208,9 +213,18 @@ class V9938:
         self._status2 &= ~(_S2_CE | _S2_TR)
 
         if cmd == _CMD_STOP or cmd not in (
+            _CMD_POINT, _CMD_PSET,
             _CMD_LMMV, _CMD_LMMM, _CMD_LMMC,
             _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
         ):
+            return
+
+        if cmd == _CMD_POINT:
+            self._status7 = self._vram_pixel_read(sx, sy) & 0xF
+            return
+
+        if cmd == _CMD_PSET:
+            self._vram_pixel_write(dx, dy, clr & 0xF, log)
             return
 
         if cmd == _CMD_LMMV:
