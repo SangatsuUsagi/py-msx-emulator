@@ -227,3 +227,25 @@ def test_make_machine_mapper2_konamisco_falls_back_to_konami(
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="auto")
     assert isinstance(m.memory._mapper2, KonamiMapper)
     assert "KonamiSCC" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# cycle_count
+
+def test_cycle_count_starts_at_zero() -> None:
+    m = _make_machine()
+    assert m.cycle_count == 0
+
+
+def test_cycle_count_increases_after_run_frame() -> None:
+    m = _make_machine()
+    m.run_frame()
+    assert m.cycle_count > 0
+
+
+def test_cycle_count_accumulates_across_frames() -> None:
+    m = _make_machine()
+    m.run_frame()
+    after_one = m.cycle_count
+    m.run_frame()
+    assert m.cycle_count >= after_one * 2 - 100  # allow ±one instruction slack
