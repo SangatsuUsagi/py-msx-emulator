@@ -69,6 +69,8 @@ _CMD_HMMC = 0xF
 _S2_CE = 0x01   # command executing
 _S2_TR = 0x80   # transfer ready (CPU may send next byte)
 
+_CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
+
 
 @dataclass
 class V9938:
@@ -88,6 +90,7 @@ class V9938:
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
     _cmd_active: bool = field(default=False, init=False, repr=False)
+    _cmd_remaining: int = field(default=0, init=False, repr=False)
     _cmd_code: int = field(default=0, init=False, repr=False)
     _cmd_dx: int = field(default=0, init=False, repr=False)
     _cmd_dy: int = field(default=0, init=False, repr=False)
@@ -109,6 +112,19 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
+
+    # ------------------------------------------------------------------
+    # Command timer
+    # ------------------------------------------------------------------
+
+    def tick(self, cycles: int) -> None:
+        """Advance VDP command timer. Clears CE when _cmd_remaining reaches 0."""
+        if self._cmd_remaining <= 0:
+            return
+        self._cmd_remaining -= cycles
+        if self._cmd_remaining <= 0:
+            self._cmd_active = False
+            self._status2 &= ~(_S2_CE | _S2_TR)
 
     # ------------------------------------------------------------------
     # Port I/O
@@ -315,6 +331,9 @@ class V9938:
             for row in range(ny if ny else 1024):
                 for col in range(nx if nx else 512):
                     self._vram_pixel_write(dx + col, dy + row, clr_px, log)
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_LMMM:
@@ -322,6 +341,9 @@ class V9938:
                 for col in range(nx if nx else 512):
                     src_pix = self._vram_pixel_read(sx + col, sy + row)
                     self._vram_pixel_write(dx + col, dy + row, src_pix, log)
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_HMMV:
@@ -329,6 +351,9 @@ class V9938:
                 for col in range(nx if nx else 512):
                     addr = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[addr] = clr
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = max(4, nx * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_HMMM:
@@ -337,6 +362,9 @@ class V9938:
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[dst] = self.vram[src]
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = max(4, nx * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_YMMM:
@@ -347,6 +375,9 @@ class V9938:
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, sy + row)
                     self.vram[dst] = self.vram[src]
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = max(4, cols * ny * _CYCLES_PER_BYTE)
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer
