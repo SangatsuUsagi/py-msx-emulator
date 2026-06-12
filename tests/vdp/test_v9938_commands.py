@@ -146,7 +146,7 @@ def test_hmmm_copies_region() -> None:
     vdp = _make_vdp()
     # Write source data manually at (SX=0, SY=0, NX=2, NY=1)
     vdp.vram[0] = 0x55  # byte covering pixels (0,1) in G4
-    _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=4, dy=2, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0xF, sx=0, sy=0, dx=4, dy=2, nx=2, ny=1)
     # Destination: (4//2)=2 in row 2 → vram[2*128 + 2]
     assert vdp.vram[2 * 128 + 2] == 0x55
     vdp.tick(10_000_000)
@@ -159,7 +159,7 @@ def test_hmmm_copies_region() -> None:
 
 def test_hmmc_sets_ce_and_tr_on_dispatch() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0xD, dx=0, dy=0, nx=4, ny=1)
     assert vdp._status2 & 0x01  # CE set
     assert vdp._status2 & 0x80  # TR set
     assert vdp._cmd_active
@@ -167,7 +167,7 @@ def test_hmmc_sets_ce_and_tr_on_dispatch() -> None:
 
 def test_hmmc_transfers_bytes_via_port_9c() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0xD, dx=0, dy=0, nx=4, ny=1)
     # NX=4 pixels = 2 bytes in G4 (each byte = 2 pixels)
     vdp.write_port(0x9C, 0xAB)
     vdp.write_port(0x9C, 0xCD)
@@ -196,14 +196,14 @@ def test_hmmc_port_9c_write_when_inactive_ignored() -> None:
 def test_lmmc_timp_skips_zero_bytes() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x99  # pre-fill destination
-    _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0x9, log=0x8, dx=0, dy=0, nx=2, ny=1)
     vdp.write_port(0x9C, 0x00)  # transparent → skip
     assert vdp.vram[0] == 0x99  # unchanged
 
 
 def test_lmmc_timp_writes_nonzero_bytes() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0x9, log=0x8, dx=0, dy=0, nx=2, ny=1)
     vdp.write_port(0x9C, 0xAB)  # non-zero → write
     assert vdp.vram[0] == 0xAB
 
@@ -262,7 +262,7 @@ def test_lmmv_xor_log() -> None:
 def test_lmmm_imp_copies_pixels() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x57  # source: pixel (0,0)=0x5, pixel (1,0)=0x7
-    _dispatch_cmd(vdp, cmd_code=0x9, log=0x0, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0xB, log=0x0, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
     # dst byte = _vram_byte_addr(4, 0) = 2
     assert vdp.vram[2] == 0x57
     vdp.tick(10_000_000)
@@ -273,7 +273,7 @@ def test_lmmm_timp_skips_zero_src_pixels() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x05  # source: pixel (0,0)=0x0 (transparent), pixel (1,0)=0x5
     vdp.vram[2] = 0xAB  # destination pre-fill
-    _dispatch_cmd(vdp, cmd_code=0x9, log=0x8, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
     # pixel 0: src=0x0 transparent → dst nibble A unchanged
     # pixel 1: src=0x5 non-zero → dst nibble B → 0x5
     assert vdp.vram[2] == 0xA5
@@ -487,7 +487,7 @@ def test_tick_noop_when_no_command() -> None:
 
 def test_tick_noop_for_lmmc() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xB, dx=0, dy=0, nx=2, ny=1)
+    _dispatch_cmd(vdp, cmd_code=0x9, dx=0, dy=0, nx=2, ny=1)
     assert vdp._cmd_active
     vdp.tick(100_000)
     assert vdp._status2 & 0x01  # CE still set
@@ -523,7 +523,7 @@ def test_hmmv_ce_clears_after_full_tick() -> None:
 def test_hmmm_ce_clears_after_full_tick() -> None:
     vdp = _make_vdp()
     # NX=128, NY=85 → duration = 128 × 85 × 8 = 86,912
-    _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
+    _dispatch_cmd(vdp, cmd_code=0xF, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
     assert vdp._status2 & 0x01
     vdp.tick(128 * 85 * 8)
     assert vdp._status2 & 0x01 == 0
