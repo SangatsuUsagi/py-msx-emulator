@@ -60,17 +60,22 @@ class Machine:
     def run_frame(self, skip_render: bool = False) -> bytearray:
         cycles = 0
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
+        vdp_tick = self.vdp.tick if isinstance(self.vdp, V9938) else None
         if self._logger is None:
             while cycles < CYCLES_PER_FRAME:
                 n = cpu_step()
                 cycles += n
                 self.cycle_count += n
+                if vdp_tick:
+                    vdp_tick(n)
         else:
             while cycles < CYCLES_PER_FRAME:
                 pc = self.cpu.registers.PC
                 n = cpu_step()
                 cycles += n
                 self.cycle_count += n
+                if vdp_tick:
+                    vdp_tick(n)
                 # PC-loop hang: skip normal HALT (halted + interrupts enabled)
                 if not (self.cpu.halted and self.cpu.iff1):
                     if pc == self._last_pc:
