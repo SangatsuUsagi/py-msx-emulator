@@ -7,7 +7,10 @@ Ports 0x98–0x9C.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from msx.vdp.tracer import Tracer
 
 _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
@@ -77,6 +80,9 @@ class V9938:
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_TMS_PALETTE))
     on_interrupt: Callable[[], None] | None = None
+    tracer: Tracer | None = field(default=None, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
@@ -113,6 +119,10 @@ class V9938:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
         elif port == 0x99:
+            if self.tracer is not None:
+                pc = self._get_pc() if self._get_pc is not None else 0
+                cy = self._get_cycle() if self._get_cycle is not None else 0
+                self.tracer.port99_write(pc, cy, value)
             if self._latch is None:
                 self._latch = value
             else:
@@ -141,6 +151,7 @@ class V9938:
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             ptr = self.regs[17] & 0x3F
+            r17_before = self.regs[17]
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
             elif 32 <= ptr <= 45:
@@ -149,6 +160,10 @@ class V9938:
                 self.cmd_regs[14] = value
                 if not self._cmd_active:
                     self._dispatch_command()
+            if self.tracer is not None:
+                pc = self._get_pc() if self._get_pc is not None else 0
+                cy = self._get_cycle() if self._get_cycle is not None else 0
+                self.tracer.port9b_write(pc, cy, value, r17=r17_before)
             if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
         elif port == 0x9C:
