@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
@@ -15,6 +16,7 @@ import msx.romdb as romdb
 from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
+from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP
@@ -138,6 +140,7 @@ def make_machine(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logrom: bytes | None = None,
+    tracer: Tracer | None = None,
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -188,6 +191,7 @@ def make_machine_msx2(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
+    tracer: Tracer | None = None,
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -234,4 +238,8 @@ def make_machine_msx2(
         input=input_state, _logger=logger,
     )
     io._get_pc = lambda: cpu.registers.PC
+    if tracer is not None:
+        vdp.tracer = tracer
+        vdp._get_pc = lambda: machine.cpu.registers.PC
+        vdp._get_cycle = lambda: machine.cycle_count
     return machine
