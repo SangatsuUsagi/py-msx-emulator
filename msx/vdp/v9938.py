@@ -147,9 +147,14 @@ class V9938:
                 low = self._latch
                 self._latch = None
                 if value & 0x80:
-                    reg = value & 0x1F
+                    reg = value & 0x3F
                     if reg < _NUM_REGS:
                         self.regs[reg] = low
+                    elif 32 <= reg <= 45:
+                        self.cmd_regs[reg - 32] = low
+                    elif reg == 46:
+                        self.cmd_regs[14] = low
+                        self._dispatch_command()
                 else:
                     # Combine 14-bit address from this write with R#14 high bits.
                     self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
@@ -176,8 +181,7 @@ class V9938:
                 self.cmd_regs[ptr - 32] = value
             elif ptr == 46:
                 self.cmd_regs[14] = value
-                if not self._cmd_active:
-                    self._dispatch_command()
+                self._dispatch_command()
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
@@ -353,7 +357,7 @@ class V9938:
                     self.vram[addr] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, nx * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_HMMM:
@@ -364,7 +368,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, nx * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
             return
 
         if cmd == _CMD_YMMM:
@@ -377,7 +381,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, cols * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = max(4, (cols // 2) * ny * _CYCLES_PER_BYTE)
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer
