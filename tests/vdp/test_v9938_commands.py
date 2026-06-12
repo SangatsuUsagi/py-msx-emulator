@@ -97,14 +97,14 @@ def test_s2_r15_2_does_not_clear_status2() -> None:
 # STOP command
 # ---------------------------------------------------------------------------
 
-def test_stop_ignored_when_cmd_active() -> None:
-    # V9938 ignores CMR writes (including STOP) while CE=1
+def test_stop_cancels_active_cmd() -> None:
+    # V9938 ABSR/STOP immediately cancels any running command
     vdp = _make_vdp()
     vdp._status2 = 0x81  # simulate active command
     vdp._cmd_active = True
     _dispatch_cmd(vdp, cmd_code=0x0)
-    assert vdp._status2 & 0x01 != 0  # CE still set
-    assert vdp._cmd_active
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert not vdp._cmd_active
 
 
 def test_stop_noop_when_idle() -> None:
