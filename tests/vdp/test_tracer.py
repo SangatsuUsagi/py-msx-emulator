@@ -201,3 +201,45 @@ def test_port9b_uses_r17_lower6_bits() -> None:
     t.port9b_write(0x1000, 1, 0xAB, r17=0x42)
     lines = _lines(buf)
     assert "R#02=ABh" in lines[0]
+
+
+# ---------------------------------------------------------------------------
+# V9938 integration
+
+from msx.vdp.v9938 import V9938
+
+
+def _make_v9938_with_tracer() -> tuple[V9938, io.StringIO]:
+    buf = io.StringIO()
+    t = Tracer(enabled=True, output=buf)
+    vdp = V9938(tracer=t, _get_pc=lambda: 0x1234, _get_cycle=lambda: 9999)
+    return vdp, buf
+
+
+def test_v9938_without_tracer_no_exception() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0xAB)
+    vdp.write_port(0x99, 0x80)  # R#00 = 0xAB
+    assert vdp.regs[0] == 0xAB
+
+
+def test_v9938_with_tracer_port99_emits_vdp_reg() -> None:
+    vdp, buf = _make_v9938_with_tracer()
+    vdp.write_port(0x99, 0xAB)
+    vdp.write_port(0x99, 0x81)  # R#01 = 0xAB
+    lines = _lines(buf)
+    assert len(lines) == 1
+    assert "VDP_REG R#01=ABh" in lines[0]
+    assert "PC=1234" in lines[0]
+    assert "CY=0000009999" in lines[0]
+
+
+def test_v9938_with_tracer_port9b_pre_increment_r17() -> None:
+    vdp, buf = _make_v9938_with_tracer()
+    vdp.regs[17] = 0x22  # ptr=34 (R#34), AII=0
+    vdp.write_port(0x9B, 0xFF)
+    lines = _lines(buf)
+    assert len(lines) == 1
+    assert ";port 9Bh" in lines[0]
+    # After hook, auto-increment should have occurred
+    assert vdp.regs[17] == 0x23  # ptr incremented to 35
