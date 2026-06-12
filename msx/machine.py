@@ -33,6 +33,7 @@ class Machine:
     psg: PSG
     scc: SCC | None = field(default=None)
     input: InputState = field(default_factory=InputState)
+    cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
@@ -59,11 +60,15 @@ class Machine:
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
         if self._logger is None:
             while cycles < CYCLES_PER_FRAME:
-                cycles += cpu_step()
+                n = cpu_step()
+                cycles += n
+                self.cycle_count += n
         else:
             while cycles < CYCLES_PER_FRAME:
                 pc = self.cpu.registers.PC
-                cycles += cpu_step()
+                n = cpu_step()
+                cycles += n
+                self.cycle_count += n
                 # PC-loop hang: skip normal HALT (halted + interrupts enabled)
                 if not (self.cpu.halted and self.cpu.iff1):
                     if pc == self._last_pc:
