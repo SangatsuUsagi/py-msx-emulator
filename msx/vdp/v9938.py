@@ -83,6 +83,7 @@ class V9938:
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
@@ -122,7 +123,8 @@ class V9938:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port99_write(pc, cy, value)
+                fr = self._get_frame() if self._get_frame is not None else 0
+                self.tracer.port99_write(pc, cy, value, frame=fr)
             if self._latch is None:
                 self._latch = value
             else:
@@ -163,7 +165,8 @@ class V9938:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port9b_write(pc, cy, value, r17=r17_before)
+                fr = self._get_frame() if self._get_frame is not None else 0
+                self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=fr)
             if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
         elif port == 0x9C:

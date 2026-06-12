@@ -43,7 +43,7 @@ def test_vdp_reg_control_register_format() -> None:
     t.port99_write(0x407E, 45233, 0x81)   # second byte: reg = 0x01
     lines = _lines(buf)
     assert len(lines) == 1
-    assert lines[0] == "CY=0000045233 PC=407E VDP_REG R#01=50h"
+    assert lines[0] == "CY=0000045233 FR=000000 PC=407E VDP_REG R#01=50h"
 
 
 def test_vdp_reg_cycle_zero_padded_10_digits() -> None:
@@ -52,6 +52,29 @@ def test_vdp_reg_cycle_zero_padded_10_digits() -> None:
     t.port99_write(0x0002, 9, 0x80)  # R#00
     lines = _lines(buf)
     assert lines[0].startswith("CY=0000000009 ")
+
+
+def test_vdp_reg_fr_field_present_and_zero_padded() -> None:
+    t, buf = _make_tracer()
+    t.port99_write(0x1000, 1, 0x01)
+    t.port99_write(0x1002, 2, 0x80, frame=3)  # R#00, frame=3
+    lines = _lines(buf)
+    assert "FR=000003" in lines[0]
+
+
+def test_vdp_reg_fr_field_zero_default() -> None:
+    t, buf = _make_tracer()
+    t.port99_write(0x1000, 1, 0x01)
+    t.port99_write(0x1002, 2, 0x80)  # no frame arg → default 0
+    lines = _lines(buf)
+    assert "FR=000000" in lines[0]
+
+
+def test_port9b_fr_field() -> None:
+    t, buf = _make_tracer()
+    t.port9b_write(0x1000, 500, 0x7F, r17=0x02, frame=5)
+    lines = _lines(buf)
+    assert "FR=000005" in lines[0]
 
 
 def test_vdp_reg_pc_4_digit_uppercase_hex() -> None:
@@ -102,7 +125,7 @@ def test_vdp_reg_cmd_param_register_emitted() -> None:
     t.port99_write(0x4084, 45291, 0xA4)  # reg = 36
     lines = _lines(buf)
     assert len(lines) == 1
-    assert lines[0] == "CY=0000045291 PC=4084 VDP_REG R#36=00h"
+    assert lines[0] == "CY=0000045291 FR=000000 PC=4084 VDP_REG R#36=00h"
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +188,7 @@ def test_port9b_emits_suffix() -> None:
     t.port9b_write(0x40C1, 178432, 0x1E, r17=0x02)
     lines = _lines(buf)
     assert len(lines) == 1
-    assert lines[0] == "CY=0000178432 PC=40C1 VDP_REG R#02=1Eh  ;port 9Bh"
+    assert lines[0] == "CY=0000178432 FR=000000 PC=40C1 VDP_REG R#02=1Eh  ;port 9Bh"
 
 
 def test_port9b_emits_suffix_cycle_format() -> None:
