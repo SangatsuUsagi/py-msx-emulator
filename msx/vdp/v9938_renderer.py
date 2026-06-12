@@ -411,7 +411,7 @@ def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
         bx = y * _W
         for ox in range(_W):
             b = vdp.vram[(row_base + ox) & 0x1FFFF]
-            buf[bx + ox] = (b >> 4) & 0x0F
+            buf[bx + ox] = (b >> 4) & 0x0F  # even virtual pixel; odd (b&0xF) discarded
 
 
 # ---------------------------------------------------------------------------
