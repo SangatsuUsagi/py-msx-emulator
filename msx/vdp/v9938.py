@@ -332,57 +332,66 @@ class V9938:
             return
 
         if cmd == _CMD_LMMV:
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
             clr_px = clr & 0xF
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     self._vram_pixel_write(dx + col, dy + row, clr_px, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_LMMM:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     src_pix = self._vram_pixel_read(sx + col, sy + row)
                     self._vram_pixel_write(dx + col, dy + row, src_pix, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMV:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     addr = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[addr] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMM:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, (nx // 2) * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_YMMM:
             # Y-strip copy: SX→DX for NY rows; NX ignored (copies to screen edge)
+            actual_ny = ny if ny else 1024
             cols = 256 - max(sx, dx)
-            for row in range(ny if ny else 1024):
+            for row in range(actual_ny):
                 for col in range(cols):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, sy + row)
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = max(4, (cols // 2) * ny * _CYCLES_PER_BYTE)
+            self._cmd_remaining = (cols // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer
