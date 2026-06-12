@@ -127,7 +127,8 @@ def test_hmmv_fills_rectangle() -> None:
     assert vdp.vram[3] == 0xAB  # row 0, byte 3
     assert vdp.vram[128 + 2] == 0xAB  # row 1, byte 2
     assert vdp.vram[128 + 3] == 0xAB  # row 1, byte 3
-    assert vdp._status2 & 0x01 == 0  # CE not set (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_hmmv_does_not_touch_outside_rectangle() -> None:
@@ -148,7 +149,8 @@ def test_hmmm_copies_region() -> None:
     _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=4, dy=2, nx=2, ny=1)
     # Destination: (4//2)=2 in row 2 → vram[2*128 + 2]
     assert vdp.vram[2 * 128 + 2] == 0x55
-    assert vdp._status2 & 0x01 == 0  # CE not set (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +219,8 @@ def test_lmmv_imp_fills_pixels() -> None:
     # G4: byte 0 = pixels (0,1), byte 1 = pixels (2,3)
     assert vdp.vram[0] == 0x77
     assert vdp.vram[1] == 0x77
-    assert vdp._status2 & 0x01 == 0  # CE cleared (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_lmmv_timp_skips_zero_clr() -> None:
@@ -262,7 +265,8 @@ def test_lmmm_imp_copies_pixels() -> None:
     _dispatch_cmd(vdp, cmd_code=0x9, log=0x0, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
     # dst byte = _vram_byte_addr(4, 0) = 2
     assert vdp.vram[2] == 0x57
-    assert vdp._status2 & 0x01 == 0  # CE cleared
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_lmmm_timp_skips_zero_src_pixels() -> None:
@@ -289,7 +293,8 @@ def test_ymmm_copies_rows_from_sx_to_dx() -> None:
     # dst row 0: _vram_byte_addr(4, 0)=2, _vram_byte_addr(6, 0)=3
     assert vdp.vram[2] == 0xAB
     assert vdp.vram[3] == 0xCD
-    assert vdp._status2 & 0x01 == 0  # CE cleared
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_ymmm_uses_sy_not_dy_for_destination_row() -> None:
@@ -467,3 +472,59 @@ def test_line_log_applied_to_each_pixel() -> None:
     _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=1, ny=0, clr=0xF, log=0x3, arg=0)
     assert vdp.vram[0] >> 4 == 0x0   # 0xF XOR 0xF = 0x0
     assert vdp.vram[0] & 0xF == 0x0  # pixel (1,0) also XOR'd
+
+
+# ---------------------------------------------------------------------------
+# tick() — command timer
+# ---------------------------------------------------------------------------
+
+def test_tick_noop_when_no_command() -> None:
+    vdp = _make_vdp()
+    vdp.tick(1000)
+    assert vdp._status2 == 0
+    assert not vdp._cmd_active
+
+
+def test_tick_noop_for_lmmc() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xB, dx=0, dy=0, nx=2, ny=1)
+    assert vdp._cmd_active
+    vdp.tick(100_000)
+    assert vdp._status2 & 0x01  # CE still set
+    assert vdp._cmd_active
+
+
+def test_tick_partial_does_not_clear_ce() -> None:
+    vdp = _make_vdp()
+    # HMMV NX=128, NY=1 → duration = 128 × 1 × 8 = 1024
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=1, clr=0xFF)
+    assert vdp._status2 & 0x01  # CE set immediately
+    vdp.tick(500)
+    assert vdp._status2 & 0x01  # CE still set after partial tick
+
+
+def test_hmmv_ce_set_immediately_after_dispatch() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=4, ny=2, clr=0xAB)
+    assert vdp._status2 & 0x01  # CE=1 immediately
+    assert vdp._cmd_active
+
+
+def test_hmmv_ce_clears_after_full_tick() -> None:
+    vdp = _make_vdp()
+    # NX=128, NY=212 → duration = 128 × 212 × 8 = 217,088
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=212, clr=0x00)
+    assert vdp._status2 & 0x01
+    vdp.tick(128 * 212 * 8)
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert not vdp._cmd_active
+
+
+def test_hmmm_ce_clears_after_full_tick() -> None:
+    vdp = _make_vdp()
+    # NX=128, NY=85 → duration = 128 × 85 × 8 = 86,912
+    _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
+    assert vdp._status2 & 0x01
+    vdp.tick(128 * 85 * 8)
+    assert vdp._status2 & 0x01 == 0
+    assert not vdp._cmd_active
