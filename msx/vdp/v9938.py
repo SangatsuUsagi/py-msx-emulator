@@ -57,13 +57,13 @@ _CMD_PSET = 0x5
 _CMD_SRCH = 0x6
 _CMD_LINE = 0x7
 _CMD_LMMV = 0x8
-_CMD_LMMM = 0x9
+_CMD_LMMC = 0x9
 _CMD_LMCM = 0xA
-_CMD_LMMC = 0xB
+_CMD_LMMM = 0xB
 _CMD_HMMV = 0xC
-_CMD_HMMM = 0xD
+_CMD_HMMC = 0xD
 _CMD_YMMM = 0xE
-_CMD_HMMC = 0xF
+_CMD_HMMM = 0xF
 
 # S2 status bits
 _S2_CE = 0x01   # command executing
@@ -216,8 +216,9 @@ class V9938:
     # ------------------------------------------------------------------
 
     def _vram_byte_addr(self, x: int, y: int) -> int:
-        """G4 byte address for pixel (x, y): 256-pixel wide, 2 pixels/byte."""
-        return (y * 128 + x // 2) & 0x1FFFF
+        """G4 byte address for pixel (x, y) relative to R#2 display base."""
+        base = ((self.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+        return (base + y * 128 + x // 2) & 0x1FFFF
 
     def _vram_pixel_read(self, x: int, y: int) -> int:
         """Return 4-bit pixel at (x, y) in G4 VRAM."""
