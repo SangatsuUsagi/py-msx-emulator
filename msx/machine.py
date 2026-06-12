@@ -242,4 +242,5 @@ def make_machine_msx2(
         vdp.tracer = tracer
         vdp._get_pc = lambda: machine.cpu.registers.PC
         vdp._get_cycle = lambda: machine.cycle_count
+        vdp._get_frame = lambda: vdp._frame_count
     return machine
