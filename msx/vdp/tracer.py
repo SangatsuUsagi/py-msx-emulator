@@ -50,13 +50,14 @@ class Tracer:
     # ------------------------------------------------------------------
     # Public hooks
 
-    def port99_write(self, pc: int, cycle: int, val: int) -> None:
+    def port99_write(self, pc: int, cycle: int, val: int, frame: int = 0) -> None:
         """Hook for OUT (0x99), A — V9938 two-byte register-write protocol.
 
         Args:
             pc: Program counter at the time of the write.
             cycle: Cumulative T-state count.
             val: Byte written to port 0x99.
+            frame: VDP frame count (incremented each VBLANK).
         """
         if not self.enabled:
             return
@@ -72,10 +73,10 @@ class Tracer:
 
         if val & 0x80:
             reg = val & 0x3F
-            self._handle_reg_write(pc, cycle, reg, data, via="")
+            self._handle_reg_write(pc, cycle, frame, reg, data, via="")
         # else: VRAM address set — not a register write, ignore
 
-    def port9b_write(self, pc: int, cycle: int, val: int, r17: int) -> None:
+    def port9b_write(self, pc: int, cycle: int, val: int, r17: int, frame: int = 0) -> None:
         """Hook for OUT (0x9B), A — V9938 indirect register write.
 
         Args:
@@ -84,32 +85,36 @@ class Tracer:
             val: Byte written to port 0x9B.
             r17: Value of VDP R#17 BEFORE the auto-increment is applied.
                  Lower 6 bits select the target register.
+            frame: VDP frame count (incremented each VBLANK).
         """
         if not self.enabled:
             return
 
         val &= 0xFF
         reg = r17 & 0x3F
-        self._handle_reg_write(pc, cycle, reg, val, via=";port 9Bh")
+        self._handle_reg_write(pc, cycle, frame, reg, val, via=";port 9Bh")
 
     # ------------------------------------------------------------------
     # Internal
 
-    def _handle_reg_write(self, pc: int, cycle: int, reg: int, data: int, via: str) -> None:
+    def _handle_reg_write(
+        self, pc: int, cycle: int, frame: int, reg: int, data: int, via: str
+    ) -> None:
         suffix = f"  {via}" if via else ""
+        prefix = f"CY={cycle:010d} FR={frame:06d} PC={pc:04X}"
         if 32 <= reg <= 45:
             self._param_buf[reg] = data
-            self._emit(f"CY={cycle:010d} PC={pc:04X} VDP_REG R#{reg:02d}={data:02X}h{suffix}")
+            self._emit(f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}")
         elif reg == 46:
             params = self._fmt_params()
             name = _cmd_name(data)
             self._emit(
-                f"CY={cycle:010d} PC={pc:04X} VDP_CMD {name:<4s} ({data:02X}h)"
+                f"{prefix} VDP_CMD {name:<4s} ({data:02X}h)"
                 f" R32-45={params}{suffix}"
             )
             self._param_buf.clear()
         else:
-            self._emit(f"CY={cycle:010d} PC={pc:04X} VDP_REG R#{reg:02d}={data:02X}h{suffix}")
+            self._emit(f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}")
 
     def _fmt_params(self) -> str:
         """Format _param_buf as ['XX','XX',...] with '--' for unwritten registers."""
