@@ -375,7 +375,7 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
     base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
     for y in range(h):
-        row_base = base + y * 128
+        row_base = (base + y * 128) & 0x1FFFF
         bx = y * _W
         for x in range(0, _W, 2):
             b = vdp.vram[(row_base + x // 2) & 0x1FFFF]
@@ -391,7 +391,7 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 6: 2-bpp, 4 virtual pixels per byte; sample even pixels → 256 wide."""
     base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
     for y in range(h):
-        row_base = base + y * 128
+        row_base = (base + y * 128) & 0x1FFFF
         bx = y * _W
         for ox in range(_W):
             b = vdp.vram[(row_base + ox // 2) & 0x1FFFF]
@@ -407,7 +407,7 @@ def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 7: 4-bpp, 2 virtual pixels per byte; sample even pixels → 256 wide."""
     base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
     for y in range(h):
-        row_base = base + y * _W
+        row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W
         for ox in range(_W):
             b = vdp.vram[(row_base + ox) & 0x1FFFF]
@@ -434,7 +434,7 @@ def _render_g7(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
     base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
     for y in range(h):
-        row_base = base + y * _W
+        row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W
         for x in range(_W):
             buf[bx + x] = vdp.vram[(row_base + x) & 0x1FFFF]
