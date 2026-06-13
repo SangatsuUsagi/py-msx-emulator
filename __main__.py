@@ -70,9 +70,6 @@ def main() -> None:
                         help="Write VDP trace to FILE instead of stdout")
     parser.add_argument("--count", type=int, default=None, metavar="N",
                         help="Run exactly N CPU T-states headlessly and exit (no SDL window)")
-    parser.add_argument("--break-point", action="append", default=[], metavar="ADDR",
-                        dest="breakpoints",
-                        help="Break at address (hex e.g. 0x806A or 806A); repeatable")
     args = parser.parse_args()
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -174,18 +171,6 @@ def main() -> None:
             machine = make_machine(rom=bios, cartridge=cartridge, logger=logger,
                                    mapper=args.mapper, cartridge2=cartridge2,
                                    mapper2=args.mapper2, logrom=logrom, tracer=tracer)
-
-        if args.breakpoints:
-            bps: dict[int, tuple[int, int] | None] = {}
-            for spec in args.breakpoints:
-                parts = spec.split(",")
-                pc_addr = int(parts[0], 16)
-                mem_info = (int(parts[1], 16), int(parts[2])) if len(parts) == 3 else None
-                bps[pc_addr] = mem_info
-            machine.breakpoints = bps
-            for bp, mi in sorted(bps.items()):
-                extra = f"  mem {mi[0]:04X}h+{mi[1]}" if mi else ""
-                print(f"breakpoint: {bp:04X}h{extra}")
 
         if args.count is not None:
             # Headless run: no SDL, just run until cycle_count reaches N
