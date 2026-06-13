@@ -33,6 +33,7 @@ class Z80:
     im: int = 0
     int_pending: bool = False
     nmi_pending: bool = False
+    instruction_pc: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
 
     def reset(self) -> None:
@@ -107,6 +108,7 @@ class Z80:
             return 4
 
         pc = self.registers.PC
+        self.instruction_pc = pc
         opcode = self._fetch()
         if self._logger is not None:
             self._logger.on_step(pc, opcode)

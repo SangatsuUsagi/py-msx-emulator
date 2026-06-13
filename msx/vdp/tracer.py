@@ -4,6 +4,7 @@ Produces log lines in the canonical VDP Trace Log Format v1.0.
 See extras/vdp_trace_format.md for the full format specification.
 The OpenMSX counterpart (extras/vdp_trace.tcl) emits the same format.
 """
+
 from __future__ import annotations
 
 import sys
@@ -12,11 +13,22 @@ from typing import IO
 
 # Command code (upper 4 bits of R#46) → mnemonic
 _CMD_NAMES: dict[int, str] = {
-    0x0: "ABSR", 0x1: "ABSR", 0x2: "ABSR", 0x3: "ABSR",
-    0x4: "PSET", 0x5: "POINT",
-    0x6: "SRCH", 0x7: "LINE",
-    0x8: "LMMV", 0x9: "LMMC", 0xA: "LMCM", 0xB: "LMMM",
-    0xC: "HMMV", 0xD: "HMMC", 0xE: "HMCM", 0xF: "HMMM",
+    0x0: "ABRT",
+    0x1: "????",
+    0x2: "????",
+    0x3: "????",
+    0x4: "POINT",
+    0x5: "PSET",
+    0x6: "SRCH",
+    0x7: "LINE",
+    0x8: "LMMV",
+    0x9: "LMMM",
+    0xA: "LMCM",
+    0xB: "LMMC",
+    0xC: "HMMV",
+    0xD: "HMMM",
+    0xE: "YMMM",
+    0xF: "HMMC",
 }
 
 
@@ -108,10 +120,7 @@ class Tracer:
         elif reg == 46:
             params = self._fmt_params()
             name = _cmd_name(data)
-            self._emit(
-                f"{prefix} VDP_CMD {name:<4s} ({data:02X}h)"
-                f" R32-45={params}{suffix}"
-            )
+            self._emit(f"{prefix} VDP_CMD {name:<4s} ({data:02X}h) R32-45={params}{suffix}")
             self._param_buf.clear()
         else:
             self._emit(f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}")

@@ -4,6 +4,7 @@
 hardware command engine (full V9938 command set).
 Ports 0x98–0x9C.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ def _apply_log(src: int, dst: int, log_op: int) -> int:
         return (~src) & 0xF
     return src
 
+
 # TMS9918A-compatible initial palette, 9-bit packed as (R<<6)|(G<<3)|B.
 _TMS_PALETTE: tuple[int, ...] = (
     0b000_000_000,  # 0  transparent → black
@@ -51,23 +53,23 @@ _TMS_PALETTE: tuple[int, ...] = (
 )
 
 # Command codes in R46 upper nibble
-_CMD_STOP = 0x0
+_CMD_ABRT = 0x0
 _CMD_POINT = 0x4
 _CMD_PSET = 0x5
 _CMD_SRCH = 0x6
 _CMD_LINE = 0x7
 _CMD_LMMV = 0x8
-_CMD_LMMC = 0x9
+_CMD_LMMM = 0x9
 _CMD_LMCM = 0xA
-_CMD_LMMM = 0xB
+_CMD_LMMC = 0xB
 _CMD_HMMV = 0xC
-_CMD_HMMC = 0xD
+_CMD_HMMM = 0xD
 _CMD_YMMM = 0xE
-_CMD_HMMM = 0xF
+_CMD_HMMC = 0xF
 
 # S2 status bits
-_S2_CE = 0x01   # command executing
-_S2_TR = 0x80   # transfer ready (CPU may send next byte)
+_S2_CE = 0x01  # command executing
+_S2_TR = 0x80  # transfer ready (CPU may send next byte)
 
 _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
 
@@ -173,6 +175,10 @@ class V9938:
                 self.palette[idx] = (r << 6) | (g << 3) | b
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
+            # During HMMC/LMMC: port 0x9B doubles as command data port.
+            if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                self._cmd_data_write(value)
+                return
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
@@ -187,8 +193,8 @@ class V9938:
                 cy = self._get_cycle() if self._get_cycle is not None else 0
                 fr = self._get_frame() if self._get_frame is not None else 0
                 self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=fr)
-            if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
-                self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
+            if not (self.regs[17] & 0x80):  # AII (bit7) clear → auto-increment
+                self.regs[17] = (self.regs[17] & 0xC0) | (((self.regs[17] & 0x3F) + 1) & 0x3F)
         elif port == 0x9C:
             self._cmd_data_write(value)
 
@@ -257,10 +263,19 @@ class V9938:
         self._cmd_active = False
         self._status2 &= ~(_S2_CE | _S2_TR)
 
-        if cmd == _CMD_STOP or cmd not in (
-            _CMD_POINT, _CMD_PSET, _CMD_SRCH, _CMD_LINE,
-            _CMD_LMMV, _CMD_LMMM, _CMD_LMCM, _CMD_LMMC,
-            _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
+        if cmd == _CMD_ABRT or cmd not in (
+            _CMD_POINT,
+            _CMD_PSET,
+            _CMD_SRCH,
+            _CMD_LINE,
+            _CMD_LMMV,
+            _CMD_LMMM,
+            _CMD_LMCM,
+            _CMD_LMMC,
+            _CMD_HMMV,
+            _CMD_HMMM,
+            _CMD_YMMM,
+            _CMD_HMMC,
         ):
             return
 
@@ -287,9 +302,9 @@ class V9938:
                     break
                 x += direction
             if found:
-                self._status2 = x & 0xFF           # found X in S2
+                self._status2 = x & 0xFF  # found X in S2
             else:
-                self._status2 = 0x10               # BD flag: not found
+                self._status2 = 0x10  # BD flag: not found
             return
 
         if cmd == _CMD_LINE:
