@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
@@ -15,6 +16,7 @@ import msx.romdb as romdb
 from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
+from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP
@@ -33,6 +35,7 @@ class Machine:
     psg: PSG
     scc: SCC | None = field(default=None)
     input: InputState = field(default_factory=InputState)
+    cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
@@ -57,13 +60,22 @@ class Machine:
     def run_frame(self, skip_render: bool = False) -> bytearray:
         cycles = 0
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
+        vdp_tick = self.vdp.tick if isinstance(self.vdp, V9938) else None
         if self._logger is None:
             while cycles < CYCLES_PER_FRAME:
-                cycles += cpu_step()
+                n = cpu_step()
+                cycles += n
+                self.cycle_count += n
+                if vdp_tick:
+                    vdp_tick(n)
         else:
             while cycles < CYCLES_PER_FRAME:
                 pc = self.cpu.registers.PC
-                cycles += cpu_step()
+                n = cpu_step()
+                cycles += n
+                self.cycle_count += n
+                if vdp_tick:
+                    vdp_tick(n)
                 # PC-loop hang: skip normal HALT (halted + interrupts enabled)
                 if not (self.cpu.halted and self.cpu.iff1):
                     if pc == self._last_pc:
@@ -133,6 +145,7 @@ def make_machine(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logrom: bytes | None = None,
+    tracer: Tracer | None = None,
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -183,6 +196,7 @@ def make_machine_msx2(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
+    tracer: Tracer | None = None,
 ) -> Machine:
     resolved = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -229,4 +243,9 @@ def make_machine_msx2(
         input=input_state, _logger=logger,
     )
     io._get_pc = lambda: cpu.registers.PC
+    if tracer is not None:
+        vdp.tracer = tracer
+        vdp._get_pc = lambda: machine.cpu.instruction_pc
+        vdp._get_cycle = lambda: machine.cycle_count
+        vdp._get_frame = lambda: vdp._frame_count
     return machine

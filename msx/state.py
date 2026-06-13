@@ -60,6 +60,7 @@ class MachineSnapshot:
     sub_slot_reg: int | None = None
     cmd_regs: list[int] | None = None
     status2: int | None = None
+    cmd_remaining: int | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -168,6 +169,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         sub_slot_reg: int | None = machine.memory.sub_slot_reg
         cmd_regs: list[int] | None = list(machine.vdp.cmd_regs)
         status2: int | None = machine.vdp._status2
+        cmd_remaining: int | None = machine.vdp._cmd_remaining
     else:
         vdp_latch = machine.vdp.latch
         vdp_addr = machine.vdp.addr
@@ -178,6 +180,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         sub_slot_reg = None
         cmd_regs = None
         status2 = None
+        cmd_remaining = None
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type="msx2" if is_msx2 else "msx1",
@@ -209,6 +212,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         sub_slot_reg=sub_slot_reg,
         cmd_regs=cmd_regs,
         status2=status2,
+        cmd_remaining=cmd_remaining,
     )
 
 
@@ -263,6 +267,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             machine.vdp.cmd_regs[:] = snap.cmd_regs
         if snap.status2 is not None:
             machine.vdp._status2 = snap.status2
+        if snap.cmd_remaining is not None:
+            machine.vdp._cmd_remaining = snap.cmd_remaining
     else:
         machine.vdp.latch = snap.vdp_latch
         machine.vdp.addr = snap.vdp_addr
