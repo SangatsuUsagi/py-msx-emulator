@@ -26,6 +26,23 @@ CYCLES_PER_FRAME: int = 59_659
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
+def _on_breakpoint(cpu: Z80, read_byte: object, mem_info: tuple[int, int] | None) -> None:
+    r = cpu.registers
+    print(f"[BREAK] PC={r.PC:04X}h  AF={r.A:02X}{r.F:02X}h  BC={r.BC:04X}h  DE={r.DE:04X}h  HL={r.HL:04X}h",
+          file=sys.stderr)
+    print(f"        IX={r.IX:04X}h  IY={r.IY:04X}h  SP={r.SP:04X}h  I={r.I:02X}h  R={r.R:02X}h",
+          file=sys.stderr)
+    print(f"        AF'={r.A_:02X}{r.F_:02X}h BC'={r.BC_:04X}h DE'={r.DE_:04X}h HL'={r.HL_:04X}h",
+          file=sys.stderr)
+    if mem_info is not None:
+        addr, length = mem_info
+        rb = read_byte  # type: ignore[assignment]
+        raw = bytes(rb(addr + i) for i in range(length))
+        hex_part = " ".join(f"{b:02X}" for b in raw)
+        asc_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in raw)
+        print(f"[MEM]   {addr:04X}h: {hex_part}  {asc_part}", file=sys.stderr)
+
+
 @dataclass
 class Machine:
     cpu: Z80
@@ -36,6 +53,7 @@ class Machine:
     scc: SCC | None = field(default=None)
     input: InputState = field(default_factory=InputState)
     cycle_count: int = 0
+    breakpoints: dict[int, tuple[int, int] | None] = field(default_factory=dict, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
@@ -61,16 +79,33 @@ class Machine:
         cycles = 0
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
         vdp_tick = self.vdp.tick if isinstance(self.vdp, V9938) else None
-        if self._logger is None:
+        breakpoints = self.breakpoints
+        if self._logger is None and not breakpoints:
             while cycles < CYCLES_PER_FRAME:
                 n = cpu_step()
                 cycles += n
                 self.cycle_count += n
                 if vdp_tick:
                     vdp_tick(n)
-        else:
+        elif self._logger is None:
+            rb = self.memory.read
             while cycles < CYCLES_PER_FRAME:
                 pc = self.cpu.registers.PC
+                if pc in breakpoints:
+                    _on_breakpoint(self.cpu, rb, breakpoints[pc])
+                    input("  [Enter to continue] ")
+                n = cpu_step()
+                cycles += n
+                self.cycle_count += n
+                if vdp_tick:
+                    vdp_tick(n)
+        else:
+            rb = self.memory.read
+            while cycles < CYCLES_PER_FRAME:
+                pc = self.cpu.registers.PC
+                if pc in breakpoints:
+                    _on_breakpoint(self.cpu, rb, breakpoints[pc])
+                    input("  [Enter to continue] ")
                 n = cpu_step()
                 cycles += n
                 self.cycle_count += n
@@ -245,7 +280,7 @@ def make_machine_msx2(
     io._get_pc = lambda: cpu.registers.PC
     if tracer is not None:
         vdp.tracer = tracer
-        vdp._get_pc = lambda: machine.cpu.registers.PC
+        vdp._get_pc = lambda: machine.cpu.instruction_pc
         vdp._get_cycle = lambda: machine.cycle_count
         vdp._get_frame = lambda: vdp._frame_count
     return machine
