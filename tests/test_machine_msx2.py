@@ -102,3 +102,24 @@ def test_msx1_make_machine_still_works() -> None:
 def test_msx1_input_is_input_state() -> None:
     machine = make_machine(_DUMMY_ROM)
     assert isinstance(machine.input, InputState)
+
+
+# ---------------------------------------------------------------------------
+# run_frame: vdp.tick() called each CPU step
+# ---------------------------------------------------------------------------
+
+def test_run_frame_clears_ce_for_small_hmmv() -> None:
+    """After run_frame, a small HMMV (NX=2, NY=1, duration=16) has CE cleared."""
+    from msx.vdp.v9938 import V9938
+    from tests.vdp.test_v9938_commands import _dispatch_cmd
+
+    machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_EXTROM)
+    vdp = machine.vdp
+    assert isinstance(vdp, V9938)
+
+    # Dispatch HMMV (NX=2, NY=1 → duration = 2 × 1 × 8 = 16 T-states)
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=2, ny=1, clr=0xFF)
+    assert vdp._status2 & 0x01  # CE=1 immediately after dispatch
+
+    machine.run_frame()
+    assert vdp._status2 & 0x01 == 0  # CE cleared within one frame

@@ -30,7 +30,7 @@ def _dispatch_cmd(vdp: V9938, cmd_code: int, log: int = 0,
                   dx: int = 0, dy: int = 0, nx: int = 1, ny: int = 1,
                   sx: int = 0, sy: int = 0, clr: int = 0, arg: int = 0) -> None:
     """Set up and dispatch a V9938 command."""
-    _write_reg(vdp, 17, 0x80 | 32)  # AII=1, ptr=R32 (SX low)
+    _write_reg(vdp, 17, 32)  # AII=0 (auto-increment), ptr=R32 (SX low)
     for val in [sx & 0xFF, 0, sy & 0xFF, (sy >> 8) & 0x03,
                 dx & 0xFF, 0, dy & 0xFF, (dy >> 8) & 0x03,
                 nx & 0xFF, 0, ny & 0xFF, 0, clr, arg & 0xFF]:
@@ -97,14 +97,14 @@ def test_s2_r15_2_does_not_clear_status2() -> None:
 # STOP command
 # ---------------------------------------------------------------------------
 
-def test_stop_ignored_when_cmd_active() -> None:
-    # V9938 ignores CMR writes (including STOP) while CE=1
+def test_stop_cancels_active_cmd() -> None:
+    # V9938 ABSR/STOP immediately cancels any running command
     vdp = _make_vdp()
     vdp._status2 = 0x81  # simulate active command
     vdp._cmd_active = True
     _dispatch_cmd(vdp, cmd_code=0x0)
-    assert vdp._status2 & 0x01 != 0  # CE still set
-    assert vdp._cmd_active
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert not vdp._cmd_active
 
 
 def test_stop_noop_when_idle() -> None:
@@ -127,7 +127,8 @@ def test_hmmv_fills_rectangle() -> None:
     assert vdp.vram[3] == 0xAB  # row 0, byte 3
     assert vdp.vram[128 + 2] == 0xAB  # row 1, byte 2
     assert vdp.vram[128 + 3] == 0xAB  # row 1, byte 3
-    assert vdp._status2 & 0x01 == 0  # CE not set (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_hmmv_does_not_touch_outside_rectangle() -> None:
@@ -148,7 +149,8 @@ def test_hmmm_copies_region() -> None:
     _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=4, dy=2, nx=2, ny=1)
     # Destination: (4//2)=2 in row 2 → vram[2*128 + 2]
     assert vdp.vram[2 * 128 + 2] == 0x55
-    assert vdp._status2 & 0x01 == 0  # CE not set (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +189,33 @@ def test_hmmc_port_9c_write_when_inactive_ignored() -> None:
     assert vdp.vram[0] == 0x00  # unchanged
 
 
+def test_hmmc_transfers_bytes_via_port_9b() -> None:
+    # V9938: port 0x9B doubles as command data port during HMMC/LMMC.
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
+    vdp.write_port(0x9B, 0xAB)
+    vdp.write_port(0x9B, 0xCD)
+    assert vdp.vram[0] == 0xAB
+    assert vdp.vram[1] == 0xCD
+
+
+def test_hmmc_port_9b_does_not_write_register_when_active() -> None:
+    # Port 0x9B must NOT update cmd_regs while HMMC is active.
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
+    vdp.regs[17] = 0x20  # ptr → R#32
+    before = vdp.cmd_regs[0]
+    vdp.write_port(0x9B, 0xFF)  # must route to HMMC, not R#32
+    assert vdp.cmd_regs[0] == before
+
+
+def test_lmmc_transfers_bytes_via_port_9b() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xB, log=0x0, dx=0, dy=0, nx=2, ny=1)
+    vdp.write_port(0x9B, 0xAB)
+    assert vdp.vram[0] == 0xAB
+
+
 # ---------------------------------------------------------------------------
 # LMMC — TIMP (transparent)
 # ---------------------------------------------------------------------------
@@ -217,7 +246,8 @@ def test_lmmv_imp_fills_pixels() -> None:
     # G4: byte 0 = pixels (0,1), byte 1 = pixels (2,3)
     assert vdp.vram[0] == 0x77
     assert vdp.vram[1] == 0x77
-    assert vdp._status2 & 0x01 == 0  # CE cleared (synchronous)
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_lmmv_timp_skips_zero_clr() -> None:
@@ -262,7 +292,8 @@ def test_lmmm_imp_copies_pixels() -> None:
     _dispatch_cmd(vdp, cmd_code=0x9, log=0x0, sx=0, sy=0, dx=4, dy=0, nx=2, ny=1)
     # dst byte = _vram_byte_addr(4, 0) = 2
     assert vdp.vram[2] == 0x57
-    assert vdp._status2 & 0x01 == 0  # CE cleared
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_lmmm_timp_skips_zero_src_pixels() -> None:
@@ -289,7 +320,8 @@ def test_ymmm_copies_rows_from_sx_to_dx() -> None:
     # dst row 0: _vram_byte_addr(4, 0)=2, _vram_byte_addr(6, 0)=3
     assert vdp.vram[2] == 0xAB
     assert vdp.vram[3] == 0xCD
-    assert vdp._status2 & 0x01 == 0  # CE cleared
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
 def test_ymmm_uses_sy_not_dy_for_destination_row() -> None:
@@ -467,3 +499,59 @@ def test_line_log_applied_to_each_pixel() -> None:
     _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=1, ny=0, clr=0xF, log=0x3, arg=0)
     assert vdp.vram[0] >> 4 == 0x0   # 0xF XOR 0xF = 0x0
     assert vdp.vram[0] & 0xF == 0x0  # pixel (1,0) also XOR'd
+
+
+# ---------------------------------------------------------------------------
+# tick() — command timer
+# ---------------------------------------------------------------------------
+
+def test_tick_noop_when_no_command() -> None:
+    vdp = _make_vdp()
+    vdp.tick(1000)
+    assert vdp._status2 == 0
+    assert not vdp._cmd_active
+
+
+def test_tick_noop_for_lmmc() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xB, dx=0, dy=0, nx=2, ny=1)
+    assert vdp._cmd_active
+    vdp.tick(100_000)
+    assert vdp._status2 & 0x01  # CE still set
+    assert vdp._cmd_active
+
+
+def test_tick_partial_does_not_clear_ce() -> None:
+    vdp = _make_vdp()
+    # HMMV NX=128, NY=1 → duration = 128 × 1 × 8 = 1024
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=1, clr=0xFF)
+    assert vdp._status2 & 0x01  # CE set immediately
+    vdp.tick(500)
+    assert vdp._status2 & 0x01  # CE still set after partial tick
+
+
+def test_hmmv_ce_set_immediately_after_dispatch() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=4, ny=2, clr=0xAB)
+    assert vdp._status2 & 0x01  # CE=1 immediately
+    assert vdp._cmd_active
+
+
+def test_hmmv_ce_clears_after_full_tick() -> None:
+    vdp = _make_vdp()
+    # NX=128, NY=212 → duration = 128 × 212 × 8 = 217,088
+    _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=212, clr=0x00)
+    assert vdp._status2 & 0x01
+    vdp.tick(128 * 212 * 8)
+    assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert not vdp._cmd_active
+
+
+def test_hmmm_ce_clears_after_full_tick() -> None:
+    vdp = _make_vdp()
+    # NX=128, NY=85 → duration = 128 × 85 × 8 = 86,912
+    _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
+    assert vdp._status2 & 0x01
+    vdp.tick(128 * 85 * 8)
+    assert vdp._status2 & 0x01 == 0
+    assert not vdp._cmd_active

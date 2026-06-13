@@ -4,10 +4,14 @@
 hardware command engine (full V9938 command set).
 Ports 0x98–0x9C.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from msx.vdp.tracer import Tracer
 
 _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
@@ -26,6 +30,7 @@ def _apply_log(src: int, dst: int, log_op: int) -> int:
     if log_op == 4:
         return (~src) & 0xF
     return src
+
 
 # TMS9918A-compatible initial palette, 9-bit packed as (R<<6)|(G<<3)|B.
 _TMS_PALETTE: tuple[int, ...] = (
@@ -48,7 +53,7 @@ _TMS_PALETTE: tuple[int, ...] = (
 )
 
 # Command codes in R46 upper nibble
-_CMD_STOP = 0x0
+_CMD_ABRT = 0x0
 _CMD_POINT = 0x4
 _CMD_PSET = 0x5
 _CMD_SRCH = 0x6
@@ -63,8 +68,10 @@ _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
 # S2 status bits
-_S2_CE = 0x01   # command executing
-_S2_TR = 0x80   # transfer ready (CPU may send next byte)
+_S2_CE = 0x01  # command executing
+_S2_TR = 0x80  # transfer ready (CPU may send next byte)
+
+_CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
 
 
 @dataclass
@@ -77,10 +84,15 @@ class V9938:
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_TMS_PALETTE))
     on_interrupt: Callable[[], None] | None = None
+    tracer: Tracer | None = field(default=None, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
     _cmd_active: bool = field(default=False, init=False, repr=False)
+    _cmd_remaining: int = field(default=0, init=False, repr=False)
     _cmd_code: int = field(default=0, init=False, repr=False)
     _cmd_dx: int = field(default=0, init=False, repr=False)
     _cmd_dy: int = field(default=0, init=False, repr=False)
@@ -104,6 +116,19 @@ class V9938:
         return 212 if (self.regs[9] & 0x80) else 192
 
     # ------------------------------------------------------------------
+    # Command timer
+    # ------------------------------------------------------------------
+
+    def tick(self, cycles: int) -> None:
+        """Advance VDP command timer. Clears CE when _cmd_remaining reaches 0."""
+        if self._cmd_remaining <= 0:
+            return
+        self._cmd_remaining -= cycles
+        if self._cmd_remaining <= 0:
+            self._cmd_active = False
+            self._status2 &= ~(_S2_CE | _S2_TR)
+
+    # ------------------------------------------------------------------
     # Port I/O
     # ------------------------------------------------------------------
 
@@ -113,15 +138,25 @@ class V9938:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
         elif port == 0x99:
+            if self.tracer is not None:
+                pc = self._get_pc() if self._get_pc is not None else 0
+                cy = self._get_cycle() if self._get_cycle is not None else 0
+                fr = self._get_frame() if self._get_frame is not None else 0
+                self.tracer.port99_write(pc, cy, value, frame=fr)
             if self._latch is None:
                 self._latch = value
             else:
                 low = self._latch
                 self._latch = None
                 if value & 0x80:
-                    reg = value & 0x1F
+                    reg = value & 0x3F
                     if reg < _NUM_REGS:
                         self.regs[reg] = low
+                    elif 32 <= reg <= 45:
+                        self.cmd_regs[reg - 32] = low
+                    elif reg == 46:
+                        self.cmd_regs[14] = low
+                        self._dispatch_command()
                 else:
                     # Combine 14-bit address from this write with R#14 high bits.
                     self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
@@ -140,17 +175,26 @@ class V9938:
                 self.palette[idx] = (r << 6) | (g << 3) | b
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
+            # During HMMC/LMMC: port 0x9B doubles as command data port.
+            if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                self._cmd_data_write(value)
+                return
             ptr = self.regs[17] & 0x3F
+            r17_before = self.regs[17]
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
             elif ptr == 46:
                 self.cmd_regs[14] = value
-                if not self._cmd_active:
-                    self._dispatch_command()
-            if not (self.regs[17] & 0x40):  # AII bit clear → auto-increment
-                self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
+                self._dispatch_command()
+            if self.tracer is not None:
+                pc = self._get_pc() if self._get_pc is not None else 0
+                cy = self._get_cycle() if self._get_cycle is not None else 0
+                fr = self._get_frame() if self._get_frame is not None else 0
+                self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=fr)
+            if not (self.regs[17] & 0x80):  # AII (bit7) clear → auto-increment
+                self.regs[17] = (self.regs[17] & 0xC0) | (((self.regs[17] & 0x3F) + 1) & 0x3F)
         elif port == 0x9C:
             self._cmd_data_write(value)
 
@@ -178,8 +222,9 @@ class V9938:
     # ------------------------------------------------------------------
 
     def _vram_byte_addr(self, x: int, y: int) -> int:
-        """G4 byte address for pixel (x, y): 256-pixel wide, 2 pixels/byte."""
-        return (y * 128 + x // 2) & 0x1FFFF
+        """G4 byte address for pixel (x, y) relative to R#2 display base."""
+        base = ((self.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+        return (base + y * 128 + x // 2) & 0x1FFFF
 
     def _vram_pixel_read(self, x: int, y: int) -> int:
         """Return 4-bit pixel at (x, y) in G4 VRAM."""
@@ -218,10 +263,19 @@ class V9938:
         self._cmd_active = False
         self._status2 &= ~(_S2_CE | _S2_TR)
 
-        if cmd == _CMD_STOP or cmd not in (
-            _CMD_POINT, _CMD_PSET, _CMD_SRCH, _CMD_LINE,
-            _CMD_LMMV, _CMD_LMMM, _CMD_LMCM, _CMD_LMMC,
-            _CMD_HMMV, _CMD_HMMM, _CMD_YMMM, _CMD_HMMC,
+        if cmd == _CMD_ABRT or cmd not in (
+            _CMD_POINT,
+            _CMD_PSET,
+            _CMD_SRCH,
+            _CMD_LINE,
+            _CMD_LMMV,
+            _CMD_LMMM,
+            _CMD_LMCM,
+            _CMD_LMMC,
+            _CMD_HMMV,
+            _CMD_HMMM,
+            _CMD_YMMM,
+            _CMD_HMMC,
         ):
             return
 
@@ -248,9 +302,9 @@ class V9938:
                     break
                 x += direction
             if found:
-                self._status2 = x & 0xFF           # found X in S2
+                self._status2 = x & 0xFF  # found X in S2
             else:
-                self._status2 = 0x10               # BD flag: not found
+                self._status2 = 0x10  # BD flag: not found
             return
 
         if cmd == _CMD_LINE:
@@ -293,42 +347,66 @@ class V9938:
             return
 
         if cmd == _CMD_LMMV:
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
             clr_px = clr & 0xF
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     self._vram_pixel_write(dx + col, dy + row, clr_px, log)
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_LMMM:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     src_pix = self._vram_pixel_read(sx + col, sy + row)
                     self._vram_pixel_write(dx + col, dy + row, src_pix, log)
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMV:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     addr = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[addr] = clr
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMM:
-            for row in range(ny if ny else 1024):
-                for col in range(nx if nx else 512):
+            actual_nx = nx if nx else 512
+            actual_ny = ny if ny else 1024
+            for row in range(actual_ny):
+                for col in range(actual_nx):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, dy + row)
                     self.vram[dst] = self.vram[src]
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_YMMM:
             # Y-strip copy: SX→DX for NY rows; NX ignored (copies to screen edge)
+            actual_ny = ny if ny else 1024
             cols = 256 - max(sx, dx)
-            for row in range(ny if ny else 1024):
+            for row in range(actual_ny):
                 for col in range(cols):
                     src = self._vram_byte_addr(sx + col, sy + row)
                     dst = self._vram_byte_addr(dx + col, sy + row)
                     self.vram[dst] = self.vram[src]
+            self._cmd_active = True
+            self._status2 |= _S2_CE
+            self._cmd_remaining = (cols // 2) * actual_ny * _CYCLES_PER_BYTE
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer

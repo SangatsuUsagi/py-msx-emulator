@@ -11,15 +11,15 @@ _DEFAULT_MSX2_BIOS = Path("roms/cbios_main_msx2.rom")
 _DEFAULT_MSX2_EXT  = Path("roms/cbios_sub.rom")
 
 # Pairs each known C-BIOS main ROM filename with its companion logo ROM.
-# MSX2 logo ROMs are intentionally absent: cbios_logo_msx2.rom uses V9938
-# hardware commands (LMMC/HMMM) which are not yet emulated. Loading the MSX2
-# logo ROM causes its OTIR init block to wrap R17 and corrupt R0=0x06 back to
-# 0x00, leaving the display blank. Re-enable once V9938 commands are implemented.
 _LOGO_ROM_MAP: dict[str, str] = {
     "cbios_main_msx1.rom":    "cbios_logo_msx1.rom",
     "cbios_main_msx1_jp.rom": "cbios_logo_msx1.rom",
     "cbios_main_msx1_eu.rom": "cbios_logo_msx1.rom",
     "cbios_main_msx1_br.rom": "cbios_logo_msx1.rom",
+    "cbios_main_msx2.rom":    "cbios_logo_msx2.rom",
+    "cbios_main_msx2_jp.rom": "cbios_logo_msx2.rom",
+    "cbios_main_msx2_eu.rom": "cbios_logo_msx2.rom",
+    "cbios_main_msx2_br.rom": "cbios_logo_msx2.rom",
 }
 
 
@@ -64,6 +64,12 @@ def main() -> None:
                         help="Force MSX2 mode (auto-detected from ROM DB when cartridge known)")
     parser.add_argument("--extrom", metavar="EXTROM_PATH", default=None,
                         help="Extension BIOS ROM path (auto-selected for MSX2; overrides default)")
+    parser.add_argument("--vdp-trace", action="store_true", dest="vdp_trace",
+                        help="Enable VDP register write tracing (VDP Trace Log Format)")
+    parser.add_argument("--vdp-trace-out", metavar="FILE", dest="vdp_trace_out", default=None,
+                        help="Write VDP trace to FILE instead of stdout")
+    parser.add_argument("--count", type=int, default=None, metavar="N",
+                        help="Run exactly N CPU T-states headlessly and exit (no SDL window)")
     args = parser.parse_args()
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -131,14 +137,26 @@ def main() -> None:
     if is_msx2:
         print(f"ext     : {extrom_path}")
     print(f"mapper  : {display_mapper}")
+    if args.vdp_trace:
+        print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
+    if args.count is not None:
+        print(f"count   : {args.count} T-states (headless)")
 
     # --- Load ROM bytes ---
     bios = bios_path.read_bytes()
     extrom: bytes | None = extrom_path.read_bytes() if extrom_path else None
 
-    from frontend.sdl2_frontend import run
     from msx.debug.logger import DebugLogger
     from msx.machine import make_machine, make_machine_msx2
+    from msx.vdp.tracer import Tracer
+
+    # --- Build tracer ---
+    tracer: Tracer | None = None
+    _trace_file = None
+    if args.vdp_trace:
+        if args.vdp_trace_out:
+            _trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
+        tracer = Tracer(enabled=True, output=_trace_file if _trace_file else sys.stdout)
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
@@ -147,16 +165,26 @@ def main() -> None:
             machine = make_machine_msx2(rom=bios, extrom=extrom,  # type: ignore[arg-type]
                                         logrom=logrom,
                                         cartridge=cartridge, logger=logger, mapper=args.mapper,
-                                        cartridge2=cartridge2, mapper2=args.mapper2)
+                                        cartridge2=cartridge2, mapper2=args.mapper2,
+                                        tracer=tracer)
         else:
             machine = make_machine(rom=bios, cartridge=cartridge, logger=logger,
                                    mapper=args.mapper, cartridge2=cartridge2,
-                                   mapper2=args.mapper2, logrom=logrom)
-        run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
-            frame_skip=args.frame_skip)
+                                   mapper2=args.mapper2, logrom=logrom, tracer=tracer)
+
+        if args.count is not None:
+            # Headless run: no SDL, just run until cycle_count reaches N
+            while machine.cycle_count < args.count:
+                machine.run_frame()
+        else:
+            from frontend.sdl2_frontend import run
+            run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
+                frame_skip=args.frame_skip)
     finally:
         if logger is not None:
             logger.close()
+        if _trace_file is not None:
+            _trace_file.close()
 
 
 if __name__ == "__main__":

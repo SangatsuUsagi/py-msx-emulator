@@ -216,6 +216,21 @@ def test_msx1_cmd_regs_none_in_snapshot(saves_dir):
         snap = pickle.load(f)
     assert snap.cmd_regs is None
     assert snap.status2 is None
+    assert snap.cmd_remaining is None
+
+
+def test_msx2_roundtrip_cmd_remaining(saves_dir):
+    machine = make_machine_msx2(_ROM, _ROM)
+    machine.vdp._cmd_remaining = 1000
+    machine.vdp._status2 = 0x01  # CE=1
+
+    save_state(machine, _RGB_MSX2, "test")
+    machine.vdp._cmd_remaining = 0
+    machine.vdp._status2 = 0
+    load_state(machine)
+
+    assert machine.vdp._cmd_remaining == 1000
+    assert machine.vdp._status2 & 0x01
 
 
 # ---------------------------------------------------------------------------
