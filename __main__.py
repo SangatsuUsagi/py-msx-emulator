@@ -70,6 +70,9 @@ def main() -> None:
                         help="Write VDP trace to FILE instead of stdout")
     parser.add_argument("--count", type=int, default=None, metavar="N",
                         help="Run exactly N CPU T-states headlessly and exit (no SDL window)")
+    parser.add_argument("--break-point", metavar="ADDRS", default=None,
+                        dest="break_point",
+                        help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
     args = parser.parse_args()
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -146,6 +149,23 @@ def main() -> None:
     bios = bios_path.read_bytes()
     extrom: bytes | None = extrom_path.read_bytes() if extrom_path else None
 
+    # --- Parse --break-point ---
+    breakpoint_addrs: list[int] = []
+    if args.break_point is not None:
+        for tok in args.break_point.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                breakpoint_addrs.append(int(tok, 16) & 0xFFFF)
+            except ValueError:
+                print(f"error: invalid breakpoint address: {tok!r} (expected hex)", file=sys.stderr)
+                sys.exit(1)
+        if len(breakpoint_addrs) > 4:
+            print(f"warning: more than 4 breakpoints given; only first 4 will be used",
+                  file=sys.stderr)
+            breakpoint_addrs = breakpoint_addrs[:4]
+
     from msx.debug.logger import DebugLogger
     from msx.machine import make_machine, make_machine_msx2
     from msx.vdp.tracer import Tracer
@@ -171,6 +191,15 @@ def main() -> None:
             machine = make_machine(rom=bios, cartridge=cartridge, logger=logger,
                                    mapper=args.mapper, cartridge2=cartridge2,
                                    mapper2=args.mapper2, logrom=logrom, tracer=tracer)
+
+        # MSX2-only: attach debugger when breakpoints are requested.
+        # TMS9918A support deferred to a separate proposal.
+        if is_msx2 and breakpoint_addrs:
+            from msx.debugger.prompt import Debugger
+            dbg = Debugger(machine)
+            machine._debugger = dbg
+            machine.set_breakpoints(breakpoint_addrs)
+            print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
 
         if args.count is not None:
             # Headless run: no SDL, just run until cycle_count reaches N
