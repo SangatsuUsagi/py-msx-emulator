@@ -153,6 +153,10 @@ def run(
                         print(f"load failed: {exc}", file=sys.stderr)
                 elif event.key.keysym.sym == sdl2.SDLK_F10:
                     _save_screenshot(rgb_buf, h)
+                elif (event.key.keysym.sym == sdl2.SDLK_c
+                      and (event.key.keysym.mod & sdl2.KMOD_CTRL)
+                      and machine._debugger is not None):
+                    machine._debugger.enter()
                 else:
                     machine.input.key_down(event.key.keysym.sym)
             elif event.type == sdl2.SDL_KEYUP:
