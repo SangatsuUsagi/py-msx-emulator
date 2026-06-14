@@ -121,7 +121,7 @@ class Debugger:
         if not isinstance(vdp, V9938):
             print("vdp: V9938 not active (MSX2 only)")
             return
-        print(f"  S#0={vdp.status:02X}  S#2={vdp._status2:02X}")
+        _print_vdp_fancy(vdp)
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
@@ -215,3 +215,117 @@ class Debugger:
         self._machine.step()
         r = self._machine.cpu.registers
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
+
+
+# ---------------------------------------------------------------------------
+# VDP fancy display helpers (module-level, no instance state needed)
+# ---------------------------------------------------------------------------
+
+_CMD_NAMES: dict[int, str] = {
+    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH",
+    0x7: "LINE", 0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM",
+    0xB: "LMMC", 0xC: "HMMV", 0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
+}
+_LOG_OPS: dict[int, str] = {
+    0: "IMP", 1: "AND", 2: "OR", 3: "XOR", 4: "NOT",
+}
+
+
+def _decode_screen_mode(r0: int, r1: int) -> str:
+    m1 = (r1 >> 4) & 1
+    m2 = (r1 >> 3) & 1
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    modes: dict[tuple[int, ...], str] = {
+        (0, 0, 0, 0, 0): "SCREEN1 (TEXT1/32col)",
+        (1, 0, 0, 0, 0): "SCREEN0 (TEXT2/80col)",
+        (0, 0, 1, 0, 0): "SCREEN2 (GRAPHIC2)",
+        (0, 1, 0, 0, 0): "SCREEN3 (MULTICOLOR)",
+        (0, 0, 0, 1, 0): "SCREEN1 (GRAPHIC1)",
+        (0, 0, 0, 0, 1): "SCREEN4 (GRAPHIC3)",
+        (0, 0, 1, 0, 1): "SCREEN5 (GRAPHIC4/512)",
+        (0, 1, 0, 0, 1): "SCREEN6 (GRAPHIC5/512)",
+        (0, 1, 1, 0, 1): "SCREEN7 (GRAPHIC6/512)",
+        (1, 0, 0, 0, 1): "SCREEN8 (GRAPHIC7/256)",
+    }
+    return modes.get((m1, m2, m3, m4, m5), f"UNKNOWN (M={m1}{m2}{m3}{m4}{m5})")
+
+
+def _decode_cmr(cmr: int) -> tuple[str, str]:
+    cmd_code = (cmr >> 4) & 0xF
+    log_code = cmr & 0x07
+    transparent = bool(cmr & 0x08)
+    cmd = _CMD_NAMES.get(cmd_code, f"CMD{cmd_code:X}")
+    log = _LOG_OPS.get(log_code, f"LOG{log_code}")
+    if transparent:
+        log += "/T"
+    return cmd, log
+
+
+def _print_vdp_fancy(vdp: object) -> None:
+    from msx.vdp.v9938 import V9938
+    assert isinstance(vdp, V9938)
+    r = vdp.regs          # R#0-R#27
+    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
+    s0 = vdp.status
+    s2 = vdp._status2
+
+    # --- Screen mode ---
+    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
+
+    # --- VRAM layout ---
+    name_base    = (r[2]  & 0x7F) << 10
+    color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
+    pattern_base = (r[4]  & 0x3F) << 11
+    sprite_attr  = ((r[11] & 0x03) << 15) | ((r[5]  & 0xFF) << 7)
+    sprite_pat   = (r[6]  & 0x3F) << 11
+    print(
+        f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"
+        f"  Pattern={pattern_base:05X}  SprAttr={sprite_attr:05X}  SprPat={sprite_pat:05X}"
+    )
+
+    # --- Display control ---
+    disp    = "ON " if r[1] & 0x40 else "OFF"
+    sprites = "OFF" if r[8] & 0x02 else "ON "
+    height  = 212 if r[9] & 0x80 else 192
+    timing  = "PAL " if r[9] & 0x02 else "NTSC"
+    ilace   = " IL" if r[9] & 0x08 else "   "
+    spr_sz  = "16x16" if r[1] & 0x02 else " 8x8 "
+    spr_mag = "x2" if r[1] & 0x01 else "x1"
+    fg      = (r[7] >> 4) & 0xF
+    bg      = r[7] & 0xF
+    ie0     = "IE0" if r[1] & 0x20 else "   "
+    ie1     = "IE1" if r[0] & 0x10 else "   "
+    print(
+        f"  Disp   : EN={disp}  SPR={sprites}  {height}L  {timing}{ilace}"
+        f"  Spr={spr_sz}/mag={spr_mag}  FG={fg:X} BG={bg:X}  {ie0} {ie1}"
+    )
+
+    # --- VDP command state ---
+    sx  = c[0]  | (c[1]  & 0x01) << 8
+    sy  = c[2]  | (c[3]  & 0x03) << 8
+    dx  = c[4]  | (c[5]  & 0x01) << 8
+    dy  = c[6]  | (c[7]  & 0x03) << 8
+    nx  = c[8]  | (c[9]  & 0x01) << 8
+    ny  = c[10] | (c[11] & 0x03) << 8
+    clr = c[12]
+    arg = c[13]
+    cmr = c[14]
+    cmd_name, log_op = _decode_cmr(cmr)
+    busy = "BUSY" if s2 & 0x01 else "IDLE"
+    dix  = "←" if arg & 0x04 else "→"
+    diy  = "↑" if arg & 0x08 else "↓"
+    print(
+        f"  CMD    : {cmd_name}  {log_op}  [{busy}]"
+        f"  SRC=({sx},{sy})  DST=({dx},{dy})  SIZE=({nx},{ny})"
+        f"  CLR={clr:02X}  DIR={dix}{diy}"
+    )
+
+    # --- Status registers ---
+    tr  = "TR" if s2 & 0x80 else "  "
+    ce  = "CE" if s2 & 0x01 else "  "
+    vf  = "F"  if s0 & 0x80 else " "
+    sp  = f"5S={s0 & 0x40 and 1 or 0}"
+    col = f"C={s0 & 0x20 and 1 or 0}"
+    print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
