@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: reg cpu | reg vdp | vdp | dump ADDR [SIZE] | "
-    "break add/remove/list ADDR | disasm [ADDR] | cont | quit"
+    "break add/remove/list ADDR | disasm [ADDR] | step | cont | quit"
 )
 
 
@@ -67,6 +67,8 @@ class Debugger:
                 self._cmd_break(args)
             elif cmd == "disasm":
                 self._cmd_disasm(args)
+            elif cmd in ("step", "s"):
+                self._cmd_step()
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -208,3 +210,8 @@ class Debugger:
             raw_bytes = " ".join(f"{read((addr + i) & 0xFFFF):02X}" for i in range(size))
             print(f"  {addr:04X}: {raw_bytes:<12}  {mnem}")
             addr = (addr + size) & 0xFFFF
+
+    def _cmd_step(self) -> None:
+        self._machine.step()
+        r = self._machine.cpu.registers
+        print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
