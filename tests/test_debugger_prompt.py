@@ -247,6 +247,46 @@ class TestDisasm:
 
 
 # ---------------------------------------------------------------------------
+# step
+# ---------------------------------------------------------------------------
+
+class TestStep:
+    def test_step_calls_machine_step(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        dbg._cmd_step()
+        m.step.assert_called_once()
+
+    def test_step_prints_pc(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        dbg._cmd_step()
+        out = capsys.readouterr().out
+        assert "PC=" in out
+
+    def test_step_alias_s_in_repl(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        inputs = iter(["s", "cont"])
+        with patch("builtins.input", side_effect=inputs):
+            dbg.enter()
+        m.step.assert_called_once()
+
+    def test_step_keeps_repl_active(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        # step then cont — if REPL stays active, cont is reached
+        inputs = iter(["step", "cont"])
+        with patch("builtins.input", side_effect=inputs):
+            dbg.enter()  # should return normally (not raise StopIteration)
+        m.step.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # unknown command
 # ---------------------------------------------------------------------------
 
