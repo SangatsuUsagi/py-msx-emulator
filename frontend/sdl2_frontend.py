@@ -132,104 +132,111 @@ def run(
     _skip_counter: int = 0
 
     while running:
-        # Process events
-        while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
-            if event.type == sdl2.SDL_QUIT:
-                running = False
-            elif event.type == sdl2.SDL_KEYDOWN:
-                if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+        try:
+            # Process events
+            while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
+                if event.type == sdl2.SDL_QUIT:
                     running = False
-                elif event.key.keysym.sym == sdl2.SDLK_F11:
-                    _fullscreen = not _fullscreen
-                    flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
-                    if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-                        print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
-                elif event.key.keysym.sym == sdl2.SDLK_F8:
-                    save_state(machine, rgb_buf, game_title)
-                elif event.key.keysym.sym == sdl2.SDLK_F9:
-                    try:
-                        load_state(machine)
-                    except Exception as exc:
-                        print(f"load failed: {exc}", file=sys.stderr)
-                elif event.key.keysym.sym == sdl2.SDLK_F10:
-                    _save_screenshot(rgb_buf, h)
-                elif (event.key.keysym.sym == sdl2.SDLK_c
-                      and (event.key.keysym.mod & sdl2.KMOD_CTRL)
-                      and machine._debugger is not None):
-                    machine._debugger.enter()
+                elif event.type == sdl2.SDL_KEYDOWN:
+                    if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                        running = False
+                    elif event.key.keysym.sym == sdl2.SDLK_F11:
+                        _fullscreen = not _fullscreen
+                        flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
+                        if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+                            print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                    elif event.key.keysym.sym == sdl2.SDLK_F8:
+                        save_state(machine, rgb_buf, game_title)
+                    elif event.key.keysym.sym == sdl2.SDLK_F9:
+                        try:
+                            load_state(machine)
+                        except Exception as exc:
+                            print(f"load failed: {exc}", file=sys.stderr)
+                    elif event.key.keysym.sym == sdl2.SDLK_F10:
+                        _save_screenshot(rgb_buf, h)
+                    elif (event.key.keysym.sym == sdl2.SDLK_c
+                          and (event.key.keysym.mod & sdl2.KMOD_CTRL)
+                          and machine._debugger is not None):
+                        machine._debugger.enter()
+                    else:
+                        machine.input.key_down(event.key.keysym.sym)
+                elif event.type == sdl2.SDL_KEYUP:
+                    machine.input.key_up(event.key.keysym.sym)
+                elif event.type in (
+                    sdl2.SDL_CONTROLLERDEVICEADDED,
+                    sdl2.SDL_CONTROLLERDEVICEREMOVED,
+                    sdl2.SDL_JOYDEVICEADDED,
+                    sdl2.SDL_JOYDEVICEREMOVED,
+                    sdl2.SDL_CONTROLLERBUTTONDOWN,
+                    sdl2.SDL_CONTROLLERBUTTONUP,
+                    sdl2.SDL_CONTROLLERAXISMOTION,
+                    sdl2.SDL_JOYBUTTONDOWN,
+                    sdl2.SDL_JOYBUTTONUP,
+                    sdl2.SDL_JOYAXISMOTION,
+                    sdl2.SDL_JOYHATMOTION,
+                ):
+                    joy_manager.handle_event(event)
+
+            if not running:
+                break
+
+            # Run one frame (skip VDP pixel rendering when behind schedule)
+            skip_this_frame = _skip_counter > 0
+            index_buf = machine.run_frame(skip_render=skip_this_frame)
+            if not skip_this_frame:
+                rgb_buf = _index_to_rgb24(index_buf)
+
+            # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
+            if audio_dev > 0:
+                psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+                if machine.scc is not None:
+                    scc_buf = machine.scc.generate_samples(SAMPLES_PER_FRAME)
+                    mixed = bytearray(len(psg_buf))
+                    for i in range(SAMPLES_PER_FRAME):
+                        offset = i * 2
+                        psg_s = struct.unpack_from("<h", psg_buf, offset)[0]
+                        scc_s = struct.unpack_from("<h", scc_buf, offset)[0]
+                        total = psg_s + scc_s
+                        if total > 32767:
+                            total = 32767
+                        elif total < -32768:
+                            total = -32768
+                        struct.pack_into("<h", mixed, offset, total)
+                    audio_buf = mixed
                 else:
-                    machine.input.key_down(event.key.keysym.sym)
-            elif event.type == sdl2.SDL_KEYUP:
-                machine.input.key_up(event.key.keysym.sym)
-            elif event.type in (
-                sdl2.SDL_CONTROLLERDEVICEADDED,
-                sdl2.SDL_CONTROLLERDEVICEREMOVED,
-                sdl2.SDL_JOYDEVICEADDED,
-                sdl2.SDL_JOYDEVICEREMOVED,
-                sdl2.SDL_CONTROLLERBUTTONDOWN,
-                sdl2.SDL_CONTROLLERBUTTONUP,
-                sdl2.SDL_CONTROLLERAXISMOTION,
-                sdl2.SDL_JOYBUTTONDOWN,
-                sdl2.SDL_JOYBUTTONUP,
-                sdl2.SDL_JOYAXISMOTION,
-                sdl2.SDL_JOYHATMOTION,
-            ):
-                joy_manager.handle_event(event)
+                    audio_buf = psg_buf
+                sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
 
-        if not running:
-            break
+            # Upload to texture only when frame was rendered
+            if not skip_this_frame:
+                pixels_ptr = ctypes.c_void_p()
+                pitch = ctypes.c_int()
+                sdl2.SDL_LockTexture(texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch))
+                ctypes.memmove(pixels_ptr, bytes(rgb_buf), len(rgb_buf))
+                sdl2.SDL_UnlockTexture(texture)
 
-        # Run one frame (skip VDP pixel rendering when behind schedule)
-        skip_this_frame = _skip_counter > 0
-        index_buf = machine.run_frame(skip_render=skip_this_frame)
-        if not skip_this_frame:
-            rgb_buf = _index_to_rgb24(index_buf)
+            # Render (always — redisplays previous texture on skipped frames)
+            sdl2.SDL_RenderClear(renderer)
+            sdl2.SDL_RenderCopy(renderer, texture, None, None)
+            sdl2.SDL_RenderPresent(renderer)
 
-        # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
-        if audio_dev > 0:
-            psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
-            if machine.scc is not None:
-                scc_buf = machine.scc.generate_samples(SAMPLES_PER_FRAME)
-                mixed = bytearray(len(psg_buf))
-                for i in range(SAMPLES_PER_FRAME):
-                    offset = i * 2
-                    psg_s = struct.unpack_from("<h", psg_buf, offset)[0]
-                    scc_s = struct.unpack_from("<h", scc_buf, offset)[0]
-                    total = psg_s + scc_s
-                    if total > 32767:
-                        total = 32767
-                    elif total < -32768:
-                        total = -32768
-                    struct.pack_into("<h", mixed, offset, total)
-                audio_buf = mixed
+            # Frame pacing + skip counter update
+            elapsed = frame_timer.tick()
+            if frame_skip == "auto":
+                if elapsed > frame_timer._frame_interval * 1.05:
+                    _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
+                else:
+                    _skip_counter = max(_skip_counter - 1, 0)
+
+            if frame_timer.fps_measured > 0:
+                title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
+                sdl2.SDL_SetWindowTitle(window, title)
+
+        except KeyboardInterrupt:
+            if machine._debugger is not None:
+                machine._debugger.enter()
             else:
-                audio_buf = psg_buf
-            sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
-
-        # Upload to texture only when frame was rendered
-        if not skip_this_frame:
-            pixels_ptr = ctypes.c_void_p()
-            pitch = ctypes.c_int()
-            sdl2.SDL_LockTexture(texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch))
-            ctypes.memmove(pixels_ptr, bytes(rgb_buf), len(rgb_buf))
-            sdl2.SDL_UnlockTexture(texture)
-
-        # Render (always — redisplays previous texture on skipped frames)
-        sdl2.SDL_RenderClear(renderer)
-        sdl2.SDL_RenderCopy(renderer, texture, None, None)
-        sdl2.SDL_RenderPresent(renderer)
-
-        # Frame pacing + skip counter update
-        elapsed = frame_timer.tick()
-        if frame_skip == "auto":
-            if elapsed > frame_timer._frame_interval * 1.05:
-                _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
-            else:
-                _skip_counter = max(_skip_counter - 1, 0)
-
-        if frame_timer.fps_measured > 0:
-            title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
-            sdl2.SDL_SetWindowTitle(window, title)
+                running = False
 
     joy_manager.close_all()
     if audio_dev > 0:
