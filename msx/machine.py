@@ -21,6 +21,9 @@ from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP
 
+if TYPE_CHECKING:
+    from msx.debugger.prompt import Debugger
+
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
 HANG_PC_REPEAT_THRESHOLD: int = 1000
@@ -37,6 +40,8 @@ class Machine:
     input: InputState = field(default_factory=InputState)
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
+    _debugger: Debugger | None = field(default=None, repr=False)
+    _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
 
@@ -54,6 +59,10 @@ class Machine:
         self.cpu.reset()
         self.vdp.status = 0
 
+    def set_breakpoints(self, addrs: list[int]) -> None:
+        """Set breakpoint addresses (max 4). Replaces existing set."""
+        self._breakpoints = frozenset(addrs[:4])
+
     def step(self) -> int:
         return self.cpu.step()
 
@@ -61,30 +70,60 @@ class Machine:
         cycles = 0
         cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
         vdp_tick = self.vdp.tick if isinstance(self.vdp, V9938) else None
-        if self._logger is None:
-            while cycles < CYCLES_PER_FRAME:
-                n = cpu_step()
-                cycles += n
-                self.cycle_count += n
-                if vdp_tick:
-                    vdp_tick(n)
+        # PERF: third loop branch — only taken when breakpoints are set.
+        # When _breakpoints is empty frozenset, the outer `if` is never entered.
+        if self._breakpoints:
+            try:
+                while cycles < CYCLES_PER_FRAME:
+                    if self.cpu.registers.PC in self._breakpoints:
+                        if self._debugger is not None:
+                            self._debugger.enter()
+                    n = cpu_step()
+                    cycles += n
+                    self.cycle_count += n
+                    if vdp_tick:
+                        vdp_tick(n)
+            except KeyboardInterrupt:
+                if self._debugger is not None:
+                    self._debugger.enter()
+                else:
+                    raise
+        elif self._logger is None:
+            try:
+                while cycles < CYCLES_PER_FRAME:
+                    n = cpu_step()
+                    cycles += n
+                    self.cycle_count += n
+                    if vdp_tick:
+                        vdp_tick(n)
+            except KeyboardInterrupt:
+                if self._debugger is not None:
+                    self._debugger.enter()
+                else:
+                    raise
         else:
-            while cycles < CYCLES_PER_FRAME:
-                pc = self.cpu.registers.PC
-                n = cpu_step()
-                cycles += n
-                self.cycle_count += n
-                if vdp_tick:
-                    vdp_tick(n)
-                # PC-loop hang: skip normal HALT (halted + interrupts enabled)
-                if not (self.cpu.halted and self.cpu.iff1):
-                    if pc == self._last_pc:
-                        self._pc_repeat += 1
-                        if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                            self._logger.on_hang_pc_loop(pc)
-                    else:
-                        self._pc_repeat = 0
-                    self._last_pc = pc
+            try:
+                while cycles < CYCLES_PER_FRAME:
+                    pc = self.cpu.registers.PC
+                    n = cpu_step()
+                    cycles += n
+                    self.cycle_count += n
+                    if vdp_tick:
+                        vdp_tick(n)
+                    # PC-loop hang: skip normal HALT (halted + interrupts enabled)
+                    if not (self.cpu.halted and self.cpu.iff1):
+                        if pc == self._last_pc:
+                            self._pc_repeat += 1
+                            if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
+                                self._logger.on_hang_pc_loop(pc)
+                        else:
+                            self._pc_repeat = 0
+                        self._last_pc = pc
+            except KeyboardInterrupt:
+                if self._debugger is not None:
+                    self._debugger.enter()
+                else:
+                    raise
 
             # HALT+DI hang: check once per frame
             if self.cpu.halted and not self.cpu.iff1:
