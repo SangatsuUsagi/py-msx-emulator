@@ -192,14 +192,15 @@ def main() -> None:
                                    mapper=args.mapper, cartridge2=cartridge2,
                                    mapper2=args.mapper2, logrom=logrom, tracer=tracer)
 
-        # MSX2-only: attach debugger when breakpoints are requested.
+        # MSX2-only: always attach debugger so Ctrl+C enters REPL.
         # TMS9918A support deferred to a separate proposal.
-        if is_msx2 and breakpoint_addrs:
+        if is_msx2:
             from msx.debugger.prompt import Debugger
             dbg = Debugger(machine)
             machine._debugger = dbg
-            machine.set_breakpoints(breakpoint_addrs)
-            print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
+            if breakpoint_addrs:
+                machine.set_breakpoints(breakpoint_addrs)
+                print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
 
         if args.count is not None:
             # Headless run: no SDL, just run until cycle_count reaches N
