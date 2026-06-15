@@ -44,6 +44,7 @@ def _make_machine(pc: int = 0x4000) -> MagicMock:
 
     m._breakpoints = frozenset()
     m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
+    m.cycle_count = 0
     return m
 
 
@@ -83,6 +84,13 @@ class TestRegVdp:
         dbg._cmd_reg_vdp()
         out = capsys.readouterr().out
         for i in range(28):
+            assert f"R#{i}=" in out
+
+    def test_cmd_regs_shown(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_reg_vdp()
+        out = capsys.readouterr().out
+        for i in range(32, 47):
             assert f"R#{i}=" in out
 
     def test_non_v9938_shows_error(self, capsys):
@@ -160,28 +168,65 @@ class TestDump:
 
 
 # ---------------------------------------------------------------------------
+# dv (dump VRAM)
+# ---------------------------------------------------------------------------
+
+class TestDumpVram:
+    def test_default_128_bytes(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_dump_vram(["12000"])
+        out = capsys.readouterr().out
+        lines = [l for l in out.strip().splitlines() if l.strip()]
+        assert len(lines) == 8  # 128 / 16
+
+    def test_address_shown_as_5digit(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_dump_vram(["12000", "10"])
+        out = capsys.readouterr().out
+        assert "12000:" in out
+
+    def test_vram_wraps_at_128k(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_dump_vram(["1FFF0", "20"])
+        out = capsys.readouterr().out
+        assert "1FFF0:" in out
+
+    def test_invalid_addr(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_dump_vram(["ZZZZZ"])
+        out = capsys.readouterr().out
+        assert "invalid" in out.lower()
+
+    def test_no_args(self, capsys):
+        dbg = Debugger(_make_machine())
+        dbg._cmd_dump_vram([])
+        out = capsys.readouterr().out
+        assert "Usage" in out
+
+
+# ---------------------------------------------------------------------------
 # break add / remove / list
 # ---------------------------------------------------------------------------
 
 class TestBreak:
     def test_list_empty(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["list"])
+        dbg._cmd_break(["l"])
         out = capsys.readouterr().out
         assert "no breakpoints" in out
 
     def test_add_breakpoint(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["add", "C000"])
+        dbg._cmd_break(["a", "C000"])
         assert 0xC000 in m._breakpoints
 
     def test_list_after_add(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["add", "C000"])
+        dbg._cmd_break(["a", "C000"])
         capsys.readouterr()
-        dbg._cmd_break(["list"])
+        dbg._cmd_break(["l"])
         out = capsys.readouterr().out
         assert "C000" in out
 
@@ -189,14 +234,14 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["remove", "C000"])
+        dbg._cmd_break(["r", "C000"])
         assert 0xC000 not in m._breakpoints
 
     def test_max_4_enforced(self, capsys):
         m = _make_machine()
         m._breakpoints = frozenset([0x1000, 0x2000, 0x3000, 0x4000])
         dbg = Debugger(m)
-        dbg._cmd_break(["add", "5000"])
+        dbg._cmd_break(["a", "5000"])
         out = capsys.readouterr().out
         assert "maximum 4" in out
         assert 0x5000 not in m._breakpoints
@@ -204,13 +249,13 @@ class TestBreak:
     def test_remove_unknown_addr(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["remove", "DEAD"])
+        dbg._cmd_break(["r", "DEAD"])
         out = capsys.readouterr().out
         assert "not in" in out
 
     def test_add_invalid_addr(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["add", "ZZZZ"])
+        dbg._cmd_break(["a", "ZZZZ"])
         out = capsys.readouterr().out
         assert "invalid" in out.lower()
 
@@ -255,22 +300,22 @@ class TestStep:
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         dbg = Debugger(m)
-        dbg._cmd_step()
+        dbg._cmd_step([])
         m.step.assert_called_once()
 
     def test_step_prints_pc(self, capsys):
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         dbg = Debugger(m)
-        dbg._cmd_step()
+        dbg._cmd_step([])
         out = capsys.readouterr().out
         assert "PC=" in out
 
-    def test_step_alias_s_in_repl(self, capsys):
+    def test_s_in_repl(self, capsys):
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         dbg = Debugger(m)
-        inputs = iter(["s", "cont"])
+        inputs = iter(["s", "c"])
         with patch("builtins.input", side_effect=inputs):
             dbg.enter()
         m.step.assert_called_once()
@@ -279,11 +324,47 @@ class TestStep:
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         dbg = Debugger(m)
-        # step then cont — if REPL stays active, cont is reached
-        inputs = iter(["step", "cont"])
+        inputs = iter(["s", "c"])
         with patch("builtins.input", side_effect=inputs):
-            dbg.enter()  # should return normally (not raise StopIteration)
+            dbg.enter()
         m.step.assert_called_once()
+
+    def test_step_count_arg(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        dbg._cmd_step(["256"])
+        assert m.step.call_count == 256
+
+    def test_step_count_via_repl(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        inputs = iter(["s 10", "c"])
+        with patch("builtins.input", side_effect=inputs):
+            dbg.enter()
+        assert m.step.call_count == 10
+
+    def test_step_invalid_count(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        dbg = Debugger(m)
+        dbg._cmd_step(["abc"])
+        out = capsys.readouterr().out
+        assert "invalid" in out.lower()
+        m.step.assert_not_called()
+
+    def test_prompt_shows_cyc_frm(self, capsys):
+        m = _make_machine(pc=0x4000)
+        m.step = MagicMock(return_value=4)
+        m.cycle_count = 12345
+        m.vdp._frame_count = 60
+        dbg = Debugger(m)
+        prompts = []
+        with patch("builtins.input", side_effect=lambda p="": (prompts.append(p), "c")[1]):
+            dbg.enter()
+        assert any("cyc=12345" in p for p in prompts)
+        assert any("frm=60" in p for p in prompts)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +376,7 @@ class TestUnknownCommand:
         m = _make_machine()
         dbg = Debugger(m)
         # Simulate one unknown command then 'cont'
-        inputs = iter(["foobar", "cont"])
+        inputs = iter(["foobar", "c"])
         with patch("builtins.input", side_effect=inputs):
             dbg.enter()
         out = capsys.readouterr().out

@@ -12,9 +12,9 @@ def _enable(vdp: V9938) -> None:
 # ---------------------------------------------------------------------------
 
 def _set_screen5(vdp: V9938) -> None:
-    """Set mode bits for SCREEN 5 (M5=1, M4=0, rest=0)."""
+    """Set mode bits for SCREEN 5 (M3=1, M4=1): R#0=0x06."""
     _enable(vdp)
-    vdp.regs[0] = 0x10  # M5 = bit 4
+    vdp.regs[0] = 0x06  # M3=bit1, M4=bit2
 
 
 def test_screen5_buffer_size_192() -> None:
@@ -68,13 +68,13 @@ def test_screen5_palette_indices_in_buffer() -> None:
 
 
 def test_screen5_vram_base_from_r2() -> None:
-    """R#2 bits 6:0 × 0x800 sets the VRAM base address."""
+    """R#2 bits[6:5] select 32KB page: 0b01→page1→base=0x8000."""
     vdp = V9938()
     _set_screen5(vdp)
-    vdp.regs[2] = 0x02  # base = 2 × 0x800 = 0x1000
+    vdp.regs[2] = 0x20  # bits[6:5]=01 → page 1 → base = 0x8000
 
     vdp.vram[0x0000] = 0xFF  # decoy at base 0 — must NOT appear in output
-    vdp.vram[0x1000] = 0xAB  # actual base: pixel 0=0xA=10, pixel 1=0xB=11
+    vdp.vram[0x8000] = 0xAB  # actual base: pixel 0=0xA=10, pixel 1=0xB=11
 
     buf = render_frame(vdp)
     assert buf[0] == 0x0A   # high nibble of 0xAB
@@ -98,10 +98,9 @@ def test_screen5_second_row_offset() -> None:
 # ---------------------------------------------------------------------------
 
 def _set_screen8(vdp: V9938) -> None:
-    """Set mode bits for SCREEN 8 (M5=1, M4=1, M2=1, rest=0)."""
+    """Set mode bits for SCREEN 8 (M3+M4+M5): R#0=0x0E."""
     _enable(vdp)
-    vdp.regs[0] = 0x18  # M5=bit4, M4=bit3
-    vdp.regs[1] |= 0x08  # M2=bit3
+    vdp.regs[0] = 0x0E  # M3=bit1, M4=bit2, M5=bit3
 
 
 def test_screen8_buffer_size_192() -> None:
@@ -134,10 +133,10 @@ def test_screen8_second_pixel() -> None:
 def test_screen8_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen8(vdp)
-    vdp.regs[2] = 0x01  # base = 1 × 0x800 = 0x0800
+    vdp.regs[2] = 0x20  # bits[6:5]=01 → page 1 → base = 0x8000
 
     vdp.vram[0x0000] = 0xFF   # decoy at offset 0 — must NOT appear
-    vdp.vram[0x0800] = 0x42   # first pixel at actual base
+    vdp.vram[0x8000] = 0x42   # first pixel at actual base
 
     buf = render_frame(vdp)
     assert buf[0] == 0x42
@@ -197,9 +196,9 @@ def test_grb332_example_byte() -> None:
 # ---------------------------------------------------------------------------
 
 def _set_screen4(vdp: V9938) -> None:
-    """SCREEN 4: M4=1, M5=0, M2=0."""
+    """SCREEN 4 (Graphic 3): M4=1 only, R#0=0x04."""
     _enable(vdp)
-    vdp.regs[0] = 0x08  # M4=bit3
+    vdp.regs[0] = 0x04  # M4=bit2
 
 
 def test_screen4_buffer_size_192() -> None:
@@ -230,9 +229,9 @@ def test_screen4_renders_g2_tiles() -> None:
 # ---------------------------------------------------------------------------
 
 def _set_screen6(vdp: V9938) -> None:
-    """SCREEN 6: M5=1, M4=1, M2=0."""
+    """SCREEN 6 (Graphic 5): M5=1 only, R#0=0x08."""
     _enable(vdp)
-    vdp.regs[0] = 0x18  # M5=bit4, M4=bit3
+    vdp.regs[0] = 0x08  # M5=bit3
 
 
 def test_screen6_buffer_size_192() -> None:
@@ -287,10 +286,10 @@ def test_screen6_second_output_byte() -> None:
 def test_screen6_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen6(vdp)
-    vdp.regs[2] = 0x02   # base = 2 × 0x800 = 0x1000
+    vdp.regs[2] = 0x20   # bits[6:5]=01 → page 1 → base = 0x8000
 
-    vdp.vram[0x0000] = 0xFF   # decoy — must not appear
-    vdp.vram[0x1000] = 0b11_00_00_00   # pixel 0 = colour 3
+    vdp.vram[0x0000] = 0x00   # decoy — must not appear
+    vdp.vram[0x8000] = 0b11_00_00_00   # pixel 0 = colour 3
 
     buf = render_frame(vdp)
     assert buf[0] == 3
@@ -301,10 +300,9 @@ def test_screen6_vram_base_from_r2() -> None:
 # ---------------------------------------------------------------------------
 
 def _set_screen7(vdp: V9938) -> None:
-    """SCREEN 7: M5=0, M4=1, M2=1."""
+    """SCREEN 7 (Graphic 6): M3+M5, R#0=0x0A."""
     _enable(vdp)
-    vdp.regs[0] = 0x08        # M4=bit3
-    vdp.regs[1] |= 0x08       # M2=bit3
+    vdp.regs[0] = 0x0A  # M3=bit1, M5=bit3
 
 
 def test_screen7_buffer_size_192() -> None:
@@ -338,10 +336,10 @@ def test_screen7_second_pixel_independent_byte() -> None:
 def test_screen7_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen7(vdp)
-    vdp.regs[2] = 0x01   # base = 1 × 0x800 = 0x0800
+    vdp.regs[2] = 0x20   # bits[6:5]=01 → page 1 → base = 0x8000
 
     vdp.vram[0x0000] = 0xFF   # decoy
-    vdp.vram[0x0800] = 0x5E   # high nibble = 5
+    vdp.vram[0x8000] = 0x5E   # high nibble = 5
 
     buf = render_frame(vdp)
     assert buf[0] == 5
