@@ -16,10 +16,12 @@ def _set_screen5(vdp: V9938) -> None:
     vdp.regs[0] = 0x06  # M3=bit1, M4=bit2
 
 
-# R#5=0x70, R#11=0 → sat_base = (0x70 & 0x7F) << 7 = 0x3800
+# R#5=0x70, R#11=0 → attr_reg = 0x70 << 7 = 0x3800.
+# V9938 sprite mode 2: align attr_reg low 9 bits → colour base = 0x3800,
+# SAT = colour_base + 0x200 = 0x3A00.
 _SAT_R5 = 0x70
-_SAT_BASE = 0x3800
-_COL_BASE = _SAT_BASE + 0x200  # colour table at SAT+0x200
+_COL_BASE = 0x3800
+_SAT_BASE = _COL_BASE + 0x200
 
 
 def _write_sat_entry(
