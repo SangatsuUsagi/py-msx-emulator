@@ -133,10 +133,10 @@ def test_screen8_second_pixel() -> None:
 def test_screen8_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen8(vdp)
-    vdp.regs[2] = 0x20  # bits[6:5]=01 → page 1 → base = 0x8000
+    vdp.regs[2] = 0x40  # G7: 64KB pages, bit6=1 → base = 0x10000
 
-    vdp.vram[0x0000] = 0xFF   # decoy at offset 0 — must NOT appear
-    vdp.vram[0x8000] = 0x42   # first pixel at actual base
+    vdp.vram[0x0000]  = 0xFF   # decoy at offset 0 — must NOT appear
+    vdp.vram[0x10000] = 0x42   # first pixel at actual base
 
     buf = render_frame(vdp)
     assert buf[0] == 0x42
@@ -336,10 +336,10 @@ def test_screen7_second_pixel_independent_byte() -> None:
 def test_screen7_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen7(vdp)
-    vdp.regs[2] = 0x20   # bits[6:5]=01 → page 1 → base = 0x8000
+    vdp.regs[2] = 0x40   # G6: 64KB pages, bit6=1 → base = 0x10000
 
-    vdp.vram[0x0000] = 0xFF   # decoy
-    vdp.vram[0x8000] = 0x5E   # high nibble = 5
+    vdp.vram[0x0000]  = 0xFF   # decoy
+    vdp.vram[0x10000] = 0x5E   # high nibble = 5
 
     buf = render_frame(vdp)
     assert buf[0] == 5

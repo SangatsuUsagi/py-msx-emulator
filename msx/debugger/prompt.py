@@ -320,7 +320,10 @@ def _print_vdp_fancy(vdp: object) -> None:
     name_base    = (r[2] & 0x60) << 10 if (_m4 or _m5) else (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
-    sprite_attr  = ((r[11] & 0x03) << 15) | ((r[5]  & 0xFF) << 7)
+    # V9938 sprite mode 2: R#5<<7 → align to 0x200, then SAT = +0x200
+    _attr_reg    = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
+    _spr_col     = _attr_reg & ~0x1FF & 0x1FFFF
+    sprite_attr  = (_spr_col + 0x200) & 0x1FFFF
     sprite_pat   = (r[6]  & 0x3F) << 11
     print(
         f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"

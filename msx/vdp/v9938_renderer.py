@@ -203,7 +203,7 @@ def _render_sprites(vdp: "V9938", buf: bytearray) -> None:
     render_size = pat_size * (2 if mag else 1)
 
     sat_base = (vdp.regs[5] & 0x7F) << 7
-    spt_base = (vdp.regs[6] & 0x07) << 11
+    spt_base = (vdp.regs[6] & 0x3F) << 11
 
     line_count = [0] * _TILE_H
     ninth_set  = False
@@ -275,9 +275,12 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
     pat_size    = 16 if si else 8
     render_size = pat_size * (2 if mag else 1)
 
-    sat_base = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
-    spt_base = (vdp.regs[6] & 0x07) << 11
-    col_base = (sat_base + 0x200) & 0x1FFFF
+    # V9938 sprite mode 2: R#5<<7 → low 9 bits aligned → color table base.
+    # SAT lives at color_base + 0x200.
+    attr_reg = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
+    col_base = attr_reg & ~0x1FF & 0x1FFFF
+    sat_base = (col_base + 0x200) & 0x1FFFF
+    spt_base = (vdp.regs[6] & 0x3F) << 11
 
     line_count = [0] * h
     ninth_set  = False
@@ -319,7 +322,7 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
             if color == 0:
                 continue  # transparent regardless of OR mode
 
-            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
+            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
             scale  = 2 if mag else 1
 
             for bit_i, pixel in enumerate(pixels):
@@ -346,20 +349,21 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
 
 
 def _sprite_row_pixels(
-    vdp: "V9938", spt_base: int, pat_idx: int, si: int, src_row: int
+    vdp: "V9938", spt_base: int, pat_idx: int, si: int, src_row: int,
+    mask: int = 0x3FFF,
 ) -> bytes:
     if si == 0:
-        b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
+        b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & mask]
         return bytes((b >> (7 - bit)) & 1 for bit in range(8))
 
     base = pat_idx & 0xFC
     if src_row < 8:
-        left  = vdp.vram[(spt_base + base * 8 + src_row) & 0x3FFF]
-        right = vdp.vram[(spt_base + (base + 2) * 8 + src_row) & 0x3FFF]
+        left  = vdp.vram[(spt_base + base * 8 + src_row) & mask]
+        right = vdp.vram[(spt_base + (base + 2) * 8 + src_row) & mask]
     else:
         r = src_row - 8
-        left  = vdp.vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
-        right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
+        left  = vdp.vram[(spt_base + (base + 1) * 8 + r) & mask]
+        right = vdp.vram[(spt_base + (base + 3) * 8 + r) & mask]
 
     return (
         bytes((left  >> (7 - b)) & 1 for b in range(8))
@@ -405,7 +409,7 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
 
 def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 7: 4-bpp, 2 virtual pixels per byte; sample even pixels → 256 wide."""
-    base = (vdp.regs[2] & 0x60) << 10
+    base = (vdp.regs[2] & 0x40) << 10  # G6: 64KB pages, bit6 only
     for y in range(h):
         row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W
@@ -432,7 +436,7 @@ def grb332_to_rgb(byte: int) -> tuple[int, int, int]:
 
 def _render_g7(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
-    base = (vdp.regs[2] & 0x60) << 10
+    base = (vdp.regs[2] & 0x40) << 10  # G7: 64KB pages, bit6 only
     for y in range(h):
         row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W
