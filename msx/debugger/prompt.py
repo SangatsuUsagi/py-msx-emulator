@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 
 _HELP = (
-    "Commands: reg cpu | reg vdp | vdp | dump ADDR [SIZE] | "
-    "break add/remove/list ADDR | disasm [ADDR] | step | cont | quit"
+    "Commands: rc | rv | vdp | dm ADDR [SIZE] | dv VADDR [SIZE] | "
+    "b a/r/l ADDR | da [ADDR] | s [N] | c | q"
 )
 
 
@@ -34,11 +34,13 @@ class Debugger:
 
     def enter(self) -> None:
         """Suspend emulation and run the debug REPL until 'cont' or 'quit'."""
-        print("\nDebugger entered. Type 'cont' to resume, 'quit' to exit.")
+        print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
         print(f"  PC={self._machine.cpu.registers.PC:04X}h")
         while True:
             try:
-                line = input("(msx-dbg) ").strip()
+                cyc = self._machine.cycle_count
+                frm = self._machine.vdp._frame_count
+                line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
                 return
@@ -53,22 +55,26 @@ class Debugger:
             cmd = parts[0].lower()
             args = parts[1:]
 
-            if cmd in ("cont", "c"):
+            if cmd == "c":
                 return
-            if cmd in ("quit", "q"):
+            if cmd == "q":
                 sys.exit(0)
-            elif cmd == "reg":
-                self._cmd_reg(args)
+            elif cmd == "rc":
+                self._cmd_reg_cpu()
+            elif cmd == "rv":
+                self._cmd_reg_vdp()
             elif cmd == "vdp":
                 self._cmd_vdp_status()
-            elif cmd == "dump":
+            elif cmd == "dm":
                 self._cmd_dump(args)
-            elif cmd == "break":
+            elif cmd == "dv":
+                self._cmd_dump_vram(args)
+            elif cmd == "b":
                 self._cmd_break(args)
-            elif cmd == "disasm":
+            elif cmd == "da":
                 self._cmd_disasm(args)
-            elif cmd in ("step", "s"):
-                self._cmd_step()
+            elif cmd == "s":
+                self._cmd_step(args)
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -114,6 +120,13 @@ class Debugger:
                 for i in range(row_start, min(row_start + 8, 28))
             ]
             print("  " + "  ".join(parts))
+        cmd = vdp.cmd_regs
+        for row_start in range(0, 15, 8):
+            parts = [
+                f"R#{32 + i}={cmd[i]:02X}"
+                for i in range(row_start, min(row_start + 8, 15))
+            ]
+            print("  " + "  ".join(parts))
 
     def _cmd_vdp_status(self) -> None:
         from msx.vdp.v9938 import V9938
@@ -141,14 +154,32 @@ class Debugger:
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
             print(f"  {(addr + row) & 0xFFFF:04X}: {hex_part}  {ascii_part}")
 
+    def _cmd_dump_vram(self, args: list[str]) -> None:
+        if not args:
+            print("Usage: dv VADDR [SIZE]")
+            return
+        try:
+            addr = int(args[0], 16) & 0x1FFFF
+            size = int(args[1], 16) if len(args) > 1 else 128
+        except ValueError:
+            print("dv: invalid address or size (hex expected)")
+            return
+
+        vram = self._machine.vdp.vram
+        for row in range(0, size, 16):
+            row_bytes = [vram[(addr + row + col) & 0x1FFFF] for col in range(16)]
+            hex_part = " ".join(f"{b:02X}" for b in row_bytes)
+            ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
+            print(f"  {(addr + row) & 0x1FFFF:05X}: {hex_part}  {ascii_part}")
+
     def _cmd_break(self, args: list[str]) -> None:
         if not args:
-            print("Usage: break add ADDR | break remove ADDR | break list")
+            print("Usage: b a ADDR | b r ADDR | b l")
             return
         sub = args[0].lower()
         current = list(self._machine._breakpoints)
 
-        if sub == "list":
+        if sub == "l":
             if not current:
                 print("  (no breakpoints)")
             else:
@@ -156,17 +187,17 @@ class Debugger:
                     print(f"  {addr:04X}h")
             return
 
-        if sub == "add":
+        if sub == "a":
             if len(args) < 2:
-                print("Usage: break add ADDR")
+                print("Usage: b a ADDR")
                 return
             try:
                 addr = int(args[1], 16) & 0xFFFF
             except ValueError:
-                print("break add: invalid address (hex expected)")
+                print("b a: invalid address (hex expected)")
                 return
             if len(current) >= 4:
-                print("break add: maximum 4 breakpoints reached")
+                print("b a: maximum 4 breakpoints reached")
                 return
             if addr not in current:
                 current.append(addr)
@@ -174,24 +205,24 @@ class Debugger:
             print(f"  Breakpoint set at {addr:04X}h ({len(current)}/4)")
             return
 
-        if sub == "remove":
+        if sub == "r":
             if len(args) < 2:
-                print("Usage: break remove ADDR")
+                print("Usage: b r ADDR")
                 return
             try:
                 addr = int(args[1], 16) & 0xFFFF
             except ValueError:
-                print("break remove: invalid address (hex expected)")
+                print("b r: invalid address (hex expected)")
                 return
             if addr not in current:
-                print(f"break remove: {addr:04X}h not in breakpoint list")
+                print(f"b r: {addr:04X}h not in breakpoint list")
                 return
             current.remove(addr)
             self._machine.set_breakpoints(current)
             print(f"  Breakpoint {addr:04X}h removed ({len(current)}/4)")
             return
 
-        print(f"Unknown break sub-command: {sub!r}. Use add, remove, or list.")
+        print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
 
     def _cmd_disasm(self, args: list[str]) -> None:
         r = self._machine.cpu.registers
@@ -211,10 +242,20 @@ class Debugger:
             print(f"  {addr:04X}: {raw_bytes:<12}  {mnem}")
             addr = (addr + size) & 0xFFFF
 
-    def _cmd_step(self) -> None:
-        self._machine.step()
+    def _cmd_step(self, args: list[str] | None = None) -> None:
+        try:
+            count = int(args[0]) if args else 1
+        except (ValueError, IndexError):
+            print("step: invalid count (decimal integer expected)")
+            return
+        for _ in range(count):
+            self._machine.step()
         r = self._machine.cpu.registers
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
+        read = self._machine.cpu.read_byte
+        mnem, size = disassemble(read, r.PC)
+        raw_bytes = " ".join(f"{read((r.PC + i) & 0xFFFF):02X}" for i in range(size))
+        print(f"  => {r.PC:04X}: {raw_bytes:<12}  {mnem}")
 
 
 # ---------------------------------------------------------------------------
@@ -234,20 +275,19 @@ _LOG_OPS: dict[int, str] = {
 def _decode_screen_mode(r0: int, r1: int) -> str:
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
-    m3 = (r0 >> 1) & 1
-    m4 = (r0 >> 2) & 1
-    m5 = (r0 >> 3) & 1
+    m3 = (r0 >> 1) & 1  # R#0 bit1
+    m4 = (r0 >> 2) & 1  # R#0 bit2
+    m5 = (r0 >> 3) & 1  # R#0 bit3
     modes: dict[tuple[int, ...], str] = {
-        (0, 0, 0, 0, 0): "SCREEN1 (TEXT1/32col)",
-        (1, 0, 0, 0, 0): "SCREEN0 (TEXT2/80col)",
+        (0, 0, 0, 0, 0): "SCREEN1 (GRAPHIC1)",
+        (1, 0, 0, 0, 0): "SCREEN0 (TEXT1/40col)",
         (0, 0, 1, 0, 0): "SCREEN2 (GRAPHIC2)",
         (0, 1, 0, 0, 0): "SCREEN3 (MULTICOLOR)",
-        (0, 0, 0, 1, 0): "SCREEN1 (GRAPHIC1)",
-        (0, 0, 0, 0, 1): "SCREEN4 (GRAPHIC3)",
-        (0, 0, 1, 0, 1): "SCREEN5 (GRAPHIC4/512)",
-        (0, 1, 0, 0, 1): "SCREEN6 (GRAPHIC5/512)",
-        (0, 1, 1, 0, 1): "SCREEN7 (GRAPHIC6/512)",
-        (1, 0, 0, 0, 1): "SCREEN8 (GRAPHIC7/256)",
+        (0, 0, 0, 1, 0): "SCREEN4 (GRAPHIC3)",
+        (0, 0, 1, 1, 0): "SCREEN5 (GRAPHIC4)",
+        (0, 0, 0, 0, 1): "SCREEN6 (GRAPHIC5)",
+        (0, 0, 1, 0, 1): "SCREEN7 (GRAPHIC6)",
+        (0, 0, 1, 1, 1): "SCREEN8 (GRAPHIC7)",
     }
     return modes.get((m1, m2, m3, m4, m5), f"UNKNOWN (M={m1}{m2}{m3}{m4}{m5})")
 
@@ -275,7 +315,9 @@ def _print_vdp_fancy(vdp: object) -> None:
     print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
 
     # --- VRAM layout ---
-    name_base    = (r[2]  & 0x7F) << 10
+    _m4 = (r[0] >> 2) & 1  # R#0 bit2
+    _m5 = (r[0] >> 3) & 1  # R#0 bit3
+    name_base    = (r[2] & 0x60) << 10 if (_m4 or _m5) else (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
     sprite_attr  = ((r[11] & 0x03) << 15) | ((r[5]  & 0xFF) << 7)
@@ -313,9 +355,18 @@ def _print_vdp_fancy(vdp: object) -> None:
     arg = c[13]
     cmr = c[14]
     cmd_name, log_op = _decode_cmr(cmr)
-    busy = "BUSY" if s2 & 0x01 else "IDLE"
     dix  = "←" if arg & 0x04 else "→"
     diy  = "↑" if arg & 0x08 else "↓"
+    if s2 & 0x01:
+        rem = vdp._cmd_remaining
+        if rem > 0:
+            busy = f"BUSY({rem}cyc)"
+        else:
+            total = (vdp._cmd_nx // 2) * vdp._cmd_ny
+            done  = vdp._cmd_y * (vdp._cmd_nx // 2) + vdp._cmd_x // 2
+            busy  = f"BUSY(CPU-feed rem={total - done}/{total})"
+    else:
+        busy = "IDLE"
     print(
         f"  CMD    : {cmd_name}  {log_op}  [{busy}]"
         f"  SRC=({sx},{sy})  DST=({dx},{dy})  SIZE=({nx},{ny})"

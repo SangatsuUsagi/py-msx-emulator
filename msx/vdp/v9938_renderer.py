@@ -44,29 +44,29 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
-    m3 = (r0 >> 1) & 1
-    m4 = (r0 >> 3) & 1
-    m5 = (r0 >> 4) & 1
+    m3 = (r0 >> 1) & 1  # R#0 bit1
+    m4 = (r0 >> 2) & 1  # R#0 bit2
+    m5 = (r0 >> 3) & 1  # R#0 bit3
 
     # Pre-fill with border; tile renderers only write the first _TILE_H rows.
     buf = bytearray([border] * (_W * h))
 
     if m5:
-        if m4 and m2:
-            _render_g7(vdp, buf, h)              # SCREEN 8 (Graphic 7)
+        if m4:
+            _render_g7(vdp, buf, h)              # SCREEN 8 (Graphic 7): M3+M4+M5
             _render_sprites_mode2(vdp, buf, h)
-        elif m4:
-            _render_g5(vdp, buf, h)              # SCREEN 6 (Graphic 5)
+        elif m3:
+            _render_g6(vdp, buf, h)              # SCREEN 7 (Graphic 6): M3+M5
             _render_sprites_mode2(vdp, buf, h)
         else:
-            _render_g4(vdp, buf, h)              # SCREEN 5 (Graphic 4)
+            _render_g5(vdp, buf, h)              # SCREEN 6 (Graphic 5): M5 only
             _render_sprites_mode2(vdp, buf, h)
     elif m4:
-        if m2:
-            _render_g6(vdp, buf, h)              # SCREEN 7 (Graphic 6)
+        if m3:
+            _render_g4(vdp, buf, h)              # SCREEN 5 (Graphic 4): M3+M4
             _render_sprites_mode2(vdp, buf, h)
         else:
-            _render_g2(vdp, buf)                 # SCREEN 4 (Graphic 3) — G2 tiles
+            _render_g2(vdp, buf)                 # SCREEN 4 (Graphic 3): M4 only — G2 tiles
             _render_sprites_mode2(vdp, buf, h)
     elif m1:
         _render_text(vdp, buf)
@@ -275,7 +275,7 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
     pat_size    = 16 if si else 8
     render_size = pat_size * (2 if mag else 1)
 
-    sat_base = (((vdp.regs[11] & 3) << 15) | ((vdp.regs[5] & 0x7F) << 7)) & 0x1FFFF
+    sat_base = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
     spt_base = (vdp.regs[6] & 0x07) << 11
     col_base = (sat_base + 0x200) & 0x1FFFF
 
@@ -373,7 +373,7 @@ def _sprite_row_pixels(
 
 def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
-    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    base = (vdp.regs[2] & 0x60) << 10
     for y in range(h):
         row_base = (base + y * 128) & 0x1FFFF
         bx = y * _W
@@ -389,7 +389,7 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
 
 def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 6: 2-bpp, 4 virtual pixels per byte; sample even pixels → 256 wide."""
-    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    base = (vdp.regs[2] & 0x60) << 10
     for y in range(h):
         row_base = (base + y * 128) & 0x1FFFF
         bx = y * _W
@@ -405,7 +405,7 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
 
 def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 7: 4-bpp, 2 virtual pixels per byte; sample even pixels → 256 wide."""
-    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    base = (vdp.regs[2] & 0x60) << 10
     for y in range(h):
         row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W
@@ -432,7 +432,7 @@ def grb332_to_rgb(byte: int) -> tuple[int, int, int]:
 
 def _render_g7(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
-    base = ((vdp.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+    base = (vdp.regs[2] & 0x60) << 10
     for y in range(h):
         row_base = (base + y * _W) & 0x1FFFF
         bx = y * _W

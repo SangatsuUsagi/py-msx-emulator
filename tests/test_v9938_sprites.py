@@ -13,7 +13,7 @@ def _enable(vdp: V9938) -> None:
 
 def _set_screen5(vdp: V9938) -> None:
     _enable(vdp)
-    vdp.regs[0] = 0x10  # M5=bit4
+    vdp.regs[0] = 0x06  # M3=bit1, M4=bit2
 
 
 # R#5=0x70, R#11=0 → sat_base = (0x70 & 0x7F) << 7 = 0x3800

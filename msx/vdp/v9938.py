@@ -101,6 +101,7 @@ class V9938:
     _cmd_x: int = field(default=0, init=False, repr=False)
     _cmd_y: int = field(default=0, init=False, repr=False)
     _cmd_log: int = field(default=0, init=False, repr=False)
+    _tr_delay: int = field(default=0, init=False, repr=False)  # cycles until TR re-asserts
     _status7: int = field(default=0, init=False, repr=False)  # POINT result
     _lmcm_buf: list[int] = field(default_factory=list, init=False, repr=False)
     # Standard internals
@@ -121,12 +122,15 @@ class V9938:
 
     def tick(self, cycles: int) -> None:
         """Advance VDP command timer. Clears CE when _cmd_remaining reaches 0."""
-        if self._cmd_remaining <= 0:
-            return
-        self._cmd_remaining -= cycles
-        if self._cmd_remaining <= 0:
-            self._cmd_active = False
-            self._status2 &= ~(_S2_CE | _S2_TR)
+        if self._cmd_remaining > 0:
+            self._cmd_remaining -= cycles
+            if self._cmd_remaining <= 0:
+                self._cmd_active = False
+                self._status2 &= ~(_S2_CE | _S2_TR)
+        if self._tr_delay > 0:
+            self._tr_delay -= cycles
+            if self._tr_delay <= 0 and self._cmd_active:
+                self._status2 |= _S2_TR
 
     # ------------------------------------------------------------------
     # Port I/O
@@ -223,7 +227,7 @@ class V9938:
 
     def _vram_byte_addr(self, x: int, y: int) -> int:
         """G4 byte address for pixel (x, y) relative to R#2 display base."""
-        base = ((self.regs[2] & 0x7F) * 0x800) & 0x1FFFF
+        base = (self.regs[2] & 0x60) << 10
         return (base + y * 128 + x // 2) & 0x1FFFF
 
     def _vram_pixel_read(self, x: int, y: int) -> int:
@@ -425,6 +429,9 @@ class V9938:
         """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
         if not self._cmd_active or self._cmd_code == _CMD_LMCM:
             return
+        # TR=0 while VDP processes; tick() re-asserts TR after _CYCLES_PER_BYTE
+        self._status2 &= ~_S2_TR
+        self._tr_delay = _CYCLES_PER_BYTE
         px = self._cmd_dx + self._cmd_x
         py = self._cmd_dy + self._cmd_y
         if self._cmd_code == _CMD_LMMC:
@@ -441,6 +448,7 @@ class V9938:
             self._cmd_y += 1
             if self._cmd_y >= self._cmd_ny:
                 self._cmd_active = False
+                self._tr_delay = 0
                 self._status2 &= ~(_S2_CE | _S2_TR)
 
     def _cmd_data_read(self) -> int:
