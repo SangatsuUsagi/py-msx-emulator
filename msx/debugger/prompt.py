@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 _HELP = (
-    "Commands: rc | rv | vdp | dm ADDR [SIZE] | dv VADDR [SIZE] | "
+    "Commands: rc | rv | rp | vdp | dm ADDR [SIZE] | dv VADDR [SIZE] | "
     "b a/r/l ADDR | da [ADDR] | s [N] | c | q"
 )
 
@@ -63,6 +63,8 @@ class Debugger:
                 self._cmd_reg_cpu()
             elif cmd == "rv":
                 self._cmd_reg_vdp()
+            elif cmd == "rp":
+                self._cmd_reg_palette()
             elif cmd == "vdp":
                 self._cmd_vdp_status()
             elif cmd == "dm":
@@ -126,6 +128,22 @@ class Debugger:
                 f"R#{32 + i}={cmd[i]:02X}"
                 for i in range(row_start, min(row_start + 8, 15))
             ]
+            print("  " + "  ".join(parts))
+
+    def _cmd_reg_palette(self) -> None:
+        from msx.vdp.v9938 import V9938
+        vdp = self._machine.vdp
+        if not isinstance(vdp, V9938):
+            print("rp: V9938 not active (MSX2 only)")
+            return
+        for row_start in range(0, 16, 8):
+            parts = []
+            for i in range(row_start, row_start + 8):
+                p = vdp.palette[i]
+                r = (p >> 6) & 0x7
+                g = (p >> 3) & 0x7
+                b = p & 0x7
+                parts.append(f"#{i:X}={p:03X}({r},{g},{b})")
             print("  " + "  ".join(parts))
 
     def _cmd_vdp_status(self) -> None:
@@ -320,10 +338,10 @@ def _print_vdp_fancy(vdp: object) -> None:
     name_base    = (r[2] & 0x60) << 10 if (_m4 or _m5) else (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
-    # V9938 sprite mode 2: R#5<<7 → align to 0x200, then SAT = +0x200
+    # R#5/R#11 → SAT base (512-byte aligned); colour table at SAT-0x200
     _attr_reg    = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
-    _spr_col     = _attr_reg & ~0x1FF & 0x1FFFF
-    sprite_attr  = (_spr_col + 0x200) & 0x1FFFF
+    sprite_attr  = _attr_reg & ~0x1FF & 0x1FFFF
+    _spr_col     = (sprite_attr - 0x200) & 0x1FFFF
     sprite_pat   = (r[6]  & 0x3F) << 11
     print(
         f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"
