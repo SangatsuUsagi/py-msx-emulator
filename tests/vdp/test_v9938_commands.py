@@ -310,26 +310,26 @@ def test_lmmm_timp_skips_zero_src_pixels() -> None:
 # YMMM — high-speed Y-strip VRAM copy
 # ---------------------------------------------------------------------------
 
-def test_ymmm_copies_rows_from_sx_to_dx() -> None:
+def test_ymmm_copies_strip_from_sy_to_dy() -> None:
     vdp = _make_vdp()
-    # Write source data at row 0, columns 0-1 (byte 0: pixels 0-1)
-    vdp.vram[0] = 0xAB
-    vdp.vram[1] = 0xCD
-    # YMMM from SX=0 to DX=4, NY=2 rows (copies rows 0 and 1)
-    _dispatch_cmd(vdp, cmd_code=0xE, sx=0, sy=0, dx=4, dy=0, ny=2)
-    # dst row 0: _vram_byte_addr(4, 0)=2, _vram_byte_addr(6, 0)=3
-    assert vdp.vram[2] == 0xAB
-    assert vdp.vram[3] == 0xCD
+    # YMMM copies a vertical strip at X=DX; source row SY → destination row DY.
+    # Source strip at row 0, X>=DX=4 (bytes at offset 2,3 cover x=4..7).
+    vdp.vram[2] = 0xAB
+    vdp.vram[3] = 0xCD
+    _dispatch_cmd(vdp, cmd_code=0xE, dx=4, sy=0, dy=2, ny=1)
+    # dst row 2: _vram_byte_addr(4, 2)=2*128+2=258, _vram_byte_addr(6, 2)=259
+    assert vdp.vram[258] == 0xAB
+    assert vdp.vram[259] == 0xCD
     vdp.tick(10_000_000)
     assert vdp._status2 & 0x01 == 0  # CE cleared after tick
 
 
-def test_ymmm_uses_sy_not_dy_for_destination_row() -> None:
+def test_ymmm_destination_uses_dy_row() -> None:
     vdp = _make_vdp()
-    vdp.vram[128] = 0x55  # row 1 source
-    _dispatch_cmd(vdp, cmd_code=0xE, sx=0, sy=1, dx=2, dy=0, ny=1)
-    # destination: (DX=2, SY=1) → _vram_byte_addr(2, 1) = 128 + 1 = 129
-    assert vdp.vram[129] == 0x55
+    vdp.vram[2] = 0x55  # row 0 source at X=DX=4
+    _dispatch_cmd(vdp, cmd_code=0xE, dx=4, sy=0, dy=1, ny=1)
+    # destination: (DX=4, DY=1) → _vram_byte_addr(4, 1) = 128 + 2 = 130
+    assert vdp.vram[130] == 0x55
 
 
 # ---------------------------------------------------------------------------
@@ -431,32 +431,37 @@ def test_srch_finds_matching_pixel_right() -> None:
     vdp = _make_vdp()
     vdp.vram[2] = 0x05  # pixel (4,0)=0x0, pixel (5,0)=0x5
     _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0x5, arg=0)
-    # pixel (5,0) = 0x5 matches CLR → found at x=5
-    assert vdp._status2 == 5
-    assert vdp._status2 & 0x10 == 0  # BD not set
+    # pixel (5,0) = 0x5 matches CLR → found at x=5: BD set, X in S#8
+    assert vdp._status2 & 0x10  # BD set (found)
+    vdp.regs[15] = 8
+    assert vdp.read_port(0x99) == 5
 
 
 def test_srch_bd_flag_when_not_found() -> None:
     vdp = _make_vdp()
     # vram all zeros; CLR=0xF → never matches
     _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xF, arg=0)
-    assert vdp._status2 & 0x10  # BD flag set
+    assert vdp._status2 & 0x10 == 0  # BD clear (not found)
 
 
 def test_srch_left_direction() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0xA0  # pixel (0,0)=0xA
-    _dispatch_cmd(vdp, cmd_code=0x6, sx=4, sy=0, clr=0xA, arg=1)  # direction=left
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=4, sy=0, clr=0xA, arg=0x04)  # DIX=left
     # scan left from x=4: x=4(0), 3(0), 2(0), 1(0), 0 → 0xA match at x=0
-    assert vdp._status2 == 0
+    assert vdp._status2 & 0x10  # BD set (found)
+    vdp.regs[15] = 8
+    assert vdp.read_port(0x99) == 0
 
 
 def test_srch_stop_on_not_equal() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0xAA  # pixels (0,0)=0xA, (1,0)=0xA
     vdp.vram[1] = 0x5A  # pixel (2,0)=0x5 differs
-    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xA, arg=2)  # stop on not-equal
-    assert vdp._status2 == 2  # first pixel ≠ 0xA is at x=2
+    _dispatch_cmd(vdp, cmd_code=0x6, sx=0, sy=0, clr=0xA, arg=0x02)  # EQ: stop on not-equal
+    assert vdp._status2 & 0x10  # BD set (found)
+    vdp.regs[15] = 8
+    assert vdp.read_port(0x99) == 2  # first pixel ≠ 0xA is at x=2
 
 
 # ---------------------------------------------------------------------------
@@ -475,8 +480,8 @@ def test_line_horizontal_draws_nx_plus_1_pixels() -> None:
 
 def test_line_vertical_draws_ny_plus_1_pixels() -> None:
     vdp = _make_vdp()
-    # Vertical line: MAJ=Y (arg[2]=4), NX=0 (minor), NY=2 → 3 pixels at col 0
-    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=0, ny=2, clr=0x5, arg=4)
+    # Vertical line: MAJ=Y (arg bit0=1), NX=0 (minor), NY=2 → 3 pixels at col 0
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=0, ny=2, clr=0x5, arg=0x01)
     # pixels (0,0), (0,1), (0,2) = 0x5 → high nibble of vram[0], vram[128], vram[256]
     assert vdp.vram[0] >> 4 == 0x5
     assert vdp.vram[128] >> 4 == 0x5
