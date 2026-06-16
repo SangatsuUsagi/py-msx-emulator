@@ -54,7 +54,7 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     if m5:
         if m4:
             _render_g7(vdp, buf, h)              # SCREEN 8 (Graphic 7): M3+M4+M5
-            _render_sprites_mode2(vdp, buf, h)
+            _render_sprites_mode2(vdp, buf, h, grb_mode=True)
         elif m3:
             _render_g6(vdp, buf, h)              # SCREEN 7 (Graphic 6): M3+M5
             _render_sprites_mode2(vdp, buf, h)
@@ -262,12 +262,13 @@ def _render_sprites(vdp: "V9938", buf: bytearray) -> None:
         vdp.status |= 0x20
 
 
-def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
+def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int, grb_mode: bool = False) -> None:
     """Sprite mode 2 for SCREEN 4–8.
 
-    Colour table at sat_base+0x200, 16 bytes per sprite (one per scanline).
+    R#5/R#11 → SAT base (512-byte aligned). Colour table at sat_base-0x200.
     Colour byte: bit5=OR mode, bits3:0=palette colour.
     EC (early clock) in SAT attr bit7 shifts X by -32.
+    grb_mode=True (SCREEN 8): sprite palette colours are converted to GRB332 before writing.
     """
     r1 = vdp.regs[1]
     si  = (r1 >> 1) & 1
@@ -275,11 +276,10 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
     pat_size    = 16 if si else 8
     render_size = pat_size * (2 if mag else 1)
 
-    # V9938 sprite mode 2: R#5<<7 → low 9 bits aligned → color table base.
-    # SAT lives at color_base + 0x200.
+    # R#5/R#11 specify the SAT base (512-byte aligned). Color table is 0x200 before SAT.
     attr_reg = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
-    col_base = attr_reg & ~0x1FF & 0x1FFFF
-    sat_base = (col_base + 0x200) & 0x1FFFF
+    sat_base = attr_reg & ~0x1FF & 0x1FFFF
+    col_base = (sat_base - 0x200) & 0x1FFFF
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
     line_count = [0] * h
@@ -340,9 +340,16 @@ def _render_sprites_mode2(vdp: "V9938", buf: bytearray, h: int) -> None:
                     else:
                         sprite_buf[coord] = color
 
-    for idx, sc in enumerate(sprite_buf):
-        if sc:
-            buf[idx] = sc
+    if grb_mode:
+        palette = vdp.palette
+        for idx, sc in enumerate(sprite_buf):
+            if sc:
+                p = palette[sc & 0x0F]
+                buf[idx] = (((p >> 3) & 0x7) << 5) | (((p >> 6) & 0x7) << 2) | ((p & 0x7) >> 1)
+    else:
+        for idx, sc in enumerate(sprite_buf):
+            if sc:
+                buf[idx] = sc
 
     if coincidence:
         vdp.status |= 0x20

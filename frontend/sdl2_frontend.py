@@ -13,6 +13,8 @@ from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.state import load_state, save_state
+from msx.vdp.v9938 import V9938
+from msx.vdp.v9938_renderer import grb332_to_rgb
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -39,13 +41,30 @@ _W = 256
 _MAX_FRAME_SKIP: int = 4
 
 
-def _index_to_rgb24(src: bytearray) -> bytearray:
+def _index_to_rgb24(src: bytearray, vdp: object) -> bytearray:
     dst = bytearray(len(src) * 3)
-    for i in range(len(src)):
-        r, g, b = TMS9918A_PALETTE[src[i] & 0x0F]
-        dst[i * 3]     = r
-        dst[i * 3 + 1] = g
-        dst[i * 3 + 2] = b
+    if isinstance(vdp, V9938):
+        r0 = vdp.regs[0]
+        is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
+        if is_g7:
+            for i in range(len(src)):
+                r, g, b = grb332_to_rgb(src[i])
+                dst[i * 3] = r
+                dst[i * 3 + 1] = g
+                dst[i * 3 + 2] = b
+        else:
+            palette = vdp.palette
+            for i in range(len(src)):
+                p = palette[src[i] & 0x0F]
+                dst[i * 3]     = ((p >> 6) & 0x7) * 255 // 7
+                dst[i * 3 + 1] = ((p >> 3) & 0x7) * 255 // 7
+                dst[i * 3 + 2] = (p & 0x7) * 255 // 7
+    else:
+        for i in range(len(src)):
+            r, g, b = TMS9918A_PALETTE[src[i] & 0x0F]
+            dst[i * 3]     = r
+            dst[i * 3 + 1] = g
+            dst[i * 3 + 2] = b
     return dst
 
 
@@ -184,7 +203,7 @@ def run(
             skip_this_frame = _skip_counter > 0
             index_buf = machine.run_frame(skip_render=skip_this_frame)
             if not skip_this_frame:
-                rgb_buf = _index_to_rgb24(index_buf)
+                rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
 
             # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
             if audio_dev > 0:
