@@ -127,6 +127,7 @@ class V9938:
     _pal_latch: int | None = field(default=None, init=False, repr=False)
     _read_buf: int = field(default=0, init=False, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
+    _ie1_warned: bool = field(default=False, init=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -141,6 +142,12 @@ class V9938:
         m4 = (r0 >> 2) & 1
         m5 = (r0 >> 3) & 1
         return 512 if (m5 and not m4) else 256
+
+    def _warn_ie1_if_needed(self, reg: int, value: int) -> None:
+        if reg == 0 and (value & 0x10) and not (self.regs[0] & 0x10) and not self._ie1_warned:
+            import sys
+            print("Warning: ROM enabled V9938 H-sync interrupt (IE1/R#0 bit4) — not supported", file=sys.stderr)
+            self._ie1_warned = True
 
     # ------------------------------------------------------------------
     # Command timer
@@ -181,6 +188,7 @@ class V9938:
                 if value & 0x80:
                     reg = value & 0x3F
                     if reg < _NUM_REGS:
+                        self._warn_ie1_if_needed(reg, low)
                         self.regs[reg] = low
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
@@ -212,6 +220,7 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
+                self._warn_ie1_if_needed(ptr, value)
                 self.regs[ptr] = value
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
