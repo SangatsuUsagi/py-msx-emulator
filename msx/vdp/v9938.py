@@ -32,24 +32,27 @@ def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
     return src
 
 
-# TMS9918A-compatible initial palette, 9-bit packed as (R<<6)|(G<<3)|B.
-_TMS_PALETTE: tuple[int, ...] = (
-    0b000_000_000,  # 0  transparent → black
-    0b000_000_000,  # 1  black
-    0b001_110_001,  # 2  medium green
-    0b011_111_011,  # 3  light green
-    0b001_001_111,  # 4  dark blue
-    0b010_010_111,  # 5  light blue
-    0b101_001_001,  # 6  dark red
-    0b010_111_111,  # 7  cyan
-    0b111_010_010,  # 8  medium red
-    0b111_100_100,  # 9  light red
-    0b110_110_001,  # 10 dark yellow
-    0b111_111_100,  # 11 light yellow
-    0b001_101_001,  # 12 dark green
-    0b110_010_101,  # 13 magenta
-    0b101_101_101,  # 14 gray
-    0b111_111_111,  # 15 white
+# V9938 power-on default palette (the MSX2 standard palette), 9-bit packed as
+# (R<<6)|(G<<3)|B. These are the real hardware reset values — matching openMSX's
+# V9938_PALETTE (V9938 data book p.6) — NOT the TMS9918A approximations, so MSX2
+# titles that rely on the default palette show their intended colours.
+_MSX2_DEFAULT_PALETTE: tuple[int, ...] = (
+    0b000_000_000,  # 0  transparent → black   R0 G0 B0
+    0b000_000_000,  # 1  black                  R0 G0 B0
+    0b001_110_001,  # 2  medium green           R1 G6 B1
+    0b011_111_011,  # 3  light green            R3 G7 B3
+    0b001_001_111,  # 4  dark blue              R1 G1 B7
+    0b010_011_111,  # 5  light blue             R2 G3 B7
+    0b101_001_001,  # 6  dark red               R5 G1 B1
+    0b010_110_111,  # 7  cyan                   R2 G6 B7
+    0b111_001_001,  # 8  medium red             R7 G1 B1
+    0b111_011_011,  # 9  light red              R7 G3 B3
+    0b110_110_001,  # 10 dark yellow            R6 G6 B1
+    0b110_110_100,  # 11 light yellow           R6 G6 B4
+    0b001_100_001,  # 12 dark green             R1 G4 B1
+    0b110_010_101,  # 13 magenta                R6 G2 B5
+    0b101_101_101,  # 14 gray                   R5 G5 B5
+    0b111_111_111,  # 15 white                  R7 G7 B7
 )
 
 # Command codes in R46 upper nibble
@@ -89,7 +92,7 @@ class V9938:
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
     status: int = 0
-    palette: list[int] = field(default_factory=lambda: list(_TMS_PALETTE))
+    palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
     on_interrupt: Callable[[], None] | None = None
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
@@ -129,6 +132,15 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
+
+    @property
+    def display_width(self) -> int:
+        """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
+        SCREEN 7 (G6), i.e. M5 set with M4 clear. SCREEN 8 (G7, M5+M4) is 256."""
+        r0 = self.regs[0]
+        m4 = (r0 >> 2) & 1
+        m5 = (r0 >> 3) & 1
+        return 512 if (m5 and not m4) else 256
 
     # ------------------------------------------------------------------
     # Command timer
@@ -226,6 +238,10 @@ class V9938:
             if self.regs[15] == 2:
                 return self._status2
             if self.regs[15] == 7:
+                # LMCM delivers each result byte through S#7 (handbook); fall
+                # back to the POINT result when no LMCM transfer is active.
+                if self._cmd_active and self._cmd_code == _CMD_LMCM and self._lmcm_buf:
+                    return self._cmd_data_read()
                 return self._status7
             if self.regs[15] == 8:
                 return self._status8
@@ -261,8 +277,13 @@ class V9938:
         return 128, 2, 4   # GRAPHIC 4 (SCREEN 5): 256 wide, 4 bpp (default)
 
     def _vram_byte_addr(self, x: int, y: int) -> int:
-        """Linear VRAM byte address for command-engine pixel (x, y)."""
-        return (y * self._cmd_bpl + x // self._cmd_ppb) & 0x1FFFF
+        """Linear VRAM byte address for command-engine pixel (x, y).
+
+        The X byte offset wraps within its own row so a blit that runs past the
+        right edge stays on its row instead of spilling into the next row.
+        In-bounds pixels (x < screen width) are unaffected.
+        """
+        return (y * self._cmd_bpl + (x // self._cmd_ppb) % self._cmd_bpl) & 0x1FFFF
 
     def _vram_pixel_read(self, x: int, y: int) -> int:
         """Return the pixel value at (x, y) for the current screen mode."""
@@ -355,8 +376,10 @@ class V9938:
         if cmd == _CMD_LINE:
             maj_y = bool(arg & _ARG_MAJ)
             clr_px = clr & px_mask
-            major = ny if maj_y else nx
-            minor = nx if maj_y else ny
+            # NX is always the major (long) side, NY always the minor (short);
+            # MAJ only selects which screen axis the major runs along.
+            major = nx
+            minor = ny
             err = major // 2
             x, y = dx, dy
             for _ in range(major + 1):
@@ -405,7 +428,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_LMMM:
@@ -419,7 +442,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMV:
@@ -432,7 +455,7 @@ class V9938:
                     self.vram[addr] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMM:
@@ -447,7 +470,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // 2) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_YMMM:
@@ -465,10 +488,11 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (x_count // 2) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = (x_count // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
-        # HMMC (0xF) or LMMC (0xB): CPU-feed transfer
+        # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
+        self._cmd_remaining = 0
         self._cmd_active = True
         self._cmd_code = cmd
         self._cmd_dx = dx
@@ -480,7 +504,17 @@ class V9938:
         self._cmd_log = log
         self._cmd_xstep = xs
         self._cmd_ystep = ys
-        self._status2 |= _S2_CE | _S2_TR
+        self._status2 |= _S2_CE
+        # The first datum is pre-loaded in R#44 (CLR) before the command is
+        # issued; the engine consumes it on dispatch and the CPU then supplies
+        # the remaining NX*NY-1 dots via the data port. (Handbook: NX*NY bytes
+        # total, "including first byte pre-loaded in R#44".)
+        self._cmd_data_write(clr)
+        if self._cmd_active:
+            # Ready for the next byte immediately (the pre-load is consumed as
+            # part of command start, not a timed CPU transfer).
+            self._tr_delay = 0
+            self._status2 |= _S2_TR
 
     def _cmd_data_write(self, value: int) -> None:
         """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
@@ -492,20 +526,14 @@ class V9938:
         px = self._cmd_dx + self._cmd_x * self._cmd_xstep
         py = self._cmd_dy + self._cmd_y * self._cmd_ystep
         if self._cmd_code == _CMD_LMMC:
-            # Pixel-level write with LOG: a byte packs ppb pixels, MSB first.
-            ppb = self._cmd_ppb
-            bpp = self._cmd_bpp
-            mask = (1 << bpp) - 1
-            for k in range(ppb):
-                shift = (ppb - 1 - k) * bpp
-                self._vram_pixel_write(
-                    px + k * self._cmd_xstep, py, (value >> shift) & mask, self._cmd_log
-                )
+            # LMMC: CPU sends one byte per pixel; color in lower bpp bits.
+            mask = (1 << self._cmd_bpp) - 1
+            self._vram_pixel_write(px, py, value & mask, self._cmd_log)
+            self._cmd_x += 1
         else:
-            # HMMC: high-speed byte copy, no logical operation
+            # HMMC: high-speed byte copy, no logical operation; one byte = ppb pixels.
             self.vram[self._vram_byte_addr(px, py)] = value
-        # advance cursor by one byte = ppb pixels
-        self._cmd_x += self._cmd_ppb
+            self._cmd_x += self._cmd_ppb
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1

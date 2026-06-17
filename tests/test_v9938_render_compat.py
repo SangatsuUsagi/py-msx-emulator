@@ -192,8 +192,8 @@ def test_sprite_pixel_placed_at_correct_position() -> None:
     assert buf[1 * 256 + 0] == 7
 
 
-def test_sprite_9th_line_flag() -> None:
-    """V9938 sprite mode 1 allows 8 per line; the 9th sets S#0 bit 6."""
+def test_sprite_5th_line_flag() -> None:
+    """V9938 sprite mode 1 keeps the TMS 4-per-line limit; the 5th sets S#0 bit 6."""
     vdp = V9938()
     _enable(vdp)
     vdp.regs[5] = 0x0E  # SAT at 0x0700
@@ -201,12 +201,43 @@ def test_sprite_9th_line_flag() -> None:
 
     sat_base = (vdp.regs[5] & 0x7F) << 7  # 0x0700
 
-    # 9 sprites at y=0 (all visible on scan line 1), spread across x
-    for i in range(9):
+    # 5 sprites at y=0 (all visible on scan line 1), spread across x
+    for i in range(5):
         _write_sat_entry(vdp, i, y=0, x=i * 8, pat=0, color=i + 1)
-    vdp.vram[(sat_base + 9 * 4) & 0x3FFF] = 0xD0  # terminate after sprite 8
+    vdp.vram[(sat_base + 5 * 4) & 0x3FFF] = 0xD0  # terminate after sprite 4
 
     render_frame(vdp)
 
-    assert vdp.status & 0x40           # 9th-sprite flag set
-    assert (vdp.status & 0x1F) == 8   # index of 9th sprite (0-based = 8)
+    assert vdp.status & 0x40           # 5th-sprite flag set
+    assert (vdp.status & 0x1F) == 4   # index of 5th sprite (0-based = 4)
+
+
+# ---------------------------------------------------------------------------
+# TEXT1 (SCREEN 0) colours come straight from R#7 (no colour-0 substitution)
+# ---------------------------------------------------------------------------
+
+def test_text1_colours_from_r7() -> None:
+    vdp = V9938()
+    vdp.regs[1] = 0x50  # M1 (bit4) + BL (bit6) → TEXT1
+    vdp.regs[2] = 0x00  # name table at 0x0000
+    vdp.regs[4] = 0x01  # pattern gen at 0x0800
+    vdp.regs[7] = 0x32  # fg=3, bg=2
+    vdp.vram[0x0000] = 0x00     # char 0 at col 0
+    vdp.vram[0x0800] = 0xFF     # pattern row 0 all set
+
+    buf = render_frame(vdp)
+    assert buf[8] == 3   # col 0, first text pixel = fg=3
+
+
+def test_text1_fg_zero_uses_palette_index_0() -> None:
+    """V9938 TEXT1 with fg=0 shows palette index 0 directly, NOT colour 1."""
+    vdp = V9938()
+    vdp.regs[1] = 0x50  # TEXT1
+    vdp.regs[2] = 0x00
+    vdp.regs[4] = 0x01
+    vdp.regs[7] = 0x02  # fg=0, bg=2
+    vdp.vram[0x0000] = 0x00
+    vdp.vram[0x0800] = 0xFF
+
+    buf = render_frame(vdp)
+    assert buf[8] == 0   # fg=0 → index 0 (was incorrectly forced to 1)
