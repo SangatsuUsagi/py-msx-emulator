@@ -213,6 +213,23 @@ def test_initial_palette_has_16_entries() -> None:
     assert len(vdp.palette) == 16
 
 
+def test_initial_palette_is_msx2_default_not_tms() -> None:
+    """The power-on palette must be the V9938 (MSX2) default, not the TMS9918A
+    approximation. Check the entries that differ between the two."""
+    vdp = V9938()
+
+    def rgb(i: int) -> tuple[int, int, int]:
+        p = vdp.palette[i]
+        return ((p >> 6) & 7, (p >> 3) & 7, p & 7)
+
+    assert rgb(5) == (2, 3, 7)   # light blue  (TMS was 2,2,7)
+    assert rgb(7) == (2, 6, 7)   # cyan        (TMS was 2,7,7)
+    assert rgb(8) == (7, 1, 1)   # medium red  (TMS was 7,2,2)
+    assert rgb(9) == (7, 3, 3)   # light red   (TMS was 7,4,4)
+    assert rgb(11) == (6, 6, 4)  # light yellow(TMS was 7,7,4)
+    assert rgb(12) == (1, 4, 1)  # dark green  (TMS was 1,5,1)
+
+
 # ---------------------------------------------------------------------------
 # display_height
 # ---------------------------------------------------------------------------
@@ -233,3 +250,26 @@ def test_display_height_back_to_192_when_ln_cleared() -> None:
     vdp.regs[9] = 0x80
     vdp.regs[9] = 0x00
     assert vdp.display_height == 192
+
+
+def test_display_width_default_256() -> None:
+    vdp = V9938()
+    assert vdp.display_width == 256
+
+
+def test_display_width_512_for_screen6() -> None:
+    vdp = V9938()
+    vdp.regs[0] = 0x08  # M5 only → SCREEN 6 (G5)
+    assert vdp.display_width == 512
+
+
+def test_display_width_512_for_screen7() -> None:
+    vdp = V9938()
+    vdp.regs[0] = 0x0A  # M3+M5 → SCREEN 7 (G6)
+    assert vdp.display_width == 512
+
+
+def test_display_width_256_for_screen8() -> None:
+    vdp = V9938()
+    vdp.regs[0] = 0x0E  # M3+M4+M5 → SCREEN 8 (G7), 256 wide 8bpp
+    assert vdp.display_width == 256

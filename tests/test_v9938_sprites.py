@@ -35,9 +35,17 @@ def _write_sat_entry(
 
 
 def _write_col_entry(
-    vdp: V9938, sprite_idx: int, line_idx: int, color: int, or_mode: bool = False
+    vdp: V9938, sprite_idx: int, line_idx: int, color: int,
+    or_mode: bool = False, ec: bool = False, ic: bool = False,
 ) -> None:
-    entry = (color & 0x0F) | (0x20 if or_mode else 0)
+    # Per-line colour byte: EC(7) | CC(6) | IC(5) | 0 | colour(3:0).
+    entry = color & 0x0F
+    if or_mode:
+        entry |= 0x40  # CC
+    if ic:
+        entry |= 0x20  # IC
+    if ec:
+        entry |= 0x80  # EC
     vdp.vram[(_COL_BASE + sprite_idx * 16 + line_idx) & 0x1FFFF] = entry
 
 
@@ -113,17 +121,17 @@ def test_sprite_mode2_colour_per_scanline() -> None:
 # ---------------------------------------------------------------------------
 
 def test_sprite_mode2_early_clock_shifts_x_left() -> None:
-    """EC bit (bit 7 of SAT attr) shifts sprite X by −32."""
+    """EC bit (bit 7 of the per-line colour byte) shifts sprite X by −32."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
     vdp.regs[6] = 0x00
 
     # EC=1, X=64 → effective X = (64 − 32) = 32
-    _write_sat_entry(vdp, 0, y=0, x=64, pat=0, attr=0x80)
+    _write_sat_entry(vdp, 0, y=0, x=64, pat=0)
     _terminate_sat(vdp, after_idx=1)
 
-    _write_col_entry(vdp, 0, 0, color=7)
+    _write_col_entry(vdp, 0, 0, color=7, ec=True)
     vdp.vram[0] = 0x80  # leftmost pixel
 
     buf = render_frame(vdp)
@@ -259,3 +267,145 @@ def test_sprite_mode2_9th_sprite_not_rendered() -> None:
     # Sprite 7 is at x=56, colour=8 → buf[1*256+56] == 8
     assert buf[1 * 256 + 56] == 8   # sprite 7 (last rendered)
     assert buf[1 * 256 + 64] != 9   # sprite 8 (9th, not rendered)
+
+
+def test_sprite_mode2_ic_suppresses_coincidence() -> None:
+    """IC bit (bit 5) on an overlapping sprite suppresses the coincidence flag."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=3)
+
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4, ic=True)  # ignore collision
+
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert vdp.status & 0x20 == 0   # coincidence NOT flagged
+
+
+def test_sprite_mode2_screen8_uses_fixed_sprite_palette() -> None:
+    """SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not the
+    programmable palette. Colour 8 → fixed GRB332 byte 0x9D (from 0x472),
+    NOT the programmable-palette-derived 0x3C."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x0E  # SCREEN 8 (G7): M3+M4+M5
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=8)
+    vdp.vram[0] = 0x80  # sprite pattern row 0, leftmost pixel
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 0x9D   # fixed GRAPHIC7 sprite palette entry 8
+    assert buf[1 * 256 + 0] != 0x3C   # not the programmable-palette result
+
+
+# ---------------------------------------------------------------------------
+# Sprite mode 2: 16×16 sprites
+# ---------------------------------------------------------------------------
+
+def _set_16x16(vdp: V9938) -> None:
+    vdp.regs[1] |= 0x02  # SI bit: 16×16 sprites
+
+
+def test_sprite_mode2_16x16_quadrant_layout() -> None:
+    """16×16 sprite: N=top-left, N+1=bottom-left, N+2=top-right, N+3=bottom-right."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    _set_16x16(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00  # SPG at 0x0000
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)  # pat & 0xFC = 0
+    _terminate_sat(vdp, after_idx=1)
+
+    # Top half = sprite lines 0–7 (screen line 1..8); bottom half = lines 8–15.
+    vdp.vram[0 * 8 + 0] = 0x80  # char 0 (top-left)  row0: px 0
+    vdp.vram[2 * 8 + 0] = 0x01  # char 2 (top-right) row0: px 7 → sprite px 15
+    vdp.vram[1 * 8 + 0] = 0x80  # char 1 (bottom-left)  row0: px 0
+    vdp.vram[3 * 8 + 0] = 0x01  # char 3 (bottom-right) row0: px 7 → sprite px 15
+
+    for ln in range(16):
+        _write_col_entry(vdp, 0, ln, color=6)
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 6    # top-left  px 0
+    assert buf[1 * 256 + 15] == 6   # top-right px 15
+    assert buf[9 * 256 + 0] == 6    # bottom-left  px 0  (screen line 9 = sprite row 8)
+    assert buf[9 * 256 + 15] == 6   # bottom-right px 15
+
+
+def test_sprite_mode2_16x16_right_edge_clips_no_wrap() -> None:
+    """A 16×16 sprite past the right edge clips; pixels do not wrap to the left."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    _set_16x16(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=248, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+
+    vdp.vram[0 * 8 + 0] = 0xFF  # top-left  row0: px 0–7  → screen 248–255
+    vdp.vram[2 * 8 + 0] = 0xFF  # top-right row0: px 8–15 → screen 256–263 (off-screen)
+    for ln in range(16):
+        _write_col_entry(vdp, 0, ln, color=7)
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 255] == 7   # last on-screen pixel drawn
+    assert buf[1 * 256 + 0] != 7     # right half clipped, not wrapped to the left
+
+
+def test_sprite_mode2_16x16_early_clock_off_left_edge() -> None:
+    """EC pushing a 16×16 sprite fully off the left edge draws nothing (no wrap)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    _set_16x16(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)  # x=0, EC → -32 → fully off-screen
+    _terminate_sat(vdp, after_idx=1)
+
+    vdp.vram[0 * 8 + 0] = 0xFF
+    vdp.vram[2 * 8 + 0] = 0xFF
+    for ln in range(16):
+        _write_col_entry(vdp, 0, ln, color=7, ec=True)
+
+    buf = render_frame(vdp)
+    assert 7 not in buf[1 * 256:2 * 256]  # nothing drawn on the line, no wrap
+
+
+# ---------------------------------------------------------------------------
+# Sprite mode 2 in the 512-wide modes (SCREEN 6/7): horizontal doubling
+# ---------------------------------------------------------------------------
+
+def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
+    """In a 512-wide mode the 256-dot sprite plane is doubled: sprite dot at X
+    covers screen columns 2X and 2X+1, in a 512-stride buffer."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x08  # SCREEN 6 (G5): 512 wide
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=10, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=7)
+    vdp.vram[0] = 0x80  # pattern row 0, leftmost dot
+
+    buf = render_frame(vdp)
+    assert len(buf) == 512 * vdp.display_height
+    # sprite dot at sx=10 → doubled to columns 20 and 21 on scan line 1
+    assert buf[1 * 512 + 20] == 7
+    assert buf[1 * 512 + 21] == 7
+    assert buf[1 * 512 + 19] != 7

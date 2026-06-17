@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | vdp | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "b a/r/l ADDR | da [ADDR] | s [N] | c | q"
+    "b a/r/l ADDR | da [ADDR] | s [N] | te | td | c | q"
 )
 
 
@@ -35,7 +35,11 @@ class Debugger:
     def enter(self) -> None:
         """Suspend emulation and run the debug REPL until 'cont' or 'quit'."""
         print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
-        print(f"  PC={self._machine.cpu.registers.PC:04X}h")
+        pc = self._machine.cpu.registers.PC
+        read = self._machine.cpu.read_byte
+        mnem, size = disassemble(read, pc)
+        raw_bytes = " ".join(f"{read((pc + i) & 0xFFFF):02X}" for i in range(size))
+        print(f"  PC={pc:04X}h  {raw_bytes:<12}  {mnem}")
         while True:
             try:
                 cyc = self._machine.cycle_count
@@ -77,6 +81,10 @@ class Debugger:
                 self._cmd_disasm(args)
             elif cmd == "s":
                 self._cmd_step(args)
+            elif cmd == "te":
+                self._cmd_trace_enable()
+            elif cmd == "td":
+                self._cmd_trace_disable()
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -274,6 +282,33 @@ class Debugger:
         mnem, size = disassemble(read, r.PC)
         raw_bytes = " ".join(f"{read((r.PC + i) & 0xFFFF):02X}" for i in range(size))
         print(f"  => {r.PC:04X}: {raw_bytes:<12}  {mnem}")
+
+    def _cmd_trace_enable(self) -> None:
+        from msx.vdp.v9938 import V9938
+        from msx.vdp.tracer import Tracer
+        vdp = self._machine.vdp
+        if not isinstance(vdp, V9938):
+            print("te: V9938 not active (MSX2 only)")
+            return
+        if vdp._get_pc is None:
+            m = self._machine
+            vdp._get_pc    = lambda: m.cpu.instruction_pc
+            vdp._get_cycle = lambda: m.cycle_count
+            vdp._get_frame = lambda: vdp._frame_count
+        if vdp.tracer is None:
+            vdp.tracer = Tracer(enabled=True, output=sys.stdout)
+        else:
+            vdp.tracer.enabled = True
+        print("VDP trace enabled (stdout)")
+
+    def _cmd_trace_disable(self) -> None:
+        from msx.vdp.v9938 import V9938
+        vdp = self._machine.vdp
+        if not isinstance(vdp, V9938) or vdp.tracer is None or not vdp.tracer.enabled:
+            print("VDP trace already disabled")
+            return
+        vdp.tracer.enabled = False
+        print("VDP trace disabled")
 
 
 # ---------------------------------------------------------------------------

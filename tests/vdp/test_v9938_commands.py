@@ -167,18 +167,19 @@ def test_hmmc_sets_ce_and_tr_on_dispatch() -> None:
 
 def test_hmmc_transfers_bytes_via_port_9c() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
-    # NX=4 pixels = 2 bytes in G4 (each byte = 2 pixels)
-    vdp.write_port(0x9C, 0xAB)
+    # NX=4 pixels = 2 bytes in G4. First byte is pre-loaded in CLR (R#44) and
+    # consumed on dispatch; the second arrives via the data port.
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0xAB)
     vdp.write_port(0x9C, 0xCD)
-    assert vdp.vram[0] == 0xAB  # pixel pair (0,1)
+    assert vdp.vram[0] == 0xAB  # pixel pair (0,1) — pre-loaded CLR
     assert vdp.vram[1] == 0xCD  # pixel pair (2,3)
 
 
 def test_hmmc_clears_ce_when_done() -> None:
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=2, ny=1)
-    vdp.write_port(0x9C, 0xAB)  # 1 byte for NX=2 pixels
+    # NX=2 pixels = 1 byte total = just the pre-loaded CLR → completes on dispatch.
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=2, ny=1, clr=0xAB)
+    assert vdp.vram[0] == 0xAB
     assert vdp._status2 & 0x01 == 0  # CE cleared
     assert not vdp._cmd_active
 
@@ -191,9 +192,9 @@ def test_hmmc_port_9c_write_when_inactive_ignored() -> None:
 
 def test_hmmc_transfers_bytes_via_port_9b() -> None:
     # V9938: port 0x9B doubles as command data port during HMMC/LMMC.
+    # First byte pre-loaded in CLR; second via the port.
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
-    vdp.write_port(0x9B, 0xAB)
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0xAB)
     vdp.write_port(0x9B, 0xCD)
     assert vdp.vram[0] == 0xAB
     assert vdp.vram[1] == 0xCD
@@ -210,10 +211,26 @@ def test_hmmc_port_9b_does_not_write_register_when_active() -> None:
 
 
 def test_lmmc_transfers_bytes_via_port_9b() -> None:
+    # LMMC: 1 byte per pixel; color in lower nibble. G4 (4bpp): 2 pixels per VRAM byte.
+    # V9938 transfers all NX*NY dots; the first dot is the pre-loaded CLR and the
+    # CPU supplies the remaining NX*NY-1 via the port. CE clears after the last.
+    # NX=4,NY=2 → 8 dots = CLR + 7 port writes.
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xB, log=0x0, dx=0, dy=0, nx=2, ny=1)
-    vdp.write_port(0x9B, 0xAB)
-    assert vdp.vram[0] == 0xAB
+    _dispatch_cmd(vdp, cmd_code=0xB, log=0x0, dx=0, dy=0, nx=4, ny=2, clr=0x07)
+    # (0,0)=7 came from CLR; remaining dots via the port:
+    vdp.write_port(0x9B, 0x05)  # (1,0)=5
+    vdp.write_port(0x9B, 0x03)  # (2,0)=3
+    vdp.write_port(0x9B, 0x01)  # (3,0)=1
+    vdp.write_port(0x9B, 0x04)  # (0,1)=4
+    vdp.write_port(0x9B, 0x02)  # (1,1)=2
+    vdp.write_port(0x9B, 0x06)  # (2,1)=6
+    assert vdp._cmd_active        # still active before the final pixel
+    vdp.write_port(0x9B, 0x08)  # (3,1)=8 → last dot → CE=0
+    assert vdp.vram[0] == 0x75   # row 0 byte 0: pixels (0,0)=7, (1,0)=5
+    assert vdp.vram[1] == 0x31   # row 0 byte 1: pixels (2,0)=3, (3,0)=1
+    assert vdp.vram[128] == 0x42 # row 1 byte 0: pixels (0,1)=4, (1,1)=2
+    assert vdp.vram[129] == 0x68 # row 1 byte 1: pixels (2,1)=6, (3,1)=8
+    assert not vdp._cmd_active    # command complete after NX*NY dots
 
 
 # ---------------------------------------------------------------------------
@@ -229,10 +246,17 @@ def test_lmmc_timp_skips_zero_bytes() -> None:
 
 
 def test_lmmc_timp_writes_nonzero_bytes() -> None:
+    # TIMP: color 0 = transparent (skip). Non-zero color writes the pixel.
+    # NX=3,NY=1 → 3 dots: CLR (pre-load) + 2 port writes.
     vdp = _make_vdp()
-    _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=2, ny=1)
-    vdp.write_port(0x9C, 0xAB)  # non-zero → write
-    assert vdp.vram[0] == 0xAB
+    _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=3, ny=1, clr=0x0B)
+    # (0,0) color 0xB came from CLR; remaining dots via the port:
+    vdp.write_port(0x9C, 0x05)  # (1,0) color 5 → pixel written
+    vdp.write_port(0x9C, 0x0C)  # (2,0) color C → last dot → CE=0
+    # G4: byte 0 = pixels 0,1 packed; byte 1 = pixels 2,3.
+    assert vdp.vram[0] == 0xB5      # pixel 0 high=B, pixel 1 low=5
+    assert vdp.vram[1] & 0xF0 == 0xC0  # pixel 2 high nibble = C
+    assert not vdp._cmd_active
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +447,19 @@ def test_lmcm_write_to_9c_ignored_during_lmcm() -> None:
     assert vdp.vram[0] == 0xAB  # unchanged
 
 
+def test_lmcm_read_via_status_register_7() -> None:
+    # Handbook path: CPU reads each LMCM byte from S#7 (R#15=7 via port 0x99).
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAB  # pixels (0,0)=0xA, (1,0)=0xB
+    vdp.vram[1] = 0xCD  # pixels (2,0)=0xC, (3,0)=0xD
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)
+    vdp.regs[15] = 7
+    assert vdp.read_port(0x99) == 0xAB
+    assert vdp.read_port(0x99) == 0xCD
+    assert vdp._status2 & 0x01 == 0  # CE cleared after last byte
+    assert not vdp._cmd_active
+
+
 # ---------------------------------------------------------------------------
 # SRCH — horizontal color search
 # ---------------------------------------------------------------------------
@@ -478,10 +515,11 @@ def test_line_horizontal_draws_nx_plus_1_pixels() -> None:
     assert vdp._status2 & 0x01 == 0  # CE cleared
 
 
-def test_line_vertical_draws_ny_plus_1_pixels() -> None:
+def test_line_vertical_draws_nx_plus_1_pixels() -> None:
     vdp = _make_vdp()
-    # Vertical line: MAJ=Y (arg bit0=1), NX=0 (minor), NY=2 → 3 pixels at col 0
-    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=0, ny=2, clr=0x5, arg=0x01)
+    # Vertical line: MAJ=Y (arg bit0=1). NX is always the major (long) side, so
+    # the line runs NX+1=3 dots along Y; NY=0 is the minor side. → 3 pixels at col 0.
+    _dispatch_cmd(vdp, cmd_code=0x7, dx=0, dy=0, nx=2, ny=0, clr=0x5, arg=0x01)
     # pixels (0,0), (0,1), (0,2) = 0x5 → high nibble of vram[0], vram[128], vram[256]
     assert vdp.vram[0] >> 4 == 0x5
     assert vdp.vram[128] >> 4 == 0x5

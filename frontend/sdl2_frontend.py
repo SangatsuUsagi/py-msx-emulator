@@ -14,7 +14,10 @@ from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.state import load_state, save_state
 from msx.vdp.v9938 import V9938
-from msx.vdp.v9938_renderer import grb332_to_rgb
+from msx.vdp.v9938_renderer import _INTENSITY3, grb332_to_rgb
+
+# Precomputed SCREEN 8 GRB332 → (R, G, B) table (256 entries).
+_GRB332_LUT: tuple[tuple[int, int, int], ...] = tuple(grb332_to_rgb(b) for b in range(256))
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -42,36 +45,46 @@ _MAX_FRAME_SKIP: int = 4
 
 
 def _index_to_rgb24(src: bytearray, vdp: object) -> bytearray:
-    dst = bytearray(len(src) * 3)
+    n = len(src)
+    dst = bytearray(n * 3)
     if isinstance(vdp, V9938):
         r0 = vdp.regs[0]
         is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
         if is_g7:
-            for i in range(len(src)):
-                r, g, b = grb332_to_rgb(src[i])
-                dst[i * 3] = r
-                dst[i * 3 + 1] = g
-                dst[i * 3 + 2] = b
-        else:
-            palette = vdp.palette
-            for i in range(len(src)):
-                p = palette[src[i] & 0x0F]
-                dst[i * 3]     = ((p >> 6) & 0x7) * 255 // 7
-                dst[i * 3 + 1] = ((p >> 3) & 0x7) * 255 // 7
-                dst[i * 3 + 2] = (p & 0x7) * 255 // 7
+            # SCREEN 8: each byte is a direct GRB332 colour.
+            lut = _GRB332_LUT
+            for i in range(n):
+                o = i * 3
+                r, g, b = lut[src[i]]
+                dst[o] = r
+                dst[o + 1] = g
+                dst[o + 2] = b
+            return dst
+        # Indexed modes: build a 16-entry RGB LUT from the current programmable
+        # palette (9-bit RGB333), reusing the renderer's intensity table so the
+        # frontend and the SCREEN 8 path stay consistent.
+        lut = [
+            (_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7])
+            for p in vdp.palette[:16]
+        ]
+        mask = 0x0F
     else:
-        for i in range(len(src)):
-            r, g, b = TMS9918A_PALETTE[src[i] & 0x0F]
-            dst[i * 3]     = r
-            dst[i * 3 + 1] = g
-            dst[i * 3 + 2] = b
+        lut = TMS9918A_PALETTE
+        mask = 0x0F
+
+    for i in range(n):
+        o = i * 3
+        r, g, b = lut[src[i] & mask]
+        dst[o] = r
+        dst[o + 1] = g
+        dst[o + 2] = b
     return dst
 
 
-def _save_screenshot(rgb_buf: bytearray, h: int) -> None:
+def _save_screenshot(rgb_buf: bytearray, w: int, h: int) -> None:
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = f"screenshot_{stamp}.png"
-    img = _PIL_Image.frombytes("RGB", (_W, h), bytes(rgb_buf))
+    img = _PIL_Image.frombytes("RGB", (w, h), bytes(rgb_buf))
     img.save(path)
     print(f"screenshot saved: {path}")
 
@@ -116,12 +129,13 @@ def run(
     if not renderer:
         renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
 
+    tex_w, tex_h = _W, h
     texture = sdl2.SDL_CreateTexture(
         renderer,
         sdl2.SDL_PIXELFORMAT_RGB24,
         sdl2.SDL_TEXTUREACCESS_STREAMING,
-        _W,
-        h,
+        tex_w,
+        tex_h,
     )
 
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
@@ -172,7 +186,7 @@ def run(
                         except Exception as exc:
                             print(f"load failed: {exc}", file=sys.stderr)
                     elif event.key.keysym.sym == sdl2.SDLK_F10:
-                        _save_screenshot(rgb_buf, h)
+                        _save_screenshot(rgb_buf, tex_w, tex_h)
                     elif (event.key.keysym.sym == sdl2.SDLK_c
                           and (event.key.keysym.mod & sdl2.KMOD_CTRL)
                           and machine._debugger is not None):
@@ -204,6 +218,22 @@ def run(
             index_buf = machine.run_frame(skip_render=skip_this_frame)
             if not skip_this_frame:
                 rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
+                # The VDP resolution can change at runtime (R#9 LN: 192↔212;
+                # SCREEN 6/7 width). Recreate the texture and resize the window
+                # to match before uploading, or the texture copy would overflow.
+                new_h = machine.vdp.display_height
+                new_w = (len(index_buf) // new_h) if new_h else tex_w
+                if (new_w, new_h) != (tex_w, tex_h):
+                    tex_w, tex_h = new_w, new_h
+                    sdl2.SDL_DestroyTexture(texture)
+                    texture = sdl2.SDL_CreateTexture(
+                        renderer,
+                        sdl2.SDL_PIXELFORMAT_RGB24,
+                        sdl2.SDL_TEXTUREACCESS_STREAMING,
+                        tex_w,
+                        tex_h,
+                    )
+                    sdl2.SDL_SetWindowSize(window, tex_w * scale, tex_h * scale)
 
             # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
             if audio_dev > 0:
