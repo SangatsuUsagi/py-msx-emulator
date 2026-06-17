@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 
 _HELP = (
-    "Commands: rc | rv | rp | vdp | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "b a/r/l ADDR | da [ADDR] | s [N] | te | td | c | q"
+    "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
+    "ba/br/bl ADDR | da [ADDR] | s [N] | te | td | c | q"
 )
 
 
@@ -69,14 +69,18 @@ class Debugger:
                 self._cmd_reg_vdp()
             elif cmd == "rp":
                 self._cmd_reg_palette()
-            elif cmd == "vdp":
+            elif cmd == "v":
                 self._cmd_vdp_status()
             elif cmd == "dm":
                 self._cmd_dump(args)
             elif cmd == "dv":
                 self._cmd_dump_vram(args)
-            elif cmd == "b":
-                self._cmd_break(args)
+            elif cmd == "ba":
+                self._cmd_break(["a"] + args)
+            elif cmd == "br":
+                self._cmd_break(["r"] + args)
+            elif cmd == "bl":
+                self._cmd_break(["l"])
             elif cmd == "da":
                 self._cmd_disasm(args)
             elif cmd == "s":
@@ -200,7 +204,7 @@ class Debugger:
 
     def _cmd_break(self, args: list[str]) -> None:
         if not args:
-            print("Usage: b a ADDR | b r ADDR | b l")
+            print("Usage: ba ADDR | br ADDR | bl")
             return
         sub = args[0].lower()
         current = list(self._machine._breakpoints)
@@ -215,15 +219,15 @@ class Debugger:
 
         if sub == "a":
             if len(args) < 2:
-                print("Usage: b a ADDR")
+                print("Usage: ba ADDR")
                 return
             try:
                 addr = int(args[1], 16) & 0xFFFF
             except ValueError:
-                print("b a: invalid address (hex expected)")
+                print("ba: invalid address (hex expected)")
                 return
             if len(current) >= 4:
-                print("b a: maximum 4 breakpoints reached")
+                print("ba: maximum 4 breakpoints reached")
                 return
             if addr not in current:
                 current.append(addr)
@@ -233,15 +237,15 @@ class Debugger:
 
         if sub == "r":
             if len(args) < 2:
-                print("Usage: b r ADDR")
+                print("Usage: br ADDR")
                 return
             try:
                 addr = int(args[1], 16) & 0xFFFF
             except ValueError:
-                print("b r: invalid address (hex expected)")
+                print("br: invalid address (hex expected)")
                 return
             if addr not in current:
-                print(f"b r: {addr:04X}h not in breakpoint list")
+                print(f"br: {addr:04X}h not in breakpoint list")
                 return
             current.remove(addr)
             self._machine.set_breakpoints(current)
