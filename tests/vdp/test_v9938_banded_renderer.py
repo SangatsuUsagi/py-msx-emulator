@@ -159,8 +159,9 @@ def test_palette_change_at_line_64_applies_to_lower_band() -> None:
     assert vdp._frame_start_palette[1] == 0b001_110_001
 
     # Mid-frame: change palette[1] at line 64
-    vdp.palette[1] = 0b111_001_001  # medium red
-    vdp._reg_write_log.append((64, -1, 1))  # sentinel: palette index 1
+    new_rgb = 0b111_001_001  # medium red
+    vdp.palette[1] = new_rgb
+    vdp._reg_write_log.append((64, -1, (1, new_rgb)))  # sentinel: (palette_idx, rgb)
 
     bands = _build_bands(vdp)
     assert len(bands) == 2

@@ -57,7 +57,11 @@ def test_palette_write_logged_with_sentinel() -> None:
     vdp.regs[16] = 3  # palette auto-index = 3
     vdp.write_port(0x9A, 0x77)  # first byte (RB)
     vdp.write_port(0x9A, 0x04)  # second byte (G)
-    assert (50, -1, 3) in vdp._reg_write_log
+    entry = next(e for e in vdp._reg_write_log if e[1] == -1)
+    assert entry[0] == 50
+    idx, rgb = entry[2]
+    assert idx == 3
+    assert rgb == vdp.palette[3]
 
 
 # ---------------------------------------------------------------------------
