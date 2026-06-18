@@ -46,16 +46,87 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
         _finalize(vdp)
         return bytearray(0)
 
+    log = vdp._reg_write_log
+    if log:
+        return _render_banded(vdp)
+
+    return _render_pass(vdp)
+
+
+def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
+    """Build (y0, y1, regs_snapshot, palette_snapshot) bands from register change log."""
+    log = vdp._reg_write_log
+    display_height = vdp.display_height
+    final_palette = vdp.palette
+
+    change_lines: dict[int, list[tuple[int, int]]] = {}
+    for dl, reg, value in log:
+        if 0 <= dl < display_height:
+            change_lines.setdefault(dl, []).append((reg, value))
+
+    if not change_lines:
+        return []
+
+    bands = []
+    cur_regs = list(vdp._frame_start_regs)
+    cur_palette = list(vdp._frame_start_palette)
+    prev_y = 0
+
+    for line in sorted(change_lines):
+        if line > prev_y:
+            bands.append((prev_y, line, list(cur_regs), list(cur_palette)))
+        for reg, value in change_lines[line]:
+            if reg == -1:
+                # palette sentinel: value is palette_index; use final palette value
+                cur_palette[value] = final_palette[value]
+            else:
+                cur_regs[reg] = value
+        prev_y = line
+
+    if prev_y < display_height:
+        bands.append((prev_y, display_height, list(cur_regs), list(cur_palette)))
+
+    return bands
+
+
+def _render_banded(vdp: "V9938") -> bytearray:
+    """Render with band-split: each band uses its own register/palette snapshot."""
+    bands = _build_bands(vdp)
+    if not bands:
+        return _render_pass(vdp)
+
+    full_h = vdp.display_height
+    full_w = vdp.display_width
+    out = bytearray(full_w * full_h)
+
+    saved_regs = vdp.regs[:]
+    saved_palette = vdp.palette[:]
+
+    for y0, y1, band_regs, band_palette in bands:
+        vdp.regs = band_regs
+        vdp.palette = band_palette
+        band_h = vdp.display_height  # R#9 bit7 from band snapshot
+        band_w = vdp.display_width   # R#0 bit3 from band snapshot
+        temp = _render_pass(vdp)
+        # Copy rows [y0, y1) into output; clamp y1 to band_h
+        y_end = min(y1, band_h)
+        out[y0 * band_w:y_end * band_w] = temp[y0 * band_w:y_end * band_w]
+
+    vdp.regs = saved_regs
+    vdp.palette = saved_palette
+    return out
+
+
+def _render_pass(vdp: "V9938") -> bytearray:
+    """Single-pass render using current vdp register/palette state."""
     h = vdp.display_height
-    w = vdp.display_width  # 256, or 512 for the wide bitmap modes (G5/G6)
+    w = vdp.display_width
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
-    m3 = (r0 >> 1) & 1  # R#0 bit1
-    m4 = (r0 >> 2) & 1  # R#0 bit2
-    m5 = (r0 >> 3) & 1  # R#0 bit3
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
 
-    # GRAPHIC 7 (SCREEN 8) takes the full 8-bit R#7 as a GRB332 backdrop; all
-    # other modes use the 4-bit palette index in R#7 bits 3:0.
     is_g7 = bool(m5 and m4)
     border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
 
@@ -66,25 +137,24 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
 
-    # Pre-fill with border; tile renderers only write the first _TILE_H rows.
     buf = bytearray([border] * (w * h))
 
     if m5:
         if m4:
-            _render_g7(vdp, buf, h)              # SCREEN 8 (Graphic 7): M3+M4+M5
+            _render_g7(vdp, buf, h)
             _render_sprites_mode2(vdp, buf, h, grb_mode=True)
         elif m3:
-            _render_g6(vdp, buf, h)              # SCREEN 7 (Graphic 6): M3+M5
+            _render_g6(vdp, buf, h)
             _render_sprites_mode2(vdp, buf, h, width=512)
         else:
-            _render_g5(vdp, buf, h)              # SCREEN 6 (Graphic 5): M5 only
+            _render_g5(vdp, buf, h)
             _render_sprites_mode2(vdp, buf, h, width=512)
     elif m4:
         if m3:
-            _render_g4(vdp, buf, h)              # SCREEN 5 (Graphic 4): M3+M4
+            _render_g4(vdp, buf, h)
             _render_sprites_mode2(vdp, buf, h)
         else:
-            _render_g2(vdp, buf)                 # SCREEN 4 (Graphic 3): M4 only — G2 tiles
+            _render_g2(vdp, buf)
             _render_sprites_mode2(vdp, buf, h)
     elif m1:
         _render_text(vdp, buf)

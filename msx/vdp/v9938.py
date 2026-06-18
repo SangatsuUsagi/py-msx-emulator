@@ -136,6 +136,8 @@ class V9938:
     display_line: int = field(default=0, init=False, repr=False)
     _irq: bool = field(default=False, init=False, repr=False)
     _reg_write_log: list = field(default_factory=list, init=False, repr=False)
+    _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
+    _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -163,6 +165,8 @@ class V9938:
 
     def begin_scanline(self, line: int) -> None:
         if line == 0:
+            self._frame_start_regs = self.regs[:]
+            self._frame_start_palette = self.palette[:]
             self._reg_write_log.clear()
         self.display_line = line
         dh = self.display_height
