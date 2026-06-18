@@ -128,6 +128,10 @@ class V9938:
     _read_buf: int = field(default=0, init=False, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
+    _status1: int = field(default=0, init=False, repr=False)
+    display_line: int = field(default=0, init=False, repr=False)
+    _irq: bool = field(default=False, init=False, repr=False)
+    _reg_write_log: list = field(default_factory=list, init=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -143,11 +147,33 @@ class V9938:
         m5 = (r0 >> 3) & 1
         return 512 if (m5 and not m4) else 256
 
+    def irq_pending(self) -> bool:
+        ie0 = bool(self.regs[1] & 0x20)
+        f = bool(self.status & 0x80)
+        ie1 = bool(self.regs[0] & 0x10)
+        fh = bool(self._status1 & 0x01)
+        return (ie0 and f) or (ie1 and fh)
+
+    def _update_irq(self) -> None:
+        self._irq = self.irq_pending()
+
+    def begin_scanline(self, line: int) -> None:
+        if line == 0:
+            self._reg_write_log.clear()
+        self.display_line = line
+        dh = self.display_height
+        if line == dh:
+            self.status |= 0x80  # VBlank F
+            self._update_irq()
+        elif 0 <= line < dh:
+            effective = (self.regs[19] - self.regs[23]) & 0xFF
+            if line == effective:
+                self._status1 |= 0x01  # FH
+                if self.regs[0] & 0x10:  # IE1
+                    self._update_irq()
+
     def _warn_ie1_if_needed(self, reg: int, value: int) -> None:
-        if reg == 0 and (value & 0x10) and not (self.regs[0] & 0x10) and not self._ie1_warned:
-            import sys
-            print("Warning: ROM enabled V9938 H-sync interrupt (IE1/R#0 bit4) — not supported", file=sys.stderr)
-            self._ie1_warned = True
+        pass  # IE1 now implemented; warning no longer needed
 
     # ------------------------------------------------------------------
     # Command timer
@@ -252,12 +278,18 @@ class V9938:
                 if self._cmd_active and self._cmd_code == _CMD_LMCM and self._lmcm_buf:
                     return self._cmd_data_read()
                 return self._status7
+            if self.regs[15] == 1:
+                result = self._status1
+                self._status1 &= ~0x01  # clear FH
+                self._update_irq()
+                return result & 0xFF
             if self.regs[15] == 8:
                 return self._status8
             if self.regs[15] == 9:
                 return self._status9
             result = self.status
             self.status &= ~0x80  # clear F flag
+            self._update_irq()
             self._latch = None
             return result & 0xFF
         if port == 0x9C:
