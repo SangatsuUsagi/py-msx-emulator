@@ -83,6 +83,10 @@ _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 
 _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
 
+# Display-relevant registers tracked in _reg_write_log for banded rendering.
+# Command-engine registers (R#32-R#46) and SAT registers are excluded.
+_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 19, 23})
+
 
 @dataclass
 class V9938:
@@ -127,6 +131,13 @@ class V9938:
     _pal_latch: int | None = field(default=None, init=False, repr=False)
     _read_buf: int = field(default=0, init=False, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
+    _ie1_warned: bool = field(default=False, init=False, repr=False)
+    _status1: int = field(default=0, init=False, repr=False)
+    display_line: int = field(default=0, init=False, repr=False)
+    _irq: bool = field(default=False, init=False, repr=False)
+    _reg_write_log: list = field(default_factory=list, init=False, repr=False)
+    _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
+    _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -141,6 +152,36 @@ class V9938:
         m4 = (r0 >> 2) & 1
         m5 = (r0 >> 3) & 1
         return 512 if (m5 and not m4) else 256
+
+    def irq_pending(self) -> bool:
+        ie0 = bool(self.regs[1] & 0x20)
+        f = bool(self.status & 0x80)
+        ie1 = bool(self.regs[0] & 0x10)
+        fh = bool(self._status1 & 0x01)
+        return (ie0 and f) or (ie1 and fh)
+
+    def _update_irq(self) -> None:
+        self._irq = self.irq_pending()
+
+    def begin_scanline(self, line: int) -> None:
+        if line == 0:
+            self._frame_start_regs = self.regs[:]
+            self._frame_start_palette = self.palette[:]
+            self._reg_write_log.clear()
+        self.display_line = line
+        dh = self.display_height
+        if line == dh:
+            self.status |= 0x80  # VBlank F
+            self._update_irq()
+        elif 0 <= line < dh:
+            effective = (self.regs[19] - self.regs[23]) & 0xFF
+            if line == effective:
+                self._status1 |= 0x01  # FH
+                if self.regs[0] & 0x10:  # IE1
+                    self._update_irq()
+
+    def _warn_ie1_if_needed(self, reg: int, value: int) -> None:
+        pass  # IE1 now implemented; warning no longer needed
 
     # ------------------------------------------------------------------
     # Command timer
@@ -181,7 +222,10 @@ class V9938:
                 if value & 0x80:
                     reg = value & 0x3F
                     if reg < _NUM_REGS:
+                        self._warn_ie1_if_needed(reg, low)
                         self.regs[reg] = low
+                        if reg in _DISPLAY_REGS:
+                            self._reg_write_log.append((self.display_line, reg, low))
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
                     elif reg == 46:
@@ -203,6 +247,7 @@ class V9938:
                 g = value & 0x07
                 idx = self.regs[16] & 0x0F
                 self.palette[idx] = (r << 6) | (g << 3) | b
+                self._reg_write_log.append((self.display_line, -1, idx))
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
@@ -212,7 +257,10 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
+                self._warn_ie1_if_needed(ptr, value)
                 self.regs[ptr] = value
+                if ptr in _DISPLAY_REGS:
+                    self._reg_write_log.append((self.display_line, ptr, value))
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
             elif ptr == 46:
@@ -243,12 +291,18 @@ class V9938:
                 if self._cmd_active and self._cmd_code == _CMD_LMCM and self._lmcm_buf:
                     return self._cmd_data_read()
                 return self._status7
+            if self.regs[15] == 1:
+                result = self._status1
+                self._status1 &= ~0x01  # clear FH
+                self._update_irq()
+                return result & 0xFF
             if self.regs[15] == 8:
                 return self._status8
             if self.regs[15] == 9:
                 return self._status9
             result = self.status
             self.status &= ~0x80  # clear F flag
+            self._update_irq()
             self._latch = None
             return result & 0xFF
         if port == 0x9C:
