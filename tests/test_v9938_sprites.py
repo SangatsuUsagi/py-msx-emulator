@@ -289,6 +289,61 @@ def test_sprite_mode2_ic_suppresses_coincidence() -> None:
     assert vdp.status & 0x20 == 0   # coincidence NOT flagged
 
 
+def test_sprite_mode2_leading_cc_sprite_invisible() -> None:
+    """A CC=1 sprite with higher priority than any CC=0 sprite is not drawn;
+    the lower-priority CC=0 sprite shows through (not OR'd)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    # Sprite 0 (highest priority) is CC=1 → leading, must be invisible.
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=4, or_mode=True)
+    # Sprite 1 (lower priority) is the CC=0 base.
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=3, or_mode=False)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 3   # CC=0 shows; leading CC=1 neither drawn nor OR'd (not 4, not 7)
+
+
+def test_sprite_mode2_lone_cc_sprite_invisible() -> None:
+    """A CC=1 sprite with no CC=0 sprite on the line is entirely invisible."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=5, or_mode=True)  # lone CC=1
+    _terminate_sat(vdp, after_idx=1)
+    vdp.vram[0] = 0x80
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] != 5   # not drawn (backdrop shows)
+
+
+def test_sprite_mode2_cc_after_cc0_still_ors() -> None:
+    """A CC=1 sprite that follows a CC=0 sprite still OR-combines (normal use)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=3, or_mode=False)  # CC=0 base
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4, or_mode=True)   # CC=1 overlay
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 7   # 3 | 4
+
+
 def test_sprite_mode2_screen8_uses_fixed_sprite_palette() -> None:
     """SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not the
     programmable palette. Colour 8 → fixed GRB332 byte 0x9D (from 0x472),

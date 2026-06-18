@@ -115,3 +115,53 @@ def test_irq_stays_when_one_source_remains() -> None:
     vdp.regs[15] = 0
     vdp.read_port(0x99)
     assert vdp.irq_pending()  # FH still pending
+
+
+# ---------------------------------------------------------------------------
+# S#2: HR (horizontal retrace, bit5) and VR (vertical retrace, bit6)
+# ---------------------------------------------------------------------------
+
+def test_s2_hr_set_late_in_scanline() -> None:
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp._line_cycle = 220  # past the display, in horizontal blanking
+    assert vdp.read_port(0x99) & 0x20  # HR
+
+
+def test_s2_hr_clear_early_in_scanline() -> None:
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp._line_cycle = 10  # active display region
+    assert not (vdp.read_port(0x99) & 0x20)
+
+
+def test_s2_hr_advances_with_tick_and_resets_each_line() -> None:
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp.tick(220)
+    assert vdp.read_port(0x99) & 0x20  # HR set after enough T-states
+    vdp.begin_scanline(5)
+    assert not (vdp.read_port(0x99) & 0x20)  # reset at the new scanline
+
+
+def test_s2_hr_preserves_command_bits() -> None:
+    vdp = make_vdp()
+    vdp._status2 = 0x81  # CE + TR
+    vdp._line_cycle = 220
+    vdp.regs[15] = 2
+    assert vdp.read_port(0x99) == 0x81 | 0x20 | 0x0C  # +HR, +reserved bits 2,3
+    assert vdp._status2 == 0x81  # underlying field unchanged
+
+
+def test_s2_vr_set_during_vblank() -> None:
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp.begin_scanline(200)  # >= 192 → vertical blanking
+    assert vdp.read_port(0x99) & 0x40  # VR
+
+
+def test_s2_vr_clear_during_active_display() -> None:
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp.begin_scanline(100)  # active display
+    assert not (vdp.read_port(0x99) & 0x40)

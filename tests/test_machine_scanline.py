@@ -147,17 +147,18 @@ def test_line_interrupt_fh_set_at_r19_line() -> None:
     assert machine.cpu.registers.SP < initial_sp
 
 
-def test_no_line_interrupt_when_r19_exceeds_display_height() -> None:
+def test_line_interrupt_fires_in_border_region() -> None:
     machine = _make_msx2()
     vdp = machine.vdp
     assert isinstance(vdp, V9938)
 
     vdp.regs[0] |= 0x10   # IE1
     vdp.regs[1] |= 0x40   # BL
-    vdp.regs[19] = 220    # > display_height (192)
+    vdp.regs[19] = 220    # border/vblank region (beyond the 192-line display)
     vdp.regs[23] = 0
 
     machine.run_frame(skip_render=True)
 
-    # FH must NOT be set (220 > 192)
-    assert not (vdp._status1 & 0x01)
+    # The line interrupt counts the whole field: R#19=220 still matches raster
+    # line 220 even though it is outside the active display.
+    assert vdp._status1 & 0x01

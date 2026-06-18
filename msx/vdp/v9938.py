@@ -85,7 +85,19 @@ _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states /
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded.
-_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 19, 23})
+_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 19, 23})
+
+# S#2 status bits
+_S2_HR = 0x20  # horizontal retrace (set during horizontal blanking)
+_S2_VR = 0x40  # vertical retrace (set during vertical blanking)
+_S2_RESERVED = 0x0C  # bits 2,3 read as 1 on the V9938 (matches openMSX reset 0x0C)
+
+# Horizontal-retrace timing. One NTSC scanline is ~227 Z80 T-states; the active
+# display occupies ~1024/1368 of the line (openMSX ratio), so HR reads as 1 for
+# the remainder of the line (the blanking/retrace tail). Sub-line accurate to the
+# extent the scanline-stepped CPU advances _line_cycle via tick().
+_TSTATES_PER_LINE: int = 227
+_HBLANK_START: int = _TSTATES_PER_LINE * 1024 // 1368  # ~169
 
 
 @dataclass
@@ -134,6 +146,7 @@ class V9938:
     _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
     display_line: int = field(default=0, init=False, repr=False)
+    _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     _irq: bool = field(default=False, init=False, repr=False)
     _reg_write_log: list = field(default_factory=list, init=False, repr=False)
     _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
@@ -169,16 +182,19 @@ class V9938:
             self._frame_start_palette = self.palette[:]
             self._reg_write_log.clear()
         self.display_line = line
+        self._line_cycle = 0  # new scanline: restart the horizontal-retrace timer
         dh = self.display_height
         if line == dh:
             self.status |= 0x80  # VBlank F
             self._update_irq()
-        elif 0 <= line < dh:
-            effective = (self.regs[19] - self.regs[23]) & 0xFF
-            if line == effective:
-                self._status1 |= 0x01  # FH
-                if self.regs[0] & 0x10:  # IE1
-                    self._update_irq()
+        # Line interrupt: R#19 is an 8-bit raster line that may target any line
+        # in the field (0-255), including the border/vblank region — not only the
+        # active display. Lines >= 256 can never match the 8-bit compare.
+        effective = (self.regs[19] - self.regs[23]) & 0xFF
+        if line == effective:
+            self._status1 |= 0x01  # FH
+            if self.regs[0] & 0x10:  # IE1
+                self._update_irq()
 
     def _warn_ie1_if_needed(self, reg: int, value: int) -> None:
         pass  # IE1 now implemented; warning no longer needed
@@ -189,6 +205,7 @@ class V9938:
 
     def tick(self, cycles: int) -> None:
         """Advance VDP command timer. Clears CE when _cmd_remaining reaches 0."""
+        self._line_cycle += cycles  # horizontal position within the current scanline
         if self._cmd_remaining > 0:
             self._cmd_remaining -= cycles
             if self._cmd_remaining <= 0:
@@ -246,8 +263,9 @@ class V9938:
                 b = rb & 0x07
                 g = value & 0x07
                 idx = self.regs[16] & 0x0F
-                self.palette[idx] = (r << 6) | (g << 3) | b
-                self._reg_write_log.append((self.display_line, -1, idx))
+                rgb = (r << 6) | (g << 3) | b
+                self.palette[idx] = rgb
+                self._reg_write_log.append((self.display_line, -1, (idx, rgb)))
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
@@ -284,7 +302,15 @@ class V9938:
             return result
         if port == 0x99:
             if self.regs[15] == 2:
-                return self._status2
+                # S#2 also reports the live horizontal/vertical retrace flags,
+                # which software polls to time mid-screen register changes; bits
+                # 2,3 always read as 1.
+                s2 = self._status2 | _S2_RESERVED
+                if self._line_cycle >= _HBLANK_START:
+                    s2 |= _S2_HR
+                if not (0 <= self.display_line < self.display_height):
+                    s2 |= _S2_VR
+                return s2
             if self.regs[15] == 7:
                 # LMCM delivers each result byte through S#7 (handbook); fall
                 # back to the POINT result when no LMCM transfer is active.

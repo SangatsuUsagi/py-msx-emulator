@@ -62,12 +62,22 @@ def test_fh_persists_until_s1_read() -> None:
     assert vdp._status1 & 0x01
 
 
-def test_fh_not_set_outside_active_display() -> None:
+def test_fh_set_outside_active_display() -> None:
+    # The line interrupt counts the whole field: R#19 may target a line in the
+    # border/vblank region (here 200, beyond the 192-line active display).
     vdp = make_vdp()
     vdp.regs[19] = 200
     vdp.regs[23] = 0
-    # display_height = 192 by default
     vdp.begin_scanline(200)
+    assert vdp._status1 & 0x01
+
+
+def test_fh_not_set_above_8bit_line_range() -> None:
+    # Lines >= 256 can never match the 8-bit R#19 compare.
+    vdp = make_vdp()
+    vdp.regs[19] = 0
+    vdp.regs[23] = 0
+    vdp.begin_scanline(256)
     assert not (vdp._status1 & 0x01)
 
 

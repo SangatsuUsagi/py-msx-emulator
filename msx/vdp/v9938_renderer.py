@@ -47,17 +47,54 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
         return bytearray(0)
 
     log = vdp._reg_write_log
-    if log:
-        return _render_banded(vdp)
+    buf = _render_banded(vdp) if log else _render_pass(vdp)
+    return _apply_display_adjust(vdp, buf)
 
-    return _render_pass(vdp)
+
+def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
+    """Apply R#18 display adjust: shift the whole picture horizontally/vertically
+    and fill the exposed edges with the border colour.
+
+    Each nibble of R#18 encodes an offset (openMSX): adjust = (nibble ^ 7),
+    pixel/line offset = adjust - 7, range -7..+8; the BIOS-neutral nibble 0 → 0.
+    Positive offset moves the picture right/down.
+    """
+    reg18 = vdp.regs[18]
+    h_off = ((reg18 & 0x0F) ^ 0x07) - 7        # dots, +ve = right
+    v_off = ((reg18 >> 4) ^ 0x07) - 7          # lines, +ve = down
+    if h_off == 0 and v_off == 0:
+        return buf
+
+    h = vdp.display_height
+    w = vdp.display_width
+    r0 = vdp.regs[0]
+    is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
+    border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+    h_shift = h_off * (w // 256)               # 512-wide modes shift 2 buffer px per dot
+
+    out = bytearray([border]) * (w * h)
+    for sy in range(h):
+        dy = sy + v_off
+        if dy < 0 or dy >= h:
+            continue
+        srow = sy * w
+        drow = dy * w
+        if h_shift == 0:
+            out[drow:drow + w] = buf[srow:srow + w]
+        elif h_shift > 0:
+            if h_shift < w:
+                out[drow + h_shift:drow + w] = buf[srow:srow + w - h_shift]
+        else:
+            k = -h_shift
+            if k < w:
+                out[drow:drow + w - k] = buf[srow + k:srow + w]
+    return out
 
 
 def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
     """Build (y0, y1, regs_snapshot, palette_snapshot) bands from register change log."""
     log = vdp._reg_write_log
     display_height = vdp.display_height
-    final_palette = vdp.palette
 
     change_lines: dict[int, list[tuple[int, int]]] = {}
     for dl, reg, value in log:
@@ -77,8 +114,8 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
             bands.append((prev_y, line, list(cur_regs), list(cur_palette)))
         for reg, value in change_lines[line]:
             if reg == -1:
-                # palette sentinel: value is palette_index; use final palette value
-                cur_palette[value] = final_palette[value]
+                idx, rgb = value
+                cur_palette[idx] = rgb
             else:
                 cur_regs[reg] = value
         prev_y = line
@@ -381,6 +418,10 @@ def _render_sprites_mode2(
     line_count = [0] * h
     ninth_set  = False
     sprite_buf = bytearray(h * width)  # 0 = transparent
+    # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
+    # visible if a higher-priority CC=0 sprite precedes it on the same line
+    # (V9938 rule); leading CC=1 sprites are invisible.
+    cc0_seen = bytearray(h)
     coincidence = False
 
     for i in range(32):
@@ -417,6 +458,15 @@ def _render_sprites_mode2(
             or_mode = bool(col_entry & 0x40)  # CC: OR-combine with same-priority sprite
             ignore_collision = bool(col_entry & 0x20)  # IC: don't flag coincidence
             x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
+
+            # CC=1 sprites are only visible once a higher-priority CC=0 sprite
+            # has appeared on this line; a CC=0 sprite enables them (counted even
+            # when its own colour is transparent).
+            if or_mode:
+                if not cc0_seen[line]:
+                    continue
+            else:
+                cc0_seen[line] = 1
 
             if color == 0:
                 continue  # transparent regardless of OR mode

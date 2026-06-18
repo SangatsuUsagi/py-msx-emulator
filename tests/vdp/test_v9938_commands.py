@@ -82,7 +82,8 @@ def test_s2_r15_2_returns_status2() -> None:
     vdp = _make_vdp()
     vdp._status2 = 0x81  # CE=1, TR=1
     vdp.regs[15] = 2
-    assert vdp.read_port(0x99) == 0x81
+    # Bits 2,3 (0x0C) always read as 1 on the V9938.
+    assert vdp.read_port(0x99) == 0x81 | 0x0C
 
 
 def test_s2_r15_2_does_not_clear_status2() -> None:
