@@ -83,6 +83,10 @@ _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 
 _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
 
+# Display-relevant registers tracked in _reg_write_log for banded rendering.
+# Command-engine registers (R#32-R#46) and SAT registers are excluded.
+_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 19, 23})
+
 
 @dataclass
 class V9938:
@@ -216,6 +220,8 @@ class V9938:
                     if reg < _NUM_REGS:
                         self._warn_ie1_if_needed(reg, low)
                         self.regs[reg] = low
+                        if reg in _DISPLAY_REGS:
+                            self._reg_write_log.append((self.display_line, reg, low))
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
                     elif reg == 46:
@@ -237,6 +243,7 @@ class V9938:
                 g = value & 0x07
                 idx = self.regs[16] & 0x0F
                 self.palette[idx] = (r << 6) | (g << 3) | b
+                self._reg_write_log.append((self.display_line, -1, idx))
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
@@ -248,6 +255,8 @@ class V9938:
             if ptr < _NUM_REGS:
                 self._warn_ie1_if_needed(ptr, value)
                 self.regs[ptr] = value
+                if ptr in _DISPLAY_REGS:
+                    self._reg_write_log.append((self.display_line, ptr, value))
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
             elif ptr == 46:
