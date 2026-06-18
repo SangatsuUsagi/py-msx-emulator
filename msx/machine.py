@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
+LINES_PER_FRAME: int = 262
+TSTATES_PER_LINE: int = CYCLES_PER_FRAME // LINES_PER_FRAME  # 227; carry remainder across lines
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
@@ -50,7 +52,8 @@ class Machine:
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
-        self.vdp.on_interrupt = self._vblank_interrupt
+        if not isinstance(self.vdp, V9938):
+            self.vdp.on_interrupt = self._vblank_interrupt
 
     def _vblank_interrupt(self) -> None:
         self.cpu.int_pending = True
@@ -67,22 +70,31 @@ class Machine:
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
-        cycles = 0
-        cpu_step = self.cpu.step  # bind Z80.step directly — skip Machine.step wrapper
-        vdp_tick = self.vdp.tick if isinstance(self.vdp, V9938) else None
-        # PERF: third loop branch — only taken when breakpoints are set.
-        # When _breakpoints is empty frozenset, the outer `if` is never entered.
+        cpu_step = self.cpu.step
+        is_v9938 = isinstance(self.vdp, V9938)
+        vdp_tick = self.vdp.tick if is_v9938 else None
+        vdp9938 = self.vdp if is_v9938 else None
+        cpu = self.cpu
+        total = 0
+
         if self._breakpoints:
             try:
-                while cycles < CYCLES_PER_FRAME:
-                    if self.cpu.registers.PC in self._breakpoints:
-                        if self._debugger is not None:
-                            self._debugger.enter()
-                    n = cpu_step()
-                    cycles += n
-                    self.cycle_count += n
-                    if vdp_tick:
-                        vdp_tick(n)
+                for L in range(LINES_PER_FRAME):
+                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                    while total < line_end:
+                        if cpu.registers.PC in self._breakpoints:
+                            if self._debugger is not None:
+                                self._debugger.enter()
+                        if vdp9938:
+                            cpu.int_pending = vdp9938.irq_pending()
+                        n = cpu_step()
+                        total += n
+                        self.cycle_count += n
+                        if vdp_tick:
+                            vdp_tick(n)
+                    if vdp9938:
+                        vdp9938.begin_scanline(L)
+                        cpu.int_pending = vdp9938.irq_pending()
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
@@ -90,12 +102,19 @@ class Machine:
                     raise
         elif self._logger is None:
             try:
-                while cycles < CYCLES_PER_FRAME:
-                    n = cpu_step()
-                    cycles += n
-                    self.cycle_count += n
-                    if vdp_tick:
-                        vdp_tick(n)
+                for L in range(LINES_PER_FRAME):
+                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                    while total < line_end:
+                        if vdp9938:
+                            cpu.int_pending = vdp9938.irq_pending()
+                        n = cpu_step()
+                        total += n
+                        self.cycle_count += n
+                        if vdp_tick:
+                            vdp_tick(n)
+                    if vdp9938:
+                        vdp9938.begin_scanline(L)
+                        cpu.int_pending = vdp9938.irq_pending()
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
@@ -103,35 +122,39 @@ class Machine:
                     raise
         else:
             try:
-                while cycles < CYCLES_PER_FRAME:
-                    pc = self.cpu.registers.PC
-                    n = cpu_step()
-                    cycles += n
-                    self.cycle_count += n
-                    if vdp_tick:
-                        vdp_tick(n)
-                    # PC-loop hang: skip normal HALT (halted + interrupts enabled)
-                    if not (self.cpu.halted and self.cpu.iff1):
-                        if pc == self._last_pc:
-                            self._pc_repeat += 1
-                            if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                                self._logger.on_hang_pc_loop(pc)
-                        else:
-                            self._pc_repeat = 0
-                        self._last_pc = pc
+                for L in range(LINES_PER_FRAME):
+                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                    while total < line_end:
+                        pc = cpu.registers.PC
+                        if vdp9938:
+                            cpu.int_pending = vdp9938.irq_pending()
+                        n = cpu_step()
+                        total += n
+                        self.cycle_count += n
+                        if vdp_tick:
+                            vdp_tick(n)
+                        if not (cpu.halted and cpu.iff1):
+                            if pc == self._last_pc:
+                                self._pc_repeat += 1
+                                if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
+                                    self._logger.on_hang_pc_loop(pc)
+                            else:
+                                self._pc_repeat = 0
+                            self._last_pc = pc
+                    if vdp9938:
+                        vdp9938.begin_scanline(L)
+                        cpu.int_pending = vdp9938.irq_pending()
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
                 else:
                     raise
 
-            # HALT+DI hang: check once per frame
-            if self.cpu.halted and not self.cpu.iff1:
-                self._logger.on_hang_halt_di(self.cpu.registers.PC)
+            if cpu.halted and not cpu.iff1:
+                self._logger.on_hang_halt_di(cpu.registers.PC)
 
-        if isinstance(self.vdp, V9938):
+        if is_v9938:
             result = render_frame_v9938(self.vdp, skip_render=skip_render)
-            # V9938 render_frame already increments _frame_count
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
             self.vdp._frame_count += 1
