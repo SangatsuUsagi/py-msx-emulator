@@ -103,9 +103,9 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
 
 def _finalize(vdp: "V9938") -> None:
-    vdp.status |= 0x80  # set F flag (VBlank)
-    if (vdp.regs[1] & 0x20) and vdp.on_interrupt is not None:
-        vdp.on_interrupt()
+    # VBlank flag is now set by begin_scanline() in the scanline loop (machine.py).
+    # _finalize only handles frame-buffer finalisation; no interrupt generation here.
+    pass
 
 
 def _backdrop(vdp: "V9938") -> int:
