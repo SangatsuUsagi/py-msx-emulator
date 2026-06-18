@@ -55,30 +55,28 @@ def test_buffer_size_212_when_ln_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# VBlank: F flag and interrupt
+# VBlank: F flag set by begin_scanline (not by render_frame)
 # ---------------------------------------------------------------------------
 
-def test_render_sets_f_flag_in_status() -> None:
+def test_begin_scanline_sets_f_flag_at_display_height() -> None:
     vdp = V9938()
     _enable(vdp)
-    render_frame(vdp)
+    vdp.begin_scanline(vdp.display_height)
     assert vdp.status & 0x80
 
 
-def test_on_interrupt_fires_when_ie0_set() -> None:
-    fired: list[int] = []
-    vdp = V9938(on_interrupt=lambda: fired.append(1))
+def test_irq_pending_true_when_ie0_and_vblank() -> None:
+    vdp = V9938()
     vdp.regs[1] = 0x40 | 0x20  # BL + IE0
-    render_frame(vdp)
-    assert len(fired) == 1
+    vdp.begin_scanline(vdp.display_height)
+    assert vdp.irq_pending()
 
 
-def test_no_interrupt_when_ie0_clear() -> None:
-    fired: list[int] = []
-    vdp = V9938(on_interrupt=lambda: fired.append(1))
-    vdp.regs[1] = 0x40  # BL only
-    render_frame(vdp)
-    assert len(fired) == 0
+def test_irq_pending_false_when_ie0_clear() -> None:
+    vdp = V9938()
+    vdp.regs[1] = 0x40  # BL only, IE0 clear
+    vdp.begin_scanline(vdp.display_height)
+    assert not vdp.irq_pending()
 
 
 # ---------------------------------------------------------------------------
