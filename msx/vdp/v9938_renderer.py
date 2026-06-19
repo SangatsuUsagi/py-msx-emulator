@@ -235,13 +235,13 @@ def _color(c: int, backdrop: int) -> int:
 def _render_g1(vdp: "V9938", buf: bytearray) -> None:
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base  = (vdp.regs[4] & 0x07) << 11
-    col_base  = vdp.regs[3] << 6
+    col_base  = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
     bd = _backdrop(vdp)
 
     for row in range(24):
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
-            cb = vdp.vram[(col_base + tile // 8) & 0x3FFF]
+            cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
             fg = _color((cb >> 4) & 0x0F, bd)
             bg = _color(cb & 0x0F, bd)
             pat_tile = pat_base + tile * 8
@@ -259,7 +259,7 @@ def _render_g1(vdp: "V9938", buf: bytearray) -> None:
 def _render_g2(vdp: "V9938", buf: bytearray) -> None:
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base  = (vdp.regs[4] & 0x04) << 11
-    col_base  = (vdp.regs[3] & 0x80) << 6
+    col_base  = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
     bd = _backdrop(vdp)
 
     for row in range(24):
@@ -271,7 +271,7 @@ def _render_g2(vdp: "V9938", buf: bytearray) -> None:
             for py in range(8):
                 off = tile_off + py
                 pat = vdp.vram[(pat_base + off) & 0x3FFF]
-                cb  = vdp.vram[(col_base + off) & 0x3FFF]
+                cb  = vdp.vram[(col_base + off) & 0x1FFFF]
                 fg = _color((cb >> 4) & 0x0F, bd)
                 bg = _color(cb & 0x0F, bd)
                 rs = (row * 8 + py) * _W + bx
