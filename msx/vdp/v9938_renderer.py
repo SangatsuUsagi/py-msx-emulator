@@ -242,8 +242,8 @@ def _render_g1(vdp: "V9938", buf: bytearray) -> None:
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
             cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
-            fg = _color((cb >> 4) & 0x0F, bd)
-            bg = _color(cb & 0x0F, bd)
+            _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
+            _lo = cb & 0x0F;         bg = _lo if _lo else bd
             pat_tile = pat_base + tile * 8
             bx = col * 8
             for py in range(8):
@@ -272,8 +272,8 @@ def _render_g2(vdp: "V9938", buf: bytearray) -> None:
                 off = tile_off + py
                 pat = vdp.vram[(pat_base + off) & 0x3FFF]
                 cb  = vdp.vram[(col_base + off) & 0x1FFFF]
-                fg = _color((cb >> 4) & 0x0F, bd)
-                bg = _color(cb & 0x0F, bd)
+                _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
+                _lo = cb & 0x0F;         bg = _lo if _lo else bd
                 rs = (row * 8 + py) * _W + bx
                 buf[rs:rs + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -317,8 +317,8 @@ def _render_mc(vdp: "V9938", buf: bytearray) -> None:
             bx = col * 8
             for py in range(8):
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
-                lc = _color((pat >> 4) & 0x0F, bd)
-                rc = _color(pat & 0x0F, bd)
+                _hi = (pat >> 4) & 0x0F; lc = _hi if _hi else bd  # inline _color
+                _lo = pat & 0x0F;         rc = _lo if _lo else bd
                 y = row * 8 + py
                 buf[y * _W + bx:y * _W + bx + 4] = bytes([lc] * 4)
                 buf[y * _W + bx + 4:y * _W + bx + 8] = bytes([rc] * 4)
