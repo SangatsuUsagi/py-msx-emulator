@@ -89,6 +89,8 @@ class Debugger:
                 self._cmd_trace_enable()
             elif cmd == "td":
                 self._cmd_trace_disable()
+            elif cmd == "pdbg":
+                self._cmd_palette_debug()
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -313,6 +315,16 @@ class Debugger:
             return
         vdp.tracer.enabled = False
         print("VDP trace disabled")
+
+    def _cmd_palette_debug(self) -> None:
+        from msx.vdp.v9938 import V9938
+        vdp = self._machine.vdp
+        if not isinstance(vdp, V9938):
+            print("pdbg: V9938 not active (MSX2 only)")
+            return
+        vdp.debug_palette_writes = not vdp.debug_palette_writes
+        state = "ON" if vdp.debug_palette_writes else "OFF"
+        print(f"Palette mid-frame write debug: {state}")
 
 
 # ---------------------------------------------------------------------------
