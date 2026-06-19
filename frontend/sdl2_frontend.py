@@ -14,7 +14,7 @@ from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.state import load_state, save_state
 from msx.vdp.v9938 import V9938
-from msx.vdp.v9938_renderer import _INTENSITY3, grb332_to_rgb
+from msx.vdp.v9938_renderer import _INTENSITY3, _build_bands, grb332_to_rgb
 
 # Precomputed SCREEN 8 GRB332 → 3-byte RGB table (256 entries), for fast join.
 _GRB332_BYTES: tuple[bytes, ...] = tuple(bytes(grb332_to_rgb(b)) for b in range(256))
@@ -47,28 +47,75 @@ _MAX_FRAME_SKIP: int = 4
 _TMS9918A_BYTES: tuple[bytes, ...] = tuple(bytes(c) for c in TMS9918A_PALETTE)
 
 
+def _make_lut16(palette: list) -> list:
+    """Build a 16-entry RGB24 bytes LUT from a 9-bit RGB333 palette."""
+    return [
+        bytes((_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7]))
+        for p in palette[:16]
+    ]
+
+
 def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
     """Map a palette-index (or SCREEN 8 GRB332) buffer to packed RGB24.
 
-    Uses a per-pixel byte-string lookup joined in C (b"".join), which is far
-    faster than a Python per-channel loop while staying pure-Python.
+    For V9938 indexed modes with mid-frame palette changes, applies each
+    band's palette snapshot to the correct scanlines so that colours written
+    via H-sync interrupt are rendered at the right lines rather than using the
+    end-of-frame palette for the whole frame.
     """
     if isinstance(vdp, V9938):
         r0 = vdp.regs[0]
         is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
         if is_g7:
-            # SCREEN 8: each byte is a direct GRB332 colour.
             lut = _GRB332_BYTES
             return b"".join([lut[x] for x in src])
-        # Indexed modes: build a 16-entry RGB LUT from the current programmable
-        # palette (9-bit RGB333), reusing the renderer's intensity table.
-        lut16 = [
-            bytes((_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7]))
-            for p in vdp.palette[:16]
-        ]
+
+        # Check for mid-frame palette changes in the log.  _reg_write_log is
+        # still valid here: it is cleared by begin_scanline(0) at the *next*
+        # frame, not at the end of this one.
+        has_palette_change = any(entry[1] == -1 for entry in vdp._reg_write_log)
+        if has_palette_change:
+            return _v9938_banded_to_rgb24(src, vdp)
+
+        lut16 = _make_lut16(vdp.palette)
         return b"".join([lut16[x & 0x0F] for x in src])
     lut16 = _TMS9918A_BYTES
     return b"".join([lut16[x & 0x0F] for x in src])
+
+
+def _v9938_banded_to_rgb24(src: bytearray, vdp: "V9938") -> bytes:
+    """Per-band palette→RGB24 conversion for mid-frame palette changes.
+
+    Reuses _build_bands() (which reads _reg_write_log / _frame_start_palette)
+    to determine which palette was active on each scanline, then applies the
+    correct 16-entry LUT per output line.  Display-adjust vertical offset
+    (R#18 high nibble) is accounted for: output line dy came from source line
+    dy - v_off, whose band determines the palette.
+    """
+    h = vdp.display_height
+    w = len(src) // h if h else _W
+
+    reg18 = vdp.regs[18]
+    v_off = ((reg18 >> 4) ^ 0x07) - 7   # signed line shift from R#18
+
+    bands = _build_bands(vdp)
+
+    # Build a per-source-line LUT table (fall back to frame-start palette for
+    # source lines outside any band, e.g. the border area after v_off shift).
+    default_lut = _make_lut16(vdp._frame_start_palette)
+    line_lut: list = [default_lut] * h
+    for _y0, _y1, _band_regs, band_palette in bands:
+        lut16 = _make_lut16(band_palette)
+        for sy in range(max(0, _y0), min(h, _y1)):
+            line_lut[sy] = lut16
+
+    parts: list[bytes] = []
+    for dy in range(h):
+        sy = dy - v_off
+        lut16 = line_lut[sy] if 0 <= sy < h else default_lut
+        row_start = dy * w
+        parts.append(b"".join(lut16[b & 0x0F] for b in src[row_start:row_start + w]))
+    return b"".join(parts)
 
 
 def _save_screenshot(rgb_buf: bytearray, w: int, h: int) -> None:
