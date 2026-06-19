@@ -151,6 +151,7 @@ class V9938:
     _reg_write_log: list = field(default_factory=list, init=False, repr=False)
     _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
     _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
+    debug_palette_writes: bool = field(default=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -269,6 +270,11 @@ class V9938:
                 self.palette[idx] = rgb
                 self._reg_write_log.append((self.display_line, -1, (idx, rgb)))
                 self.regs[16] = (idx + 1) & 0x0F
+                if self.debug_palette_writes and 0 <= self.display_line < self.display_height:
+                    r2 = (rgb >> 6) & 0x07
+                    g2 = (rgb >> 3) & 0x07
+                    b2 = rgb & 0x07
+                    print(f"[PAL] line={self.display_line:3d} idx={idx:2d} R={r2} G={g2} B={b2}")
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
             if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
