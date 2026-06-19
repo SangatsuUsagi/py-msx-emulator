@@ -31,6 +31,10 @@ _G7_SPRITE_PALETTE: tuple[int, ...] = tuple(
     for v in _G7_SPRITE_GRB_SRC
 )
 
+# Solid-colour fill tables — avoids bytes([c]*N) allocation in hot tile loops.
+_COLOR4: tuple[bytes, ...] = tuple(bytes([c] * 4) for c in range(16))
+_COLOR8: tuple[bytes, ...] = tuple(bytes([c] * 8) for c in range(16))
+
 # Precomputed tile-row lookup: _ROW_BYTES[pat][fg][bg] → 8-byte slice.
 _ROW_BYTES: list[list[list[bytes]]] = [
     [
@@ -320,8 +324,8 @@ def _render_mc(vdp: "V9938", buf: bytearray) -> None:
                 _hi = (pat >> 4) & 0x0F; lc = _hi if _hi else bd  # inline _color
                 _lo = pat & 0x0F;         rc = _lo if _lo else bd
                 y = row * 8 + py
-                buf[y * _W + bx:y * _W + bx + 4] = bytes([lc] * 4)
-                buf[y * _W + bx + 4:y * _W + bx + 8] = bytes([rc] * 4)
+                buf[y * _W + bx:y * _W + bx + 4] = _COLOR4[lc]
+                buf[y * _W + bx + 4:y * _W + bx + 8] = _COLOR4[rc]
 
 
 # ---------------------------------------------------------------------------
