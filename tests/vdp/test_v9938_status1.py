@@ -105,6 +105,28 @@ def test_irq_deasserts_after_s1_read() -> None:
     assert not vdp.irq_pending()
 
 
+def test_irq_cache_updates_on_ie0_register_write() -> None:
+    # The machine loop reads the cached vdp._irq; enabling IE0 via a register
+    # write while F is already set must refresh the cache immediately.
+    vdp = make_vdp()
+    vdp.status |= 0x80          # F (VBlank) already pending
+    vdp._update_irq()
+    assert not vdp._irq         # IE0 not set yet
+    vdp.write_port(0x99, 0x40 | 0x20)  # data = BL|IE0
+    vdp.write_port(0x99, 0x80 | 1)     # commit to R#1
+    assert vdp._irq             # cache refreshed → IRQ pending
+
+
+def test_irq_cache_updates_on_ie1_register_write() -> None:
+    vdp = make_vdp()
+    vdp._status1 |= 0x01        # FH pending
+    vdp._update_irq()
+    assert not vdp._irq         # IE1 not set yet
+    vdp.write_port(0x99, 0x10)         # data = IE1 (R#0 bit4)
+    vdp.write_port(0x99, 0x80 | 0)     # commit to R#0
+    assert vdp._irq
+
+
 def test_irq_stays_when_one_source_remains() -> None:
     vdp = make_vdp()
     vdp.regs[1] |= 0x20

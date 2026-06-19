@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from msx.mapper import FlatMapper
 
 
-@dataclass
+@dataclass(slots=True)
 class Memory:
     rom: bytes
     ram: bytearray
@@ -28,6 +28,12 @@ class Memory:
     sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
     sub0_rom: bytes | None = field(default=None, repr=False)
     sub1_rom: bytes | None = field(default=None, repr=False)
+    _rom_len: int = field(init=False, repr=False, default=0)
+    _extrom_len: int = field(init=False, repr=False, default=0)
+
+    def __post_init__(self) -> None:
+        self._rom_len = len(self.rom)
+        self._extrom_len = len(self.extrom) if self.extrom is not None else 0
 
     def _slot(self, addr: int) -> int:
         page = (addr >> 14) & 0x03
@@ -42,8 +48,8 @@ class Memory:
         if slot == 0:
             if self.extrom is not None and 0x8000 <= addr <= 0xBFFF:
                 off = addr - 0x8000
-                return self.extrom[off] if off < len(self.extrom) else 0xFF
-            return self.rom[addr] if addr < len(self.rom) else 0xFF
+                return self.extrom[off] if off < self._extrom_len else 0xFF
+            return self.rom[addr] if addr < self._rom_len else 0xFF
         if slot == 1:
             return self._mapper.read(addr)
         if slot == 2:

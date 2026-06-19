@@ -16,8 +16,8 @@ from msx.state import load_state, save_state
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import _INTENSITY3, grb332_to_rgb
 
-# Precomputed SCREEN 8 GRB332 → (R, G, B) table (256 entries).
-_GRB332_LUT: tuple[tuple[int, int, int], ...] = tuple(grb332_to_rgb(b) for b in range(256))
+# Precomputed SCREEN 8 GRB332 → 3-byte RGB table (256 entries), for fast join.
+_GRB332_BYTES: tuple[bytes, ...] = tuple(bytes(grb332_to_rgb(b)) for b in range(256))
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -43,42 +43,32 @@ TMS9918A_PALETTE: tuple[tuple[int, int, int], ...] = (
 _W = 256
 _MAX_FRAME_SKIP: int = 4
 
+# TMS9918A palette as 3-byte RGB entries (for the MSX1 join path).
+_TMS9918A_BYTES: tuple[bytes, ...] = tuple(bytes(c) for c in TMS9918A_PALETTE)
 
-def _index_to_rgb24(src: bytearray, vdp: object) -> bytearray:
-    n = len(src)
-    dst = bytearray(n * 3)
+
+def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
+    """Map a palette-index (or SCREEN 8 GRB332) buffer to packed RGB24.
+
+    Uses a per-pixel byte-string lookup joined in C (b"".join), which is far
+    faster than a Python per-channel loop while staying pure-Python.
+    """
     if isinstance(vdp, V9938):
         r0 = vdp.regs[0]
         is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
         if is_g7:
             # SCREEN 8: each byte is a direct GRB332 colour.
-            lut = _GRB332_LUT
-            for i in range(n):
-                o = i * 3
-                r, g, b = lut[src[i]]
-                dst[o] = r
-                dst[o + 1] = g
-                dst[o + 2] = b
-            return dst
+            lut = _GRB332_BYTES
+            return b"".join([lut[x] for x in src])
         # Indexed modes: build a 16-entry RGB LUT from the current programmable
-        # palette (9-bit RGB333), reusing the renderer's intensity table so the
-        # frontend and the SCREEN 8 path stay consistent.
-        lut = [
-            (_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7])
+        # palette (9-bit RGB333), reusing the renderer's intensity table.
+        lut16 = [
+            bytes((_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7]))
             for p in vdp.palette[:16]
         ]
-        mask = 0x0F
-    else:
-        lut = TMS9918A_PALETTE
-        mask = 0x0F
-
-    for i in range(n):
-        o = i * 3
-        r, g, b = lut[src[i] & mask]
-        dst[o] = r
-        dst[o + 1] = g
-        dst[o + 2] = b
-    return dst
+        return b"".join([lut16[x & 0x0F] for x in src])
+    lut16 = _TMS9918A_BYTES
+    return b"".join([lut16[x & 0x0F] for x in src])
 
 
 def _save_screenshot(rgb_buf: bytearray, w: int, h: int) -> None:
