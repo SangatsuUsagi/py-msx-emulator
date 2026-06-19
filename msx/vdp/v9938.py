@@ -248,6 +248,8 @@ class V9938:
                             self._update_irq()
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
+                        if reg == 44 and self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                            self._cmd_data_write(low)
                     elif reg == 46:
                         self.cmd_regs[14] = low
                         self._dispatch_command()
@@ -518,7 +520,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_LMMM:
@@ -532,7 +534,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMV:
@@ -545,7 +547,7 @@ class V9938:
                     self.vram[addr] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_HMMM:
@@ -560,7 +562,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (actual_nx // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         if cmd == _CMD_YMMM:
@@ -578,7 +580,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = (x_count // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = ((x_count + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
