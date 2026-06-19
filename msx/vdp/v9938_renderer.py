@@ -35,6 +35,39 @@ _G7_SPRITE_PALETTE: tuple[int, ...] = tuple(
 _COLOR4: tuple[bytes, ...] = tuple(bytes([c] * 4) for c in range(16))
 _COLOR8: tuple[bytes, ...] = tuple(bytes([c] * 8) for c in range(16))
 
+# LUT caches for G4/G6 and G5 pixel expansion via bytes.translate().
+# Keys: (tp: bool, border: int).  At most 32 entries each (2 × 16).
+_G46_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes]] = {}
+_G5_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes, bytes, bytes]] = {}
+
+
+def _g46_luts(tp: bool, border: int) -> tuple[bytes, bytes]:
+    """Return (lut_hi, lut_lo) translate tables for 4-bpp G4/G6 expansion."""
+    key = (tp, border)
+    if key not in _G46_LUT_CACHE:
+        lut_hi = bytes(((b >> 4) & 0x0F) if (tp or (b >> 4) & 0x0F) else border
+                       for b in range(256))
+        lut_lo = bytes((b & 0x0F) if (tp or b & 0x0F) else border
+                       for b in range(256))
+        _G46_LUT_CACHE[key] = (lut_hi, lut_lo)
+    return _G46_LUT_CACHE[key]
+
+
+def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
+    """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion."""
+    key = (tp, border)
+    if key not in _G5_LUT_CACHE:
+        def _ch(b: int, shift: int) -> int:
+            c = (b >> shift) & 0x03
+            return c if (tp or c) else border
+        p0 = bytes(_ch(b, 6) for b in range(256))
+        p1 = bytes(_ch(b, 4) for b in range(256))
+        p2 = bytes(_ch(b, 2) for b in range(256))
+        p3 = bytes(_ch(b, 0) for b in range(256))
+        _G5_LUT_CACHE[key] = (p0, p1, p2, p3)
+    return _G5_LUT_CACHE[key]
+
+
 # Precomputed tile-row lookup: _ROW_BYTES[pat][fg][bg] → 8-byte slice.
 _ROW_BYTES: list[list[list[bytes]]] = [
     [
@@ -548,16 +581,14 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
     border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
     vram = vdp.vram
-    # Per-byte → 2-pixel LUT; transparent col0 maps to the backdrop when tp=0.
-    lut = [bytes((
-        (b >> 4) & 0x0F if (tp or (b >> 4) & 0x0F) else border,
-        b & 0x0F if (tp or b & 0x0F) else border,
-    )) for b in range(256)]
+    # C-level expansion: two translate tables (hi/lo nibble) + strided slice assignment.
+    lut_hi, lut_lo = _g46_luts(tp, border)
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 128) & 0x1FFFF
         bx = y * _W
-        row = vram[row_base:row_base + 128]
-        buf[bx:bx + _W] = b"".join([lut[x] for x in row])
+        row = bytes(vram[row_base:row_base + 128])
+        buf[bx:bx + _W:2]      = row.translate(lut_hi)
+        buf[bx + 1:bx + _W:2]  = row.translate(lut_lo)
 
 
 # ---------------------------------------------------------------------------
@@ -572,17 +603,16 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
     vscroll = vdp.regs[23]
     vram = vdp.vram
     w = 512
-
-    def conv(c: int) -> int:
-        return c if (tp or c) else border
-    # Per-byte → 4-pixel LUT (MSB pair first).
-    lut = [bytes((conv((b >> 6) & 3), conv((b >> 4) & 3),
-                  conv((b >> 2) & 3), conv(b & 3))) for b in range(256)]
+    # C-level expansion: four translate tables (bit-pairs 7:6, 5:4, 3:2, 1:0) + stride-4.
+    p0, p1, p2, p3 = _g5_luts(tp, border)
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 128) & 0x1FFFF
         bx = y * w
-        row = vram[row_base:row_base + 128]
-        buf[bx:bx + w] = b"".join([lut[x] for x in row])
+        row = bytes(vram[row_base:row_base + 128])
+        buf[bx:bx + w:4]     = row.translate(p0)
+        buf[bx + 1:bx + w:4] = row.translate(p1)
+        buf[bx + 2:bx + w:4] = row.translate(p2)
+        buf[bx + 3:bx + w:4] = row.translate(p3)
 
 
 # ---------------------------------------------------------------------------
@@ -597,15 +627,14 @@ def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
     vscroll = vdp.regs[23]
     vram = vdp.vram
     w = 512
-    lut = [bytes((
-        (b >> 4) & 0x0F if (tp or (b >> 4) & 0x0F) else border,
-        b & 0x0F if (tp or b & 0x0F) else border,
-    )) for b in range(256)]
+    # Same hi/lo translate approach as G4 but 256 VRAM bytes → 512 output pixels.
+    lut_hi, lut_lo = _g46_luts(tp, border)
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 256) & 0x1FFFF  # 256 bytes/line
         bx = y * w
-        row = vram[row_base:row_base + 256]
-        buf[bx:bx + w] = b"".join([lut[x] for x in row])
+        row = bytes(vram[row_base:row_base + 256])
+        buf[bx:bx + w:2]     = row.translate(lut_hi)
+        buf[bx + 1:bx + w:2] = row.translate(lut_lo)
 
 
 # ---------------------------------------------------------------------------
