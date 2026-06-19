@@ -80,6 +80,18 @@ _ROW_BYTES: list[list[list[bytes]]] = [
     for pat in range(256)
 ]
 
+# Precomputed text-row lookup: _TEXT6_BYTES[pat][fg][bg] → 6-byte slice.
+_TEXT6_BYTES: list[list[list[bytes]]] = [
+    [
+        [
+            bytes((fg if (pat >> (7 - px)) & 1 else bg) for px in range(6))
+            for bg in range(16)
+        ]
+        for fg in range(16)
+    ]
+    for pat in range(256)
+]
+
 
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices (length 256×display_height)."""
@@ -333,10 +345,8 @@ def _render_text(vdp: "V9938", buf: bytearray) -> None:
             tile = vdp.vram[(name_base + row * 40 + col) & 0x3FFF]
             for py in range(8):
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
-                y = row * 8 + py
-                for px in range(6):
-                    c = fg if (pat >> (7 - px)) & 1 else bg
-                    buf[y * _W + 8 + col * 6 + px] = c
+                rs = (row * 8 + py) * _W + 8 + col * 6
+                buf[rs:rs + 6] = _TEXT6_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
