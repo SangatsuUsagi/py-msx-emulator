@@ -107,9 +107,12 @@ class Z80:
         if self.halted:
             return 4
 
-        pc = self.registers.PC
+        r = self.registers
+        pc = r.PC
         self.instruction_pc = pc
-        opcode = self._fetch()
+        opcode = self.read_byte(pc)
+        r.PC = (pc + 1) & 0xFFFF
+        r.R = (r.R + 1) & 0x7F
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
         return execute(self, opcode)

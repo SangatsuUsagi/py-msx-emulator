@@ -13,6 +13,11 @@ if TYPE_CHECKING:
 _W = 256
 _TILE_H = 192  # TMS9918A-compatible modes always render 24 tile rows (192 px)
 
+# byte → 8 pixel bits (MSB first), precomputed to avoid per-call generators.
+_UNPACK8: tuple[bytes, ...] = tuple(
+    bytes((b >> (7 - i)) & 1 for i in range(8)) for b in range(256)
+)
+
 # GRAPHIC7 (SCREEN 8) sprites use a FIXED 16-colour palette, NOT the
 # programmable one. Source values from openMSX Renderer::GRAPHIC7_SPRITE_PALETTE
 # as 0xGRB nibbles (each channel 0-7); stored here pre-converted to the GRB332
@@ -422,6 +427,7 @@ def _render_sprites_mode2(
     # visible if a higher-priority CC=0 sprite precedes it on the same line
     # (V9938 rule); leading CC=1 sprites are invisible.
     cc0_seen = bytearray(h)
+    drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
 
     for i in range(32):
@@ -491,16 +497,17 @@ def _render_sprites_mode2(
                                 sprite_buf[coord] |= color
                         else:
                             sprite_buf[coord] = color
+                            drawn.append(coord)
 
+    # Composite only the pixels a sprite actually touched (avoids scanning the
+    # whole h*width buffer every frame when sprites are sparse or absent).
     if grb_mode:
         # SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not vdp.palette.
-        for idx, sc in enumerate(sprite_buf):
-            if sc:
-                buf[idx] = _G7_SPRITE_PALETTE[sc & 0x0F]
+        for coord in drawn:
+            buf[coord] = _G7_SPRITE_PALETTE[sprite_buf[coord] & 0x0F]
     else:
-        for idx, sc in enumerate(sprite_buf):
-            if sc:
-                buf[idx] = sc
+        for coord in drawn:
+            buf[coord] = sprite_buf[coord]
 
     if coincidence:
         vdp.status |= 0x20
@@ -512,7 +519,7 @@ def _sprite_row_pixels(
 ) -> bytes:
     if si == 0:
         b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & mask]
-        return bytes((b >> (7 - bit)) & 1 for bit in range(8))
+        return _UNPACK8[b]
 
     base = pat_idx & 0xFC
     if src_row < 8:
@@ -523,10 +530,7 @@ def _sprite_row_pixels(
         left  = vdp.vram[(spt_base + (base + 1) * 8 + r) & mask]
         right = vdp.vram[(spt_base + (base + 3) * 8 + r) & mask]
 
-    return (
-        bytes((left  >> (7 - b)) & 1 for b in range(8))
-        + bytes((right >> (7 - b)) & 1 for b in range(8))
-    )
+    return _UNPACK8[left] + _UNPACK8[right]
 
 
 # ---------------------------------------------------------------------------
@@ -537,18 +541,19 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
     base = (vdp.regs[2] & 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)  # R#8 bit5: 1=col0 solid, 0=col0 transparent→backdrop
+    border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
+    vram = vdp.vram
+    # Per-byte → 2-pixel LUT; transparent col0 maps to the backdrop when tp=0.
+    lut = [bytes((
+        (b >> 4) & 0x0F if (tp or (b >> 4) & 0x0F) else border,
+        b & 0x0F if (tp or b & 0x0F) else border,
+    )) for b in range(256)]
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 128) & 0x1FFFF
         bx = y * _W
-        for x in range(0, _W, 2):
-            b = vdp.vram[(row_base + x // 2) & 0x1FFFF]
-            hi = (b >> 4) & 0x0F
-            lo = b & 0x0F
-            if tp or hi:
-                buf[bx + x] = hi
-            if tp or lo:
-                buf[bx + x + 1] = lo
+        row = vram[row_base:row_base + 128]
+        buf[bx:bx + _W] = b"".join([lut[x] for x in row])
 
 
 # ---------------------------------------------------------------------------
@@ -559,17 +564,21 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 6: 2-bpp, 4 pixels per byte, full 512-pixel width."""
     base = (vdp.regs[2] & 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)
+    border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
+    vram = vdp.vram
     w = 512
+
+    def conv(c: int) -> int:
+        return c if (tp or c) else border
+    # Per-byte → 4-pixel LUT (MSB pair first).
+    lut = [bytes((conv((b >> 6) & 3), conv((b >> 4) & 3),
+                  conv((b >> 2) & 3), conv(b & 3))) for b in range(256)]
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 128) & 0x1FFFF
         bx = y * w
-        for ox in range(w):
-            b = vdp.vram[(row_base + ox // 4) & 0x1FFFF]
-            shift = (3 - (ox % 4)) * 2
-            c = (b >> shift) & 0x03
-            if tp or c:
-                buf[bx + ox] = c
+        row = vram[row_base:row_base + 128]
+        buf[bx:bx + w] = b"".join([lut[x] for x in row])
 
 
 # ---------------------------------------------------------------------------
@@ -580,16 +589,19 @@ def _render_g6(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 7: 4-bpp, 2 pixels per byte, full 512-pixel width."""
     base = (vdp.regs[2] & 0x40) << 10  # G6: 64KB pages, bit6 only
     tp = bool(vdp.regs[8] & 0x20)
+    border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
+    vram = vdp.vram
     w = 512
+    lut = [bytes((
+        (b >> 4) & 0x0F if (tp or (b >> 4) & 0x0F) else border,
+        b & 0x0F if (tp or b & 0x0F) else border,
+    )) for b in range(256)]
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * 256) & 0x1FFFF  # 256 bytes/line
         bx = y * w
-        for ox in range(w):
-            b = vdp.vram[(row_base + ox // 2) & 0x1FFFF]
-            c = (b >> 4) & 0x0F if (ox % 2 == 0) else (b & 0x0F)
-            if tp or c:
-                buf[bx + ox] = c
+        row = vram[row_base:row_base + 256]
+        buf[bx:bx + w] = b"".join([lut[x] for x in row])
 
 
 # ---------------------------------------------------------------------------
@@ -619,8 +631,8 @@ def _render_g7(vdp: "V9938", buf: bytearray, h: int) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
     base = (vdp.regs[2] & 0x40) << 10  # G7: 64KB pages, bit6 only
     vscroll = vdp.regs[23]
+    vram = vdp.vram
     for y in range(h):
         row_base = (base + ((y + vscroll) & 0xFF) * _W) & 0x1FFFF
         bx = y * _W
-        for x in range(_W):
-            buf[bx + x] = vdp.vram[(row_base + x) & 0x1FFFF]
+        buf[bx:bx + _W] = vram[row_base:row_base + _W]  # whole row, one C-level copy

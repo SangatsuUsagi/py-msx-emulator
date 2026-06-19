@@ -243,6 +243,8 @@ class V9938:
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
                             self._reg_write_log.append((self.display_line, reg, low))
+                        if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
+                            self._update_irq()
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
                     elif reg == 46:
@@ -279,6 +281,8 @@ class V9938:
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
                     self._reg_write_log.append((self.display_line, ptr, value))
+                if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
+                    self._update_irq()
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
             elif ptr == 46:
