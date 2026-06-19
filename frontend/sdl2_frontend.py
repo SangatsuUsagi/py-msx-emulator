@@ -166,6 +166,9 @@ def run(
     if not renderer:
         renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
 
+    # Linear filtering so 512-wide SCREEN 6/7 textures downscale smoothly to 256*scale window.
+    sdl2.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"1")
+
     tex_w, tex_h = _W, h
     texture = sdl2.SDL_CreateTexture(
         renderer,
@@ -270,7 +273,10 @@ def run(
                         tex_w,
                         tex_h,
                     )
-                    sdl2.SDL_SetWindowSize(window, tex_w * scale, tex_h * scale)
+                    # 512-wide modes (SCREEN 6/7) display at 256*scale to preserve aspect ratio;
+                    # SDL scales the 512-wide texture down via bilinear filtering.
+                    win_display_w = _W if tex_w > _W else tex_w
+                    sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
 
             # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
             if audio_dev > 0:
