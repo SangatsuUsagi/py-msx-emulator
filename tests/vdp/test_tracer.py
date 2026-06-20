@@ -142,7 +142,7 @@ def test_vdp_cmd_hmmv_format() -> None:
     lines = _lines(buf)
     # First 2 lines = R#36/R#37 VDP_REG; last = VDP_CMD
     cmd_line = lines[-1]
-    assert "VDP_CMD HMMV (C0h)" in cmd_line
+    assert "VDP_CMD HMMV/IMP  (C0h)" in cmd_line
     assert "CY=0000045342" in cmd_line
     assert "PC=40A4" in cmd_line
 
@@ -213,7 +213,7 @@ def test_port9b_r46_emits_vdp_cmd() -> None:
     # r17=0x2E → ptr=46 → R#46
     t.port9b_write(0x2000, 999, 0xC0, r17=0x2E)
     lines = _lines(buf)
-    assert "VDP_CMD HMMV (C0h)" in lines[0]
+    assert "VDP_CMD HMMV/IMP  (C0h)" in lines[0]
     assert ";port 9Bh" in lines[0]
 
 
