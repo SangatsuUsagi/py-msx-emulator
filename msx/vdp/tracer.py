@@ -36,6 +36,17 @@ def _cmd_name(val: int) -> str:
     return _CMD_NAMES.get((val >> 4) & 0xF, "????")
 
 
+# Logical operation (lower 4 bits of R#46) → mnemonic
+_LOP_NAMES: list[str] = [
+    "IMP", "AND", "OR", "XOR", "NOT", "????", "????", "????",
+    "TIMP", "TAND", "TOR", "TXOR", "TNOT", "????", "????", "????",
+]
+
+
+def _lop_name(val: int) -> str:
+    return _LOP_NAMES[val & 0xF]
+
+
 @dataclass
 class Tracer:
     """VDP register write tracer.
@@ -120,7 +131,8 @@ class Tracer:
         elif reg == 46:
             params = self._fmt_params()
             name = _cmd_name(data)
-            self._emit(f"{prefix} VDP_CMD {name:<4s} ({data:02X}h) R32-45={params}{suffix}")
+            lop = _lop_name(data)
+            self._emit(f"{prefix} VDP_CMD {name:<4s}/{lop:<4s} ({data:02X}h) R32-45={params}{suffix}")
             self._param_buf.clear()
         else:
             self._emit(f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}")
