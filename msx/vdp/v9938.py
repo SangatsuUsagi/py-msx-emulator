@@ -70,6 +70,12 @@ _CMD_HMMM = 0xD
 _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
+_CMD_NAMES: dict[int, str] = {
+    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH", 0x7: "LINE",
+    0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM", 0xB: "LMMC", 0xC: "HMMV",
+    0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
+}
+
 # S2 status bits
 _S2_CE = 0x01  # command executing
 _S2_BD = 0x10  # border/colour detected (SRCH result)
@@ -152,6 +158,9 @@ class V9938:
     _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
     _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
     debug_palette_writes: bool = field(default=False, repr=False)
+    debug_banding: bool = field(default=False, repr=False)
+    debug_sprite_line: int = field(default=-1, repr=False)  # >=0: dump drawn sprites at that screen line
+    debug_disable_sprites: bool = field(default=False, repr=False)  # render background only
 
     @property
     def display_height(self) -> int:
@@ -221,9 +230,28 @@ class V9938:
     # Port I/O
     # ------------------------------------------------------------------
 
+    def _log_sat_write(self, addr: int, value: int) -> None:
+        """Log a port-0x98 VRAM write that lands in the sprite-mode-2 SAT or its
+        per-line colour table, tagged with display_line / active-vs-vblank — to
+        see whether sprite attributes are rewritten mid-frame (during active
+        display), i.e. whether sprite ghosting shares the VRAM-timing root."""
+        attr_reg = (((self.regs[11] & 3) << 15) | (self.regs[5] << 7)) & 0x1FFFF
+        sat_base = attr_reg & ~0x1FF & 0x1FFFF
+        col_base = (sat_base - 0x200) & 0x1FFFF
+        line = self.display_line
+        region = "active" if 0 <= line < self.display_height else "vblank"
+        if sat_base <= addr < sat_base + 0x80:
+            off = addr - sat_base
+            print(f"[SAT] line={line:3d}({region}) addr={addr:05X} sprite#{off // 4:02d}"
+                  f" byte={off % 4} val={value:02X}h")
+        elif col_base <= addr < col_base + 0x200:
+            print(f"[SATCOL] line={line:3d}({region}) addr={addr:05X} val={value:02X}h")
+
     def write_port(self, port: int, value: int) -> None:
         value &= 0xFF
         if port == 0x98:
+            if self.debug_banding:
+                self._log_sat_write(self._addr, value)
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
         elif port == 0x99:
@@ -244,6 +272,8 @@ class V9938:
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
                             self._reg_write_log.append((self.display_line, reg, low))
+                            if self.debug_banding and 0 <= self.display_line < self.display_height:
+                                print(f"[BAND] line={self.display_line:3d} R#{reg:02d}={low:02X}h (port 99h)")
                         if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                             self._update_irq()
                     elif 32 <= reg <= 45:
@@ -272,6 +302,8 @@ class V9938:
                 self.palette[idx] = rgb
                 self._reg_write_log.append((self.display_line, -1, (idx, rgb)))
                 self.regs[16] = (idx + 1) & 0x0F
+                if self.debug_banding and 0 <= self.display_line < self.display_height:
+                    print(f"[BAND] line={self.display_line:3d} PAL[{idx:2d}]=({(rgb>>6)&7},{(rgb>>3)&7},{rgb&7})")
                 if self.debug_palette_writes and 0 <= self.display_line < self.display_height:
                     r2 = (rgb >> 6) & 0x07
                     g2 = (rgb >> 3) & 0x07
@@ -289,6 +321,8 @@ class V9938:
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
                     self._reg_write_log.append((self.display_line, ptr, value))
+                    if self.debug_banding and 0 <= self.display_line < self.display_height:
+                        print(f"[BAND] line={self.display_line:3d} R#{ptr:02d}={value:02X}h (port 9Bh)")
                 if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                     self._update_irq()
             elif 32 <= ptr <= 45:
@@ -416,6 +450,15 @@ class V9938:
         arg = self.cmd_regs[13]
         xs = -1 if (arg & _ARG_DIX) else 1  # DIX: 1 = leftward
         ys = -1 if (arg & _ARG_DIY) else 1  # DIY: 1 = upward
+
+        if self.debug_banding:
+            # Log every command dispatch with the raster position at issue time,
+            # so beam-timed VRAM blits (software raster scroll) can be inspected.
+            dxn = "L" if (arg & _ARG_DIX) else "R"
+            dyn = "U" if (arg & _ARG_DIY) else "D"
+            print(f"[CMD] line={self.display_line:3d} cyc={self._line_cycle:4d} "
+                  f"{_CMD_NAMES.get(cmd, f'?{cmd:X}')} S=({sx:3d},{sy:3d}) "
+                  f"D=({dx:3d},{dy:3d}) N=({nx:3d},{ny:3d}) dir={dxn}{dyn} LOG={log:X}")
 
         self._cmd_active = False
         self._status2 &= ~(_S2_CE | _S2_TR)
