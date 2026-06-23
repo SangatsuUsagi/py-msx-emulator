@@ -205,3 +205,35 @@ def test_no_coincidence_when_no_overlap() -> None:
     render_frame(vdp)
 
     assert not (vdp.status & 0x20), "coincidence flag must not be set"
+
+
+# ---------------------------------------------------------------------------
+# EC (Early Clock) bit — X shift left by 32
+# ---------------------------------------------------------------------------
+
+def test_ec_bit_shifts_sprite_left_32() -> None:
+    """EC bit shifts sprite 32 pixels left; X=40 with EC → appears at X=8."""
+    vdp = make_sprite_vdp()
+    # EC=1 (bit7 of attr), X=40 → effective x=8
+    _sat_entry(vdp, 0, 0, 40, 0, 0x8F)   # attr=0x8F: EC=1, colour=15
+    vdp.vram[_SPT + 0] = 0x80             # bit 7 only → pixel at x_pos+0
+    _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
+
+    buf = render_frame(vdp)
+
+    assert buf[1 * 256 + 8] == 15, "EC bit: sprite at X=40 should appear at X=8"
+    assert buf[1 * 256 + 40] == 1, "no sprite at X=40 (un-shifted position)"
+
+
+def test_ec_bit_x0_clips_off_left_edge() -> None:
+    """EC bit with X=0 → effective x=-32, all pixels clipped, not wrapped to right."""
+    vdp = make_sprite_vdp()
+    _sat_entry(vdp, 0, 0, 0, 0, 0x8F)    # EC=1, X=0 → effective x=-32
+    vdp.vram[_SPT + 0] = 0xFF             # all 8 pixels set
+    _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
+
+    buf = render_frame(vdp)
+
+    # No pixels should appear anywhere — all clipped off left edge
+    assert all(buf[1 * 256 + x] == 1 for x in range(256)), \
+        "EC+X=0: all pixels must be clipped, not wrapped to right side"

@@ -152,8 +152,12 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
 
     change_lines: dict[int, list[tuple[int, int]]] = {}
     for dl, reg, value in log:
-        if 0 <= dl < display_height:
-            change_lines.setdefault(dl, []).append((reg, value))
+        # Writes logged at display_line=N happen during line N+1's CPU window
+        # (begin_scanline(N) fires after N's CPU budget; ISR runs in N+1's window).
+        # The register change therefore takes effect from line N+1 onwards.
+        effective = dl + 1
+        if 0 < effective < display_height:
+            change_lines.setdefault(effective, []).append((reg, value))
 
     if not change_lines:
         return []
@@ -180,6 +184,113 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
     return bands
 
 
+def _debug_band_sprites(
+    vdp: "V9938", y0: int, y1: int, band_regs: list,
+) -> None:
+    """Print sprites visible in [y0, y1) with the given band registers.
+
+    Sprites are evaluated once per frame with R#23 vscroll, so this is called once
+    over the full frame with the main band's registers."""
+    r1 = band_regs[1]
+    r8 = band_regs[8]
+    if r8 & 0x04:
+        print(f"  [SPR-DBG] [{y0},{y1}) SPD set — no sprites")
+        return
+    si = (r1 >> 1) & 1
+    mag = r1 & 1
+    pat_size = 16 if si else 8
+    render_size = pat_size * (2 if mag else 1)
+    vscroll = band_regs[23]
+    attr_reg = (((band_regs[11] & 3) << 15) | (band_regs[5] << 7)) & 0x1FFFF
+    sat_base = attr_reg & ~0x1FF & 0x1FFFF
+    # Mode-2 per-line colour table sits 0x200 before the SAT (same as the renderer).
+    col_base = (sat_base - 0x200) & 0x1FFFF
+    visible: list[tuple[int, int, int, list[int], int, int]] = []
+    for i in range(32):
+        y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
+        if y_byte == 0xD8:  # sprite mode 2 list terminator is 216 (0xD8), not 208
+            break
+        x_byte = vdp.vram[(sat_base + i * 4 + 1) & 0x1FFFF]
+        y_top = (y_byte + 1) & 0xFF
+        max_sprite_rows = min(render_size, 256 - y_top)
+        lines_hit = []
+        first_col_entry = -1
+        opaque_lines = 0  # hit lines whose per-line colour byte is non-transparent
+        for line in range(y0, y1):
+            vram_line = (line + vscroll) & 0xFF
+            sprite_row = (vram_line - y_top) & 0xFF
+            if sprite_row < max_sprite_rows:
+                lines_hit.append(line)
+                src_row = sprite_row // 2 if mag else sprite_row
+                col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
+                if first_col_entry < 0:
+                    first_col_entry = col_entry
+                if col_entry & 0x0F:
+                    opaque_lines += 1
+        if lines_hit:
+            visible.append((i, y_top, x_byte, lines_hit, first_col_entry, opaque_lines))
+    if visible:
+        print(f"  [SPR-DBG] [{y0},{y1}) vscroll={vscroll:02X}h render_size={render_size}"
+              f" — {len(visible)} sprite(s) visible:")
+        for spr_i, y_top, x_byte, lines_hit, col0, opaque_lines in visible:
+            lmin, lmax = lines_hit[0], lines_hit[-1]
+            color = col0 & 0x0F
+            flags = "".join((
+                "E" if col0 & 0x80 else "-",  # EC: early-clock (-32px)
+                "C" if col0 & 0x40 else "-",  # CC: colour-combine (OR)
+                "I" if col0 & 0x20 else "-",  # IC: ignore collision
+            ))
+            tag = "" if opaque_lines else " (all transparent)"
+            print(f"    sprite#{spr_i:02d} y_top={y_top:3d}(0x{y_top:02X}) x={x_byte:3d}"
+                  f" screen_lines=[{lmin},{lmax}]"
+                  f" col0={col0:02X}h color={color:X} [{flags}]"
+                  f" opaque_lines={opaque_lines}{tag}")
+    else:
+        print(f"  [SPR-DBG] [{y0},{y1}) vscroll={vscroll:02X}h — 0 sprites visible")
+
+
+def _dump_sprite_line(
+    target: int, entries: list[tuple], sprite_buf: bytearray, width: int,
+    vscroll: int, h: int,
+) -> None:
+    """Print the per-sprite draw outcome and final sprite-layer pixel runs for
+    one screen line (set via `ds <line>` / `vdp.debug_sprite_line`).
+
+    `entries` are in sprite-priority (table) order. `painted`/`combined` count
+    new vs OR-combined pixels this sprite contributed on the line, so a sprite
+    listed as DRAWN with painted=0 was fully blocked by higher-priority sprites.
+
+    `PARKED` marks a sprite whose y_top sits off the bottom of the display
+    (>= display_height): without vscroll it would be hidden, so its presence
+    here means vscroll dragged it on-screen — the prime ghost suspect.
+    """
+    print(f"  [SPR-LINE] screen_line={target} vscroll={vscroll:02X}h:"
+          f" {len(entries)} sprite(s) evaluated (priority order, x in 256-dot sprite plane):")
+    for i, x, y_top, color, flags, status, painted, combined in entries:
+        cstr = f"color={color:X}" if color >= 0 else "color=?"
+        extra = f" painted={painted} combined={combined}" if status == "DRAWN" else ""
+        parked = "  <PARKED off-screen w/o vscroll>" if y_top >= h else ""
+        print(f"    sprite#{i:02d} x={x:4d} y_top={y_top:3d}(0x{y_top:02X}) {cstr}"
+              f" [{flags}] {status}{extra}{parked}")
+    # Final composited sprite layer on this line: contiguous non-transparent runs.
+    row = sprite_buf[target * width:(target + 1) * width]
+    runs: list[tuple[int, int]] = []
+    start = None
+    for px in range(width):
+        if row[px] and start is None:
+            start = px
+        elif not row[px] and start is not None:
+            runs.append((start, px - 1))
+            start = None
+    if start is not None:
+        runs.append((start, width - 1))
+    if runs:
+        rs = ", ".join(f"[{a}-{b}]" for a, b in runs)
+        print(f"    final sprite-layer pixel runs (x): {rs}")
+    else:
+        print(f"    final sprite-layer: empty")
+
+
 def _render_banded(vdp: "V9938") -> bytearray:
     """Render with band-split: each band uses its own register/palette snapshot."""
     bands = _build_bands(vdp)
@@ -188,15 +299,37 @@ def _render_banded(vdp: "V9938") -> bytearray:
 
     full_h = vdp.display_height
     full_w = vdp.display_width
+
+    # Sprites are evaluated once per frame (like real hardware / openMSX positions
+    # each sprite once), using the registers of the largest band — the main play
+    # area.  Drawing sprites per band would re-evaluate every sprite in every band
+    # and, when bands carry different vscroll, draw the same sprite at two screen
+    # positions (the duplicate/ghost bug).
+    main_regs = max(bands, key=lambda b: b[1] - b[0])[2]
+
+    if vdp.debug_banding:
+        print(f"[BAND-SPLIT] {len(bands)} band(s) this frame:")
+        for y0, y1, br, _ in bands:
+            r0, r8, r23 = br[0], br[8], br[23]
+            spd = "SPD" if (r8 & 0x04) else "spr-on"
+            print(f"  [{y0:3d},{y1:3d}) R#00={r0:02X}h R#23={r23:02X}h R#08={r8:02X}h ({spd})")
+        # Sprites are frame-global now: report visibility once with the main band's regs.
+        _debug_band_sprites(vdp, 0, full_h, main_regs)
+
     out = bytearray(full_w * full_h)
 
     saved_regs = vdp.regs[:]
     saved_palette = vdp.palette[:]
 
+    # Background: one pass per band with that band's registers/palette (no sprites).
     for y0, y1, band_regs, band_palette in bands:
         vdp.regs = band_regs
         vdp.palette = band_palette
-        _render_pass_range(vdp, out, y0, min(y1, vdp.display_height))
+        _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
+
+    # Sprites: a single full-frame pass with the main band's registers.
+    vdp.regs = main_regs
+    _render_sprites_for_mode(vdp, out, 0, full_h)
 
     _finalize(vdp)
     vdp.regs = saved_regs
@@ -214,10 +347,15 @@ def _render_pass(vdp: "V9938") -> bytearray:
     return buf
 
 
-def _render_pass_range(vdp: "V9938", buf: bytearray, y_start: int, y_end: int) -> None:
+def _render_pass_range(
+    vdp: "V9938", buf: bytearray, y_start: int, y_end: int,
+    draw_sprites: bool = True,
+) -> None:
     """Render scanlines [y_start, y_end) into buf using current vdp register/palette state.
 
     Pre-fills the scanline range with border colour, then writes content pixels.
+    draw_sprites=False renders the background only (banded mode draws sprites once
+    per frame afterwards, so a sprite is not re-evaluated in every band).
     """
     w = vdp.display_width
     h = vdp.display_height
@@ -239,33 +377,59 @@ def _render_pass_range(vdp: "V9938", buf: bytearray, y_start: int, y_end: int) -
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
 
+    # Background plane only — sprites are dispatched separately (see _render_sprites_for_mode).
     if m5:
         if m4:
             _render_g7(vdp, buf, h, y_start, y_end)
-            _render_sprites_mode2(vdp, buf, h, y_start, y_end, grb_mode=True)
         elif m3:
             _render_g6(vdp, buf, h, y_start, y_end)
-            _render_sprites_mode2(vdp, buf, h, y_start, y_end, width=512)
         else:
             _render_g5(vdp, buf, h, y_start, y_end)
-            _render_sprites_mode2(vdp, buf, h, y_start, y_end, width=512)
     elif m4:
         if m3:
             _render_g4(vdp, buf, h, y_start, y_end)
-            _render_sprites_mode2(vdp, buf, h, y_start, y_end)
         else:
             _render_g2(vdp, buf, y_start, y_end)
-            _render_sprites_mode2(vdp, buf, h, y_start, y_end)
     elif m1:
         _render_text(vdp, buf, y_start, y_end)
     elif m3:
         _render_g2(vdp, buf, y_start, y_end)
-        _render_sprites(vdp, buf, y_start, y_end)
     elif m2:
         _render_mc(vdp, buf, y_start, y_end)
-        _render_sprites(vdp, buf, y_start, y_end)
     else:
         _render_g1(vdp, buf, y_start, y_end)
+
+    if draw_sprites:
+        _render_sprites_for_mode(vdp, buf, y_start, y_end)
+
+
+def _render_sprites_for_mode(vdp: "V9938", buf: bytearray, y_start: int, y_end: int) -> None:
+    """Dispatch to the sprite renderer for the current screen mode over [y_start, y_end).
+
+    Sprite Y uses R#23 (vscroll) as on real hardware; each sprite is positioned
+    once. TEXT1 (M1) and blanked display (BL=0) draw no sprites.
+    """
+    r0 = vdp.regs[0]
+    r1 = vdp.regs[1]
+    if not (r1 & 0x40):  # BL clear → display blanked
+        return
+    m1 = (r1 >> 4) & 1
+    m2 = (r1 >> 3) & 1
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    h = vdp.display_height
+
+    if m5:
+        if m4:
+            _render_sprites_mode2(vdp, buf, h, y_start, y_end, grb_mode=True)
+        else:  # G5 and G6 both render sprites onto a 512-wide buffer
+            _render_sprites_mode2(vdp, buf, h, y_start, y_end, width=512)
+    elif m4:
+        _render_sprites_mode2(vdp, buf, h, y_start, y_end)
+    elif m1:
+        pass  # TEXT1: no sprites
+    else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1
         _render_sprites(vdp, buf, y_start, y_end)
 
 
@@ -402,6 +566,10 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # ---------------------------------------------------------------------------
 
 def _render_sprites(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
+    if vdp.debug_disable_sprites:  # debug: render background only
+        return
+    if vdp.regs[8] & 0x04:  # SPD: sprite disable (R#8 bit 2)
+        return
     r1 = vdp.regs[1]
     si  = (r1 >> 1) & 1
     mag = r1 & 1
@@ -480,7 +648,14 @@ def _render_sprites_mode2(
     grb_mode=True (SCREEN 8): sprite palette colours are converted to GRB332 before writing.
     width: buffer line width; 512 for the wide modes (G5/G6), where the 256-dot
     sprite plane is doubled horizontally so sprites span the full screen.
+
+    Sprite Y is evaluated against R#23 vertical scroll (as on real hardware), and
+    this is called once per frame so each sprite is positioned a single time.
     """
+    if vdp.debug_disable_sprites:  # debug: render background only
+        return
+    if vdp.regs[8] & 0x04:  # SPD: sprite disable (R#8 bit 2)
+        return
     r1 = vdp.regs[1]
     si  = (r1 >> 1) & 1
     mag = r1 & 1
@@ -506,9 +681,16 @@ def _render_sprites_mode2(
     coincidence = False
     ye = y_end if y_end is not None else h
 
+    # Diagnostic: dump the sprites actually drawn at a specific screen line
+    # (after the colour/CC/8-per-line gates), in priority order.
+    dbg_target = vdp.debug_sprite_line
+    if not (y_start <= dbg_target < min(ye, h)):
+        dbg_target = -1
+    dbg_entries: list[tuple] = []
+
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
-        if y_byte == 0xD0:
+        if y_byte == 0xD8:  # sprite mode 2 list terminator is 216 (0xD8), not 208
             break
 
         x_byte  = vdp.vram[(sat_base + i * 4 + 1) & 0x1FFFF]
@@ -517,18 +699,28 @@ def _render_sprites_mode2(
         # per-line colour table byte instead.
 
         y_top = (y_byte + 1) & 0xFF
+        # NOTE (speculative, from b24fb1d): clip the sprite to VRAM rows < 256
+        # rather than letting the pattern wrap row 255→0. openMSX does NOT clip
+        # (it uses a plain (line - y) & 0xFF < magSize test, so a sprite near
+        # Y=255 wraps onto the top of the screen). This clip therefore diverges
+        # from openMSX and suppresses partially-above-top sprites; it is kept for
+        # now only because it is currently harmless (post-terminator garbage is
+        # gone) — revisit if top-edge sprites look wrong.
+        max_sprite_rows = min(render_size, 256 - y_top)
 
         for line in range(y_start, min(ye, h)):
             # Sprite Y is in VRAM coordinate space; account for vertical scroll.
             vram_line = (line + vscroll) & 0xFF
             sprite_row = (vram_line - y_top) & 0xFF
-            if sprite_row >= render_size:
+            if sprite_row >= max_sprite_rows:
                 continue
 
             if line_count[line] >= 8:
                 if not ninth_set:
                     vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
                     ninth_set = True
+                if line == dbg_target:
+                    dbg_entries.append((i, x_byte, y_top, -1, "---", "dropped(>8/line)", 0, 0))
                 continue
 
             line_count[line] += 1
@@ -541,21 +733,32 @@ def _render_sprites_mode2(
             ignore_collision = bool(col_entry & 0x20)  # IC: don't flag coincidence
             x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
 
+            is_target = line == dbg_target
+            flags = (("E" if (col_entry & 0x80) else "-")
+                     + ("C" if or_mode else "-")
+                     + ("I" if ignore_collision else "-"))
+
             # CC=1 sprites are only visible once a higher-priority CC=0 sprite
             # has appeared on this line; a CC=0 sprite enables them (counted even
             # when its own colour is transparent).
             if or_mode:
                 if not cc0_seen[line]:
+                    if is_target:
+                        dbg_entries.append((i, x_pos, y_top, color, flags, "cc-hidden(no CC0 before)", 0, 0))
                     continue
             else:
                 cc0_seen[line] = 1
 
             if color == 0:
+                if is_target:
+                    dbg_entries.append((i, x_pos, y_top, color, flags, "transparent(color0)", 0, 0))
                 continue  # transparent regardless of OR mode
 
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
             scale  = 2 if mag else 1
 
+            painted = 0    # new (previously empty) pixels this sprite set on dbg_target
+            combined = 0   # pixels this sprite OR-combined onto an occupied pixel
             for bit_i, pixel in enumerate(pixels):
                 if not pixel:
                     continue
@@ -571,9 +774,19 @@ def _render_sprites_mode2(
                                 coincidence = True
                             if or_mode:
                                 sprite_buf[coord] |= color
+                                if is_target:
+                                    combined += 1
                         else:
                             sprite_buf[coord] = color
                             drawn.append(coord)
+                            if is_target:
+                                painted += 1
+            if is_target:
+                status = "DRAWN" if (painted or combined) else "blocked(all px occupied)"
+                dbg_entries.append((i, x_pos, y_top, color, flags, status, painted, combined))
+
+    if dbg_target >= 0:
+        _dump_sprite_line(dbg_target, dbg_entries, sprite_buf, width, vscroll, h)
 
     # Composite only the pixels a sprite actually touched (avoids scanning the
     # whole h*width buffer every frame when sprites are sparse or absent).
