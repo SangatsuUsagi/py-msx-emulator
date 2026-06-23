@@ -62,11 +62,11 @@ def test_build_bands_empty_log() -> None:
 def test_build_bands_single_change() -> None:
     vdp = make_g4_vdp()
     vdp.begin_scanline(0)
-    vdp._reg_write_log = [(96, 0, 0x00)]  # mode change at line 96
+    vdp._reg_write_log = [(96, 0, 0x00)]  # write at display_line 96 → takes effect from line 97
     bands = _build_bands(vdp)
     assert len(bands) == 2
-    assert bands[0][0] == 0 and bands[0][1] == 96    # first band [0, 96)
-    assert bands[1][0] == 96 and bands[1][1] == 192  # second band [96, 192)
+    assert bands[0][0] == 0 and bands[0][1] == 97    # first band [0, 97)
+    assert bands[1][0] == 97 and bands[1][1] == 192  # second band [97, 192)
 
 
 def test_build_bands_multiple_changes() -> None:
@@ -75,9 +75,9 @@ def test_build_bands_multiple_changes() -> None:
     vdp._reg_write_log = [(50, 7, 1), (100, 7, 2), (150, 7, 3)]
     bands = _build_bands(vdp)
     assert len(bands) == 4
-    # band boundaries at 0, 50, 100, 150
-    assert [b[0] for b in bands] == [0, 50, 100, 150]
-    assert [b[1] for b in bands] == [50, 100, 150, 192]
+    # writes at display_lines 50, 100, 150 → take effect from lines 51, 101, 151
+    assert [b[0] for b in bands] == [0, 51, 101, 151]
+    assert [b[1] for b in bands] == [51, 101, 151, 192]
 
 
 # ---------------------------------------------------------------------------
@@ -138,10 +138,11 @@ def test_first_band_uses_frame_start_regs() -> None:
     bands = _build_bands(vdp)
     assert len(bands) == 2
 
-    # First band [0, 64): should have R#7 = 0x05 (frame start value)
+    # Write at display_line 64 → takes effect from line 65
+    # First band [0, 65): should have R#7 = 0x05 (frame start value)
     assert bands[0][2][7] == 0x05
 
-    # Second band [64, 192): should have R#7 = 0x09
+    # Second band [65, 192): should have R#7 = 0x09
     assert bands[1][2][7] == 0x09
 
 
@@ -166,8 +167,37 @@ def test_palette_change_at_line_64_applies_to_lower_band() -> None:
     bands = _build_bands(vdp)
     assert len(bands) == 2
 
-    # First band [0, 64): old palette[1]
+    # Write at display_line 64 → takes effect from line 65
+    # First band [0, 65): old palette[1]
     assert bands[0][3][1] == 0b001_110_001
 
-    # Second band [64, 192): new palette[1]
+    # Second band [65, 192): new palette[1]
     assert bands[1][3][1] == 0b111_001_001
+
+
+# ---------------------------------------------------------------------------
+# Split-screen ghost: H-line vscroll change must not affect the line it fires on
+# ---------------------------------------------------------------------------
+
+def test_hline_vscroll_change_does_not_affect_trigger_line() -> None:
+    # Reproduces the split-screen ghost: game uses VBlank to set R#23=0 (status bar),
+    # then H-line ISR at the end of line 9 sets R#23=scroll for the game field.
+    # The write is logged as display_line=9 (CPU runs with that display_line during
+    # line 10's window). The new vscroll must NOT apply to line 9 (status bar).
+    vdp = make_g1_vdp()
+    vdp.regs[23] = 0  # VBlank set R#23=0 for status bar
+    vdp.begin_scanline(0)  # captures frame_start_regs[23]=0
+
+    # H-line ISR writes R#23=60 during line 10's CPU window (display_line=9)
+    vdp._reg_write_log = [(9, 23, 60)]
+
+    bands = _build_bands(vdp)
+    assert len(bands) == 2
+
+    # Band [0, 10) = status bar: must use frame-start vscroll=0, NOT the new 60
+    assert bands[0][0] == 0 and bands[0][1] == 10
+    assert bands[0][2][23] == 0
+
+    # Band [10, 192) = game field: uses new vscroll=60
+    assert bands[1][0] == 10
+    assert bands[1][2][23] == 60

@@ -50,7 +50,8 @@ def _write_col_entry(
 
 
 def _terminate_sat(vdp: V9938, after_idx: int) -> None:
-    vdp.vram[(_SAT_BASE + after_idx * 4) & 0x1FFFF] = 0xD0
+    # Sprite mode 2 (SCREEN 4-8) terminates the list on Y == 216 (0xD8), not 208.
+    vdp.vram[(_SAT_BASE + after_idx * 4) & 0x1FFFF] = 0xD8
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,72 @@ def test_sprite_mode2_colour_from_colour_table() -> None:
     buf = render_frame(vdp)
     # y=0 → y_top=1; sprite at scan line 1, col 0
     assert buf[1 * 256 + 0] == 6
+
+
+def test_sprite_mode2_terminator_is_216_not_208() -> None:
+    """Mode-2 list stops at Y=216 (0xD8); entries after it are not drawn, and a
+    sprite at Y=208 (0xD0) is a normal sprite, not a terminator."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    # idx0: visible sprite at y_top=1. idx1: terminator (0xD8). idx2: opaque
+    # "garbage" after the terminator that must NOT be drawn.
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    vdp.vram[(_SAT_BASE + 1 * 4) & 0x1FFFF] = 0xD8     # terminator
+    _write_sat_entry(vdp, 2, y=9, x=0, pat=0)          # y_top=10, would be visible
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    _write_col_entry(vdp, sprite_idx=2, line_idx=0, color=7)
+    vdp.vram[0] = 0x80  # pattern 0, row 0: leftmost bit set (shared by both)
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 6           # idx0 before terminator: drawn
+    assert buf[10 * 256 + 0] == 0          # idx2 after terminator: not drawn
+
+
+def test_sprite_mode2_y208_is_not_a_terminator() -> None:
+    """A sprite at Y=208 (0xD0) must still render in mode 2 (only 216 stops)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[9] = 0x80  # LN: 212-line mode so y_top=209 is on-screen
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=208, x=0, pat=0)   # y_top=209
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=5)
+    vdp.vram[0] = 0x80
+
+    buf = render_frame(vdp)
+    assert buf[209 * 256 + 0] == 5  # 0xD0 is a normal sprite, rendered
+
+
+def test_sprite_mode2_terminator_chains_lower_priority_sprites() -> None:
+    """Undocumented V9938 behaviour: the Y=216 (0xD8) terminator stops the whole
+    list — the terminating sprite AND every higher-numbered (lower-priority)
+    sprite after it are hidden, even though they have valid positions/colours."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    # Sprites 0..2 visible (rows 1,2,3), sprite 3 = terminator, sprites 4..6
+    # have valid on-screen positions but must all be suppressed by the chain.
+    for idx in range(3):
+        _write_sat_entry(vdp, idx, y=idx, x=0, pat=0)       # y_top = idx+1
+        _write_col_entry(vdp, sprite_idx=idx, line_idx=0, color=6)
+    vdp.vram[(_SAT_BASE + 3 * 4) & 0x1FFFF] = 0xD8          # terminator at sprite 3
+    for idx in range(4, 7):
+        _write_sat_entry(vdp, idx, y=idx + 6, x=0, pat=0)   # y_top = 11,12,13
+        _write_col_entry(vdp, sprite_idx=idx, line_idx=0, color=7)
+    vdp.vram[0] = 0x80  # pattern 0, row 0: leftmost bit set
+
+    buf = render_frame(vdp)
+    assert buf[1 * 256 + 0] == 6   # sprite 0 (before terminator): drawn
+    assert buf[3 * 256 + 0] == 6   # sprite 2 (before terminator): drawn
+    for line in (11, 12, 13):      # sprites 4,5,6 (after terminator): all hidden
+        assert buf[line * 256 + 0] == 0
 
 
 def test_sprite_mode2_sat_attr_colour_bits_ignored() -> None:
@@ -464,3 +531,47 @@ def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
     assert buf[1 * 512 + 20] == 7
     assert buf[1 * 512 + 21] == 7
     assert buf[1 * 512 + 19] != 7
+
+
+# ---------------------------------------------------------------------------
+# SPD (Sprite Disable) — R#8 bit 2
+# ---------------------------------------------------------------------------
+
+def test_spd_bit_disables_all_sprites() -> None:
+    """R#8 bit 2 (SPD=1) disables sprite rendering entirely."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[8] = 0x04  # SPD=1 (bit 2)
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=7)
+    vdp.vram[0] = 0xFF  # all pixels set in pattern row 0
+
+    buf = render_frame(vdp)
+
+    # Sprite should not appear on line 1 (y_top=1)
+    assert all(buf[1 * 256 + x] != 7 for x in range(8)), \
+        "SPD=1: sprites must not render"
+
+
+def test_spd_bit_clear_allows_sprites() -> None:
+    """R#8 bit 2 = 0 (SPD=0) allows normal sprite rendering."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[8] = 0x00  # SPD=0
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=7)
+    vdp.vram[0] = 0x80  # bit 7 only → pixel at x=0
+
+    buf = render_frame(vdp)
+
+    assert buf[1 * 256 + 0] == 7, "SPD=0: sprite must render normally"
+
+

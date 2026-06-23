@@ -226,7 +226,7 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
         attr = vdp.vram[(sat_base + i * 4 + 3) & 0x3FFF]
         color = attr & 0x0F
         if attr & 0x80:
-            x_byte = (x_byte - 32) & 0xFF
+            x_byte -= 32  # EC: shift 32px left; may go negative → clipped below
 
         y_top = (y_byte + 1) & 0xFF
 
@@ -254,8 +254,8 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
                 if not pixel:
                     continue
                 for s in range(scale):
-                    px = (x_byte + bit_i * scale + s) & 0xFF
-                    if px >= _W:
+                    px = x_byte + bit_i * scale + s
+                    if px < 0 or px >= _W:
                         continue
                     coord = line * _W + px
                     if sprite_painted[coord]:
