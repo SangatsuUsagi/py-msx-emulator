@@ -481,30 +481,38 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # ---------------------------------------------------------------------------
 
 def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    name_base = (vdp.regs[2] & 0x0F) << 10
+    # Name table base: V9938 GRAPHIC2/3 use the full 7-bit R#2 (A16-A10), so the
+    # name table can sit anywhere in 128 KB VRAM — not just the low 16 KB an
+    # MSX1 4-bit mask would allow. The pattern/colour bases keep the TMS9918
+    # GRAPHIC2 quirk (R#4 bit2 / R#3 bit7 select 0 or 0x2000; the low bits act as
+    # tile-index masks, here covered by the per-third band offset).
+    name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base  = (vdp.regs[4] & 0x04) << 11
     col_base  = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
+    # R#23 vertical scroll applies to GRAPHIC2/3 on the V9938 (it wraps within the
+    # 256-line VRAM field). With R#23 = 0 this loop is identical to the previous
+    # row-stepped renderer. The per-third pattern/colour bank still follows the
+    # (scrolled) VRAM tile row, as on the TMS9918A.
+    vscroll = vdp.regs[23]
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
-    row_start = y_start // 8
-    row_end = min(24, (ye + 7) // 8)
 
-    for row in range(row_start, row_end):
-        band_offset = (row // 8) * 0x800
+    for scan in range(y_start, ye):
+        vline = (scan + vscroll) & 0xFF
+        row = vline >> 3
+        py = vline & 0x07
+        band_offset = (row >> 3) * 0x800
+        name_row = name_base + row * 32
+        scan_w = scan * _W
         for col in range(32):
-            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
-            tile_off = band_offset + tile * 8
+            tile = vdp.vram[(name_row + col) & 0x1FFFF]
+            off = band_offset + tile * 8 + py
+            pat = vdp.vram[(pat_base + off) & 0x1FFFF]
+            cb  = vdp.vram[(col_base + off) & 0x1FFFF]
+            _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
+            _lo = cb & 0x0F;         bg = _lo if _lo else bd
             bx = col * 8
-            for py in range(8):
-                scan = row * 8 + py
-                if scan < y_start or scan >= ye:
-                    continue
-                off = tile_off + py
-                pat = vdp.vram[(pat_base + off) & 0x3FFF]
-                cb  = vdp.vram[(col_base + off) & 0x1FFFF]
-                _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
-                _lo = cb & 0x0F;         bg = _lo if _lo else bd
-                buf[scan * _W + bx:scan * _W + bx + 8] = _ROW_BYTES[pat][fg][bg]
+            buf[scan_w + bx:scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------

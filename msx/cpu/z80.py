@@ -33,6 +33,7 @@ class Z80:
     im: int = 0
     int_pending: bool = False
     nmi_pending: bool = False
+    ei_pending: bool = False
     instruction_pc: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
 
@@ -44,6 +45,7 @@ class Z80:
         self.im = 0
         self.int_pending = False
         self.nmi_pending = False
+        self.ei_pending = False
 
     def _fetch(self) -> int:
         b = self.read_byte(self.registers.PC)
@@ -86,7 +88,12 @@ class Z80:
             self.registers.PC = 0x0066
             return 11
 
-        if self.int_pending and self.iff1:
+        # EI enables interrupts only *after* the instruction following it, so an
+        # interrupt accepted here is suppressed for exactly one instruction when
+        # ei_pending is set. ei_pending is cleared below so the delay lasts a
+        # single instruction (e.g. the RET in C-BIOS's EI;RET interrupt epilogue
+        # must run before the next interrupt is taken).
+        if self.int_pending and self.iff1 and not self.ei_pending:
             self.int_pending = False
             self.halted = False
             self.iff1 = False
@@ -103,6 +110,10 @@ class Z80:
                 self._push(self.registers.PC)
                 self.registers.PC = (hi << 8) | lo
                 return 19
+
+        # One instruction has now elapsed since EI (this step); allow the next
+        # interrupt check to fire normally.
+        self.ei_pending = False
 
         if self.halted:
             return 4

@@ -224,6 +224,47 @@ def test_screen4_renders_g2_tiles() -> None:
     assert buf[0] == 6
 
 
+def test_screen4_name_table_above_16k() -> None:
+    """V9938 GRAPHIC2/3 use the full 7-bit R#2, so the name table may sit above
+    the 16 KB an MSX1 4-bit mask would allow. Space Manbow places it at 0xC000
+    (R#2=0x30); a 4-bit mask would read it from 0x0000 (the pattern table) and
+    render garbage."""
+    vdp = V9938()
+    _set_screen4(vdp)
+
+    vdp.regs[2] = 0x30   # name_base = 0x30 << 10 = 0xC000 (7-bit)
+    vdp.regs[3] = 0x80   # col_base  = 0x2000
+    vdp.regs[4] = 0x00   # pat_base  = 0x0000
+
+    vdp.vram[0xC000] = 0       # name[0,0] = tile 0 (read from 0xC000, not 0x0000)
+    vdp.vram[0x0000] = 0xFF    # pattern row 0: all fg
+    vdp.vram[0x2000] = 0x65    # colour: fg=6, bg=5
+
+    buf = render_frame(vdp)
+    assert buf[0] == 6
+
+
+def test_screen4_vertical_scroll_r23() -> None:
+    """R#23 vertical scroll applies to GRAPHIC2/3 (a no-op when R#23 = 0). With
+    R#23 = 8, screen line 0 shows VRAM line 8 = name row 1 (Space Manbow sets
+    R#23 to position its scrolling playfield)."""
+    vdp = V9938()
+    _set_screen4(vdp)
+
+    vdp.regs[2] = 0x00   # name_base = 0x0000
+    vdp.regs[3] = 0x80   # col_base  = 0x2000
+    vdp.regs[4] = 0x00   # pat_base  = 0x0000
+    vdp.regs[23] = 8     # scroll up one tile row
+
+    vdp.vram[0x0000] = 0       # name[row 0, col 0] = tile 0 (would show without scroll)
+    vdp.vram[0x0020] = 1       # name[row 1, col 0] = tile 1 (shows at line 0 when scrolled)
+    vdp.vram[0x0008] = 0xFF    # pattern tile 1 row 0: all fg
+    vdp.vram[0x2008] = 0x65    # colour tile 1 row 0: fg=6, bg=5
+
+    buf = render_frame(vdp)
+    assert buf[0] == 6         # line 0 shows the scrolled-in row 1, foreground colour 6
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 6 (Graphic 5): 2-bpp, full 512-pixel width
 # ---------------------------------------------------------------------------

@@ -347,6 +347,12 @@ class V9938:
             self._addr = (self._addr + 1) & 0x1FFFF
             return result
         if port == 0x99:
+            # Reading the status port resets the port-99 write latch (the
+            # second-byte flip-flop) on real V9938 hardware, regardless of which
+            # status register R#15 selects. Resetting it only for S#0 lets a
+            # latch desync (e.g. a write interrupted mid-sequence) persist
+            # forever, corrupting every subsequent R#nn / address write.
+            self._latch = None
             if self.regs[15] == 2:
                 # S#2 also reports the live horizontal/vertical retrace flags,
                 # which software polls to time mid-screen register changes; bits
@@ -375,7 +381,6 @@ class V9938:
             result = self.status
             self.status &= ~0x80  # clear F flag
             self._update_irq()
-            self._latch = None
             return result & 0xFF
         if port == 0x9C:
             return self._cmd_data_read()
