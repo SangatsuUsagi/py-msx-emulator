@@ -96,8 +96,12 @@ def test_irq_not_taken_on_ei_itself() -> None:
     assert cpu.iff1 is True
 
 
-def test_irq_taken_on_instruction_after_ei() -> None:
-    cpu = _make_cpu_with_rom([0xFB, 0x00])  # EI, NOP
+def test_irq_delayed_until_after_instruction_following_ei() -> None:
+    # The Z80 delays interrupt enabling by one instruction: the instruction
+    # immediately following EI is always executed before any pending interrupt
+    # is accepted. (C-BIOS's interrupt epilogue relies on this — the RET after
+    # EI must run before the next IRQ, otherwise the stack runs away.)
+    cpu = _make_cpu_with_rom([0xFB, 0x00, 0x00])  # EI, NOP, NOP
     cpu.iff1 = False
     cpu.iff2 = False
     cpu.int_pending = False
@@ -106,10 +110,14 @@ def test_irq_taken_on_instruction_after_ei() -> None:
     # EI: sets iff1, but int_pending=False → not taken
     cpu.step()
     assert cpu.registers.PC == 1
+    assert cpu.iff1 is True
 
-    # Set int_pending AFTER EI (as scanline loop would do)
+    # Set int_pending AFTER EI (as the scanline loop would do)
     cpu.int_pending = True
-    cpu.step()  # NOP — but interrupt taken first
+    cpu.step()  # the NOP after EI executes first — interrupt still delayed
+    assert cpu.registers.PC == 2
+
+    cpu.step()  # now the interrupt is accepted
     assert cpu.registers.PC == 0x0038  # vectored to IM1 ISR
 
 

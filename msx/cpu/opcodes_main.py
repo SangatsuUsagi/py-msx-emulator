@@ -1144,6 +1144,8 @@ def _op_di(cpu: Z80) -> int:
 def _op_ei(cpu: Z80) -> int:
     cpu.iff1 = True
     cpu.iff2 = True
+    # Interrupts are not accepted until after the instruction following EI.
+    cpu.ei_pending = True
     return 4
 
 
