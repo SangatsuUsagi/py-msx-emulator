@@ -100,7 +100,7 @@ class Ascii16Mapper:
 
 @dataclass
 class KonamiMapper:
-    """Konami (Konami4/SCC) mapper: four 8 KB windows.
+    """Konami (Konami4) mapper: four 8 KB windows.
 
     Window 0 (0x4000–0x5FFF) is permanently fixed to page 0.
     Windows 1–3 are switched by writing the page index to an address
@@ -110,8 +110,15 @@ class KonamiMapper:
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
 
-    def _num_pages(self) -> int:
-        return max(1, len(self.rom) // _PAGE_8K)
+    def _bank_mask(self) -> int:
+        # Konami4 hardware: 5-bit bank register → 32 pages (256 KB) max.
+        # Use power-of-2 bitmask capped at 31, matching OpenMSX setBlockMask(31).
+        # Avoids modulo aliasing when ROM > 256 KB (upper half is padding/inaccessible).
+        pages = min(max(1, len(self.rom) // _PAGE_8K), 32)
+        m = 1
+        while m < pages:
+            m <<= 1
+        return m - 1
 
     def read(self, addr: int) -> int:
         if addr < 0x6000:
@@ -129,12 +136,33 @@ class KonamiMapper:
 
     def write(self, addr: int, value: int) -> None:
         if 0x6000 <= addr < 0x8000:
-            self._banks[1] = value % self._num_pages()
+            self._banks[1] = value & self._bank_mask()
         elif 0x8000 <= addr < 0xA000:
-            self._banks[2] = value % self._num_pages()
+            self._banks[2] = value & self._bank_mask()
         elif 0xA000 <= addr < 0xC000:
-            self._banks[3] = value % self._num_pages()
+            self._banks[3] = value & self._bank_mask()
         # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
+
+
+@dataclass
+class MajutsushiMapper(KonamiMapper):
+    """Konami mapper + DAC for Hai no Majutsushi.
+
+    Writes to 0x5000–0x5FFF are routed to the DAC (8-bit PCM).
+    All other behaviour is identical to KonamiMapper.
+    """
+
+    _dac_value: int = field(default=0, init=False, repr=False)
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x5000 <= addr < 0x6000:
+            self._dac_value = value
+        else:
+            super().write(addr, value)
+
+    @property
+    def dac_value(self) -> int:
+        return self._dac_value
 
 
 @dataclass

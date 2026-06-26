@@ -44,6 +44,8 @@ class Machine:
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
+    _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
+    _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
 
@@ -65,6 +67,41 @@ class Machine:
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
         self._breakpoints = frozenset(addrs[:4])
+
+    def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
+        """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
+        r: set[int] = set()
+        w: set[int] = set()
+        for addr, mode in entries[:4]:
+            if "r" in mode:
+                r.add(addr)
+            if "w" in mode:
+                w.add(addr)
+        self._watch_read = frozenset(r)
+        self._watch_write = frozenset(w)
+        if self._watch_read or self._watch_write:
+            self.cpu.read_byte = self._read_with_watch
+            self.cpu.write_byte = self._write_with_watch
+        else:
+            self.cpu.read_byte = self.memory.read
+            self.cpu.write_byte = self.memory.write
+
+    def _read_with_watch(self, addr: int) -> int:
+        val = self.memory.read(addr)
+        if addr in self._watch_read:
+            pc = self.cpu.instruction_pc
+            print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
+            if self._debugger is not None:
+                self._debugger.enter()
+        return val
+
+    def _write_with_watch(self, addr: int, value: int) -> None:
+        if addr in self._watch_write:
+            pc = self.cpu.instruction_pc
+            print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
+            if self._debugger is not None:
+                self._debugger.enter()
+        self.memory.write(addr, value)
 
     def step(self) -> int:
         return self.cpu.step()
