@@ -172,6 +172,15 @@ class KonamiSCCMapper:
 
     When the window-2 bank register is set to 0x3F, the address range
     0x9800–0x9FFF is redirected to SCC registers instead of ROM.
+
+    All four windows are switchable. Each bank register occupies only the
+    low 2 KB of its window's register zone:
+        bank 0 (0x4000): 0x5000–0x57FF
+        bank 1 (0x6000): 0x7000–0x77FF
+        bank 2 (0x8000): 0x9000–0x97FF  (0x3F enables SCC)
+        bank 3 (0xA000): 0xB000–0xB7FF
+    Decoding the whole window would wrongly treat ordinary writes (e.g. a
+    BIOS RAM test hitting 0xBF00) as bank switches.
     """
 
     rom: bytes
@@ -203,15 +212,17 @@ class KonamiSCCMapper:
         if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
             self.scc.write(addr - 0x9800, value)
             return
-        if 0x6000 <= addr < 0x8000:
+        if 0x5000 <= addr < 0x5800:
+            self._banks[0] = value % self._num_pages()
+        elif 0x7000 <= addr < 0x7800:
             self._banks[1] = value % self._num_pages()
-        elif 0x8000 <= addr < 0xA000:
+        elif 0x9000 <= addr < 0x9800:
             # Window 2 bank register: 0x3F enables SCC mode; any other value disables it.
             if value == 0x3F:
                 self._scc_mode = True
             else:
                 self._scc_mode = False
                 self._banks[2] = value % self._num_pages()
-        elif 0xA000 <= addr < 0xC000:
+        elif 0xB000 <= addr < 0xB800:
             self._banks[3] = value % self._num_pages()
-        # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
+        # Writes outside the four register zones are ignored.
