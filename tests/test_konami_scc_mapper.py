@@ -31,29 +31,48 @@ def test_initial_bank_state(mapper: KonamiSCCMapper) -> None:
     assert mapper.read(0xA000) == 3  # page 3
 
 
-def test_window0_fixed(mapper: KonamiSCCMapper) -> None:
+def test_bank_switch_window0(mapper: KonamiSCCMapper) -> None:
+    # Konami SCC window 0 is switchable via the 0x5000–0x57FF register.
+    mapper.write(0x5000, 5)
+    assert mapper.read(0x4000) == 5
+
+
+def test_window0_write_outside_register_ignored(mapper: KonamiSCCMapper) -> None:
+    # 0x4000–0x4FFF is not the bank-0 register; writes there are ignored.
     mapper.write(0x4000, 5)
     assert mapper.read(0x4000) == 0  # still page 0
 
 
 def test_bank_switch_window1(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x6000, 4)
+    mapper.write(0x7000, 4)  # bank-1 register is 0x7000-0x77FF
     assert mapper.read(0x6000) == 4
 
 
 def test_bank_switch_window2(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x8000, 5)
+    mapper.write(0x9000, 5)  # bank-2 register is 0x9000-0x97FF
     assert mapper.read(0x8000) == 5
 
 
 def test_bank_switch_window3(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0xA000, 6)
+    mapper.write(0xB000, 6)  # bank-3 register is 0xB000-0xB7FF
     assert mapper.read(0xA000) == 6
 
 
 def test_bank_page_wrap(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x6000, 9)  # 9 % 8 = 1
+    mapper.write(0x7000, 9)  # 9 % 8 = 1
     assert mapper.read(0x6000) == 1
+
+
+def test_writes_outside_register_zones_ignored(mapper: KonamiSCCMapper) -> None:
+    # Bank registers are only the low 2 KB of each window. Writes elsewhere
+    # (e.g. a BIOS RAM test hitting 0xBF00) must NOT switch a bank — this was
+    # the Metal Gear 2 boot bug: 0xBF00 wrongly set bank 3.
+    mapper.write(0xBF00, 0x0F)
+    assert mapper.read(0xA000) == 3  # bank 3 unchanged
+    mapper.write(0x6000, 4)
+    assert mapper.read(0x6000) == 1  # 0x6000 is not the bank-1 register
+    mapper.write(0x8000, 5)
+    assert mapper.read(0x8000) == 2  # 0x8000 is not the bank-2 register
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +95,12 @@ def test_scc_mode_cleared_by_non_0x3f(mapper: KonamiSCCMapper) -> None:
 
 
 def test_scc_mode_not_affected_by_window1_write(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x6000, 0x3F)
+    mapper.write(0x7000, 0x3F)  # bank-1 register; 0x3F selects a page, not SCC
     assert mapper._scc_mode is False
 
 
 def test_scc_mode_not_affected_by_window3_write(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0xA000, 0x3F)
+    mapper.write(0xB000, 0x3F)  # bank-3 register; 0x3F selects a page, not SCC
     assert mapper._scc_mode is False
 
 
@@ -99,17 +118,6 @@ def test_scc_write_routed_when_scc_mode(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x9000, 0x3F)
     mapper.write(0x9800, 0x7F)
     assert mapper.scc.read(0x00) == 0x7F
-
-
-def test_scc_mode_does_not_affect_writes_below_0x9800(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x9000, 0x3F)
-    # Writes to 0x8000–0x97FF are still in window 2 bank-reg range — they
-    # would normally set the bank, but since _scc_mode is True the address
-    # 0x8000 is NOT in the SCC register range (0x9800+), so it falls through
-    # to the bank-register write path.  After writing 0x02 the SCC mode
-    # should be cleared.
-    mapper.write(0x8000, 0x02)
-    assert mapper._scc_mode is False
 
 
 def test_rom_read_when_scc_mode_false(mapper: KonamiSCCMapper) -> None:
