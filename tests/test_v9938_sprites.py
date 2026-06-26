@@ -575,3 +575,44 @@ def test_spd_bit_clear_allows_sprites() -> None:
     assert buf[1 * 256 + 0] == 7, "SPD=0: sprite must render normally"
 
 
+
+
+# ---------------------------------------------------------------------------
+# Sprite multiplexer / "sprite doubler": mid-screen SAT base (R#5) switch
+# ---------------------------------------------------------------------------
+
+def test_sprite_doubler_mid_screen_sat_switch() -> None:
+    """A mid-frame R#5 change switches the sprite attribute table base, letting a
+    game show a second set of 32 sprites in the lower screen region (e.g. Space
+    Manbow). Sprites from the second SAT must appear in the lower region; the old
+    single-SAT-per-frame pass dropped them."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[6] = 0x00       # sprite pattern generator at 0x0000
+    vdp.vram[0] = 0xFF       # pattern 0, row 0: 8 opaque pixels
+
+    sat_a = 0x3800           # R#5 = 0x70
+    sat_b = 0x3C00           # R#5 = 0x78
+
+    def put_sprite(base: int, y: int, color: int) -> None:
+        vdp.vram[base] = y          # sprite 0 Y
+        vdp.vram[base + 1] = 0      # X
+        vdp.vram[base + 2] = 0      # pattern 0
+        vdp.vram[base + 3] = 0
+        vdp.vram[base + 4] = 0xD8   # terminator
+        vdp.vram[(base - 0x200) + 0] = color & 0x0F  # sprite 0, line 0 colour
+
+    put_sprite(sat_a, y=9, color=6)    # appears at screen line 10 (upper region)
+    put_sprite(sat_b, y=149, color=7)  # appears at screen line 150 (lower region)
+
+    # Banded frame: start with SAT-A, switch R#5 to SAT-B at line 96 (mid screen).
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_regs[5] = 0x70
+    vdp.regs[5] = 0x78
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp._reg_write_log = [(95, 5, 0x78)]   # effective line 96
+
+    buf = render_frame(vdp)
+
+    assert buf[10 * 256 + 0] == 6, "upper region shows SAT-A sprite"
+    assert buf[150 * 256 + 0] == 7, "lower region shows SAT-B sprite (doubler)"

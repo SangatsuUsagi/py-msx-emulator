@@ -327,9 +327,41 @@ def _render_banded(vdp: "V9938") -> bytearray:
         vdp.palette = band_palette
         _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
 
-    # Sprites: a single full-frame pass with the main band's registers.
-    vdp.regs = main_regs
-    _render_sprites_for_mode(vdp, out, 0, full_h)
+    # Sprites: normally a single full-frame pass with the main band's registers
+    # (drawing sprites per band would redraw the same SAT sprite at each band's
+    # vscroll → the duplicate/ghost bug). The exception is a mid-screen sprite
+    # attribute table switch (R#5/R#11), used for sprite multiplexing / "sprite
+    # doubler" (e.g. Space Manbow flips R#5 near screen centre to show a second
+    # set of 32 sprites in the lower half). There the regions read *different*
+    # SAT buffers, so one sprite pass per SAT region — each clipped to its
+    # scanline span — reproduces the doubler without the same-sprite ghost.
+    # Consecutive bands sharing a SAT base are merged so the pass count stays
+    # at the number of distinct SAT regions (one for ordinary games), keeping
+    # the cost ~unchanged. R#5 is only changed mid-active-display for this
+    # purpose, so gating on it does not affect non-multiplexed games.
+    def _sat_key(regs: list[int]) -> tuple[int, int]:
+        return (regs[5], regs[11] & 0x03)
+
+    sat_segments: list[list] = []  # [y0, y1, regs_of_largest_band, largest_band_h]
+    for y0, y1, band_regs, _ in bands:
+        bh = y1 - y0
+        if sat_segments and _sat_key(sat_segments[-1][2]) == _sat_key(band_regs):
+            seg = sat_segments[-1]
+            seg[1] = y1
+            if bh > seg[3]:
+                seg[2] = band_regs
+                seg[3] = bh
+        else:
+            sat_segments.append([y0, y1, band_regs, bh])
+
+    if len(sat_segments) <= 1:
+        # One SAT for the whole frame → original single pass (main band regs).
+        vdp.regs = main_regs
+        _render_sprites_for_mode(vdp, out, 0, full_h)
+    else:
+        for y0, y1, seg_regs, _ in sat_segments:
+            vdp.regs = seg_regs
+            _render_sprites_for_mode(vdp, out, y0, min(y1, full_h))
 
     _finalize(vdp)
     vdp.regs = saved_regs
