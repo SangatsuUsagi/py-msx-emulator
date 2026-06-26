@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | da [ADDR] | s [N] | te | td | db | ds [LINE] | ns | ss | pdbg | c | q"
+    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | db | ds [LINE] | ns | ss | pdbg | c | q"
 )
 
 
@@ -81,6 +81,12 @@ class Debugger:
                 self._cmd_break(["r"] + args)
             elif cmd == "bl":
                 self._cmd_break(["l"])
+            elif cmd == "wa":
+                self._cmd_watch(["a"] + args)
+            elif cmd == "wd":
+                self._cmd_watch(["r"] + args)
+            elif cmd == "wl":
+                self._cmd_watch(["l"])
             elif cmd == "da":
                 self._cmd_disasm(args)
             elif cmd == "s":
@@ -263,6 +269,82 @@ class Debugger:
             return
 
         print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
+
+    def _cmd_watch(self, args: list[str]) -> None:
+        if not args:
+            print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
+            return
+        sub = args[0].lower()
+
+        def _current_entries() -> list[tuple[int, str]]:
+            r_set = self._machine._watch_read
+            w_set = self._machine._watch_write
+            result = []
+            for addr in sorted(r_set | w_set):
+                mode = ("r" if addr in r_set else "") + ("w" if addr in w_set else "")
+                result.append((addr, mode))
+            return result
+
+        if sub == "l":
+            entries = _current_entries()
+            if not entries:
+                print("  (no watchpoints)")
+            else:
+                for addr, mode in entries:
+                    print(f"  {addr:04X}h [{mode}]")
+            return
+
+        if sub == "a":
+            if len(args) < 2:
+                print("Usage: wa ADDR[,r|w|rw]")
+                return
+            tok = args[1]
+            if "," in tok:
+                addr_str, mode = tok.split(",", 1)
+            elif len(args) > 2:
+                addr_str, mode = tok, args[2]
+            else:
+                addr_str, mode = tok, "rw"
+            mode = mode.lower().strip()
+            if not mode or not all(c in "rw" for c in mode):
+                print(f"wa: invalid mode {mode!r} (use r, w, or rw)")
+                return
+            try:
+                addr = int(addr_str, 16) & 0xFFFF
+            except ValueError:
+                print("wa: invalid address (hex expected)")
+                return
+            entries = _current_entries()
+            if addr in [e[0] for e in entries]:
+                entries = [(a, mode if a == addr else m) for a, m in entries]
+            else:
+                if len(entries) >= 4:
+                    print("wa: maximum 4 watchpoints reached")
+                    return
+                entries.append((addr, mode))
+            self._machine.set_watchpoints(entries)
+            print(f"  Watchpoint set at {addr:04X}h [{mode}] ({len(entries)}/4)")
+            return
+
+        if sub == "r":
+            if len(args) < 2:
+                print("Usage: wd ADDR")
+                return
+            try:
+                addr = int(args[1], 16) & 0xFFFF
+            except ValueError:
+                print("wd: invalid address (hex expected)")
+                return
+            entries = _current_entries()
+            if addr not in [e[0] for e in entries]:
+                print(f"wd: {addr:04X}h not in watchpoint list")
+                return
+            entries = [(a, m) for a, m in entries if a != addr]
+            self._machine.set_watchpoints(entries)
+            print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/4)")
+            return
+
+        print(f"Unknown watch sub-command: {sub!r}. Use a, r, or l.")
 
     def _cmd_disasm(self, args: list[str]) -> None:
         r = self._machine.cpu.registers

@@ -73,6 +73,9 @@ def main() -> None:
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
                         help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
+    parser.add_argument("--watch-point", metavar="ADDRS", default=None,
+                        dest="watch_point",
+                        help="Comma-separated hex watchpoint addresses, max 4 (MSX2 only; breaks on read or write)")
     args = parser.parse_args()
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -166,6 +169,39 @@ def main() -> None:
                   file=sys.stderr)
             breakpoint_addrs = breakpoint_addrs[:4]
 
+    # --- Parse --watch-point ---
+    # Format: addr[,mode][,addr[,mode]...]  where mode is r / w / rw (default rw)
+    # Example: ca4a,w,fd9a,r  →  [(0xca4a,'w'), (0xfd9a,'r')]
+    watchpoint_entries: list[tuple[int, str]] = []
+    if args.watch_point is not None:
+        _pending_addr: int | None = None
+        for tok in args.watch_point.split(","):
+            tok = tok.strip().lower()
+            if not tok:
+                continue
+            if tok in ("r", "w", "rw"):
+                if _pending_addr is not None:
+                    watchpoint_entries.append((_pending_addr, tok))
+                    _pending_addr = None
+                else:
+                    print(f"error: mode {tok!r} without preceding address", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                if _pending_addr is not None:
+                    watchpoint_entries.append((_pending_addr, "rw"))
+                try:
+                    _pending_addr = int(tok, 16) & 0xFFFF
+                except ValueError:
+                    print(f"error: invalid watchpoint token: {tok!r} (hex address or r/w/rw expected)",
+                          file=sys.stderr)
+                    sys.exit(1)
+        if _pending_addr is not None:
+            watchpoint_entries.append((_pending_addr, "rw"))
+        if len(watchpoint_entries) > 4:
+            print("warning: more than 4 watchpoints given; only first 4 will be used",
+                  file=sys.stderr)
+            watchpoint_entries = watchpoint_entries[:4]
+
     from msx.debug.logger import DebugLogger
     from msx.machine import make_machine, make_machine_msx2
     from msx.vdp.tracer import Tracer
@@ -201,6 +237,9 @@ def main() -> None:
             if breakpoint_addrs:
                 machine.set_breakpoints(breakpoint_addrs)
                 print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
+            if watchpoint_entries:
+                machine.set_watchpoints(watchpoint_entries)
+                print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
 
         if args.count is not None:
             # Headless run: no SDL, just run until cycle_count reaches N
