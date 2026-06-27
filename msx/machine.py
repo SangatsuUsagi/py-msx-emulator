@@ -7,7 +7,7 @@ from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper, Mapper
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper, MajutsushiMapper, Mapper
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
@@ -39,6 +39,7 @@ class Machine:
     io: IOBus
     psg: PSG
     scc: SCC | None = field(default=None)
+    dac: MajutsushiMapper | None = field(default=None)
     input: InputState = field(default_factory=InputState)
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
@@ -198,7 +199,7 @@ class Machine:
         return result
 
 
-_SUPPORTED_MAPPERS = frozenset({"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC"})
+_SUPPORTED_MAPPERS = frozenset({"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi"})
 
 
 def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
@@ -229,6 +230,8 @@ def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = No
         return Ascii16Mapper(rom_bytes)
     if mapper_type == "Konami":
         return KonamiMapper(rom_bytes)
+    if mapper_type == "Majutsushi":
+        return MajutsushiMapper(rom_bytes)
     if mapper_type == "KonamiSCC":
         if scc is None:
             raise ValueError("KonamiSCC mapper requires an SCC instance")
@@ -256,10 +259,12 @@ def make_machine(
         resolved2 = "Konami"
     mapper2_instance = _make_mapper(resolved2, cartridge2)
 
+    mapper_instance = _make_mapper(resolved, cartridge, scc=scc)
+    dac: MajutsushiMapper | None = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     memory = Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=_make_mapper(resolved, cartridge, scc=scc),
+        _mapper=mapper_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
@@ -278,10 +283,12 @@ def make_machine(
     io.register_write(0xA8, 0xAB, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     machine = Machine(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc,
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
     )
     io._get_pc = lambda: cpu.registers.PC
+    if dac is not None:
+        dac._get_cycle = lambda: machine.cycle_count
     return machine
 
 
@@ -307,11 +314,13 @@ def make_machine_msx2(
         resolved2 = "Konami"
     mapper2_instance = _make_mapper(resolved2, cartridge2)
 
+    mapper_instance = _make_mapper(resolved, cartridge, scc=scc)
+    dac: MajutsushiMapper | None = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     ram_mapper = RamMapper()
     memory = Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=_make_mapper(resolved, cartridge, scc=scc),
+        _mapper=mapper_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
@@ -338,10 +347,12 @@ def make_machine_msx2(
     io.register_write(0xFC, 0xFF, ram_mapper.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     machine = Machine(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc,
+        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
     )
     io._get_pc = lambda: cpu.registers.PC
+    if dac is not None:
+        dac._get_cycle = lambda: machine.cycle_count
     if tracer is not None:
         vdp.tracer = tracer
         vdp._get_pc = lambda: machine.cpu.instruction_pc

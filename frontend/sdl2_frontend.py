@@ -255,7 +255,9 @@ def run(
 
             # Run one frame (skip VDP pixel rendering when behind schedule)
             skip_this_frame = _skip_counter > 0
+            frame_start_cycle = machine.cycle_count
             index_buf = machine.run_frame(skip_render=skip_this_frame)
+            frame_end_cycle = machine.cycle_count
             if not skip_this_frame:
                 rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
                 # The VDP resolution can change at runtime (R#9 LN: 192↔212;
@@ -278,17 +280,21 @@ def run(
                     win_display_w = _W if tex_w > _W else tex_w
                     sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
 
-            # Generate and queue audio (PSG + SCC mixed if SCC present) — always runs
+            # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
             if audio_dev > 0:
                 psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+                extra_bufs = []
                 if machine.scc is not None:
-                    scc_buf = machine.scc.generate_samples(SAMPLES_PER_FRAME)
+                    extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
+                if machine.dac is not None:
+                    extra_bufs.append(machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle))
+                if extra_bufs:
                     mixed = bytearray(len(psg_buf))
                     for i in range(SAMPLES_PER_FRAME):
                         offset = i * 2
-                        psg_s = struct.unpack_from("<h", psg_buf, offset)[0]
-                        scc_s = struct.unpack_from("<h", scc_buf, offset)[0]
-                        total = psg_s + scc_s
+                        total = struct.unpack_from("<h", psg_buf, offset)[0]
+                        for buf in extra_bufs:
+                            total += struct.unpack_from("<h", buf, offset)[0]
                         if total > 32767:
                             total = 32767
                         elif total < -32768:
