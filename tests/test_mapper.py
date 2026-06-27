@@ -1,4 +1,6 @@
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
+import struct
+
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, MajutsushiMapper
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -208,3 +210,104 @@ def test_konami_page_wrap_around() -> None:
     m = KonamiMapper(rom)
     m.write(0x6000, 9)  # 9 % 8 == 1
     assert m.read(0x6000) == 1
+
+
+# ---------------------------------------------------------------------------
+# MajutsushiMapper
+# ---------------------------------------------------------------------------
+
+def _maj(n_pages: int = 4) -> MajutsushiMapper:
+    m = MajutsushiMapper(_rom_8k_pages(n_pages))
+    cycle = 0
+
+    def _get_cycle() -> int:
+        return cycle
+
+    m._get_cycle = _get_cycle
+    return m
+
+
+def test_majutsushi_dac_write_stored() -> None:
+    m = _maj()
+    m.write(0x5000, 0xFF)
+    assert m._dac_events[-1][1] == 0xFF
+
+
+def test_majutsushi_dac_write_masked_to_byte() -> None:
+    m = _maj()
+    m.write(0x5000, 0x1FF)
+    assert m._dac_events[-1][1] == 0xFF
+
+
+def test_majutsushi_dac_write_does_not_affect_bank() -> None:
+    m = _maj()
+    m.write(0x5000, 0x03)
+    assert m._banks[0] == 0  # window 0 unchanged
+
+
+def test_majutsushi_non_dac_write_switches_bank() -> None:
+    m = _maj()
+    m.write(0x6000, 2)
+    assert m._banks[1] == 2
+
+
+def test_majutsushi_generate_samples_silence() -> None:
+    m = _maj()
+    # no events written → _last_dac == 0x80 → silence
+    buf = m.generate_samples(4, 0, 100)
+    for i in range(4):
+        s = struct.unpack_from("<h", buf, i * 2)[0]
+        assert s == 0
+
+
+def test_majutsushi_generate_samples_max() -> None:
+    m = _maj()
+    m.write(0x5000, 0xFF)  # cycle=0, maps to sample 0 in frame [0,100)
+    buf = m.generate_samples(2, 0, 100)
+    s = struct.unpack_from("<h", buf, 0)[0]
+    assert s == (0xFF - 0x80) * 256  # 127 * 256 = 32512
+
+
+def test_majutsushi_generate_samples_min() -> None:
+    m = _maj()
+    m.write(0x5000, 0x00)
+    buf = m.generate_samples(2, 0, 100)
+    s = struct.unpack_from("<h", buf, 0)[0]
+    assert s == (0x00 - 0x80) * 256  # -128 * 256 = -32768
+
+
+def test_majutsushi_generate_samples_length() -> None:
+    m = _maj()
+    assert len(m.generate_samples(735, 0, 59659)) == 735 * 2
+
+
+def test_majutsushi_generate_samples_events_cleared() -> None:
+    m = _maj()
+    m.write(0x5000, 0xC0)
+    m.generate_samples(4, 0, 100)
+    assert m._dac_events == []
+
+
+def test_majutsushi_generate_samples_last_dac_persists() -> None:
+    m = _maj()
+    m.write(0x5000, 0xC0)
+    m.generate_samples(4, 0, 100)
+    # next frame: no new events → uses _last_dac from previous frame
+    buf = m.generate_samples(2, 100, 200)
+    s = struct.unpack_from("<h", buf, 0)[0]
+    assert s == (0xC0 - 0x80) * 256
+
+
+def test_majutsushi_generate_samples_mid_frame_write() -> None:
+    # Write at cycle 50 in a [0, 100) frame with 4 samples.
+    # Samples 0-1: threshold < 50 → silence (0x80).
+    # Samples 2-3: threshold >= 50 → 0xFF.
+    m = MajutsushiMapper(_rom_8k_pages(4))
+    cycle_val = [50]
+    m._get_cycle = lambda: cycle_val[0]
+    m.write(0x5000, 0xFF)
+    buf = m.generate_samples(4, 0, 100)
+    # sample 0: threshold = 0*100//4 = 0 < 50 → silence
+    assert struct.unpack_from("<h", buf, 0)[0] == 0
+    # sample 2: threshold = 2*100//4 = 50 → value applies
+    assert struct.unpack_from("<h", buf, 4)[0] == (0xFF - 0x80) * 256
