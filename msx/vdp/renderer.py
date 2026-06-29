@@ -51,13 +51,16 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
         _render_g4(vdp, buf)
     elif m3:
         _render_g2(vdp, buf)
-        _render_sprites(vdp, buf)
+        if not vdp.debug_disable_sprites:
+            _render_sprites(vdp, buf)
     elif m2:
         _render_mc(vdp, buf)
-        _render_sprites(vdp, buf)
+        if not vdp.debug_disable_sprites:
+            _render_sprites(vdp, buf)
     else:
         _render_g1(vdp, buf)
-        _render_sprites(vdp, buf)
+        if not vdp.debug_disable_sprites:
+            _render_sprites(vdp, buf)
 
     _finalize(vdp)
     return buf
