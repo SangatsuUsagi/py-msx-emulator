@@ -23,7 +23,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_bytes(self: Path) -> bytes:
         return b"\x00" * 32768
 
-    with patch.object(sys, "argv", [".", "--msx2", *argv]), \
+    with patch.object(sys, "argv", [".", "--machine", "cbios_msx2", *argv]), \
          patch("builtins.print", side_effect=lambda *a, **kw: (
              stdout_buf.write(" ".join(str(x) for x in a) + "\n")
              if kw.get("file") is None else

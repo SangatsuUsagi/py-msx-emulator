@@ -1,4 +1,4 @@
-"""Entry point: python . [--machine MACHINE_ID] [--msx2] [cartridge_path]"""
+"""Entry point: python . [--machine MACHINE_ID] [cartridge_path]"""
 from __future__ import annotations
 
 import argparse
@@ -8,28 +8,6 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
-# Logo ROM filename map — used only when --biosrom overrides the default BIOS path.
-# Keyed by BIOS filename; value is the companion logo ROM in the same directory.
-_LOGO_ROM_MAP: dict[str, str] = {
-    "cbios_main_msx1.rom":    "cbios_logo_msx1.rom",
-    "cbios_main_msx1_jp.rom": "cbios_logo_msx1.rom",
-    "cbios_main_msx1_eu.rom": "cbios_logo_msx1.rom",
-    "cbios_main_msx1_br.rom": "cbios_logo_msx1.rom",
-    "cbios_main_msx2.rom":    "cbios_logo_msx2.rom",
-    "cbios_main_msx2_jp.rom": "cbios_logo_msx2.rom",
-    "cbios_main_msx2_eu.rom": "cbios_logo_msx2.rom",
-    "cbios_main_msx2_br.rom": "cbios_logo_msx2.rom",
-}
-
-
-def _find_logo_rom(bios_path: Path) -> bytes | None:
-    """Return companion logo ROM bytes for a given BIOS path, or None."""
-    logo_name = _LOGO_ROM_MAP.get(bios_path.name)
-    if logo_name is None:
-        return None
-    logo_path = bios_path.parent / logo_name
-    return logo_path.read_bytes() if logo_path.exists() else None
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="py-msx-emulator")
@@ -37,8 +15,6 @@ def main() -> None:
                         help="Cartridge ROM path")
     parser.add_argument("--machine", metavar="MACHINE_ID", default=None,
                         help="Machine configuration ID (e.g. cbios_msx1, cbios_msx2_jp)")
-    parser.add_argument("--biosrom", metavar="BIOS_PATH", default=None,
-                        help="Main BIOS ROM path (overrides machine YAML ROM file)")
     parser.add_argument("--debug", action="store_true",
                         help="Enable diagnostic logging")
     parser.add_argument("--log", metavar="FILE",
@@ -47,13 +23,14 @@ def main() -> None:
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--mapper",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
-                                 "Konami", "KonamiSCC"],
+                                 "Konami", "KonamiSCC", "Majutsushi"],
                         default="auto",
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
     parser.add_argument("--mapper2",
-                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami"],
+                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
+                                 "Konami", "Majutsushi"],
                         default="auto",
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
@@ -61,10 +38,6 @@ def main() -> None:
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
-    parser.add_argument("--msx2", action="store_true",
-                        help="Use MSX2 machine (alias for --machine cbios_msx2)")
-    parser.add_argument("--extrom", metavar="EXTROM_PATH", default=None,
-                        help="MSX2 extension BIOS ROM path (overrides machine YAML sub ROM)")
     parser.add_argument("--vdp-trace", action="store_true", dest="vdp_trace",
                         help="Enable VDP register write tracing (VDP Trace Log Format)")
     parser.add_argument("--vdp-trace-out", metavar="FILE", dest="vdp_trace_out", default=None,
@@ -97,16 +70,14 @@ def main() -> None:
     cartridge2: bytes | None = slot2_path.read_bytes() if slot2_path else None
 
     # --- Resolve machine ID ---
-    # Priority: --machine > --msx2 > ROM DB auto-detect > default cbios_msx1
+    # Priority: --machine > ROM DB (MSX1 → cbios_msx1_jp) > default cbios_msx2_jp
     db_system = lookup_system(cartridge) if cartridge else None
     if args.machine is not None:
         machine_id = args.machine
-    elif args.msx2:
-        machine_id = "cbios_msx2"
-    elif db_system == "MSX2":
-        machine_id = "cbios_msx2"
+    elif db_system == "MSX":
+        machine_id = "cbios_msx1_jp"
     else:
-        machine_id = "cbios_msx1"
+        machine_id = "cbios_msx2_jp"
 
     # --- Load machine spec from YAML ---
     from msx.machine_loader import (
@@ -121,29 +92,6 @@ def main() -> None:
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    # --- ROM overrides from --biosrom / --extrom ---
-    bios_override: bytes | None = None
-    logo_override: bytes | None = None
-    extrom_override: bytes | None = None
-
-    if args.biosrom is not None:
-        bios_path = Path(args.biosrom)
-        if not bios_path.exists():
-            print(f"error: BIOS ROM not found: {bios_path}", file=sys.stderr)
-            sys.exit(1)
-        bios_override = bios_path.read_bytes()
-        logo_override = _find_logo_rom(bios_path)
-
-    if args.extrom is not None:
-        if spec.generation != "msx2":
-            print("warning: --extrom ignored (machine type resolved to MSX1)", file=sys.stderr)
-        else:
-            extrom_path = Path(args.extrom)
-            if not extrom_path.exists():
-                print(f"error: ext ROM not found: {extrom_path}", file=sys.stderr)
-                sys.exit(1)
-            extrom_override = extrom_path.read_bytes()
 
     # --- Resolve display mapper for summary ---
     if args.mapper != "auto":
@@ -208,13 +156,8 @@ def main() -> None:
     # --- Startup summary ---
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
-    if bios_override is not None:
-        print(f"bios    : {args.biosrom} (override)")
-    else:
-        print(f"bios    : {spec.main_rom_entry.file}")
-    if extrom_override is not None:
-        print(f"ext     : {args.extrom} (override)")
-    elif spec.generation == "msx2" and spec.sub_rom_entry is not None:
+    print(f"bios    : {spec.main_rom_entry.file}")
+    if spec.generation == "msx2" and spec.sub_rom_entry is not None:
         print(f"ext     : {spec.sub_rom_entry.file}")
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
@@ -245,9 +188,6 @@ def main() -> None:
                 mapper2=args.mapper2,
                 logger=logger,
                 tracer=tracer,
-                bios_override=bios_override,
-                logo_override=logo_override,
-                extrom_override=extrom_override,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)

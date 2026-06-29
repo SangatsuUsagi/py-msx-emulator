@@ -17,7 +17,7 @@ _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 # ---------------------------------------------------------------------------
 
 def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True,
-              cart_exists: bool = True, biosrom_exists: bool = True) -> tuple[int, str, str]:
+              cart_exists: bool = True) -> tuple[int, str, str]:
     """Run __main__.main() with patched argv, filesystem, and romdb.
 
     Loads the emulator's __main__.py via importlib.util to avoid conflicts with
@@ -29,14 +29,12 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
 
     def fake_exists(self: Path) -> bool:
         name = self.name
-        if name in ("cbios_main_msx1.rom", "cbios_main_msx2.rom"):
+        if name.startswith("cbios_main_msx"):
             return bios_exists
         if name == "cbios_sub.rom":
             return ext_exists
         if name.endswith(".rom") and "cart" in name:
             return cart_exists
-        if name == "my_bios.rom":
-            return biosrom_exists
         return True
 
     def fake_read_bytes(self: Path) -> bytes:
@@ -66,52 +64,27 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
 # Core CLI behaviour
 # ---------------------------------------------------------------------------
 
-def test_msx2_auto_detect_selects_msx2_bios(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("msx.romdb._db", None)
+def test_default_machine_is_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
-    monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX2")
     monkeypatch.setattr(romdb, "lookup", lambda _c: "KonamiSCC")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: "TestGame")
 
     code, out, _err = _run_main(["cart.rom"])
     assert code == 0
     assert "MSX2" in out
-    assert "cbios_main_msx2.rom" in out
+    assert "cbios_main_msx2_jp.rom" in out
     assert "cbios_sub.rom" in out
 
 
-def test_msx2_flag_overrides_msx1_db(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_machine_flag_overrides_db(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX")
     monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
-    code, out, _err = _run_main(["cart.rom", "--msx2"])
+    code, out, _err = _run_main(["cart.rom", "--machine", "cbios_msx2"])
     assert code == 0
     assert "MSX2" in out
-
-
-def test_extrom_warning_for_msx1_cart(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
-    monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX")
-    monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
-    monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
-
-    code, _out, err = _run_main(["cart.rom", "--extrom", "roms/cbios_sub.rom"])
-    assert code == 0
-    assert "warning" in err.lower()
-    assert "MSX1" in err
-
-
-def test_biosrom_overrides_auto_bios(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
-    monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX")
-    monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
-    monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
-
-    code, out, _err = _run_main(["cart.rom", "--biosrom", "my_bios.rom"])
-    assert code == 0
-    assert "my_bios.rom" in out
 
 
 def test_missing_auto_bios_exits_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,10 +96,10 @@ def test_missing_auto_bios_exits_with_error(monkeypatch: pytest.MonkeyPatch) -> 
     code, _out, err = _run_main(["cart.rom"], bios_exists=False)
     assert code != 0
     assert "error" in err.lower()
-    assert "cbios_main_msx1.rom" in err
+    assert "cbios_main_msx2_jp.rom" in err
 
 
-def test_unknown_cart_defaults_to_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unknown_cart_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
@@ -134,11 +107,11 @@ def test_unknown_cart_defaults_to_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
 
     code, out, _err = _run_main(["cart.rom"])
     assert code == 0
-    assert "MSX1" in out
-    assert "cbios_main_msx1.rom" in out
+    assert "MSX2" in out
+    assert "cbios_main_msx2_jp.rom" in out
 
 
-def test_no_cartridge_defaults_to_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_cartridge_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
@@ -146,7 +119,8 @@ def test_no_cartridge_defaults_to_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
 
     code, out, _err = _run_main([])
     assert code == 0
-    assert "MSX1" in out
+    assert "MSX2" in out
+    assert "cbios_main_msx2_jp.rom" in out
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +148,7 @@ def test_msx1_summary_omits_ext_line(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
-    code, out, _err = _run_main(["cart.rom"])
+    code, out, _err = _run_main(["cart.rom", "--machine", "cbios_msx1"])
     assert code == 0
     assert "ext" not in out
     assert "machine" in out
