@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | db | ds [LINE] | ns | ss | pdbg | c | q"
+    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | ss | c | q"
 )
 
 
@@ -95,16 +95,10 @@ class Debugger:
                 self._cmd_trace_enable()
             elif cmd == "td":
                 self._cmd_trace_disable()
-            elif cmd == "db":
-                self._cmd_banding_debug()
             elif cmd == "ds":
-                self._cmd_sprite_line_debug(args)
-            elif cmd == "ns":
-                self._cmd_no_sprites()
+                self._cmd_disable_sprites()
             elif cmd == "ss":
                 self._cmd_screenshot()
-            elif cmd == "pdbg":
-                self._cmd_palette_debug()
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -406,37 +400,6 @@ class Debugger:
         vdp.tracer.enabled = False
         print("VDP trace disabled")
 
-    def _cmd_banding_debug(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("db: V9938 not active (MSX2 only)")
-            return
-        vdp.debug_banding = not vdp.debug_banding
-        state = "ON" if vdp.debug_banding else "OFF"
-        print(f"Banding debug (mid-frame VDP reg writes): {state}")
-        if vdp.debug_banding:
-            print("  Output format: [BAND] line=NNN R#XX=YYh (port ZZh)")
-
-    def _cmd_sprite_line_debug(self, args: list[str]) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("ds: V9938 not active (MSX2 only)")
-            return
-        if not args:
-            vdp.debug_sprite_line = -1
-            print("Sprite-line dump: OFF")
-            return
-        try:
-            line = int(args[0], 0)
-        except ValueError:
-            print("Usage: ds [LINE]   (no arg = off)")
-            return
-        vdp.debug_sprite_line = line
-        print(f"Sprite-line dump: ON at screen line {line}")
-        print("  Output: [SPR-LINE] ... (per rendered frame; lists drawn sprites + pixel runs)")
-
     def _cmd_screenshot(self) -> None:
         # Render the *current* VDP state and save it as a PNG, so a screenshot can
         # be captured deterministically at the paused point and correlated with
@@ -461,25 +424,11 @@ class Debugger:
         w = (len(idx) // h) if h else 256
         _save_screenshot(bytearray(_index_to_rgb24(idx, vdp)), w, h)
 
-    def _cmd_no_sprites(self) -> None:
-        from msx.vdp.v9938 import V9938
+    def _cmd_disable_sprites(self) -> None:
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("ns: V9938 not active (MSX2 only)")
-            return
         vdp.debug_disable_sprites = not vdp.debug_disable_sprites
         state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
         print(f"Sprite rendering: {state}")
-
-    def _cmd_palette_debug(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("pdbg: V9938 not active (MSX2 only)")
-            return
-        vdp.debug_palette_writes = not vdp.debug_palette_writes
-        state = "ON" if vdp.debug_palette_writes else "OFF"
-        print(f"Palette mid-frame write debug: {state}")
 
 
 # ---------------------------------------------------------------------------
