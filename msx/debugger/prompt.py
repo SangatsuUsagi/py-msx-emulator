@@ -134,29 +134,30 @@ class Debugger:
     def _cmd_reg_vdp(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("reg vdp: V9938 not active (MSX2 only)")
-            return
-        regs = vdp.regs
-        for row_start in range(0, 28, 8):
-            parts = [
-                f"R#{i}={regs[i]:02X}"
-                for i in range(row_start, min(row_start + 8, 28))
-            ]
-            print("  " + "  ".join(parts))
-        cmd = vdp.cmd_regs
-        for row_start in range(0, 15, 8):
-            parts = [
-                f"R#{32 + i}={cmd[i]:02X}"
-                for i in range(row_start, min(row_start + 8, 15))
-            ]
+        if isinstance(vdp, V9938):
+            regs = vdp.regs
+            for row_start in range(0, 28, 8):
+                parts = [
+                    f"R#{i}={regs[i]:02X}"
+                    for i in range(row_start, min(row_start + 8, 28))
+                ]
+                print("  " + "  ".join(parts))
+            cmd = vdp.cmd_regs
+            for row_start in range(0, 15, 8):
+                parts = [
+                    f"R#{32 + i}={cmd[i]:02X}"
+                    for i in range(row_start, min(row_start + 8, 15))
+                ]
+                print("  " + "  ".join(parts))
+        else:
+            parts = [f"R#{i}={vdp.regs[i]:02X}" for i in range(8)]
             print("  " + "  ".join(parts))
 
     def _cmd_reg_palette(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
         if not isinstance(vdp, V9938):
-            print("rp: V9938 not active (MSX2 only)")
+            print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
         for row_start in range(0, 16, 8):
             parts = []
@@ -171,10 +172,10 @@ class Debugger:
     def _cmd_vdp_status(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("vdp: V9938 not active (MSX2 only)")
-            return
-        _print_vdp_fancy(vdp)
+        if isinstance(vdp, V9938):
+            _print_vdp_fancy(vdp)
+        else:
+            _print_vdp_tms(vdp)
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
@@ -198,19 +199,21 @@ class Debugger:
         if not args:
             print("Usage: dv VADDR [SIZE]")
             return
+        vram = self._machine.vdp.vram
+        vram_mask = len(vram) - 1
         try:
-            addr = int(args[0], 16) & 0x1FFFF
+            addr = int(args[0], 16) & vram_mask
             size = int(args[1], 16) if len(args) > 1 else 128
         except ValueError:
             print("dv: invalid address or size (hex expected)")
             return
 
-        vram = self._machine.vdp.vram
+        addr_fmt = "05X" if vram_mask > 0xFFFF else "04X"
         for row in range(0, size, 16):
-            row_bytes = [vram[(addr + row + col) & 0x1FFFF] for col in range(16)]
+            row_bytes = [vram[(addr + row + col) & vram_mask] for col in range(16)]
             hex_part = " ".join(f"{b:02X}" for b in row_bytes)
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
-            print(f"  {(addr + row) & 0x1FFFF:05X}: {hex_part}  {ascii_part}")
+            print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {hex_part}  {ascii_part}")
 
     def _cmd_break(self, args: list[str]) -> None:
         if not args:
@@ -374,12 +377,8 @@ class Debugger:
         print(f"  => {r.PC:04X}: {raw_bytes:<12}  {mnem}")
 
     def _cmd_trace_enable(self) -> None:
-        from msx.vdp.v9938 import V9938
         from msx.vdp.tracer import Tracer
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("te: V9938 not active (MSX2 only)")
-            return
         if vdp._get_pc is None:
             m = self._machine
             vdp._get_pc    = lambda: m.cpu.instruction_pc
@@ -392,9 +391,8 @@ class Debugger:
         print("VDP trace enabled (stdout)")
 
     def _cmd_trace_disable(self) -> None:
-        from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938) or vdp.tracer is None or not vdp.tracer.enabled:
+        if vdp.tracer is None or not vdp.tracer.enabled:
             print("VDP trace already disabled")
             return
         vdp.tracer.enabled = False
@@ -556,3 +554,31 @@ def _print_vdp_fancy(vdp: object) -> None:
     sp  = f"5S={s0 & 0x40 and 1 or 0}"
     col = f"C={s0 & 0x20 and 1 or 0}"
     print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
+
+
+def _print_vdp_tms(vdp: object) -> None:
+    r = vdp.regs  # type: ignore[attr-defined]
+    s0 = vdp.status  # type: ignore[attr-defined]
+
+    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
+
+    name_base    = (r[2] & 0x0F) << 10
+    color_base   = r[3] << 6
+    pattern_base = (r[4] & 0x07) << 11
+    sprite_attr  = (r[5] & 0x7F) << 7
+    sprite_pat   = (r[6] & 0x07) << 11
+    print(
+        f"  VRAM   : Name={name_base:04X}  Color={color_base:04X}"
+        f"  Pat={pattern_base:04X}  SprAttr={sprite_attr:04X}  SprPat={sprite_pat:04X}"
+    )
+
+    en      = (r[1] >> 6) & 1
+    fg      = (r[7] >> 4) & 0xF
+    bg      = r[7] & 0xF
+    spr_sz  = 16 if r[1] & 0x02 else 8
+    spr_mag = r[1] & 0x01
+    print(
+        f"  Disp   : EN={en}  h=192  FG={fg:X}  BG={bg:X}  size={spr_sz}  mag={spr_mag}"
+    )
+
+    print(f"  Status : S#0={s0:02X}")
