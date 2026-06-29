@@ -483,6 +483,7 @@ def _build_msx1(
         slot_register=0x00,
         _logger=logger,
         extrom=logo_bytes,
+        rom_name=spec.main_rom_entry.file,
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
@@ -535,6 +536,8 @@ def _build_msx2(
         sub0_rom=sub_bytes,
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
+        rom_name=spec.main_rom_entry.file,
+        sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
     vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP(_logger=logger)
     rtc: RTC | None = RTC() if spec.has_rtc else None
