@@ -137,7 +137,7 @@ def main() -> None:
 
     if args.extrom is not None:
         if spec.generation != "msx2":
-            print("warning: --extrom ignored (machine is not MSX2)", file=sys.stderr)
+            print("warning: --extrom ignored (machine type resolved to MSX1)", file=sys.stderr)
         else:
             extrom_path = Path(args.extrom)
             if not extrom_path.exists():
