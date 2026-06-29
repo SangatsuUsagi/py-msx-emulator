@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
+    from msx.vdp.tracer import Tracer
 
 
 @dataclass
@@ -18,6 +19,11 @@ class VDP:
     on_interrupt: Callable[[], None] | None = None
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
+    tracer: Tracer | None = field(default=None, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
+    debug_disable_sprites: bool = field(default=False, repr=False)
 
     @property
     def display_height(self) -> int:
@@ -29,6 +35,11 @@ class VDP:
             self.vram[self.addr] = value
             self.addr = (self.addr + 1) & 0x3FFF
         elif port == 0x99:
+            if self.tracer is not None:
+                pc = self._get_pc() if self._get_pc is not None else 0
+                cy = self._get_cycle() if self._get_cycle is not None else 0
+                fr = self._get_frame() if self._get_frame is not None else 0
+                self.tracer.port99_write(pc, cy, value, frame=fr)
             if self.latch is None:
                 self.latch = value
             else:
