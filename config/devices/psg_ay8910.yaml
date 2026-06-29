@@ -1,0 +1,7 @@
+id: psg_ay8910
+type: io_device
+implemented: true
+name: General Instrument AY-3-8910 Programmable Sound Generator
+chip: ay-3-8910
+io_ports: [0xA0, 0xA1, 0xA2]
+controls: programmable_sound_generator
