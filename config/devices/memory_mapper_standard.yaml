@@ -1,0 +1,7 @@
+id: memory_mapper_standard
+type: io_device
+implemented: true
+chip: null
+io_ports: [0xFC, 0xFD, 0xFE, 0xFF]
+controls: ram_segment_switching
+segment_size_kb: 16
