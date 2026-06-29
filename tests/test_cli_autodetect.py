@@ -1,11 +1,15 @@
 """CLI auto-detect integration tests — patches filesystem and romdb, never touches SDL2."""
 from __future__ import annotations
 
+import importlib.util
+import io
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
+
+_MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
 # ---------------------------------------------------------------------------
@@ -14,20 +18,18 @@ import pytest
 
 def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True,
               cart_exists: bool = True, biosrom_exists: bool = True) -> tuple[int, str, str]:
-    """
-    Run __main__.main() with patched argv, filesystem, romdb, and machine factory.
+    """Run __main__.main() with patched argv, filesystem, and romdb.
+
+    Loads the emulator's __main__.py via importlib.util to avoid conflicts with
+    pytest's own __main__ module in sys.modules.
     Returns (exit_code, stdout, stderr).
     """
-    import io
-
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
 
     def fake_exists(self: Path) -> bool:
         name = self.name
-        if name == "cbios_main_msx1.rom":
-            return bios_exists
-        if name == "cbios_main_msx2.rom":
+        if name in ("cbios_main_msx1.rom", "cbios_main_msx2.rom"):
             return bios_exists
         if name == "cbios_sub.rom":
             return ext_exists
@@ -35,13 +37,10 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
             return cart_exists
         if name == "my_bios.rom":
             return biosrom_exists
-        return True  # slot2, etc.
+        return True
 
     def fake_read_bytes(self: Path) -> bytes:
         return b"\x00" * 32768
-
-    fake_machine = MagicMock()
-    fake_machine.vdp.display_height = 192
 
     with patch.object(sys, "argv", [".", *argv]), \
          patch("builtins.print", side_effect=lambda *a, **kw: (
@@ -51,13 +50,12 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
          )), \
          patch.object(Path, "exists", fake_exists), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
-         patch("msx.machine.make_machine", return_value=fake_machine), \
-         patch("msx.machine.make_machine_msx2", return_value=fake_machine), \
          patch("frontend.sdl2_frontend.run"):
         try:
-            import importlib
-            import __main__ as m
-            importlib.reload(m)
+            spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
+            assert spec is not None and spec.loader is not None
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)  # type: ignore[union-attr]
             m.main()
             return 0, stdout_buf.getvalue(), stderr_buf.getvalue()
         except SystemExit as exc:
@@ -65,7 +63,7 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
 
 
 # ---------------------------------------------------------------------------
-# Task 7.1 — core CLI behaviour
+# Core CLI behaviour
 # ---------------------------------------------------------------------------
 
 def test_msx2_auto_detect_selects_msx2_bios(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,7 +150,7 @@ def test_no_cartridge_defaults_to_msx1(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 7.2 — startup summary format
+# Startup summary format
 # ---------------------------------------------------------------------------
 
 def test_msx2_summary_includes_ext_line(monkeypatch: pytest.MonkeyPatch) -> None:
