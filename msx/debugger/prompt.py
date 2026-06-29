@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | ss | c | q"
+    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | sl | st | ss | c | q"
 )
 
 
@@ -97,6 +97,10 @@ class Debugger:
                 self._cmd_trace_disable()
             elif cmd == "ds":
                 self._cmd_disable_sprites()
+            elif cmd == "sl":
+                self._cmd_slot_active()
+            elif cmd == "st":
+                self._cmd_slot_tree()
             elif cmd == "ss":
                 self._cmd_screenshot()
             else:
@@ -428,6 +432,47 @@ class Debugger:
         state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
         print(f"Sprite rendering: {state}")
 
+    def _cmd_slot_active(self) -> None:
+        mem = self._machine.memory
+        print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
+        _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
+        for page in range(4):
+            prim = (mem.slot_register >> (page * 2)) & 0x03
+            if mem.sub_slot_enabled and prim == 3:
+                sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
+                sec_str = str(sec)
+            else:
+                sec = None
+                sec_str = "-"
+            content = _sl_content(mem, prim, sec, page)
+            bank = _sl_bank(mem, prim, sec, page)
+            print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
+
+    def _cmd_slot_tree(self) -> None:
+        mem = self._machine.memory
+        _roles = {1: "cartridge slot", 2: "cartridge slot"}
+        for prim in range(4):
+            if mem.sub_slot_enabled and prim == 3:
+                raw = mem.sub_slot_reg
+                print(f"  Primary 3 [EXPANDED]  secondary-select(raw)={raw:02X}h")
+                parts = []
+                for pg in range(4):
+                    s = (raw >> (pg * 2)) & 0x03
+                    parts.append(f"P{pg}->3-{s}")
+                print(f"    page-map: {'  '.join(parts)}")
+                for sec in range(4):
+                    content = _sl_content(mem, prim, sec, None)
+                    size = _sl_size(mem, prim, sec)
+                    suffix = f"  {size}" if size else ""
+                    print(f"    3-{sec}  {content}{suffix}")
+            else:
+                role = _roles.get(prim)
+                role_str = f"  [{role}]" if role else ""
+                content = _sl_content(mem, prim, None, None)
+                size = _sl_size(mem, prim, None)
+                suffix = f"  {size}" if size else ""
+                print(f"  Primary {prim}{role_str}  {content}{suffix}")
+
 
 # ---------------------------------------------------------------------------
 # VDP fancy display helpers (module-level, no instance state needed)
@@ -582,3 +627,57 @@ def _print_vdp_tms(vdp: object) -> None:
     )
 
     print(f"  Status : S#0={s0:02X}")
+
+
+# ---------------------------------------------------------------------------
+# Slot inspector helpers
+# ---------------------------------------------------------------------------
+
+def _sl_content(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
+    from msx.mapper import FlatMapper
+    if primary == 0:
+        name = getattr(mem, "rom_name", "") or "ROM"
+        return f"ROM {name}" if name != "ROM" else "ROM"
+    if primary in (1, 2):
+        mapper = mem._mapper if primary == 1 else mem._mapper2  # type: ignore[attr-defined]
+        if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
+            return "Cartridge (empty)"
+        cls = type(mapper).__name__.replace("Mapper", "")
+        return f"Cartridge {cls}"
+    if primary == 3:
+        if secondary == 0:
+            name = getattr(mem, "sub0_rom_name", "") or "ROM"
+            return f"ROM {name}" if name != "ROM" else "ROM"
+        if secondary == 1:
+            return "empty"
+        if secondary in (2, 3):
+            if getattr(mem, "ram_mapper", None) is not None:
+                return "RAM (mapper:standard)"
+            return "RAM"
+        return "empty"
+    return "empty"
+
+
+def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
+    if primary == 3 and secondary in (2, 3) and page is not None:
+        rm = getattr(mem, "ram_mapper", None)
+        if rm is not None:
+            return f"seg={rm.banks[page]}"
+    return "-"
+
+
+def _sl_size(mem: object, primary: int, secondary: int | None) -> str:
+    if primary == 0:
+        n = len(getattr(mem, "rom", b""))
+        return f"{n // 1024}KB" if n else ""
+    if primary == 3 and secondary == 0:
+        sub = getattr(mem, "sub0_rom", None)
+        n = len(sub) if sub is not None else 0
+        return f"{n // 1024}KB" if n else ""
+    if primary == 3 and secondary in (2, 3):
+        rm = getattr(mem, "ram_mapper", None)
+        if rm is not None:
+            return "128KB"
+        n = len(getattr(mem, "ram", b""))
+        return f"{n // 1024}KB" if n else ""
+    return ""
