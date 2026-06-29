@@ -1,0 +1,36 @@
+schema_version: 1
+id: cbios_msx1_eu
+name: "Generic MSX1 (C-BIOS, Europe)"
+generation: msx1
+rom_base: roms/cbios
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: cbios_main_msx1_eu.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: null
+        - rom:
+            file: cbios_logo_msx1.rom
+            size_kb: 16
+            pages: [2]
+            sha1: null
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      type: ram
+      size_kb: 32
+      mapper: none
+
+builtin_devices:
+  - ref: ppi8255
+  - ref: vdp_tms9918a
+  - ref: psg_ay8910
+
+default_extensions: []
