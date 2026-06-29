@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | db | ds [LINE] | ns | ss | pdbg | c | q"
+    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | sl | st | ss | c | q"
 )
 
 
@@ -95,16 +95,14 @@ class Debugger:
                 self._cmd_trace_enable()
             elif cmd == "td":
                 self._cmd_trace_disable()
-            elif cmd == "db":
-                self._cmd_banding_debug()
             elif cmd == "ds":
-                self._cmd_sprite_line_debug(args)
-            elif cmd == "ns":
-                self._cmd_no_sprites()
+                self._cmd_disable_sprites()
+            elif cmd == "sl":
+                self._cmd_slot_active()
+            elif cmd == "st":
+                self._cmd_slot_tree()
             elif cmd == "ss":
                 self._cmd_screenshot()
-            elif cmd == "pdbg":
-                self._cmd_palette_debug()
             else:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
@@ -140,29 +138,30 @@ class Debugger:
     def _cmd_reg_vdp(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("reg vdp: V9938 not active (MSX2 only)")
-            return
-        regs = vdp.regs
-        for row_start in range(0, 28, 8):
-            parts = [
-                f"R#{i}={regs[i]:02X}"
-                for i in range(row_start, min(row_start + 8, 28))
-            ]
-            print("  " + "  ".join(parts))
-        cmd = vdp.cmd_regs
-        for row_start in range(0, 15, 8):
-            parts = [
-                f"R#{32 + i}={cmd[i]:02X}"
-                for i in range(row_start, min(row_start + 8, 15))
-            ]
+        if isinstance(vdp, V9938):
+            regs = vdp.regs
+            for row_start in range(0, 28, 8):
+                parts = [
+                    f"R#{i}={regs[i]:02X}"
+                    for i in range(row_start, min(row_start + 8, 28))
+                ]
+                print("  " + "  ".join(parts))
+            cmd = vdp.cmd_regs
+            for row_start in range(0, 15, 8):
+                parts = [
+                    f"R#{32 + i}={cmd[i]:02X}"
+                    for i in range(row_start, min(row_start + 8, 15))
+                ]
+                print("  " + "  ".join(parts))
+        else:
+            parts = [f"R#{i}={vdp.regs[i]:02X}" for i in range(8)]
             print("  " + "  ".join(parts))
 
     def _cmd_reg_palette(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
         if not isinstance(vdp, V9938):
-            print("rp: V9938 not active (MSX2 only)")
+            print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
         for row_start in range(0, 16, 8):
             parts = []
@@ -177,10 +176,10 @@ class Debugger:
     def _cmd_vdp_status(self) -> None:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("vdp: V9938 not active (MSX2 only)")
-            return
-        _print_vdp_fancy(vdp)
+        if isinstance(vdp, V9938):
+            _print_vdp_fancy(vdp)
+        else:
+            _print_vdp_tms(vdp)
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
@@ -204,19 +203,21 @@ class Debugger:
         if not args:
             print("Usage: dv VADDR [SIZE]")
             return
+        vram = self._machine.vdp.vram
+        vram_mask = len(vram) - 1
         try:
-            addr = int(args[0], 16) & 0x1FFFF
+            addr = int(args[0], 16) & vram_mask
             size = int(args[1], 16) if len(args) > 1 else 128
         except ValueError:
             print("dv: invalid address or size (hex expected)")
             return
 
-        vram = self._machine.vdp.vram
+        addr_fmt = "05X" if vram_mask > 0xFFFF else "04X"
         for row in range(0, size, 16):
-            row_bytes = [vram[(addr + row + col) & 0x1FFFF] for col in range(16)]
+            row_bytes = [vram[(addr + row + col) & vram_mask] for col in range(16)]
             hex_part = " ".join(f"{b:02X}" for b in row_bytes)
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
-            print(f"  {(addr + row) & 0x1FFFF:05X}: {hex_part}  {ascii_part}")
+            print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {hex_part}  {ascii_part}")
 
     def _cmd_break(self, args: list[str]) -> None:
         if not args:
@@ -380,12 +381,8 @@ class Debugger:
         print(f"  => {r.PC:04X}: {raw_bytes:<12}  {mnem}")
 
     def _cmd_trace_enable(self) -> None:
-        from msx.vdp.v9938 import V9938
         from msx.vdp.tracer import Tracer
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("te: V9938 not active (MSX2 only)")
-            return
         if vdp._get_pc is None:
             m = self._machine
             vdp._get_pc    = lambda: m.cpu.instruction_pc
@@ -398,44 +395,12 @@ class Debugger:
         print("VDP trace enabled (stdout)")
 
     def _cmd_trace_disable(self) -> None:
-        from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938) or vdp.tracer is None or not vdp.tracer.enabled:
+        if vdp.tracer is None or not vdp.tracer.enabled:
             print("VDP trace already disabled")
             return
         vdp.tracer.enabled = False
         print("VDP trace disabled")
-
-    def _cmd_banding_debug(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("db: V9938 not active (MSX2 only)")
-            return
-        vdp.debug_banding = not vdp.debug_banding
-        state = "ON" if vdp.debug_banding else "OFF"
-        print(f"Banding debug (mid-frame VDP reg writes): {state}")
-        if vdp.debug_banding:
-            print("  Output format: [BAND] line=NNN R#XX=YYh (port ZZh)")
-
-    def _cmd_sprite_line_debug(self, args: list[str]) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("ds: V9938 not active (MSX2 only)")
-            return
-        if not args:
-            vdp.debug_sprite_line = -1
-            print("Sprite-line dump: OFF")
-            return
-        try:
-            line = int(args[0], 0)
-        except ValueError:
-            print("Usage: ds [LINE]   (no arg = off)")
-            return
-        vdp.debug_sprite_line = line
-        print(f"Sprite-line dump: ON at screen line {line}")
-        print("  Output: [SPR-LINE] ... (per rendered frame; lists drawn sprites + pixel runs)")
 
     def _cmd_screenshot(self) -> None:
         # Render the *current* VDP state and save it as a PNG, so a screenshot can
@@ -461,25 +426,52 @@ class Debugger:
         w = (len(idx) // h) if h else 256
         _save_screenshot(bytearray(_index_to_rgb24(idx, vdp)), w, h)
 
-    def _cmd_no_sprites(self) -> None:
-        from msx.vdp.v9938 import V9938
+    def _cmd_disable_sprites(self) -> None:
         vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("ns: V9938 not active (MSX2 only)")
-            return
         vdp.debug_disable_sprites = not vdp.debug_disable_sprites
         state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
         print(f"Sprite rendering: {state}")
 
-    def _cmd_palette_debug(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
-            print("pdbg: V9938 not active (MSX2 only)")
-            return
-        vdp.debug_palette_writes = not vdp.debug_palette_writes
-        state = "ON" if vdp.debug_palette_writes else "OFF"
-        print(f"Palette mid-frame write debug: {state}")
+    def _cmd_slot_active(self) -> None:
+        mem = self._machine.memory
+        print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
+        _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
+        for page in range(4):
+            prim = (mem.slot_register >> (page * 2)) & 0x03
+            if mem.sub_slot_enabled and prim == 3:
+                sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
+                sec_str = str(sec)
+            else:
+                sec = None
+                sec_str = "-"
+            content = _sl_content(mem, prim, sec, page)
+            bank = _sl_bank(mem, prim, sec, page)
+            print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
+
+    def _cmd_slot_tree(self) -> None:
+        mem = self._machine.memory
+        _roles = {1: "cartridge slot", 2: "cartridge slot"}
+        for prim in range(4):
+            if mem.sub_slot_enabled and prim == 3:
+                raw = mem.sub_slot_reg
+                print(f"  Primary 3 [EXPANDED]  secondary-select(raw)={raw:02X}h")
+                parts = []
+                for pg in range(4):
+                    s = (raw >> (pg * 2)) & 0x03
+                    parts.append(f"P{pg}->3-{s}")
+                print(f"    page-map: {'  '.join(parts)}")
+                for sec in range(4):
+                    content = _sl_content(mem, prim, sec, None)
+                    size = _sl_size(mem, prim, sec)
+                    suffix = f"  {size}" if size else ""
+                    print(f"    3-{sec}  {content}{suffix}")
+            else:
+                role = _roles.get(prim)
+                role_str = f"  [{role}]" if role else ""
+                content = _sl_content(mem, prim, None, None)
+                size = _sl_size(mem, prim, None)
+                suffix = f"  {size}" if size else ""
+                print(f"  Primary {prim}{role_str}  {content}{suffix}")
 
 
 # ---------------------------------------------------------------------------
@@ -607,3 +599,85 @@ def _print_vdp_fancy(vdp: object) -> None:
     sp  = f"5S={s0 & 0x40 and 1 or 0}"
     col = f"C={s0 & 0x20 and 1 or 0}"
     print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
+
+
+def _print_vdp_tms(vdp: object) -> None:
+    r = vdp.regs  # type: ignore[attr-defined]
+    s0 = vdp.status  # type: ignore[attr-defined]
+
+    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
+
+    name_base    = (r[2] & 0x0F) << 10
+    color_base   = r[3] << 6
+    pattern_base = (r[4] & 0x07) << 11
+    sprite_attr  = (r[5] & 0x7F) << 7
+    sprite_pat   = (r[6] & 0x07) << 11
+    print(
+        f"  VRAM   : Name={name_base:04X}  Color={color_base:04X}"
+        f"  Pat={pattern_base:04X}  SprAttr={sprite_attr:04X}  SprPat={sprite_pat:04X}"
+    )
+
+    en      = (r[1] >> 6) & 1
+    fg      = (r[7] >> 4) & 0xF
+    bg      = r[7] & 0xF
+    spr_sz  = 16 if r[1] & 0x02 else 8
+    spr_mag = r[1] & 0x01
+    print(
+        f"  Disp   : EN={en}  h=192  FG={fg:X}  BG={bg:X}  size={spr_sz}  mag={spr_mag}"
+    )
+
+    print(f"  Status : S#0={s0:02X}")
+
+
+# ---------------------------------------------------------------------------
+# Slot inspector helpers
+# ---------------------------------------------------------------------------
+
+def _sl_content(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
+    from msx.mapper import FlatMapper
+    if primary == 0:
+        name = getattr(mem, "rom_name", "") or "ROM"
+        return f"ROM {name}" if name != "ROM" else "ROM"
+    if primary in (1, 2):
+        mapper = mem._mapper if primary == 1 else mem._mapper2  # type: ignore[attr-defined]
+        if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
+            return "Cartridge (empty)"
+        cls = type(mapper).__name__.replace("Mapper", "")
+        return f"Cartridge {cls}"
+    if primary == 3:
+        if secondary == 0:
+            name = getattr(mem, "sub0_rom_name", "") or "ROM"
+            return f"ROM {name}" if name != "ROM" else "ROM"
+        if secondary == 1:
+            return "empty"
+        if secondary in (2, 3):
+            if getattr(mem, "ram_mapper", None) is not None:
+                return "RAM (mapper:standard)"
+            return "RAM"
+        return "empty"
+    return "empty"
+
+
+def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
+    if primary == 3 and secondary in (2, 3) and page is not None:
+        rm = getattr(mem, "ram_mapper", None)
+        if rm is not None:
+            return f"seg={rm.banks[page]}"
+    return "-"
+
+
+def _sl_size(mem: object, primary: int, secondary: int | None) -> str:
+    if primary == 0:
+        n = len(getattr(mem, "rom", b""))
+        return f"{n // 1024}KB" if n else ""
+    if primary == 3 and secondary == 0:
+        sub = getattr(mem, "sub0_rom", None)
+        n = len(sub) if sub is not None else 0
+        return f"{n // 1024}KB" if n else ""
+    if primary == 3 and secondary in (2, 3):
+        rm = getattr(mem, "ram_mapper", None)
+        if rm is not None:
+            return "128KB"
+        n = len(getattr(mem, "ram", b""))
+        return f"{n // 1024}KB" if n else ""
+    return ""

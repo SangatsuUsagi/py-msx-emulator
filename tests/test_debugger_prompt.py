@@ -10,7 +10,10 @@ import pytest
 
 from msx.cpu.registers import Registers
 from msx.debugger.prompt import Debugger
+from msx.mapper import FlatMapper
+from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
+from msx.vdp.vdp import VDP
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +43,27 @@ def _make_machine(pc: int = 0x4000) -> MagicMock:
     vdp.regs[1] = 0xE0
     vdp.status = 0xA0
     vdp._status2 = 0x03
+    m.vdp = vdp
+
+    m._breakpoints = frozenset()
+    m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
+    m.cycle_count = 0
+    return m
+
+
+def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
+    """Build a mock Machine with TMS9918A VDP."""
+    m = MagicMock()
+    regs = Registers()
+    regs.PC = pc
+    m.cpu.registers = regs
+    m.cpu.read_byte = lambda addr: 0x00
+    m.cpu.instruction_pc = pc
+
+    vdp = VDP()
+    vdp.regs[0] = 0x00
+    vdp.regs[1] = 0x00
+    vdp.status = 0x00
     m.vdp = vdp
 
     m._breakpoints = frozenset()
@@ -93,13 +117,13 @@ class TestRegVdp:
         for i in range(32, 47):
             assert f"R#{i}=" in out
 
-    def test_non_v9938_shows_error(self, capsys):
-        m = _make_machine()
-        m.vdp = MagicMock(spec=[])   # not a V9938 instance
-        dbg = Debugger(m)
+    def test_tms9918a_shows_8_registers(self, capsys):
+        dbg = Debugger(_make_tms_machine())
         dbg._cmd_reg_vdp()
         out = capsys.readouterr().out
-        assert "V9938 not active" in out
+        for i in range(8):
+            assert f"R#{i}=" in out
+        assert "R#8=" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +143,12 @@ class TestVdpStatus:
         out = capsys.readouterr().out
         assert "S#2=03" in out
 
-    def test_non_v9938_shows_error(self, capsys):
-        m = _make_machine()
-        m.vdp = MagicMock(spec=[])
-        dbg = Debugger(m)
+    def test_tms9918a_shows_screen_mode(self, capsys):
+        dbg = Debugger(_make_tms_machine())
         dbg._cmd_vdp_status()
         out = capsys.readouterr().out
-        assert "V9938 not active" in out
+        assert "GRAPHIC1" in out or "SCREEN" in out
+        assert "V9938 not active" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +405,166 @@ class TestUnknownCommand:
         out = capsys.readouterr().out
         assert "Unknown command" in out
         assert "Commands:" in out
+
+
+# ---------------------------------------------------------------------------
+# TMS9918A debugger commands (5.1 - 5.6)
+# ---------------------------------------------------------------------------
+
+class TestTMS9918ADebug:
+    def test_ds_toggles_disable_sprites_on_tms(self, capsys):
+        m = _make_tms_machine()
+        dbg = Debugger(m)
+        assert m.vdp.debug_disable_sprites is False
+        dbg._cmd_disable_sprites()
+        assert m.vdp.debug_disable_sprites is True
+        dbg._cmd_disable_sprites()
+        assert m.vdp.debug_disable_sprites is False
+
+    def test_v_on_tms_shows_screen_mode_no_exception(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_vdp_status()
+        out = capsys.readouterr().out
+        assert "Screen" in out
+        assert "V9938 not active" not in out
+        assert "MSX2 only" not in out
+
+    def test_rv_on_tms_shows_r0_through_r7(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_reg_vdp()
+        out = capsys.readouterr().out
+        for i in range(8):
+            assert f"R#{i}=" in out
+
+    def test_dv_on_tms_dumps_without_index_error(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_dump_vram(["0"])
+        out = capsys.readouterr().out
+        lines = [l for l in out.strip().splitlines() if l.strip()]
+        assert len(lines) == 8  # 128 bytes / 16 per row
+
+    def test_te_on_tms_attaches_tracer(self, capsys):
+        m = _make_tms_machine()
+        dbg = Debugger(m)
+        assert m.vdp.tracer is None
+        dbg._cmd_trace_enable()
+        assert m.vdp.tracer is not None
+        assert m.vdp.tracer.enabled is True
+
+    def test_rp_on_tms_prints_no_palette_error(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_reg_palette()
+        out = capsys.readouterr().out
+        assert "no programmable palette" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# Slot inspector commands (9.1 - 9.5)
+# ---------------------------------------------------------------------------
+
+def _make_slot_memory(
+    slot_register: int = 0xD4,
+    sub_slot_enabled: bool = False,
+    sub_slot_reg: int = 0x00,
+    rom_name: str = "cbios_main.rom",
+    sub0_rom_name: str = "",
+    with_ram_mapper: bool = False,
+) -> MagicMock:
+    mem = MagicMock()
+    mem.slot_register = slot_register
+    mem.sub_slot_enabled = sub_slot_enabled
+    mem.sub_slot_reg = sub_slot_reg
+    mem.rom = b"\x00" * 32768
+    mem.rom_name = rom_name
+    mem.sub0_rom = b"\x00" * 16384 if sub0_rom_name else None
+    mem.sub0_rom_name = sub0_rom_name
+    mem._mapper = FlatMapper(None)
+    mem._mapper2 = FlatMapper(None)
+    mem.ram_mapper = RamMapper() if with_ram_mapper else None
+    return mem
+
+
+def _make_slot_machine(
+    slot_register: int = 0xD4,
+    sub_slot_enabled: bool = False,
+    sub_slot_reg: int = 0x00,
+    rom_name: str = "cbios_main.rom",
+    sub0_rom_name: str = "",
+    with_ram_mapper: bool = False,
+) -> MagicMock:
+    m = _make_machine()
+    m.memory = _make_slot_memory(
+        slot_register=slot_register,
+        sub_slot_enabled=sub_slot_enabled,
+        sub_slot_reg=sub_slot_reg,
+        rom_name=rom_name,
+        sub0_rom_name=sub0_rom_name,
+        with_ram_mapper=with_ram_mapper,
+    )
+    return m
+
+
+class TestSlotActive:
+    def test_sl_decodes_primary_slots(self, capsys):
+        # slot_register=0xD4 = 0b11_01_01_00 → P0=0, P1=1, P2=1, P3=3
+        m = _make_slot_machine(slot_register=0xD4)
+        Debugger(m)._cmd_slot_active()
+        out = capsys.readouterr().out
+        # Data rows contain "P0"/"P1"/"P2"/"P3"
+        assert "P0" in out
+        assert "P1" in out
+        assert "P2" in out
+        assert "P3" in out
+        # P0 should have primary=0, P3 should have primary=3
+        for line in out.splitlines():
+            if "P0" in line and "0000" in line:
+                assert " 0 " in line or line.strip().split()[2] == "0"
+            if "P3" in line and "C000" in line:
+                assert " 3 " in line or line.strip().split()[2] == "3"
+
+    def test_sl_no_secondary_on_msx1(self, capsys):
+        m = _make_slot_machine(sub_slot_enabled=False)
+        Debugger(m)._cmd_slot_active()
+        out = capsys.readouterr().out
+        # Sec column shows "-" for all data rows (at least 4 dashes in data portion)
+        data_lines = [l for l in out.splitlines() if "0000" in l or "4000" in l or "8000" in l or "C000" in l]
+        assert len(data_lines) == 4
+        for line in data_lines:
+            cols = line.split()
+            assert cols[3] == "-"  # Sec column
+
+    def test_sl_ram_mapper_bank_shown(self, capsys):
+        # P3 = slot 3, sub 2 or 3 with ram_mapper
+        # slot_register: P3=3 → 0b11xxxxxx = 0xC0 | lower = use 0xD4 (P3=3)
+        m = _make_slot_machine(
+            slot_register=0xD4,
+            sub_slot_enabled=True,
+            sub_slot_reg=0xA8,  # P0=0,P1=2,P2=2,P3=2 (sub slots for slot 3)
+            sub0_rom_name="cbios_sub.rom",
+            with_ram_mapper=True,
+        )
+        Debugger(m)._cmd_slot_active()
+        out = capsys.readouterr().out
+        assert "seg=" in out
+
+
+class TestSlotTree:
+    def test_st_msx2_shows_expanded_slot3(self, capsys):
+        m = _make_slot_machine(
+            sub_slot_enabled=True,
+            sub_slot_reg=0xA4,
+            sub0_rom_name="cbios_sub.rom",
+            with_ram_mapper=True,
+        )
+        Debugger(m)._cmd_slot_tree()
+        out = capsys.readouterr().out
+        assert "[EXPANDED]" in out
+        assert "secondary-select(raw)=A4h" in out
+        assert "page-map" in out
+
+    def test_st_msx1_no_expanded(self, capsys):
+        m = _make_slot_machine(sub_slot_enabled=False)
+        Debugger(m)._cmd_slot_tree()
+        out = capsys.readouterr().out
+        assert "[EXPANDED]" not in out
+        assert "page-map" not in out
