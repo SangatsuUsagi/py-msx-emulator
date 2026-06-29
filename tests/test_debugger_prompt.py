@@ -11,6 +11,7 @@ import pytest
 from msx.cpu.registers import Registers
 from msx.debugger.prompt import Debugger
 from msx.vdp.v9938 import V9938
+from msx.vdp.vdp import VDP
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +41,27 @@ def _make_machine(pc: int = 0x4000) -> MagicMock:
     vdp.regs[1] = 0xE0
     vdp.status = 0xA0
     vdp._status2 = 0x03
+    m.vdp = vdp
+
+    m._breakpoints = frozenset()
+    m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
+    m.cycle_count = 0
+    return m
+
+
+def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
+    """Build a mock Machine with TMS9918A VDP."""
+    m = MagicMock()
+    regs = Registers()
+    regs.PC = pc
+    m.cpu.registers = regs
+    m.cpu.read_byte = lambda addr: 0x00
+    m.cpu.instruction_pc = pc
+
+    vdp = VDP()
+    vdp.regs[0] = 0x00
+    vdp.regs[1] = 0x00
+    vdp.status = 0x00
     m.vdp = vdp
 
     m._breakpoints = frozenset()
@@ -93,13 +115,13 @@ class TestRegVdp:
         for i in range(32, 47):
             assert f"R#{i}=" in out
 
-    def test_non_v9938_shows_error(self, capsys):
-        m = _make_machine()
-        m.vdp = MagicMock(spec=[])   # not a V9938 instance
-        dbg = Debugger(m)
+    def test_tms9918a_shows_8_registers(self, capsys):
+        dbg = Debugger(_make_tms_machine())
         dbg._cmd_reg_vdp()
         out = capsys.readouterr().out
-        assert "V9938 not active" in out
+        for i in range(8):
+            assert f"R#{i}=" in out
+        assert "R#8=" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +141,12 @@ class TestVdpStatus:
         out = capsys.readouterr().out
         assert "S#2=03" in out
 
-    def test_non_v9938_shows_error(self, capsys):
-        m = _make_machine()
-        m.vdp = MagicMock(spec=[])
-        dbg = Debugger(m)
+    def test_tms9918a_shows_screen_mode(self, capsys):
+        dbg = Debugger(_make_tms_machine())
         dbg._cmd_vdp_status()
         out = capsys.readouterr().out
-        assert "V9938 not active" in out
+        assert "GRAPHIC1" in out or "SCREEN" in out
+        assert "V9938 not active" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +403,54 @@ class TestUnknownCommand:
         out = capsys.readouterr().out
         assert "Unknown command" in out
         assert "Commands:" in out
+
+
+# ---------------------------------------------------------------------------
+# TMS9918A debugger commands (5.1 - 5.6)
+# ---------------------------------------------------------------------------
+
+class TestTMS9918ADebug:
+    def test_ds_toggles_disable_sprites_on_tms(self, capsys):
+        m = _make_tms_machine()
+        dbg = Debugger(m)
+        assert m.vdp.debug_disable_sprites is False
+        dbg._cmd_disable_sprites()
+        assert m.vdp.debug_disable_sprites is True
+        dbg._cmd_disable_sprites()
+        assert m.vdp.debug_disable_sprites is False
+
+    def test_v_on_tms_shows_screen_mode_no_exception(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_vdp_status()
+        out = capsys.readouterr().out
+        assert "Screen" in out
+        assert "V9938 not active" not in out
+        assert "MSX2 only" not in out
+
+    def test_rv_on_tms_shows_r0_through_r7(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_reg_vdp()
+        out = capsys.readouterr().out
+        for i in range(8):
+            assert f"R#{i}=" in out
+
+    def test_dv_on_tms_dumps_without_index_error(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_dump_vram(["0"])
+        out = capsys.readouterr().out
+        lines = [l for l in out.strip().splitlines() if l.strip()]
+        assert len(lines) == 8  # 128 bytes / 16 per row
+
+    def test_te_on_tms_attaches_tracer(self, capsys):
+        m = _make_tms_machine()
+        dbg = Debugger(m)
+        assert m.vdp.tracer is None
+        dbg._cmd_trace_enable()
+        assert m.vdp.tracer is not None
+        assert m.vdp.tracer.enabled is True
+
+    def test_rp_on_tms_prints_no_palette_error(self, capsys):
+        dbg = Debugger(_make_tms_machine())
+        dbg._cmd_reg_palette()
+        out = capsys.readouterr().out
+        assert "no programmable palette" in out.lower()
