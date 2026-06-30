@@ -55,3 +55,28 @@ class MapperTracer:
             file=self.output,
         )
         self.output.flush()
+
+
+def attach_to_machine(machine, *, output: IO[str] | None = None) -> "MapperTracer | None":
+    """Attach an enabled MapperTracer to the cartridge ROM mapper(s) in slots 1/2.
+
+    Wires the PC/cycle/frame accessors the same way the `ce` debugger command
+    does. Returns the tracer, or None when no bank-switching ROM mapper is
+    present (flat mapper or empty slot), so callers can report the inert case.
+    """
+    mem = machine.memory
+    targets = []
+    for attr in ("_mapper", "_mapper2"):
+        mp = getattr(mem, attr, None)
+        if mp is not None and hasattr(mp, "_tracer"):
+            targets.append(mp)
+    if not targets:
+        return None
+    tracer = MapperTracer(enabled=True, output=output or sys.stdout)
+    for mp in targets:
+        mp._tracer = tracer
+        if mp._get_pc is None:
+            mp._get_pc = lambda: machine.cpu.instruction_pc
+            mp._get_cycle = lambda: machine.cycle_count
+            mp._get_frame = lambda: machine.vdp._frame_count
+    return tracer
