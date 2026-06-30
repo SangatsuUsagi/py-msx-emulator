@@ -103,6 +103,18 @@ class Memory:
             return
         self.ram[addr - 0x8000] = value
 
+    def main_ram_range(self) -> tuple[int, int]:
+        """Conventional main-RAM address window, for stack-sanity checks.
+
+        MSX1 flat RAM sits at the top of the address space, so the window is
+        derived from the RAM size. Mapper-backed (MSX2) RAM can appear in any
+        page, so the whole address space is treated as valid RAM.
+        """
+        if self.ram_mapper is not None:
+            return (0x0000, 0xFFFF)
+        low = max(0, 0x10000 - len(self.ram))
+        return (low, 0xFFFF)
+
     def read_port_a8(self) -> int:
         return self.slot_register & 0xFF
 
