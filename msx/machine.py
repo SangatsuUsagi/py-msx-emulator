@@ -50,6 +50,9 @@ class Machine:
     _sp_range: tuple[int, int] | None = field(default=None, init=False, repr=False)
     _halt_di_seen: bool = field(default=False, init=False, repr=False)
     _sp_out_seen: bool = field(default=False, init=False, repr=False)
+    # Targeted execution control (debugger g/so); one-shot, cleared on hit.
+    _temp_breakpoint: int | None = field(default=None, init=False, repr=False)
+    _stepout_sp: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cpu.read_byte = self.memory.read
@@ -80,9 +83,23 @@ class Machine:
         self._sp_range = rng
         self._sp_out_seen = False
 
+    def set_temp_breakpoint(self, addr: int | None) -> None:
+        """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit."""
+        self._temp_breakpoint = addr
+
+    def set_step_out(self, sp: int) -> None:
+        """Break (once) when SP rises above sp, i.e. the current routine returns."""
+        self._stepout_sp = sp
+
     def _break_conditions_active(self) -> bool:
         """True when any execution-break condition needs the per-instruction loop."""
-        return bool(self._breakpoints) or self._break_halt_di or self._sp_range is not None
+        return (
+            bool(self._breakpoints)
+            or self._break_halt_di
+            or self._sp_range is not None
+            or self._temp_breakpoint is not None
+            or self._stepout_sp is not None
+        )
 
     def _post_step_break(self) -> bool:
         """Evaluate crash-signature break conditions after one CPU step.
@@ -106,6 +123,9 @@ class Machine:
                     return True
             else:
                 self._sp_out_seen = False
+        if self._stepout_sp is not None and cpu.registers.SP > self._stepout_sp:
+            self._stepout_sp = None
+            return True
         return False
 
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
@@ -161,7 +181,10 @@ class Machine:
                 for L in range(lpf):
                     line_end = (L + 1) * cpf // lpf
                     while total < line_end:
-                        if cpu.registers.PC in self._breakpoints:
+                        pc = cpu.registers.PC
+                        if pc in self._breakpoints or pc == self._temp_breakpoint:
+                            if pc == self._temp_breakpoint:
+                                self._temp_breakpoint = None
                             if self._debugger is not None:
                                 self._debugger.enter()
                         if vdp9938:
