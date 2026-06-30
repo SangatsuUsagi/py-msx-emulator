@@ -568,3 +568,65 @@ class TestSlotTree:
         out = capsys.readouterr().out
         assert "[EXPANDED]" not in out
         assert "page-map" not in out
+
+
+# ---------------------------------------------------------------------------
+# sl — cartridge ROM mapper bank column
+# ---------------------------------------------------------------------------
+
+class TestSlotRomMapperBank:
+    @staticmethod
+    def _rom16(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+
+    @staticmethod
+    def _rom8(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(8192)])
+
+    def test_ascii16_window_bank_and_offset(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import Ascii16Mapper
+        m = Ascii16Mapper(self._rom16(8))
+        # power-on: both windows bank 0
+        assert _rom_mapper_bank_info(m, 1) == "bank 0 @00000-03FFF"
+        assert _rom_mapper_bank_info(m, 2) == "bank 0 @00000-03FFF"
+        # switch window 1 (0x8000) to bank 3
+        m.write(0x7000, 3)
+        assert _rom_mapper_bank_info(m, 2) == "bank 3 @0C000-0FFFF"
+
+    def test_ascii8_shows_both_windows_per_page(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import Ascii8Mapper
+        m = Ascii8Mapper(self._rom8(8))
+        m.write(0x6000, 1)  # window 0 (0x4000) -> bank 1
+        m.write(0x6800, 2)  # window 1 (0x6000) -> bank 2
+        assert _rom_mapper_bank_info(m, 1) == "w0=b1@02000  w1=b2@04000"
+
+    def test_flat_mapper_has_no_bank(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import FlatMapper
+        assert _rom_mapper_bank_info(FlatMapper(b"\x00" * 32768), 1) is None
+
+    def test_sl_bank_uses_rom_mapper_for_cartridge(self):
+        from types import SimpleNamespace
+        from msx.debugger.prompt import _sl_bank
+        from msx.mapper import Ascii16Mapper
+        mem = SimpleNamespace(
+            _mapper=Ascii16Mapper(self._rom16(8)), _mapper2=None, ram_mapper=None
+        )
+        assert _sl_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
+
+    def test_sl_bank_ram_mapper_segment_unchanged(self):
+        from msx.debugger.prompt import _sl_bank
+        from msx.ram_mapper import RamMapper
+        from types import SimpleNamespace
+        rm = RamMapper()
+        rm.banks[3] = 2
+        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=rm)
+        assert _sl_bank(mem, 3, 2, 3) == "seg=2"
+
+    def test_sl_bank_dash_for_bios(self):
+        from msx.debugger.prompt import _sl_bank
+        from types import SimpleNamespace
+        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=None)
+        assert _sl_bank(mem, 0, None, 0) == "-"
