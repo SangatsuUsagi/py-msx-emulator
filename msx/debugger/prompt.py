@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ce | cd | ds | "
-    "sl | st | ss | c | q"
+    "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
+    "te | td | ce | cd | ds | sl | st | ss | c | q"
 )
 
 
@@ -82,6 +82,10 @@ class Debugger:
                 self._cmd_break(["r"] + args)
             elif cmd == "bl":
                 self._cmd_break(["l"])
+            elif cmd == "bh":
+                self._cmd_break_halt()
+            elif cmd == "bs":
+                self._cmd_break_sp(args)
             elif cmd == "wa":
                 self._cmd_watch(["a"] + args)
             elif cmd == "wd":
@@ -275,6 +279,37 @@ class Debugger:
             return
 
         print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
+
+    def _cmd_break_halt(self) -> None:
+        m = self._machine
+        enabled = not m._break_halt_di
+        m.set_break_halt_di(enabled)
+        print(f"  Break on HALT+DI {'enabled' if enabled else 'disabled'}")
+
+    def _cmd_break_sp(self, args: list[str]) -> None:
+        m = self._machine
+        if not args:
+            low, high = m.memory.main_ram_range()
+            m.set_sp_range((low, high))
+            print(f"  Break on SP outside {low:04X}h-{high:04X}h (auto: machine RAM)")
+            return
+        if args[0].lower() == "off":
+            m.set_sp_range(None)
+            print("  SP-range break disabled")
+            return
+        if len(args) < 2:
+            print("Usage: bs | bs off | bs LOW HIGH")
+            return
+        try:
+            low = int(args[0], 16) & 0xFFFF
+            high = int(args[1], 16) & 0xFFFF
+        except ValueError:
+            print("bs: invalid address (hex expected)")
+            return
+        if low > high:
+            low, high = high, low
+        m.set_sp_range((low, high))
+        print(f"  Break on SP outside {low:04X}h-{high:04X}h")
 
     def _cmd_watch(self, args: list[str]) -> None:
         if not args:
