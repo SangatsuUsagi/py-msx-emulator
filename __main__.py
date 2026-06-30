@@ -202,10 +202,12 @@ def main() -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
+        # Attach the interactive debugger for all machines so Ctrl-C drops into
+        # the REPL on MSX1 too (the slot/mapper tools are most useful there).
+        from msx.debugger.prompt import Debugger
+        machine._debugger = Debugger(machine)
+
         if spec.generation == "msx2":
-            from msx.debugger.prompt import Debugger
-            dbg = Debugger(machine)
-            machine._debugger = dbg
             if breakpoint_addrs:
                 machine.set_breakpoints(breakpoint_addrs)
                 print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
