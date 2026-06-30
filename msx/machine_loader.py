@@ -12,12 +12,20 @@ from typing import Any
 
 import yaml
 
+import msx.romdb as romdb
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.machine import _make_mapper, _resolve_mapper_type
-from msx.mapper import MajutsushiMapper
+from msx.mapper import (
+    Ascii8Mapper,
+    Ascii16Mapper,
+    FlatMapper,
+    KonamiMapper,
+    KonamiSCCMapper,
+    MajutsushiMapper,
+    Mapper,
+)
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
@@ -30,6 +38,58 @@ from msx.vdp.vdp import VDP
 
 if False:  # TYPE_CHECKING — avoid circular at runtime
     pass
+
+
+# ---------------------------------------------------------------------------
+# Mapper helpers (shared with build_machine)
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_MAPPERS = frozenset(
+    {"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi"}
+)
+
+
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+    if mapper != "auto":
+        return mapper
+    if cartridge is None:
+        return "Mirrored"
+    found = romdb.lookup(cartridge)
+    if found is None:
+        print("warning: cartridge not found in ROM database, using Mirrored mapper",
+              file=sys.stderr)
+        return "Mirrored"
+    if found not in _SUPPORTED_MAPPERS:
+        print(f"warning: unsupported mapper type {found!r} from ROM database, "
+              "using Mirrored mapper", file=sys.stderr)
+        return "Mirrored"
+    return found
+
+
+def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
+    if mapper_type in ("Mirrored", "Normal"):
+        return FlatMapper(cartridge)
+    rom_bytes = cartridge if cartridge is not None else b""
+    if mapper_type == "ASCII8":
+        return Ascii8Mapper(rom_bytes)
+    if mapper_type == "ASCII16":
+        return Ascii16Mapper(rom_bytes)
+    if mapper_type == "Konami":
+        return KonamiMapper(rom_bytes)
+    if mapper_type == "Majutsushi":
+        return MajutsushiMapper(rom_bytes)
+    if mapper_type == "KonamiSCC":
+        if scc is None:
+            raise ValueError("KonamiSCC mapper requires an SCC instance")
+        return KonamiSCCMapper(rom_bytes, scc=scc)
+    raise ValueError(f"unknown mapper type: {mapper_type!r}")
+
+
+# cycles_per_frame, lines_per_frame keyed by video standard
+_TIMING: dict[str, tuple[int, int]] = {
+    "ntsc": (59_659, 262),
+    "pal":  (71_364, 313),
+}
 
 
 class MachineLoadError(Exception):
@@ -82,6 +142,10 @@ class MachineSpec:
 
     # I/O port ranges from device YAML: device_id -> (first_port, last_port)
     device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+    # Timing (derived from video_standard in YAML)
+    cycles_per_frame: int = 59_659   # NTSC default
+    lines_per_frame: int = 262       # NTSC default
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +314,14 @@ def load_machine_spec(
     rom_base: str = str(raw.get("rom_base", "roms/cbios"))
     rom_base_dir = project_root / rom_base
 
+    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
+    if video_standard not in _TIMING:
+        raise MachineLoadError(
+            f"{machine_path}: unsupported video_standard {video_standard!r} "
+            f"(expected 'ntsc' or 'pal')"
+        )
+    cycles_per_frame, lines_per_frame = _TIMING[video_standard]
+
     # --- Slot parsing ---
     slots: dict[str, Any] = raw.get("slots", {})
     primary: dict[Any, Any] = slots.get("primary", {})
@@ -320,6 +392,8 @@ def load_machine_spec(
         has_v9938=has_v9938,
         has_rtc=has_rtc,
         device_io_ports=device_io_ports,
+        cycles_per_frame=cycles_per_frame,
+        lines_per_frame=lines_per_frame,
     )
 
 
@@ -521,6 +595,8 @@ def _build_msx1(
     return Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
+        cycles_per_frame=spec.cycles_per_frame,
+        lines_per_frame=spec.lines_per_frame,
     )
 
 
@@ -590,6 +666,8 @@ def _build_msx2(
     machine = Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
+        cycles_per_frame=spec.cycles_per_frame,
+        lines_per_frame=spec.lines_per_frame,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer

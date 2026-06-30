@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from msx.machine import make_machine
+from tests.factories import make_machine
 from msx.state import CURRENT_FORMAT_VERSION, MachineSnapshot, load_state, save_state
 
 _ROM = b"\x00" * 0x8000
