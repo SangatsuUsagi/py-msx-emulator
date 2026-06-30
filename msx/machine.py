@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper, MajutsushiMapper, Mapper
+from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
-from msx.ppi import PPI
 from msx.psg import PSG
-from msx.ram_mapper import RamMapper
-import msx.romdb as romdb
-from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
-from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP
@@ -41,6 +35,8 @@ class Machine:
     scc: SCC | None = field(default=None)
     dac: MajutsushiMapper | None = field(default=None)
     input: InputState = field(default_factory=InputState)
+    cycles_per_frame: int = CYCLES_PER_FRAME
+    lines_per_frame: int = LINES_PER_FRAME
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
@@ -113,12 +109,14 @@ class Machine:
         vdp_tick = self.vdp.tick if is_v9938 else None
         vdp9938 = self.vdp if is_v9938 else None
         cpu = self.cpu
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
         total = 0
 
         if self._breakpoints:
             try:
-                for L in range(LINES_PER_FRAME):
-                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                for L in range(lpf):
+                    line_end = (L + 1) * cpf // lpf
                     while total < line_end:
                         if cpu.registers.PC in self._breakpoints:
                             if self._debugger is not None:
@@ -140,8 +138,8 @@ class Machine:
                     raise
         elif self._logger is None:
             try:
-                for L in range(LINES_PER_FRAME):
-                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                for L in range(lpf):
+                    line_end = (L + 1) * cpf // lpf
                     while total < line_end:
                         if vdp9938:
                             cpu.int_pending = vdp9938._irq
@@ -160,8 +158,8 @@ class Machine:
                     raise
         else:
             try:
-                for L in range(LINES_PER_FRAME):
-                    line_end = (L + 1) * CYCLES_PER_FRAME // LINES_PER_FRAME
+                for L in range(lpf):
+                    line_end = (L + 1) * cpf // lpf
                     while total < line_end:
                         pc = cpu.registers.PC
                         if vdp9938:
@@ -199,163 +197,3 @@ class Machine:
         return result
 
 
-_SUPPORTED_MAPPERS = frozenset({"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi"})
-
-
-def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
-    """Resolve 'auto' to a concrete mapper type string via the ROM database."""
-    if mapper != "auto":
-        return mapper
-    if cartridge is None:
-        return "Mirrored"
-    found = romdb.lookup(cartridge)
-    if found is None:
-        print("warning: cartridge not found in ROM database, using Mirrored mapper",
-              file=sys.stderr)
-        return "Mirrored"
-    if found not in _SUPPORTED_MAPPERS:
-        print(f"warning: unsupported mapper type {found!r} from ROM database, "
-              "using Mirrored mapper", file=sys.stderr)
-        return "Mirrored"
-    return found
-
-
-def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
-    if mapper_type in ("Mirrored", "Normal"):
-        return FlatMapper(cartridge)
-    rom_bytes = cartridge if cartridge is not None else b""
-    if mapper_type == "ASCII8":
-        return Ascii8Mapper(rom_bytes)
-    if mapper_type == "ASCII16":
-        return Ascii16Mapper(rom_bytes)
-    if mapper_type == "Konami":
-        return KonamiMapper(rom_bytes)
-    if mapper_type == "Majutsushi":
-        return MajutsushiMapper(rom_bytes)
-    if mapper_type == "KonamiSCC":
-        if scc is None:
-            raise ValueError("KonamiSCC mapper requires an SCC instance")
-        return KonamiSCCMapper(rom_bytes, scc=scc)
-    raise ValueError(f"unknown mapper type: {mapper_type!r}")
-
-
-def make_machine(
-    rom: bytes,
-    cartridge: bytes | None = None,
-    logger: DebugLogger | None = None,
-    mapper: str = "auto",
-    cartridge2: bytes | None = None,
-    mapper2: str = "auto",
-    logrom: bytes | None = None,
-    tracer: Tracer | None = None,
-) -> Machine:
-    resolved = _resolve_mapper_type(mapper, cartridge)
-    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
-
-    resolved2 = _resolve_mapper_type(mapper2, cartridge2)
-    if resolved2 == "KonamiSCC":
-        print("warning: KonamiSCC is not supported for slot 2, using Konami mapper",
-              file=sys.stderr)
-        resolved2 = "Konami"
-    mapper2_instance = _make_mapper(resolved2, cartridge2)
-
-    mapper_instance = _make_mapper(resolved, cartridge, scc=scc)
-    dac: MajutsushiMapper | None = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
-    memory = Memory(
-        rom=rom,
-        ram=bytearray(32768),
-        _mapper=mapper_instance,
-        _mapper2=mapper2_instance,
-        slot_register=0x00,
-        _logger=logger,
-        extrom=logrom,
-    )
-    input_state = InputState()
-    psg = PSG(_input=input_state)
-    ppi = PPI(memory=memory, _input=input_state)
-    vdp = VDP(_logger=logger)
-    io = IOBus(_logger=logger)
-    io.register_read(0x98, 0x99, vdp.read_port)
-    io.register_write(0x98, 0x99, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
-    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
-    )
-    io._get_pc = lambda: cpu.registers.PC
-    if dac is not None:
-        dac._get_cycle = lambda: machine.cycle_count
-    return machine
-
-
-def make_machine_msx2(
-    rom: bytes,
-    extrom: bytes,
-    *,
-    logrom: bytes | None = None,
-    cartridge: bytes | None = None,
-    mapper: str = "auto",
-    cartridge2: bytes | None = None,
-    mapper2: str = "auto",
-    logger: DebugLogger | None = None,
-    tracer: Tracer | None = None,
-) -> Machine:
-    resolved = _resolve_mapper_type(mapper, cartridge)
-    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
-
-    resolved2 = _resolve_mapper_type(mapper2, cartridge2)
-    if resolved2 == "KonamiSCC":
-        print("warning: KonamiSCC is not supported for slot 2, using Konami mapper",
-              file=sys.stderr)
-        resolved2 = "Konami"
-    mapper2_instance = _make_mapper(resolved2, cartridge2)
-
-    mapper_instance = _make_mapper(resolved, cartridge, scc=scc)
-    dac: MajutsushiMapper | None = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
-    ram_mapper = RamMapper()
-    memory = Memory(
-        rom=rom,
-        ram=bytearray(32768),
-        _mapper=mapper_instance,
-        _mapper2=mapper2_instance,
-        slot_register=0x00,
-        _logger=logger,
-        extrom=logrom,          # slot 0 / page 2: logo ROM
-        sub0_rom=extrom,        # slot 3 / sub-slot 0: cbios_sub.rom (extension BIOS)
-        sub_slot_enabled=True,
-        ram_mapper=ram_mapper,
-    )
-    input_state = InputState()
-    psg = PSG(_input=input_state)
-    ppi = PPI(memory=memory, _input=input_state)
-    vdp = V9938()
-    rtc = RTC()
-    io = IOBus(_logger=logger)
-    io.register_read(0x98, 0x9C, vdp.read_port)
-    io.register_write(0x98, 0x9C, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
-    io.register_read(0xB4, 0xB5, rtc.read_port)
-    io.register_write(0xB4, 0xB5, rtc.write_port)
-    io.register_read(0xFC, 0xFF, ram_mapper.read_port)
-    io.register_write(0xFC, 0xFF, ram_mapper.write_port)
-    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(
-        cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
-    )
-    io._get_pc = lambda: cpu.registers.PC
-    if dac is not None:
-        dac._get_cycle = lambda: machine.cycle_count
-    if tracer is not None:
-        vdp.tracer = tracer
-        vdp._get_pc = lambda: machine.cpu.instruction_pc
-        vdp._get_cycle = lambda: machine.cycle_count
-        vdp._get_frame = lambda: vdp._frame_count
-    return machine

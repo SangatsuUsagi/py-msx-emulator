@@ -12,12 +12,20 @@ from typing import Any
 
 import yaml
 
+import msx.romdb as romdb
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.machine import _make_mapper, _resolve_mapper_type
-from msx.mapper import MajutsushiMapper
+from msx.mapper import (
+    Ascii8Mapper,
+    Ascii16Mapper,
+    FlatMapper,
+    KonamiMapper,
+    KonamiSCCMapper,
+    MajutsushiMapper,
+    Mapper,
+)
 from msx.memory import Memory
 from msx.ppi import PPI
 from msx.psg import PSG
@@ -30,6 +38,58 @@ from msx.vdp.vdp import VDP
 
 if False:  # TYPE_CHECKING — avoid circular at runtime
     pass
+
+
+# ---------------------------------------------------------------------------
+# Mapper helpers (shared with build_machine)
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_MAPPERS = frozenset(
+    {"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi"}
+)
+
+
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+    if mapper != "auto":
+        return mapper
+    if cartridge is None:
+        return "Mirrored"
+    found = romdb.lookup(cartridge)
+    if found is None:
+        print("warning: cartridge not found in ROM database, using Mirrored mapper",
+              file=sys.stderr)
+        return "Mirrored"
+    if found not in _SUPPORTED_MAPPERS:
+        print(f"warning: unsupported mapper type {found!r} from ROM database, "
+              "using Mirrored mapper", file=sys.stderr)
+        return "Mirrored"
+    return found
+
+
+def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
+    if mapper_type in ("Mirrored", "Normal"):
+        return FlatMapper(cartridge)
+    rom_bytes = cartridge if cartridge is not None else b""
+    if mapper_type == "ASCII8":
+        return Ascii8Mapper(rom_bytes)
+    if mapper_type == "ASCII16":
+        return Ascii16Mapper(rom_bytes)
+    if mapper_type == "Konami":
+        return KonamiMapper(rom_bytes)
+    if mapper_type == "Majutsushi":
+        return MajutsushiMapper(rom_bytes)
+    if mapper_type == "KonamiSCC":
+        if scc is None:
+            raise ValueError("KonamiSCC mapper requires an SCC instance")
+        return KonamiSCCMapper(rom_bytes, scc=scc)
+    raise ValueError(f"unknown mapper type: {mapper_type!r}")
+
+
+# cycles_per_frame, lines_per_frame keyed by video standard
+_TIMING: dict[str, tuple[int, int]] = {
+    "ntsc": (59_659, 262),
+    "pal":  (71_364, 313),
+}
 
 
 class MachineLoadError(Exception):
@@ -79,6 +139,13 @@ class MachineSpec:
     # Device flags
     has_v9938: bool
     has_rtc: bool
+
+    # I/O port ranges from device YAML: device_id -> (first_port, last_port)
+    device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+    # Timing (derived from video_standard in YAML)
+    cycles_per_frame: int = 59_659   # NTSC default
+    lines_per_frame: int = 262       # NTSC default
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +314,14 @@ def load_machine_spec(
     rom_base: str = str(raw.get("rom_base", "roms/cbios"))
     rom_base_dir = project_root / rom_base
 
+    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
+    if video_standard not in _TIMING:
+        raise MachineLoadError(
+            f"{machine_path}: unsupported video_standard {video_standard!r} "
+            f"(expected 'ntsc' or 'pal')"
+        )
+    cycles_per_frame, lines_per_frame = _TIMING[video_standard]
+
     # --- Slot parsing ---
     slots: dict[str, Any] = raw.get("slots", {})
     primary: dict[Any, Any] = slots.get("primary", {})
@@ -276,6 +351,7 @@ def load_machine_spec(
     # --- Builtin device resolution ---
     has_v9938 = False
     has_rtc = False
+    device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
         if not isinstance(entry, dict):
@@ -299,6 +375,9 @@ def load_machine_spec(
             has_v9938 = True
         elif ref_str == "rtc_rp5c01":
             has_rtc = True
+        ports_raw: Any = dev.raw.get("io_ports")
+        if isinstance(ports_raw, list) and len(ports_raw) >= 1:
+            device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return MachineSpec(
         id=machine_id,
@@ -312,7 +391,23 @@ def load_machine_spec(
         ram_size_kb=ram_size_kb,
         has_v9938=has_v9938,
         has_rtc=has_rtc,
+        device_io_ports=device_io_ports,
+        cycles_per_frame=cycles_per_frame,
+        lines_per_frame=lines_per_frame,
     )
+
+
+# ---------------------------------------------------------------------------
+# I/O port range helper
+# ---------------------------------------------------------------------------
+
+def _io_range(
+    spec: MachineSpec,
+    device_id: str,
+    fallback: tuple[int, int],
+) -> tuple[int, int]:
+    """Return (first_port, last_port) for device_id from spec, or fallback."""
+    return spec.device_io_ports.get(device_id, fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -487,16 +582,21 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
-    io.register_read(0x98, 0x99, vdp.read_port)
-    io.register_write(0x98, 0x99, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
+    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", (0x98, 0x99))
+    psg_s, psg_e = _io_range(spec, "psg_ay8910",   (0xA0, 0xA2))
+    ppi_s, ppi_e = _io_range(spec, "ppi8255",       (0xA8, 0xAB))
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     return Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
+        cycles_per_frame=spec.cycles_per_frame,
+        lines_per_frame=spec.lines_per_frame,
     )
 
 
@@ -543,24 +643,31 @@ def _build_msx2(
     rtc: RTC | None = RTC() if spec.has_rtc else None
     ppi = PPI(memory=memory, _input=input_state)
 
-    vdp_end_port = 0x9C if isinstance(vdp, V9938) else 0x99
-    io.register_read(0x98, vdp_end_port, vdp.read_port)
-    io.register_write(0x98, vdp_end_port, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
+    vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
+    vdp_s, vdp_e = _io_range(spec, vdp_dev_id,        (0x98, 0x9C if spec.has_v9938 else 0x99))
+    psg_s, psg_e = _io_range(spec, "psg_ay8910",       (0xA0, 0xA2))
+    ppi_s, ppi_e = _io_range(spec, "ppi8255",           (0xA8, 0xAB))
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
     if rtc is not None:
-        io.register_read(0xB4, 0xB5, rtc.read_port)
-        io.register_write(0xB4, 0xB5, rtc.write_port)
+        rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01",          (0xB4, 0xB5))
+        io.register_read(rtc_s, rtc_e, rtc.read_port)
+        io.register_write(rtc_s, rtc_e, rtc.write_port)
     if ram_mapper is not None:
-        io.register_read(0xFC, 0xFF, ram_mapper.read_port)
-        io.register_write(0xFC, 0xFF, ram_mapper.write_port)
+        ram_s, ram_e = _io_range(spec, "memory_mapper_standard", (0xFC, 0xFF))
+        io.register_read(ram_s, ram_e, ram_mapper.read_port)
+        io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     machine = Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
+        cycles_per_frame=spec.cycles_per_frame,
+        lines_per_frame=spec.lines_per_frame,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer
