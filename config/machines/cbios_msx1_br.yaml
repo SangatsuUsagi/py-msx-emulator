@@ -2,6 +2,7 @@ schema_version: 1
 id: cbios_msx1_br
 name: "Generic MSX1 (C-BIOS, Brazil)"
 generation: msx1
+video_standard: ntsc
 rom_base: roms/cbios
 cpu:
   type: z80a
