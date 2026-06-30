@@ -658,11 +658,47 @@ def _sl_content(mem: object, primary: int, secondary: int | None, page: int | No
     return "empty"
 
 
+def _rom_mapper_bank_info(mapper: object, page: int) -> str | None:
+    """Describe the ROM mapper bank(s) visible at a CPU page (1=0x4000, 2=0x8000).
+
+    Returns a display string with the selected bank index and the resolved ROM
+    byte offset for each mapper window covering the page, or None when the mapper
+    has no switchable banks (e.g. FlatMapper) or the page is outside its windows.
+    """
+    banks = getattr(mapper, "_banks", None)
+    if banks is None:
+        return None
+    if len(banks) == 2:
+        # ASCII16: two 16 KB windows — page 1 -> window 0, page 2 -> window 1.
+        win = page - 1
+        if win not in (0, 1):
+            return None
+        b = banks[win]
+        start = b * 0x4000
+        return f"bank {b} @{start:05X}-{start + 0x3FFF:05X}"
+    if len(banks) == 4:
+        # ASCII8 / Konami: four 8 KB windows — page 1 -> windows 0,1; page 2 -> 2,3.
+        if page == 1:
+            wins = (0, 1)
+        elif page == 2:
+            wins = (2, 3)
+        else:
+            return None
+        parts = [f"w{w}=b{banks[w]}@{banks[w] * 0x2000:05X}" for w in wins]
+        return "  ".join(parts)
+    return None
+
+
 def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
     if primary == 3 and secondary in (2, 3) and page is not None:
         rm = getattr(mem, "ram_mapper", None)
         if rm is not None:
             return f"seg={rm.banks[page]}"
+    if primary in (1, 2) and page is not None:
+        mapper = getattr(mem, "_mapper" if primary == 1 else "_mapper2", None)
+        info = _rom_mapper_bank_info(mapper, page) if mapper is not None else None
+        if info is not None:
+            return info
     return "-"
 
 
