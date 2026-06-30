@@ -480,19 +480,10 @@ class Debugger:
         return result
 
     def _cmd_mapper_trace_enable(self) -> None:
-        from msx.mapper_tracer import MapperTracer
-        targets = self._mapper_targets()
-        if not targets:
+        from msx.mapper_tracer import attach_to_machine
+        if attach_to_machine(self._machine, output=sys.stdout) is None:
             print("ce: no bank-switching ROM mapper present")
             return
-        m = self._machine
-        tracer = MapperTracer(enabled=True, output=sys.stdout)
-        for mp in targets:
-            mp._tracer = tracer  # type: ignore[attr-defined]
-            if mp._get_pc is None:  # type: ignore[attr-defined]
-                mp._get_pc = lambda: m.cpu.instruction_pc  # type: ignore[attr-defined]
-                mp._get_cycle = lambda: m.cycle_count  # type: ignore[attr-defined]
-                mp._get_frame = lambda: m.vdp._frame_count  # type: ignore[attr-defined]
         print("Mapper bank-switch trace enabled (stdout)")
 
     def _cmd_mapper_trace_disable(self) -> None:
