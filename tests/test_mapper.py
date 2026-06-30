@@ -68,9 +68,9 @@ def test_ascii8_initial_banks() -> None:
     rom = _rom_8k_pages(8)
     m = Ascii8Mapper(rom)
     assert m.read(0x4000) == 0  # page 0
-    assert m.read(0x6000) == 1  # page 1
-    assert m.read(0x8000) == 2  # page 2
-    assert m.read(0xA000) == 3  # page 3
+    assert m.read(0x6000) == 0  # all windows reset to bank 0 (hardware/openMSX)
+    assert m.read(0x8000) == 0
+    assert m.read(0xA000) == 0
 
 
 def test_ascii8_switch_window_0() -> None:
@@ -130,7 +130,7 @@ def test_ascii16_initial_banks() -> None:
     rom = _rom_16k_pages(4)
     m = Ascii16Mapper(rom)
     assert m.read(0x4000) == 0  # page 0
-    assert m.read(0x8000) == 1  # page 1
+    assert m.read(0x8000) == 0  # page 0 — both windows reset to bank 0 (hardware/openMSX)
 
 
 def test_ascii16_switch_window_0() -> None:

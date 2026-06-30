@@ -40,10 +40,15 @@ class Ascii8Mapper:
     Control registers written to 0x6000–0x7FFF select which ROM page each
     window shows.  The 2 KB sub-ranges (determined by bits 12:11 of the write
     address) map to windows 0–3 respectively.
+
+    Power-on state: all four windows select bank 0 (matches real ASCII8 hardware
+    and openMSX, which reset all segment registers to 0). Same rationale as
+    Ascii16Mapper: a cartridge INIT may rely on the upper windows mirroring
+    bank 0 before it switches banks itself.
     """
 
     rom: bytes
-    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
@@ -74,10 +79,15 @@ class Ascii16Mapper:
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers at 0x6000–0x6FFF (window 0) and 0x7000–0x7FFF (window 1).
+
+    Power-on state: both windows select bank 0 (matches real ASCII16 hardware
+    and openMSX, which reset all segment registers to 0). Some games rely on the
+    0x8000 window mirroring bank 0 at startup — e.g. their cartridge INIT does
+    `JP 8031h` into bank-0 code visible through the second window.
     """
 
     rom: bytes
-    _banks: list[int] = field(default_factory=lambda: [0, 1], repr=False)
+    _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
