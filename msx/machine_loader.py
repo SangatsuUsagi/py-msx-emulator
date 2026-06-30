@@ -80,6 +80,9 @@ class MachineSpec:
     has_v9938: bool
     has_rtc: bool
 
+    # I/O port ranges from device YAML: device_id -> (first_port, last_port)
+    device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # Pass 1: device registry
@@ -276,6 +279,7 @@ def load_machine_spec(
     # --- Builtin device resolution ---
     has_v9938 = False
     has_rtc = False
+    device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
         if not isinstance(entry, dict):
@@ -299,6 +303,9 @@ def load_machine_spec(
             has_v9938 = True
         elif ref_str == "rtc_rp5c01":
             has_rtc = True
+        ports_raw: Any = dev.raw.get("io_ports")
+        if isinstance(ports_raw, list) and len(ports_raw) >= 1:
+            device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return MachineSpec(
         id=machine_id,
@@ -312,7 +319,21 @@ def load_machine_spec(
         ram_size_kb=ram_size_kb,
         has_v9938=has_v9938,
         has_rtc=has_rtc,
+        device_io_ports=device_io_ports,
     )
+
+
+# ---------------------------------------------------------------------------
+# I/O port range helper
+# ---------------------------------------------------------------------------
+
+def _io_range(
+    spec: MachineSpec,
+    device_id: str,
+    fallback: tuple[int, int],
+) -> tuple[int, int]:
+    """Return (first_port, last_port) for device_id from spec, or fallback."""
+    return spec.device_io_ports.get(device_id, fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -487,12 +508,15 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
-    io.register_read(0x98, 0x99, vdp.read_port)
-    io.register_write(0x98, 0x99, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
+    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", (0x98, 0x99))
+    psg_s, psg_e = _io_range(spec, "psg_ay8910",   (0xA0, 0xA2))
+    ppi_s, ppi_e = _io_range(spec, "ppi8255",       (0xA8, 0xAB))
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     return Machine(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
@@ -543,19 +567,24 @@ def _build_msx2(
     rtc: RTC | None = RTC() if spec.has_rtc else None
     ppi = PPI(memory=memory, _input=input_state)
 
-    vdp_end_port = 0x9C if isinstance(vdp, V9938) else 0x99
-    io.register_read(0x98, vdp_end_port, vdp.read_port)
-    io.register_write(0x98, vdp_end_port, vdp.write_port)
-    io.register_read(0xA0, 0xA2, psg.read_port)
-    io.register_write(0xA0, 0xA2, psg.write_port)
-    io.register_read(0xA8, 0xAB, ppi.read_port)
-    io.register_write(0xA8, 0xAB, ppi.write_port)
+    vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
+    vdp_s, vdp_e = _io_range(spec, vdp_dev_id,        (0x98, 0x9C if spec.has_v9938 else 0x99))
+    psg_s, psg_e = _io_range(spec, "psg_ay8910",       (0xA0, 0xA2))
+    ppi_s, ppi_e = _io_range(spec, "ppi8255",           (0xA8, 0xAB))
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
     if rtc is not None:
-        io.register_read(0xB4, 0xB5, rtc.read_port)
-        io.register_write(0xB4, 0xB5, rtc.write_port)
+        rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01",          (0xB4, 0xB5))
+        io.register_read(rtc_s, rtc_e, rtc.read_port)
+        io.register_write(rtc_s, rtc_e, rtc.write_port)
     if ram_mapper is not None:
-        io.register_read(0xFC, 0xFF, ram_mapper.read_port)
-        io.register_write(0xFC, 0xFF, ram_mapper.write_port)
+        ram_s, ram_e = _io_range(spec, "memory_mapper_standard", (0xFC, 0xFF))
+        io.register_read(ram_s, ram_e, ram_mapper.read_port)
+        io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
     machine = Machine(
