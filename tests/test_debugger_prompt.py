@@ -727,3 +727,35 @@ class TestBreakSp:
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["ffff", "c000"])
         m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+
+
+# ---------------------------------------------------------------------------
+# g / so — targeted execution control
+# ---------------------------------------------------------------------------
+
+class TestGoto:
+    def test_g_sets_temp_breakpoint_and_resumes(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto(["8031"]) is True
+        m.set_temp_breakpoint.assert_called_once_with(0x8031)
+        assert "8031h" in capsys.readouterr().out
+
+    def test_g_no_args_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto([]) is False
+        m.set_temp_breakpoint.assert_not_called()
+        assert "Usage" in capsys.readouterr().out
+
+    def test_g_invalid_addr_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto(["zz"]) is False
+        m.set_temp_breakpoint.assert_not_called()
+
+
+class TestStepOut:
+    def test_so_records_current_sp(self, capsys):
+        m = _make_machine()
+        m.cpu.registers.SP = 0xF2EC
+        Debugger(m)._cmd_step_out()
+        m.set_step_out.assert_called_once_with(0xF2EC)
+        assert "F2EC" in capsys.readouterr().out

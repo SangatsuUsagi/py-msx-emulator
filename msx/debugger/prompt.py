@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
-    "te | td | ce | cd | ds | sl | st | ss | c | q"
+    "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | c | q"
 )
 
 
@@ -64,6 +64,13 @@ class Debugger:
                 return
             if cmd == "q":
                 sys.exit(0)
+            if cmd == "g":
+                if self._cmd_goto(args):
+                    return
+                continue
+            if cmd == "so":
+                self._cmd_step_out()
+                return
             elif cmd == "rc":
                 self._cmd_reg_cpu()
             elif cmd == "rv":
@@ -279,6 +286,26 @@ class Debugger:
             return
 
         print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
+
+    def _cmd_goto(self, args: list[str]) -> bool:
+        """Set a one-shot run-to breakpoint. Returns True if emulation should resume."""
+        if not args:
+            print("Usage: g ADDR")
+            return False
+        try:
+            addr = int(args[0], 16) & 0xFFFF
+        except ValueError:
+            print("g: invalid address (hex expected)")
+            return False
+        self._machine.set_temp_breakpoint(addr)
+        print(f"  Running to {addr:04X}h ...")
+        return True
+
+    def _cmd_step_out(self) -> None:
+        """Run until the current routine returns (SP rises above its current value)."""
+        sp = self._machine.cpu.registers.SP
+        self._machine.set_step_out(sp)
+        print(f"  Stepping out (SP={sp:04X}h) ...")
 
     def _cmd_break_halt(self) -> None:
         m = self._machine
