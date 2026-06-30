@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from msx.machine import make_machine, make_machine_msx2
+from tests.factories import make_machine, make_machine_msx2
 
 _NOP_ROM = bytes(32768)
 _EXTROM = bytes(32768)

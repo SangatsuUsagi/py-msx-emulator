@@ -1,5 +1,6 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
-from msx.machine import CYCLES_PER_FRAME, LINES_PER_FRAME, make_machine_msx2
+from msx.machine import CYCLES_PER_FRAME, LINES_PER_FRAME
+from tests.factories import make_machine_msx2
 from msx.vdp.v9938 import V9938
 from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper

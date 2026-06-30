@@ -2,7 +2,8 @@ import pytest
 from msx.cpu.z80 import Z80
 from msx.input import InputState
 from msx.io import IOBus
-from msx.machine import CYCLES_PER_FRAME, Machine, make_machine
+from msx.machine import CYCLES_PER_FRAME, Machine
+from tests.factories import make_machine
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
 from msx.memory import Memory
 from msx.vdp.vdp import VDP

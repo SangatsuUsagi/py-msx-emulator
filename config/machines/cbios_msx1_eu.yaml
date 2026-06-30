@@ -2,6 +2,7 @@ schema_version: 1
 id: cbios_msx1_eu
 name: "Generic MSX1 (C-BIOS, Europe)"
 generation: msx1
+video_standard: pal
 rom_base: roms/cbios
 cpu:
   type: z80a

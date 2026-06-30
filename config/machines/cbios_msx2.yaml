@@ -2,6 +2,7 @@ schema_version: 1
 id: cbios_msx2
 name: "Generic MSX2 (C-BIOS, International)"
 generation: msx2
+video_standard: ntsc
 rom_base: roms/cbios
 cpu:
   type: z80a

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from msx.debug.logger import DebugLogger
-from msx.machine import make_machine
+from tests.factories import make_machine
 
 
 ROM = bytes(32768)
