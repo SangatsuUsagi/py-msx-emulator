@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | sl | st | ss | c | q"
+    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ce | cd | ds | "
+    "sl | st | ss | c | q"
 )
 
 
@@ -95,6 +96,10 @@ class Debugger:
                 self._cmd_trace_enable()
             elif cmd == "td":
                 self._cmd_trace_disable()
+            elif cmd == "ce":
+                self._cmd_mapper_trace_enable()
+            elif cmd == "cd":
+                self._cmd_mapper_trace_disable()
             elif cmd == "ds":
                 self._cmd_disable_sprites()
             elif cmd == "sl":
@@ -401,6 +406,41 @@ class Debugger:
             return
         vdp.tracer.enabled = False
         print("VDP trace disabled")
+
+    def _mapper_targets(self) -> list[object]:
+        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
+        mem = self._machine.memory
+        result = []
+        for attr in ("_mapper", "_mapper2"):
+            mp = getattr(mem, attr, None)
+            if mp is not None and hasattr(mp, "_tracer"):
+                result.append(mp)
+        return result
+
+    def _cmd_mapper_trace_enable(self) -> None:
+        from msx.mapper_tracer import MapperTracer
+        targets = self._mapper_targets()
+        if not targets:
+            print("ce: no bank-switching ROM mapper present")
+            return
+        m = self._machine
+        tracer = MapperTracer(enabled=True, output=sys.stdout)
+        for mp in targets:
+            mp._tracer = tracer  # type: ignore[attr-defined]
+            if mp._get_pc is None:  # type: ignore[attr-defined]
+                mp._get_pc = lambda: m.cpu.instruction_pc  # type: ignore[attr-defined]
+                mp._get_cycle = lambda: m.cycle_count  # type: ignore[attr-defined]
+                mp._get_frame = lambda: m.vdp._frame_count  # type: ignore[attr-defined]
+        print("Mapper bank-switch trace enabled (stdout)")
+
+    def _cmd_mapper_trace_disable(self) -> None:
+        disabled = False
+        for mp in self._mapper_targets():
+            tracer = mp._tracer  # type: ignore[attr-defined]
+            if tracer is not None and tracer.enabled:
+                tracer.enabled = False
+                disabled = True
+        print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
 
     def _cmd_screenshot(self) -> None:
         # Render the *current* VDP state and save it as a PNG, so a screenshot can

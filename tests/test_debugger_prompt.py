@@ -630,3 +630,54 @@ class TestSlotRomMapperBank:
         from types import SimpleNamespace
         mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=None)
         assert _sl_bank(mem, 0, None, 0) == "-"
+
+
+# ---------------------------------------------------------------------------
+# ce / cd — mapper bank-switch trace
+# ---------------------------------------------------------------------------
+
+def _make_mapper_machine(mapper):
+    from msx.mapper import FlatMapper
+    m = _make_machine()
+    m.memory = MagicMock()
+    m.memory._mapper = mapper
+    m.memory._mapper2 = FlatMapper(None)
+    m.cpu.instruction_pc = 0x402E
+    m.cycle_count = 45231
+    m.vdp._frame_count = 3
+    return m
+
+
+class TestMapperTrace:
+    @staticmethod
+    def _rom16(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+
+    def test_ce_enables_and_logs_switch(self, capsys):
+        from msx.mapper import Ascii16Mapper
+        mapper = Ascii16Mapper(self._rom16(8))
+        m = _make_mapper_machine(mapper)
+        Debugger(m)._cmd_mapper_trace_enable()
+        capsys.readouterr()  # discard the "enabled" line
+        mapper.write(0x7000, 1)  # window 1: 0 -> 1
+        out = capsys.readouterr().out
+        assert "MAP_BANK win=1 00h->01h addr=7000h" in out
+        assert "PC=402E" in out
+
+    def test_cd_disables(self, capsys):
+        from msx.mapper import Ascii16Mapper
+        mapper = Ascii16Mapper(self._rom16(8))
+        m = _make_mapper_machine(mapper)
+        dbg = Debugger(m)
+        dbg._cmd_mapper_trace_enable()
+        dbg._cmd_mapper_trace_disable()
+        capsys.readouterr()
+        mapper.write(0x7000, 2)
+        assert capsys.readouterr().out == ""
+
+    def test_ce_no_mapper_message(self, capsys):
+        from msx.mapper import FlatMapper
+        m = _make_mapper_machine(FlatMapper(b"\x00" * 32768))
+        Debugger(m)._cmd_mapper_trace_enable()
+        out = capsys.readouterr().out
+        assert "no bank-switching ROM mapper" in out
