@@ -5,6 +5,7 @@ Raises MachineLoadError with specific file and field names on any validation fai
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,12 +20,17 @@ from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import (
     Ascii8Mapper,
+    Ascii8Sram2Mapper,
+    Ascii8Sram8Mapper,
     Ascii16Mapper,
+    Ascii16Sram2Mapper,
+    Ascii16Sram8Mapper,
     FlatMapper,
     KonamiMapper,
     KonamiSCCMapper,
     MajutsushiMapper,
     Mapper,
+    RTypeMapper,
 )
 from msx.memory import Memory
 from msx.ppi import PPI
@@ -44,9 +50,18 @@ if False:  # TYPE_CHECKING — avoid circular at runtime
 # Mapper helpers (shared with build_machine)
 # ---------------------------------------------------------------------------
 
-_SUPPORTED_MAPPERS = frozenset(
-    {"Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi"}
-)
+_SUPPORTED_MAPPERS = frozenset({
+    "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
+    "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
+    "R-Type",
+})
+
+_SRAM_SIZES: dict[str, int] = {
+    "ASCII8SRAM2": 2048,
+    "ASCII8SRAM8": 8192,
+    "ASCII16SRAM2": 2048,
+    "ASCII16SRAM8": 8192,
+}
 
 
 def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
@@ -66,18 +81,33 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
     return found
 
 
-def _make_mapper(mapper_type: str, cartridge: bytes | None, scc: SCC | None = None) -> Mapper:
+def _make_mapper(
+    mapper_type: str,
+    cartridge: bytes | None,
+    scc: SCC | None = None,
+    sram: bytearray | None = None,
+) -> Mapper:
     if mapper_type in ("Mirrored", "Normal"):
         return FlatMapper(cartridge)
     rom_bytes = cartridge if cartridge is not None else b""
     if mapper_type == "ASCII8":
         return Ascii8Mapper(rom_bytes)
+    if mapper_type == "ASCII8SRAM2":
+        return Ascii8Sram2Mapper(rom_bytes, sram=sram)
+    if mapper_type == "ASCII8SRAM8":
+        return Ascii8Sram8Mapper(rom_bytes, sram=sram)
     if mapper_type == "ASCII16":
         return Ascii16Mapper(rom_bytes)
+    if mapper_type == "ASCII16SRAM2":
+        return Ascii16Sram2Mapper(rom_bytes, sram=sram)
+    if mapper_type == "ASCII16SRAM8":
+        return Ascii16Sram8Mapper(rom_bytes, sram=sram)
     if mapper_type == "Konami":
         return KonamiMapper(rom_bytes)
     if mapper_type == "Majutsushi":
         return MajutsushiMapper(rom_bytes)
+    if mapper_type == "R-Type":
+        return RTypeMapper(rom_bytes)
     if mapper_type == "KonamiSCC":
         if scc is None:
             raise ValueError("KonamiSCC mapper requires an SCC instance")
@@ -506,7 +536,25 @@ def build_machine(
         )
         resolved2 = "Konami"
 
-    mapper_instance = _make_mapper(resolved, cartridge, scc=scc)
+    # SRAM: load existing save file if mapper supports it
+    sram_save_path: Path | None = None
+    sram_data: bytearray | None = None
+    if resolved in _SRAM_SIZES and cartridge is not None:
+        sha1 = hashlib.sha1(cartridge).hexdigest()
+        sram_save_path = Path("saves") / f"{sha1}.sram"
+        expected_size = _SRAM_SIZES[resolved]
+        if sram_save_path.exists():
+            raw = sram_save_path.read_bytes()
+            if len(raw) == expected_size:
+                sram_data = bytearray(raw)
+            else:
+                print(
+                    f"warning: SRAM file {sram_save_path} has wrong size "
+                    f"({len(raw)} != {expected_size}), starting fresh",
+                    file=sys.stderr,
+                )
+
+    mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
     mapper2_instance = _make_mapper(resolved2, cartridge2)
     dac: MajutsushiMapper | None = (
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
@@ -552,6 +600,7 @@ def build_machine(
     io._get_pc = lambda: machine.cpu.registers.PC
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
+    machine.sram_save_path = sram_save_path
     return machine
 
 
