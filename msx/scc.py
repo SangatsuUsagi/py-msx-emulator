@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import struct
 from dataclasses import dataclass, field
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
@@ -49,6 +48,9 @@ class SCC:
             return self._vol[addr - 0x8A] & 0x0F
         if addr == 0x8F:
             return self._enable & 0x1F
+        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) read
+        # back as 0xFF. Reading the deformation range is a harmless no-op here;
+        # rotation / frequency-mode emulation is intentionally omitted.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -73,7 +75,8 @@ class SCC:
         if addr == 0x8F:
             self._enable = value & 0x1F
             return
-        # Undefined offset — no-op.
+        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) are a
+        # safe no-op: they do not alter waveform/frequency/volume/enable state.
 
     # -------------------------------------------------------- sample generation
 
@@ -107,6 +110,8 @@ class SCC:
             elif sample < -32768:
                 sample = -32768
 
-            struct.pack_into("<h", out, i * 2, sample)
+            # Signed 16-bit little-endian; masking yields two's-complement bytes.
+            out[i * 2] = sample & 0xFF
+            out[i * 2 + 1] = (sample >> 8) & 0xFF
 
         return out

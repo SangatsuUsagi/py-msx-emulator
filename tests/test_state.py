@@ -1,14 +1,13 @@
 """Tests for msx/state.py save/load state functionality."""
 from __future__ import annotations
 
-import pickle
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from tests.factories import make_machine
-from msx.state import CURRENT_FORMAT_VERSION, MachineSnapshot, load_state, save_state
+from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
 
 _ROM = b"\x00" * 0x8000
 
@@ -109,16 +108,17 @@ def test_load_state_missing_file_raises(machine, saves_dir):
 
 
 def test_load_state_wrong_version_raises(machine, saves_dir):
+    import json
     rgb = bytearray(256 * 192 * 3)
     state_path = save_state(machine, rgb, "test")
 
-    with open(state_path, "rb") as f:
-        snap: MachineSnapshot = pickle.load(f)
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    snap.format_version = CURRENT_FORMAT_VERSION + 99
+    data["format_version"] = CURRENT_FORMAT_VERSION + 99
     bad_path = saves_dir / "bad.state"
-    with open(bad_path, "wb") as f:
-        pickle.dump(snap, f)
+    with open(bad_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
     latest = saves_dir / "latest.state"
     if latest.exists() or latest.is_symlink():
         latest.unlink()
@@ -127,3 +127,13 @@ def test_load_state_wrong_version_raises(machine, saves_dir):
 
     with pytest.raises(ValueError, match="version"):
         load_state(machine)
+
+
+def test_legacy_pickle_state_rejected(machine, saves_dir):
+    import pickle as _pickle
+    saves_dir.mkdir(parents=True, exist_ok=True)
+    bad = saves_dir / "legacy.state"
+    with open(bad, "wb") as f:
+        _pickle.dump({"format_version": 4}, f)
+    with pytest.raises(ValueError, match="legacy pickle"):
+        load_state(machine, bad)

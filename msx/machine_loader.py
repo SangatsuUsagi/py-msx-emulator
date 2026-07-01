@@ -42,9 +42,6 @@ from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
-if False:  # TYPE_CHECKING — avoid circular at runtime
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Mapper helpers (shared with build_machine)
@@ -169,6 +166,9 @@ class MachineSpec:
     # Device flags
     has_v9938: bool
     has_rtc: bool
+
+    # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
+    keyboard_type: str = "int"
 
     # I/O port ranges from device YAML: device_id -> (first_port, last_port)
     device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
@@ -381,6 +381,7 @@ def load_machine_spec(
     # --- Builtin device resolution ---
     has_v9938 = False
     has_rtc = False
+    keyboard_type = "int"
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
@@ -405,6 +406,18 @@ def load_machine_spec(
             has_v9938 = True
         elif ref_str == "rtc_rp5c01":
             has_rtc = True
+        elif ref_str == "ppi8255":
+            # Keyboard layout: device-YAML default, optionally overridden per machine.
+            kt = dev.raw.get("keyboard_type", "int")
+            overrides = entry.get("overrides")
+            if isinstance(overrides, dict) and "keyboard_type" in overrides:
+                kt = overrides["keyboard_type"]
+            kt = str(kt).lower()
+            if kt not in ("int", "jp"):
+                raise MachineLoadError(
+                    f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
+                )
+            keyboard_type = kt
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
@@ -421,6 +434,7 @@ def load_machine_spec(
         ram_size_kb=ram_size_kb,
         has_v9938=has_v9938,
         has_rtc=has_rtc,
+        keyboard_type=keyboard_type,
         device_io_ports=device_io_ports,
         cycles_per_frame=cycles_per_frame,
         lines_per_frame=lines_per_frame,
@@ -560,7 +574,7 @@ def build_machine(
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     )
 
-    input_state = InputState()
+    input_state = InputState(keyboard_type=spec.keyboard_type)
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
 

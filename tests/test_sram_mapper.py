@@ -12,12 +12,12 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
 )
 
-# 16 KB = 2 pages of 8 KB.  SRAM selected when bank >= 2.
+# 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
 _ROM_16K = bytes(range(256)) * 64
-# 32 KB = 2 pages of 16 KB. SRAM selected for window 1 when bank >= 2.
+# 32 KB = 2 pages of 16 KB. ASCII16 SRAM selected for window 1 when bank == 0x10.
 _ROM_32K = bytes(range(256)) * 128
 
-# SRAM bank value for 2-page ROMs (first bank value >= num_pages)
+# ASCII8: a bank value with the enable bit (= num_pages = 2) set selects SRAM.
 _SRAM_BANK = 2
 
 
@@ -35,34 +35,41 @@ class TestAscii8Sram2:
         m.write(0x6000, 0x01)  # window 0 = ROM page 1
         assert m.read(0x4000) == _ROM_16K[8192]
 
-    def test_sram_read_when_bank_ge_num_pages(self):
+    def test_sram_read_when_enable_bit_set(self):
+        # Window 2 (0x8000) is in _SRAM_PAGES; enable bit (= num_pages = 2) set.
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         m.sram[0x100] = 0xAB
-        m.write(0x6000, _SRAM_BANK)  # bank 2 >= 2 pages → SRAM
-        assert m.read(0x4000 + 0x100) == 0xAB
+        m.write(0x7000, _SRAM_BANK)  # window 2 bank reg, enable bit set → SRAM
+        assert m.read(0x8000 + 0x100) == 0xAB
 
     def test_sram_write(self):
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
-        m.write(0x6000, _SRAM_BANK)
-        m.write(0x4000 + 0x200, 0x55)
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        m.write(0x8000 + 0x200, 0x55)
         assert m.sram[0x200] == 0x55
 
     def test_sram_2kb_wrap(self):
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
-        m.write(0x6000, _SRAM_BANK)
-        m.write(0x4800, 0x77)  # offset 0x800 & 0x7FF = 0x000
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        m.write(0x8800, 0x77)  # offset 0x800 & 0x7FF = 0x000
         assert m.sram[0x000] == 0x77
 
-    def test_window1_read_sram(self):
+    def test_windows_0_and_1_never_map_sram(self):
+        # _SRAM_PAGES (0x30) only allows windows 2 (0x8000) and 3 (0xA000).
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         m.sram[0x00] = 0xCC
-        m.write(0x6800, _SRAM_BANK)  # window 1 = SRAM
-        assert m.read(0x6000) == 0xCC
+        m.write(0x6000, _SRAM_BANK)  # window 0 bank reg, enable bit set
+        m.write(0x6800, _SRAM_BANK)  # window 1 bank reg, enable bit set
+        # Window 0 body reads ROM (out-of-range page → 0xFF), not SRAM.
+        assert m.read(0x4000) != 0xCC
+        # Window 0 body write does not reach SRAM.
+        m.write(0x4100, 0xEE)
+        assert m.sram[0x100] == 0x00
 
-    def test_window1_write_goes_to_bank_reg_not_sram(self):
-        # Writes to 0x6000-0x7FFF always update bank registers
+    def test_bank_reg_write_never_writes_sram(self):
+        # Writes to 0x6000-0x7FFF always update bank registers, never SRAM.
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
-        m.write(0x6800, _SRAM_BANK)  # window 1 = SRAM
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
         original_sram_0 = m.sram[0]
         m.write(0x6000, 0x05)  # bank reg write for window 0 — not a SRAM write
         assert m.sram[0] == original_sram_0
@@ -80,15 +87,15 @@ class TestAscii8Sram2:
         m.write(0xA000 + 0x10, 0x99)
         assert m.sram[0x10] == 0x99
 
-    def test_large_rom_sram_selected_only_above_page_count(self):
-        # 256 KB = 32 pages of 8 KB; bank 31 is ROM, bank 32 is SRAM
+    def test_large_rom_sram_selected_by_enable_bit(self):
+        # 256 KB = 32 pages of 8 KB; enable bit = 32 (0x20). Window 2 (0x8000).
         rom_256k = bytes(32 * 8192)
         m = Ascii8Sram2Mapper(rom=rom_256k)
         m.sram[0] = 0xBB
-        m.write(0x6000, 31)   # last valid ROM page
-        assert m.read(0x4000) == 0x00   # ROM byte (zeroed ROM)
-        m.write(0x6000, 32)   # first SRAM-range bank
-        assert m.read(0x4000) == 0xBB  # SRAM
+        m.write(0x7000, 31)   # 31 & 0x20 == 0 → ROM page 31
+        assert m.read(0x8000) == 0x00   # ROM byte (zeroed ROM)
+        m.write(0x7000, 32)   # 32 & 0x20 == 0x20 → SRAM
+        assert m.read(0x8000) == 0xBB  # SRAM
 
     def test_mapper_trace_called_on_bank_write(self):
         # Verify _trace_bank path: after write, _banks is updated (no crash)
@@ -108,26 +115,26 @@ class TestAscii8Sram8:
 
     def test_sram_write_high_offset(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
-        m.write(0x6000, _SRAM_BANK)  # window 0 = SRAM (0x4000-0x5FFF)
-        m.write(0x5FFF, 0xCC)        # offset 0x1FFF
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM (0x8000-0x9FFF)
+        m.write(0x9FFF, 0xCC)        # offset 0x1FFF
         assert m.sram[0x1FFF] == 0xCC
 
     def test_sram_write_low_offset(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
-        m.write(0x6000, _SRAM_BANK)
-        m.write(0x4000, 0xDD)
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        m.write(0x8000, 0xDD)
         assert m.sram[0x0000] == 0xDD
 
     def test_sram_shared_across_windows(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
-        m.write(0x6000, _SRAM_BANK)  # window 0 = SRAM
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
         m.sram[0] = 0xAB
-        m.write(0x6800, _SRAM_BANK)  # window 1 = SRAM
-        assert m.read(0x6000) == 0xAB  # reads same physical SRAM
+        m.write(0x7800, _SRAM_BANK)  # window 3 = SRAM
+        assert m.read(0xA000) == 0xAB  # reads same physical SRAM
 
-    def test_rom_page_below_num_pages_is_not_sram(self):
+    def test_rom_page_below_enable_bit_is_not_sram(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
-        m.write(0x6000, 1)   # page 1 < 2 (num_pages) → ROM
+        m.write(0x6000, 1)   # 1 & 2 == 0 → ROM page 1
         assert m.read(0x4000) == _ROM_16K[8192]
 
 
@@ -143,20 +150,25 @@ class TestAscii16Sram2:
     def test_window1_sram_read(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.sram[0x100] = 0x42
-        m.write(0x7000, _SRAM_BANK)  # bank 2 >= 2 pages → SRAM
+        m.write(0x7000, 0x10)  # bank == 0x10 → SRAM
         assert m.read(0x8100) == 0x42
 
     def test_window1_sram_write(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
-        m.write(0x7000, _SRAM_BANK)
+        m.write(0x7000, 0x10)
         m.write(0x8200, 0x99)
         assert m.sram[0x200] == 0x99
 
     def test_sram_2kb_wrap(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
-        m.write(0x7000, _SRAM_BANK)
+        m.write(0x7000, 0x10)
         m.write(0x8800, 0x11)  # offset 0x800 & 0x7FF = 0x000
         assert m.sram[0x000] == 0x11
+
+    def test_window1_non_0x10_value_reads_rom(self):
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x01)  # not 0x10 → ROM page 1
+        assert m.read(0x8000) == _ROM_32K[16384]
 
     def test_window0_never_sram(self):
         # Window 0 cannot be SRAM regardless of bank value
@@ -170,14 +182,14 @@ class TestAscii16Sram2:
         m.write(0x7000, 0x01)  # page 1 < 2 → ROM
         assert m.read(0x8000) == _ROM_32K[16384]
 
-    def test_large_rom_sram_selected_only_above_page_count(self):
+    def test_sram_selected_only_on_exact_0x10(self):
         rom_256k = bytes(16 * 16384)  # 256KB = 16 pages of 16KB
         m = Ascii16Sram2Mapper(rom=rom_256k)
         m.sram[0] = 0xAB
-        m.write(0x7000, 15)   # last ROM page
-        assert m.read(0x8000) == 0x00   # ROM (zeroed)
-        m.write(0x7000, 16)   # first SRAM bank
-        assert m.read(0x8000) == 0xAB  # SRAM
+        m.write(0x7000, 0x0F)   # not 0x10 → ROM page 15 (zeroed)
+        assert m.read(0x8000) == 0x00
+        m.write(0x7000, 0x10)   # exactly 0x10 → SRAM
+        assert m.read(0x8000) == 0xAB
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +203,7 @@ class TestAscii16Sram8:
 
     def test_sram_write_high_offset(self):
         m = Ascii16Sram8Mapper(rom=_ROM_32K)
-        m.write(0x7000, _SRAM_BANK)
+        m.write(0x7000, 0x10)
         m.write(0x8000 + 0x1FFF, 0xBB)
         assert m.sram[0x1FFF] == 0xBB
 
@@ -220,8 +232,8 @@ class TestSramConstructorParam:
     def test_preloaded_bytes_used(self):
         sram_data = bytearray(b'\xAB' * 2048)
         m = Ascii8Sram2Mapper(rom=_ROM_16K, sram=sram_data)
-        m.write(0x6000, _SRAM_BANK)
-        assert m.read(0x4000) == 0xAB
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        assert m.read(0x8000) == 0xAB
 
     def test_wrong_size_gives_zeroed_sram(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K, sram=bytearray(100))
@@ -302,3 +314,41 @@ class TestMachineLoaderSramIntegration:
         monkeypatch.chdir(tmp_path)
         machine = make_machine(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
         assert machine.memory._mapper.sram == bytearray(2048)
+
+
+# ---------------------------------------------------------------------------
+# snapshot() / restore() round-trip
+# ---------------------------------------------------------------------------
+
+class TestSnapshotRestore:
+    def test_ascii8sram_roundtrips_banks_and_sram(self):
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)   # window 2 = SRAM
+        m.write(0x8100, 0x5A)         # SRAM byte
+        m.write(0x6000, 0x01)         # window 0 bank
+        snap = m.snapshot()
+
+        m2 = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m2.restore(snap)
+        assert m2._banks == m._banks
+        assert m2.read(0x8100) == 0x5A
+
+    def test_ascii16sram_roundtrips(self):
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x10)         # window 1 = SRAM
+        m.write(0x8200, 0x3C)
+        snap = m.snapshot()
+
+        m2 = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m2.restore(snap)
+        assert m2._banks == m._banks
+        assert m2.read(0x8200) == 0x3C
+
+    def test_snapshot_survives_mapper_mutation(self):
+        m = Ascii8Sram8Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)
+        m.write(0x8000, 0x11)
+        snap = m.snapshot()
+        m.write(0x8000, 0x22)         # mutate after snapshot
+        m.restore(snap)
+        assert m.read(0x8000) == 0x11

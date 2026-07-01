@@ -94,6 +94,17 @@ def test_scc_mode_cleared_by_non_0x3f(mapper: KonamiSCCMapper) -> None:
     assert mapper._scc_mode is False
 
 
+def test_scc_mode_enabled_when_low_six_bits_set(mapper: KonamiSCCMapper) -> None:
+    # 0xFF & 0x3F == 0x3F: upper two bits are don't-care.
+    mapper.write(0x9000, 0xFF)
+    assert mapper._scc_mode is True
+
+
+def test_scc_mode_not_enabled_when_low_six_bits_differ(mapper: KonamiSCCMapper) -> None:
+    mapper.write(0x9000, 0x3E)  # 0x3E & 0x3F != 0x3F
+    assert mapper._scc_mode is False
+
+
 def test_scc_mode_not_affected_by_window1_write(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x7000, 0x3F)  # bank-1 register; 0x3F selects a page, not SCC
     assert mapper._scc_mode is False
@@ -136,3 +147,14 @@ def test_scc_enable_register_routed(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x9000, 0x3F)
     mapper.write(0x9800 + 0x8F, 0x1F)
     assert mapper.scc.read(0x8F) == 0x1F
+
+
+def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper) -> None:
+    mapper.write(0x5000, 5)      # window 0 bank
+    mapper.write(0x9000, 0x3F)   # enable SCC mode
+    snap = mapper.snapshot()
+
+    other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
+    other.restore(snap)
+    assert other._banks == mapper._banks
+    assert other._scc_mode is True
