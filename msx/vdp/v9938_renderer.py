@@ -94,8 +94,10 @@ _TEXT6_BYTES: list[list[list[bytes]]] = [
 
 
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
-    """Render one frame; return bytearray of palette indices (length 256×display_height)."""
-    vdp._frame_count += 1
+    """Render one frame; return bytearray of palette indices (length 256×display_height).
+
+    Frame counting is owned by the caller (Machine.run_frame), not the renderer.
+    """
     if skip_render:
         _finalize(vdp)
         return bytearray(0)
@@ -505,7 +507,7 @@ def _render_sprites(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int |
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
     line_count = [0] * _TILE_H
-    ninth_set  = False
+    fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     sprite_painted = bytearray(_W * _TILE_H)
     coincidence = False
     ye = y_end if y_end is not None else _TILE_H
@@ -530,9 +532,9 @@ def _render_sprites(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int |
                 continue
 
             if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
-                if not ninth_set:
+                if not fifth_set:
                     vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
-                    ninth_set = True
+                    fifth_set = True
                 continue
 
             line_count[line] += 1

@@ -49,6 +49,15 @@ def test_run_frame_skip_render_returns_empty_buffer() -> None:
     assert len(buf) == 0
 
 
+def test_run_frame_increments_vdp_frame_count() -> None:
+    # Machine.run_frame owns frame counting (both VDP variants).
+    m = _make_machine()
+    assert m.vdp._frame_count == 0
+    m.run_frame()
+    m.run_frame(skip_render=True)
+    assert m.vdp._frame_count == 2
+
+
 def test_run_frame_skip_render_still_fires_vblank() -> None:
     rom = bytes([0xFB] + [0x00] * 32767)  # EI then NOP — enable interrupts
     m = _make_machine(rom=rom)

@@ -17,24 +17,13 @@ def test_skip_render_returns_empty_bytearray() -> None:
     assert len(render_frame(vdp, skip_render=True)) == 0
 
 
-def test_frame_count_increments_without_skip() -> None:
+def test_render_frame_does_not_own_frame_count() -> None:
+    # Frame counting moved to Machine.run_frame; the renderer no longer touches it.
     vdp = V9938()
     _enable(vdp)
     render_frame(vdp)
-    assert vdp._frame_count == 1
-
-
-def test_frame_count_increments_with_skip() -> None:
-    vdp = V9938()
     render_frame(vdp, skip_render=True)
-    assert vdp._frame_count == 1
-
-
-def test_frame_count_accumulates_across_frames() -> None:
-    vdp = V9938()
-    for _ in range(5):
-        render_frame(vdp, skip_render=True)
-    assert vdp._frame_count == 5
+    assert vdp._frame_count == 0
 
 
 # ---------------------------------------------------------------------------
