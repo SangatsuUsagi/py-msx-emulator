@@ -600,3 +600,27 @@ def test_hmmm_ce_clears_after_full_tick() -> None:
     vdp.tick(128 * 85 * 8)
     assert vdp._status2 & 0x01 == 0
     assert not vdp._cmd_active
+
+
+# ---------------------------------------------------------------------------
+# Command timing: pixel-unit (LMMx) vs byte-unit (HMMx) CE duration
+# ---------------------------------------------------------------------------
+
+def test_lmmv_ce_duration_is_pixel_unit() -> None:
+    # SCREEN 5 (ppb=2): LMMV counts pixels; HMMV counts bytes (ppb× fewer units),
+    # so for the same NX/NY the LMMV CE duration is ppb× longer.
+    lmmv = _make_vdp()
+    _dispatch_cmd(lmmv, cmd_code=0x8, dx=0, dy=0, nx=8, ny=2, clr=0x01)
+    hmmv = _make_vdp()
+    _dispatch_cmd(hmmv, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0x01)
+    assert lmmv._cmd_remaining == 8 * 2 * 8       # nx*ny*_CYCLES_PER_PIXEL
+    assert hmmv._cmd_remaining == (8 // 2) * 2 * 8  # ceil(nx/ppb)*ny*_CYCLES_PER_BYTE
+    assert lmmv._cmd_remaining == 2 * hmmv._cmd_remaining
+
+
+def test_lmmm_ce_clears_after_full_tick() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0x9, sx=0, sy=0, dx=0, dy=4, nx=4, ny=1)
+    assert vdp._status2 & 0x01  # CE set immediately after dispatch
+    vdp.tick(10_000_000)
+    assert vdp._status2 & 0x01 == 0  # CE cleared after ample tick

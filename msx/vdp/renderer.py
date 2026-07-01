@@ -146,8 +146,7 @@ def _render_text(vdp: VDP, buf: bytearray) -> None:
     bg = vdp.regs[7] & 0x0F
     border = bg
 
-    for i in range(_W * _H):
-        buf[i] = border
+    buf[:] = bytes([border]) * (_W * _H)
 
     for row in range(24):
         for col in range(40):
