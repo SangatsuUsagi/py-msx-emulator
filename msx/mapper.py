@@ -260,6 +260,46 @@ class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
 
 
 @dataclass
+class RTypeMapper:
+    """R-Type (Irem) mapper: 16 KB fixed at 0x4000 (last page), 16 KB switchable at 0x8000.
+
+    The last 16 KB of ROM is always mapped at 0x4000–0x7FFF.
+    The switchable window at 0x8000–0xBFFF starts at page 0.
+    Bank register: write anywhere to 0x4000–0x7FFF.
+    Bank mask: value & 0x17 when bit 4 set, else value & 0x1F (openMSX RomRType).
+    """
+
+    rom: bytes
+    _bank: int = field(default=0, repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // _PAGE_16K)
+
+    def read(self, addr: int) -> int:
+        if 0x4000 <= addr < 0x8000:
+            fixed = (self._num_pages() - 1) * _PAGE_16K + (addr - 0x4000)
+            if 0 <= fixed < len(self.rom):
+                return self.rom[fixed]
+            return 0xFF
+        if 0x8000 <= addr < 0xC000:
+            offset = self._bank * _PAGE_16K + (addr - 0x8000)
+            if 0 <= offset < len(self.rom):
+                return self.rom[offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x4000 <= addr < 0x8000:
+            value = value & 0x17 if (value & 0x10) else value & 0x1F
+            old = self._bank
+            self._bank = value
+            _trace_bank(self, 1, old, self._bank, addr)
+
+
+@dataclass
 class KonamiMapper:
     """Konami (Konami4) mapper: four 8 KB windows.
 

@@ -23,7 +23,9 @@ def main() -> None:
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--mapper",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
-                                 "Konami", "KonamiSCC", "Majutsushi"],
+                                 "Konami", "KonamiSCC", "Majutsushi",
+                                 "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
+                                 "R-Type"],
                         default="auto",
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",

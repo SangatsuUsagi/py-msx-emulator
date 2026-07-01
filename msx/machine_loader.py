@@ -30,6 +30,7 @@ from msx.mapper import (
     KonamiSCCMapper,
     MajutsushiMapper,
     Mapper,
+    RTypeMapper,
 )
 from msx.memory import Memory
 from msx.ppi import PPI
@@ -52,6 +53,7 @@ if False:  # TYPE_CHECKING — avoid circular at runtime
 _SUPPORTED_MAPPERS = frozenset({
     "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
     "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
+    "R-Type",
 })
 
 _SRAM_SIZES: dict[str, int] = {
@@ -104,6 +106,8 @@ def _make_mapper(
         return KonamiMapper(rom_bytes)
     if mapper_type == "Majutsushi":
         return MajutsushiMapper(rom_bytes)
+    if mapper_type == "R-Type":
+        return RTypeMapper(rom_bytes)
     if mapper_type == "KonamiSCC":
         if scc is None:
             raise ValueError("KonamiSCC mapper requires an SCC instance")
