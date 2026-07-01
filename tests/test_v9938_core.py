@@ -154,14 +154,16 @@ def test_port_99_17bit_address_via_r14() -> None:
 def test_status_read_returns_current_status() -> None:
     vdp = V9938()
     vdp.status = 0xA5
-    assert vdp.read_port(0x99) == 0xA5
+    # S#0 bits 4-0 report the idle last-sprite number (0x1F); the sprite-limit
+    # (5S) / collision (C) fields are not emulated. High bits pass through.
+    assert vdp.read_port(0x99) == 0xBF  # (0xA5 & 0xE0) | 0x1F
 
 
 def test_status_read_clears_f_flag() -> None:
     vdp = V9938()
     vdp.status = 0x80
     result = vdp.read_port(0x99)
-    assert result == 0x80
+    assert result == 0x9F  # F set + idle last-sprite number (0x1F)
     assert vdp.status & 0x80 == 0
 
 
@@ -170,6 +172,16 @@ def test_status_read_preserves_non_f_bits() -> None:
     vdp.status = 0xFF
     vdp.read_port(0x99)
     assert vdp.status == 0x7F  # only bit 7 cleared
+
+
+def test_status_s0_reports_idle_sprite_number() -> None:
+    # Real V9938 S#0 bits 4-0 hold the 5th/last sprite number; the idle value is
+    # 31 (0x1F). MSX2 C-BIOS cartridge boot reads S#0 and feeds it into its
+    # cartridge-scan loop counter, so reporting 0 there stalls boot (e.g.
+    # King's Valley II hangs on "Init ROM Slot").
+    vdp = V9938()
+    vdp.status = 0x00
+    assert vdp.read_port(0x99) & 0x1F == 0x1F
 
 
 # ---------------------------------------------------------------------------
