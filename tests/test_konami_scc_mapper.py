@@ -94,6 +94,17 @@ def test_scc_mode_cleared_by_non_0x3f(mapper: KonamiSCCMapper) -> None:
     assert mapper._scc_mode is False
 
 
+def test_scc_mode_enabled_when_low_six_bits_set(mapper: KonamiSCCMapper) -> None:
+    # 0xFF & 0x3F == 0x3F: upper two bits are don't-care.
+    mapper.write(0x9000, 0xFF)
+    assert mapper._scc_mode is True
+
+
+def test_scc_mode_not_enabled_when_low_six_bits_differ(mapper: KonamiSCCMapper) -> None:
+    mapper.write(0x9000, 0x3E)  # 0x3E & 0x3F != 0x3F
+    assert mapper._scc_mode is False
+
+
 def test_scc_mode_not_affected_by_window1_write(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x7000, 0x3F)  # bank-1 register; 0x3F selects a page, not SCC
     assert mapper._scc_mode is False
