@@ -221,3 +221,31 @@ class TestUnknownOpcode:
         # ED sub-opcode 0x10 is not in ED table
         mnem, size = disassemble(_mem(0xED, 0x10), 0)
         assert "DB" in mnem
+
+
+class TestDDCBExtensions:
+    # Displacement uses the existing "(IX++NNh)" double-sign convention shared
+    # with all DD/FD templates (pre-existing display quirk, not changed here).
+    def test_sll_ix_with_register_copy(self):
+        # DD CB 02 30 = SLL (IX+2), B (undocumented shift-left-logical)
+        mnem, size = disassemble(_mem(0xDD, 0xCB, 0x02, 0x30), 0)
+        assert mnem == "SLL (IX++02h), B"
+        assert size == 4
+
+    def test_index6_standalone_rlc(self):
+        # DD CB 03 06 = RLC (IX+3) with no register-copy suffix
+        mnem, size = disassemble(_mem(0xDD, 0xCB, 0x03, 0x06), 0)
+        assert mnem == "RLC (IX++03h)"
+        assert size == 4
+
+    def test_fdcb_sll_iy(self):
+        # FD CB 01 37 = SLL (IY+1), A
+        mnem, size = disassemble(_mem(0xFD, 0xCB, 0x01, 0x37), 0)
+        assert mnem == "SLL (IY++01h), A"
+        assert size == 4
+
+    def test_unknown_ddcb_shows_actual_byte(self):
+        # 0xC0 (SET 0,(IX+d),B) is not in the table → DB with the real sub-opcode byte
+        mnem, size = disassemble(_mem(0xDD, 0xCB, 0x00, 0xC0), 0)
+        assert mnem == "DB C0h"
+        assert size == 4

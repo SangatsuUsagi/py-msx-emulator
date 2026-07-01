@@ -44,7 +44,7 @@ class Debugger:
         while True:
             try:
                 cyc = self._machine.cycle_count
-                frm = self._machine.vdp._frame_count
+                frm = getattr(self._machine.vdp, "_frame_count", 0)
                 line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
@@ -126,18 +126,6 @@ class Debugger:
     # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
-
-    def _cmd_reg(self, args: list[str]) -> None:
-        if not args:
-            print(f"Usage: reg cpu | reg vdp")
-            return
-        sub = args[0].lower()
-        if sub == "cpu":
-            self._cmd_reg_cpu()
-        elif sub == "vdp":
-            self._cmd_reg_vdp()
-        else:
-            print(f"Unknown register group: {sub!r}. Use 'reg cpu' or 'reg vdp'.")
 
     def _cmd_reg_cpu(self) -> None:
         r = self._machine.cpu.registers
