@@ -1,11 +1,17 @@
-"""Save and restore complete machine state to/from disk."""
+"""Save and restore complete machine state to/from disk.
+
+The on-disk `.state` file is a stdlib-only JSON container (no pickle): scalar and
+structured fields are stored as JSON, and byte blobs (RAM, VRAM, SRAM) are wrapped
+as ``{"__b64__": "<base64>"}``. `format_version` guards compatibility.
+"""
 from __future__ import annotations
 
+import base64
 import datetime
+import json
 import os
-import pickle
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,10 +22,8 @@ from msx.vdp.v9938 import V9938
 if TYPE_CHECKING:
     from msx.machine import Machine
 
-CURRENT_FORMAT_VERSION: int = 4
-
-# Mapper fields that hold ROM data — too large to snapshot, not mutable.
-_MAPPER_SKIP_FIELDS: frozenset[str] = frozenset({"rom", "cartridge", "scc"})
+# Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
+CURRENT_FORMAT_VERSION: int = 5
 
 
 @dataclass
@@ -158,15 +162,11 @@ def _restore_scc(machine: "Machine", d: dict[str, object] | None) -> None:
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     is_msx2 = isinstance(machine.vdp, V9938)
     mapper = machine.memory._mapper
-    mapper_state = {
-        k: (list(v) if isinstance(v, list) else v)
-        for k, v in mapper.__dict__.items()
-        if k not in _MAPPER_SKIP_FIELDS
-    }
+    mapper_state = mapper.snapshot()
     if is_msx2:
-        vdp_latch = machine.vdp._latch
-        vdp_addr = machine.vdp._addr
-        vdp_read_buf = machine.vdp._read_buf
+        vdp_latch = machine.vdp.latch
+        vdp_addr = machine.vdp.addr
+        vdp_read_buf = machine.vdp.read_buf
         vdp_palette: list[int] | None = list(machine.vdp.palette)
         ram_mapper_ram: bytearray | None = bytearray(machine.memory.ram_mapper.ram)
         ram_mapper_banks: list[int] | None = list(machine.memory.ram_mapper.banks)
@@ -250,18 +250,16 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.memory.ram[:] = snap.ram
     machine.memory.slot_register = snap.slot_register
-    for k, v in snap.mapper_state.items():
-        if hasattr(mapper, k):
-            setattr(mapper, k, list(v) if isinstance(v, list) else v)  # type: ignore[arg-type]
+    mapper.restore(snap.mapper_state)
 
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
     machine.vdp.status = snap.vdp_status
     machine.vdp._frame_count = snap.vdp_frame_count
     if is_msx2:
-        machine.vdp._latch = snap.vdp_latch
-        machine.vdp._addr = snap.vdp_addr
-        machine.vdp._read_buf = snap.vdp_read_buf
+        machine.vdp.latch = snap.vdp_latch
+        machine.vdp.addr = snap.vdp_addr
+        machine.vdp.read_buf = snap.vdp_read_buf
         machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
         machine.memory.ram_mapper.ram[:] = snap.ram_mapper_ram  # type: ignore[index]
         machine.memory.ram_mapper.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
@@ -307,6 +305,32 @@ def _sanitise_title(title: str) -> str:
     return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
+def _to_jsonable(obj: object) -> object:
+    """Recursively convert a snapshot dict to JSON-serialisable form.
+
+    Byte blobs become ``{"__b64__": "<base64>"}``; lists and dicts recurse;
+    scalars pass through unchanged.
+    """
+    if isinstance(obj, (bytes, bytearray)):
+        return {"__b64__": base64.b64encode(bytes(obj)).decode("ascii")}
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(v) for v in obj]
+    return obj
+
+
+def _from_jsonable(obj: object) -> object:
+    """Inverse of _to_jsonable: restore byte blobs (as bytearray) and containers."""
+    if isinstance(obj, dict):
+        if "__b64__" in obj and len(obj) == 1:
+            return bytearray(base64.b64decode(obj["__b64__"]))
+        return {k: _from_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_from_jsonable(v) for v in obj]
+    return obj
+
+
 def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
     """Serialise machine state and screenshot to saves/<title>_YYYYMMDD_HHMMSS.*
 
@@ -326,10 +350,11 @@ def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
     png_path = saves_dir / f"{stem}.png"
 
     snap = _snapshot_from_machine(machine)
-    with open(state_path, "wb") as f:
-        pickle.dump(snap, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(_to_jsonable(asdict(snap)), f)
 
-    img = _PIL_Image.frombytes("RGB", (256, 192), bytes(rgb_buf))
+    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+    img = _PIL_Image.frombytes("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), bytes(rgb_buf))
     img.save(png_path)
 
     _update_symlink(saves_dir / "latest.state", state_path)
@@ -361,7 +386,21 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
         resolved = path
 
     with open(resolved, "rb") as f:
-        snap: MachineSnapshot = pickle.load(f)
+        raw = f.read()
+    # Legacy pickle files (format_version <= 4) start with a pickle opcode byte,
+    # not JSON. Refuse to unpickle them; the format is now stdlib JSON.
+    stripped = raw.lstrip()
+    if not stripped[:1] == b"{":
+        raise ValueError(
+            "legacy pickle save states are no longer supported; please re-save "
+            f"({resolved})"
+        )
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
 
+    fields = _from_jsonable(data)
+    snap = MachineSnapshot(**fields)  # type: ignore[arg-type]
     _restore_snapshot(machine, snap)
     print(f"state loaded: {resolved}")
