@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from msx.mapper_tracer import MapperTracer
     from msx.scc import SCC
 
 _PAGE_8K = 8192
@@ -14,6 +15,22 @@ _PAGE_16K = 16384
 class Mapper(Protocol):
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
+
+
+def _trace_bank(mapper: object, window: int, old: int, new: int, addr: int) -> None:
+    """Notify an injected MapperTracer of a bank change. No-op without a tracer."""
+    tracer = getattr(mapper, "_tracer", None)
+    if tracer is None or old == new:
+        return
+    get_pc = mapper._get_pc  # type: ignore[attr-defined]
+    get_cycle = mapper._get_cycle  # type: ignore[attr-defined]
+    get_frame = mapper._get_frame  # type: ignore[attr-defined]
+    tracer.bank_change(
+        window, old, new, addr,
+        get_pc() if get_pc else 0,
+        get_cycle() if get_cycle else 0,
+        get_frame() if get_frame else 0,
+    )
 
 
 @dataclass
@@ -49,6 +66,10 @@ class Ascii8Mapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
@@ -71,7 +92,10 @@ class Ascii8Mapper:
         if 0x6000 <= addr <= 0x7FFF:
             # Bits 12:11 of address select register 0–3
             reg = (addr >> 11) & 0x03
-            self._banks[reg] = value % self._num_pages()
+            new = value % self._num_pages()
+            old = self._banks[reg]
+            self._banks[reg] = new
+            _trace_bank(self, reg, old, new, addr)
 
 
 @dataclass
@@ -88,6 +112,10 @@ class Ascii16Mapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
@@ -106,7 +134,10 @@ class Ascii16Mapper:
         if 0x6000 <= addr <= 0x7FFF:
             # Bit 12 selects window 0 (0x6xxx) or window 1 (0x7xxx)
             window = (addr >> 12) & 0x01
-            self._banks[window] = value % self._num_pages()
+            new = value % self._num_pages()
+            old = self._banks[window]
+            self._banks[window] = new
+            _trace_bank(self, window, old, new, addr)
 
 
 @dataclass
@@ -120,6 +151,10 @@ class KonamiMapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _bank_mask(self) -> int:
         # Konami4 hardware: 5-bit bank register → 32 pages (256 KB) max.
@@ -147,12 +182,18 @@ class KonamiMapper:
 
     def write(self, addr: int, value: int) -> None:
         if 0x6000 <= addr < 0x8000:
-            self._banks[1] = value & self._bank_mask()
+            window = 1
         elif 0x8000 <= addr < 0xA000:
-            self._banks[2] = value & self._bank_mask()
+            window = 2
         elif 0xA000 <= addr < 0xC000:
-            self._banks[3] = value & self._bank_mask()
-        # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
+            window = 3
+        else:
+            # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
+            return
+        new = value & self._bank_mask()
+        old = self._banks[window]
+        self._banks[window] = new
+        _trace_bank(self, window, old, new, addr)
 
 
 @dataclass
@@ -230,6 +271,10 @@ class KonamiSCCMapper:
     scc: "SCC"
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _scc_mode: bool = field(default=False, init=False, repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
@@ -256,16 +301,28 @@ class KonamiSCCMapper:
             self.scc.write(addr - 0x9800, value)
             return
         if 0x5000 <= addr < 0x5800:
-            self._banks[0] = value % self._num_pages()
+            new = value % self._num_pages()
+            old = self._banks[0]
+            self._banks[0] = new
+            _trace_bank(self, 0, old, new, addr)
         elif 0x7000 <= addr < 0x7800:
-            self._banks[1] = value % self._num_pages()
+            new = value % self._num_pages()
+            old = self._banks[1]
+            self._banks[1] = new
+            _trace_bank(self, 1, old, new, addr)
         elif 0x9000 <= addr < 0x9800:
             # Window 2 bank register: 0x3F enables SCC mode; any other value disables it.
             if value == 0x3F:
                 self._scc_mode = True
             else:
                 self._scc_mode = False
-                self._banks[2] = value % self._num_pages()
+                new = value % self._num_pages()
+                old = self._banks[2]
+                self._banks[2] = new
+                _trace_bank(self, 2, old, new, addr)
         elif 0xB000 <= addr < 0xB800:
-            self._banks[3] = value % self._num_pages()
+            new = value % self._num_pages()
+            old = self._banks[3]
+            self._banks[3] = new
+            _trace_bank(self, 3, old, new, addr)
         # Writes outside the four register zones are ignored.

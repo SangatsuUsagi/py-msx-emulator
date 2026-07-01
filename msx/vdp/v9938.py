@@ -345,7 +345,13 @@ class V9938:
                 return self._status8
             if self.regs[15] == 9:
                 return self._status9
-            result = self.status
+            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/last
+            # sprite number. The sprite-limit (5S), collision (C) and per-line
+            # sprite-scan are not emulated; report the hardware idle last-sprite
+            # number 31 (0x1F) in bits 4-0, matching a real V9938 / openMSX.
+            # Returning 0 there stalls MSX2 C-BIOS cartridge boot, which reads
+            # S#0 and feeds the value into its cartridge-scan loop counter.
+            result = (self.status & 0xE0) | 0x1F
             self.status &= ~0x80  # clear F flag
             self._update_irq()
             return result & 0xFF

@@ -568,3 +568,194 @@ class TestSlotTree:
         out = capsys.readouterr().out
         assert "[EXPANDED]" not in out
         assert "page-map" not in out
+
+
+# ---------------------------------------------------------------------------
+# sl — cartridge ROM mapper bank column
+# ---------------------------------------------------------------------------
+
+class TestSlotRomMapperBank:
+    @staticmethod
+    def _rom16(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+
+    @staticmethod
+    def _rom8(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(8192)])
+
+    def test_ascii16_window_bank_and_offset(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import Ascii16Mapper
+        m = Ascii16Mapper(self._rom16(8))
+        # power-on: both windows bank 0
+        assert _rom_mapper_bank_info(m, 1) == "bank 0 @00000-03FFF"
+        assert _rom_mapper_bank_info(m, 2) == "bank 0 @00000-03FFF"
+        # switch window 1 (0x8000) to bank 3
+        m.write(0x7000, 3)
+        assert _rom_mapper_bank_info(m, 2) == "bank 3 @0C000-0FFFF"
+
+    def test_ascii8_shows_both_windows_per_page(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import Ascii8Mapper
+        m = Ascii8Mapper(self._rom8(8))
+        m.write(0x6000, 1)  # window 0 (0x4000) -> bank 1
+        m.write(0x6800, 2)  # window 1 (0x6000) -> bank 2
+        assert _rom_mapper_bank_info(m, 1) == "w0=b1@02000  w1=b2@04000"
+
+    def test_flat_mapper_has_no_bank(self):
+        from msx.debugger.prompt import _rom_mapper_bank_info
+        from msx.mapper import FlatMapper
+        assert _rom_mapper_bank_info(FlatMapper(b"\x00" * 32768), 1) is None
+
+    def test_sl_bank_uses_rom_mapper_for_cartridge(self):
+        from types import SimpleNamespace
+        from msx.debugger.prompt import _sl_bank
+        from msx.mapper import Ascii16Mapper
+        mem = SimpleNamespace(
+            _mapper=Ascii16Mapper(self._rom16(8)), _mapper2=None, ram_mapper=None
+        )
+        assert _sl_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
+
+    def test_sl_bank_ram_mapper_segment_unchanged(self):
+        from msx.debugger.prompt import _sl_bank
+        from msx.ram_mapper import RamMapper
+        from types import SimpleNamespace
+        rm = RamMapper()
+        rm.banks[3] = 2
+        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=rm)
+        assert _sl_bank(mem, 3, 2, 3) == "seg=2"
+
+    def test_sl_bank_dash_for_bios(self):
+        from msx.debugger.prompt import _sl_bank
+        from types import SimpleNamespace
+        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=None)
+        assert _sl_bank(mem, 0, None, 0) == "-"
+
+
+# ---------------------------------------------------------------------------
+# ce / cd — mapper bank-switch trace
+# ---------------------------------------------------------------------------
+
+def _make_mapper_machine(mapper):
+    from msx.mapper import FlatMapper
+    m = _make_machine()
+    m.memory = MagicMock()
+    m.memory._mapper = mapper
+    m.memory._mapper2 = FlatMapper(None)
+    m.cpu.instruction_pc = 0x402E
+    m.cycle_count = 45231
+    m.vdp._frame_count = 3
+    return m
+
+
+class TestMapperTrace:
+    @staticmethod
+    def _rom16(pages: int):
+        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+
+    def test_ce_enables_and_logs_switch(self, capsys):
+        from msx.mapper import Ascii16Mapper
+        mapper = Ascii16Mapper(self._rom16(8))
+        m = _make_mapper_machine(mapper)
+        Debugger(m)._cmd_mapper_trace_enable()
+        capsys.readouterr()  # discard the "enabled" line
+        mapper.write(0x7000, 1)  # window 1: 0 -> 1
+        out = capsys.readouterr().out
+        assert "MAP_BANK win=1 00h->01h addr=7000h" in out
+        assert "PC=402E" in out
+
+    def test_cd_disables(self, capsys):
+        from msx.mapper import Ascii16Mapper
+        mapper = Ascii16Mapper(self._rom16(8))
+        m = _make_mapper_machine(mapper)
+        dbg = Debugger(m)
+        dbg._cmd_mapper_trace_enable()
+        dbg._cmd_mapper_trace_disable()
+        capsys.readouterr()
+        mapper.write(0x7000, 2)
+        assert capsys.readouterr().out == ""
+
+    def test_ce_no_mapper_message(self, capsys):
+        from msx.mapper import FlatMapper
+        m = _make_mapper_machine(FlatMapper(b"\x00" * 32768))
+        Debugger(m)._cmd_mapper_trace_enable()
+        out = capsys.readouterr().out
+        assert "no bank-switching ROM mapper" in out
+
+
+# ---------------------------------------------------------------------------
+# bh / bs — crash-signature auto-break commands
+# ---------------------------------------------------------------------------
+
+class TestBreakHaltDi:
+    def test_bh_toggles_on(self, capsys):
+        m = _make_machine()
+        m._break_halt_di = False
+        Debugger(m)._cmd_break_halt()
+        m.set_break_halt_di.assert_called_once_with(True)
+        assert "enabled" in capsys.readouterr().out
+
+    def test_bh_toggles_off(self, capsys):
+        m = _make_machine()
+        m._break_halt_di = True
+        Debugger(m)._cmd_break_halt()
+        m.set_break_halt_di.assert_called_once_with(False)
+        assert "disabled" in capsys.readouterr().out
+
+
+class TestBreakSp:
+    def test_bs_no_args_uses_machine_ram_range(self, capsys):
+        m = _make_machine()
+        m.memory.main_ram_range.return_value = (0x8000, 0xFFFF)
+        Debugger(m)._cmd_break_sp([])
+        m.set_sp_range.assert_called_once_with((0x8000, 0xFFFF))
+        out = capsys.readouterr().out
+        assert "8000h-FFFFh" in out and "auto" in out
+
+    def test_bs_off_disables(self, capsys):
+        m = _make_machine()
+        Debugger(m)._cmd_break_sp(["off"])
+        m.set_sp_range.assert_called_once_with(None)
+        assert "disabled" in capsys.readouterr().out
+
+    def test_bs_explicit_range(self, capsys):
+        m = _make_machine()
+        Debugger(m)._cmd_break_sp(["c000", "ffff"])
+        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+
+    def test_bs_swaps_reversed_range(self, capsys):
+        m = _make_machine()
+        Debugger(m)._cmd_break_sp(["ffff", "c000"])
+        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+
+
+# ---------------------------------------------------------------------------
+# g / so — targeted execution control
+# ---------------------------------------------------------------------------
+
+class TestGoto:
+    def test_g_sets_temp_breakpoint_and_resumes(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto(["8031"]) is True
+        m.set_temp_breakpoint.assert_called_once_with(0x8031)
+        assert "8031h" in capsys.readouterr().out
+
+    def test_g_no_args_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto([]) is False
+        m.set_temp_breakpoint.assert_not_called()
+        assert "Usage" in capsys.readouterr().out
+
+    def test_g_invalid_addr_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto(["zz"]) is False
+        m.set_temp_breakpoint.assert_not_called()
+
+
+class TestStepOut:
+    def test_so_records_current_sp(self, capsys):
+        m = _make_machine()
+        m.cpu.registers.SP = 0xF2EC
+        Debugger(m)._cmd_step_out()
+        m.set_step_out.assert_called_once_with(0xF2EC)
+        assert "F2EC" in capsys.readouterr().out

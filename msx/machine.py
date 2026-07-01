@@ -45,6 +45,14 @@ class Machine:
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
     _last_pc: int = field(default=0, init=False, repr=False)
     _pc_repeat: int = field(default=0, init=False, repr=False)
+    # Crash-signature auto-break conditions (debugger bh/bs).
+    _break_halt_di: bool = field(default=False, init=False, repr=False)
+    _sp_range: tuple[int, int] | None = field(default=None, init=False, repr=False)
+    _halt_di_seen: bool = field(default=False, init=False, repr=False)
+    _sp_out_seen: bool = field(default=False, init=False, repr=False)
+    # Targeted execution control (debugger g/so); one-shot, cleared on hit.
+    _temp_breakpoint: int | None = field(default=None, init=False, repr=False)
+    _stepout_sp: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cpu.read_byte = self.memory.read
@@ -64,6 +72,61 @@ class Machine:
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
         self._breakpoints = frozenset(addrs[:4])
+
+    def set_break_halt_di(self, enabled: bool) -> None:
+        """Enable/disable breaking when the CPU executes HALT with interrupts off."""
+        self._break_halt_di = enabled
+        self._halt_di_seen = False
+
+    def set_sp_range(self, rng: tuple[int, int] | None) -> None:
+        """Set the valid-RAM range for SP; break when SP leaves it. None disables."""
+        self._sp_range = rng
+        self._sp_out_seen = False
+
+    def set_temp_breakpoint(self, addr: int | None) -> None:
+        """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit."""
+        self._temp_breakpoint = addr
+
+    def set_step_out(self, sp: int) -> None:
+        """Break (once) when SP rises above sp, i.e. the current routine returns."""
+        self._stepout_sp = sp
+
+    def _break_conditions_active(self) -> bool:
+        """True when any execution-break condition needs the per-instruction loop."""
+        return (
+            bool(self._breakpoints)
+            or self._break_halt_di
+            or self._sp_range is not None
+            or self._temp_breakpoint is not None
+            or self._stepout_sp is not None
+        )
+
+    def _post_step_break(self) -> bool:
+        """Evaluate crash-signature break conditions after one CPU step.
+
+        Returns True at most once per rising edge of each condition (so resuming
+        from a still-true condition does not immediately re-break).
+        """
+        cpu = self.cpu
+        if self._break_halt_di:
+            if cpu.halted and not cpu.iff1:
+                if not self._halt_di_seen:
+                    self._halt_di_seen = True
+                    return True
+            else:
+                self._halt_di_seen = False
+        if self._sp_range is not None:
+            sp = cpu.registers.SP
+            if sp < self._sp_range[0] or sp > self._sp_range[1]:
+                if not self._sp_out_seen:
+                    self._sp_out_seen = True
+                    return True
+            else:
+                self._sp_out_seen = False
+        if self._stepout_sp is not None and cpu.registers.SP > self._stepout_sp:
+            self._stepout_sp = None
+            return True
+        return False
 
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
@@ -113,12 +176,15 @@ class Machine:
         lpf = self.lines_per_frame
         total = 0
 
-        if self._breakpoints:
+        if self._break_conditions_active():
             try:
                 for L in range(lpf):
                     line_end = (L + 1) * cpf // lpf
                     while total < line_end:
-                        if cpu.registers.PC in self._breakpoints:
+                        pc = cpu.registers.PC
+                        if pc in self._breakpoints or pc == self._temp_breakpoint:
+                            if pc == self._temp_breakpoint:
+                                self._temp_breakpoint = None
                             if self._debugger is not None:
                                 self._debugger.enter()
                         if vdp9938:
@@ -128,6 +194,8 @@ class Machine:
                         self.cycle_count += n
                         if vdp_tick:
                             vdp_tick(n)
+                        if self._post_step_break() and self._debugger is not None:
+                            self._debugger.enter()
                     if vdp9938:
                         vdp9938.begin_scanline(L)
                         cpu.int_pending = vdp9938._irq

@@ -75,7 +75,8 @@ def test_s2_default_returns_s0() -> None:
     vdp = _make_vdp()
     vdp.status = 0xAB
     vdp.regs[15] = 0
-    assert vdp.read_port(0x99) == 0xAB
+    # S#0 bits 4-0 report the idle last-sprite number (0x1F).
+    assert vdp.read_port(0x99) == 0xBF  # (0xAB & 0xE0) | 0x1F
 
 
 def test_s2_r15_2_returns_status2() -> None:
