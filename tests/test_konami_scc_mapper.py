@@ -147,3 +147,14 @@ def test_scc_enable_register_routed(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x9000, 0x3F)
     mapper.write(0x9800 + 0x8F, 0x1F)
     assert mapper.scc.read(0x8F) == 0x1F
+
+
+def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper) -> None:
+    mapper.write(0x5000, 5)      # window 0 bank
+    mapper.write(0x9000, 0x3F)   # enable SCC mode
+    snap = mapper.snapshot()
+
+    other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
+    other.restore(snap)
+    assert other._banks == mapper._banks
+    assert other._scc_mode is True

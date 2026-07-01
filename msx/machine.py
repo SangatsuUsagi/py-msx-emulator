@@ -25,6 +25,10 @@ LINES_PER_FRAME: int = 262
 TSTATES_PER_LINE: int = CYCLES_PER_FRAME // LINES_PER_FRAME  # 227; carry remainder across lines
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
+# MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
+SCREEN_WIDTH: int = 256
+SCREEN_HEIGHT: int = 192
+
 
 @dataclass
 class Machine:
@@ -190,7 +194,7 @@ class Machine:
                             if self._debugger is not None:
                                 self._debugger.enter()
                         if vdp9938:
-                            cpu.int_pending = vdp9938._irq
+                            cpu.int_pending = vdp9938.irq
                         n = cpu_step()
                         total += n
                         self.cycle_count += n
@@ -200,7 +204,7 @@ class Machine:
                             self._debugger.enter()
                     if vdp9938:
                         vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938._irq
+                        cpu.int_pending = vdp9938.irq
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
@@ -212,7 +216,7 @@ class Machine:
                     line_end = (L + 1) * cpf // lpf
                     while total < line_end:
                         if vdp9938:
-                            cpu.int_pending = vdp9938._irq
+                            cpu.int_pending = vdp9938.irq
                         n = cpu_step()
                         total += n
                         self.cycle_count += n
@@ -220,7 +224,7 @@ class Machine:
                             vdp_tick(n)
                     if vdp9938:
                         vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938._irq
+                        cpu.int_pending = vdp9938.irq
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
@@ -233,7 +237,7 @@ class Machine:
                     while total < line_end:
                         pc = cpu.registers.PC
                         if vdp9938:
-                            cpu.int_pending = vdp9938._irq
+                            cpu.int_pending = vdp9938.irq
                         n = cpu_step()
                         total += n
                         self.cycle_count += n
@@ -249,7 +253,7 @@ class Machine:
                             self._last_pc = pc
                     if vdp9938:
                         vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938._irq
+                        cpu.int_pending = vdp9938.irq
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
