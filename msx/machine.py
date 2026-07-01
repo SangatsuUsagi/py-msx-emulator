@@ -267,7 +267,8 @@ class Machine:
             result = render_frame_v9938(self.vdp, skip_render=skip_render)
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
-            self.vdp._frame_count += 1
+        # Frame counting is owned here (orchestration), for both VDP variants.
+        self.vdp._frame_count += 1
         return result
 
 
