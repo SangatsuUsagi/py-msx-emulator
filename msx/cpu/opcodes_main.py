@@ -144,6 +144,32 @@ def _dec8(cpu: Z80, v: int) -> int:
     return result
 
 
+def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
+    """Set flags for INI/IND/OUTI/OUTD (Sean Young, Undocumented Z80 §4.3).
+
+    Args:
+        cpu: The CPU whose F register is updated.
+        value: The byte transferred to/from the port.
+        b_after: The B register after its post-transfer decrement.
+        k: Intermediate value; (value + (C+1)) for INI, (value + (C-1)) for IND,
+            (value + L) for OUTI/OUTD.
+    """
+    f = 0
+    if b_after == 0:
+        f |= F.FLAG_Z
+    if b_after & 0x80:
+        f |= F.FLAG_S
+    # Undocumented Y (bit 5) and X (bit 3) come from the decremented B.
+    f |= b_after & (0x20 | 0x08)
+    if value & 0x80:
+        f |= F.FLAG_N
+    if k > 0xFF:
+        f |= F.FLAG_H | F.FLAG_C
+    if F.parity((k & 0x07) ^ b_after):
+        f |= F.FLAG_PV
+    cpu.registers.F = f
+
+
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
     result = hl + rr
     f = cpu.registers.F & ~(F.FLAG_H | F.FLAG_N | F.FLAG_C)
@@ -554,6 +580,8 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
             f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
             if not (v & (1 << bit)):
                 f |= F.FLAG_Z | F.FLAG_PV
+            if (v & (1 << bit)) and bit == 7:
+                f |= F.FLAG_S
             cpu.registers.F = f
             return 20
         elif row == 2:
@@ -795,6 +823,9 @@ def _execute_ed(cpu: Z80) -> int:
         r.A = _sub8(cpu, 0, r.A)
         return 8
 
+    # RETN / RETI both copy IFF2 back into IFF1 on the real Z80; they differ
+    # only in the opcode byte that external interrupt controllers observe, not
+    # in their effect on the CPU's interrupt flip-flops (Zilog UM0080).
     # RETN
     if op == 0x45:
         cpu.iff1 = cpu.iff2
@@ -842,27 +873,27 @@ def _execute_ed(cpu: Z80) -> int:
             r.SP = val
         return 20
 
-    # IN r, (C)
+    # IN r, (C) — port address is (B << 8) | C on the bus
     in_regs = {0x40: 0, 0x48: 1, 0x50: 2, 0x58: 3, 0x60: 4, 0x68: 5, 0x78: 7}
     if op in in_regs:
-        v = cpu.read_port(r.C)
+        v = cpu.read_port((r.B << 8) | r.C)
         _set_r(cpu, in_regs[op], v)
         r.F = (r.F & F.FLAG_C) | _szp(v)
         return 12
     # IN F, (C)  (0x70 — result discarded, flags set)
     if op == 0x70:
-        v = cpu.read_port(r.C)
+        v = cpu.read_port((r.B << 8) | r.C)
         r.F = (r.F & F.FLAG_C) | _szp(v)
         return 12
 
-    # OUT (C), r
+    # OUT (C), r — port address is (B << 8) | C on the bus
     out_regs = {0x41: 0, 0x49: 1, 0x51: 2, 0x59: 3, 0x61: 4, 0x69: 5, 0x79: 7}
     if op in out_regs:
-        cpu.write_port(r.C, _get_r(cpu, out_regs[op]))
+        cpu.write_port((r.B << 8) | r.C, _get_r(cpu, out_regs[op]))
         return 12
     # OUT (C), 0
     if op == 0x71:
-        cpu.write_port(r.C, 0)
+        cpu.write_port((r.B << 8) | r.C, 0)
         return 12
 
     # RLD / RRD
@@ -906,7 +937,7 @@ def _execute_ed(cpu: Z80) -> int:
         r.HL = (r.HL + inc) & 0xFFFF
         r.BC = (r.BC - 1) & 0xFFFF
         f = (r.F & F.FLAG_C) | F.FLAG_N
-        if result & 0xFF == 0:
+        if (result & 0xFF) == 0:
             f |= F.FLAG_Z
         if result & 0x80:
             f |= F.FLAG_S
@@ -922,11 +953,14 @@ def _execute_ed(cpu: Z80) -> int:
 
     # Block I/O: INI / IND / INIR / INDR
     if op in (0xA2, 0xAA, 0xB2, 0xBA):
-        val = cpu.read_port(r.C)
-        cpu.write_byte(r.HL, val)
         inc = 1 if op in (0xA2, 0xB2) else -1
+        val = cpu.read_port((r.B << 8) | r.C)
+        cpu.write_byte(r.HL, val)
         r.HL = (r.HL + inc) & 0xFFFF
-        r.B = _dec8(cpu, r.B)
+        r.B = (r.B - 1) & 0xFF
+        # INI adds (C+1), IND adds (C-1); inc carries that sign.
+        c_adj = (r.C + inc) & 0xFF
+        _block_io_flags(cpu, val, r.B, val + c_adj)
         if op in (0xB2, 0xBA) and r.B != 0:
             r.PC = (r.PC - 2) & 0xFFFF
             return 21
@@ -934,11 +968,13 @@ def _execute_ed(cpu: Z80) -> int:
 
     # Block I/O: OUTI / OUTD / OTIR / OTDR
     if op in (0xA3, 0xAB, 0xB3, 0xBB):
-        val = cpu.read_byte(r.HL)
         inc = 1 if op in (0xA3, 0xB3) else -1
+        val = cpu.read_byte(r.HL)
         r.HL = (r.HL + inc) & 0xFFFF
-        cpu.write_port(r.C, val)
-        r.B = _dec8(cpu, r.B)
+        cpu.write_port((r.B << 8) | r.C, val)
+        r.B = (r.B - 1) & 0xFF
+        # OUTI/OUTD use L after HL has been incremented/decremented.
+        _block_io_flags(cpu, val, r.B, val + r.L)
         if op in (0xB3, 0xBB) and r.B != 0:
             r.PC = (r.PC - 2) & 0xFFFF
             return 21
@@ -1484,12 +1520,18 @@ def _op_ex_sp_hl(cpu: Z80) -> int:
 
 
 def _op_in_a_n(cpu: Z80) -> int:
-    cpu.registers.A = cpu.read_port(cpu._fetch())
+    # Port address is (A << 8) | n, using A before it is overwritten.
+    n = cpu._fetch()
+    a = cpu.registers.A
+    cpu.registers.A = cpu.read_port((a << 8) | n)
     return 11
 
 
 def _op_out_n_a(cpu: Z80) -> int:
-    cpu.write_port(cpu._fetch(), cpu.registers.A)
+    # Port address is (A << 8) | n on the bus.
+    n = cpu._fetch()
+    a = cpu.registers.A
+    cpu.write_port((a << 8) | n, a)
     return 11
 
 
