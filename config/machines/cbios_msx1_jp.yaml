@@ -31,6 +31,7 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
+    overrides: {keyboard_type: jp}
   - ref: vdp_tms9918a
   - ref: psg_ay8910
 
