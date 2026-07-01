@@ -2,7 +2,7 @@ from msx.input import (
     InputState, KEY_MATRIX, KEY_MATRIX_INT, KEY_MATRIX_JP, JOY_MAP,
     _K_a, _K_SPACE, _K_w, _K_s, _K_x,
     _K_MINUS, _K_SLASH, _K_SEMICOLON,
-    _K_LEFTBRACKET, _K_RIGHTBRACKET, _K_QUOTE, _K_COMMA,
+    _K_LEFTBRACKET, _K_RIGHTBRACKET, _K_QUOTE, _K_COMMA, _K_LALT,
     _K_UP, _K_DOWN, _K_LEFT, _K_RIGHT,
 )
 
@@ -248,3 +248,14 @@ def test_jp_apostrophe_unmapped_is_noop() -> None:
     kjp = InputState(keyboard_type="jp")
     kjp.key_down(_K_QUOTE)  # no JIS cell → must not raise, matrix unchanged
     assert all(row == 0xFF for row in kjp.matrix)
+
+
+def test_left_alt_maps_to_graph_key() -> None:
+    # Left Alt/Option → MSX GRAPH at matrix (6, 2), shared by both layouts.
+    assert KEY_MATRIX_INT[_K_LALT] == (6, 2)
+    assert KEY_MATRIX_JP[_K_LALT] == (6, 2)
+    state = InputState()
+    state.key_down(_K_LALT)
+    assert state.matrix[6] & (1 << 2) == 0  # GRAPH pressed (active-low)
+    state.key_up(_K_LALT)
+    assert state.matrix[6] & (1 << 2) != 0
