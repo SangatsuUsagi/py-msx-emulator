@@ -27,6 +27,10 @@ class IOBus:
         self._write_handlers.append((start, end, handler))
 
     def read_port(self, port: int) -> int:
+        # The Z80 drives a 16-bit port address (high byte = B or A), but MSX
+        # devices decode only the low 8 bits. Mask here so handlers and range
+        # checks see the 8-bit port regardless of the high byte.
+        port &= 0xFF
         for start, end, handler in self._read_handlers:
             if start <= port <= end:
                 value = handler(port)
@@ -40,6 +44,7 @@ class IOBus:
         return 0xFF
 
     def write_port(self, port: int, value: int) -> None:
+        port &= 0xFF
         if self._logger is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             self._logger.on_io_write(port, value, pc)

@@ -112,3 +112,32 @@ def test_reti() -> None:
     cpu.step()
     assert cpu.registers.PC == 0x1000
     assert cpu.iff1 is True
+
+
+def test_ini_sets_carry_half_and_n() -> None:
+    cpu = make_cpu([0xED, 0xA2])  # INI
+    cpu.read_port = lambda port: 0xFF
+    cpu.registers.B = 0x10
+    cpu.registers.C = 0x01
+    cpu.registers.HL = 0xC000
+    cpu.step()
+    assert cpu.registers.B == 0x0F
+    assert cpu.registers.HL == 0xC001
+    f = cpu.registers.F
+    # k = value + ((C + 1) & 0xFF) = 0xFF + 0x02 = 0x101 > 255
+    assert f & F.FLAG_C
+    assert f & F.FLAG_H
+    assert f & F.FLAG_N  # N = bit 7 of the transferred value (0xFF)
+
+
+def test_outi_decrements_b_sets_zero_and_drives_port() -> None:
+    writes: list[tuple[int, int]] = []
+    cpu = make_cpu([0xED, 0xA3])  # OUTI
+    cpu.write_port = lambda port, value: writes.append((port, value))
+    cpu.registers.B = 0x01
+    cpu.registers.C = 0x99
+    cpu.registers.HL = 0xC000  # (HL) reads back 0x00 from zeroed RAM
+    cpu.step()
+    assert cpu.registers.B == 0x00
+    assert cpu.registers.F & F.FLAG_Z  # B decremented to zero
+    assert writes == [(0x0199, 0x00)]  # port = (B_before << 8) | C
