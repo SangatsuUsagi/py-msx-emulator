@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
@@ -38,6 +39,7 @@ class Machine:
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME
     cycle_count: int = 0
+    sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
