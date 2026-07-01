@@ -382,3 +382,20 @@ def test_build_machine_extrom_override_msx2(tmp_path: Path) -> None:
     )
     assert machine.memory.sub0_rom is not None
     assert machine.memory.sub0_rom[0] == 0xAB
+
+
+# ---------------------------------------------------------------------------
+# keyboard_type resolution (ppi8255 device default + per-machine override)
+# ---------------------------------------------------------------------------
+
+def test_keyboard_type_defaults_to_int_from_real_config() -> None:
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec("cbios_msx2", Path("config"), reg, Path("."))
+    assert spec.keyboard_type == "int"
+
+
+def test_keyboard_type_override_jp_from_real_config() -> None:
+    reg = load_device_registry(Path("config"))
+    for mid in ("cbios_msx1_jp", "cbios_msx2_jp"):
+        spec = load_machine_spec(mid, Path("config"), reg, Path("."))
+        assert spec.keyboard_type == "jp", mid
