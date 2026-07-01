@@ -165,6 +165,11 @@ def run(
     renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
     if not renderer:
         renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
+    if not renderer:
+        print(f"SDL_CreateRenderer error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sdl2.SDL_DestroyWindow(window)
+        sdl2.SDL_Quit()
+        sys.exit(1)
 
     # Linear filtering so 512-wide SCREEN 6/7 textures downscale smoothly to 256*scale window.
     sdl2.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"1")
@@ -177,10 +182,15 @@ def run(
         tex_w,
         tex_h,
     )
+    if not texture:
+        print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sdl2.SDL_DestroyRenderer(renderer)
+        sdl2.SDL_DestroyWindow(window)
+        sdl2.SDL_Quit()
+        sys.exit(1)
 
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
-    audio_dev = 0
     desired = sdl2.SDL_AudioSpec(44100, sdl2.AUDIO_S16LSB, 1, 1024)
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
@@ -204,142 +214,160 @@ def run(
     rgb_buf: bytearray = bytearray(_W * h * 3)
     _skip_counter: int = 0
 
-    while running:
-        try:
-            # Process events
-            while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
-                if event.type == sdl2.SDL_QUIT:
-                    running = False
-                elif event.type == sdl2.SDL_KEYDOWN:
-                    if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+    try:
+        while running:
+            try:
+                # Process events
+                while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
+                    if event.type == sdl2.SDL_QUIT:
                         running = False
-                    elif event.key.keysym.sym == sdl2.SDLK_F11:
-                        _fullscreen = not _fullscreen
-                        flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
-                        if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-                            print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
-                    elif event.key.keysym.sym == sdl2.SDLK_F8:
-                        save_state(machine, rgb_buf, game_title)
-                    elif event.key.keysym.sym == sdl2.SDLK_F9:
-                        try:
-                            load_state(machine)
-                        except Exception as exc:
-                            print(f"load failed: {exc}", file=sys.stderr)
-                    elif event.key.keysym.sym == sdl2.SDLK_F10:
-                        _save_screenshot(rgb_buf, tex_w, tex_h)
-                    elif (event.key.keysym.sym == sdl2.SDLK_c
-                          and (event.key.keysym.mod & sdl2.KMOD_CTRL)
-                          and machine._debugger is not None):
-                        machine._debugger.enter()
+                    elif event.type == sdl2.SDL_KEYDOWN:
+                        if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                            running = False
+                        elif event.key.keysym.sym == sdl2.SDLK_F11:
+                            _fullscreen = not _fullscreen
+                            flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
+                            if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+                                print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                        elif event.key.keysym.sym == sdl2.SDLK_F8:
+                            save_state(machine, rgb_buf, game_title)
+                        elif event.key.keysym.sym == sdl2.SDLK_F9:
+                            try:
+                                load_state(machine)
+                            except Exception as exc:
+                                print(f"load failed: {exc}", file=sys.stderr)
+                        elif event.key.keysym.sym == sdl2.SDLK_F10:
+                            _save_screenshot(rgb_buf, tex_w, tex_h)
+                        elif (event.key.keysym.sym == sdl2.SDLK_c
+                              and (event.key.keysym.mod & sdl2.KMOD_CTRL)
+                              and machine._debugger is not None):
+                            machine._debugger.enter()
+                        else:
+                            machine.input.key_down(event.key.keysym.sym)
+                    elif event.type == sdl2.SDL_KEYUP:
+                        machine.input.key_up(event.key.keysym.sym)
+                    elif event.type in (
+                        sdl2.SDL_CONTROLLERDEVICEADDED,
+                        sdl2.SDL_CONTROLLERDEVICEREMOVED,
+                        sdl2.SDL_JOYDEVICEADDED,
+                        sdl2.SDL_JOYDEVICEREMOVED,
+                        sdl2.SDL_CONTROLLERBUTTONDOWN,
+                        sdl2.SDL_CONTROLLERBUTTONUP,
+                        sdl2.SDL_CONTROLLERAXISMOTION,
+                        sdl2.SDL_JOYBUTTONDOWN,
+                        sdl2.SDL_JOYBUTTONUP,
+                        sdl2.SDL_JOYAXISMOTION,
+                        sdl2.SDL_JOYHATMOTION,
+                    ):
+                        joy_manager.handle_event(event)
+
+                if not running:
+                    break
+
+                # Run one frame (skip VDP pixel rendering when behind schedule)
+                skip_this_frame = _skip_counter > 0
+                frame_start_cycle = machine.cycle_count
+                index_buf = machine.run_frame(skip_render=skip_this_frame)
+                frame_end_cycle = machine.cycle_count
+                if not skip_this_frame:
+                    rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
+                    # The VDP resolution can change at runtime (R#9 LN: 192↔212;
+                    # SCREEN 6/7 width). Recreate the texture and resize the window
+                    # to match before uploading, or the texture copy would overflow.
+                    new_h = machine.vdp.display_height
+                    new_w = (len(index_buf) // new_h) if new_h else tex_w
+                    if (new_w, new_h) != (tex_w, tex_h):
+                        tex_w, tex_h = new_w, new_h
+                        sdl2.SDL_DestroyTexture(texture)
+                        texture = sdl2.SDL_CreateTexture(
+                            renderer,
+                            sdl2.SDL_PIXELFORMAT_RGB24,
+                            sdl2.SDL_TEXTUREACCESS_STREAMING,
+                            tex_w,
+                            tex_h,
+                        )
+                        if not texture:
+                            print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}",
+                                  file=sys.stderr)
+                            running = False
+                            break
+                        # 512-wide modes (SCREEN 6/7) display at 256*scale to keep
+                        # aspect ratio; SDL scales the texture down via bilinear filter.
+                        win_display_w = _W if tex_w > _W else tex_w
+                        sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
+
+                # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
+                if audio_dev > 0:
+                    psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+                    extra_bufs = []
+                    if machine.scc is not None:
+                        extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
+                    if machine.dac is not None:
+                        extra_bufs.append(machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle))
+                    if extra_bufs:
+                        mixed = bytearray(len(psg_buf))
+                        for i in range(SAMPLES_PER_FRAME):
+                            offset = i * 2
+                            total = struct.unpack_from("<h", psg_buf, offset)[0]
+                            for buf in extra_bufs:
+                                total += struct.unpack_from("<h", buf, offset)[0]
+                            if total > 32767:
+                                total = 32767
+                            elif total < -32768:
+                                total = -32768
+                            struct.pack_into("<h", mixed, offset, total)
+                        audio_buf = mixed
                     else:
-                        machine.input.key_down(event.key.keysym.sym)
-                elif event.type == sdl2.SDL_KEYUP:
-                    machine.input.key_up(event.key.keysym.sym)
-                elif event.type in (
-                    sdl2.SDL_CONTROLLERDEVICEADDED,
-                    sdl2.SDL_CONTROLLERDEVICEREMOVED,
-                    sdl2.SDL_JOYDEVICEADDED,
-                    sdl2.SDL_JOYDEVICEREMOVED,
-                    sdl2.SDL_CONTROLLERBUTTONDOWN,
-                    sdl2.SDL_CONTROLLERBUTTONUP,
-                    sdl2.SDL_CONTROLLERAXISMOTION,
-                    sdl2.SDL_JOYBUTTONDOWN,
-                    sdl2.SDL_JOYBUTTONUP,
-                    sdl2.SDL_JOYAXISMOTION,
-                    sdl2.SDL_JOYHATMOTION,
-                ):
-                    joy_manager.handle_event(event)
+                        audio_buf = psg_buf
+                    sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
 
-            if not running:
-                break
+                # Upload to texture only when frame was rendered
+                if not skip_this_frame:
+                    pixels_ptr = ctypes.c_void_p()
+                    pitch = ctypes.c_int()
+                    if sdl2.SDL_LockTexture(
+                        texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch)
+                    ) != 0:
+                        # Transient failure: skip this frame's pixel upload rather
+                        # than writing through an invalid pointer.
+                        print(f"SDL_LockTexture failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                    else:
+                        # rgb_buf is already an immutable bytes from _index_to_rgb24;
+                        # memmove accepts it directly (no extra copy needed).
+                        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+                        sdl2.SDL_UnlockTexture(texture)
 
-            # Run one frame (skip VDP pixel rendering when behind schedule)
-            skip_this_frame = _skip_counter > 0
-            frame_start_cycle = machine.cycle_count
-            index_buf = machine.run_frame(skip_render=skip_this_frame)
-            frame_end_cycle = machine.cycle_count
-            if not skip_this_frame:
-                rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
-                # The VDP resolution can change at runtime (R#9 LN: 192↔212;
-                # SCREEN 6/7 width). Recreate the texture and resize the window
-                # to match before uploading, or the texture copy would overflow.
-                new_h = machine.vdp.display_height
-                new_w = (len(index_buf) // new_h) if new_h else tex_w
-                if (new_w, new_h) != (tex_w, tex_h):
-                    tex_w, tex_h = new_w, new_h
-                    sdl2.SDL_DestroyTexture(texture)
-                    texture = sdl2.SDL_CreateTexture(
-                        renderer,
-                        sdl2.SDL_PIXELFORMAT_RGB24,
-                        sdl2.SDL_TEXTUREACCESS_STREAMING,
-                        tex_w,
-                        tex_h,
-                    )
-                    # 512-wide modes (SCREEN 6/7) display at 256*scale to preserve aspect ratio;
-                    # SDL scales the 512-wide texture down via bilinear filtering.
-                    win_display_w = _W if tex_w > _W else tex_w
-                    sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
+                # Render (always — redisplays previous texture on skipped frames)
+                sdl2.SDL_RenderClear(renderer)
+                sdl2.SDL_RenderCopy(renderer, texture, None, None)
+                sdl2.SDL_RenderPresent(renderer)
 
-            # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
-            if audio_dev > 0:
-                psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
-                extra_bufs = []
-                if machine.scc is not None:
-                    extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
-                if machine.dac is not None:
-                    extra_bufs.append(machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle))
-                if extra_bufs:
-                    mixed = bytearray(len(psg_buf))
-                    for i in range(SAMPLES_PER_FRAME):
-                        offset = i * 2
-                        total = struct.unpack_from("<h", psg_buf, offset)[0]
-                        for buf in extra_bufs:
-                            total += struct.unpack_from("<h", buf, offset)[0]
-                        if total > 32767:
-                            total = 32767
-                        elif total < -32768:
-                            total = -32768
-                        struct.pack_into("<h", mixed, offset, total)
-                    audio_buf = mixed
+                # Frame pacing + skip counter update
+                elapsed = frame_timer.tick()
+                if frame_skip == "auto":
+                    if elapsed > frame_timer._frame_interval * 1.05:
+                        _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
+                    else:
+                        _skip_counter = max(_skip_counter - 1, 0)
+
+                if frame_timer.fps_measured > 0:
+                    title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
+                    sdl2.SDL_SetWindowTitle(window, title)
+
+            except KeyboardInterrupt:
+                if machine._debugger is not None:
+                    machine._debugger.enter()
                 else:
-                    audio_buf = psg_buf
-                sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
+                    running = False
 
-            # Upload to texture only when frame was rendered
-            if not skip_this_frame:
-                pixels_ptr = ctypes.c_void_p()
-                pitch = ctypes.c_int()
-                sdl2.SDL_LockTexture(texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch))
-                ctypes.memmove(pixels_ptr, bytes(rgb_buf), len(rgb_buf))
-                sdl2.SDL_UnlockTexture(texture)
-
-            # Render (always — redisplays previous texture on skipped frames)
-            sdl2.SDL_RenderClear(renderer)
-            sdl2.SDL_RenderCopy(renderer, texture, None, None)
-            sdl2.SDL_RenderPresent(renderer)
-
-            # Frame pacing + skip counter update
-            elapsed = frame_timer.tick()
-            if frame_skip == "auto":
-                if elapsed > frame_timer._frame_interval * 1.05:
-                    _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
-                else:
-                    _skip_counter = max(_skip_counter - 1, 0)
-
-            if frame_timer.fps_measured > 0:
-                title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
-                sdl2.SDL_SetWindowTitle(window, title)
-
-        except KeyboardInterrupt:
-            if machine._debugger is not None:
-                machine._debugger.enter()
-            else:
-                running = False
-
-    joy_manager.close_all()
-    if audio_dev > 0:
-        sdl2.SDL_CloseAudioDevice(audio_dev)
-    sdl2.SDL_DestroyTexture(texture)
-    sdl2.SDL_DestroyRenderer(renderer)
-    sdl2.SDL_DestroyWindow(window)
-    sdl2.SDL_Quit()
+    finally:
+        joy_manager.close_all()
+        if audio_dev > 0:
+            sdl2.SDL_CloseAudioDevice(audio_dev)
+        if texture:
+            sdl2.SDL_DestroyTexture(texture)
+        if renderer:
+            sdl2.SDL_DestroyRenderer(renderer)
+        if window:
+            sdl2.SDL_DestroyWindow(window)
+        sdl2.SDL_Quit()
