@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 if TYPE_CHECKING:
     from msx.mapper_tracer import MapperTracer
@@ -138,6 +139,119 @@ class Ascii16Mapper:
             old = self._banks[window]
             self._banks[window] = new
             _trace_bank(self, window, old, new, addr)
+
+
+@dataclass
+class Ascii8Sram2Mapper(Ascii8Mapper):
+    """ASCII8 mapper + 2 KB battery-backed SRAM.
+
+    Bank register bit 3 set (value & 0x08) maps SRAM into that window.
+    ROM page index is bits [2:0] of the register value.
+    Writes to 0x6000–0x7FFF always update bank registers, never SRAM.
+    """
+
+    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_MASK: ClassVar[int] = 0x7FF
+
+    sram: bytearray | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+            self.sram = bytearray(self._SRAM_SIZE)
+
+    def read(self, addr: int) -> int:
+        if addr < 0x6000:
+            window, base = 0, 0x4000
+        elif addr < 0x8000:
+            window, base = 1, 0x6000
+        elif addr < 0xA000:
+            window, base = 2, 0x8000
+        else:
+            window, base = 3, 0xA000
+        bank = self._banks[window]
+        if bank & 0x08:
+            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+        page_offset = (bank & 0x07) * _PAGE_8K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x6000 <= addr <= 0x7FFF:
+            reg = (addr >> 11) & 0x03
+            self._banks[reg] = value  # raw value; bit 3 = SRAM select
+        else:
+            if addr < 0x6000:
+                window, base = 0, 0x4000
+            elif addr < 0xA000:
+                window, base = 2, 0x8000
+            else:
+                window, base = 3, 0xA000
+            if self._banks[window] & 0x08:
+                self.sram[(addr - base) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)  # type: ignore[arg-type]
+
+
+@dataclass
+class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
+    """ASCII8 mapper + 8 KB battery-backed SRAM."""
+
+    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_MASK: ClassVar[int] = 0x1FFF
+
+
+@dataclass
+class Ascii16Sram2Mapper(Ascii16Mapper):
+    """ASCII16 mapper + 2 KB battery-backed SRAM.
+
+    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped.
+    Bank register bit 4 set (value & 0x10) selects SRAM for window 1.
+    ROM page index is bits [3:0] of the register value (0x0F mask).
+    """
+
+    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_MASK: ClassVar[int] = 0x7FF
+
+    sram: bytearray | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+            self.sram = bytearray(self._SRAM_SIZE)
+
+    def read(self, addr: int) -> int:
+        if addr < 0x8000:
+            window, base = 0, 0x4000
+        else:
+            window, base = 1, 0x8000
+        bank = self._banks[window]
+        if window == 1 and (bank & 0x10):
+            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+        page_offset = (bank & 0x0F) * _PAGE_16K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x6000 <= addr <= 0x7FFF:
+            window = (addr >> 12) & 0x01
+            self._banks[window] = value  # raw value; bit 4 = SRAM select (window 1 only)
+        elif addr >= 0x8000:
+            # Cartridge body write to window 1 region: route to SRAM if selected
+            if self._banks[1] & 0x10:
+                self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)  # type: ignore[arg-type]
+
+
+@dataclass
+class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
+    """ASCII16 mapper + 8 KB battery-backed SRAM."""
+
+    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_MASK: ClassVar[int] = 0x1FFF
 
 
 @dataclass
