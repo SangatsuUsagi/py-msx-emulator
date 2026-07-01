@@ -41,6 +41,7 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
+    overrides: {keyboard_type: jp}
   - ref: vdp_v9938
     overrides: {vram_kb: 128}
   - ref: psg_ay8910

@@ -1,6 +1,8 @@
 from msx.input import (
-    InputState, KEY_MATRIX, JOY_MAP,
+    InputState, KEY_MATRIX, KEY_MATRIX_INT, KEY_MATRIX_JP, JOY_MAP,
     _K_a, _K_SPACE, _K_w, _K_s, _K_x,
+    _K_MINUS, _K_SLASH, _K_SEMICOLON,
+    _K_LEFTBRACKET, _K_RIGHTBRACKET, _K_QUOTE, _K_COMMA, _K_LALT,
     _K_UP, _K_DOWN, _K_LEFT, _K_RIGHT,
 )
 
@@ -22,6 +24,25 @@ def test_default_joy1_all_released() -> None:
 def test_default_joy2_all_released() -> None:
     state = make_input()
     assert state.joy2 == 0x3F
+
+
+def test_minus_key_maps_to_row1_col2() -> None:
+    assert KEY_MATRIX[_K_MINUS] == (1, 2)
+    state = InputState()
+    state.key_down(_K_MINUS)
+    assert state.matrix[1] & (1 << 2) == 0  # active-low: pressed
+
+
+def test_slash_key_maps_to_row2_col4() -> None:
+    # International layout: '/' is row 2, col 4 (shared with JIS).
+    assert KEY_MATRIX[_K_SLASH] == (2, 4)
+    state = InputState()
+    state.key_down(_K_SLASH)
+    assert state.matrix[2] & (1 << 4) == 0
+
+
+def test_semicolon_key_maps_to_row1_col7() -> None:
+    assert KEY_MATRIX[_K_SEMICOLON] == (1, 7)
 
 
 def test_key_down_clears_matrix_bit() -> None:
@@ -185,3 +206,56 @@ def test_trigger_b_hardware() -> None:
     assert state.joy1 & (1 << 5) == 0
     state.joystick_button_up(0, 5)
     assert state.joy1 & (1 << 5) != 0
+
+
+# ---------------------------------------------------------------------------
+# Keyboard layout selection (International vs Japanese/JIS)
+# ---------------------------------------------------------------------------
+
+def test_default_keyboard_type_is_int() -> None:
+    assert InputState().keyboard_type == "int"
+
+
+def test_int_and_jp_share_common_cells() -> None:
+    # Digits, letters, comma/period/slash, minus, semicolon are identical.
+    for key in (_K_a, _K_SPACE, _K_MINUS, _K_SEMICOLON, _K_SLASH, _K_COMMA):
+        assert KEY_MATRIX_INT[key] == KEY_MATRIX_JP[key]
+
+
+def test_int_specific_symbol_cells() -> None:
+    assert KEY_MATRIX_INT[_K_RIGHTBRACKET] == (1, 6)  # ]
+    assert KEY_MATRIX_INT[_K_LEFTBRACKET] == (1, 5)   # [
+    assert KEY_MATRIX_INT[_K_QUOTE] == (2, 0)         # ' (int has a dedicated key)
+
+
+def test_jp_specific_symbol_cells() -> None:
+    assert KEY_MATRIX_JP[_K_RIGHTBRACKET] == (2, 1)   # ] differs from int
+    assert KEY_MATRIX_JP[_K_LEFTBRACKET] == (1, 6)    # [ differs from int
+    assert _K_QUOTE not in KEY_MATRIX_JP               # JIS: apostrophe is Shift+7
+
+
+def test_keyboard_type_selects_matrix_on_keypress() -> None:
+    # ']' lands in different cells depending on the selected layout.
+    kint = InputState(keyboard_type="int")
+    kint.key_down(_K_RIGHTBRACKET)
+    assert kint.matrix[1] & (1 << 6) == 0  # int cell (1,6)
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(_K_RIGHTBRACKET)
+    assert kjp.matrix[2] & (1 << 1) == 0   # jp cell (2,1)
+
+
+def test_jp_apostrophe_unmapped_is_noop() -> None:
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(_K_QUOTE)  # no JIS cell → must not raise, matrix unchanged
+    assert all(row == 0xFF for row in kjp.matrix)
+
+
+def test_left_alt_maps_to_graph_key() -> None:
+    # Left Alt/Option → MSX GRAPH at matrix (6, 2), shared by both layouts.
+    assert KEY_MATRIX_INT[_K_LALT] == (6, 2)
+    assert KEY_MATRIX_JP[_K_LALT] == (6, 2)
+    state = InputState()
+    state.key_down(_K_LALT)
+    assert state.matrix[6] & (1 << 2) == 0  # GRAPH pressed (active-low)
+    state.key_up(_K_LALT)
+    assert state.matrix[6] & (1 << 2) != 0

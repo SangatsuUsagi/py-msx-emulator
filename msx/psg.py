@@ -30,10 +30,13 @@ class PSG:
     _tone_out: list[int] = field(default_factory=lambda: [0, 0, 0], init=False, repr=False)
     _noise_cnt: int = field(default=1, init=False, repr=False)
     _lfsr: int = field(default=1, init=False, repr=False)   # 17-bit; must never be 0
+    # Envelope: 32-step down-counter + attack/alternate/hold model (openMSX/MAME).
     _env_cnt: int = field(default=1, init=False, repr=False)
-    _env_level: int = field(default=15, init=False, repr=False)
-    _env_dir: int = field(default=-1, init=False, repr=False)  # +1 or -1
-    _env_hold: bool = field(default=False, init=False, repr=False)
+    _env_step: int = field(default=0x1F, init=False, repr=False)   # 5-bit counter 0-31
+    _env_attack: int = field(default=0, init=False, repr=False)    # 0x00 or 0x1F
+    _env_alternate: bool = field(default=False, init=False, repr=False)
+    _env_hold_flag: bool = field(default=False, init=False, repr=False)
+    _env_holding: bool = field(default=False, init=False, repr=False)
     _clk_frac: int = field(default=0, init=False, repr=False)
 
     # ------------------------------------------------------------------ ports
@@ -62,18 +65,30 @@ class PSG:
 
     # --------------------------------------------------------- envelope reset
 
+    def _env_period(self) -> int:
+        return max(1, (self.regs[12] << 8) | self.regs[11])
+
+    def _env_output_level(self) -> int:
+        """Current 4-bit envelope level (0-15) from the step/attack model."""
+        return (self._env_step ^ self._env_attack) >> 1
+
     def _reset_envelope(self) -> None:
         shape = self.regs[13] & 0x0F
-        # Shapes 4-11 begin with an attack (count up); all others begin with decay.
-        if 4 <= shape <= 11:
-            self._env_level = 0
-            self._env_dir = 1
+        # attack bit (0x04) picks the ramp direction; step always starts at 0x1F.
+        self._env_attack = 0x1F if (shape & 0x04) else 0
+        if (shape & 0x08) == 0:
+            # continue = 0: single-shot; alternate mirrors the attack bit.
+            self._env_hold_flag = True
+            self._env_alternate = self._env_attack != 0
         else:
-            self._env_level = 15
-            self._env_dir = -1
-        self._env_hold = False
-        period = max(1, (self.regs[12] << 8) | self.regs[11])
-        self._env_cnt = period * 16
+            self._env_hold_flag = bool(shape & 0x01)
+            self._env_alternate = bool(shape & 0x02)
+        self._env_step = 0x1F
+        self._env_holding = False
+        # 32-step counter with a 16-level (>>1) output: 2 steps per level, so a
+        # step advances every period*8 ticks to keep the per-level rate (and full
+        # ramp duration) identical to a 16-level period*16 model.
+        self._env_cnt = self._env_period() * 8
 
     # ---------------------------------------------------------- tone channels
 
@@ -100,47 +115,26 @@ class PSG:
     # ------------------------------------------------------------ envelope
 
     def _step_envelope(self, ticks: int) -> None:
-        if self._env_hold:
+        if self._env_holding:
             return
-        period = max(1, (self.regs[12] << 8) | self.regs[11])
-        step_ticks = period * 16  # one level change per period×16 PSG ticks
+        step_ticks = self._env_period() * 8  # one step per period×8 PSG ticks
         self._env_cnt -= ticks
         while self._env_cnt <= 0:
             self._env_cnt += step_ticks
-            self._env_level += self._env_dir
-            if self._env_level < 0 or self._env_level > 15:
-                self._envelope_boundary()
-                if self._env_hold:
+            self._env_step -= 1
+            if self._env_step < 0:
+                if self._env_hold_flag:
+                    # Freeze at the boundary; alternate flips the final direction.
+                    if self._env_alternate:
+                        self._env_attack ^= 0x1F
+                    self._env_holding = True
+                    self._env_step = 0
                     break
-
-    def _envelope_boundary(self) -> None:
-        shape = self.regs[13] & 0x0F
-        if shape < 8:
-            # Single-shot: hold at 0 regardless of attack/decay direction.
-            self._env_level = 0
-            self._env_hold = True
-        elif shape == 8:    # //// attack repeat
-            self._env_level = 0
-        elif shape == 9:    # /^^^ attack, hold at 15
-            self._env_level = 15
-            self._env_hold = True
-        elif shape == 10:   # /\/\ triangle
-            self._env_dir = -self._env_dir
-            self._env_level = 0 if self._env_dir == 1 else 15
-        elif shape == 11:   # /^^^ (same as 9)
-            self._env_level = 15
-            self._env_hold = True
-        elif shape == 12:   # \\\\ decay repeat
-            self._env_level = 15
-        elif shape == 13:   # \___ decay, hold at 0
-            self._env_level = 0
-            self._env_hold = True
-        elif shape == 14:   # \/\/ inverted triangle
-            self._env_dir = -self._env_dir
-            self._env_level = 0 if self._env_dir == 1 else 15
-        else:               # shape == 15: \^^^ decay, hold at 15
-            self._env_level = 15
-            self._env_hold = True
+                # Repeating shape: reload counter; alternate reverses the ramp
+                # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
+                if self._env_alternate and (self._env_step & 0x20):
+                    self._env_attack ^= 0x1F
+                self._env_step &= 0x1F
 
     # --------------------------------------------------------------- mixer
 
@@ -159,6 +153,7 @@ class PSG:
     def generate_samples(self, n: int) -> bytearray:
         """Return n signed 16-bit little-endian mono PCM samples."""
         out = bytearray(n * 2)
+        regs = self.regs  # local binding for the hot per-sample loop
         for i in range(n):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
             self._clk_frac += PSG_CLOCK
@@ -171,12 +166,13 @@ class PSG:
             self._step_envelope(ticks)
 
             # Sum channel amplitudes.
+            env_amp = _VOL_TABLE[self._env_output_level()]
             sample = 0
             for ch in range(3):
                 if self._mix_channel(ch):
-                    vol_reg = self.regs[8 + ch]
+                    vol_reg = regs[8 + ch]
                     if vol_reg & 0x10:
-                        sample += _VOL_TABLE[self._env_level]
+                        sample += env_amp
                     else:
                         sample += _VOL_TABLE[vol_reg & 0x0F]
 

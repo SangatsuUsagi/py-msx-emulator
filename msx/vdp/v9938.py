@@ -88,6 +88,13 @@ _ARG_DIX = 0x04  # X direction (0=right, 1=left)
 _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 
 _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
+# Byte-unit commands (HMMV/HMMM/YMMM) process one VRAM byte (= ppb pixels) per
+# _CYCLES_PER_BYTE; pixel-unit commands (LMMV/LMMM) process one pixel per
+# _CYCLES_PER_PIXEL. openMSX's VDP-clock coefficients (HMMV≈48, HMMM≈88,
+# LMMV≈96, LMMM≈120 per unit) put the logical (pixel) commands ~ppb× slower than
+# the byte commands; expressing them per pixel (rather than per byte) reproduces
+# that ratio in this emulator's calibrated T-state unit.
+_CYCLES_PER_PIXEL: int = _CYCLES_PER_BYTE
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded.
@@ -154,10 +161,43 @@ class V9938:
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     _irq: bool = field(default=False, init=False, repr=False)
-    _reg_write_log: list = field(default_factory=list, init=False, repr=False)
-    _frame_start_regs: list = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
-    _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
+    _reg_write_log: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
+    _frame_start_regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
+    _frame_start_palette: list[int] = field(
+        default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False
+    )
     debug_disable_sprites: bool = field(default=False, repr=False)  # render background only
+
+    # Public accessors mirroring the TMS9918A VDP field names, so cross-module
+    # code (machine, state save/load) can use the same names for both VDP types.
+    @property
+    def latch(self) -> int | None:
+        return self._latch
+
+    @latch.setter
+    def latch(self, value: int | None) -> None:
+        self._latch = value
+
+    @property
+    def addr(self) -> int:
+        return self._addr
+
+    @addr.setter
+    def addr(self, value: int) -> None:
+        self._addr = value
+
+    @property
+    def read_buf(self) -> int:
+        return self._read_buf
+
+    @read_buf.setter
+    def read_buf(self, value: int) -> None:
+        self._read_buf = value
+
+    @property
+    def irq(self) -> bool:
+        """Current interrupt-request line state (read-only)."""
+        return self._irq
 
     @property
     def display_height(self) -> int:
@@ -197,14 +237,13 @@ class V9938:
         # Line interrupt: R#19 is an 8-bit raster line that may target any line
         # in the field (0-255), including the border/vblank region — not only the
         # active display. Lines >= 256 can never match the 8-bit compare.
+        # Subtracting R#23 (vertical scroll) is intentional and matches openMSX
+        # (VDP.cc scheduleHScan): the split line is compared as (R#19 - R#23) & 0xFF.
         effective = (self.regs[19] - self.regs[23]) & 0xFF
         if line == effective:
             self._status1 |= 0x01  # FH
             if self.regs[0] & 0x10:  # IE1
                 self._update_irq()
-
-    def _warn_ie1_if_needed(self, reg: int, value: int) -> None:
-        pass  # IE1 now implemented; warning no longer needed
 
     # ------------------------------------------------------------------
     # Command timer
@@ -246,7 +285,6 @@ class V9938:
                 if value & 0x80:
                     reg = value & 0x3F
                     if reg < _NUM_REGS:
-                        self._warn_ie1_if_needed(reg, low)
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
                             self._reg_write_log.append((self.display_line, reg, low))
@@ -286,7 +324,6 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
-                self._warn_ie1_if_needed(ptr, value)
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
                     self._reg_write_log.append((self.display_line, ptr, value))
@@ -408,6 +445,23 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
+    def _byte_cmd_cycles(self, nx_px: int, ny: int) -> int:
+        """CE duration for a byte-unit command (HMMV/HMMM/YMMM).
+
+        nx_px pixels span ceil(nx_px / ppb) VRAM bytes; each byte costs
+        _CYCLES_PER_BYTE T-states. Clamped to a 4 T-state minimum.
+        """
+        byte_cols = (nx_px + self._cmd_ppb - 1) // self._cmd_ppb
+        return max(4, byte_cols * ny * _CYCLES_PER_BYTE)
+
+    def _pixel_cmd_cycles(self, nx_px: int, ny: int) -> int:
+        """CE duration for a pixel-unit command (LMMV/LMMM).
+
+        Logical commands process one pixel per _CYCLES_PER_PIXEL T-states (no
+        ppb division), making them ~ppb× slower than the byte commands.
+        """
+        return max(4, nx_px * ny * _CYCLES_PER_PIXEL)
+
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14])."""
         cmr = self.cmd_regs[14]
@@ -416,7 +470,6 @@ class V9938:
 
         self._cmd_bpl, self._cmd_ppb, self._cmd_bpp = self._cmd_geometry()
         px_mask = (1 << self._cmd_bpp) - 1
-        sw = self._cmd_bpl * self._cmd_ppb  # screen width in pixels
 
         sx = self.cmd_regs[0] | ((self.cmd_regs[1] & 0x01) << 8)
         sy = self.cmd_regs[2] | ((self.cmd_regs[3] & 0x03) << 8)
@@ -457,6 +510,7 @@ class V9938:
             return
 
         if cmd == _CMD_SRCH:
+            sw = self._cmd_bpl * self._cmd_ppb  # screen width in pixels
             stop_on_ne = bool(arg & _ARG_EQ)
             clr_px = clr & px_mask
             x = sx
@@ -532,7 +586,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_LMMM:
@@ -546,7 +600,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_HMMV:
@@ -559,7 +613,7 @@ class V9938:
                     self.vram[addr] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = self._byte_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_HMMM:
@@ -574,13 +628,14 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = ((actual_nx + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = self._byte_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_YMMM:
             # Y-direction copy: vertical strip at X=DX (NX ignored, X-range runs
             # to the screen edge per DIX); source row SY → destination row DY.
             actual_ny = ny if ny else 1024
+            sw = self._cmd_bpl * self._cmd_ppb  # screen width in pixels
             x_count = (dx + 1) if (arg & _ARG_DIX) else (sw - dx)
             for row in range(actual_ny):
                 syy = sy + row * ys
@@ -592,7 +647,7 @@ class V9938:
                     self.vram[dst] = self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = ((x_count + self._cmd_ppb - 1) // self._cmd_ppb) * actual_ny * _CYCLES_PER_BYTE
+            self._cmd_remaining = self._byte_cmd_cycles(x_count, actual_ny)
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
