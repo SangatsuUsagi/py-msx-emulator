@@ -103,9 +103,11 @@ def _psg_synth_to_dict(machine: "Machine") -> dict[str, object]:
         "_noise_cnt": p._noise_cnt,
         "_lfsr": p._lfsr,
         "_env_cnt": p._env_cnt,
-        "_env_level": p._env_level,
-        "_env_dir": p._env_dir,
-        "_env_hold": p._env_hold,
+        "_env_step": p._env_step,
+        "_env_attack": p._env_attack,
+        "_env_alternate": p._env_alternate,
+        "_env_hold_flag": p._env_hold_flag,
+        "_env_holding": p._env_holding,
         "_clk_frac": p._clk_frac,
     }
 
@@ -117,9 +119,11 @@ def _restore_psg_synth(machine: "Machine", d: dict[str, object]) -> None:
     p._noise_cnt = int(d["_noise_cnt"])  # type: ignore[arg-type]
     p._lfsr = int(d["_lfsr"])  # type: ignore[arg-type]
     p._env_cnt = int(d["_env_cnt"])  # type: ignore[arg-type]
-    p._env_level = int(d["_env_level"])  # type: ignore[arg-type]
-    p._env_dir = int(d["_env_dir"])  # type: ignore[arg-type]
-    p._env_hold = bool(d["_env_hold"])
+    p._env_step = int(d["_env_step"])  # type: ignore[arg-type]
+    p._env_attack = int(d["_env_attack"])  # type: ignore[arg-type]
+    p._env_alternate = bool(d["_env_alternate"])
+    p._env_hold_flag = bool(d["_env_hold_flag"])
+    p._env_holding = bool(d["_env_holding"])
     p._clk_frac = int(d["_clk_frac"])  # type: ignore[arg-type]
 
 

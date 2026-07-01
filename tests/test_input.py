@@ -1,6 +1,7 @@
 from msx.input import (
     InputState, KEY_MATRIX, JOY_MAP,
     _K_a, _K_SPACE, _K_w, _K_s, _K_x,
+    _K_MINUS, _K_SLASH, _K_SEMICOLON,
     _K_UP, _K_DOWN, _K_LEFT, _K_RIGHT,
 )
 
@@ -22,6 +23,24 @@ def test_default_joy1_all_released() -> None:
 def test_default_joy2_all_released() -> None:
     state = make_input()
     assert state.joy2 == 0x3F
+
+
+def test_minus_key_maps_to_row1_col2() -> None:
+    assert KEY_MATRIX[_K_MINUS] == (1, 2)
+    state = InputState()
+    state.key_down(_K_MINUS)
+    assert state.matrix[1] & (1 << 2) == 0  # active-low: pressed
+
+
+def test_slash_key_maps_to_row2_col2() -> None:
+    assert KEY_MATRIX[_K_SLASH] == (2, 2)
+    state = InputState()
+    state.key_down(_K_SLASH)
+    assert state.matrix[2] & (1 << 2) == 0
+
+
+def test_semicolon_key_maps_to_row1_col7() -> None:
+    assert KEY_MATRIX[_K_SEMICOLON] == (1, 7)
 
 
 def test_key_down_clears_matrix_bit() -> None:
