@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 if TYPE_CHECKING:
     from msx.mapper_tracer import MapperTracer
@@ -138,6 +139,164 @@ class Ascii16Mapper:
             old = self._banks[window]
             self._banks[window] = new
             _trace_bank(self, window, old, new, addr)
+
+
+@dataclass
+class Ascii8Sram2Mapper(Ascii8Mapper):
+    """ASCII8 mapper + 2 KB battery-backed SRAM.
+
+    SRAM is selected for a window when its bank register value >= num_rom_pages.
+    Writes to 0x6000–0x7FFF always update bank registers (never write to SRAM).
+    """
+
+    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_MASK: ClassVar[int] = 0x7FF
+
+    sram: bytearray | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+            self.sram = bytearray(self._SRAM_SIZE)
+
+    def _is_sram_bank(self, window: int) -> bool:
+        return self._banks[window] >= self._num_pages()
+
+    def read(self, addr: int) -> int:
+        if addr < 0x6000:
+            window, base = 0, 0x4000
+        elif addr < 0x8000:
+            window, base = 1, 0x6000
+        elif addr < 0xA000:
+            window, base = 2, 0x8000
+        else:
+            window, base = 3, 0xA000
+        if self._is_sram_bank(window):
+            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x6000 <= addr <= 0x7FFF:
+            reg = (addr >> 11) & 0x03
+            old = self._banks[reg]
+            self._banks[reg] = value
+            _trace_bank(self, reg, old, value, addr)
+        else:
+            if addr < 0x6000:
+                window, base = 0, 0x4000
+            elif addr < 0xA000:
+                window, base = 2, 0x8000
+            else:
+                window, base = 3, 0xA000
+            if self._is_sram_bank(window):
+                self.sram[(addr - base) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)  # type: ignore[arg-type]
+
+
+@dataclass
+class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
+    """ASCII8 mapper + 8 KB battery-backed SRAM."""
+
+    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_MASK: ClassVar[int] = 0x1FFF
+
+
+@dataclass
+class Ascii16Sram2Mapper(Ascii16Mapper):
+    """ASCII16 mapper + 2 KB battery-backed SRAM.
+
+    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped.
+    SRAM is selected for window 1 when its bank register value >= num_rom_pages.
+    """
+
+    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_MASK: ClassVar[int] = 0x7FF
+
+    sram: bytearray | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+            self.sram = bytearray(self._SRAM_SIZE)
+
+    def _is_sram_bank(self, window: int) -> bool:
+        return window == 1 and self._banks[window] >= self._num_pages()
+
+    def read(self, addr: int) -> int:
+        if addr < 0x8000:
+            window, base = 0, 0x4000
+        else:
+            window, base = 1, 0x8000
+        if self._is_sram_bank(window):
+            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+        page_offset = self._banks[window] * _PAGE_16K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x6000 <= addr <= 0x7FFF:
+            window = (addr >> 12) & 0x01
+            old = self._banks[window]
+            self._banks[window] = value
+            _trace_bank(self, window, old, value, addr)
+        elif addr >= 0x8000:
+            if self._is_sram_bank(1):
+                self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)  # type: ignore[arg-type]
+
+
+@dataclass
+class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
+    """ASCII16 mapper + 8 KB battery-backed SRAM."""
+
+    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_MASK: ClassVar[int] = 0x1FFF
+
+
+@dataclass
+class RTypeMapper:
+    """R-Type (Irem) mapper: 16 KB fixed at 0x4000 (last page), 16 KB switchable at 0x8000.
+
+    The last 16 KB of ROM is always mapped at 0x4000–0x7FFF.
+    The switchable window at 0x8000–0xBFFF starts at page 0.
+    Bank register: write anywhere to 0x4000–0x7FFF.
+    Bank mask: value & 0x17 when bit 4 set, else value & 0x1F (openMSX RomRType).
+    """
+
+    rom: bytes
+    _bank: int = field(default=0, repr=False)
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // _PAGE_16K)
+
+    def read(self, addr: int) -> int:
+        if 0x4000 <= addr < 0x8000:
+            fixed = (self._num_pages() - 1) * _PAGE_16K + (addr - 0x4000)
+            if 0 <= fixed < len(self.rom):
+                return self.rom[fixed]
+            return 0xFF
+        if 0x8000 <= addr < 0xC000:
+            offset = self._bank * _PAGE_16K + (addr - 0x8000)
+            if 0 <= offset < len(self.rom):
+                return self.rom[offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x4000 <= addr < 0x8000:
+            value = value & 0x17 if (value & 0x10) else value & 0x1F
+            old = self._bank
+            self._bank = value
+            _trace_bank(self, 1, old, self._bank, addr)
 
 
 @dataclass

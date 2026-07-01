@@ -23,7 +23,9 @@ def main() -> None:
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--mapper",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
-                                 "Konami", "KonamiSCC", "Majutsushi"],
+                                 "Konami", "KonamiSCC", "Majutsushi",
+                                 "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
+                                 "R-Type"],
                         default="auto",
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
@@ -187,6 +189,7 @@ def main() -> None:
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
+    machine = None
     try:
         try:
             machine = build_machine(
@@ -236,6 +239,11 @@ def main() -> None:
             _trace_file.close()
         if _mapper_trace_file is not None:
             _mapper_trace_file.close()
+        if machine is not None and machine.sram_save_path is not None:
+            mapper = machine.memory._mapper
+            if hasattr(mapper, "save_sram"):
+                machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+                mapper.save_sram(machine.sram_save_path)
 
 
 if __name__ == "__main__":
