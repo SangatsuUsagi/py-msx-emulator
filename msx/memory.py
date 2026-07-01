@@ -62,13 +62,18 @@ class Memory:
             return (~self.sub_slot_reg) & 0xFF
         page = (addr >> 14) & 0x03
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        if sub == 0 and self.sub0_rom is not None:
-            if addr <= 0x3FFF:
-                return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
-            return 0xFF  # sub0_rom present but addr out of its page-0 range
+        # Sub-slot dispatch (explicit per sub value for a clean port to match):
+        #   0: extension ROM in page 0 (if present), else main RAM
+        #   1: reserved / unmapped -> 0xFF
+        #   2, 3: main RAM
+        if sub == 0:
+            if self.sub0_rom is not None:
+                if addr <= 0x3FFF:
+                    return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
+                return 0xFF  # sub0_rom present but addr out of its page-0 range
         elif sub == 1:
             return 0xFF
-        # sub-slots 0 (no sub0_rom, backward compat), 2, and 3 → RAM mapper
+        # sub == 2, sub == 3, or sub == 0 without a sub0_rom -> RAM
         if self.ram_mapper is not None:
             return self.ram_mapper.read(addr)
         # MSX1: 32 KB RAM at 0x8000-0xFFFF only
