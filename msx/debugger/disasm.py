@@ -19,7 +19,8 @@ from typing import Callable
 #   {b1} = byte at offset 2 (after opcode+b0), formatted as 02Xh
 #   {w}  = 16-bit word at offset 1 (little-endian), formatted as 04Xh
 #   {d}  = signed displacement at offset 1, formatted as +dd/-dd (decimal)
-#   {r}  = signed relative jump offset (PC-relative, shown as hex target) — stored as {b0} raw
+#   {r}  = PC-relative jump target: the signed offset at offset 1 resolved to
+#          the absolute destination address, formatted as 04Xh
 #
 # For DD/FD prefixed ops with displacement:
 #   {id} = signed displacement for (IX+d)/(IY+d)
@@ -339,17 +340,18 @@ def _build_xycb(xy: str) -> dict[int, tuple[str, int]]:
         t[0x46 + bit * 8] = (f"BIT {bit}, ({xy}+{{id}})", 4)
         t[0x86 + bit * 8] = (f"RES {bit}, ({xy}+{{id}})", 4)
         t[0xC6 + bit * 8] = (f"SET {bit}, ({xy}+{{id}})", 4)
+    # Rotate/shift group. Index 6 is the documented standalone (IX+d)/(IY+d)
+    # form (no register copy); the other indices are the undocumented variants
+    # that also copy the result into a register. 0x30 is SLL (undocumented).
     regs = ["B", "C", "D", "E", "H", "L", None, "A"]
-    for i, r in enumerate(regs):
-        if r is None:
-            continue
-        t[0x00 + i] = (f"RLC ({xy}+{{id}}), {r}", 4)
-        t[0x08 + i] = (f"RRC ({xy}+{{id}}), {r}", 4)
-        t[0x10 + i] = (f"RL ({xy}+{{id}}), {r}", 4)
-        t[0x18 + i] = (f"RR ({xy}+{{id}}), {r}", 4)
-        t[0x20 + i] = (f"SLA ({xy}+{{id}}), {r}", 4)
-        t[0x28 + i] = (f"SRA ({xy}+{{id}}), {r}", 4)
-        t[0x38 + i] = (f"SRL ({xy}+{{id}}), {r}", 4)
+    shift_ops = [
+        (0x00, "RLC"), (0x08, "RRC"), (0x10, "RL"), (0x18, "RR"),
+        (0x20, "SLA"), (0x28, "SRA"), (0x30, "SLL"), (0x38, "SRL"),
+    ]
+    for base, mnem in shift_ops:
+        for i, r in enumerate(regs):
+            suffix = "" if r is None else f", {r}"
+            t[base + i] = (f"{mnem} ({xy}+{{id}}){suffix}", 4)
     return t
 
 _DDCB_OPS: dict[int, tuple[str, int]] = _build_xycb("IX")
@@ -500,7 +502,7 @@ def disassemble(read: Callable[[int], int], addr: int) -> tuple[str, int]:
             if entry:
                 tmpl, size = entry
                 return _apply_xycb_template(tmpl, read, addr), size
-            return f"DB CBh", 4
+            return f"DB {b3:02X}h", 4
 
         entry = xy_ops.get(b1)
         if entry:
