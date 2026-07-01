@@ -1,13 +1,25 @@
 """Tests for MSX2 save/load state functionality."""
 from __future__ import annotations
 
-import pickle
+import json
 from pathlib import Path
 
 import pytest
 
 from tests.factories import make_machine, make_machine_msx2
 from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
+
+
+def _load_state_json(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _rewrite_state_version(path: Path, version: int) -> None:
+    data = _load_state_json(path)
+    data["format_version"] = version
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -105,11 +117,7 @@ def test_old_format_version_rejected(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    with open(state_path, "rb") as f:
-        snap = pickle.load(f)
-    snap.format_version = 1
-    with open(state_path, "wb") as f:
-        pickle.dump(snap, f)
+    _rewrite_state_version(state_path, 1)
 
     with pytest.raises(ValueError, match="version"):
         load_state(machine, state_path)
@@ -135,9 +143,8 @@ def test_msx1_sub_slot_reg_none_in_snapshot(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    with open(state_path, "rb") as f:
-        snap = pickle.load(f)
-    assert snap.sub_slot_reg is None
+    data = _load_state_json(state_path)
+    assert data["sub_slot_reg"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -148,11 +155,7 @@ def test_format_version_2_rejected(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    with open(state_path, "rb") as f:
-        snap = pickle.load(f)
-    snap.format_version = 2
-    with open(state_path, "wb") as f:
-        pickle.dump(snap, f)
+    _rewrite_state_version(state_path, 2)
 
     with pytest.raises(ValueError, match="version"):
         load_state(machine, state_path)
@@ -166,11 +169,7 @@ def test_format_version_3_rejected(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    with open(state_path, "rb") as f:
-        snap = pickle.load(f)
-    snap.format_version = 3
-    with open(state_path, "wb") as f:
-        pickle.dump(snap, f)
+    _rewrite_state_version(state_path, 3)
 
     with pytest.raises(ValueError, match="version"):
         load_state(machine, state_path)
@@ -212,11 +211,10 @@ def test_msx1_cmd_regs_none_in_snapshot(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    with open(state_path, "rb") as f:
-        snap = pickle.load(f)
-    assert snap.cmd_regs is None
-    assert snap.status2 is None
-    assert snap.cmd_remaining is None
+    data = _load_state_json(state_path)
+    assert data["cmd_regs"] is None
+    assert data["status2"] is None
+    assert data["cmd_remaining"] is None
 
 
 def test_msx2_roundtrip_cmd_remaining(saves_dir):
@@ -249,3 +247,17 @@ def test_msx1_roundtrip_unaffected(saves_dir):
 
     assert machine.cpu.registers.A == 0x55
     assert machine.memory.ram[10] == 0x99
+
+
+def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    # Write a recognisable pattern across the 128 KB VRAM.
+    for i in range(0, len(machine.vdp.vram), 997):
+        machine.vdp.vram[i] = (i * 7) & 0xFF
+    expected = bytes(machine.vdp.vram)
+    save_state(machine, _RGB_MSX2, "test")
+
+    for i in range(len(machine.vdp.vram)):
+        machine.vdp.vram[i] = 0
+    load_state(machine)
+    assert bytes(machine.vdp.vram) == expected

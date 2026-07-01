@@ -314,3 +314,41 @@ class TestMachineLoaderSramIntegration:
         monkeypatch.chdir(tmp_path)
         machine = make_machine(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
         assert machine.memory._mapper.sram == bytearray(2048)
+
+
+# ---------------------------------------------------------------------------
+# snapshot() / restore() round-trip
+# ---------------------------------------------------------------------------
+
+class TestSnapshotRestore:
+    def test_ascii8sram_roundtrips_banks_and_sram(self):
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)   # window 2 = SRAM
+        m.write(0x8100, 0x5A)         # SRAM byte
+        m.write(0x6000, 0x01)         # window 0 bank
+        snap = m.snapshot()
+
+        m2 = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m2.restore(snap)
+        assert m2._banks == m._banks
+        assert m2.read(0x8100) == 0x5A
+
+    def test_ascii16sram_roundtrips(self):
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x10)         # window 1 = SRAM
+        m.write(0x8200, 0x3C)
+        snap = m.snapshot()
+
+        m2 = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m2.restore(snap)
+        assert m2._banks == m._banks
+        assert m2.read(0x8200) == 0x3C
+
+    def test_snapshot_survives_mapper_mutation(self):
+        m = Ascii8Sram8Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)
+        m.write(0x8000, 0x11)
+        snap = m.snapshot()
+        m.write(0x8000, 0x22)         # mutate after snapshot
+        m.restore(snap)
+        assert m.read(0x8000) == 0x11

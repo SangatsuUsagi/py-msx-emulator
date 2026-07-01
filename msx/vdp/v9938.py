@@ -159,6 +159,37 @@ class V9938:
     _frame_start_palette: list = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False)
     debug_disable_sprites: bool = field(default=False, repr=False)  # render background only
 
+    # Public accessors mirroring the TMS9918A VDP field names, so cross-module
+    # code (machine, state save/load) can use the same names for both VDP types.
+    @property
+    def latch(self) -> int | None:
+        return self._latch
+
+    @latch.setter
+    def latch(self, value: int | None) -> None:
+        self._latch = value
+
+    @property
+    def addr(self) -> int:
+        return self._addr
+
+    @addr.setter
+    def addr(self, value: int) -> None:
+        self._addr = value
+
+    @property
+    def read_buf(self) -> int:
+        return self._read_buf
+
+    @read_buf.setter
+    def read_buf(self, value: int) -> None:
+        self._read_buf = value
+
+    @property
+    def irq(self) -> bool:
+        """Current interrupt-request line state (read-only)."""
+        return self._irq
+
     @property
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
