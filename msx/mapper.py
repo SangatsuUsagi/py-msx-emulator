@@ -71,6 +71,12 @@ class FlatMapper:
     def write(self, addr: int, value: int) -> None:
         pass
 
+    def snapshot(self) -> dict[str, object]:
+        return {}
+
+    def restore(self, state: dict[str, object]) -> None:
+        pass
+
 
 @dataclass
 class Ascii8Mapper(_BankTracing):
@@ -115,6 +121,12 @@ class Ascii8Mapper(_BankTracing):
             self._banks[reg] = new
             _trace_bank(self, reg, old, new, addr)
 
+    def snapshot(self) -> dict[str, object]:
+        return {"banks": list(self._banks)}
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._banks[:] = state["banks"]  # type: ignore[assignment]
+
 
 @dataclass
 class Ascii16Mapper(_BankTracing):
@@ -152,6 +164,12 @@ class Ascii16Mapper(_BankTracing):
             old = self._banks[window]
             self._banks[window] = new
             _trace_bank(self, window, old, new, addr)
+
+    def snapshot(self) -> dict[str, object]:
+        return {"banks": list(self._banks)}
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._banks[:] = state["banks"]  # type: ignore[assignment]
 
 
 @dataclass
@@ -232,6 +250,15 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)  # type: ignore[arg-type]
 
+    def snapshot(self) -> dict[str, object]:
+        state = super().snapshot()
+        state["sram"] = bytes(self.sram)  # type: ignore[arg-type]
+        return state
+
+    def restore(self, state: dict[str, object]) -> None:
+        super().restore(state)
+        self.sram[:] = state["sram"]  # type: ignore[index,assignment]
+
 
 @dataclass
 class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
@@ -289,6 +316,15 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)  # type: ignore[arg-type]
 
+    def snapshot(self) -> dict[str, object]:
+        state = super().snapshot()
+        state["sram"] = bytes(self.sram)  # type: ignore[arg-type]
+        return state
+
+    def restore(self, state: dict[str, object]) -> None:
+        super().restore(state)
+        self.sram[:] = state["sram"]  # type: ignore[index,assignment]
+
 
 @dataclass
 class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
@@ -336,6 +372,12 @@ class RTypeMapper(_BankTracing):
             old = self._bank
             self._bank = value
             _trace_bank(self, 1, old, self._bank, addr)
+
+    def snapshot(self) -> dict[str, object]:
+        return {"bank": self._bank}
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._bank = int(state["bank"])  # type: ignore[arg-type]
 
 
 @dataclass
@@ -389,6 +431,12 @@ class KonamiMapper(_BankTracing):
         self._banks[window] = new
         _trace_bank(self, window, old, new, addr)
 
+    def snapshot(self) -> dict[str, object]:
+        return {"banks": list(self._banks)}
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._banks[:] = state["banks"]  # type: ignore[assignment]
+
 
 @dataclass
 class MajutsushiMapper(KonamiMapper):
@@ -440,6 +488,16 @@ class MajutsushiMapper(KonamiMapper):
             value = events[-1][1]
         self._last_dac = value
         return out
+
+    def snapshot(self) -> dict[str, object]:
+        # _dac_events is transient (consumed each frame), so only last_dac persists.
+        state = super().snapshot()
+        state["last_dac"] = self._last_dac
+        return state
+
+    def restore(self, state: dict[str, object]) -> None:
+        super().restore(state)
+        self._last_dac = int(state["last_dac"])  # type: ignore[arg-type]
 
 
 @dataclass
@@ -517,3 +575,11 @@ class KonamiSCCMapper(_BankTracing):
             self._banks[3] = new
             _trace_bank(self, 3, old, new, addr)
         # Writes outside the four register zones are ignored.
+
+    def snapshot(self) -> dict[str, object]:
+        # SCC chip state is snapshotted separately by the state module.
+        return {"banks": list(self._banks), "scc_mode": self._scc_mode}
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._banks[:] = state["banks"]  # type: ignore[assignment]
+        self._scc_mode = bool(state["scc_mode"])

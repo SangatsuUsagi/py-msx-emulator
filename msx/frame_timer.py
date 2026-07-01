@@ -25,11 +25,17 @@ class FrameTimer:
         self._last_tick_time = now
 
     def tick(self) -> float:
+        """Block until the next frame deadline; return the measured frame time.
+
+        The return value (and `_last_tick_time`) is the real elapsed seconds since
+        the previous tick, for callers that display an actual frame time; it does
+        not feed back into deadline scheduling.
+        """
         # Bulk sleep down to _SPIN_THRESHOLD before deadline
         remaining = self._next_deadline - time.perf_counter()
         if remaining > _SPIN_THRESHOLD:
             time.sleep(remaining - _SPIN_THRESHOLD)
-        # Spin for the final stretch
+        # Spin for the final stretch (Rust port: use std::hint::spin_loop() here)
         while time.perf_counter() < self._next_deadline:
             pass
 
