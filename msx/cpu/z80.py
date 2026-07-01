@@ -3,13 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
 if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
 
 
-_execute: Callable[[Z80, int], int] | None = None
+# The opcode dispatcher is bound once at import time. opcodes_main references
+# Z80 only for type checking (guarded by TYPE_CHECKING), so this top-level
+# import does not create a runtime import cycle, and step() avoids a per-call
+# None check on the hot path.
+_execute: Callable[[Z80, int], int] = _opcodes_main.execute
 
 
 def _noop_read(_port: int) -> int:
@@ -74,12 +79,6 @@ class Z80:
         return (hi << 8) | lo
 
     def step(self) -> int:
-        global _execute
-        if _execute is None:
-            from msx.cpu import opcodes_main
-            _execute = opcodes_main.execute
-        execute = _execute
-
         if self.nmi_pending:
             self.nmi_pending = False
             self.halted = False
@@ -126,4 +125,4 @@ class Z80:
         r.R = (r.R + 1) & 0x7F
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
-        return execute(self, opcode)
+        return _execute(self, opcode)
