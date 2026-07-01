@@ -11,7 +11,9 @@ _K_RETURN = 13
 _K_ESCAPE = 27
 _K_SPACE = 32
 _K_COMMA = 44
+_K_MINUS = 45
 _K_PERIOD = 46
+_K_SLASH = 47
 _K_0 = 48
 _K_1 = 49
 _K_2 = 50
@@ -102,15 +104,16 @@ KEY_MATRIX: dict[int, tuple[int, int]] = {
     # Row 1: digits 8-9 and punctuation
     _K_8: (1, 0),
     _K_9: (1, 1),
-    _K_SEMICOLON: (1, 2),  # - (MSX uses this column for minus)
+    _K_MINUS: (1, 2),      # - (minus) → MSX row 1 col 2
     _K_EQUALS: (1, 3),     # =
     _K_BACKSLASH: (1, 4),  # backslash
     _K_LEFTBRACKET: (1, 5),
     _K_RIGHTBRACKET: (1, 6),
+    _K_SEMICOLON: (1, 7),  # ; → MSX row 1 col 7
     # Row 2: A-B and special
     _K_COMMA: (2, 0),
     _K_PERIOD: (2, 1),
-    # _K_SLASH: (2, 2),  # / - no constant defined above
+    _K_SLASH: (2, 2),      # / (slash) → MSX row 2 col 2
     _K_BACKSPACE: (2, 3),
     _K_ESCAPE: (2, 4),
     _K_BACKQUOTE: (2, 5),
