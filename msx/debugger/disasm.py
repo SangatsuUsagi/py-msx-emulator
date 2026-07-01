@@ -251,29 +251,29 @@ def _build_xy(xy: str) -> dict[int, tuple[str, int]]:
         0x2C: (f"INC {xy}L", 2),
         0x2D: (f"DEC {xy}L", 2),
         0x2E: (f"LD {xy}L, {{b0}}h", 3),
-        0x34: (f"INC ({xy}+{{id}})", 3),
-        0x35: (f"DEC ({xy}+{{id}})", 3),
-        0x36: (f"LD ({xy}+{{id}}), {{ib}}h", 4),
+        0x34: (f"INC ({xy}{{id}})", 3),
+        0x35: (f"DEC ({xy}{{id}})", 3),
+        0x36: (f"LD ({xy}{{id}}), {{ib}}h", 4),
         0x39: (f"ADD {xy}, SP", 2),
         0x44: (f"LD B, {xy}H", 2),
         0x45: (f"LD B, {xy}L", 2),
-        0x46: (f"LD B, ({xy}+{{id}})", 3),
+        0x46: (f"LD B, ({xy}{{id}})", 3),
         0x4C: (f"LD C, {xy}H", 2),
         0x4D: (f"LD C, {xy}L", 2),
-        0x4E: (f"LD C, ({xy}+{{id}})", 3),
+        0x4E: (f"LD C, ({xy}{{id}})", 3),
         0x54: (f"LD D, {xy}H", 2),
         0x55: (f"LD D, {xy}L", 2),
-        0x56: (f"LD D, ({xy}+{{id}})", 3),
+        0x56: (f"LD D, ({xy}{{id}})", 3),
         0x5C: (f"LD E, {xy}H", 2),
         0x5D: (f"LD E, {xy}L", 2),
-        0x5E: (f"LD E, ({xy}+{{id}})", 3),
+        0x5E: (f"LD E, ({xy}{{id}})", 3),
         0x60: (f"LD {xy}H, B", 2),
         0x61: (f"LD {xy}H, C", 2),
         0x62: (f"LD {xy}H, D", 2),
         0x63: (f"LD {xy}H, E", 2),
         0x64: (f"LD {xy}H, {xy}H", 2),
         0x65: (f"LD {xy}H, {xy}L", 2),
-        0x66: (f"LD H, ({xy}+{{id}})", 3),
+        0x66: (f"LD H, ({xy}{{id}})", 3),
         0x67: (f"LD {xy}H, A", 2),
         0x68: (f"LD {xy}L, B", 2),
         0x69: (f"LD {xy}L, C", 2),
@@ -281,42 +281,42 @@ def _build_xy(xy: str) -> dict[int, tuple[str, int]]:
         0x6B: (f"LD {xy}L, E", 2),
         0x6C: (f"LD {xy}L, {xy}H", 2),
         0x6D: (f"LD {xy}L, {xy}L", 2),
-        0x6E: (f"LD L, ({xy}+{{id}})", 3),
+        0x6E: (f"LD L, ({xy}{{id}})", 3),
         0x6F: (f"LD {xy}L, A", 2),
-        0x70: (f"LD ({xy}+{{id}}), B", 3),
-        0x71: (f"LD ({xy}+{{id}}), C", 3),
-        0x72: (f"LD ({xy}+{{id}}), D", 3),
-        0x73: (f"LD ({xy}+{{id}}), E", 3),
-        0x74: (f"LD ({xy}+{{id}}), H", 3),
-        0x75: (f"LD ({xy}+{{id}}), L", 3),
-        0x77: (f"LD ({xy}+{{id}}), A", 3),
+        0x70: (f"LD ({xy}{{id}}), B", 3),
+        0x71: (f"LD ({xy}{{id}}), C", 3),
+        0x72: (f"LD ({xy}{{id}}), D", 3),
+        0x73: (f"LD ({xy}{{id}}), E", 3),
+        0x74: (f"LD ({xy}{{id}}), H", 3),
+        0x75: (f"LD ({xy}{{id}}), L", 3),
+        0x77: (f"LD ({xy}{{id}}), A", 3),
         0x7C: (f"LD A, {xy}H", 2),
         0x7D: (f"LD A, {xy}L", 2),
-        0x7E: (f"LD A, ({xy}+{{id}})", 3),
+        0x7E: (f"LD A, ({xy}{{id}})", 3),
         0x84: (f"ADD A, {xy}H", 2),
         0x85: (f"ADD A, {xy}L", 2),
-        0x86: (f"ADD A, ({xy}+{{id}})", 3),
+        0x86: (f"ADD A, ({xy}{{id}})", 3),
         0x8C: (f"ADC A, {xy}H", 2),
         0x8D: (f"ADC A, {xy}L", 2),
-        0x8E: (f"ADC A, ({xy}+{{id}})", 3),
+        0x8E: (f"ADC A, ({xy}{{id}})", 3),
         0x94: (f"SUB {xy}H", 2),
         0x95: (f"SUB {xy}L", 2),
-        0x96: (f"SUB ({xy}+{{id}})", 3),
+        0x96: (f"SUB ({xy}{{id}})", 3),
         0x9C: (f"SBC A, {xy}H", 2),
         0x9D: (f"SBC A, {xy}L", 2),
-        0x9E: (f"SBC A, ({xy}+{{id}})", 3),
+        0x9E: (f"SBC A, ({xy}{{id}})", 3),
         0xA4: (f"AND {xy}H", 2),
         0xA5: (f"AND {xy}L", 2),
-        0xA6: (f"AND ({xy}+{{id}})", 3),
+        0xA6: (f"AND ({xy}{{id}})", 3),
         0xAC: (f"XOR {xy}H", 2),
         0xAD: (f"XOR {xy}L", 2),
-        0xAE: (f"XOR ({xy}+{{id}})", 3),
+        0xAE: (f"XOR ({xy}{{id}})", 3),
         0xB4: (f"OR {xy}H", 2),
         0xB5: (f"OR {xy}L", 2),
-        0xB6: (f"OR ({xy}+{{id}})", 3),
+        0xB6: (f"OR ({xy}{{id}})", 3),
         0xBC: (f"CP {xy}H", 2),
         0xBD: (f"CP {xy}L", 2),
-        0xBE: (f"CP ({xy}+{{id}})", 3),
+        0xBE: (f"CP ({xy}{{id}})", 3),
         0xC1: (f"POP {xy}", 2),
         0xC5: (f"PUSH {xy}", 2),
         0xE1: (f"POP {xy}", 2),
@@ -337,9 +337,9 @@ _FD_OPS: dict[int, tuple[str, int]] = _build_xy("IY")
 def _build_xycb(xy: str) -> dict[int, tuple[str, int]]:
     t: dict[int, tuple[str, int]] = {}
     for bit in range(8):
-        t[0x46 + bit * 8] = (f"BIT {bit}, ({xy}+{{id}})", 4)
-        t[0x86 + bit * 8] = (f"RES {bit}, ({xy}+{{id}})", 4)
-        t[0xC6 + bit * 8] = (f"SET {bit}, ({xy}+{{id}})", 4)
+        t[0x46 + bit * 8] = (f"BIT {bit}, ({xy}{{id}})", 4)
+        t[0x86 + bit * 8] = (f"RES {bit}, ({xy}{{id}})", 4)
+        t[0xC6 + bit * 8] = (f"SET {bit}, ({xy}{{id}})", 4)
     # Rotate/shift group. Index 6 is the documented standalone (IX+d)/(IY+d)
     # form (no register copy); the other indices are the undocumented variants
     # that also copy the result into a register. 0x30 is SLL (undocumented).
@@ -351,7 +351,7 @@ def _build_xycb(xy: str) -> dict[int, tuple[str, int]]:
     for base, mnem in shift_ops:
         for i, r in enumerate(regs):
             suffix = "" if r is None else f", {r}"
-            t[base + i] = (f"{mnem} ({xy}+{{id}}){suffix}", 4)
+            t[base + i] = (f"{mnem} ({xy}{{id}}){suffix}", 4)
     return t
 
 _DDCB_OPS: dict[int, tuple[str, int]] = _build_xycb("IX")

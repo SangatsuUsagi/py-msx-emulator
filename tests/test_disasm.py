@@ -144,13 +144,19 @@ class TestDDPrefix:
 
     def test_ld_a_ix_d(self):
         mnem, size = disassemble(_mem(0xDD, 0x7E, 0x05), 0)
-        assert mnem == "LD A, (IX++05h)"
+        assert mnem == "LD A, (IX+05h)"
         assert size == 3
 
     def test_ld_ix_d_n(self):
         mnem, size = disassemble(_mem(0xDD, 0x36, 0x02, 0x42), 0)
-        assert mnem == "LD (IX++02h), 42h"
+        assert mnem == "LD (IX+02h), 42h"
         assert size == 4
+
+    def test_ld_a_ix_negative_d_single_sign(self):
+        # Displacement 0xFB = -5; must render single-sign "(IX-05h)".
+        mnem, size = disassemble(_mem(0xDD, 0x7E, 0xFB), 0)
+        assert mnem == "LD A, (IX-05h)"
+        assert size == 3
 
     def test_inc_ix(self):
         mnem, size = disassemble(_mem(0xDD, 0x23), 0)
@@ -171,7 +177,7 @@ class TestFDPrefix:
 
     def test_ld_b_iy_d(self):
         mnem, size = disassemble(_mem(0xFD, 0x46, 0x10), 0)
-        assert mnem == "LD B, (IY++10h)"
+        assert mnem == "LD B, (IY+10h)"
         assert size == 3
 
 
@@ -224,24 +230,22 @@ class TestUnknownOpcode:
 
 
 class TestDDCBExtensions:
-    # Displacement uses the existing "(IX++NNh)" double-sign convention shared
-    # with all DD/FD templates (pre-existing display quirk, not changed here).
     def test_sll_ix_with_register_copy(self):
         # DD CB 02 30 = SLL (IX+2), B (undocumented shift-left-logical)
         mnem, size = disassemble(_mem(0xDD, 0xCB, 0x02, 0x30), 0)
-        assert mnem == "SLL (IX++02h), B"
+        assert mnem == "SLL (IX+02h), B"
         assert size == 4
 
     def test_index6_standalone_rlc(self):
         # DD CB 03 06 = RLC (IX+3) with no register-copy suffix
         mnem, size = disassemble(_mem(0xDD, 0xCB, 0x03, 0x06), 0)
-        assert mnem == "RLC (IX++03h)"
+        assert mnem == "RLC (IX+03h)"
         assert size == 4
 
     def test_fdcb_sll_iy(self):
         # FD CB 01 37 = SLL (IY+1), A
         mnem, size = disassemble(_mem(0xFD, 0xCB, 0x01, 0x37), 0)
-        assert mnem == "SLL (IY++01h), A"
+        assert mnem == "SLL (IY+01h), A"
         assert size == 4
 
     def test_unknown_ddcb_shows_actual_byte(self):
