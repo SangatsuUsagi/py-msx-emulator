@@ -114,6 +114,7 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     # Row 6: modifiers and F1-F3
     _K_LSHIFT: (6, 0), _K_RSHIFT: (6, 0),
     _K_LCTRL: (6, 1), _K_RCTRL: (6, 1),
+    _K_LALT: (6, 2),   # left Alt/Option → MSX GRAPH
     _K_CAPSLOCK: (6, 3),
     _K_F1: (6, 5), _K_F2: (6, 6), _K_F3: (6, 7),
     # Row 7: F4, F5, ESC, TAB, BS, RETURN
