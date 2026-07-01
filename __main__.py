@@ -42,8 +42,14 @@ def main() -> None:
                         help="Enable VDP register write tracing (VDP Trace Log Format)")
     parser.add_argument("--vdp-trace-out", metavar="FILE", dest="vdp_trace_out", default=None,
                         help="Write VDP trace to FILE instead of stdout")
-    parser.add_argument("--count", type=int, default=None, metavar="N",
-                        help="Run exactly N CPU T-states headlessly and exit (no SDL window)")
+    parser.add_argument("--mapper-trace", action="store_true", dest="mapper_trace",
+                        help="Enable cartridge mapper bank-switch tracing (MAP_BANK records)")
+    parser.add_argument("--mapper-trace-out", metavar="FILE", dest="mapper_trace_out",
+                        default=None,
+                        help="Write mapper trace to FILE instead of stdout")
+    parser.add_argument("--count-frame", type=int, default=None, metavar="N",
+                        dest="count_frame",
+                        help="Run exactly N frames headlessly and exit (no SDL window)")
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
                         help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
@@ -162,8 +168,10 @@ def main() -> None:
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
-    if args.count is not None:
-        print(f"count   : {args.count} T-states (headless)")
+    if args.mapper_trace:
+        print(f"map-trace: {'stdout' if args.mapper_trace_out is None else args.mapper_trace_out}")
+    if args.count_frame is not None:
+        print(f"frames  : {args.count_frame} (headless)")
 
     from msx.debug.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -171,6 +179,7 @@ def main() -> None:
     # --- Build tracer ---
     tracer: Tracer | None = None
     _trace_file = None
+    _mapper_trace_file = None
     if args.vdp_trace:
         if args.vdp_trace_out:
             _trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
@@ -193,10 +202,12 @@ def main() -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
+        # Attach the interactive debugger for all machines so Ctrl-C drops into
+        # the REPL on MSX1 too (the slot/mapper tools are most useful there).
+        from msx.debugger.prompt import Debugger
+        machine._debugger = Debugger(machine)
+
         if spec.generation == "msx2":
-            from msx.debugger.prompt import Debugger
-            dbg = Debugger(machine)
-            machine._debugger = dbg
             if breakpoint_addrs:
                 machine.set_breakpoints(breakpoint_addrs)
                 print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
@@ -204,8 +215,15 @@ def main() -> None:
                 machine.set_watchpoints(watchpoint_entries)
                 print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
 
-        if args.count is not None:
-            while machine.cycle_count < args.count:
+        if args.mapper_trace:
+            from msx.mapper_tracer import attach_to_machine
+            if args.mapper_trace_out:
+                _mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
+            if attach_to_machine(machine, output=_mapper_trace_file or sys.stdout) is None:
+                print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
+
+        if args.count_frame is not None:
+            for _ in range(args.count_frame):
                 machine.run_frame()
         else:
             from frontend.sdl2_frontend import run
@@ -216,6 +234,8 @@ def main() -> None:
             logger.close()
         if _trace_file is not None:
             _trace_file.close()
+        if _mapper_trace_file is not None:
+            _mapper_trace_file.close()
 
 
 if __name__ == "__main__":

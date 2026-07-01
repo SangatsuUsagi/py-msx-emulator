@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
-    "ba/br/bl ADDR | wa/wd/wl ADDR | da [ADDR] | s [N] | te | td | ds | sl | st | ss | c | q"
+    "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
+    "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | c | q"
 )
 
 
@@ -63,6 +64,13 @@ class Debugger:
                 return
             if cmd == "q":
                 sys.exit(0)
+            if cmd == "g":
+                if self._cmd_goto(args):
+                    return
+                continue
+            if cmd == "so":
+                self._cmd_step_out()
+                return
             elif cmd == "rc":
                 self._cmd_reg_cpu()
             elif cmd == "rv":
@@ -81,6 +89,10 @@ class Debugger:
                 self._cmd_break(["r"] + args)
             elif cmd == "bl":
                 self._cmd_break(["l"])
+            elif cmd == "bh":
+                self._cmd_break_halt()
+            elif cmd == "bs":
+                self._cmd_break_sp(args)
             elif cmd == "wa":
                 self._cmd_watch(["a"] + args)
             elif cmd == "wd":
@@ -95,6 +107,10 @@ class Debugger:
                 self._cmd_trace_enable()
             elif cmd == "td":
                 self._cmd_trace_disable()
+            elif cmd == "ce":
+                self._cmd_mapper_trace_enable()
+            elif cmd == "cd":
+                self._cmd_mapper_trace_disable()
             elif cmd == "ds":
                 self._cmd_disable_sprites()
             elif cmd == "sl":
@@ -271,6 +287,57 @@ class Debugger:
 
         print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
 
+    def _cmd_goto(self, args: list[str]) -> bool:
+        """Set a one-shot run-to breakpoint. Returns True if emulation should resume."""
+        if not args:
+            print("Usage: g ADDR")
+            return False
+        try:
+            addr = int(args[0], 16) & 0xFFFF
+        except ValueError:
+            print("g: invalid address (hex expected)")
+            return False
+        self._machine.set_temp_breakpoint(addr)
+        print(f"  Running to {addr:04X}h ...")
+        return True
+
+    def _cmd_step_out(self) -> None:
+        """Run until the current routine returns (SP rises above its current value)."""
+        sp = self._machine.cpu.registers.SP
+        self._machine.set_step_out(sp)
+        print(f"  Stepping out (SP={sp:04X}h) ...")
+
+    def _cmd_break_halt(self) -> None:
+        m = self._machine
+        enabled = not m._break_halt_di
+        m.set_break_halt_di(enabled)
+        print(f"  Break on HALT+DI {'enabled' if enabled else 'disabled'}")
+
+    def _cmd_break_sp(self, args: list[str]) -> None:
+        m = self._machine
+        if not args:
+            low, high = m.memory.main_ram_range()
+            m.set_sp_range((low, high))
+            print(f"  Break on SP outside {low:04X}h-{high:04X}h (auto: machine RAM)")
+            return
+        if args[0].lower() == "off":
+            m.set_sp_range(None)
+            print("  SP-range break disabled")
+            return
+        if len(args) < 2:
+            print("Usage: bs | bs off | bs LOW HIGH")
+            return
+        try:
+            low = int(args[0], 16) & 0xFFFF
+            high = int(args[1], 16) & 0xFFFF
+        except ValueError:
+            print("bs: invalid address (hex expected)")
+            return
+        if low > high:
+            low, high = high, low
+        m.set_sp_range((low, high))
+        print(f"  Break on SP outside {low:04X}h-{high:04X}h")
+
     def _cmd_watch(self, args: list[str]) -> None:
         if not args:
             print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
@@ -401,6 +468,32 @@ class Debugger:
             return
         vdp.tracer.enabled = False
         print("VDP trace disabled")
+
+    def _mapper_targets(self) -> list[object]:
+        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
+        mem = self._machine.memory
+        result = []
+        for attr in ("_mapper", "_mapper2"):
+            mp = getattr(mem, attr, None)
+            if mp is not None and hasattr(mp, "_tracer"):
+                result.append(mp)
+        return result
+
+    def _cmd_mapper_trace_enable(self) -> None:
+        from msx.mapper_tracer import attach_to_machine
+        if attach_to_machine(self._machine, output=sys.stdout) is None:
+            print("ce: no bank-switching ROM mapper present")
+            return
+        print("Mapper bank-switch trace enabled (stdout)")
+
+    def _cmd_mapper_trace_disable(self) -> None:
+        disabled = False
+        for mp in self._mapper_targets():
+            tracer = mp._tracer  # type: ignore[attr-defined]
+            if tracer is not None and tracer.enabled:
+                tracer.enabled = False
+                disabled = True
+        print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
 
     def _cmd_screenshot(self) -> None:
         # Render the *current* VDP state and save it as a PNG, so a screenshot can
@@ -658,11 +751,47 @@ def _sl_content(mem: object, primary: int, secondary: int | None, page: int | No
     return "empty"
 
 
+def _rom_mapper_bank_info(mapper: object, page: int) -> str | None:
+    """Describe the ROM mapper bank(s) visible at a CPU page (1=0x4000, 2=0x8000).
+
+    Returns a display string with the selected bank index and the resolved ROM
+    byte offset for each mapper window covering the page, or None when the mapper
+    has no switchable banks (e.g. FlatMapper) or the page is outside its windows.
+    """
+    banks = getattr(mapper, "_banks", None)
+    if banks is None:
+        return None
+    if len(banks) == 2:
+        # ASCII16: two 16 KB windows — page 1 -> window 0, page 2 -> window 1.
+        win = page - 1
+        if win not in (0, 1):
+            return None
+        b = banks[win]
+        start = b * 0x4000
+        return f"bank {b} @{start:05X}-{start + 0x3FFF:05X}"
+    if len(banks) == 4:
+        # ASCII8 / Konami: four 8 KB windows — page 1 -> windows 0,1; page 2 -> 2,3.
+        if page == 1:
+            wins = (0, 1)
+        elif page == 2:
+            wins = (2, 3)
+        else:
+            return None
+        parts = [f"w{w}=b{banks[w]}@{banks[w] * 0x2000:05X}" for w in wins]
+        return "  ".join(parts)
+    return None
+
+
 def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
     if primary == 3 and secondary in (2, 3) and page is not None:
         rm = getattr(mem, "ram_mapper", None)
         if rm is not None:
             return f"seg={rm.banks[page]}"
+    if primary in (1, 2) and page is not None:
+        mapper = getattr(mem, "_mapper" if primary == 1 else "_mapper2", None)
+        info = _rom_mapper_bank_info(mapper, page) if mapper is not None else None
+        if info is not None:
+            return info
     return "-"
 
 
