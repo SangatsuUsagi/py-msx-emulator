@@ -12,20 +12,41 @@ if TYPE_CHECKING:
 _PAGE_8K = 8192
 _PAGE_16K = 16384
 
+# R-Type (Irem) bank register masks (openMSX RomRType).
+_RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
+_RTYPE_MASK_HI = 0x17
+_RTYPE_MASK = 0x1F
+
 
 class Mapper(Protocol):
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
 
 
-def _trace_bank(mapper: object, window: int, old: int, new: int, addr: int) -> None:
+@dataclass
+class _BankTracing:
+    """Shared bank-change tracing state for the bank-switching mappers.
+
+    Consolidated into one base so every mapper carries the same four hook
+    fields instead of redeclaring them, and so _trace_bank can access them
+    with static typing rather than getattr. The loader injects the callbacks
+    after construction (all init=False).
+    """
+
+    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
+    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+
+
+def _trace_bank(mapper: _BankTracing, window: int, old: int, new: int, addr: int) -> None:
     """Notify an injected MapperTracer of a bank change. No-op without a tracer."""
-    tracer = getattr(mapper, "_tracer", None)
+    tracer = mapper._tracer
     if tracer is None or old == new:
         return
-    get_pc = mapper._get_pc  # type: ignore[attr-defined]
-    get_cycle = mapper._get_cycle  # type: ignore[attr-defined]
-    get_frame = mapper._get_frame  # type: ignore[attr-defined]
+    get_pc = mapper._get_pc
+    get_cycle = mapper._get_cycle
+    get_frame = mapper._get_frame
     tracer.bank_change(
         window, old, new, addr,
         get_pc() if get_pc else 0,
@@ -52,7 +73,7 @@ class FlatMapper:
 
 
 @dataclass
-class Ascii8Mapper:
+class Ascii8Mapper(_BankTracing):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
 
     Control registers written to 0x6000–0x7FFF select which ROM page each
@@ -67,10 +88,6 @@ class Ascii8Mapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
@@ -100,7 +117,7 @@ class Ascii8Mapper:
 
 
 @dataclass
-class Ascii16Mapper:
+class Ascii16Mapper(_BankTracing):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers at 0x6000–0x6FFF (window 0) and 0x7000–0x7FFF (window 1).
@@ -113,10 +130,6 @@ class Ascii16Mapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
@@ -143,14 +156,24 @@ class Ascii16Mapper:
 
 @dataclass
 class Ascii8Sram2Mapper(Ascii8Mapper):
-    """ASCII8 mapper + 2 KB battery-backed SRAM.
+    """ASCII8 mapper + 2 KB battery-backed SRAM (generic ASCII8-SRAM).
 
-    SRAM is selected for a window when its bank register value >= num_rom_pages.
-    Writes to 0x6000–0x7FFF always update bank registers (never write to SRAM).
+    Following openMSX RomAscii8_8: a window maps SRAM when its bank register
+    value has the SRAM-enable bit set, where the enable bit equals the ROM's
+    8 KB page count (rom_size // 8192). SRAM is only selectable for windows in
+    _SRAM_PAGES (default 0x8000 and 0xA000; the region bit for window w is
+    1 << (w + 2)). The SRAM-page-select bits are masked with
+    round_up(sram_size / 8192) - 1. Writes to 0x6000–0x7FFF always update bank
+    registers (raw value, never SRAM).
+
+    KOEI and Wizardry variants (different enable bit / SRAM windows) are out of
+    scope here and are not covered by this generic mapper.
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
+    # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
+    _SRAM_PAGES: ClassVar[int] = 0x30
 
     sram: bytearray | None = None
 
@@ -158,8 +181,21 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
 
+    def _sram_enable_bit(self) -> int:
+        return self._num_pages()
+
+    def _sram_block_mask(self) -> int:
+        blocks = max(1, (self._SRAM_SIZE + _PAGE_8K - 1) // _PAGE_8K)
+        return blocks - 1
+
     def _is_sram_bank(self, window: int) -> bool:
-        return self._banks[window] >= self._num_pages()
+        if not (self._SRAM_PAGES & (1 << (window + 2))):
+            return False
+        return bool(self._banks[window] & self._sram_enable_bit())
+
+    def _sram_offset(self, window: int, addr: int, base: int) -> int:
+        block = self._banks[window] & self._sram_block_mask()
+        return (block * _PAGE_8K + (addr - base)) & self._SRAM_MASK
 
     def read(self, addr: int) -> int:
         if addr < 0x6000:
@@ -171,7 +207,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         else:
             window, base = 3, 0xA000
         if self._is_sram_bank(window):
-            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+            return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
         page_offset = self._banks[window] * _PAGE_8K + (addr - base)
         if 0 <= page_offset < len(self.rom):
             return self.rom[page_offset]
@@ -183,15 +219,15 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             old = self._banks[reg]
             self._banks[reg] = value
             _trace_bank(self, reg, old, value, addr)
+            return
+        if addr < 0x6000:
+            window, base = 0, 0x4000
+        elif addr < 0xA000:
+            window, base = 2, 0x8000
         else:
-            if addr < 0x6000:
-                window, base = 0, 0x4000
-            elif addr < 0xA000:
-                window, base = 2, 0x8000
-            else:
-                window, base = 3, 0xA000
-            if self._is_sram_bank(window):
-                self.sram[(addr - base) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+            window, base = 3, 0xA000
+        if self._is_sram_bank(window):
+            self.sram[self._sram_offset(window, addr, base)] = value & 0xFF  # type: ignore[index]
 
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)  # type: ignore[arg-type]
@@ -207,14 +243,17 @@ class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
 
 @dataclass
 class Ascii16Sram2Mapper(Ascii16Mapper):
-    """ASCII16 mapper + 2 KB battery-backed SRAM.
+    """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
-    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped.
-    SRAM is selected for window 1 when its bank register value >= num_rom_pages.
+    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped. SRAM is selected for
+    window 1 when its bank register value equals exactly 0x10 (strict equality;
+    any other value selects a ROM page). Writes to 0x6000–0x7FFF always update
+    bank registers (raw value).
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
+    _SRAM_SELECT: ClassVar[int] = 0x10
 
     sram: bytearray | None = None
 
@@ -223,7 +262,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             self.sram = bytearray(self._SRAM_SIZE)
 
     def _is_sram_bank(self, window: int) -> bool:
-        return window == 1 and self._banks[window] >= self._num_pages()
+        return window == 1 and self._banks[window] == self._SRAM_SELECT
 
     def read(self, addr: int) -> int:
         if addr < 0x8000:
@@ -260,21 +299,18 @@ class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
 
 
 @dataclass
-class RTypeMapper:
+class RTypeMapper(_BankTracing):
     """R-Type (Irem) mapper: 16 KB fixed at 0x4000 (last page), 16 KB switchable at 0x8000.
 
     The last 16 KB of ROM is always mapped at 0x4000–0x7FFF.
     The switchable window at 0x8000–0xBFFF starts at page 0.
     Bank register: write anywhere to 0x4000–0x7FFF.
-    Bank mask: value & 0x17 when bit 4 set, else value & 0x1F (openMSX RomRType).
+    Bank mask: value & _RTYPE_MASK_HI when bit 4 set, else value & _RTYPE_MASK
+    (openMSX RomRType).
     """
 
     rom: bytes
     _bank: int = field(default=0, repr=False)
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
@@ -293,14 +329,17 @@ class RTypeMapper:
 
     def write(self, addr: int, value: int) -> None:
         if 0x4000 <= addr < 0x8000:
-            value = value & 0x17 if (value & 0x10) else value & 0x1F
+            if value & _RTYPE_HI_BIT:
+                value = value & _RTYPE_MASK_HI
+            else:
+                value = value & _RTYPE_MASK
             old = self._bank
             self._bank = value
             _trace_bank(self, 1, old, self._bank, addr)
 
 
 @dataclass
-class KonamiMapper:
+class KonamiMapper(_BankTracing):
     """Konami (Konami4) mapper: four 8 KB windows.
 
     Window 0 (0x4000–0x5FFF) is permanently fixed to page 0.
@@ -310,10 +349,6 @@ class KonamiMapper:
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _bank_mask(self) -> int:
         # Konami4 hardware: 5-bit bank register → 32 pages (256 KB) max.
@@ -368,7 +403,6 @@ class MajutsushiMapper(KonamiMapper):
 
     _last_dac: int = field(default=0x80, init=False, repr=False)
     _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
@@ -409,12 +443,13 @@ class MajutsushiMapper(KonamiMapper):
 
 
 @dataclass
-class KonamiSCCMapper:
+class KonamiSCCMapper(_BankTracing):
     """Konami SCC mapper: same 8 KB bank switching as KonamiMapper, extended
     with SCC mode.
 
-    When the window-2 bank register is set to 0x3F, the address range
-    0x9800–0x9FFF is redirected to SCC registers instead of ROM.
+    When the window-2 bank register value has its low 6 bits all set
+    ((value & 0x3F) == 0x3F), the address range 0x9800–0x9FFF is redirected to
+    SCC registers instead of ROM.
 
     All four windows are switchable. Each bank register occupies only the
     low 2 KB of its window's register zone:
@@ -430,10 +465,6 @@ class KonamiSCCMapper:
     scc: "SCC"
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _scc_mode: bool = field(default=False, init=False, repr=False)
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
@@ -470,8 +501,9 @@ class KonamiSCCMapper:
             self._banks[1] = new
             _trace_bank(self, 1, old, new, addr)
         elif 0x9000 <= addr < 0x9800:
-            # Window 2 bank register: 0x3F enables SCC mode; any other value disables it.
-            if value == 0x3F:
+            # Window 2 bank register: low 6 bits all set enables SCC mode
+            # (upper 2 bits are don't-care); any other value disables it.
+            if (value & 0x3F) == 0x3F:
                 self._scc_mode = True
             else:
                 self._scc_mode = False
