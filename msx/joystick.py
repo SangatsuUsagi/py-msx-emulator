@@ -7,9 +7,9 @@ from msx.input import InputState
 
 AXIS_DEAD_ZONE: int = 8192
 
-# Each port uses bits 0-5: up(0) down(1) left(2) right(3) trigA(4) trigB(5)
-_PORT_BIT_OFFSET = [0, 0]
-_PORT_BIT_COUNT = [6, 6]
+# Each port uses bits 0-5: up(0) down(1) left(2) right(3) trigA(4) trigB(5).
+# Both ports maintain their own 6-bit state independently in InputState.
+_PORT_BIT_COUNT = 6
 
 # GameController button → bit index within the port's 6-bit joystick state
 _GC_BUTTON_BIT = {
@@ -94,10 +94,8 @@ class JoystickManager:
                 self.close_device(self._instance_ids[i])
 
     def _release_port_bits(self, port: int) -> None:
-        offset = _PORT_BIT_OFFSET[port]
-        count = _PORT_BIT_COUNT[port]
-        for b in range(count):
-            self._input.joystick_button_up(port, offset + b)
+        for b in range(_PORT_BIT_COUNT):
+            self._input.joystick_button_up(port, b)
 
     def handle_event(self, event: Any) -> None:
         sdl = self._sdl
@@ -131,8 +129,7 @@ class JoystickManager:
         button = int(event.cbutton.button)
         if button not in _GC_BUTTON_BIT:
             return
-        bit_offset = _GC_BUTTON_BIT[button]
-        bit = _PORT_BIT_OFFSET[port] + bit_offset
+        bit = _GC_BUTTON_BIT[button]
         if event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
             self._input.joystick_button_down(port, bit)
         else:
@@ -146,9 +143,7 @@ class JoystickManager:
         axis = int(event.caxis.axis)
         if axis not in _GC_AXIS_BIT:
             return
-        neg_off, pos_off = _GC_AXIS_BIT[axis]
-        neg_bit = _PORT_BIT_OFFSET[port] + neg_off
-        pos_bit = _PORT_BIT_OFFSET[port] + pos_off
+        neg_bit, pos_bit = _GC_AXIS_BIT[axis]
         value = int(event.caxis.value)
         if value < -AXIS_DEAD_ZONE:
             self._input.joystick_button_down(port, neg_bit)
@@ -185,9 +180,7 @@ class JoystickManager:
         axis = int(event.jaxis.axis)
         if axis not in _GC_AXIS_BIT:
             return
-        neg_off, pos_off = _GC_AXIS_BIT[axis]
-        neg_bit = _PORT_BIT_OFFSET[port] + neg_off
-        pos_bit = _PORT_BIT_OFFSET[port] + pos_off
+        neg_bit, pos_bit = _GC_AXIS_BIT[axis]
         value = int(event.jaxis.value)
         if value < -AXIS_DEAD_ZONE:
             self._input.joystick_button_down(port, neg_bit)
@@ -204,21 +197,20 @@ class JoystickManager:
         port = self._port_for_instance(event.jhat.which)
         if port is None:
             return
-        offset = _PORT_BIT_OFFSET[port]
         hat = int(event.jhat.value)
         if hat & sdl.SDL_HAT_UP:
-            self._input.joystick_button_down(port, offset + 0)
+            self._input.joystick_button_down(port, 0)
         else:
-            self._input.joystick_button_up(port, offset + 0)
+            self._input.joystick_button_up(port, 0)
         if hat & sdl.SDL_HAT_DOWN:
-            self._input.joystick_button_down(port, offset + 1)
+            self._input.joystick_button_down(port, 1)
         else:
-            self._input.joystick_button_up(port, offset + 1)
+            self._input.joystick_button_up(port, 1)
         if hat & sdl.SDL_HAT_LEFT:
-            self._input.joystick_button_down(port, offset + 2)
+            self._input.joystick_button_down(port, 2)
         else:
-            self._input.joystick_button_up(port, offset + 2)
+            self._input.joystick_button_up(port, 2)
         if hat & sdl.SDL_HAT_RIGHT:
-            self._input.joystick_button_down(port, offset + 3)
+            self._input.joystick_button_down(port, 3)
         else:
-            self._input.joystick_button_up(port, offset + 3)
+            self._input.joystick_button_up(port, 3)

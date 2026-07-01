@@ -9,6 +9,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class IOBus:
+    """I/O port dispatcher.
+
+    Handlers are registered with an inclusive [start, end] port range and
+    dispatched by linear scan: the first registered handler whose range covers
+    the (8-bit) port wins for both reads and writes. Reads log after the handler
+    runs (the returned value is known); writes log before (the value is fixed at
+    call time). Devices decode only the low 8 bits, so the 16-bit port the Z80
+    drives is masked at entry.
+    """
+
     _read_handlers: list[tuple[int, int, Callable[[int], int]]] = field(
         default_factory=list
     )

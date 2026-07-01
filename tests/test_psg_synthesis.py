@@ -140,91 +140,93 @@ def test_noise_period_zero_clamped() -> None:
 # ---------------------------------------------------------------------------
 
 def _run_envelope(shape: int, n_steps: int) -> list[int]:
-    """Run envelope for n_steps level changes at period=1, return level history."""
+    """Run the envelope for n_steps level changes at period=1, return level history.
+
+    Uses the 32-step attack/alternate/hold model: with period=1 a step advances
+    every 8 PSG ticks, so _step_envelope(16) advances two counter steps = one of
+    the 16 output levels. Attack bit direction (AY-3-8910): attack=1 ramps up,
+    attack=0 ramps down.
+    """
     psg = PSG()
-    psg.regs[11] = 1   # period = 1  → step every 16 PSG ticks
+    psg.regs[11] = 1   # period = 1
     psg.regs[12] = 0
     psg.regs[13] = shape
     psg._reset_envelope()
 
-    levels: list[int] = [psg._env_level]
-    # Each step_ticks call of 16 advances the envelope one step.
+    levels: list[int] = [psg._env_output_level()]
     for _ in range(n_steps):
-        psg._step_envelope(16)
-        levels.append(psg._env_level)
+        psg._step_envelope(16)  # one output level per call
+        levels.append(psg._env_output_level())
     return levels
 
 
-def test_envelope_shape_08_attack_repeat() -> None:
-    """Shape 0x08 (////): 0→15 then wraps back to 0."""
+def test_envelope_shape_08_decay_repeat() -> None:
+    """Shape 0x08 (attack=0, continue=1): decays 15→0 then repeats."""
     levels = _run_envelope(0x08, 20)
-    # Should see 0→15 and then restart at 0.
+    assert levels[0] == 15
+    assert levels[15] == 0
+    assert levels[16] == 15  # wrap-around: repeats from the top
+
+
+def test_envelope_shape_0c_attack_repeat() -> None:
+    """Shape 0x0C (attack=1, continue=1): rises 0→15 then repeats."""
+    levels = _run_envelope(0x0C, 20)
     assert levels[0] == 0
     assert levels[15] == 15
-    assert levels[16] == 0  # wrap-around
+    assert levels[16] == 0  # wrap-around: repeats from the bottom
 
 
-def test_envelope_shape_09_attack_hold_15() -> None:
-    """Shape 0x09 (/^^^): 0→15 then holds at 15."""
+def test_envelope_shape_09_decay_hold_0() -> None:
+    """Shape 0x09 (attack=0, continue=1, hold=1): decays 15→0 then holds at 0."""
     levels = _run_envelope(0x09, 20)
+    assert levels[0] == 15
+    assert levels[15] == 0
+    assert levels[16] == 0
+    assert levels[20] == 0
+
+
+def test_envelope_shape_0d_attack_hold_15() -> None:
+    """Shape 0x0D (attack=1, continue=1, hold=1): rises 0→15 then holds at 15."""
+    levels = _run_envelope(0x0D, 20)
+    assert levels[0] == 0
     assert levels[15] == 15
     assert levels[16] == 15
     assert levels[20] == 15
 
 
-def test_envelope_shape_0a_triangle() -> None:
-    """Shape 0x0A (/\\/\\): 0→15 then 15→0 then 0→15...
-    At each direction reversal the boundary value is replayed once (hardware behaviour).
-    """
+def test_envelope_shape_0a_triangle_down_first() -> None:
+    """Shape 0x0A (attack=0, continue=1, alternate=1): decays then reverses up."""
     levels = _run_envelope(0x0A, 35)
-    assert levels[0] == 0
-    assert levels[15] == 15
-    # At step 16 the counter overflows; boundary handler sets level=15 and reverses.
-    assert levels[16] == 15
-    assert levels[17] == 14  # now counting down
-    assert levels[31] == 0
-    # At step 32 the counter underflows; boundary handler sets level=0 and reverses.
-    assert levels[32] == 0
-    assert levels[33] == 1   # now counting up again
-
-
-def test_envelope_shape_0c_decay_repeat() -> None:
-    """Shape 0x0C (\\\\): 15→0 then wraps back to 15."""
-    levels = _run_envelope(0x0C, 20)
     assert levels[0] == 15
-    assert levels[15] == 0   # 15 decrements: 15→14→...→0
-    assert levels[16] == 15  # wrap-around: boundary resets to 15
-    assert levels[17] == 14
-
-
-def test_envelope_shape_0d_decay_hold_0() -> None:
-    """Shape 0x0D (\\___): 15→0 then holds at 0."""
-    levels = _run_envelope(0x0D, 20)
-    assert levels[16] == 0
-    assert levels[20] == 0
+    assert levels[15] == 0     # reached the bottom
+    assert levels[17] == 1     # reversed: now ascending
+    assert levels[31] == 15    # reached the top
+    assert levels[33] == 14    # reversed again: descending
 
 
 def test_envelope_shape_00_single_decay_hold_0() -> None:
-    """Shapes 0x00-0x07: single decay then hold at 0."""
+    """Shapes 0x00-0x07 (continue=0): single decay then hold at 0."""
     levels = _run_envelope(0x00, 20)
+    assert levels[0] == 15
     assert levels[16] == 0
     assert levels[20] == 0
 
 
 def test_envelope_reset_on_r13_write() -> None:
-    """Writing R13 restarts the envelope from the beginning."""
+    """Writing R13 restarts the envelope from the beginning (step = 0x1F)."""
     psg = PSG()
     psg.regs[11] = 1
     psg.regs[12] = 0
-    psg.regs[13] = 0x08
+    psg.regs[13] = 0x0C  # attack repeat (rises from 0)
     psg._reset_envelope()
-    # Advance a few steps.
+    # Advance a few steps away from the start.
     psg._step_envelope(48)
-    assert psg._env_level > 0
-    # Write R13 → restart.
+    assert psg._env_output_level() > 0
+    # Write R13 → restart at the beginning of the attack ramp.
     psg.write_port(0xA0, 13)
-    psg.write_port(0xA1, 0x08)
-    assert psg._env_level == 0  # reset to start of attack
+    psg.write_port(0xA1, 0x0C)
+    assert psg._env_step == 0x1F
+    assert psg._env_output_level() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -268,10 +270,11 @@ def test_envelope_flag_uses_envelope_level() -> None:
     psg.regs[8] = 0x10   # envelope mode (bit 4 set)
     psg.regs[11] = 0xFF
     psg.regs[12] = 0xFF  # very slow envelope → level stays near 15
-    psg.regs[13] = 0x0D  # decay once then hold at 0... but period is huge
+    psg.regs[13] = 0x0D  # attack then hold at 15
     psg._reset_envelope()
-    psg._env_level = 15
-    psg._env_hold = True  # freeze at 15
+    psg._env_attack = 0x1F
+    psg._env_step = 0x00      # (0x00 ^ 0x1F) >> 1 == 15
+    psg._env_holding = True   # freeze at level 15
 
     buf = psg.generate_samples(100)
     samples = _samples_as_int16(buf)
