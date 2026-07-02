@@ -88,19 +88,18 @@ class SCC:
             ticks = self._clk_frac // SAMPLE_RATE
             self._clk_frac %= SAMPLE_RATE
 
-            for ch in range(5):
-                period = max(1, self._freq[ch] + 1)
-                self._phase_cnt[ch] += ticks
-                while self._phase_cnt[ch] >= period:
-                    self._phase_cnt[ch] -= period
-                    self._phase_idx[ch] = (self._phase_idx[ch] + 1) % 32
-
+            # Single pass over the 5 channels: advance the phase (divmod instead
+            # of a subtract-loop) and accumulate the sample in one go.
             sample = 0
             for ch in range(5):
+                period = max(1, self._freq[ch] + 1)
+                steps, self._phase_cnt[ch] = divmod(self._phase_cnt[ch] + ticks, period)
+                idx = (self._phase_idx[ch] + steps) & 31  # 32-entry wave, & 31 == % 32
+                self._phase_idx[ch] = idx
                 if not (self._enable >> ch) & 1:
                     continue
                 wave_bank = min(ch, 3)  # ch 4 and 5 (idx 3,4) both use bank 3
-                raw = self._waves[wave_bank][self._phase_idx[ch]]
+                raw = self._waves[wave_bank][idx]
                 # Convert unsigned byte to signed 8-bit.
                 signed = raw if raw < 128 else raw - 256
                 sample += signed * self._vol[ch] * SCC_SCALE

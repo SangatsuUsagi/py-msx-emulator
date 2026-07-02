@@ -622,3 +622,36 @@ def test_lmmm_ce_clears_after_full_tick() -> None:
     assert vdp._status2 & 0x01  # CE set immediately after dispatch
     vdp.tick(10_000_000)
     assert vdp._status2 & 0x01 == 0  # CE cleared after ample tick
+
+
+# ---------------------------------------------------------------------------
+# Command dispatch sets the active command code for EVERY command
+# ---------------------------------------------------------------------------
+
+def test_dispatch_sets_cmd_code_for_synchronous_command() -> None:
+    """A synchronous command (LMMV=0x8) must own _cmd_code, not leave a stale
+    HMMC/LMMC code from an earlier CPU-feed command."""
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0x8, dx=0, dy=0, nx=4, ny=4, clr=0x0F)
+    assert vdp._cmd_code == 0x8  # LMMV, set at dispatch (was stale/default before)
+
+
+def test_completed_command_does_not_misroute_later_data_writes() -> None:
+    """After a completed HMMC, a synchronous command's own _cmd_code prevents a
+    later port-0x9B data write from being misrouted into the CPU-feed path and
+    corrupting the just-drawn region (V9938 register-file fix)."""
+    vdp = _make_vdp()
+    # 1) HMMC 1x1 completes on dispatch (the pre-loaded CLR is the only byte);
+    #    leaves _cmd_code = HMMC, _cmd_active = False, dest (4,5).
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=4, dy=5, nx=1, ny=1, clr=0xAA)
+    assert not vdp._cmd_active
+    # 2) LMMV fills an 8x8 region with colour 0x0F and stays active (not ticked).
+    _dispatch_cmd(vdp, cmd_code=0x8, dx=0, dy=0, nx=8, ny=8, clr=0x0F)
+    assert vdp._cmd_active
+    before = bytes(vdp.vram[0:8 * 128])  # first 8 G4 rows (128 bytes/row)
+    # 3) A stray port-0x9B write to a harmless register. With a stale HMMC
+    #    _cmd_code this would be misrouted into _cmd_data_write and scribble
+    #    VRAM; with _cmd_code = LMMV it is a plain register write.
+    _write_reg(vdp, 17, 0x80 | 20)  # point R17 at R20 (AII=1)
+    vdp.write_port(0x9B, 0x55)
+    assert bytes(vdp.vram[0:8 * 128]) == before  # drawn region uncorrupted
