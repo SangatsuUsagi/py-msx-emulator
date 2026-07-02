@@ -5,6 +5,7 @@ are implemented in later phases.
 """
 from __future__ import annotations
 
+from itertools import chain
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -12,6 +13,19 @@ if TYPE_CHECKING:
 
 _W = 256
 _TILE_H = 192  # TMS9918A-compatible modes always render 24 tile rows (192 px)
+
+# Cache constant border-fill buffers per colour so a band prefill can slice-assign
+# a memoryview instead of rebuilding bytes([border]) * n every band/frame.
+_BORDER_CACHE: dict[int, bytes] = {}
+
+
+def _border_fill(border: int, n: int) -> memoryview:
+    """Return an n-byte view of a cached constant-`border` buffer."""
+    buf = _BORDER_CACHE.get(border)
+    if buf is None or len(buf) < n:
+        buf = bytes((border,)) * n
+        _BORDER_CACHE[border] = buf
+    return memoryview(buf)[:n]
 
 # byte → 8 pixel bits (MSB first), precomputed to avoid per-call generators.
 _UNPACK8: tuple[bytes, ...] = tuple(
@@ -98,6 +112,12 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
     Frame counting is owned by the caller (Machine.run_frame), not the renderer.
     """
+    # Reset 5S (bit6) and C (bit5) at frame start (F/bit7 is owned by
+    # begin_scanline). The sprite scan below re-sets them if a 5th sprite /
+    # collision occurs this frame; without this reset they would persist across
+    # frames whenever no S#0 read cleared them (V9938 clears them on S#0 read).
+    vdp.status &= ~0x60
+
     if skip_render:
         _finalize(vdp)
         return bytearray(0)
@@ -288,7 +308,7 @@ def _render_pass_range(
     border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
 
     n = (y_end - y_start) * w
-    buf[y_start * w:y_end * w] = bytes([border]) * n
+    buf[y_start * w:y_end * w] = _border_fill(border, n)
 
     if not (r1 & 0x40):  # BL clear → blank band already filled above
         return
@@ -517,7 +537,7 @@ def _render_sprites(
     fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     sprite_painted = bytearray(_W * _TILE_H)
     coincidence = False
-    ye = y_end if y_end is not None else _TILE_H
+    scan_hi = min(y_end if y_end is not None else _TILE_H, _TILE_H)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x3FFF]
@@ -533,10 +553,20 @@ def _render_sprites(
 
         y_top = (y_byte + 1) & 0xFF
 
-        for line in range(y_start, min(ye, _TILE_H)):
-            sprite_row = (line - y_top) & 0xFF
-            if sprite_row >= render_size:
-                continue
+        # Scan only the sprite's visible band [y_top, y_top+render_size) instead
+        # of every scanline; the second (wrapped) band is taken only when the
+        # & 0xFF row test actually wraps past 255. Per-sprite line order does not
+        # affect line_count / 5S / coincidence, so iterating the wrapped band
+        # first (increasing screen line) is equivalent to the old full scan.
+        end = y_top + render_size
+        if end <= 256:
+            lines = range(max(y_start, y_top), min(scan_hi, end))
+        else:
+            lines = chain(range(y_start, min(scan_hi, end - 256)),
+                          range(max(y_start, y_top), scan_hi))
+
+        for line in lines:
+            sprite_row = (line - y_top) & 0xFF  # guaranteed < render_size
 
             if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
                 if not fifth_set:
@@ -552,20 +582,35 @@ def _render_sprites(
             src_row = sprite_row // 2 if mag else sprite_row
             pixels  = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
             scale   = 2 if mag else 1
+            row = line * _W
 
-            for bit_i, pixel in enumerate(pixels):
-                if not pixel:
-                    continue
-                for s in range(scale):
-                    px = x_byte + bit_i * scale + s
+            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    px = x_byte + bit_i
                     if px < 0 or px >= _W:  # clip off-screen, no wrap
                         continue
-                    coord = line * _W + px
+                    coord = row + px
                     if sprite_painted[coord]:
                         coincidence = True
                     else:
                         sprite_painted[coord] = 1
                         buf[coord] = color
+            else:
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    for s in range(scale):
+                        px = x_byte + bit_i * scale + s
+                        if px < 0 or px >= _W:  # clip off-screen, no wrap
+                            continue
+                        coord = row + px
+                        if sprite_painted[coord]:
+                            coincidence = True
+                        else:
+                            sprite_painted[coord] = 1
+                            buf[coord] = color
 
     if coincidence:
         vdp.status |= 0x20
@@ -613,7 +658,7 @@ def _render_sprites_mode2(
     cc0_seen = bytearray(h)
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
-    ye = y_end if y_end is not None else h
+    scan_hi = min(y_end if y_end is not None else h, h)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -635,12 +680,23 @@ def _render_sprites_mode2(
         # gone) — revisit if top-edge sprites look wrong.
         max_sprite_rows = min(render_size, 256 - y_top)
 
-        for line in range(y_start, min(ye, h)):
+        # Scan only the sprite's visible band. Sprite Y is in VRAM space, so the
+        # screen-line band starts at (y_top - vscroll) & 0xFF and spans
+        # max_sprite_rows lines; the wrapped band is taken only when it crosses
+        # line 255. Per-sprite line order is immaterial to the accumulated
+        # line_count / 9S / cc0 / coincidence state, so this matches the old scan.
+        base_line = (y_top - vscroll) & 0xFF
+        end = base_line + max_sprite_rows
+        if end <= 256:
+            lines = range(max(y_start, base_line), min(scan_hi, end))
+        else:
+            lines = chain(range(y_start, min(scan_hi, end - 256)),
+                          range(max(y_start, base_line), scan_hi))
+
+        for line in lines:
             # Sprite Y is in VRAM coordinate space; account for vertical scroll.
             vram_line = (line + vscroll) & 0xFF
-            sprite_row = (vram_line - y_top) & 0xFF
-            if sprite_row >= max_sprite_rows:
-                continue
+            sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < max_sprite_rows
 
             if line_count[line] >= 8:
                 if not ninth_set:
@@ -672,17 +728,17 @@ def _render_sprites_mode2(
 
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
             scale  = 2 if mag else 1
+            line_off = line * width
 
-            for bit_i, pixel in enumerate(pixels):
-                if not pixel:
-                    continue
-                for s in range(scale):
-                    sx = x_pos + bit_i * scale + s  # position in the 256-dot sprite plane
+            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    sx = x_pos + bit_i  # position in the 256-dot sprite plane
                     if sx < 0 or sx >= _W:  # clip off-screen, no wrap
                         continue
                     for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
-                        px = sx * screen_scale + ss
-                        coord = line * width + px
+                        coord = line_off + sx * screen_scale + ss
                         if sprite_buf[coord]:
                             if not ignore_collision:
                                 coincidence = True
@@ -691,6 +747,24 @@ def _render_sprites_mode2(
                         else:
                             sprite_buf[coord] = color
                             drawn.append(coord)
+            else:
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    for s in range(scale):
+                        sx = x_pos + bit_i * scale + s  # position in the 256-dot sprite plane
+                        if sx < 0 or sx >= _W:  # clip off-screen, no wrap
+                            continue
+                        for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
+                            coord = line_off + sx * screen_scale + ss
+                            if sprite_buf[coord]:
+                                if not ignore_collision:
+                                    coincidence = True
+                                if or_mode:
+                                    sprite_buf[coord] |= color
+                            else:
+                                sprite_buf[coord] = color
+                                drawn.append(coord)
 
     # Composite only the pixels a sprite actually touched (avoids scanning the
     # whole h*width buffer every frame when sprites are sparse or absent).

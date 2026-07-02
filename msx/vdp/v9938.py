@@ -150,6 +150,7 @@ class V9938:
     _cmd_ppb: int = field(default=2, init=False, repr=False)  # pixels per byte
     _cmd_bpp: int = field(default=4, init=False, repr=False)  # bits per pixel
     _lmcm_buf: list[int] = field(default_factory=list, init=False, repr=False)
+    _lmcm_idx: int = field(default=0, init=False, repr=False)  # advancing LMCM read cursor
     # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
     _latch: int | None = field(default=None, init=False, repr=False)
@@ -378,7 +379,8 @@ class V9938:
             if self.regs[15] == 7:
                 # LMCM delivers each result byte through S#7 (handbook); fall
                 # back to the POINT result when no LMCM transfer is active.
-                if self._cmd_active and self._cmd_code == _CMD_LMCM and self._lmcm_buf:
+                if (self._cmd_active and self._cmd_code == _CMD_LMCM
+                        and self._lmcm_idx < len(self._lmcm_buf)):
                     return self._cmd_data_read()
                 return self._status7
             if self.regs[15] == 1:
@@ -391,13 +393,13 @@ class V9938:
             if self.regs[15] == 9:
                 return self._status9
             # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/last
-            # sprite number. The sprite-limit (5S), collision (C) and per-line
-            # sprite-scan are not emulated; report the hardware idle last-sprite
-            # number 31 (0x1F) in bits 4-0, matching a real V9938 / openMSX.
-            # Returning 0 there stalls MSX2 C-BIOS cartridge boot, which reads
-            # S#0 and feeds the value into its cartridge-scan loop counter.
+            # sprite number. The renderer sets 5S/C during the sprite scan; a
+            # real V9938 read of S#0 clears F, 5S and C together, so mask off
+            # 0xE0. The idle last-sprite number 31 (0x1F) is still OR-ed into the
+            # *returned* byte: returning 0 there stalls MSX2 C-BIOS cartridge
+            # boot, which feeds S#0 bits 4:0 into its cartridge-scan loop counter.
             result = (self.status & 0xE0) | 0x1F
-            self.status &= ~0x80  # clear F flag
+            self.status &= ~0xE0  # clear F, 5S and C flags together
             self._update_irq()
             return result & 0xFF
         if port == 0x9C:
@@ -475,6 +477,13 @@ class V9938:
         cmr = self.cmd_regs[14]
         cmd = (cmr >> 4) & 0xF
         log = cmr & 0xF
+
+        # Every command owns _cmd_code, not just the CPU-feed commands (HMMC/
+        # LMMC/LMCM). The data-port handlers key off _cmd_code, so a completed
+        # synchronous command (LMMV/LMMM/HMMV/HMMM/YMMM/LINE/SRCH) must overwrite
+        # any stale HMMC/LMMC code, otherwise a later R#44/port-0x9B/0x9C write
+        # is misrouted into the CPU-feed path and corrupts the just-drawn region.
+        self._cmd_code = cmd
 
         self._cmd_bpl, self._cmd_ppb, self._cmd_bpp = self._cmd_geometry()
         px_mask = (1 << self._cmd_bpp) - 1
@@ -565,6 +574,7 @@ class V9938:
 
         if cmd == _CMD_LMCM:
             self._lmcm_buf = []
+            self._lmcm_idx = 0
             rows = ny if ny else 1024
             cols = nx if nx else 512
             ppb = self._cmd_ppb
@@ -580,7 +590,6 @@ class V9938:
                     self._lmcm_buf.append(byte)
                     col += ppb
             self._cmd_active = True
-            self._cmd_code = cmd
             self._status2 |= _S2_CE | _S2_TR
             return
 
@@ -661,7 +670,6 @@ class V9938:
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
         self._cmd_remaining = 0
         self._cmd_active = True
-        self._cmd_code = cmd
         self._cmd_dx = dx
         self._cmd_dy = dy
         self._cmd_nx = nx if nx else 512
@@ -711,10 +719,13 @@ class V9938:
 
     def _cmd_data_read(self) -> int:
         """Return next buffered byte for an active LMCM transfer."""
-        if not self._cmd_active or self._cmd_code != _CMD_LMCM or not self._lmcm_buf:
+        if (not self._cmd_active or self._cmd_code != _CMD_LMCM
+                or self._lmcm_idx >= len(self._lmcm_buf)):
             return 0xFF
-        byte = self._lmcm_buf.pop(0)
-        if not self._lmcm_buf:
+        # Advancing index instead of pop(0): O(n) over a transfer, not O(n²).
+        byte = self._lmcm_buf[self._lmcm_idx]
+        self._lmcm_idx += 1
+        if self._lmcm_idx >= len(self._lmcm_buf):
             self._cmd_active = False
             self._status2 &= ~(_S2_CE | _S2_TR)
         return byte

@@ -10,11 +10,13 @@ if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
 
 
-# The opcode dispatcher is bound once at import time. opcodes_main references
-# Z80 only for type checking (guarded by TYPE_CHECKING), so this top-level
-# import does not create a runtime import cycle, and step() avoids a per-call
-# None check on the hot path.
-_execute: Callable[[Z80, int], int] = _opcodes_main.execute
+# The opcode dispatch table is bound once at import time. opcodes_main
+# references Z80 only for type checking (guarded by TYPE_CHECKING), so this
+# top-level import does not create a runtime import cycle. Binding _DISPATCH
+# directly collapses the old two-stage call (_execute → execute → _DISPATCH)
+# into a single indexed call on the hot fetch path. It is populated in place by
+# opcodes_main._build_dispatch() at import, so this reference stays valid.
+_DISPATCH: list[Callable[[Z80], int]] = _opcodes_main._DISPATCH
 
 
 def _noop_read(_port: int) -> int:
@@ -125,4 +127,4 @@ class Z80:
         r.R = (r.R + 1) & 0x7F
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
-        return _execute(self, opcode)
+        return _DISPATCH[opcode](self)
