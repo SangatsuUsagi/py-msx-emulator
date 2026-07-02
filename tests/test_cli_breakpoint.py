@@ -7,13 +7,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
 def _run_main(argv: list[str]) -> tuple[int, str, str]:
-    """Run __main__.main() in MSX2 mode with patched filesystem. Returns (exit_code, stdout, stderr)."""
+    """Run __main__.main() in MSX2 mode with patched filesystem.
+
+    Returns (exit_code, stdout, stderr).
+    """
     stdout_buf = StringIO()
     stderr_buf = StringIO()
 

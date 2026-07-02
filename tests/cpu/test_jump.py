@@ -1,11 +1,17 @@
+import pytest
+
+from msx.cpu import flags as F
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
-from msx.cpu import flags as F
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 
@@ -97,3 +103,86 @@ def test_jr_cc_nz_not_taken() -> None:
     cpu.registers.F = F.FLAG_Z
     cpu.step()
     assert cpu.registers.PC == 2
+
+
+# ===========================================================================
+# Characterization tests (test-coverage-hardening Phase 0): _cc condition-code
+# helper. Every condition (NZ/Z/NC/C/PO/PE/P/M) is exercised in both the taken
+# and not-taken state via conditional JP (branch target / fall-through) and via
+# CALL cc / RET cc (cycle counts). Confirmed by running the opcodes.
+# ===========================================================================
+
+# (name, JP-cc opcode, flags that make cc TRUE, flags that make cc FALSE)
+_CONDS = [
+    ("NZ", 0xC2, 0, F.FLAG_Z),
+    ("Z", 0xCA, F.FLAG_Z, 0),
+    ("NC", 0xD2, 0, F.FLAG_C),
+    ("C", 0xDA, F.FLAG_C, 0),
+    ("PO", 0xE2, 0, F.FLAG_PV),
+    ("PE", 0xEA, F.FLAG_PV, 0),
+    ("P", 0xF2, 0, F.FLAG_S),
+    ("M", 0xFA, F.FLAG_S, 0),
+]
+
+
+@pytest.mark.parametrize("name,op,f_true,f_false", _CONDS)
+def test_jp_cc_taken_branches(name: str, op: int, f_true: int, f_false: int) -> None:
+    cpu = make_cpu([op, 0x00, 0x50])  # JP cc, 0x5000
+    cpu.registers.F = f_true
+    t = cpu.step()
+    assert cpu.registers.PC == 0x5000  # branch taken
+    assert t == 10
+
+
+@pytest.mark.parametrize("name,op,f_true,f_false", _CONDS)
+def test_jp_cc_not_taken_falls_through(name: str, op: int, f_true: int, f_false: int) -> None:
+    cpu = make_cpu([op, 0x00, 0x50])
+    cpu.registers.F = f_false
+    t = cpu.step()
+    assert cpu.registers.PC == 0x0003  # fell through past the 3-byte instruction
+    assert t == 10
+
+
+def test_call_cc_taken_pushes_and_uses_taken_cycles() -> None:
+    cpu = make_cpu([0xC4, 0x00, 0x10])  # CALL NZ, 0x1000
+    cpu.registers.F = 0  # NZ true
+    cpu.registers.SP = 0xFFFF
+    t = cpu.step()
+    assert cpu.registers.PC == 0x1000
+    assert cpu.registers.SP == 0xFFFD  # return address pushed
+    assert t == 17
+
+
+def test_call_cc_not_taken_no_push_uses_short_cycles() -> None:
+    cpu = make_cpu([0xC4, 0x00, 0x10])  # CALL NZ, 0x1000
+    cpu.registers.F = F.FLAG_Z  # NZ false
+    cpu.registers.SP = 0xFFFF
+    t = cpu.step()
+    assert cpu.registers.PC == 0x0003  # fell through
+    assert cpu.registers.SP == 0xFFFF  # nothing pushed
+    assert t == 10
+
+
+def test_ret_cc_taken_pops_and_uses_taken_cycles() -> None:
+    rom = bytes([0xC8] + [0] * 32767)  # RET Z
+    ram = bytearray(32768)
+    ram[0x7FFE] = 0x00  # 0xFFFE
+    ram[0x7FFF] = 0x30  # 0xFFFF
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.F = F.FLAG_Z  # Z true
+    cpu.registers.SP = 0xFFFE
+    t = cpu.step()
+    assert cpu.registers.PC == 0x3000
+    assert cpu.registers.SP == 0x0000  # popped two bytes (wrapped)
+    assert t == 11
+
+
+def test_ret_cc_not_taken_uses_short_cycles() -> None:
+    cpu = make_cpu([0xC8])  # RET Z
+    cpu.registers.F = 0  # Z false
+    cpu.registers.SP = 0xFFFE
+    t = cpu.step()
+    assert cpu.registers.PC == 0x0001  # fell through
+    assert cpu.registers.SP == 0xFFFE  # nothing popped
+    assert t == 5

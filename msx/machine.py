@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.input import InputState
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
 LINES_PER_FRAME: int = 262
-TSTATES_PER_LINE: int = CYCLES_PER_FRAME // LINES_PER_FRAME  # 227; carry remainder across lines
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
@@ -61,19 +61,39 @@ class Machine:
     _stepout_sp: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Portability note: this wires the CPU's memory/IO bus by reassigning
+        # bound methods onto Callable fields at runtime — the hottest path in
+        # the emulator. Rust/C++ has no runtime method swap; a port expresses
+        # the bus as a `trait MemoryBus` (or an `enum { Normal, Watchpoint }`)
+        # whose concrete implementation is selected once behind a flag, so the
+        # per-access dispatch stays branch-free. Kept as a comment, not a
+        # rewrite, to avoid adding a per-access call/branch in Python.
         self.cpu.read_byte = self.memory.read
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
         if not isinstance(self.vdp, V9938):
+            # TMS9918A (MSX1) has a single VBlank interrupt source per frame and
+            # no line/scanline interrupts (those are V9938+). The frame-end
+            # interrupt fired once per frame via on_interrupt is therefore the
+            # hardware-correct MSX1 model; there is no MSX1 equivalent to the
+            # V9938 per-scanline IRQ polling done in run_frame().
             self.vdp.on_interrupt = self._vblank_interrupt
 
     def _vblank_interrupt(self) -> None:
         self.cpu.int_pending = True
 
     def reset(self) -> None:
+        """Full power-on reset: CPU, PSG, SCC (if present), VDP, and the
+        primary/secondary slot registers. Memory/VRAM contents are retained."""
         self.cpu.reset()
-        self.vdp.status = 0
+        self.psg.reset()
+        if self.scc is not None:
+            self.scc.reset()
+        self.vdp.reset()
+        # Power-on slot state: all pages select slot 0 (matches construction).
+        self.memory.slot_register = 0x00
+        self.memory.sub_slot_reg = 0x00
 
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
@@ -136,6 +156,11 @@ class Machine:
 
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
+        # Portability note: enabling watchpoints re-swaps cpu.read_byte/
+        # write_byte between the plain memory bus and the watch variant at
+        # runtime (see __post_init__). Rust/C++ selects the same behaviour via
+        # an `enum { Normal, Watchpoint }` bus (or trait object) chosen once,
+        # not by reassigning a function pointer per configuration change.
         r: set[int] = set()
         w: set[int] = set()
         for addr, mode in entries[:4]:
@@ -211,20 +236,39 @@ class Machine:
                 else:
                     raise
         elif self._logger is None:
+            # Hot path (no debugger, no logger). Two frame-invariants are lifted
+            # out of the inner loop: (1) the is_v9938 branch — split into a
+            # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
+            # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
+            # into a per-line local and flushed once per scanline instead of
+            # once per instruction. Line granularity is the finest flush
+            # allowed: io/dac read cycle_count *within* a frame, so a frame-end
+            # flush would starve them; a one-scanline lag matches the existing
+            # scanline-stepped timing. The duplicated loop body is the
+            # readability cost of removing that per-instruction overhead.
             try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
-                    while total < line_end:
-                        if vdp9938:
+                if vdp9938 is not None:
+                    for L in range(lpf):
+                        line_end = (L + 1) * cpf // lpf
+                        line_cycles = 0
+                        while total < line_end:
                             cpu.int_pending = vdp9938.irq
-                        n = cpu_step()
-                        total += n
-                        self.cycle_count += n
-                        if vdp_tick:
+                            n = cpu_step()
+                            total += n
+                            line_cycles += n
                             vdp_tick(n)
-                    if vdp9938:
+                        self.cycle_count += line_cycles
                         vdp9938.begin_scanline(L)
                         cpu.int_pending = vdp9938.irq
+                else:
+                    for L in range(lpf):
+                        line_end = (L + 1) * cpf // lpf
+                        line_cycles = 0
+                        while total < line_end:
+                            n = cpu_step()
+                            total += n
+                            line_cycles += n
+                        self.cycle_count += line_cycles
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
@@ -268,7 +312,7 @@ class Machine:
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.
-        self.vdp._frame_count += 1
+        self.vdp.increment_frame()
         return result
 
 

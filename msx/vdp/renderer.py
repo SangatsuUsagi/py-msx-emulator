@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import chain
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -67,6 +68,10 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
 
 
 def _finalize(vdp: VDP) -> None:
+    # The TMS9918A (MSX1) has a single VBlank interrupt source per frame and no
+    # line/scanline interrupts (those are a V9938+ feature). Setting the VBlank
+    # flag and firing on_interrupt once at end-of-frame (gated by R#1 bit 5, IE0)
+    # is therefore the hardware-correct MSX1 interrupt model.
     vdp.status |= 0x80
     if (vdp.regs[1] & 0x20) and vdp.on_interrupt is not None:
         vdp.on_interrupt()
@@ -171,8 +176,12 @@ def _render_mc(vdp: VDP, buf: bytearray) -> None:
     for row in range(24):
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
+            # pair is selected by (row & 3)*2, and the top vs bottom 4 scanlines
+            # pick within the pair (py >> 2). Each nibble is a solid 4x4 block.
+            seg = (row & 3) * 2
             for py in range(8):
-                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
                 lc = _color((pat >> 4) & 0x0F, bd)
                 rc = _color(pat & 0x0F, bd)
                 y = row * 8 + py
@@ -232,10 +241,18 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
         y_top = (y_byte + 1) & 0xFF
 
-        for line in range(_H):
-            sprite_row = (line - y_top) & 0xFF
-            if sprite_row >= render_size:
-                continue
+        # Scan only the sprite's visible band [y_top, y_top+render_size); take the
+        # wrapped band (increasing screen line) only when the & 0xFF row test
+        # crosses 255. Per-sprite line order does not affect line_count / 5S /
+        # coincidence, so this is equivalent to the old full [0, _H) scan.
+        end = y_top + render_size
+        if end <= 256:
+            lines = range(y_top, min(_H, end))
+        else:
+            lines = chain(range(0, min(_H, end - 256)), range(y_top, _H))
+
+        for line in lines:
+            sprite_row = (line - y_top) & 0xFF  # guaranteed < render_size
 
             if line_count[line] >= 4:
                 if not fifth_set:
@@ -251,20 +268,35 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
             src_row = sprite_row // 2 if mag else sprite_row
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
             scale = 2 if mag else 1
+            row = line * _W
 
-            for bit_i, pixel in enumerate(pixels):
-                if not pixel:
-                    continue
-                for s in range(scale):
-                    px = x_byte + bit_i * scale + s
+            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    px = x_byte + bit_i
                     if px < 0 or px >= _W:
                         continue
-                    coord = line * _W + px
+                    coord = row + px
                     if sprite_painted[coord]:
                         coincidence = True
                     else:
                         sprite_painted[coord] = 1
                         buf[coord] = color
+            else:
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    for s in range(scale):
+                        px = x_byte + bit_i * scale + s
+                        if px < 0 or px >= _W:
+                            continue
+                        coord = row + px
+                        if sprite_painted[coord]:
+                            coincidence = True
+                        else:
+                            sprite_painted[coord] = 1
+                            buf[coord] = color
 
     if coincidence:
         vdp.status |= 0x20

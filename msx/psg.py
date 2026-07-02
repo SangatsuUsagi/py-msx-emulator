@@ -53,15 +53,33 @@ class PSG:
     def read_port(self, port: int) -> int:
         if port == 0xA2:
             if self.latch == _REG_IO_PORT_A and self._input is not None:
-                # PSG register 15 bit 6 = JOY_SELECT: 0→Joy1 dirs, 1→Joy2 dirs on bits 0-3
+                # PORT A returns the *selected* joystick port's 6 signals on
+                # bits 0-5 (dir 0-3, triggers 4-5). JOY_SELECT is PSG register
+                # 15 bit 6: 0→Joy1, 1→Joy2. Bits 6-7 are not joystick lines
+                # (pulled high here).
                 joy_select = (self.regs[15] >> 6) & 1
-                joy1 = self._input.joy1
-                joy2 = self._input.joy2
-                dir_bits = (joy1 if joy_select == 0 else joy2) & 0x0F
-                trig_bits = (joy1 & 0x30) | ((joy2 & 0x30) << 2)
-                return dir_bits | trig_bits
+                sel = self._input.joy1 if joy_select == 0 else self._input.joy2
+                return (sel & 0x3F) | 0xC0
             return self.regs[self.latch]
         return 0xFF
+
+    # --------------------------------------------------------------- reset
+
+    def reset(self) -> None:
+        """Restore power-on register and synthesiser state (matches field defaults)."""
+        self.regs = [0] * 16
+        self.latch = 0
+        self._tone_cnt = [1, 1, 1]
+        self._tone_out = [0, 0, 0]
+        self._noise_cnt = 1
+        self._lfsr = 1
+        self._env_cnt = 1
+        self._env_step = 0x1F
+        self._env_attack = 0
+        self._env_alternate = False
+        self._env_hold_flag = False
+        self._env_holding = False
+        self._clk_frac = 0
 
     # --------------------------------------------------------- envelope reset
 
@@ -85,10 +103,10 @@ class PSG:
             self._env_alternate = bool(shape & 0x02)
         self._env_step = 0x1F
         self._env_holding = False
-        # 32-step counter with a 16-level (>>1) output: 2 steps per level, so a
-        # step advances every period*8 ticks to keep the per-level rate (and full
-        # ramp duration) identical to a 16-level period*16 model.
-        self._env_cnt = self._env_period() * 8
+        # AY-3-8910: one full 32-step ramp = 256*EP/fMaster, so a single step
+        # takes (256*EP/fMaster)/32 = EP/(fMaster/8) = EP PSG-clock ticks.  One
+        # step therefore advances every `period` ticks (no *8 / *16 multiplier).
+        self._env_cnt = self._env_period()
 
     # ---------------------------------------------------------- tone channels
 
@@ -107,7 +125,9 @@ class PSG:
         period = max(1, self.regs[6] & 0x1F)
         self._noise_cnt -= ticks
         while self._noise_cnt <= 0:
-            self._noise_cnt += period
+            # Datasheet fN = fMaster/(16*NP) = PSG_CLOCK/(2*NP): the LFSR shifts
+            # once every 2*NP PSG-clock ticks (single-period reload ran it 2x fast).
+            self._noise_cnt += period * 2
             # 17-bit LFSR, polynomial x^17 + x^14 + 1 (feedback from bits 0 and 3)
             feedback = (self._lfsr ^ (self._lfsr >> 3)) & 1
             self._lfsr = ((self._lfsr >> 1) | (feedback << 16)) & 0x1FFFF
@@ -117,7 +137,7 @@ class PSG:
     def _step_envelope(self, ticks: int) -> None:
         if self._env_holding:
             return
-        step_ticks = self._env_period() * 8  # one step per period×8 PSG ticks
+        step_ticks = self._env_period()  # one 32-step count per EP PSG ticks
         self._env_cnt -= ticks
         while self._env_cnt <= 0:
             self._env_cnt += step_ticks
@@ -132,6 +152,10 @@ class PSG:
                     break
                 # Repeating shape: reload counter; alternate reverses the ramp
                 # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
+                # Portability note: _env_step went negative here (Python ints are
+                # arbitrary precision, so -1 & 0x20 == 0x20). Rust/C++ unsigned
+                # types underflow instead — a port must use a signed type (i32)
+                # or an explicit wrap so bit 5 still flags the -1 boundary.
                 if self._env_alternate and (self._env_step & 0x20):
                     self._env_attack ^= 0x1F
                 self._env_step &= 0x1F
@@ -142,44 +166,135 @@ class PSG:
         r7 = self.regs[7]
         tone_en = not ((r7 >> ch) & 1)
         noise_en = not ((r7 >> (ch + 3)) & 1)
-        if not tone_en and not noise_en:
-            return 1  # both disabled → constant high (volume sets amplitude)
-        tone_bit = self._tone_out[ch] if tone_en else 0
-        noise_bit = (self._lfsr & 1) if noise_en else 0
-        return tone_bit | noise_bit
+        # AY-3-8910: channel output is tone AND noise; a disabled generator
+        # contributes a constant 1, so it does not gate the enabled one.  Both
+        # disabled → 1 & 1 = 1 (constant high, volume sets amplitude).
+        tone_bit = self._tone_out[ch] if tone_en else 1
+        noise_bit = (self._lfsr & 1) if noise_en else 1
+        return tone_bit & noise_bit
 
     # ---------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:
-        """Return n signed 16-bit little-endian mono PCM samples."""
+        """Return n signed 16-bit little-endian mono PCM samples.
+
+        Hot path (44 100 samples/s): the registers are constant across a buffer
+        (the CPU only writes PSG registers between buffers), so all periods /
+        mixer enables / volumes are precomputed once, and the tone/noise/
+        envelope generators are inlined with their state hoisted to locals and
+        written back after the loop. Behaviour is identical to the _step_*
+        methods (kept below for the unit tests that drive them directly).
+        """
         out = bytearray(n * 2)
-        regs = self.regs  # local binding for the hot per-sample loop
+        regs = self.regs
+
+        # --- precompute buffer-constant register-derived values ---
+        tp0 = max(1, ((regs[1] & 0x0F) << 8) | regs[0])
+        tp1 = max(1, ((regs[3] & 0x0F) << 8) | regs[2])
+        tp2 = max(1, ((regs[5] & 0x0F) << 8) | regs[4])
+        np2 = max(1, regs[6] & 0x1F) * 2          # noise reload = 2 * NP
+        ep = max(1, (regs[12] << 8) | regs[11])   # envelope: one step per EP ticks
+        r7 = regs[7]
+        tone_en0 = not (r7 & 0x01)
+        tone_en1 = not (r7 & 0x02)
+        tone_en2 = not (r7 & 0x04)
+        noise_en0 = not (r7 & 0x08)
+        noise_en1 = not (r7 & 0x10)
+        noise_en2 = not (r7 & 0x20)
+        vr0, vr1, vr2 = regs[8], regs[9], regs[10]
+        va0 = _VOL_TABLE[vr0 & 0x0F]
+        va1 = _VOL_TABLE[vr1 & 0x0F]
+        va2 = _VOL_TABLE[vr2 & 0x0F]
+        env0 = bool(vr0 & 0x10)
+        env1 = bool(vr1 & 0x10)
+        env2 = bool(vr2 & 0x10)
+
+        # --- hoist generator state to locals ---
+        tc0, tc1, tc2 = self._tone_cnt
+        to0, to1, to2 = self._tone_out
+        nc = self._noise_cnt
+        lfsr = self._lfsr
+        env_cnt = self._env_cnt
+        env_step = self._env_step
+        env_attack = self._env_attack
+        env_alternate = self._env_alternate
+        env_hold_flag = self._env_hold_flag
+        env_holding = self._env_holding
+        clk_frac = self._clk_frac
+
         for i in range(n):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
-            self._clk_frac += PSG_CLOCK
-            ticks = self._clk_frac // SAMPLE_RATE
-            self._clk_frac %= SAMPLE_RATE
+            clk_frac += PSG_CLOCK
+            ticks = clk_frac // SAMPLE_RATE
+            clk_frac %= SAMPLE_RATE
 
-            for ch in range(3):
-                self._step_tone(ch, ticks)
-            self._step_noise(ticks)
-            self._step_envelope(ticks)
+            # tone channels (inline _step_tone)
+            tc0 -= ticks
+            while tc0 <= 0:
+                tc0 += tp0
+                to0 ^= 1
+            tc1 -= ticks
+            while tc1 <= 0:
+                tc1 += tp1
+                to1 ^= 1
+            tc2 -= ticks
+            while tc2 <= 0:
+                tc2 += tp2
+                to2 ^= 1
 
-            # Sum channel amplitudes.
-            env_amp = _VOL_TABLE[self._env_output_level()]
+            # noise (inline _step_noise): 17-bit LFSR, taps at bits 0 and 3
+            nc -= ticks
+            while nc <= 0:
+                nc += np2
+                feedback = (lfsr ^ (lfsr >> 3)) & 1
+                lfsr = ((lfsr >> 1) | (feedback << 16)) & 0x1FFFF
+
+            # envelope (inline _step_envelope)
+            if not env_holding:
+                env_cnt -= ticks
+                while env_cnt <= 0:
+                    env_cnt += ep
+                    env_step -= 1
+                    if env_step < 0:
+                        if env_hold_flag:
+                            if env_alternate:
+                                env_attack ^= 0x1F
+                            env_holding = True
+                            env_step = 0
+                            break
+                        if env_alternate and (env_step & 0x20):
+                            env_attack ^= 0x1F
+                        env_step &= 0x1F
+
+            env_amp = _VOL_TABLE[(env_step ^ env_attack) >> 1]
+            noise_bit = lfsr & 1
+
+            # mixer: channel output = tone AND noise (disabled generator → 1)
             sample = 0
-            for ch in range(3):
-                if self._mix_channel(ch):
-                    vol_reg = regs[8 + ch]
-                    if vol_reg & 0x10:
-                        sample += env_amp
-                    else:
-                        sample += _VOL_TABLE[vol_reg & 0x0F]
+            if (to0 if tone_en0 else 1) & (noise_bit if noise_en0 else 1):
+                sample += env_amp if env0 else va0
+            if (to1 if tone_en1 else 1) & (noise_bit if noise_en1 else 1):
+                sample += env_amp if env1 else va1
+            if (to2 if tone_en2 else 1) & (noise_bit if noise_en2 else 1):
+                sample += env_amp if env2 else va2
 
             if sample > 32767:
                 sample = 32767
 
             out[i * 2] = sample & 0xFF
             out[i * 2 + 1] = (sample >> 8) & 0xFF
+
+        # --- write generator state back ---
+        self._tone_cnt[0], self._tone_cnt[1], self._tone_cnt[2] = tc0, tc1, tc2
+        self._tone_out[0], self._tone_out[1], self._tone_out[2] = to0, to1, to2
+        self._noise_cnt = nc
+        self._lfsr = lfsr
+        self._env_cnt = env_cnt
+        self._env_step = env_step
+        self._env_attack = env_attack
+        self._env_alternate = env_alternate
+        self._env_hold_flag = env_hold_flag
+        self._env_holding = env_holding
+        self._clk_frac = clk_frac
 
         return out

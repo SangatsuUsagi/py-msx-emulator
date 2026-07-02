@@ -37,10 +37,6 @@ class Memory:
         self._rom_len = len(self.rom)
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
 
-    def _slot(self, addr: int) -> int:
-        page = (addr >> 14) & 0x03
-        return (self.slot_register >> (page * 2)) & 0x03
-
     def _page3_is_slot3(self) -> bool:
         return self.sub_slot_enabled and ((self.slot_register >> 6) & 0x03) == 3
 
@@ -76,8 +72,11 @@ class Memory:
         # sub == 2, sub == 3, or sub == 0 without a sub0_rom -> RAM
         if self.ram_mapper is not None:
             return self.ram_mapper.read(addr)
-        # MSX1: 32 KB RAM at 0x8000-0xFFFF only
-        return self.ram[addr - 0x8000]
+        # MSX1: flat RAM sits at the top of the address space (32 KB → base
+        # 0x8000). An access to a page selected to slot 3 without a RAM mapper
+        # can fall below that base (negative index); return open-bus 0xFF.
+        off = addr - (0x10000 - len(self.ram))
+        return self.ram[off] if 0 <= off < len(self.ram) else 0xFF
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
@@ -106,7 +105,10 @@ class Memory:
         if self.ram_mapper is not None:
             self.ram_mapper.write(addr, value)
             return
-        self.ram[addr - 0x8000] = value
+        # MSX1 flat RAM (base at top of address space); ignore out-of-range writes.
+        off = addr - (0x10000 - len(self.ram))
+        if 0 <= off < len(self.ram):
+            self.ram[off] = value
 
     def main_ram_range(self) -> tuple[int, int]:
         """Conventional main-RAM address window, for stack-sanity checks.
@@ -119,12 +121,3 @@ class Memory:
             return (0x0000, 0xFFFF)
         low = max(0, 0x10000 - len(self.ram))
         return (low, 0xFFFF)
-
-    def read_port_a8(self) -> int:
-        return self.slot_register & 0xFF
-
-    def write_port_a8(self, value: int) -> None:
-        old = self.slot_register
-        self.slot_register = value & 0xFF
-        if self._logger is not None:
-            self._logger.on_slot_register_write(old, self.slot_register, pc=0)

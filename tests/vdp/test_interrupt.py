@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 
 def make_vdp_with_display() -> VDP:

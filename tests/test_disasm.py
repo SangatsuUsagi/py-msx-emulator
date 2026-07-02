@@ -1,6 +1,5 @@
 """Tests for msx.debugger.disasm — Z80 disassembler."""
 
-import pytest
 from msx.debugger.disasm import disassemble
 
 

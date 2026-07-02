@@ -1,7 +1,6 @@
 """Tests for msx.vdp.v9938.V9938 core: VRAM, ports, registers, palette."""
 from msx.vdp.v9938 import V9938
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -154,8 +153,9 @@ def test_port_99_17bit_address_via_r14() -> None:
 def test_status_read_returns_current_status() -> None:
     vdp = V9938()
     vdp.status = 0xA5
-    # S#0 bits 4-0 report the idle last-sprite number (0x1F); the sprite-limit
-    # (5S) / collision (C) fields are not emulated. High bits pass through.
+    # The returned byte keeps the current F/5S/C bits and OR-s the idle
+    # last-sprite number (0x1F) into bits 4-0 (the stored bits are cleared
+    # by the read; see test_status_read_clears_f_5s_and_c).
     assert vdp.read_port(0x99) == 0xBF  # (0xA5 & 0xE0) | 0x1F
 
 
@@ -167,11 +167,13 @@ def test_status_read_clears_f_flag() -> None:
     assert vdp.status & 0x80 == 0
 
 
-def test_status_read_preserves_non_f_bits() -> None:
+def test_status_read_clears_f_5s_and_c() -> None:
+    # Real V9938: an S#0 read clears F (bit7), 5S (bit6) and C (bit5) together
+    # (mask ~0xE0). Previously only F was cleared, leaving 5S/C stuck set.
     vdp = V9938()
     vdp.status = 0xFF
     vdp.read_port(0x99)
-    assert vdp.status == 0x7F  # only bit 7 cleared
+    assert vdp.status == 0x1F  # F, 5S and C cleared; low sprite-number bits kept
 
 
 def test_status_s0_reports_idle_sprite_number() -> None:

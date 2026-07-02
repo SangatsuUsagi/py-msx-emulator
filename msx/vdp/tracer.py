@@ -132,7 +132,9 @@ class Tracer:
             params = self._fmt_params()
             name = _cmd_name(data)
             lop = _lop_name(data)
-            self._emit(f"{prefix} VDP_CMD {name:<4s}/{lop:<4s} ({data:02X}h) R32-45={params}{suffix}")
+            self._emit(
+                f"{prefix} VDP_CMD {name:<4s}/{lop:<4s} ({data:02X}h) R32-45={params}{suffix}"
+            )
             self._param_buf.clear()
         else:
             self._emit(f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}")

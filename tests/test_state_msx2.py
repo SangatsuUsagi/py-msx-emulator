@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from msx.state import load_state, save_state
 from tests.factories import make_machine, make_machine_msx2
-from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
 
 
 def _load_state_json(path: Path) -> dict:
@@ -261,3 +261,48 @@ def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
         machine.vdp.vram[i] = 0
     load_state(machine)
     assert bytes(machine.vdp.vram) == expected
+
+
+def _make_msx2_no_ram_mapper():
+    """Build an MSX2 machine (V9938) that has no RAM mapper (ram_mapper is None)."""
+    from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+    spec = MachineSpec(
+        id="test_msx2_nomap",
+        name="test_msx2_nomap",
+        generation="msx2",
+        rom_base_dir=Path("."),
+        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        logo_rom_entry=None,
+        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        has_ram_mapper=False,
+        ram_size_kb=32,
+        has_v9938=True,
+        has_rtc=True,
+    )
+    return build_machine(spec, bios_override=_ROM, extrom_override=_EXTROM)
+
+
+def test_msx2_roundtrip_without_ram_mapper(saves_dir):
+    # An MSX2 machine with no RAM mapper must save/load without AttributeError.
+    machine = _make_msx2_no_ram_mapper()
+    assert machine.memory.ram_mapper is None
+    machine.vdp.vram[0x100] = 0xAB
+    machine.memory.ram[10] = 0x99
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp.vram[0x100] = 0x00
+    machine.memory.ram[10] = 0x00
+    load_state(machine)
+
+    assert machine.vdp.vram[0x100] == 0xAB
+    assert machine.memory.ram[10] == 0x99
+
+
+def test_load_wrong_format_version_raises_before_expand(saves_dir):
+    # A wrong format_version must raise ValueError (validated before the fields
+    # are expanded into MachineSnapshot, so no TypeError on unexpected keys).
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+    _rewrite_state_version(state_path, 999)
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)

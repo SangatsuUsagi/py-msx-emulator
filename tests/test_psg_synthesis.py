@@ -3,7 +3,6 @@ import struct
 
 from msx.psg import PSG, SAMPLES_PER_FRAME
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -135,6 +134,16 @@ def test_noise_period_zero_clamped() -> None:
     psg._step_noise(1)  # must not raise
 
 
+def test_noise_reload_is_2x_np() -> None:
+    # Datasheet fN = PSG_CLOCK/(2*NP): after a shift the counter reloads to 2*NP,
+    # so the LFSR clock is half the previous (buggy 1*NP) rate.
+    psg = PSG()
+    psg.regs[6] = 8  # NP = 8
+    psg._noise_cnt = 1
+    psg._step_noise(1)          # counter hits 0 → shift + reload
+    assert psg._noise_cnt == 8 * 2  # reloaded with period * 2
+
+
 # ---------------------------------------------------------------------------
 # Envelope generator
 # ---------------------------------------------------------------------------
@@ -142,10 +151,11 @@ def test_noise_period_zero_clamped() -> None:
 def _run_envelope(shape: int, n_steps: int) -> list[int]:
     """Run the envelope for n_steps level changes at period=1, return level history.
 
-    Uses the 32-step attack/alternate/hold model: with period=1 a step advances
-    every 8 PSG ticks, so _step_envelope(16) advances two counter steps = one of
-    the 16 output levels. Attack bit direction (AY-3-8910): attack=1 ramps up,
-    attack=0 ramps down.
+    Uses the 32-step attack/alternate/hold model. Datasheet-correct rate: one
+    counter step advances every `period` PSG ticks (period=1 → every tick), and
+    two counter steps make one of the 16 output levels (level = step>>1). So
+    _step_envelope(2) advances one output level. Attack bit direction
+    (AY-3-8910): attack=1 ramps up, attack=0 ramps down.
     """
     psg = PSG()
     psg.regs[11] = 1   # period = 1
@@ -155,7 +165,7 @@ def _run_envelope(shape: int, n_steps: int) -> list[int]:
 
     levels: list[int] = [psg._env_output_level()]
     for _ in range(n_steps):
-        psg._step_envelope(16)  # one output level per call
+        psg._step_envelope(2)  # one output level per call (2 counter steps)
         levels.append(psg._env_output_level())
     return levels
 
@@ -212,6 +222,19 @@ def test_envelope_shape_00_single_decay_hold_0() -> None:
     assert levels[20] == 0
 
 
+def test_envelope_advances_one_step_per_ep_ticks() -> None:
+    # One 32-step count per EP PSG-clock ticks (no *8 / *16 multiplier).
+    psg = PSG()
+    psg.regs[11] = 3   # EP low
+    psg.regs[12] = 0   # EP = 3
+    psg.regs[13] = 0x08  # decay, repeating
+    psg._reset_envelope()
+    assert psg._env_cnt == 3      # reload = EP, not EP*8
+    start = psg._env_step
+    psg._step_envelope(3)         # exactly EP ticks → one counter step
+    assert psg._env_step == start - 1
+
+
 def test_envelope_reset_on_r13_write() -> None:
     """Writing R13 restarts the envelope from the beginning (step = 0x1F)."""
     psg = PSG()
@@ -250,12 +273,18 @@ def test_mixer_tone_only_returns_tone_bit() -> None:
     assert psg._mix_channel(0) == 0
 
 
-def test_mixer_tone_and_noise_or() -> None:
+def test_mixer_tone_and_noise_and() -> None:
+    # AY-3-8910 mixer ANDs tone and noise when both are enabled: a 0 from either
+    # generator forces the channel low (previously OR; datasheet corrected).
     psg = PSG()
     psg.regs[7] = 0x36  # tone A and noise A both enabled
     psg._tone_out[0] = 0
     psg._lfsr = 0x10001  # bit 0 = 1
-    assert psg._mix_channel(0) == 1  # 0 | 1 = 1
+    assert psg._mix_channel(0) == 0  # tone 0 AND noise 1 = 0
+    psg._tone_out[0] = 1
+    assert psg._mix_channel(0) == 1  # tone 1 AND noise 1 = 1
+    psg._lfsr = 0x10000  # bit 0 = 0
+    assert psg._mix_channel(0) == 0  # tone 1 AND noise 0 = 0
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 # Layout:
 #   name table  at 0x3800  (R2=0x0E)
@@ -36,18 +36,36 @@ def test_mc_block_left_right_colour() -> None:
         assert buf[px] == 7, f"right px {px} expected 7 got {buf[px]}"
 
 
-def test_mc_per_row_colour() -> None:
+def test_mc_top_bottom_half_bytes() -> None:
+    # MULTICOLOR: within an 8x8 cell the top 4 scanlines use pattern byte
+    # (row&3)*2 and the bottom 4 use +1; each nibble is a solid 4x4 block, so
+    # the colour is constant across all 4 scanlines of its half (NOT per-line).
     vdp = make_mc_vdp()
     vdp.vram[_NAME + 0] = 0x00
-    vdp.vram[_PAT + 0] = 0xF7   # row 0: left=15, right=7
-    vdp.vram[_PAT + 1] = 0x3A   # row 1: left=3, right=10
+    vdp.vram[_PAT + 0] = 0xF7   # top half: left=15, right=7
+    vdp.vram[_PAT + 1] = 0x3A   # bottom half: left=3, right=10
 
     buf = render_frame(vdp)
 
-    assert buf[0 * 256 + 0] == 15   # row 0, left block
-    assert buf[0 * 256 + 4] == 7    # row 0, right block
-    assert buf[1 * 256 + 0] == 3    # row 1, left block
-    assert buf[1 * 256 + 4] == 10   # row 1, right block
+    for scan in range(4):       # top half → PAT+0
+        assert buf[scan * 256 + 0] == 15
+        assert buf[scan * 256 + 4] == 7
+    for scan in range(4, 8):    # bottom half → PAT+1
+        assert buf[scan * 256 + 0] == 3
+        assert buf[scan * 256 + 4] == 10
+
+
+def test_mc_char_row_selects_byte_pair() -> None:
+    # The pattern byte pair is (row & 3)*2, so character row 1 (scanlines 8-15)
+    # uses PAT+2 / PAT+3, not PAT+0 / PAT+1.
+    vdp = make_mc_vdp()
+    vdp.vram[_NAME + 1 * 32 + 0] = 0x00   # tile 0 at (col 0, char row 1)
+    vdp.vram[_PAT + 2] = 0x5C             # row 1 top half: left=5, right=12
+
+    buf = render_frame(vdp)
+
+    assert buf[8 * 256 + 0] == 5    # scanline 8 (char row 1, top half), left
+    assert buf[8 * 256 + 4] == 12   # right
 
 
 def test_mc_transparent_colour_uses_backdrop() -> None:

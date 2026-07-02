@@ -159,12 +159,12 @@ KEY_MATRIX_JP: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_JP_SYMBOLS}
 KEY_MATRIX: dict[int, tuple[int, int]] = KEY_MATRIX_INT
 
 # JOY_MAP[key] = (port, bit)  port 0=Joy1, 1=Joy2
-# Per-joystick bit layout (matches PSG register 14 per-port view):
+# Per-joystick 6-bit active-low layout (bits 0-5 of the selected port):
 #   bit0=Up, bit1=Down, bit2=Left, bit3=Right, bit4=Trigger A, bit5=Trigger B
 #
-# PSG register 14 is composed dynamically by PSG.read_port using JOY_SELECT
-# (PSG register 15 bit 6):  0 → Joy1 directions on bits 0-3, 1 → Joy2
-# Trigger bits are always present: bits 4-5 = Joy1, bits 6-7 = Joy2.
+# PSG register 14 (PORT A) returns the *selected* port's six signals on bits
+# 0-5; JOY_SELECT (PSG register 15 bit 6) picks the port (0 → Joy1, 1 → Joy2).
+# Bits 6-7 are not joystick lines (PSG.read_port pulls them high).
 JOY_MAP: dict[int, tuple[int, int]] = {
     _K_w:      (0, 0),  # Joy1 Up
     _K_s:      (0, 1),  # Joy1 Down
@@ -197,6 +197,9 @@ class InputState:
     _matrix_map: dict[int, tuple[int, int]] = field(
         default_factory=lambda: KEY_MATRIX_INT, init=False, repr=False
     )
+    # Currently held matrix keys, so shared cells (LSHIFT/RSHIFT → (6,0),
+    # LCTRL/RCTRL → (6,1)) only release when every mapped key is released.
+    _held_keys: set[int] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._matrix_map = KEY_MATRIX_JP if self.keyboard_type == "jp" else KEY_MATRIX_INT
@@ -211,6 +214,7 @@ class InputState:
 
     def key_down(self, key: int) -> None:
         if key in self._matrix_map:
+            self._held_keys.add(key)
             row, bit = self._matrix_map[key]
             self.matrix[row] &= ~(1 << bit) & 0xFF
         if key in JOY_MAP:
@@ -222,8 +226,14 @@ class InputState:
 
     def key_up(self, key: int) -> None:
         if key in self._matrix_map:
+            self._held_keys.discard(key)
             row, bit = self._matrix_map[key]
-            self.matrix[row] |= (1 << bit)
+            # Only release the matrix bit when no other held key shares this
+            # cell (LSHIFT/RSHIFT and LCTRL/RCTRL each share one cell).
+            cell = (row, bit)
+            still_held = any(self._matrix_map.get(k) == cell for k in self._held_keys)
+            if not still_held:
+                self.matrix[row] |= (1 << bit)
         if key in JOY_MAP:
             port, bit = JOY_MAP[key]
             if port == 0:

@@ -1,12 +1,9 @@
 import pytest
-from msx.cpu.z80 import Z80
+
 from msx.input import InputState
-from msx.io import IOBus
 from msx.machine import CYCLES_PER_FRAME, Machine
-from tests.factories import make_machine
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
-from msx.memory import Memory
-from msx.vdp.vdp import VDP
+from tests.factories import make_machine
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)
@@ -170,6 +167,7 @@ def test_auto_unsupported_db_mapper_falls_back(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart = b"\xDE\xAD"
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -184,6 +182,7 @@ def test_auto_known_konamisco_selects_scc_mapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     from msx.mapper import KonamiSCCMapper
     cart = bytes(65536)  # dummy 64 KB
@@ -198,6 +197,7 @@ def test_auto_known_konami_selects_konami_mapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart = bytes(65536)
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -230,6 +230,7 @@ def test_make_machine_mapper2_konamisco_falls_back_to_konami(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart2 = bytes(65536)
     sha1 = hashlib.sha1(cart2).hexdigest()
@@ -259,3 +260,22 @@ def test_cycle_count_accumulates_across_frames() -> None:
     after_one = m.cycle_count
     m.run_frame()
     assert m.cycle_count >= after_one * 2 - 100  # allow ±one instruction slack
+
+
+def test_reset_full_power_on_state() -> None:
+    # Full reset restores PSG registers, the slot register, and VDP register/
+    # status state to power-on values (memory/VRAM contents are retained).
+    m = _make_machine()
+    m.psg.regs[7] = 0xAB
+    m.psg.latch = 5
+    m.memory.slot_register = 0xFF
+    m.memory.sub_slot_reg = 0xFF
+    m.vdp.status = 0xFF
+    m.vdp.regs[1] = 0x60
+    m.reset()
+    assert m.psg.regs == [0] * 16
+    assert m.psg.latch == 0
+    assert m.memory.slot_register == 0x00
+    assert m.memory.sub_slot_reg == 0x00
+    assert m.vdp.status == 0
+    assert all(r == 0 for r in m.vdp.regs)

@@ -5,7 +5,7 @@ import pytest
 from msx.cpu.z80 import Z80
 from msx.debug.logger import DebugLogger
 from msx.io import IOBus
-from msx.machine import Machine, HANG_PC_REPEAT_THRESHOLD
+from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.psg import PSG
