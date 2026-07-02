@@ -374,9 +374,28 @@ def run(
                         # than writing through an invalid pointer.
                         print(f"SDL_LockTexture failed: {sdl2.SDL_GetError()}", file=sys.stderr)
                     else:
-                        # rgb_buf is already an immutable bytes from _index_to_rgb24;
-                        # memmove accepts it directly (no extra copy needed).
-                        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+                        # Honour the destination row stride SDL returns. When the
+                        # texture rows are tightly packed (pitch == width*3, RGB24),
+                        # a single contiguous memmove is correct and fastest.
+                        # Otherwise (driver row padding, or a future width) copy
+                        # row-by-row: width*3 source bytes into each pitch-strided
+                        # destination row, so no source overrun and no padding is
+                        # overwritten with pixel data.
+                        row_bytes = tex_w * 3
+                        dst_pitch = pitch.value
+                        if dst_pitch == row_bytes:
+                            # rgb_buf is already an immutable bytes from
+                            # _index_to_rgb24; memmove accepts it directly.
+                            ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+                        else:
+                            dst_base = pixels_ptr.value
+                            for row in range(tex_h):
+                                src_off = row * row_bytes
+                                ctypes.memmove(
+                                    dst_base + row * dst_pitch,
+                                    rgb_buf[src_off:src_off + row_bytes],
+                                    row_bytes,
+                                )
                         sdl2.SDL_UnlockTexture(texture)
 
                 # Render (always — redisplays previous texture on skipped frames)

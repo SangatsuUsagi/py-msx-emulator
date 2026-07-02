@@ -37,10 +37,6 @@ class Memory:
         self._rom_len = len(self.rom)
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
 
-    def _slot(self, addr: int) -> int:
-        page = (addr >> 14) & 0x03
-        return (self.slot_register >> (page * 2)) & 0x03
-
     def _page3_is_slot3(self) -> bool:
         return self.sub_slot_enabled and ((self.slot_register >> 6) & 0x03) == 3
 

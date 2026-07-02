@@ -68,6 +68,10 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
 
 
 def _finalize(vdp: VDP) -> None:
+    # The TMS9918A (MSX1) has a single VBlank interrupt source per frame and no
+    # line/scanline interrupts (those are a V9938+ feature). Setting the VBlank
+    # flag and firing on_interrupt once at end-of-frame (gated by R#1 bit 5, IE0)
+    # is therefore the hardware-correct MSX1 interrupt model.
     vdp.status |= 0x80
     if (vdp.regs[1] & 0x20) and vdp.on_interrupt is not None:
         vdp.on_interrupt()

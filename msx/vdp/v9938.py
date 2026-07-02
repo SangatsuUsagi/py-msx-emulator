@@ -123,10 +123,13 @@ class V9938:
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
     on_interrupt: Callable[[], None] | None = None
+    # Portability note: these Callable hooks (on_interrupt, tracer, _get_pc,
+    # _get_cycle) are stored Python closures with no direct static-typed
+    # analogue. A Rust/C++ port models them as trait objects or feature-flagged
+    # fields resolved once, not per-call function pointers.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
@@ -218,6 +221,15 @@ class V9938:
         m5 = (r0 >> 3) & 1
         return 512 if (m5 and not m4) else 256
 
+    @property
+    def frame_count(self) -> int:
+        """Number of completed frames (incremented once per frame by the machine)."""
+        return self._frame_count
+
+    def increment_frame(self) -> None:
+        """Advance the completed-frame counter. Called once per frame."""
+        self._frame_count += 1
+
     def irq_pending(self) -> bool:
         ie0 = bool(self.regs[1] & 0x20)
         f = bool(self.status & 0x80)
@@ -302,8 +314,7 @@ class V9938:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
-                fr = self._get_frame() if self._get_frame is not None else 0
-                self.tracer.port99_write(pc, cy, value, frame=fr)
+                self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
             if self._latch is None:
                 self._latch = value
             else:
@@ -368,8 +379,7 @@ class V9938:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
-                fr = self._get_frame() if self._get_frame is not None else 0
-                self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=fr)
+                self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=self._frame_count)
             if not (self.regs[17] & 0x80):  # AII (bit7) clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | (((self.regs[17] & 0x3F) + 1) & 0x3F)
         elif port == 0x9C:

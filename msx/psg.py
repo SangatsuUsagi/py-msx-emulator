@@ -152,6 +152,10 @@ class PSG:
                     break
                 # Repeating shape: reload counter; alternate reverses the ramp
                 # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
+                # Portability note: _env_step went negative here (Python ints are
+                # arbitrary precision, so -1 & 0x20 == 0x20). Rust/C++ unsigned
+                # types underflow instead — a port must use a signed type (i32)
+                # or an explicit wrap so bit 5 still flags the -1 boundary.
                 if self._env_alternate and (self._env_step & 0x20):
                     self._env_attack ^= 0x1F
                 self._env_step &= 0x1F
