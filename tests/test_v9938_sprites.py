@@ -656,3 +656,44 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
 
     assert buf[10 * 256 + 0] == 6, "upper region shows SAT-A sprite"
     assert buf[150 * 256 + 0] == 7, "lower region shows SAT-B sprite (doubler)"
+
+
+# ---------------------------------------------------------------------------
+# SCREEN 4 (GRAPHIC 3): G2-style tile background + sprite mode 2 composited
+# on top. Guards that sprites are drawn OVER the background plane in SCREEN 4.
+# ---------------------------------------------------------------------------
+
+def test_screen4_sprite_drawn_over_g3_background() -> None:
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x04            # SCREEN 4 (G3): M4=1, M3=0, M5=0
+    vdp.regs[5] = _SAT_R5         # SAT 0x3800, colour table 0x3600
+    vdp.regs[6] = 0x00            # sprite pattern generator at 0x0000
+    # G2/G3 background tables (kept clear of SAT/colour/SPG regions)
+    vdp.regs[2] = 0x04            # name base 0x1000
+    vdp.regs[4] = 0x04            # pattern base 0x2000
+    vdp.regs[10] = 0x02           # colour base 0x8000
+    vdp.regs[3] = 0x00
+    name_base, pat_base, col_base = 0x1000, 0x2000, 0x8000
+
+    # Background: every cell = tile 0; tile 0 is a solid colour-9 block (first band)
+    for n in range(768):
+        vdp.vram[name_base + n] = 0x00
+    for r in range(8):
+        vdp.vram[pat_base + r] = 0xFF     # all pixels set
+        vdp.vram[col_base + r] = 0x99     # fg=9, bg=9 → solid colour 9
+
+    # Sprite 0 at (0,0), pattern 0 (row 0 = 8 solid pixels), per-line colour 6
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    vdp.vram[0] = 0xFF            # sprite pattern 0, row 0: 8 pixels set
+
+    buf = render_frame(vdp)
+
+    # Background shows the tile colour where no sprite covers it
+    assert buf[5 * 256 + 100] == 9, "G3 background tile colour"
+    assert buf[1 * 256 + 20] == 9, "background beside the sprite"
+    # Sprite (y=0 → y_top=1, scanline 1, cols 0-7) is composited OVER the tile
+    assert buf[1 * 256 + 0] == 6, "sprite pixel must overwrite the background"
+    assert buf[1 * 256 + 7] == 6, "sprite spans 8 px over the background"

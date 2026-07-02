@@ -176,8 +176,12 @@ def _render_mc(vdp: VDP, buf: bytearray) -> None:
     for row in range(24):
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
+            # pair is selected by (row & 3)*2, and the top vs bottom 4 scanlines
+            # pick within the pair (py >> 2). Each nibble is a solid 4x4 block.
+            seg = (row & 3) * 2
             for py in range(8):
-                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
                 lc = _color((pat >> 4) & 0x0F, bd)
                 rc = _color(pat & 0x0F, bd)
                 y = row * 8 + py

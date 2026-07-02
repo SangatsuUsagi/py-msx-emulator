@@ -384,10 +384,6 @@ def _backdrop(vdp: "V9938") -> int:
     return vdp.regs[7] & 0x0F
 
 
-def _color(c: int, backdrop: int) -> int:
-    return backdrop if c == 0 else c
-
-
 # ---------------------------------------------------------------------------
 # Graphic 1 (SCREEN 1) — 32×24 tiles, colour per 8-tile group
 # ---------------------------------------------------------------------------
@@ -424,18 +420,20 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # ---------------------------------------------------------------------------
 
 def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    # Name table base: V9938 GRAPHIC2/3 use the full 7-bit R#2 (A16-A10), so the
-    # name table can sit anywhere in 128 KB VRAM — not just the low 16 KB an
-    # MSX1 4-bit mask would allow. The pattern/colour bases keep the TMS9918
-    # GRAPHIC2 quirk (R#4 bit2 / R#3 bit7 select 0 or 0x2000; the low bits act as
-    # tile-index masks, here covered by the per-third band offset).
+    # GRAPHIC 2 (SCREEN 2) and GRAPHIC 3 (SCREEN 4) share this tile plane. Table
+    # bases follow the V9938 (per openMSX VDP::update*Base): the pattern and
+    # colour tables are 8 KB-aligned (the low 13 index bits come from the
+    # band/tile/line offset), so
+    #   pattern generator = (R#4 << 11) & ~0x1FFF = (R#4 & 0x3C) << 11
+    #   colour table      = ((R#10 << 14) | (R#3 << 6)) & ~0x1FFF
+    #                     = (R#10 & 0x07) << 14 | (R#3 & 0x80) << 6
+    #   name table        = R#2 << 10 (A16-A10)
+    # Using only R#4 bit2 for the pattern base (the TMS9918 form) put the
+    # generator at 0x0000 for e.g. Ultima III (R#4=0x13 → 0x8000), garbling the
+    # background; R#4 bits 5:2 are the real A16-A13 base bits.
     name_base = (vdp.regs[2] & 0x7F) << 10
-    pat_base  = (vdp.regs[4] & 0x04) << 11
+    pat_base  = (vdp.regs[4] & 0x3C) << 11
     col_base  = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
-    # R#23 vertical scroll applies to GRAPHIC2/3 on the V9938 (it wraps within the
-    # 256-line VRAM field). With R#23 = 0 this loop is identical to the previous
-    # row-stepped renderer. The per-third pattern/colour bank still follows the
-    # (scrolled) VRAM tile row, as on the TMS9918A.
     vscroll = vdp.regs[23]
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
@@ -504,11 +502,16 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
             bx = col * 8
+            # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
+            # pair is selected by the character row (row & 3)*2, and the top vs
+            # bottom 4 scanlines pick within the pair (py >> 2). Each nibble is a
+            # solid 4x4 block, so the colour is constant across its 4 scanlines.
+            seg = (row & 3) * 2
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
                     continue
-                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
                 _hi = (pat >> 4) & 0x0F  # inline _color
                 lc = _hi if _hi else bd
                 _lo = pat & 0x0F
