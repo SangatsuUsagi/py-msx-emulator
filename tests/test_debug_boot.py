@@ -7,27 +7,24 @@ from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.vdp.vdp import VDP
 
-
 # ---------------------------------------------------------------------------
 # Slot register write → [BOOT] log
 # ---------------------------------------------------------------------------
 
 def test_slot_register_write_logged(capsys: pytest.CaptureFixture[str]) -> None:
     logger = DebugLogger()
-    mem = Memory(
-        rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
-        slot_register=0x00, _logger=logger,
-    )
-    mem.write_port_a8(0xE0)
+    logger.on_slot_register_write(0x00, 0xE0, pc=0)
     captured = capsys.readouterr()
     assert "[BOOT]" in captured.err
     assert "0x00" in captured.err
     assert "0xE0" in captured.err
 
 
-def test_slot_register_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
+def test_slot_register_direct_write_is_silent(capsys: pytest.CaptureFixture[str]) -> None:
+    # Production PPI writes mem.slot_register directly (msx/ppi.py:22); that
+    # plain field assignment emits no diagnostic output on its own.
     mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
-    mem.write_port_a8(0xE0)
+    mem.slot_register = 0xE0
     captured = capsys.readouterr()
     assert captured.err == ""
 

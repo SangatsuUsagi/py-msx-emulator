@@ -1,9 +1,9 @@
 """Tests for make_machine_msx2 factory and MSX1 regression guard."""
 from msx.input import InputState
 from msx.machine import Machine
-from tests.factories import make_machine, make_machine_msx2
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
+from tests.factories import make_machine, make_machine_msx2
 
 _DUMMY_ROM = bytes(32768)
 _DUMMY_EXTROM = bytes(16384)

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from io import StringIO
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from msx.cpu.registers import Registers
 from msx.debugger.prompt import Debugger
@@ -14,7 +10,6 @@ from msx.mapper import FlatMapper
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -160,7 +155,7 @@ class TestDump:
         dbg = Debugger(_make_machine())
         dbg._cmd_dump(["F000"])
         out = capsys.readouterr().out
-        lines = [l for l in out.strip().splitlines() if l.strip()]
+        lines = [line for line in out.strip().splitlines() if line.strip()]
         # 128 bytes / 16 per row = 8 rows
         assert len(lines) == 8
 
@@ -174,7 +169,7 @@ class TestDump:
         dbg = Debugger(_make_machine())
         dbg._cmd_dump(["0000", "20"])  # 32 decimal? no — hex 0x20 = 32
         out = capsys.readouterr().out
-        lines = [l for l in out.strip().splitlines() if l.strip()]
+        lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 2  # 0x20 = 32 bytes / 16 = 2 rows
 
     def test_invalid_addr(self, capsys):
@@ -199,7 +194,7 @@ class TestDumpVram:
         dbg = Debugger(_make_machine())
         dbg._cmd_dump_vram(["12000"])
         out = capsys.readouterr().out
-        lines = [l for l in out.strip().splitlines() if l.strip()]
+        lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 8  # 128 / 16
 
     def test_address_shown_as_5digit(self, capsys):
@@ -292,7 +287,7 @@ class TestDisasm:
         dbg = Debugger(_make_machine(pc=0x4000))
         dbg._cmd_disasm([])
         out = capsys.readouterr().out
-        lines = [l for l in out.strip().splitlines() if l.strip()]
+        lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 10
 
     def test_starts_at_pc(self, capsys):
@@ -440,7 +435,7 @@ class TestTMS9918ADebug:
         dbg = Debugger(_make_tms_machine())
         dbg._cmd_dump_vram(["0"])
         out = capsys.readouterr().out
-        lines = [l for l in out.strip().splitlines() if l.strip()]
+        lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 8  # 128 bytes / 16 per row
 
     def test_te_on_tms_attaches_tracer(self, capsys):
@@ -527,7 +522,11 @@ class TestSlotActive:
         Debugger(m)._cmd_slot_active()
         out = capsys.readouterr().out
         # Sec column shows "-" for all data rows (at least 4 dashes in data portion)
-        data_lines = [l for l in out.splitlines() if "0000" in l or "4000" in l or "8000" in l or "C000" in l]
+        data_lines = [
+            line
+            for line in out.splitlines()
+            if "0000" in line or "4000" in line or "8000" in line or "C000" in line
+        ]
         assert len(data_lines) == 4
         for line in data_lines:
             cols = line.split()
@@ -609,6 +608,7 @@ class TestSlotRomMapperBank:
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
         from types import SimpleNamespace
+
         from msx.debugger.prompt import _sl_bank
         from msx.mapper import Ascii16Mapper
         mem = SimpleNamespace(
@@ -617,17 +617,19 @@ class TestSlotRomMapperBank:
         assert _sl_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
 
     def test_sl_bank_ram_mapper_segment_unchanged(self):
+        from types import SimpleNamespace
+
         from msx.debugger.prompt import _sl_bank
         from msx.ram_mapper import RamMapper
-        from types import SimpleNamespace
         rm = RamMapper()
         rm.banks[3] = 2
         mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=rm)
         assert _sl_bank(mem, 3, 2, 3) == "seg=2"
 
     def test_sl_bank_dash_for_bios(self):
-        from msx.debugger.prompt import _sl_bank
         from types import SimpleNamespace
+
+        from msx.debugger.prompt import _sl_bank
         mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=None)
         assert _sl_bank(mem, 0, None, 0) == "-"
 
@@ -759,3 +761,28 @@ class TestStepOut:
         Debugger(m)._cmd_step_out()
         m.set_step_out.assert_called_once_with(0xF2EC)
         assert "F2EC" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# wl — watchpoint list (exercises the _current_entries closure)
+# ---------------------------------------------------------------------------
+
+class TestWatchList:
+    def test_wl_empty(self, capsys):
+        m = _make_machine()
+        m._watch_read = set()
+        m._watch_write = set()
+        Debugger(m)._cmd_watch(["l"])
+        out = capsys.readouterr().out
+        assert "no watchpoints" in out
+
+    def test_wl_lists_read_write_and_rw_modes(self, capsys):
+        m = _make_machine()
+        m._watch_read = {0x1234}
+        m._watch_write = {0x5678, 0x1234}
+        Debugger(m)._cmd_watch(["l"])
+        out = capsys.readouterr().out
+        # 0x1234 is in both sets -> "rw"; 0x5678 write-only -> "w"; sorted ascending
+        assert "1234h [rw]" in out
+        assert "5678h [w]" in out
+        assert out.index("1234h") < out.index("5678h")

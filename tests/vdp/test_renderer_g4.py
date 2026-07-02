@@ -1,8 +1,8 @@
 """Tests for V9938 G4 (SCREEN 5) renderer."""
 from __future__ import annotations
 
+from msx.vdp.renderer import _render_g4, render_frame
 from msx.vdp.v9938 import V9938
-from msx.vdp.renderer import render_frame, _render_g4
 
 
 def _make_g4_vdp(ln: bool = False) -> V9938:

@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock
 
 from msx.input import InputState
-from msx.joystick import AXIS_DEAD_ZONE, JoystickManager
-
+from msx.joystick import JoystickManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,7 +65,9 @@ def joy_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespa
 # 4.1  open_device assigns port 0 then port 1; third device ignored
 # ---------------------------------------------------------------------------
 
-def _setup_gc(sdl: MagicMock, device_indices: list[int], instance_ids: list[int]) -> list[MagicMock]:
+def _setup_gc(
+    sdl: MagicMock, device_indices: list[int], instance_ids: list[int]
+) -> list[MagicMock]:
     handles = [MagicMock(name=f"gc_{i}") for i in device_indices]
     joys = [MagicMock(name=f"j_{i}") for i in device_indices]
     sdl.SDL_GameControllerOpen.side_effect = handles
@@ -259,7 +259,9 @@ def test_hat_up_sets_up_bit() -> None:
 def test_hat_diagonal_sets_two_bits() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP))
+    mgr.handle_event(
+        joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP)
+    )
     assert inp.joy1 & 0x01 == 0  # up
     assert inp.joy1 & 0x04 == 0  # left
 

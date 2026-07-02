@@ -287,8 +287,9 @@ class TestSaveSram:
 class TestMachineLoaderSramIntegration:
     def test_sram_loaded_from_saves_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         import hashlib
-        from tests.factories import make_machine
+
         from msx.machine_loader import _SRAM_SIZES
+        from tests.factories import make_machine
 
         rom = bytes(64 * 1024)
         cartridge = bytes(range(256)) * 32  # 8KB cart

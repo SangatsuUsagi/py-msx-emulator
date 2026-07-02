@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 # Layout:
 #   name table   at 0x1800  (R2=0x06)

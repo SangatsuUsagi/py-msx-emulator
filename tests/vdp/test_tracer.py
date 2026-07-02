@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import io
 
-import pytest
-
 from msx.vdp.tracer import Tracer
-
+from msx.vdp.v9938 import V9938
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -134,8 +132,10 @@ def test_vdp_reg_cmd_param_register_emitted() -> None:
 def test_vdp_cmd_hmmv_format() -> None:
     t, buf = _make_tracer()
     # Pre-write R#36=0x00, R#37=0x01
-    t.port99_write(0x4082, 100, 0x00); t.port99_write(0x4084, 102, 0xA4)  # R#36
-    t.port99_write(0x4086, 200, 0x01); t.port99_write(0x4088, 202, 0xA5)  # R#37
+    t.port99_write(0x4082, 100, 0x00)
+    t.port99_write(0x4084, 102, 0xA4)  # R#36
+    t.port99_write(0x4086, 200, 0x01)
+    t.port99_write(0x4088, 202, 0xA5)  # R#37
     # R#46 = 0xC0 (HMMV)
     t.port99_write(0x40A2, 45340, 0xC0)
     t.port99_write(0x40A4, 45342, 0xAE)  # reg = 46
@@ -149,9 +149,12 @@ def test_vdp_cmd_hmmv_format() -> None:
 
 def test_vdp_cmd_params_written_regs_shown() -> None:
     t, buf = _make_tracer()
-    t.port99_write(0, 1, 0x00); t.port99_write(0, 2, 0xA4)  # R#36 = 0x00
-    t.port99_write(0, 3, 0x01); t.port99_write(0, 4, 0xA5)  # R#37 = 0x01
-    t.port99_write(0, 5, 0xC0); t.port99_write(0, 6, 0xAE)  # R#46
+    t.port99_write(0, 1, 0x00)
+    t.port99_write(0, 2, 0xA4)  # R#36 = 0x00
+    t.port99_write(0, 3, 0x01)
+    t.port99_write(0, 4, 0xA5)  # R#37 = 0x01
+    t.port99_write(0, 5, 0xC0)
+    t.port99_write(0, 6, 0xAE)  # R#46
     cmd_line = _lines(buf)[-1]
     assert "'00'" in cmd_line  # R#36
     assert "'01'" in cmd_line  # R#37
@@ -160,7 +163,8 @@ def test_vdp_cmd_params_written_regs_shown() -> None:
 def test_vdp_cmd_unwritten_params_shown_as_dashes() -> None:
     t, buf = _make_tracer()
     # Only write R#46 without any param registers
-    t.port99_write(0, 1, 0xC0); t.port99_write(0, 2, 0xAE)  # R#46
+    t.port99_write(0, 1, 0xC0)
+    t.port99_write(0, 2, 0xAE)  # R#46
     cmd_line = _lines(buf)[-1]
     # All 14 slots should be '--'
     assert cmd_line.count("'--'") == 14
@@ -169,11 +173,15 @@ def test_vdp_cmd_unwritten_params_shown_as_dashes() -> None:
 def test_vdp_cmd_param_buffer_cleared_after_cmd() -> None:
     t, buf = _make_tracer()
     # Write R#36, then issue command
-    t.port99_write(0, 1, 0xAB); t.port99_write(0, 2, 0xA4)   # R#36 = 0xAB
-    t.port99_write(0, 3, 0xC0); t.port99_write(0, 4, 0xAE)   # R#46 (first cmd)
-    buf.truncate(0); buf.seek(0)
+    t.port99_write(0, 1, 0xAB)
+    t.port99_write(0, 2, 0xA4)  # R#36 = 0xAB
+    t.port99_write(0, 3, 0xC0)
+    t.port99_write(0, 4, 0xAE)  # R#46 (first cmd)
+    buf.truncate(0)
+    buf.seek(0)
     # Issue second command without writing params
-    t.port99_write(0, 5, 0x80); t.port99_write(0, 6, 0xAE)   # R#46 (second cmd)
+    t.port99_write(0, 5, 0x80)
+    t.port99_write(0, 6, 0xAE)  # R#46 (second cmd)
     cmd_line = _lines(buf)[-1]
     # R#36 buffer was cleared — should show '--'
     assert cmd_line.count("'--'") == 14
@@ -228,8 +236,6 @@ def test_port9b_uses_r17_lower6_bits() -> None:
 
 # ---------------------------------------------------------------------------
 # V9938 integration
-
-from msx.vdp.v9938 import V9938
 
 
 def _make_v9938_with_tracer() -> tuple[V9938, io.StringIO]:

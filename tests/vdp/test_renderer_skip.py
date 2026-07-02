@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from msx.vdp.vdp import VDP
+
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 
 @pytest.fixture
