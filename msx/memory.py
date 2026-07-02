@@ -76,8 +76,11 @@ class Memory:
         # sub == 2, sub == 3, or sub == 0 without a sub0_rom -> RAM
         if self.ram_mapper is not None:
             return self.ram_mapper.read(addr)
-        # MSX1: 32 KB RAM at 0x8000-0xFFFF only
-        return self.ram[addr - 0x8000]
+        # MSX1: flat RAM sits at the top of the address space (32 KB → base
+        # 0x8000). An access to a page selected to slot 3 without a RAM mapper
+        # can fall below that base (negative index); return open-bus 0xFF.
+        off = addr - (0x10000 - len(self.ram))
+        return self.ram[off] if 0 <= off < len(self.ram) else 0xFF
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
@@ -106,7 +109,10 @@ class Memory:
         if self.ram_mapper is not None:
             self.ram_mapper.write(addr, value)
             return
-        self.ram[addr - 0x8000] = value
+        # MSX1 flat RAM (base at top of address space); ignore out-of-range writes.
+        off = addr - (0x10000 - len(self.ram))
+        if 0 <= off < len(self.ram):
+            self.ram[off] = value
 
     def main_ram_range(self) -> tuple[int, int]:
         """Conventional main-RAM address window, for stack-sanity checks.

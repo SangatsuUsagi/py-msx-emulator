@@ -1377,6 +1377,7 @@ def _op_rra(cpu: Z80) -> int:
 def _op_daa(cpu: Z80) -> int:
     r = cpu.registers
     a = r.A
+    a0 = a  # pre-correction value, for the half-carry (H) derivation below
     f = r.F
     correction = 0
     new_c = False
@@ -1390,6 +1391,10 @@ def _op_daa(cpu: Z80) -> int:
     else:
         a = (a + correction) & 0xFF
     new_f = (F.FLAG_N if (f & F.FLAG_N) else 0) | (F.FLAG_C if new_c else 0)
+    # Every DAA correction constant has bit 4 = 0, so any change of A's bit 4
+    # can only be a carry/borrow out of bit 3 — i.e. the half-carry.
+    if (a0 ^ a) & 0x10:
+        new_f |= F.FLAG_H
     if a == 0:
         new_f |= F.FLAG_Z
     if a & 0x80:

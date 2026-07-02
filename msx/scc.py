@@ -78,6 +78,18 @@ class SCC:
         # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) are a
         # safe no-op: they do not alter waveform/frequency/volume/enable state.
 
+    # --------------------------------------------------------------- reset
+
+    def reset(self) -> None:
+        """Restore power-on register and synthesis state (matches field defaults)."""
+        self._waves = [[0] * 32 for _ in range(4)]
+        self._freq = [0] * 5
+        self._vol = [0] * 5
+        self._enable = 0
+        self._phase_cnt = [0] * 5
+        self._phase_idx = [0] * 5
+        self._clk_frac = 0
+
     # -------------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:

@@ -260,3 +260,22 @@ def test_cycle_count_accumulates_across_frames() -> None:
     after_one = m.cycle_count
     m.run_frame()
     assert m.cycle_count >= after_one * 2 - 100  # allow ±one instruction slack
+
+
+def test_reset_full_power_on_state() -> None:
+    # Full reset restores PSG registers, the slot register, and VDP register/
+    # status state to power-on values (memory/VRAM contents are retained).
+    m = _make_machine()
+    m.psg.regs[7] = 0xAB
+    m.psg.latch = 5
+    m.memory.slot_register = 0xFF
+    m.memory.sub_slot_reg = 0xFF
+    m.vdp.status = 0xFF
+    m.vdp.regs[1] = 0x60
+    m.reset()
+    assert m.psg.regs == [0] * 16
+    assert m.psg.latch == 0
+    assert m.memory.slot_register == 0x00
+    assert m.memory.sub_slot_reg == 0x00
+    assert m.vdp.status == 0
+    assert all(r == 0 for r in m.vdp.regs)
