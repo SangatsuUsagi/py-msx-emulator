@@ -7,12 +7,24 @@ Runs in the main thread; emulation is paused while the REPL is active.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from msx.debugger.disasm import disassemble
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+
+
+def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
+    """Disassemble one instruction at addr.
+
+    Returns the shared '<raw hex bytes>  <mnemonic>' body (raw bytes padded to a
+    fixed width) and the instruction length, so callers only supply the address
+    prefix (PC=..., ADDR:, => ...).
+    """
+    mnem, size = disassemble(read, addr)
+    raw_bytes = " ".join(f"{read((addr + i) & 0xFFFF):02X}" for i in range(size))
+    return f"{raw_bytes:<12}  {mnem}", size
 
 
 _HELP = (
@@ -37,9 +49,8 @@ class Debugger:
         print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
         pc = self._machine.cpu.registers.PC
         read = self._machine.cpu.read_byte
-        mnem, size = disassemble(read, pc)
-        raw_bytes = " ".join(f"{read((pc + i) & 0xFFFF):02X}" for i in range(size))
-        print(f"  PC={pc:04X}h  {raw_bytes:<12}  {mnem}")
+        line, _ = _format_disasm(read, pc)
+        print(f"  PC={pc:04X}h  {line}")
         while True:
             try:
                 cyc = self._machine.cycle_count
@@ -59,15 +70,17 @@ class Debugger:
             cmd = parts[0].lower()
             args = parts[1:]
 
+            # Uniform if/elif dispatch (Rust `match`-shaped). Commands that
+            # affect the REPL loop itself (c/q/g/so) return or fall through to
+            # the next prompt; the rest delegate to a _cmd_* handler.
             if cmd == "c":
                 return
-            if cmd == "q":
+            elif cmd == "q":
                 sys.exit(0)
-            if cmd == "g":
+            elif cmd == "g":
                 if self._cmd_goto(args):
                     return
-                continue
-            if cmd == "so":
+            elif cmd == "so":
                 self._cmd_step_out()
                 return
             elif cmd == "rc":
@@ -414,9 +427,8 @@ class Debugger:
 
         read = self._machine.cpu.read_byte
         for _ in range(10):
-            mnem, size = disassemble(read, addr)
-            raw_bytes = " ".join(f"{read((addr + i) & 0xFFFF):02X}" for i in range(size))
-            print(f"  {addr:04X}: {raw_bytes:<12}  {mnem}")
+            line, size = _format_disasm(read, addr)
+            print(f"  {addr:04X}: {line}")
             addr = (addr + size) & 0xFFFF
 
     def _cmd_step(self, args: list[str] | None = None) -> None:
@@ -430,9 +442,8 @@ class Debugger:
         r = self._machine.cpu.registers
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
         read = self._machine.cpu.read_byte
-        mnem, size = disassemble(read, r.PC)
-        raw_bytes = " ".join(f"{read((r.PC + i) & 0xFFFF):02X}" for i in range(size))
-        print(f"  => {r.PC:04X}: {raw_bytes:<12}  {mnem}")
+        line, _ = _format_disasm(read, r.PC)
+        print(f"  => {r.PC:04X}: {line}")
 
     def _cmd_trace_enable(self) -> None:
         from msx.vdp.tracer import Tracer
@@ -441,7 +452,6 @@ class Debugger:
             m = self._machine
             vdp._get_pc    = lambda: m.cpu.instruction_pc
             vdp._get_cycle = lambda: m.cycle_count
-            vdp._get_frame = lambda: vdp._frame_count
         if vdp.tracer is None:
             vdp.tracer = Tracer(enabled=True, output=sys.stdout)
         else:
@@ -676,8 +686,8 @@ def _print_vdp_fancy(vdp: object) -> None:
     tr  = "TR" if s2 & 0x80 else "  "
     ce  = "CE" if s2 & 0x01 else "  "
     vf  = "F"  if s0 & 0x80 else " "
-    sp  = f"5S={s0 & 0x40 and 1 or 0}"
-    col = f"C={s0 & 0x20 and 1 or 0}"
+    sp  = f"5S={(s0 >> 6) & 1}"
+    col = f"C={(s0 >> 5) & 1}"
     print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
 
 

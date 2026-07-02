@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
 LINES_PER_FRAME: int = 262
-TSTATES_PER_LINE: int = CYCLES_PER_FRAME // LINES_PER_FRAME  # 227; carry remainder across lines
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
@@ -62,11 +61,23 @@ class Machine:
     _stepout_sp: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Portability note: this wires the CPU's memory/IO bus by reassigning
+        # bound methods onto Callable fields at runtime — the hottest path in
+        # the emulator. Rust/C++ has no runtime method swap; a port expresses
+        # the bus as a `trait MemoryBus` (or an `enum { Normal, Watchpoint }`)
+        # whose concrete implementation is selected once behind a flag, so the
+        # per-access dispatch stays branch-free. Kept as a comment, not a
+        # rewrite, to avoid adding a per-access call/branch in Python.
         self.cpu.read_byte = self.memory.read
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
         if not isinstance(self.vdp, V9938):
+            # TMS9918A (MSX1) has a single VBlank interrupt source per frame and
+            # no line/scanline interrupts (those are V9938+). The frame-end
+            # interrupt fired once per frame via on_interrupt is therefore the
+            # hardware-correct MSX1 model; there is no MSX1 equivalent to the
+            # V9938 per-scanline IRQ polling done in run_frame().
             self.vdp.on_interrupt = self._vblank_interrupt
 
     def _vblank_interrupt(self) -> None:
@@ -145,6 +156,11 @@ class Machine:
 
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
+        # Portability note: enabling watchpoints re-swaps cpu.read_byte/
+        # write_byte between the plain memory bus and the watch variant at
+        # runtime (see __post_init__). Rust/C++ selects the same behaviour via
+        # an `enum { Normal, Watchpoint }` bus (or trait object) chosen once,
+        # not by reassigning a function pointer per configuration change.
         r: set[int] = set()
         w: set[int] = set()
         for addr, mode in entries[:4]:
@@ -296,7 +312,7 @@ class Machine:
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.
-        self.vdp._frame_count += 1
+        self.vdp.increment_frame()
         return result
 
 
