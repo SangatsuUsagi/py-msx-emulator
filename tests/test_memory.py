@@ -241,3 +241,15 @@ def test_slot1_and_slot2_independent() -> None:
                  slot_register=0xE4)
     assert mem.read(0x4000) == 0x11   # slot 1 → _mapper
     assert mem.read(0x8000) == 0x22   # slot 2 → _mapper2
+
+
+def test_msx1_flat_ram_out_of_range_read_write_safe() -> None:
+    # Pages 0 and 1 selected to slot 3 with no RAM mapper: the flat RAM base is
+    # 0x8000, so addr 0x0000 is below it. Read must return open-bus 0xFF and the
+    # write must be ignored (no negative-index wrap corrupting RAM).
+    mem = make_mem(slot_register=0x0F)  # page0 + page1 → slot 3
+    assert mem.ram_mapper is None
+    before = bytes(mem.ram)
+    assert mem.read(0x0000) == 0xFF
+    mem.write(0x0000, 0x42)
+    assert bytes(mem.ram) == before  # no RAM byte corrupted

@@ -29,6 +29,14 @@ class VDP:
     def display_height(self) -> int:
         return 192
 
+    def reset(self) -> None:
+        """Restore power-on register/status state (VRAM is retained)."""
+        self.regs = [0] * 8
+        self.status = 0
+        self.addr = 0
+        self.latch = None
+        self.read_buf = 0
+
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
         if port == 0x98:

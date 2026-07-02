@@ -75,6 +75,23 @@ def test_nmi_fires_when_ei() -> None:
     assert cpu.iff1 is False
 
 
+def test_nmi_saves_iff1_into_iff2_and_retn_restores() -> None:
+    # NMI acceptance copies IFF1 into IFF2 and clears IFF1; RETN (IFF1<-IFF2)
+    # at the end of the handler must restore the pre-NMI enable state.
+    rom = [0x00] * 0x0068
+    rom[0x0066] = 0xED
+    rom[0x0067] = 0x45  # RETN at the NMI vector
+    cpu = make_cpu(rom)
+    cpu.iff1 = True
+    cpu.iff2 = False
+    cpu.nmi_pending = True
+    cpu.step()  # accept NMI: IFF2 <- IFF1 (True), IFF1 <- False, PC <- 0x0066
+    assert cpu.iff1 is False
+    assert cpu.iff2 is True
+    cpu.step()  # RETN: IFF1 <- IFF2
+    assert cpu.iff1 is True
+
+
 def test_halt_nop_loop() -> None:
     cpu = make_cpu([0x76])  # HALT
     cpu.step()

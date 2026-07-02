@@ -39,7 +39,8 @@ def lookup(cartridge: bytes) -> str | None:
     entry = _load().get(sha1)
     if entry is None:
         return None
-    return str(entry["mapper"])
+    mapper = entry.get("mapper")
+    return str(mapper) if mapper is not None else None
 
 
 def lookup_system(cartridge: bytes) -> str | None:

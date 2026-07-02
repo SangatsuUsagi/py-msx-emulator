@@ -168,8 +168,10 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_addr = machine.vdp.addr
         vdp_read_buf = machine.vdp.read_buf
         vdp_palette: list[int] | None = list(machine.vdp.palette)
-        ram_mapper_ram: bytearray | None = bytearray(machine.memory.ram_mapper.ram)
-        ram_mapper_banks: list[int] | None = list(machine.memory.ram_mapper.banks)
+        # An MSX2 machine may have no RAM mapper; skip those fields when absent.
+        rm = machine.memory.ram_mapper
+        ram_mapper_ram: bytearray | None = bytearray(rm.ram) if rm is not None else None
+        ram_mapper_banks: list[int] | None = list(rm.banks) if rm is not None else None
         sub_slot_reg: int | None = machine.memory.sub_slot_reg
         cmd_regs: list[int] | None = list(machine.vdp.cmd_regs)
         status2: int | None = machine.vdp._status2
@@ -261,8 +263,10 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.vdp.addr = snap.vdp_addr
         machine.vdp.read_buf = snap.vdp_read_buf
         machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
-        machine.memory.ram_mapper.ram[:] = snap.ram_mapper_ram  # type: ignore[index]
-        machine.memory.ram_mapper.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
+        rm = machine.memory.ram_mapper
+        if rm is not None and snap.ram_mapper_ram is not None:
+            rm.ram[:] = snap.ram_mapper_ram
+            rm.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
         if snap.sub_slot_reg is not None:
             machine.memory.sub_slot_reg = snap.sub_slot_reg
         if snap.cmd_regs is not None:
@@ -401,6 +405,14 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
         raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
 
     fields = _from_jsonable(data)
+    # Validate the version before expanding fields into MachineSnapshot, so a
+    # mismatch yields a clear error rather than a TypeError on unexpected keys.
+    version = fields.get("format_version") if isinstance(fields, dict) else None
+    if version != CURRENT_FORMAT_VERSION:
+        raise ValueError(
+            f"incompatible state file: version {version}, "
+            f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
+        )
     snap = MachineSnapshot(**fields)  # type: ignore[arg-type]
     _restore_snapshot(machine, snap)
     print(f"state loaded: {resolved}")

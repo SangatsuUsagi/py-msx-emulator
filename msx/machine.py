@@ -73,8 +73,16 @@ class Machine:
         self.cpu.int_pending = True
 
     def reset(self) -> None:
+        """Full power-on reset: CPU, PSG, SCC (if present), VDP, and the
+        primary/secondary slot registers. Memory/VRAM contents are retained."""
         self.cpu.reset()
-        self.vdp.status = 0
+        self.psg.reset()
+        if self.scc is not None:
+            self.scc.reset()
+        self.vdp.reset()
+        # Power-on slot state: all pages select slot 0 (matches construction).
+        self.memory.slot_register = 0x00
+        self.memory.sub_slot_reg = 0x00
 
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
