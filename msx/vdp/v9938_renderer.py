@@ -51,6 +51,10 @@ _COLOR8: tuple[bytes, ...] = tuple(bytes([c] * 8) for c in range(16))
 
 # LUT caches for G4/G6 and G5 pixel expansion via bytes.translate().
 # Keys: (tp: bool, border: int).  At most 32 entries each (2 × 16).
+# Portability note: the dict-memoized bytes.translate() approach is Python-
+# specific. A Rust/C++ port keeps fixed [u8; 256] LUT arrays and precomputes
+# every (tp, border) pattern at init (only 32 combinations), indexing directly
+# instead of hashing a tuple key on demand.
 _G46_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes]] = {}
 _G5_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes, bytes, bytes]] = {}
 
