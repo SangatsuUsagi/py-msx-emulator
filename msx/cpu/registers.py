@@ -59,7 +59,11 @@ class Registers:
         self.A_ = (v >> 8) & 0xFF
         self.F_ = v & 0xFF
 
-    # 8-bit halves of BC/DE/HL — properties for register-indexed instructions
+    # 8-bit halves of BC/DE/HL — properties for register-indexed instructions.
+    # Portability note: these @property getter/setter pairs have no direct
+    # analogue in Rust/C++ and add descriptor-call overhead. A port stores the
+    # 8-bit halves as plain u8 fields (or derives them with inline getter/setter
+    # methods) rather than as computed properties over the 16-bit pair.
     @property
     def B(self) -> int:
         return (self.BC >> 8) & 0xFF

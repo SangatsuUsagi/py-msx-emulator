@@ -19,15 +19,27 @@ class VDP:
     on_interrupt: Callable[[], None] | None = None
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
+    # Portability note: these Callable hooks (on_interrupt above, plus the
+    # tracer / _get_pc / _get_cycle below) are stored Python closures with no
+    # direct static-typed analogue. A Rust/C++ port models them as trait objects
+    # or feature-flagged fields resolved once, not per-call function pointers.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
     debug_disable_sprites: bool = field(default=False, repr=False)
 
     @property
     def display_height(self) -> int:
         return 192
+
+    @property
+    def frame_count(self) -> int:
+        """Number of completed frames (incremented once per frame by the machine)."""
+        return self._frame_count
+
+    def increment_frame(self) -> None:
+        """Advance the completed-frame counter. Called once per frame."""
+        self._frame_count += 1
 
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
@@ -46,8 +58,7 @@ class VDP:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
-                fr = self._get_frame() if self._get_frame is not None else 0
-                self.tracer.port99_write(pc, cy, value, frame=fr)
+                self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
             if self.latch is None:
                 self.latch = value
             else:

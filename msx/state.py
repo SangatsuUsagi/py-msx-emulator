@@ -163,10 +163,11 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     is_msx2 = isinstance(machine.vdp, V9938)
     mapper = machine.memory._mapper
     mapper_state = mapper.snapshot()
+    # Common VDP address/latch state — identical field names on both VDP types.
+    vdp_latch = machine.vdp.latch
+    vdp_addr = machine.vdp.addr
+    vdp_read_buf = machine.vdp.read_buf
     if is_msx2:
-        vdp_latch = machine.vdp.latch
-        vdp_addr = machine.vdp.addr
-        vdp_read_buf = machine.vdp.read_buf
         vdp_palette: list[int] | None = list(machine.vdp.palette)
         # An MSX2 machine may have no RAM mapper; skip those fields when absent.
         rm = machine.memory.ram_mapper
@@ -177,9 +178,6 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         status2: int | None = machine.vdp._status2
         cmd_remaining: int | None = machine.vdp._cmd_remaining
     else:
-        vdp_latch = machine.vdp.latch
-        vdp_addr = machine.vdp.addr
-        vdp_read_buf = machine.vdp.read_buf
         vdp_palette = None
         ram_mapper_ram = None
         ram_mapper_banks = None
@@ -258,10 +256,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.regs[:] = snap.vdp_regs
     machine.vdp.status = snap.vdp_status
     machine.vdp._frame_count = snap.vdp_frame_count
+    # Common VDP address/latch state — identical field names on both VDP types.
+    machine.vdp.latch = snap.vdp_latch
+    machine.vdp.addr = snap.vdp_addr
+    machine.vdp.read_buf = snap.vdp_read_buf
     if is_msx2:
-        machine.vdp.latch = snap.vdp_latch
-        machine.vdp.addr = snap.vdp_addr
-        machine.vdp.read_buf = snap.vdp_read_buf
         machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
@@ -275,10 +274,6 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             machine.vdp._status2 = snap.status2
         if snap.cmd_remaining is not None:
             machine.vdp._cmd_remaining = snap.cmd_remaining
-    else:
-        machine.vdp.latch = snap.vdp_latch
-        machine.vdp.addr = snap.vdp_addr
-        machine.vdp.read_buf = snap.vdp_read_buf
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch

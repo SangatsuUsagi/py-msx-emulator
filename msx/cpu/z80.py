@@ -29,6 +29,10 @@ def _noop_write(_port: int, _value: int) -> None:
 
 @dataclass(slots=True)
 class Z80:
+    # Portability note: these bus hooks are stored Python closures (bound methods
+    # assigned at wiring time by Machine.__post_init__). Rust/C++ has no runtime
+    # method swap; a port expresses the bus as a trait object / feature-flagged
+    # field resolved once, so the per-access dispatch stays branch-free.
     read_byte: Callable[[int], int]
     write_byte: Callable[[int, int], None]
     read_port: Callable[[int], int] = field(default=_noop_read)
