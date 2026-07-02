@@ -296,6 +296,47 @@ def test_sprite_mode2_or_mode_sets_coincidence() -> None:
 # Sprite mode 2: 8-sprites-per-line limit
 # ---------------------------------------------------------------------------
 
+def test_s0_read_clears_5s_and_c_together() -> None:
+    """An S#0 read returns F/5S/C once, then clears all three (mask ~0xE0)."""
+    vdp = V9938()
+    vdp.status = 0x80 | 0x40 | 0x20 | 0x03  # F + 5S + C + sprite index 3
+    result = vdp.read_port(0x99)            # R#15 defaults to 0 → S#0
+    assert result & 0x40  # 5S reported on this read
+    assert result & 0x20  # C reported on this read
+    assert not (vdp.status & 0x80)  # F cleared
+    assert not (vdp.status & 0x40)  # 5S cleared
+    assert not (vdp.status & 0x20)  # C cleared
+
+
+def test_5s_and_c_do_not_persist_across_frames() -> None:
+    """A frame that sets 5S/C, with no S#0 read, must not leak the flags into a
+    later frame that has neither a 5th sprite nor a collision."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    # Frame 1: 9 sprites on one line → 5S; two overlap → C.
+    for i in range(9):
+        _write_sat_entry(vdp, i, y=0, x=0, pat=0)
+        _write_col_entry(vdp, i, 0, color=i + 1)
+    _terminate_sat(vdp, after_idx=9)
+    vdp.vram[0] = 0x80
+    render_frame(vdp)
+    assert vdp.status & 0x40  # 5S set this frame
+    assert vdp.status & 0x20  # C set this frame
+
+    # Frame 2: a single sprite, no 5th, no overlap — and no S#0 read between.
+    for i in range(9):
+        _write_sat_entry(vdp, i, y=216, x=0, pat=0)  # 0xD8 terminator-ish clear
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=1)
+    render_frame(vdp)
+    assert not (vdp.status & 0x40), "5S must reset at frame start"
+    assert not (vdp.status & 0x20), "C must reset at frame start"
+
+
 def test_sprite_mode2_9th_sprite_flag() -> None:
     """V9938 mode 2 allows 8 sprites per line; 9th triggers S#0 bit 6."""
     vdp = V9938()
