@@ -1,5 +1,4 @@
 import hashlib
-import importlib
 
 import pytest
 
@@ -101,3 +100,13 @@ def test_lookup_uses_db_file_sha1(monkeypatch: pytest.MonkeyPatch) -> None:
     wrong_sha1 = hashlib.md5(data).hexdigest()
     monkeypatch.setattr(romdb, "_db", {wrong_sha1: {"mapper": "ASCII8"}})
     assert romdb.lookup(data) is None
+
+
+def test_lookup_entry_without_mapper_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A matched entry missing the "mapper" key returns None (via entry.get),
+    # mirroring lookup_system/lookup_title (no KeyError).
+    _reload()
+    cart = b"\x55"
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"system": "MSX2"}})
+    assert romdb.lookup(cart) is None

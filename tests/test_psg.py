@@ -71,20 +71,43 @@ def test_reg14_joy1_trigger_b_clears_bit5() -> None:
     assert psg.read_port(0xA2) & (1 << 5) == 0
 
 
-def test_reg14_joy2_trigger_a_clears_bit6() -> None:
+def test_reg14_joy2_trigger_a_selected_clears_bit4() -> None:
+    # Corrected behaviour (Phase 2): PORT A returns the *selected* port's 6
+    # signals; Joy2 Trigger A appears on bit 4 when JOY_SELECT=1, and bits 6-7
+    # are always 1 (not joystick lines). (Previously Joy2 triggers were on 6-7.)
     state = InputState()
     state.joystick_button_down(1, 4)  # Joy2 Trigger A
     psg = PSG(_input=state)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x40)  # JOY_SELECT=1
     psg.write_port(0xA0, 14)
-    assert psg.read_port(0xA2) & (1 << 6) == 0
+    result = psg.read_port(0xA2)
+    assert result & (1 << 4) == 0    # Joy2 Trigger A on bit 4
+    assert result & 0xC0 == 0xC0     # bits 6-7 pulled high
 
 
-def test_reg14_joy2_trigger_b_clears_bit7() -> None:
+def test_reg14_joy2_trigger_b_selected_clears_bit5() -> None:
+    # Corrected behaviour (Phase 2): Joy2 Trigger B is on bit 5 when JOY_SELECT=1.
     state = InputState()
     state.joystick_button_down(1, 5)  # Joy2 Trigger B
     psg = PSG(_input=state)
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x40)  # JOY_SELECT=1
     psg.write_port(0xA0, 14)
-    assert psg.read_port(0xA2) & (1 << 7) == 0
+    result = psg.read_port(0xA2)
+    assert result & (1 << 5) == 0    # Joy2 Trigger B on bit 5
+    assert result & 0xC0 == 0xC0     # bits 6-7 pulled high
+
+
+def test_reg14_joy_select_0_selects_joy1_triggers() -> None:
+    # With JOY_SELECT=0 the selected port is Joy1; a Joy2 trigger must not show.
+    state = InputState()
+    state.joystick_button_down(1, 4)  # Joy2 Trigger A (should be hidden)
+    psg = PSG(_input=state)
+    psg.write_port(0xA0, 14)          # JOY_SELECT defaults to 0 → Joy1
+    result = psg.read_port(0xA2)
+    assert result & (1 << 4) != 0     # Joy2 not visible on the Joy1 view
+    assert result & 0xC0 == 0xC0      # bits 6-7 pulled high
 
 
 def test_reg14_joy_select_0_reads_joy1_directions() -> None:

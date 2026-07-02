@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 # Sprite attribute table at 0x1000  (R5=0x20, (0x20&0x7F)<<7=0x1000)
 # Sprite pattern table at 0x0000  (R6=0x00, (0x00&0x07)<<11=0x0000)

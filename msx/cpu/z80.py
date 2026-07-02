@@ -10,11 +10,13 @@ if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
 
 
-# The opcode dispatcher is bound once at import time. opcodes_main references
-# Z80 only for type checking (guarded by TYPE_CHECKING), so this top-level
-# import does not create a runtime import cycle, and step() avoids a per-call
-# None check on the hot path.
-_execute: Callable[[Z80, int], int] = _opcodes_main.execute
+# The opcode dispatch table is bound once at import time. opcodes_main
+# references Z80 only for type checking (guarded by TYPE_CHECKING), so this
+# top-level import does not create a runtime import cycle. Binding _DISPATCH
+# directly collapses the old two-stage call (_execute → execute → _DISPATCH)
+# into a single indexed call on the hot fetch path. It is populated in place by
+# opcodes_main._build_dispatch() at import, so this reference stays valid.
+_DISPATCH: list[Callable[[Z80], int]] = _opcodes_main._DISPATCH
 
 
 def _noop_read(_port: int) -> int:
@@ -27,6 +29,10 @@ def _noop_write(_port: int, _value: int) -> None:
 
 @dataclass(slots=True)
 class Z80:
+    # Portability note: these bus hooks are stored Python closures (bound methods
+    # assigned at wiring time by Machine.__post_init__). Rust/C++ has no runtime
+    # method swap; a port expresses the bus as a trait object / feature-flagged
+    # field resolved once, so the per-access dispatch stays branch-free.
     read_byte: Callable[[int], int]
     write_byte: Callable[[int, int], None]
     read_port: Callable[[int], int] = field(default=_noop_read)
@@ -82,6 +88,9 @@ class Z80:
         if self.nmi_pending:
             self.nmi_pending = False
             self.halted = False
+            # NMI saves the pre-NMI interrupt-enable state so RETN (IFF1<-IFF2)
+            # can restore it; only IFF1 is cleared during the handler.
+            self.iff2 = self.iff1
             self.iff1 = False
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
@@ -125,4 +134,4 @@ class Z80:
         r.R = (r.R + 1) & 0x7F
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
-        return _execute(self, opcode)
+        return _DISPATCH[opcode](self)

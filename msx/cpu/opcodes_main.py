@@ -838,16 +838,31 @@ def _execute_ed(cpu: Z80) -> int:
         r.PC = cpu._pop()
         return 14
 
-    # ADC HL, rr
-    pairs16 = {0x4A: r.BC, 0x5A: r.DE, 0x6A: r.HL, 0x7A: r.SP}
-    if op in pairs16:
-        r.HL = _adc16(cpu, r.HL, pairs16[op])
+    # ADC HL, rr — constant-tuple membership + explicit register select (no
+    # per-call dict allocation; maps cleanly to a Rust `match`).
+    if op in (0x4A, 0x5A, 0x6A, 0x7A):
+        if op == 0x4A:
+            rr = r.BC
+        elif op == 0x5A:
+            rr = r.DE
+        elif op == 0x6A:
+            rr = r.HL
+        else:
+            rr = r.SP
+        r.HL = _adc16(cpu, r.HL, rr)
         return 15
 
     # SBC HL, rr
-    sbc_pairs = {0x42: r.BC, 0x52: r.DE, 0x62: r.HL, 0x72: r.SP}
-    if op in sbc_pairs:
-        r.HL = _sbc16(cpu, r.HL, sbc_pairs[op])
+    if op in (0x42, 0x52, 0x62, 0x72):
+        if op == 0x42:
+            rr = r.BC
+        elif op == 0x52:
+            rr = r.DE
+        elif op == 0x62:
+            rr = r.HL
+        else:
+            rr = r.SP
+        r.HL = _sbc16(cpu, r.HL, rr)
         return 15
 
     # LD (nn), rr  /  LD rr, (nn)
@@ -873,11 +888,11 @@ def _execute_ed(cpu: Z80) -> int:
             r.SP = val
         return 20
 
-    # IN r, (C) — port address is (B << 8) | C on the bus
-    in_regs = {0x40: 0, 0x48: 1, 0x50: 2, 0x58: 3, 0x60: 4, 0x68: 5, 0x78: 7}
-    if op in in_regs:
+    # IN r, (C) — port address is (B << 8) | C on the bus. The destination
+    # register index is (op >> 3) & 7 for these opcodes (0x40,0x48,…,0x78).
+    if op in (0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x78):
         v = cpu.read_port((r.B << 8) | r.C)
-        _set_r(cpu, in_regs[op], v)
+        _set_r(cpu, (op >> 3) & 7, v)
         r.F = (r.F & F.FLAG_C) | _szp(v)
         return 12
     # IN F, (C)  (0x70 — result discarded, flags set)
@@ -886,10 +901,10 @@ def _execute_ed(cpu: Z80) -> int:
         r.F = (r.F & F.FLAG_C) | _szp(v)
         return 12
 
-    # OUT (C), r — port address is (B << 8) | C on the bus
-    out_regs = {0x41: 0, 0x49: 1, 0x51: 2, 0x59: 3, 0x61: 4, 0x69: 5, 0x79: 7}
-    if op in out_regs:
-        cpu.write_port((r.B << 8) | r.C, _get_r(cpu, out_regs[op]))
+    # OUT (C), r — port address is (B << 8) | C on the bus. Source register
+    # index is (op >> 3) & 7 for these opcodes (0x41,0x49,…,0x79).
+    if op in (0x41, 0x49, 0x51, 0x59, 0x61, 0x69, 0x79):
+        cpu.write_port((r.B << 8) | r.C, _get_r(cpu, (op >> 3) & 7))
         return 12
     # OUT (C), 0
     if op == 0x71:
@@ -1362,6 +1377,7 @@ def _op_rra(cpu: Z80) -> int:
 def _op_daa(cpu: Z80) -> int:
     r = cpu.registers
     a = r.A
+    a0 = a  # pre-correction value, for the half-carry (H) derivation below
     f = r.F
     correction = 0
     new_c = False
@@ -1375,6 +1391,10 @@ def _op_daa(cpu: Z80) -> int:
     else:
         a = (a + correction) & 0xFF
     new_f = (F.FLAG_N if (f & F.FLAG_N) else 0) | (F.FLAG_C if new_c else 0)
+    # Every DAA correction constant has bit 4 = 0, so any change of A's bit 4
+    # can only be a carry/borrow out of bit 3 — i.e. the half-carry.
+    if (a0 ^ a) & 0x10:
+        new_f |= F.FLAG_H
     if a == 0:
         new_f |= F.FLAG_Z
     if a & 0x80:

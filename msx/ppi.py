@@ -27,9 +27,10 @@ class PPI:
 
     def _write_control(self, value: int) -> None:
         if value & 0x80:
-            # Mode-set word: store it; the keyboard row (Port C low nibble) is
-            # left untouched.
+            # Mode-set word: store it and clear the output ports, matching the
+            # real 8255 (a mode-set command resets all output latches to 0).
             self._control = value
+            self._port_c = 0
         else:
             # Port C bit set/reset: bits 3-1 select the bit index, bit 0 the value.
             bit = (value >> 1) & 0x07

@@ -42,7 +42,6 @@ from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
-
 # ---------------------------------------------------------------------------
 # Mapper helpers (shared with build_machine)
 # ---------------------------------------------------------------------------
@@ -61,21 +60,24 @@ _SRAM_SIZES: dict[str, int] = {
 }
 
 
-def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
+    """Resolve the mapper type and return it with the cartridge sha1 (computed
+    once here so callers can reuse it for the SRAM save path)."""
+    sha1 = hashlib.sha1(cartridge).hexdigest() if cartridge is not None else None
     if mapper != "auto":
-        return mapper
+        return mapper, sha1
     if cartridge is None:
-        return "Mirrored"
+        return "Mirrored", sha1
     found = romdb.lookup(cartridge)
     if found is None:
         print("warning: cartridge not found in ROM database, using Mirrored mapper",
               file=sys.stderr)
-        return "Mirrored"
+        return "Mirrored", sha1
     if found not in _SUPPORTED_MAPPERS:
         print(f"warning: unsupported mapper type {found!r} from ROM database, "
               "using Mirrored mapper", file=sys.stderr)
-        return "Mirrored"
-    return found
+        return "Mirrored", sha1
+    return found, sha1
 
 
 def _make_mapper(
@@ -236,6 +238,17 @@ def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
+def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
+    """Coerce slot-map keys to int so string/JSON keys (e.g. "0") resolve via .get(0)."""
+    out: dict[int, Any] = {}
+    for key, value in slot_map.items():
+        try:
+            out[int(key)] = value
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _parse_slot0(
     slot0: dict[str, Any], machine_id: str
 ) -> tuple[_RomEntry | None, _RomEntry | None]:
@@ -267,7 +280,7 @@ def _parse_slot3_msx2(
     sub_rom: _RomEntry | None = None
     has_ram_mapper = False
     if slot3.get("expanded"):
-        secondary: dict[Any, Any] = slot3.get("secondary", {})
+        secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         sub0: Any = secondary.get(0, {})
         if isinstance(sub0, dict):
             for item in sub0.get("content", []):
@@ -354,7 +367,7 @@ def load_machine_spec(
 
     # --- Slot parsing ---
     slots: dict[str, Any] = raw.get("slots", {})
-    primary: dict[Any, Any] = slots.get("primary", {})
+    primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
 
     slot0: Any = primary.get(0, {})
     if not isinstance(slot0, dict):
@@ -539,10 +552,10 @@ def build_machine(
         logo_bytes = None
 
     # --- Cartridge mapper resolution ---
-    resolved = _resolve_mapper_type(mapper, cartridge)
+    resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
 
-    resolved2 = _resolve_mapper_type(mapper2, cartridge2)
+    resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
     if resolved2 == "KonamiSCC":
         print(
             "warning: KonamiSCC is not supported for slot 2, using Konami mapper",
@@ -554,8 +567,10 @@ def build_machine(
     sram_save_path: Path | None = None
     sram_data: bytearray | None = None
     if resolved in _SRAM_SIZES and cartridge is not None:
-        sha1 = hashlib.sha1(cartridge).hexdigest()
-        sram_save_path = Path("saves") / f"{sha1}.sram"
+        # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not None
+        # here, so cart_sha1 is set).
+        assert cart_sha1 is not None
+        sram_save_path = Path("saves") / f"{cart_sha1}.sram"
         expected_size = _SRAM_SIZES[resolved]
         if sram_save_path.exists():
             raw = sram_save_path.read_bytes()
@@ -736,5 +751,6 @@ def _build_msx2(
         vdp.tracer = tracer
         vdp._get_pc = lambda: machine.cpu.instruction_pc
         vdp._get_cycle = lambda: machine.cycle_count
-        vdp._get_frame = lambda: vdp._frame_count
+        # The tracer reads the VDP frame count directly (V9938.write_port passes
+        # self._frame_count), so no _get_frame getter is needed.
     return machine

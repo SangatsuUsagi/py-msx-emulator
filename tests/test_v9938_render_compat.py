@@ -228,3 +228,71 @@ def test_text1_fg_zero_uses_palette_index_0() -> None:
 
     buf = render_frame(vdp)
     assert buf[8] == 0   # fg=0 → index 0 (was incorrectly forced to 1)
+
+
+# ---------------------------------------------------------------------------
+# MULTICOLOR (SCREEN 3) — 4x4 block addressing (regression for the per-scanline
+# byte bug: only 2 of the 8 pattern bytes per cell are used)
+# ---------------------------------------------------------------------------
+
+def test_mc_top_bottom_half_bytes() -> None:
+    vdp = V9938()
+    vdp.regs[1] = 0x48   # M2 (bit3) → MULTICOLOR, BL (bit6) → display on
+    vdp.regs[2] = 0x0E   # name table at 0x3800
+    vdp.regs[4] = 0x00   # pattern generator at 0x0000
+    vdp.vram[0x3800] = 0x00      # tile 0 at (col 0, char row 0)
+    vdp.vram[0x0000] = 0xF7      # top half: left=15, right=7
+    vdp.vram[0x0001] = 0x3A      # bottom half: left=3, right=10
+
+    buf = render_frame(vdp)
+
+    for scan in range(4):        # top half → pattern byte +0
+        assert buf[scan * 256 + 0] == 15
+        assert buf[scan * 256 + 4] == 7
+    for scan in range(4, 8):     # bottom half → pattern byte +1
+        assert buf[scan * 256 + 0] == 3
+        assert buf[scan * 256 + 4] == 10
+
+
+# ---------------------------------------------------------------------------
+# GRAPHIC 2/3 pattern-generator base uses R#4 bits 5:2 (A16-A13), not just bit2.
+# Regression for Ultima III (SCREEN 4): R#4=0x13 → pattern base 0x8000; the old
+# (R#4 & 0x04) << 11 form gave 0x0000 and garbled the background.
+# ---------------------------------------------------------------------------
+
+def test_g3_pattern_base_uses_r4_bits_5_2() -> None:
+    vdp = V9938()
+    vdp.regs[0] = 0x04          # SCREEN 4 (G3): M4=1, M3=0, M5=0
+    vdp.regs[1] = 0x40          # BL on
+    vdp.regs[8] = 0x04          # SPD: disable sprites (VRAM is not a valid SAT)
+    vdp.regs[2] = 0x00          # name table 0x0000
+    vdp.regs[4] = 0x13          # pattern base (0x13 & 0x3C) << 11 = 0x8000
+    vdp.regs[3] = 0x80          # colour base (0x80 & 0x80) << 6 = 0x2000
+    vdp.regs[10] = 0x00
+    for n in range(768):        # every cell -> tile 0
+        vdp.vram[0x0000 + n] = 0x00
+    for py in range(8):
+        vdp.vram[0x8000 + py] = 0xFF   # pattern generator at 0x8000: solid tile 0
+        vdp.vram[0x2000 + py] = 0xF1   # colour: fg=15, bg=1
+
+    buf = render_frame(vdp)
+
+    # Pattern read from 0x8000 (not 0x0000, which is the zero-filled name table)
+    assert buf[5 * 256 + 5] == 15
+
+
+def test_screen2_pattern_base_bit2_still_zero() -> None:
+    # Standard SCREEN 2 layout (R#4=0x00) keeps the pattern generator at 0x0000
+    # under the R#4 bits 5:2 mask, unchanged from before.
+    vdp = V9938()
+    vdp.regs[0] = 0x02          # SCREEN 2 (M3=1)
+    vdp.regs[1] = 0x40
+    vdp.regs[8] = 0x04
+    vdp.regs[2] = 0x06          # name 0x1800
+    vdp.regs[4] = 0x00          # pattern base 0x0000
+    vdp.regs[3] = 0x80          # colour 0x2000
+    vdp.vram[0x1800] = 0x00     # tile 0
+    vdp.vram[0x0000] = 0xFF     # pattern row 0 solid
+    vdp.vram[0x2000] = 0x65     # fg=6, bg=5
+    buf = render_frame(vdp)
+    assert buf[0] == 6

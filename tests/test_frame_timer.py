@@ -22,9 +22,7 @@ def test_slowdown_absorption_no_catchup() -> None:
     # Simulate a slow frame by advancing the last tick time artificially
     timer._last_tick_time -= 0.050  # pretend 50ms already passed
     timer._next_deadline = time.perf_counter() - 0.050  # deadline already past
-    t0 = time.perf_counter()
     timer.tick()
-    elapsed = time.perf_counter() - t0
     # Next tick should still wait ~16ms, not 0ms (catch-up)
     t1 = time.perf_counter()
     timer.tick()
@@ -65,3 +63,17 @@ def test_tick_at_speed_2x_is_faster() -> None:
     elapsed = time.perf_counter() - t0
     # Should wait ~8.3ms, not 16.7ms
     assert elapsed < 0.015, f"expected <15ms at 2x speed, got {elapsed*1000:.1f}ms"
+
+
+def test_speed_zero_constructs_without_zero_division() -> None:
+    # speed=0 (paused): fps*speed == 0 must not raise ZeroDivisionError; a safe
+    # fallback interval is used instead.
+    timer = FrameTimer(fps=60.0, speed=0.0)
+    assert timer._frame_interval > 0.0
+
+
+def test_set_speed_recomputes_frame_interval() -> None:
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    timer.set_speed(2.0)
+    assert timer.speed == 2.0
+    assert abs(timer._frame_interval - 1.0 / 120.0) < 1e-9  # ≈8.333 ms

@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 # Layout:
 #   name table  at 0x0000  (R2=0x00)
@@ -37,7 +37,8 @@ def test_text_border_pixels_are_bg() -> None:
 def test_text_character_width_six_pixels() -> None:
     vdp = make_text_vdp()
     vdp.regs[7] = 0xF2   # fg=15, bg=2
-    # Tile 0 at col 0: pattern row 0 all set → fg on all 6 pixels, then bg for pixel 6+ (next char space)
+    # Tile 0 at col 0: pattern row 0 all set → fg on all 6 pixels,
+    # then bg for pixel 6+ (next char space)
     vdp.vram[_NAME + 0] = 0x00
     vdp.vram[_PAT + 0] = 0xFF   # all bits set
 

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.factories import make_machine, make_machine_msx2
+from tests.factories import make_machine
 
 _NOP_ROM = bytes(32768)
 _EXTROM = bytes(32768)

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import datetime
-import struct
 import sys
+from array import array
 from pathlib import Path
 
 from PIL import Image as _PIL_Image
@@ -55,6 +55,23 @@ def _make_lut16(palette: list) -> list:
     ]
 
 
+# Cache the 16-entry RGB24 LUT keyed on a snapshot of the palette; the palette
+# only changes when the guest reprograms it, so this avoids rebuilding the LUT
+# on every frame.
+_LUT16_CACHE_KEY: tuple | None = None
+_LUT16_CACHE: list | None = None
+
+
+def _cached_lut16(palette: list) -> list:
+    """Return _make_lut16(palette), rebuilding only when the palette changed."""
+    global _LUT16_CACHE_KEY, _LUT16_CACHE
+    key = tuple(palette[:16])
+    if key != _LUT16_CACHE_KEY:
+        _LUT16_CACHE_KEY = key
+        _LUT16_CACHE = _make_lut16(palette)
+    return _LUT16_CACHE
+
+
 def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
     """Map a palette-index (or SCREEN 8 GRB332) buffer to packed RGB24.
 
@@ -77,7 +94,7 @@ def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
         if has_palette_change:
             return _v9938_banded_to_rgb24(src, vdp)
 
-        lut16 = _make_lut16(vdp.palette)
+        lut16 = _cached_lut16(vdp.palette)
         return b"".join([lut16[x & 0x0F] for x in src])
     lut16 = _TMS9918A_BYTES
     return b"".join([lut16[x & 0x0F] for x in src])
@@ -145,7 +162,13 @@ def run(
     win_w = _W * scale
     win_h = h * scale
 
-    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER) != 0:
+    init_flags = (
+        sdl2.SDL_INIT_VIDEO
+        | sdl2.SDL_INIT_AUDIO
+        | sdl2.SDL_INIT_JOYSTICK
+        | sdl2.SDL_INIT_GAMECONTROLLER
+    )
+    if sdl2.SDL_Init(init_flags) != 0:
         print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
         sys.exit(1)
 
@@ -228,7 +251,10 @@ def run(
                             _fullscreen = not _fullscreen
                             flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
                             if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-                                print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                                print(
+                                    f"fullscreen toggle failed: {sdl2.SDL_GetError()}",
+                                    file=sys.stderr,
+                                )
                         elif event.key.keysym.sym == sdl2.SDLK_F8:
                             save_state(machine, rgb_buf, game_title)
                         elif event.key.keysym.sym == sdl2.SDLK_F9:
@@ -303,20 +329,36 @@ def run(
                     if machine.scc is not None:
                         extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
                     if machine.dac is not None:
-                        extra_bufs.append(machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle))
+                        extra_bufs.append(
+                            machine.dac.generate_samples(
+                                SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
+                            )
+                        )
                     if extra_bufs:
-                        mixed = bytearray(len(psg_buf))
+                        # Batch-decode each PCM buffer to signed 16-bit samples
+                        # via array("h") (one C call per buffer) instead of a
+                        # per-sample struct.unpack_from/pack_into. Sums are taken
+                        # in Python ints so the clamp applies to the full mix,
+                        # then re-encoded once. (array("h") is native byte order,
+                        # which matches the little-endian PCM on LE hosts.)
+                        psg_arr = array("h")
+                        psg_arr.frombytes(bytes(psg_buf))
+                        extra_arrs = []
+                        for buf in extra_bufs:
+                            a = array("h")
+                            a.frombytes(bytes(buf))
+                            extra_arrs.append(a)
+                        out_arr = array("h", bytes(2 * SAMPLES_PER_FRAME))
                         for i in range(SAMPLES_PER_FRAME):
-                            offset = i * 2
-                            total = struct.unpack_from("<h", psg_buf, offset)[0]
-                            for buf in extra_bufs:
-                                total += struct.unpack_from("<h", buf, offset)[0]
+                            total = psg_arr[i]
+                            for a in extra_arrs:
+                                total += a[i]
                             if total > 32767:
                                 total = 32767
                             elif total < -32768:
                                 total = -32768
-                            struct.pack_into("<h", mixed, offset, total)
-                        audio_buf = mixed
+                            out_arr[i] = total
+                        audio_buf = out_arr.tobytes()
                     else:
                         audio_buf = psg_buf
                     sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
@@ -332,9 +374,28 @@ def run(
                         # than writing through an invalid pointer.
                         print(f"SDL_LockTexture failed: {sdl2.SDL_GetError()}", file=sys.stderr)
                     else:
-                        # rgb_buf is already an immutable bytes from _index_to_rgb24;
-                        # memmove accepts it directly (no extra copy needed).
-                        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+                        # Honour the destination row stride SDL returns. When the
+                        # texture rows are tightly packed (pitch == width*3, RGB24),
+                        # a single contiguous memmove is correct and fastest.
+                        # Otherwise (driver row padding, or a future width) copy
+                        # row-by-row: width*3 source bytes into each pitch-strided
+                        # destination row, so no source overrun and no padding is
+                        # overwritten with pixel data.
+                        row_bytes = tex_w * 3
+                        dst_pitch = pitch.value
+                        if dst_pitch == row_bytes:
+                            # rgb_buf is already an immutable bytes from
+                            # _index_to_rgb24; memmove accepts it directly.
+                            ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+                        else:
+                            dst_base = pixels_ptr.value
+                            for row in range(tex_h):
+                                src_off = row * row_bytes
+                                ctypes.memmove(
+                                    dst_base + row * dst_pitch,
+                                    rgb_buf[src_off:src_off + row_bytes],
+                                    row_bytes,
+                                )
                         sdl2.SDL_UnlockTexture(texture)
 
                 # Render (always — redisplays previous texture on skipped frames)
