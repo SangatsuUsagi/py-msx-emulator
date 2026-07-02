@@ -9,7 +9,6 @@ import pytest
 from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
-    _RomEntry,
     build_machine,
     load_device_registry,
     load_machine_spec,

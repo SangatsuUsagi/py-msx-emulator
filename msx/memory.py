@@ -119,12 +119,3 @@ class Memory:
             return (0x0000, 0xFFFF)
         low = max(0, 0x10000 - len(self.ram))
         return (low, 0xFFFF)
-
-    def read_port_a8(self) -> int:
-        return self.slot_register & 0xFF
-
-    def write_port_a8(self, value: int) -> None:
-        old = self.slot_register
-        self.slot_register = value & 0xFF
-        if self._logger is not None:
-            self._logger.on_slot_register_write(old, self.slot_register, pc=0)

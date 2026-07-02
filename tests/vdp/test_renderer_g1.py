@@ -1,5 +1,5 @@
-from msx.vdp.vdp import VDP
 from msx.vdp.renderer import render_frame
+from msx.vdp.vdp import VDP
 
 # Layout used by all G1 tests:
 #   name table  at 0x3800  (R2=0x0E, 0x0E<<10=0x3800)

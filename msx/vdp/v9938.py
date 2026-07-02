@@ -161,8 +161,12 @@ class V9938:
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     _irq: bool = field(default=False, init=False, repr=False)
-    _reg_write_log: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
-    _frame_start_regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False)
+    _reg_write_log: list[tuple[int, int, int]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _frame_start_regs: list[int] = field(
+        default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False
+    )
     _frame_start_palette: list[int] = field(
         default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False
     )
@@ -292,7 +296,11 @@ class V9938:
                             self._update_irq()
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
-                        if reg == 44 and self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                        if (
+                            reg == 44
+                            and self._cmd_active
+                            and self._cmd_code in (_CMD_HMMC, _CMD_LMMC)
+                        ):
                             self._cmd_data_write(low)
                     elif reg == 46:
                         self.cmd_regs[14] = low

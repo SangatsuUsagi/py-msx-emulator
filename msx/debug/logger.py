@@ -5,7 +5,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TextIO
 
-
 _VDP_MODE_NAMES = {
     (0, 0, 0): "G1 (Screen 1)",
     (0, 0, 1): "G2 (Screen 2)",

@@ -1,5 +1,6 @@
-from msx.cpu.registers import Registers
 from msx.cpu import flags
+from msx.cpu.registers import Registers
+from tests.cpu.flag_helpers import pack, unpack
 
 
 def test_reset_values() -> None:
@@ -53,8 +54,8 @@ def test_hl_bytes() -> None:
 
 
 def test_flag_pack_unpack_roundtrip() -> None:
-    f = flags.pack(s=True, z=False, h=True, pv=True, n=False, c=True)
-    s, z, h, pv, n, c = flags.unpack(f)
+    f = pack(s=True, z=False, h=True, pv=True, n=False, c=True)
+    s, z, h, pv, n, c = unpack(f)
     assert s is True
     assert z is False
     assert h is True
@@ -64,13 +65,15 @@ def test_flag_pack_unpack_roundtrip() -> None:
 
 
 def test_flag_all_zero() -> None:
-    f = flags.pack(s=False, z=False, h=False, pv=False, n=False, c=False)
+    f = pack(s=False, z=False, h=False, pv=False, n=False, c=False)
     assert f == 0x00
 
 
 def test_flag_all_set() -> None:
-    f = flags.pack(s=True, z=True, h=True, pv=True, n=True, c=True)
-    assert f == (flags.FLAG_S | flags.FLAG_Z | flags.FLAG_H | flags.FLAG_PV | flags.FLAG_N | flags.FLAG_C)
+    f = pack(s=True, z=True, h=True, pv=True, n=True, c=True)
+    assert f == (
+        flags.FLAG_S | flags.FLAG_Z | flags.FLAG_H | flags.FLAG_PV | flags.FLAG_N | flags.FLAG_C
+    )
 
 
 def test_parity_even() -> None:

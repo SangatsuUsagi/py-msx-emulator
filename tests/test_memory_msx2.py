@@ -3,7 +3,6 @@ from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
 
-
 # slot_register layouts used in tests
 # 0b11_00_01_00 = 0xC4: page0=slot0, page1=slot1, page2=slot0, page3=slot3
 _SLOTS_PAGE2_IN_SLOT0 = 0xC4

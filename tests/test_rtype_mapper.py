@@ -8,8 +8,6 @@ Layout (per openMSX RomRType.cc):
 """
 from __future__ import annotations
 
-import pytest
-
 from msx.mapper import RTypeMapper
 
 # 4 pages of 16 KB. Pages have distinct fill bytes.

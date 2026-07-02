@@ -22,9 +22,7 @@ def test_slowdown_absorption_no_catchup() -> None:
     # Simulate a slow frame by advancing the last tick time artificially
     timer._last_tick_time -= 0.050  # pretend 50ms already passed
     timer._next_deadline = time.perf_counter() - 0.050  # deadline already past
-    t0 = time.perf_counter()
     timer.tick()
-    elapsed = time.perf_counter() - t0
     # Next tick should still wait ~16ms, not 0ms (catch-up)
     t1 = time.perf_counter()
     timer.tick()

@@ -13,7 +13,7 @@ class Registers:
     IY: int = 0xFFFF
     SP: int = 0xFFFF
     PC: int = 0x0000
-    I: int = 0x00
+    I: int = 0x00  # noqa: E741 - Z80 interrupt vector register (canonical name)
     R: int = 0x00
     # Shadow registers
     A_: int = 0xFF
