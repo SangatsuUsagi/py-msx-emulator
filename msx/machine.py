@@ -212,20 +212,39 @@ class Machine:
                 else:
                     raise
         elif self._logger is None:
+            # Hot path (no debugger, no logger). Two frame-invariants are lifted
+            # out of the inner loop: (1) the is_v9938 branch — split into a
+            # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
+            # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
+            # into a per-line local and flushed once per scanline instead of
+            # once per instruction. Line granularity is the finest flush
+            # allowed: io/dac read cycle_count *within* a frame, so a frame-end
+            # flush would starve them; a one-scanline lag matches the existing
+            # scanline-stepped timing. The duplicated loop body is the
+            # readability cost of removing that per-instruction overhead.
             try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
-                    while total < line_end:
-                        if vdp9938:
+                if vdp9938 is not None:
+                    for L in range(lpf):
+                        line_end = (L + 1) * cpf // lpf
+                        line_cycles = 0
+                        while total < line_end:
                             cpu.int_pending = vdp9938.irq
-                        n = cpu_step()
-                        total += n
-                        self.cycle_count += n
-                        if vdp_tick:
+                            n = cpu_step()
+                            total += n
+                            line_cycles += n
                             vdp_tick(n)
-                    if vdp9938:
+                        self.cycle_count += line_cycles
                         vdp9938.begin_scanline(L)
                         cpu.int_pending = vdp9938.irq
+                else:
+                    for L in range(lpf):
+                        line_end = (L + 1) * cpf // lpf
+                        line_cycles = 0
+                        while total < line_end:
+                            n = cpu_step()
+                            total += n
+                            line_cycles += n
+                        self.cycle_count += line_cycles
             except KeyboardInterrupt:
                 if self._debugger is not None:
                     self._debugger.enter()
