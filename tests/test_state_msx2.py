@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from msx.state import load_state, save_state
 from tests.factories import make_machine, make_machine_msx2
-from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
 
 
 def _load_state_json(path: Path) -> dict:

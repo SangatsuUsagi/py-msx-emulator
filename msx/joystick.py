@@ -136,7 +136,6 @@ class JoystickManager:
             self._input.joystick_button_up(port, bit)
 
     def _handle_gc_axis(self, event: Any) -> None:
-        sdl = self._sdl
         port = self._port_for_instance(event.caxis.which)
         if port is None:
             return
@@ -173,7 +172,6 @@ class JoystickManager:
             self._input.joystick_button_up(port, bit)
 
     def _handle_joy_axis(self, event: Any) -> None:
-        sdl = self._sdl
         port = self._port_for_instance(event.jaxis.which)
         if port is None:
             return

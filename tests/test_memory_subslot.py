@@ -1,8 +1,6 @@
 """Tests for Memory slot-3 secondary slot register (sub-slot) dispatch."""
 from __future__ import annotations
 
-import pytest
-
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper

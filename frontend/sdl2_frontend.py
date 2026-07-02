@@ -145,7 +145,13 @@ def run(
     win_w = _W * scale
     win_h = h * scale
 
-    if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_AUDIO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER) != 0:
+    init_flags = (
+        sdl2.SDL_INIT_VIDEO
+        | sdl2.SDL_INIT_AUDIO
+        | sdl2.SDL_INIT_JOYSTICK
+        | sdl2.SDL_INIT_GAMECONTROLLER
+    )
+    if sdl2.SDL_Init(init_flags) != 0:
         print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
         sys.exit(1)
 
@@ -228,7 +234,10 @@ def run(
                             _fullscreen = not _fullscreen
                             flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
                             if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-                                print(f"fullscreen toggle failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+                                print(
+                                    f"fullscreen toggle failed: {sdl2.SDL_GetError()}",
+                                    file=sys.stderr,
+                                )
                         elif event.key.keysym.sym == sdl2.SDLK_F8:
                             save_state(machine, rgb_buf, game_title)
                         elif event.key.keysym.sym == sdl2.SDLK_F9:
@@ -303,7 +312,11 @@ def run(
                     if machine.scc is not None:
                         extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
                     if machine.dac is not None:
-                        extra_bufs.append(machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle))
+                        extra_bufs.append(
+                            machine.dac.generate_samples(
+                                SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
+                            )
+                        )
                     if extra_bufs:
                         mixed = bytearray(len(psg_buf))
                         for i in range(SAMPLES_PER_FRAME):

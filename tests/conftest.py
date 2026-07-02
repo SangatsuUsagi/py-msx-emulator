@@ -1,8 +1,8 @@
 import pytest
 
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
 
 
 @pytest.fixture

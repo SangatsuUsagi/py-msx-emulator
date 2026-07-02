@@ -1,4 +1,3 @@
-import pytest
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 
@@ -88,7 +87,7 @@ def test_ram_page2_shadowed_by_cartridge() -> None:
     mem = make_mem(cartridge=cart, slot_register=_MSX1_SLOTS)  # page2 = slot1
     mem.write(0x8000, 0x99)
     # Switch page2 to slot3 to verify RAM was not written
-    mem.write_port_a8(_PAGE2_AND_3_RAM)
+    mem.slot_register = _PAGE2_AND_3_RAM
     assert mem.read(0x8000) == 0x00  # RAM untouched
 
 
@@ -118,19 +117,20 @@ def test_address_wraps_at_16_bits() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slot-register port helpers
+# Slot register (port 0xA8 state) — accessed via slot_register directly, as
+# production PPI does (msx/ppi.py:22,43).
 # ---------------------------------------------------------------------------
 
 def test_slot_register_read_back() -> None:
     mem = make_mem()
-    mem.write_port_a8(0x09)
-    assert mem.read_port_a8() == 0x09
+    mem.slot_register = 0x09
+    assert mem.slot_register == 0x09
 
 
 def test_slot_register_dataclass_default_msx1_layout() -> None:
     # Default is standard MSX1 layout: page3=slot3(RAM), page1+2=slot1(cart)
     mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
-    assert mem.read_port_a8() == 0xD4
+    assert mem.slot_register == 0xD4
 
 
 # ---------------------------------------------------------------------------

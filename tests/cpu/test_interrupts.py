@@ -1,10 +1,14 @@
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF
     return cpu
@@ -56,7 +60,6 @@ def test_nmi_fires_when_di() -> None:
     cpu = make_cpu([0x00])
     cpu.iff1 = False
     cpu.nmi_pending = True
-    saved_pc = cpu.registers.PC
     cycles = cpu.step()
     assert cpu.registers.PC == 0x0066
     assert cpu.iff1 is False

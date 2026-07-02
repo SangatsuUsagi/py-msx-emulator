@@ -1,8 +1,6 @@
 """Tests for V9938 hardware command engine."""
 from __future__ import annotations
 
-import pytest
-
 from msx.vdp.v9938 import V9938
 
 

@@ -1,7 +1,6 @@
 """Tests for msx.ram_mapper.RamMapper."""
 from msx.ram_mapper import RamMapper
 
-
 # ---------------------------------------------------------------------------
 # Buffer size and initial state
 # ---------------------------------------------------------------------------

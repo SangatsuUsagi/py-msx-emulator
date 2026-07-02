@@ -1,12 +1,9 @@
 import pytest
-from msx.cpu.z80 import Z80
+
 from msx.input import InputState
-from msx.io import IOBus
 from msx.machine import CYCLES_PER_FRAME, Machine
-from tests.factories import make_machine
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
-from msx.memory import Memory
-from msx.vdp.vdp import VDP
+from tests.factories import make_machine
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)
@@ -170,6 +167,7 @@ def test_auto_unsupported_db_mapper_falls_back(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart = b"\xDE\xAD"
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -184,6 +182,7 @@ def test_auto_known_konamisco_selects_scc_mapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     from msx.mapper import KonamiSCCMapper
     cart = bytes(65536)  # dummy 64 KB
@@ -198,6 +197,7 @@ def test_auto_known_konami_selects_konami_mapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart = bytes(65536)
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -230,6 +230,7 @@ def test_make_machine_mapper2_konamisco_falls_back_to_konami(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import hashlib
+
     import msx.romdb as romdb
     cart2 = bytes(65536)
     sha1 = hashlib.sha1(cart2).hexdigest()

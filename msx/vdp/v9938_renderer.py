@@ -333,8 +333,6 @@ def _render_sprites_for_mode(vdp: "V9938", buf: bytearray, y_start: int, y_end: 
     if not (r1 & 0x40):  # BL clear → display blanked
         return
     m1 = (r1 >> 4) & 1
-    m2 = (r1 >> 3) & 1
-    m3 = (r0 >> 1) & 1
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
     h = vdp.display_height
@@ -383,8 +381,10 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
             cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
-            _lo = cb & 0x0F;         bg = _lo if _lo else bd
+            _hi = (cb >> 4) & 0x0F  # inline _color
+            fg = _hi if _hi else bd
+            _lo = cb & 0x0F
+            bg = _lo if _lo else bd
             pat_tile = pat_base + tile * 8
             bx = col * 8
             for py in range(8):
@@ -428,8 +428,10 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             off = band_offset + tile * 8 + py
             pat = vdp.vram[(pat_base + off) & 0x1FFFF]
             cb  = vdp.vram[(col_base + off) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F; fg = _hi if _hi else bd  # inline _color
-            _lo = cb & 0x0F;         bg = _lo if _lo else bd
+            _hi = (cb >> 4) & 0x0F  # inline _color
+            fg = _hi if _hi else bd
+            _lo = cb & 0x0F
+            bg = _lo if _lo else bd
             bx = col * 8
             buf[scan_w + bx:scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -458,7 +460,8 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
-                buf[scan * _W + 8 + col * 6:scan * _W + 8 + col * 6 + 6] = _TEXT6_BYTES[pat][fg][bg]
+                off = scan * _W + 8 + col * 6
+                buf[off:off + 6] = _TEXT6_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +485,10 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
-                _hi = (pat >> 4) & 0x0F; lc = _hi if _hi else bd  # inline _color
-                _lo = pat & 0x0F;         rc = _lo if _lo else bd
+                _hi = (pat >> 4) & 0x0F  # inline _color
+                lc = _hi if _hi else bd
+                _lo = pat & 0x0F
+                rc = _lo if _lo else bd
                 buf[scan * _W + bx:scan * _W + bx + 4] = _COLOR4[lc]
                 buf[scan * _W + bx + 4:scan * _W + bx + 8] = _COLOR4[rc]
 
@@ -492,7 +497,9 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # Sprite mode 1 — V9938 allows 8 sprites per scanline (vs 4 on TMS9918A)
 # ---------------------------------------------------------------------------
 
-def _render_sprites(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_sprites(
+    vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
     if vdp.debug_disable_sprites:  # debug: render background only
         return
     if vdp.regs[8] & 0x04:  # SPD: sprite disable (R#8 bit 2)
@@ -723,7 +730,9 @@ def _sprite_row_pixels(
 # SCREEN 5 (Graphic 4) — 4-bpp bitmap, two palette indices per byte
 # ---------------------------------------------------------------------------
 
-def _render_g4(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_g4(
+    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
     base = (vdp.regs[2] & 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)  # R#8 bit5: 1=col0 solid, 0=col0 transparent→backdrop
@@ -745,7 +754,9 @@ def _render_g4(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: in
 # SCREEN 6 (Graphic 5) — 2-bpp, 512 virtual width, rendered 256 wide
 # ---------------------------------------------------------------------------
 
-def _render_g5(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_g5(
+    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+) -> None:
     """SCREEN 6: 2-bpp, 4 pixels per byte, full 512-pixel width."""
     base = (vdp.regs[2] & 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)
@@ -770,7 +781,9 @@ def _render_g5(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: in
 # SCREEN 7 (Graphic 6) — 4-bpp, 512 virtual width, rendered 256 wide
 # ---------------------------------------------------------------------------
 
-def _render_g6(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_g6(
+    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+) -> None:
     """SCREEN 7: 4-bpp, 2 pixels per byte, full 512-pixel width."""
     base = (vdp.regs[2] & 0x40) << 10  # G6: 64KB pages, bit6 only
     tp = bool(vdp.regs[8] & 0x20)
@@ -812,7 +825,9 @@ def grb332_to_rgb(byte: int) -> tuple[int, int, int]:
     return (_INTENSITY3[r], _INTENSITY3[g], _BLUE2[b])
 
 
-def _render_g7(vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_g7(
+    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
     base = (vdp.regs[2] & 0x40) << 10  # G7: 64KB pages, bit6 only
     vscroll = vdp.regs[23]
