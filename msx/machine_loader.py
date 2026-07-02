@@ -42,7 +42,6 @@ from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
-
 # ---------------------------------------------------------------------------
 # Mapper helpers (shared with build_machine)
 # ---------------------------------------------------------------------------

@@ -1,11 +1,15 @@
+from msx.cpu import flags as F
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
-from msx.cpu import flags as F
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 

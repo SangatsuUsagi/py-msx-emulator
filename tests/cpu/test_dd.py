@@ -1,11 +1,25 @@
+from msx.cpu import flags as F
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     return Z80(read_byte=mem.read, write_byte=mem.write)
+
+
+def make_cpu_mem(rom: list[int]) -> tuple[Z80, Memory]:
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    return Z80(read_byte=mem.read, write_byte=mem.write), mem
 
 
 def test_ld_ix_nn() -> None:
@@ -448,3 +462,170 @@ def test_cp_ixl() -> None:
     cpu.step()
     assert cpu.registers.A == 0x10  # A unchanged
     assert not (cpu.registers.F & 0x40)  # Z clear (not equal)
+
+
+# ===========================================================================
+# Characterization tests (test-coverage-hardening Phase 0): (IX+d) displacement
+# addressing, ALU on (IX+d), INC/DEC (IX+d), remaining ADD IX,rr / DEC IX /
+# LD (nn),IX / LD IX,(nn). Values derived from _execute_dd_fd and confirmed by
+# running the opcodes; only S/Z/H/PV/N/C and register/memory state are asserted.
+# ===========================================================================
+
+
+# --- LD (IX+d), r / LD r, (IX+d) -------------------------------------------
+
+def test_ld_ix_d_r_stores_register() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x70, 0x03])  # LD (IX+3), B
+    cpu.registers.IX = 0xC000
+    cpu.registers.B = 0x99
+    cpu.step()
+    assert mem.read(0xC003) == 0x99
+
+
+def test_ld_r_ix_d_loads_register() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x4E, 0x04])  # LD C, (IX+4)
+    mem.write(0xC004, 0x77)
+    cpu.registers.IX = 0xC000
+    cpu.step()
+    assert cpu.registers.C == 0x77
+
+
+def test_ld_a_ix_negative_displacement() -> None:
+    # IX=0xD000, d=-16 -> 0xCFF0 (still page-3 RAM)
+    cpu, mem = make_cpu_mem([0xDD, 0x7E, 0xF0])  # LD A, (IX-16)
+    mem.write(0xCFF0, 0x22)
+    cpu.registers.IX = 0xD000
+    cpu.step()
+    assert cpu.registers.A == 0x22
+
+
+# --- ALU on (IX+d) ----------------------------------------------------------
+
+def _alu_ix_d(op: int, memval: int, a: int, f: int = 0) -> Z80:
+    cpu, mem = make_cpu_mem([0xDD, op, 0x02])
+    mem.write(0xC002, memval)
+    cpu.registers.IX = 0xC000
+    cpu.registers.A = a
+    cpu.registers.F = f
+    cpu.step()
+    return cpu
+
+
+def test_add_a_ix_d() -> None:
+    cpu = _alu_ix_d(0x86, memval=0x05, a=0x10)
+    assert cpu.registers.A == 0x15
+    assert cpu.registers.F == 0x00
+
+
+def test_adc_a_ix_d_with_carry() -> None:
+    cpu = _alu_ix_d(0x8E, memval=0x04, a=0x10, f=F.FLAG_C)
+    assert cpu.registers.A == 0x15
+    assert cpu.registers.F == 0x00
+
+
+def test_sub_ix_d() -> None:
+    cpu = _alu_ix_d(0x96, memval=0x03, a=0x10)
+    assert cpu.registers.A == 0x0D
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_N)
+
+
+def test_sbc_a_ix_d_with_carry() -> None:
+    cpu = _alu_ix_d(0x9E, memval=0x03, a=0x10, f=F.FLAG_C)
+    assert cpu.registers.A == 0x0C
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_N)
+
+
+def test_and_ix_d() -> None:
+    cpu = _alu_ix_d(0xA6, memval=0x0F, a=0xFF)
+    assert cpu.registers.A == 0x0F
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV)
+
+
+def test_xor_ix_d() -> None:
+    cpu = _alu_ix_d(0xAE, memval=0xFF, a=0xAA)
+    assert cpu.registers.A == 0x55
+    assert cpu.registers.F == F.FLAG_PV
+
+
+def test_or_ix_d() -> None:
+    cpu = _alu_ix_d(0xB6, memval=0xF0, a=0x0F)
+    assert cpu.registers.A == 0xFF
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_PV)
+
+
+def test_cp_ix_d_equal() -> None:
+    cpu = _alu_ix_d(0xBE, memval=0x20, a=0x20)
+    assert cpu.registers.A == 0x20  # A unchanged
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+
+
+# --- INC/DEC (IX+d) ---------------------------------------------------------
+
+def test_inc_ix_d() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x34, 0x02])  # INC (IX+2)
+    mem.write(0xC002, 0x7F)
+    cpu.registers.IX = 0xC000
+    cpu.registers.F = 0
+    cpu.step()
+    assert mem.read(0xC002) == 0x80
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_H | F.FLAG_PV)  # 0x7F->0x80 overflow
+
+
+def test_dec_ix_d() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x35, 0x02])  # DEC (IX+2)
+    mem.write(0xC002, 0x01)
+    cpu.registers.IX = 0xC000
+    cpu.registers.F = 0
+    cpu.step()
+    assert mem.read(0xC002) == 0x00
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+
+
+# --- ADD IX,rr (remaining pairs) / DEC IX -----------------------------------
+
+def test_add_ix_de() -> None:
+    cpu = make_cpu([0xDD, 0x19])  # ADD IX, DE
+    cpu.registers.IX = 0x1000
+    cpu.registers.DE = 0x0111
+    cpu.step()
+    assert cpu.registers.IX == 0x1111
+
+
+def test_add_ix_ix() -> None:
+    cpu = make_cpu([0xDD, 0x29])  # ADD IX, IX
+    cpu.registers.IX = 0x1000
+    cpu.step()
+    assert cpu.registers.IX == 0x2000
+
+
+def test_add_ix_sp() -> None:
+    cpu = make_cpu([0xDD, 0x39])  # ADD IX, SP
+    cpu.registers.IX = 0x1000
+    cpu.registers.SP = 0x0011
+    cpu.step()
+    assert cpu.registers.IX == 0x1011
+
+
+def test_dec_ix() -> None:
+    cpu = make_cpu([0xDD, 0x2B])  # DEC IX
+    cpu.registers.IX = 0x0100
+    cpu.step()
+    assert cpu.registers.IX == 0x00FF
+
+
+# --- LD (nn),IX / LD IX,(nn) ------------------------------------------------
+
+def test_ld_ind_nn_ix() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x22, 0x00, 0xC0])  # LD (0xC000), IX
+    cpu.registers.IX = 0xBEEF
+    cpu.step()
+    assert mem.read(0xC000) == 0xEF
+    assert mem.read(0xC001) == 0xBE
+
+
+def test_ld_ix_ind_nn() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0x2A, 0x00, 0xC0])  # LD IX, (0xC000)
+    mem.write(0xC000, 0xCD)
+    mem.write(0xC001, 0xAB)
+    cpu.step()
+    assert cpu.registers.IX == 0xABCD

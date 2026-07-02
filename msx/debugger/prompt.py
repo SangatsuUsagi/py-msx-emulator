@@ -13,7 +13,6 @@ from msx.debugger.disasm import disassemble
 
 if TYPE_CHECKING:
     from msx.machine import Machine
-    from msx.vdp.v9938 import V9938
 
 
 _HELP = (

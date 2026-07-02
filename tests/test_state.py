@@ -1,13 +1,11 @@
 """Tests for msx/state.py save/load state functionality."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from PIL import Image
 
-from tests.factories import make_machine
 from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
+from tests.factories import make_machine
 
 _ROM = b"\x00" * 0x8000
 

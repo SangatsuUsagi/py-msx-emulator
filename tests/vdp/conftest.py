@@ -1,4 +1,5 @@
 import pytest
+
 from msx.vdp.vdp import VDP
 
 

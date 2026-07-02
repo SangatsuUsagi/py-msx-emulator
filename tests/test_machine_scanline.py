@@ -1,10 +1,10 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
-from msx.machine import CYCLES_PER_FRAME, LINES_PER_FRAME
-from tests.factories import make_machine_msx2
-from msx.vdp.v9938 import V9938
 from msx.cpu.z80 import Z80
+from msx.machine import CYCLES_PER_FRAME
 from msx.mapper import FlatMapper
 from msx.memory import Memory
+from msx.vdp.v9938 import V9938
+from tests.factories import make_machine_msx2
 
 _DUMMY_ROM = bytes(32768)
 _DUMMY_EXTROM = bytes(16384)
