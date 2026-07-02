@@ -228,6 +228,28 @@ class V9938:
     def _update_irq(self) -> None:
         self._irq = self.irq_pending()
 
+    def reset(self) -> None:
+        """Restore power-on register/status/command-engine state (VRAM retained)."""
+        self.regs = [0] * _NUM_REGS
+        self.status = 0
+        self.palette = list(_MSX2_DEFAULT_PALETTE)
+        self.cmd_regs = [0] * 15
+        self._status1 = 0
+        self._status2 = 0
+        self._status7 = 0
+        self._status8 = 0
+        self._status9 = 0
+        self._cmd_active = False
+        self._cmd_remaining = 0
+        self._cmd_code = 0
+        self._addr = 0
+        self._latch = None
+        self._pal_latch = None
+        self._read_buf = 0
+        self._irq = False
+        self.display_line = 0
+        self._line_cycle = 0
+
     def begin_scanline(self, line: int) -> None:
         if line == 0:
             self._frame_start_regs = self.regs[:]

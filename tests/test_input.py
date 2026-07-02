@@ -276,3 +276,30 @@ def test_left_alt_maps_to_graph_key() -> None:
     assert state.matrix[6] & (1 << 2) == 0  # GRAPH pressed (active-low)
     state.key_up(_K_LALT)
     assert state.matrix[6] & (1 << 2) != 0
+
+
+def test_shift_lr_reference_counted_release() -> None:
+    # LSHIFT and RSHIFT share matrix cell (6,0). Releasing one while the other
+    # is still held must keep the bit low; it clears only when both are up.
+    from msx.input import _K_LSHIFT, _K_RSHIFT
+    state = make_input()
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_RSHIFT)
+    assert state.matrix[6] & 0x01 == 0   # SHIFT pressed
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[6] & 0x01 == 0   # still held by RSHIFT
+    state.key_up(_K_RSHIFT)
+    assert state.matrix[6] & 0x01 != 0   # both released → bit high
+
+
+def test_ctrl_lr_reference_counted_release() -> None:
+    # LCTRL and RCTRL share matrix cell (6,1); same reference-counted release.
+    from msx.input import _K_LCTRL, _K_RCTRL
+    state = make_input()
+    state.key_down(_K_LCTRL)
+    state.key_down(_K_RCTRL)
+    assert state.matrix[6] & 0x02 == 0
+    state.key_up(_K_RCTRL)
+    assert state.matrix[6] & 0x02 == 0   # still held by LCTRL
+    state.key_up(_K_LCTRL)
+    assert state.matrix[6] & 0x02 != 0

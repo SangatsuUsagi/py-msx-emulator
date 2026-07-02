@@ -92,10 +92,11 @@ def test_port_ab_bit_reset_clears_single_port_c_bit() -> None:
     assert not (ppi.read_port(0xAA) & (1 << 6))
 
 
-def test_port_ab_mode_word_preserves_row() -> None:
-    state = InputState()
-    state.matrix[3] = 0xFE
-    ppi = make_ppi(input_state=state)
-    ppi.write_port(0xAA, 0x03)   # row 3
-    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word
-    assert ppi.read_port(0xA9) == 0xFE  # row 3 still selected
+def test_port_ab_mode_word_clears_port_c() -> None:
+    # Corrected behaviour (Phase 2): a real 8255 mode-set control word (bit 7 = 1)
+    # resets the output ports to 0, so Port C — including the keyboard row select
+    # — is cleared. (Previously the row was left untouched.)
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x43)   # CAPS LED (bit 6) + row 3 on Port C
+    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word → clears Port C
+    assert ppi.read_port(0xAA) == 0x00

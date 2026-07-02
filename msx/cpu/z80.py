@@ -84,6 +84,9 @@ class Z80:
         if self.nmi_pending:
             self.nmi_pending = False
             self.halted = False
+            # NMI saves the pre-NMI interrupt-enable state so RETN (IFF1<-IFF2)
+            # can restore it; only IFF1 is cleared during the handler.
+            self.iff2 = self.iff1
             self.iff1 = False
             self._push(self.registers.PC)
             self.registers.PC = 0x0066

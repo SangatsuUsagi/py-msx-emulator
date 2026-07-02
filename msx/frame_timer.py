@@ -18,11 +18,24 @@ class FrameTimer:
     _last_tick_time: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._frame_interval = 1.0 / (self.fps * self.speed)
+        self._frame_interval = self._compute_interval()
         now = time.perf_counter()
         self._next_deadline = now + self._frame_interval
         self._fps_last_time = now
         self._last_tick_time = now
+
+    def _compute_interval(self) -> float:
+        # fps*speed <= 0 means "paused" (speed 0) or an invalid rate; fall back
+        # to a safe 60 Hz interval instead of dividing by zero.
+        rate = self.fps * self.speed
+        if rate <= 0:
+            return 1.0 / 60.0
+        return 1.0 / rate
+
+    def set_speed(self, speed: float) -> None:
+        """Update the speed multiplier and recompute the frame interval."""
+        self.speed = speed
+        self._frame_interval = self._compute_interval()
 
     def tick(self) -> float:
         """Block until the next frame deadline; return the measured frame time.

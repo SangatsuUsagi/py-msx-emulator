@@ -398,3 +398,37 @@ def test_keyboard_type_override_jp_from_real_config() -> None:
     for mid in ("cbios_msx1_jp", "cbios_msx2_jp"):
         spec = load_machine_spec(mid, Path("config"), reg, Path("."))
         assert spec.keyboard_type == "jp", mid
+
+
+def test_load_machine_spec_string_slot_keys(tmp_path: Path) -> None:
+    # Slot-map keys may arrive as strings (quoted YAML / JSON). They must be
+    # normalised to int so slot 0 (main ROM) and slot 3 (RAM) still resolve.
+    config_dir, registry = _full_registry(tmp_path)
+    yaml_text = textwrap.dedent("""\
+    schema_version: 1
+    id: test_msx1
+    name: "Test MSX1"
+    generation: msx1
+    rom_base: roms/fake
+    cpu: {type: z80a, clock_mhz: 3.579545}
+    slots:
+      primary:
+        "0":
+          content:
+            - rom:
+                file: main.rom
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        "3":
+          type: ram
+          size_kb: 64
+          mapper: none
+    builtin_devices:
+      - ref: psg_ay8910
+    default_extensions: []
+    """)
+    _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.main_rom_entry.file == "main.rom"  # slot 0 resolved
+    assert spec.ram_size_kb == 64                  # slot 3 resolved
