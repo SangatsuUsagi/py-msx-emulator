@@ -235,6 +235,17 @@ def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
+def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
+    """Coerce slot-map keys to int so string/JSON keys (e.g. "0") resolve via .get(0)."""
+    out: dict[int, Any] = {}
+    for key, value in slot_map.items():
+        try:
+            out[int(key)] = value
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _parse_slot0(
     slot0: dict[str, Any], machine_id: str
 ) -> tuple[_RomEntry | None, _RomEntry | None]:
@@ -266,7 +277,7 @@ def _parse_slot3_msx2(
     sub_rom: _RomEntry | None = None
     has_ram_mapper = False
     if slot3.get("expanded"):
-        secondary: dict[Any, Any] = slot3.get("secondary", {})
+        secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         sub0: Any = secondary.get(0, {})
         if isinstance(sub0, dict):
             for item in sub0.get("content", []):
@@ -353,7 +364,7 @@ def load_machine_spec(
 
     # --- Slot parsing ---
     slots: dict[str, Any] = raw.get("slots", {})
-    primary: dict[Any, Any] = slots.get("primary", {})
+    primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
 
     slot0: Any = primary.get(0, {})
     if not isinstance(slot0, dict):

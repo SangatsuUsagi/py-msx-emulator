@@ -84,3 +84,24 @@ def test_daa_bcd_add() -> None:
     cpu.step()  # ADD A, 0x27 -> 0x3C
     cpu.step()  # DAA -> 0x42
     assert cpu.registers.A == 0x42
+
+
+def test_daa_sets_half_carry_on_bit4_crossing() -> None:
+    # A=0x0F, N=0: low nibble > 9 → add 0x06 → 0x15; the +6 crosses bit 4, so
+    # DAA must set the half-carry (H) flag.
+    cpu = make_cpu([0x27])
+    cpu.registers.A = 0x0F
+    cpu.registers.F = 0
+    cpu.step()
+    assert cpu.registers.A == 0x15
+    assert cpu.registers.F & F.FLAG_H
+
+
+def test_daa_clears_half_carry_without_bit4_change() -> None:
+    # A=0x12, N=0: no correction needed, A unchanged, so H must be clear.
+    cpu = make_cpu([0x27])
+    cpu.registers.A = 0x12
+    cpu.registers.F = 0
+    cpu.step()
+    assert cpu.registers.A == 0x12
+    assert not (cpu.registers.F & F.FLAG_H)

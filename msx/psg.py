@@ -53,15 +53,33 @@ class PSG:
     def read_port(self, port: int) -> int:
         if port == 0xA2:
             if self.latch == _REG_IO_PORT_A and self._input is not None:
-                # PSG register 15 bit 6 = JOY_SELECT: 0→Joy1 dirs, 1→Joy2 dirs on bits 0-3
+                # PORT A returns the *selected* joystick port's 6 signals on
+                # bits 0-5 (dir 0-3, triggers 4-5). JOY_SELECT is PSG register
+                # 15 bit 6: 0→Joy1, 1→Joy2. Bits 6-7 are not joystick lines
+                # (pulled high here).
                 joy_select = (self.regs[15] >> 6) & 1
-                joy1 = self._input.joy1
-                joy2 = self._input.joy2
-                dir_bits = (joy1 if joy_select == 0 else joy2) & 0x0F
-                trig_bits = (joy1 & 0x30) | ((joy2 & 0x30) << 2)
-                return dir_bits | trig_bits
+                sel = self._input.joy1 if joy_select == 0 else self._input.joy2
+                return (sel & 0x3F) | 0xC0
             return self.regs[self.latch]
         return 0xFF
+
+    # --------------------------------------------------------------- reset
+
+    def reset(self) -> None:
+        """Restore power-on register and synthesiser state (matches field defaults)."""
+        self.regs = [0] * 16
+        self.latch = 0
+        self._tone_cnt = [1, 1, 1]
+        self._tone_out = [0, 0, 0]
+        self._noise_cnt = 1
+        self._lfsr = 1
+        self._env_cnt = 1
+        self._env_step = 0x1F
+        self._env_attack = 0
+        self._env_alternate = False
+        self._env_hold_flag = False
+        self._env_holding = False
+        self._clk_frac = 0
 
     # --------------------------------------------------------- envelope reset
 
