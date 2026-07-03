@@ -517,10 +517,12 @@ class Debugger:
         try:
             if isinstance(vdp, V9938):
                 from msx.vdp.v9938_renderer import render_frame as _render
+                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
+                idx = _render(vdp)
             else:
-                from msx.vdp.renderer import render_frame as _render
-            from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
-            idx = _render(vdp)
+                from msx.vdp.renderer import render_frame as _render_vdp
+                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
+                idx = _render_vdp(vdp)
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"ss: screenshot failed: {exc}")
             return

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from msx.vdp.vdp import VDP
@@ -246,6 +246,7 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
         # crosses 255. Per-sprite line order does not affect line_count / 5S /
         # coincidence, so this is equivalent to the old full [0, _H) scan.
         end = y_top + render_size
+        lines: Iterable[int]
         if end <= 256:
             lines = range(y_top, min(_H, end))
         else:

@@ -15,7 +15,6 @@ from msx.vdp.tracer import Tracer
 
 def _msx1_spec() -> MachineSpec:
     return MachineSpec(
-        id="test_msx1",
         name="test_msx1",
         generation="msx1",
         rom_base_dir=Path("."),
@@ -31,7 +30,6 @@ def _msx1_spec() -> MachineSpec:
 
 def _msx2_spec() -> MachineSpec:
     return MachineSpec(
-        id="test_msx2",
         name="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),

@@ -389,6 +389,7 @@ def run(
                             ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
                         else:
                             dst_base = pixels_ptr.value
+                            assert dst_base is not None
                             for row in range(tex_h):
                                 src_off = row * row_bytes
                                 ctypes.memmove(

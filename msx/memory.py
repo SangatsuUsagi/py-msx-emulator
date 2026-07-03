@@ -27,7 +27,6 @@ class Memory:
     sub_slot_reg: int = 0x00
     sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
     sub0_rom: bytes | None = field(default=None, repr=False)
-    sub1_rom: bytes | None = field(default=None, repr=False)
     rom_name: str = ""
     sub0_rom_name: str = ""
     _rom_len: int = field(init=False, repr=False, default=0)
