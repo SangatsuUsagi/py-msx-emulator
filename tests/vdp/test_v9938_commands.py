@@ -190,6 +190,62 @@ def test_hmmc_port_9c_write_when_inactive_ignored() -> None:
     assert vdp.vram[0] == 0x00  # unchanged
 
 
+def test_hmmc_no_preload_when_col_not_written() -> None:
+    # OpenMSX bug#1014: if R#44 (COL) is not written during setup, the command
+    # must NOT auto-load a first dot on dispatch — the first CPU byte is dot 0.
+    # Unconditionally preloading CLR shifted every transfer by one dot.
+    vdp = _make_vdp()
+    _write_cmd_reg(vdp, 4, 0)    # DX low  (R36)
+    _write_cmd_reg(vdp, 6, 0)    # DY low  (R38)
+    _write_cmd_reg(vdp, 8, 4)    # NX low  (R40) = 4 px = 2 bytes
+    _write_cmd_reg(vdp, 10, 1)   # NY low  (R42)
+    _write_cmd_reg(vdp, 13, 0)   # ARG     (R45)  — R#44 (COL) deliberately untouched
+    vdp.vram[0] = 0xEE           # sentinel
+    _write_cmd_reg(vdp, 14, 0xF0)  # R46: HMMC/IMP → dispatch
+    assert vdp.vram[0] == 0xEE   # NO preload on dispatch
+    assert vdp._cmd_active
+    vdp.write_port(0x9C, 0xCD)   # first CPU byte → dot 0
+    assert vdp.vram[0] == 0xCD   # not the stale COL
+
+
+def test_hmmc_nx0_is_line_width_not_512() -> None:
+    # NX=0 must mean the mode's pixels-per-line (256 in G4 = 128 bytes/row),
+    # NOT a hardcoded 512. Otherwise a CPU-feed transfer spans 2x the row and
+    # corrupts the off-screen buffer (Daisenryaku SCREEN5 garbling).
+    vdp = _make_vdp()
+    _write_cmd_reg(vdp, 4, 0)      # DX
+    _write_cmd_reg(vdp, 6, 0)      # DY
+    _write_cmd_reg(vdp, 8, 0)      # NX low  = 0
+    _write_cmd_reg(vdp, 9, 0)      # NX high = 0  → NX = 0
+    _write_cmd_reg(vdp, 10, 2)     # NY = 2
+    _write_cmd_reg(vdp, 13, 0)     # ARG (R#44 untouched → no preload)
+    _write_cmd_reg(vdp, 14, 0xF0)  # HMMC
+    for _ in range(128):           # one row = 256 px / 2 = 128 bytes
+        vdp.write_port(0x9C, 0x11)
+    assert vdp._cmd_active          # row 1 still pending (NX=256, not 512)
+    assert vdp._cmd_y == 1
+    for _ in range(128):
+        vdp.write_port(0x9C, 0x22)
+    assert not vdp._cmd_active      # both rows done
+    assert vdp.vram[0] == 0x11 and vdp.vram[127] == 0x11
+    assert vdp.vram[128] == 0x22 and vdp.vram[255] == 0x22
+
+
+def test_lmmc_no_preload_when_col_not_written() -> None:
+    # Same as above for LMMC (1 byte/pixel). First pixel comes from the port.
+    vdp = _make_vdp()
+    _write_cmd_reg(vdp, 4, 0)    # DX
+    _write_cmd_reg(vdp, 6, 0)    # DY
+    _write_cmd_reg(vdp, 8, 4)    # NX = 4 px
+    _write_cmd_reg(vdp, 10, 1)   # NY
+    _write_cmd_reg(vdp, 13, 0)   # ARG (R#44 untouched)
+    vdp.vram[0] = 0xEE
+    _write_cmd_reg(vdp, 14, 0xB0)  # R46: LMMC/IMP
+    assert vdp.vram[0] == 0xEE   # no preload
+    vdp.write_port(0x9B, 0x07)   # first pixel (0,0)=7 → high nibble
+    assert vdp.vram[0] & 0xF0 == 0x70
+
+
 def test_hmmc_transfers_bytes_via_port_9b() -> None:
     # V9938: port 0x9B doubles as command data port during HMMC/LMMC.
     # First byte pre-loaded in CLR; second via the port.
