@@ -134,6 +134,11 @@ class V9938:
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
     _cmd_active: bool = field(default=False, init=False, repr=False)
+    # OpenMSX 'transfer' latch: set on any R#44 (COL) write, consumed when the
+    # command engine writes a dot. HMMC/LMMC do NOT auto-load the first dot on
+    # dispatch (that caused a 1-pixel offset — OpenMSX bug#1014); the first dot
+    # comes from a pending COL write instead.
+    _cmd_transfer: bool = field(default=False, init=False, repr=False)
     _cmd_remaining: int = field(default=0, init=False, repr=False)
     _cmd_code: int = field(default=0, init=False, repr=False)
     _cmd_dx: int = field(default=0, init=False, repr=False)
@@ -330,12 +335,10 @@ class V9938:
                             self._update_irq()
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
-                        if (
-                            reg == 44
-                            and self._cmd_active
-                            and self._cmd_code in (_CMD_HMMC, _CMD_LMMC)
-                        ):
-                            self._cmd_data_write(low)
+                        if reg == 44:
+                            self._cmd_transfer = True  # COL write → transfer latch
+                            if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                                self._cmd_data_write(low)
                     elif reg == 46:
                         self.cmd_regs[14] = low
                         self._dispatch_command()
@@ -373,6 +376,8 @@ class V9938:
                     self._update_irq()
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
+                if ptr == 44:
+                    self._cmd_transfer = True  # COL write → transfer latch
             elif ptr == 46:
                 self.cmd_regs[14] = value
                 self._dispatch_command()
@@ -608,7 +613,7 @@ class V9938:
             self._lmcm_buf = []
             self._lmcm_idx = 0
             rows = ny if ny else 1024
-            cols = nx if nx else 512
+            cols = nx if nx else self._cmd_bpl * self._cmd_ppb
             ppb = self._cmd_ppb
             for row in range(rows):
                 yy = sy + row * ys
@@ -626,7 +631,7 @@ class V9938:
             return
 
         if cmd == _CMD_LMMV:
-            actual_nx = nx if nx else 512
+            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
             actual_ny = ny if ny else 1024
             clr_px = clr & px_mask
             for row in range(actual_ny):
@@ -639,7 +644,7 @@ class V9938:
             return
 
         if cmd == _CMD_LMMM:
-            actual_nx = nx if nx else 512
+            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
             actual_ny = ny if ny else 1024
             for row in range(actual_ny):
                 syy = sy + row * ys
@@ -653,7 +658,7 @@ class V9938:
             return
 
         if cmd == _CMD_HMMV:
-            actual_nx = nx if nx else 512
+            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
             actual_ny = ny if ny else 1024
             for row in range(actual_ny):
                 yy = dy + row * ys
@@ -666,7 +671,7 @@ class V9938:
             return
 
         if cmd == _CMD_HMMM:
-            actual_nx = nx if nx else 512
+            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
             actual_ny = ny if ny else 1024
             for row in range(actual_ny):
                 syy = sy + row * ys
@@ -704,7 +709,7 @@ class V9938:
         self._cmd_active = True
         self._cmd_dx = dx
         self._cmd_dy = dy
-        self._cmd_nx = nx if nx else 512
+        self._cmd_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
         self._cmd_ny = ny if ny else 1024
         self._cmd_x = 0
         self._cmd_y = 0
@@ -712,14 +717,15 @@ class V9938:
         self._cmd_xstep = xs
         self._cmd_ystep = ys
         self._status2 |= _S2_CE
-        # The first datum is pre-loaded in R#44 (CLR) before the command is
-        # issued; the engine consumes it on dispatch and the CPU then supplies
-        # the remaining NX*NY-1 dots via the data port. (Handbook: NX*NY bytes
-        # total, "including first byte pre-loaded in R#44".)
-        self._cmd_data_write(clr)
+        # V9938 does NOT auto-load the first dot from R#44 at command start
+        # (OpenMSX startLmmc/startHmmc set TR only). Writing R#44 (COL) sets the
+        # transfer latch; if that happened during command setup the pending COL
+        # is the first dot, otherwise the first CPU data-port write supplies it.
+        # Unconditionally consuming CLR here shifted every transfer by one dot
+        # (OpenMSX bug#1014, "one pixel offset").
+        if self._cmd_transfer:
+            self._cmd_data_write(clr)
         if self._cmd_active:
-            # Ready for the next byte immediately (the pre-load is consumed as
-            # part of command start, not a timed CPU transfer).
             self._tr_delay = 0
             self._status2 |= _S2_TR
 
@@ -727,6 +733,8 @@ class V9938:
         """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
         if not self._cmd_active or self._cmd_code == _CMD_LMCM:
             return
+        # A pending byte is being consumed → clear the transfer latch.
+        self._cmd_transfer = False
         # TR=0 while VDP processes; tick() re-asserts TR after _CYCLES_PER_BYTE
         self._status2 &= ~_S2_TR
         self._tr_delay = _CYCLES_PER_BYTE

@@ -28,7 +28,7 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
 
 
 _HELP = (
-    "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | "
+    "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
     "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | c | q"
 )
@@ -95,6 +95,8 @@ class Debugger:
                 self._cmd_dump(args)
             elif cmd == "dv":
                 self._cmd_dump_vram(args)
+            elif cmd == "dvf":
+                self._cmd_dump_vram_file(args)
             elif cmd == "ba":
                 self._cmd_break(["a"] + args)
             elif cmd == "br":
@@ -234,6 +236,19 @@ class Debugger:
             hex_part = " ".join(f"{b:02X}" for b in row_bytes)
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
             print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {hex_part}  {ascii_part}")
+
+    def _cmd_dump_vram_file(self, args: list[str]) -> None:
+        if not args:
+            print("Usage: dvf FILE  (write full VRAM as raw binary)")
+            return
+        vram = self._machine.vdp.vram
+        try:
+            with open(args[0], "wb") as f:
+                f.write(bytes(vram))
+        except OSError as exc:
+            print(f"dvf: {exc}")
+            return
+        print(f"dvf: wrote {len(vram)} bytes to {args[0]}")
 
     def _cmd_break(self, args: list[str]) -> None:
         if not args:
