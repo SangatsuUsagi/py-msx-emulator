@@ -21,6 +21,8 @@ _RTYPE_MASK = 0x1F
 class Mapper(Protocol):
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
+    def snapshot(self) -> dict[str, object]: ...
+    def restore(self, state: dict[str, object]) -> None: ...
 
 
 @dataclass
@@ -125,7 +127,7 @@ class Ascii8Mapper(_BankTracing):
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[assignment]
+        self._banks[:] = state["banks"]  # type: ignore[call-overload]
 
 
 @dataclass
@@ -169,7 +171,7 @@ class Ascii16Mapper(_BankTracing):
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[assignment]
+        self._banks[:] = state["banks"]  # type: ignore[call-overload]
 
 
 @dataclass
@@ -257,7 +259,8 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
-        self.sram[:] = state["sram"]  # type: ignore[index,assignment]
+        if self.sram is not None:
+            self.sram[:] = state["sram"]  # type: ignore[call-overload]
 
 
 @dataclass
@@ -323,7 +326,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
-        self.sram[:] = state["sram"]  # type: ignore[index,assignment]
+        if self.sram is not None:
+            self.sram[:] = state["sram"]  # type: ignore[call-overload]
 
 
 @dataclass
@@ -377,7 +381,7 @@ class RTypeMapper(_BankTracing):
         return {"bank": self._bank}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._bank = int(state["bank"])  # type: ignore[arg-type]
+        self._bank = int(state["bank"])  # type: ignore[call-overload]
 
 
 @dataclass
@@ -435,7 +439,7 @@ class KonamiMapper(_BankTracing):
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[assignment]
+        self._banks[:] = state["banks"]  # type: ignore[call-overload]
 
 
 @dataclass
@@ -497,7 +501,7 @@ class MajutsushiMapper(KonamiMapper):
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
-        self._last_dac = int(state["last_dac"])  # type: ignore[arg-type]
+        self._last_dac = int(state["last_dac"])  # type: ignore[call-overload]
 
 
 @dataclass
@@ -581,5 +585,5 @@ class KonamiSCCMapper(_BankTracing):
         return {"banks": list(self._banks), "scc_mode": self._scc_mode}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[assignment]
+        self._banks[:] = state["banks"]  # type: ignore[call-overload]
         self._scc_mode = bool(state["scc_mode"])

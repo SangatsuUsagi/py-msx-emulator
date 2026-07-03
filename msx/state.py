@@ -118,17 +118,17 @@ def _psg_synth_to_dict(machine: "Machine") -> dict[str, object]:
 
 def _restore_psg_synth(machine: "Machine", d: dict[str, object]) -> None:
     p = machine.psg
-    p._tone_cnt = list(d["_tone_cnt"])  # type: ignore[arg-type]
-    p._tone_out = list(d["_tone_out"])  # type: ignore[arg-type]
-    p._noise_cnt = int(d["_noise_cnt"])  # type: ignore[arg-type]
-    p._lfsr = int(d["_lfsr"])  # type: ignore[arg-type]
-    p._env_cnt = int(d["_env_cnt"])  # type: ignore[arg-type]
-    p._env_step = int(d["_env_step"])  # type: ignore[arg-type]
-    p._env_attack = int(d["_env_attack"])  # type: ignore[arg-type]
+    p._tone_cnt = list(d["_tone_cnt"])  # type: ignore[call-overload]
+    p._tone_out = list(d["_tone_out"])  # type: ignore[call-overload]
+    p._noise_cnt = int(d["_noise_cnt"])  # type: ignore[call-overload]
+    p._lfsr = int(d["_lfsr"])  # type: ignore[call-overload]
+    p._env_cnt = int(d["_env_cnt"])  # type: ignore[call-overload]
+    p._env_step = int(d["_env_step"])  # type: ignore[call-overload]
+    p._env_attack = int(d["_env_attack"])  # type: ignore[call-overload]
     p._env_alternate = bool(d["_env_alternate"])
     p._env_hold_flag = bool(d["_env_hold_flag"])
     p._env_holding = bool(d["_env_holding"])
-    p._clk_frac = int(d["_clk_frac"])  # type: ignore[arg-type]
+    p._clk_frac = int(d["_clk_frac"])  # type: ignore[call-overload]
 
 
 def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -150,33 +150,33 @@ def _restore_scc(machine: "Machine", d: dict[str, object] | None) -> None:
     if machine.scc is None or d is None:
         return
     s = machine.scc
-    s._waves = [list(w) for w in d["_waves"]]  # type: ignore[arg-type]
-    s._freq = list(d["_freq"])  # type: ignore[arg-type]
-    s._vol = list(d["_vol"])  # type: ignore[arg-type]
-    s._enable = int(d["_enable"])  # type: ignore[arg-type]
-    s._phase_cnt = list(d["_phase_cnt"])  # type: ignore[arg-type]
-    s._phase_idx = list(d["_phase_idx"])  # type: ignore[arg-type]
-    s._clk_frac = int(d["_clk_frac"])  # type: ignore[arg-type]
+    s._waves = [list(w) for w in d["_waves"]]  # type: ignore[attr-defined]
+    s._freq = list(d["_freq"])  # type: ignore[call-overload]
+    s._vol = list(d["_vol"])  # type: ignore[call-overload]
+    s._enable = int(d["_enable"])  # type: ignore[call-overload]
+    s._phase_cnt = list(d["_phase_cnt"])  # type: ignore[call-overload]
+    s._phase_idx = list(d["_phase_idx"])  # type: ignore[call-overload]
+    s._clk_frac = int(d["_clk_frac"])  # type: ignore[call-overload]
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
-    is_msx2 = isinstance(machine.vdp, V9938)
+    vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     mapper = machine.memory._mapper
     mapper_state = mapper.snapshot()
     # Common VDP address/latch state — identical field names on both VDP types.
     vdp_latch = machine.vdp.latch
     vdp_addr = machine.vdp.addr
     vdp_read_buf = machine.vdp.read_buf
-    if is_msx2:
-        vdp_palette: list[int] | None = list(machine.vdp.palette)
+    if vdp9938 is not None:
+        vdp_palette: list[int] | None = list(vdp9938.palette)
         # An MSX2 machine may have no RAM mapper; skip those fields when absent.
         rm = machine.memory.ram_mapper
         ram_mapper_ram: bytearray | None = bytearray(rm.ram) if rm is not None else None
         ram_mapper_banks: list[int] | None = list(rm.banks) if rm is not None else None
         sub_slot_reg: int | None = machine.memory.sub_slot_reg
-        cmd_regs: list[int] | None = list(machine.vdp.cmd_regs)
-        status2: int | None = machine.vdp._status2
-        cmd_remaining: int | None = machine.vdp._cmd_remaining
+        cmd_regs: list[int] | None = list(vdp9938.cmd_regs)
+        status2: int | None = vdp9938._status2
+        cmd_remaining: int | None = vdp9938._cmd_remaining
     else:
         vdp_palette = None
         ram_mapper_ram = None
@@ -187,7 +187,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cmd_remaining = None
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
-        machine_type="msx2" if is_msx2 else "msx1",
+        machine_type="msx2" if vdp9938 is not None else "msx1",
         cpu_regs=_cpu_regs_to_dict(machine),
         cpu_halted=machine.cpu.halted,
         cpu_iff1=machine.cpu.iff1,
@@ -226,8 +226,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"incompatible state file: version {snap.format_version}, "
             f"expected {CURRENT_FORMAT_VERSION}"
         )
-    is_msx2 = isinstance(machine.vdp, V9938)
-    expected_type = "msx2" if is_msx2 else "msx1"
+    vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
+    expected_type = "msx2" if vdp9938 is not None else "msx1"
     if snap.machine_type != expected_type:
         raise ValueError(
             f"machine type mismatch: running {expected_type!r}, "
@@ -260,20 +260,21 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.latch = snap.vdp_latch
     machine.vdp.addr = snap.vdp_addr
     machine.vdp.read_buf = snap.vdp_read_buf
-    if is_msx2:
-        machine.vdp.palette[:] = snap.vdp_palette  # type: ignore[arg-type]
+    if vdp9938 is not None:
+        if snap.vdp_palette is not None:
+            vdp9938.palette[:] = snap.vdp_palette
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
             rm.ram[:] = snap.ram_mapper_ram
-            rm.banks[:] = snap.ram_mapper_banks  # type: ignore[arg-type]
+            rm.banks[:] = snap.ram_mapper_banks  # type: ignore[assignment]
         if snap.sub_slot_reg is not None:
             machine.memory.sub_slot_reg = snap.sub_slot_reg
         if snap.cmd_regs is not None:
-            machine.vdp.cmd_regs[:] = snap.cmd_regs
+            vdp9938.cmd_regs[:] = snap.cmd_regs
         if snap.status2 is not None:
-            machine.vdp._status2 = snap.status2
+            vdp9938._status2 = snap.status2
         if snap.cmd_remaining is not None:
-            machine.vdp._cmd_remaining = snap.cmd_remaining
+            vdp9938._cmd_remaining = snap.cmd_remaining
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch

@@ -170,7 +170,7 @@ class V9938:
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     _irq: bool = field(default=False, init=False, repr=False)
-    _reg_write_log: list[tuple[int, int, int]] = field(
+    _reg_write_log: list[tuple[int, int, int | tuple[int, int]]] = field(
         default_factory=list, init=False, repr=False
     )
     _frame_start_regs: list[int] = field(
@@ -225,11 +225,6 @@ class V9938:
         m4 = (r0 >> 2) & 1
         m5 = (r0 >> 3) & 1
         return 512 if (m5 and not m4) else 256
-
-    @property
-    def frame_count(self) -> int:
-        """Number of completed frames (incremented once per frame by the machine)."""
-        return self._frame_count
 
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""

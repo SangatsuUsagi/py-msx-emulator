@@ -6,7 +6,7 @@ are implemented in later phases.
 from __future__ import annotations
 
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -171,12 +171,12 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     return out
 
 
-def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
+def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
     """Build (y0, y1, regs_snapshot, palette_snapshot) bands from register change log."""
     log = vdp._reg_write_log
     display_height = vdp.display_height
 
-    change_lines: dict[int, list[tuple[int, int]]] = {}
+    change_lines: dict[int, list[tuple[int, int | tuple[int, int]]]] = {}
     for dl, reg, value in log:
         # Writes logged at display_line=N happen during line N+1's CPU window
         # (begin_scanline(N) fires after N's CPU budget; ISR runs in N+1's window).
@@ -198,9 +198,11 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list, list]]:
             bands.append((prev_y, line, list(cur_regs), list(cur_palette)))
         for reg, value in change_lines[line]:
             if reg == -1:
+                assert isinstance(value, tuple)
                 idx, rgb = value
                 cur_palette[idx] = rgb
             else:
+                assert isinstance(value, int)
                 cur_regs[reg] = value
         prev_y = line
 
@@ -253,7 +255,7 @@ def _render_banded(vdp: "V9938") -> bytearray:
     def _sat_key(regs: list[int]) -> tuple[int, int]:
         return (regs[5], regs[11] & 0x03)
 
-    sat_segments: list[list] = []  # [y0, y1, regs_of_largest_band, largest_band_h]
+    sat_segments: list[list[Any]] = []  # [y0, y1, regs_of_largest_band, largest_band_h]
     for y0, y1, band_regs, _ in bands:
         bh = y1 - y0
         if sat_segments and _sat_key(sat_segments[-1][2]) == _sat_key(band_regs):
@@ -566,6 +568,7 @@ def _render_sprites(
         # affect line_count / 5S / coincidence, so iterating the wrapped band
         # first (increasing screen line) is equivalent to the old full scan.
         end = y_top + render_size
+        lines: Iterable[int]
         if end <= 256:
             lines = range(max(y_start, y_top), min(scan_hi, end))
         else:
@@ -694,13 +697,14 @@ def _render_sprites_mode2(
         # line_count / 9S / cc0 / coincidence state, so this matches the old scan.
         base_line = (y_top - vscroll) & 0xFF
         end = base_line + max_sprite_rows
+        lines2: Iterable[int]
         if end <= 256:
-            lines = range(max(y_start, base_line), min(scan_hi, end))
+            lines2 = range(max(y_start, base_line), min(scan_hi, end))
         else:
-            lines = chain(range(y_start, min(scan_hi, end - 256)),
-                          range(max(y_start, base_line), scan_hi))
+            lines2 = chain(range(y_start, min(scan_hi, end - 256)),
+                           range(max(y_start, base_line), scan_hi))
 
-        for line in lines:
+        for line in lines2:
             # Sprite Y is in VRAM coordinate space; account for vertical scroll.
             vram_line = (line + vscroll) & 0xFF
             sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < max_sprite_rows

@@ -267,7 +267,6 @@ def _make_msx2_no_ram_mapper():
     """Build an MSX2 machine (V9938) that has no RAM mapper (ram_mapper is None)."""
     from msx.machine_loader import MachineSpec, _RomEntry, build_machine
     spec = MachineSpec(
-        id="test_msx2_nomap",
         name="test_msx2_nomap",
         generation="msx2",
         rom_base_dir=Path("."),

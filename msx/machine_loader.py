@@ -63,7 +63,7 @@ _SRAM_SIZES: dict[str, int] = {
 def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
     """Resolve the mapper type and return it with the cartridge sha1 (computed
     once here so callers can reuse it for the SRAM save path)."""
-    sha1 = hashlib.sha1(cartridge).hexdigest() if cartridge is not None else None
+    sha1 = hashlib.sha1(cartridge, usedforsecurity=False).hexdigest() if cartridge is not None else None
     if mapper != "auto":
         return mapper, sha1
     if cartridge is None:
@@ -131,7 +131,6 @@ class MachineLoadError(Exception):
 
 @dataclass
 class _DeviceDef:
-    id: str
     type: str
     implemented: bool
     raw: dict[str, Any]
@@ -149,7 +148,6 @@ class _RomEntry:
 class MachineSpec:
     """Fully-resolved machine wiring, ready for instantiation."""
 
-    id: str
     name: str
     generation: str          # 'msx1' | 'msx2'
     rom_base_dir: Path
@@ -218,7 +216,7 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
             raise MachineLoadError(f"{path}: missing required field 'type'")
         implemented: bool = bool(raw.get("implemented", True))
         registry[str(dev_id)] = _DeviceDef(
-            id=str(dev_id), type=str(dev_type), implemented=implemented, raw=raw
+            type=str(dev_type), implemented=implemented, raw=raw
         )
     return registry
 
@@ -436,7 +434,6 @@ def load_machine_spec(
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return MachineSpec(
-        id=machine_id,
         name=name,
         generation=str(generation),
         rom_base_dir=rom_base_dir,

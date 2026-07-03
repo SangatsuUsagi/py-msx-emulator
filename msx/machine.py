@@ -199,9 +199,8 @@ class Machine:
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
         cpu_step = self.cpu.step
-        is_v9938 = isinstance(self.vdp, V9938)
-        vdp_tick = self.vdp.tick if is_v9938 else None
-        vdp9938 = self.vdp if is_v9938 else None
+        vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
+        vdp_tick = vdp9938.tick if vdp9938 is not None else None
         cpu = self.cpu
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
@@ -256,7 +255,7 @@ class Machine:
                             n = cpu_step()
                             total += n
                             line_cycles += n
-                            vdp_tick(n)
+                            vdp9938.tick(n)
                         self.cycle_count += line_cycles
                         vdp9938.begin_scanline(L)
                         cpu.int_pending = vdp9938.irq
@@ -307,8 +306,8 @@ class Machine:
             if cpu.halted and not cpu.iff1:
                 self._logger.on_hang_halt_di(cpu.registers.PC)
 
-        if is_v9938:
-            result = render_frame_v9938(self.vdp, skip_render=skip_render)
+        if vdp9938 is not None:
+            result = render_frame_v9938(vdp9938, skip_render=skip_render)
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.

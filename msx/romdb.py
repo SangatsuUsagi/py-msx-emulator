@@ -8,7 +8,7 @@ try:
     import yaml as _yaml
     _YAML_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    _yaml = None  # type: ignore[assignment]
+    _yaml = None
     _YAML_AVAILABLE = False
     print(
         "warning: PyYAML not installed — ROM database auto-detection disabled",
@@ -35,7 +35,7 @@ def _entry(cartridge: bytes) -> dict[str, object] | None:
     """Return the ROM-database entry for a cartridge, computing its sha1 once."""
     if not cartridge:
         return None
-    sha1 = hashlib.sha1(cartridge).hexdigest()
+    sha1 = hashlib.sha1(cartridge, usedforsecurity=False).hexdigest()
     return _load().get(sha1)
 
 
