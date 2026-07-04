@@ -287,3 +287,121 @@ def test_raw_joy_button1_sets_trigger_b() -> None:
     _open_single_joy(mgr, sdl)
     mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=1))
     assert inp.joy1 & (1 << 5) == 0  # bit 5 (Trigger B) pressed
+
+
+# ---------------------------------------------------------------------------
+# 4.6–4.9  Turbo fire (X/Y buttons)
+# ---------------------------------------------------------------------------
+
+def test_gc_button_x_press_adds_to_turbo_held() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
+    assert (0, 5) in mgr._turbo_held  # X → Trigger B
+    assert inp.joy1 & (1 << 5) != 0  # no direct bit write
+
+
+def test_gc_button_x_release_removes_turbo_and_releases_bit() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
+    mgr.tick()  # drives bit low
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))
+    assert (0, 5) not in mgr._turbo_held
+    assert inp.joy1 & (1 << 5) != 0  # bit released
+
+
+def test_gc_button_y_press_release_mirrors_x_for_bit5() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))
+    assert (0, 4) in mgr._turbo_held  # Y → Trigger A
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=3))
+    assert (0, 4) not in mgr._turbo_held
+    assert inp.joy1 & (1 << 4) != 0  # bit released
+
+
+def test_tick_on_off_off_cycle() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+
+    mgr.tick()  # frame 0: ON
+    assert inp.joy1 & (1 << 5) == 0
+
+    mgr.tick()  # frame 1: OFF
+    assert inp.joy1 & (1 << 5) != 0
+
+    mgr.tick()  # frame 2: OFF
+    assert inp.joy1 & (1 << 5) != 0
+
+    mgr.tick()  # frame 3: ON (new cycle)
+    assert inp.joy1 & (1 << 5) == 0
+
+
+def test_tick_noop_when_no_turbo_held() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    counter_before = mgr._turbo_counter
+    mgr.tick()
+    assert mgr._turbo_counter == counter_before  # counter not incremented
+
+
+def test_turbo_counter_resets_on_first_press() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr._turbo_counter = 2  # simulate mid-cycle state
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    assert mgr._turbo_counter == 0
+    mgr.tick()  # should be ON (frame 0)
+    assert inp.joy1 & (1 << 5) == 0
+
+
+def test_device_disconnect_clears_turbo_state() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    assert (0, 5) in mgr._turbo_held
+
+    ev = gc_event(sdl, sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
+    mgr.handle_event(ev)
+
+    assert (0, 5) not in mgr._turbo_held
+    assert inp.joy1 & (1 << 5) != 0  # bit released
+
+
+def test_raw_joy_button2_activates_trigger_a_turbo() -> None:
+    mgr, inp, sdl = make_manager(is_gc=False)
+    _open_single_joy(mgr, sdl)
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=2))
+    assert (0, 4) in mgr._turbo_held
+    assert inp.joy1 & (1 << 4) != 0  # no direct bit write
+
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONUP, 55, button=2))
+    assert (0, 4) not in mgr._turbo_held
+
+
+def test_raw_joy_button3_activates_trigger_b_turbo() -> None:
+    mgr, inp, sdl = make_manager(is_gc=False)
+    _open_single_joy(mgr, sdl)
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=3))
+    assert (0, 5) in mgr._turbo_held
+
+    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONUP, 55, button=3))
+    assert (0, 5) not in mgr._turbo_held
+    assert inp.joy1 & (1 << 5) != 0  # bit released
+
+
+def test_releasing_one_turbo_does_not_affect_other() -> None:
+    mgr, inp, sdl = make_manager()
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))  # Y → TrigA
+    assert (0, 5) in mgr._turbo_held
+    assert (0, 4) in mgr._turbo_held
+
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))  # release X
+    assert (0, 5) not in mgr._turbo_held
+    assert (0, 4) in mgr._turbo_held  # Y still active
+    mgr.tick()  # Y turbo still fires
+    assert inp.joy1 & (1 << 4) == 0
