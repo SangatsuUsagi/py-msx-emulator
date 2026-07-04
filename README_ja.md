@@ -1,10 +1,10 @@
 # py-msx-emulator
 
-機械可読なコンポーネント仕様書によって駆動される、純粋な Python で書かれた機能的に正確な MSX1 エミュレータです。
+機械可読なコンポーネント仕様書によって駆動される、純粋な Python で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-498%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1245%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -12,37 +12,46 @@
 
 ## ゴール
 
-> **このエミュレータの主な目標は、MSX1 上で [KONAMI の沙羅曼蛇（Salamander）](https://ja.wikipedia.org/wiki/%E6%B2%99%E7%BE%85%E6%9B%BC%E8%9B%87) を動かすことです。**
+> **このエミュレータの主な目標は、対象世代のハードウェアで特定のタイトルを正確に動かすことです。**
 >
-> 互換性に関する注記: このエミュレータは、作者が所有する沙羅曼蛇の物理的な ROM ダンプのみでテストされています。すべての MSX1 ROM が正しく動作することを保証するものではありません。他のタイトルに関するバグ報告は歓迎しますが、サポートはベストエフォートとなります。
+> **MSX1:** [沙羅曼蛇（Salamander）— KONAMI](https://ja.wikipedia.org/wiki/%E6%B2%99%E7%BE%85%E6%9B%BC%E8%9B%87) · [グラディウス2（Nemesis 2）— KONAMI](https://ja.wikipedia.org/wiki/%E3%82%B0%E3%83%A9%E3%83%87%E3%82%A3%E3%82%A6%E3%82%B92) · [夢大陸アドベンチャー（Penguin Adventure）— KONAMI](https://ja.wikipedia.org/wiki/%E5%A4%A2%E5%A4%A7%E9%99%B8%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC)
+>
+> **MSX2:** [ドラゴンスレイヤーIV ドラスレファミリー（Legacy of the Wizard）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%89%E3%83%A9%E3%82%B4%E3%83%B3%E3%82%B9%E3%83%AC%E3%82%A4%E3%83%A4%E3%83%BCIV_%E3%83%89%E3%83%A9%E3%82%B9%E3%83%AC%E3%83%95%E3%82%A1%E3%83%9F%E3%83%AA%E3%83%BC) · [ロマンシア（Romancia）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9E%E3%83%B3%E3%82%B7%E3%82%A2)
+>
+> 互換性に関する注記: このエミュレータは、作者が所有する物理 ROM ダンプのみでテストされています。上記以外の MSX1/MSX2 ROM が正しく動作することを保証するものではありません。他のタイトルに関するバグ報告は歓迎しますが、サポートはベストエフォートとなります。
 
 ---
 
 ## 概要
 
-py-msx-emulator は、沙羅曼蛇を動かすために必要なハードウェアの正確な再現を目標とした、機能的な MSX1 エミュレータです。SDL2 ディスプレイ・オーディオライブラリを除き、C 拡張やネイティブバインディングを一切使用せず、純粋な Python 3.10+ のみで書かれています。
+py-msx-emulator は、対象タイトルを動かすために必要なハードウェアの正確な再現を目標とした、機能的な MSX1/MSX2 エミュレータです。SDL2 ディスプレイ・オーディオライブラリを除き、C 拡張やネイティブバインディングを一切使用せず、純粋な Python 3.10+ のみで書かれています。
 
 **設計方針:**
 
 - **ポータビリティ最優先。** すべてのコンポーネントは純粋な Python です。プラットフォーム固有の依存関係は、ディスプレイ・オーディオフロントエンド用の pysdl2 のみです。
 - **仕様駆動開発（Spec-Driven Development）。** 各ハードウェアコンポーネントは、実装コードを書く前に機械可読な仕様書として定義されます。仕様書は `openspec/specs/` 以下に置かれ、テスト設計・実装・変更管理を駆動します。
-- **明示的であること。** コンポーネントの配線は `make_machine()` で手動で行います。リフレクションや魔法的な依存性注入は使用しません。
+- **明示的であること。** コンポーネントの配線は `build_machine()` で手動で行います。リフレクションや魔法的な依存性注入は使用しません。
 
 ---
 
 ## 機能一覧
 
-- **Zilog Z80 CPU** — 完全なレジスタファイル（AF, BC, DE, HL, IX, IY, SP, PC, I, R およびシャドウレジスタ）、252 の文書化済みオペコードすべて、CB/DD/ED/FD プレフィックステーブル、非文書化の IXH/IXL/IYH/IYL レジスタアクセスオペコード、マスカブル割り込み（INT モード 1・モード 2）および非マスカブル割り込み（NMI）、T ステート精度のステッピング
+- **Zilog Z80 CPU** — 完全なレジスタファイル（AF、BC、DE、HL、IX、IY、SP、PC、I、R およびシャドウレジスタ）、252 の文書化済みオペコードすべて、CB/DD/ED/FD プレフィックステーブル、非文書化の IXH/IXL/IYH/IYL レジスタアクセスオペコード、マスカブル割り込み（INT モード 1・モード 2）および非マスカブル割り込み（NMI）、T ステート精度のステッピング
 - **TMS9918A VDP** — 16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト 40 桁、グラフィック 1/2、マルチカラー）、サイズ・拡大率付きスプライト描画、5 番目スプライトフラグおよびコインシデンスフラグ、VBlank 割り込み
+- **Yamaha V9938 VDP** — 128 KB VRAM、28 個のコントロールレジスタ、プログラマブル 16 色パレット（9 ビット GRB333）、スクリーンモード 0–8（SCREEN 0 〜 SCREEN 8）、ハードウェアコマンドエンジン（HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH）、水平ライン割り込み（R#19/R#23、IE1）、バンディングレンダラによるフレーム途中のレジスタ・パレット変更対応
 - **AY-3-8910 PSG** — 16 レジスタ、3 トーンチャンネル、ノイズチャンネル、8 波形エンベロープジェネレータ、準対数振幅テーブル、44100 Hz PCM サンプル出力（1 フレームあたり 735 サンプル）
 - **Konami SCC** — 5 チャンネルウェーブテーブルシンセサイザ（4 波形バンク、各 32 サンプル）、チャンネルごとの 12 ビット周波数・4 ビットボリューム、PSG と混合してオーディオ出力
 - **i8255 PPI** — スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）
-- **MSX スロットシステム** — 4 ページ × 4 スロットディスパッチ、スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM
-- **カートリッジマッパー** — フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC；SHA1 ベースの ROM データベースから自動検出
-- **SDL2 フロントエンド** — 768×576 ウィンドウ（256×192 × スケール 3）、TMS9918A ハードウェアパレット、44100 Hz モノラルオーディオ、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、自動フレームスキップ（遅延フレームで VDP ピクセル描画を省略；VBlank 割り込みは毎フレーム発火）
+- **MSX1 スロットシステム** — 4 ページ × 4 スロットディスパッチ、スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM
+- **MSX2 サブスロットシステム** — プライマリスロット 3 を 4 つのセカンダリスロットに拡張；サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパー
+- **RAM マッパー** — 128 KB メインメモリ（8 セグメント × 16 KB）、ポート 0xFC–0xFF のセグメントレジスタ
+- **RTC** — RP5C01 リアルタイムクロック、ポート 0xB4–0xB5
+- **カートリッジマッパー** — フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type；SHA1 ベースの ROM データベースから自動検出
+- **SDL2 フロントエンド** — 768×576 ウィンドウ（256×192 × スケール 3）、ハードウェアパレット、44100 Hz モノラルオーディオ、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、自動フレームスキップ（遅延フレームで VDP ピクセル描画を省略；VBlank 割り込みは毎フレーム発火）
 - **物理ジョイスティック** — SDL2 GameController および生ジョイスティック API、ホットプラグ対応、キーボードによるジョイスティックエミュレーション（WASD + ZX/.,）
 - **ステートセーブ/ロード** — pickle による完全なハードウェアスナップショット（CPU、RAM、VDP、PSG、SCC、マッパーバンク）、セーブごとに PNG スクリーンショットも保存、素早い復帰のための `saves/latest.*` シンボリックリンク
 - **ROM データベース** — SHA1 によるタイトル検索で自動的にゲームタイトルとマッパーを判別
+- **インタラクティブデバッガ** — Ctrl+C またはブレークポイント到達でアクセスできる REPL；ブレークポイント/ウォッチポイント、ステップ実行、レジスタ/VRAM ダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットインスペクタ
 - **デバッグツール** — オプトインの構造化ログ、CPU 命令トレース、I/O ポートトレース、ハング検出器
 - **純粋な Python** — C 拡張なし；Python 3.10 と SDL2 が動作する環境ならどこでも実行可能
 
@@ -76,7 +85,7 @@ the instruction, and return the number of T-states consumed.
 
 以下のコンポーネントについて仕様書が定義されています。
 
-`z80-cpu` · `vdp-core` · `vdp-renderer` · `vdp-sprites` · `vdp-interrupt` · `psg` · `psg-synthesis` · `scc-sound-chip` · `ppi` · `memory-bus` · `mega-rom-mapper` · `io-bus` · `keyboard-matrix` · `joystick-input` · `physical-joystick` · `machine` · `frame-timer` · `hang-detector` · `romdb` · `debug-logger` · `cpu-trace-buffer` · `io-trace` · `boot-diagnostic` · `sdl2-frontend` · `state-save-load`
+`z80-cpu` · `vdp-core` · `vdp-renderer` · `vdp-sprites` · `vdp-interrupt` · `psg` · `psg-synthesis` · `scc-sound-chip` · `ppi` · `memory-bus` · `mega-rom-mapper` · `io-bus` · `keyboard-matrix` · `joystick-input` · `physical-joystick` · `machine` · `frame-timer` · `hang-detector` · `romdb` · `debug-logger` · `cpu-trace-buffer` · `io-trace` · `boot-diagnostic` · `sdl2-frontend` · `state-save-load` · `v9938-vdp` · `v9938-state` · `v9938-cmd-registers` · `v9938-cmd-hmmv-hmmm` · `v9938-cmd-hmmc` · `v9938-cmd-stop` · `v9938-g4-renderer` · `vdp-banded-renderer` · `vdp-line-interrupt` · `vdp-cmd-timing` · `vdp-renderer-optimized` · `vdp-tracer` · `msx2-subslot` · `msx2-logo-rom` · `ram-memory-mapper` · `rtc` · `sram-mapper` · `machine-config-loader` · `z80-debugger` · `z80-disassembler` · `mapper-tracer` · `joystick-turbo` · `majutsushi-dac` · `cli`
 
 > 注: `openspec/` ディレクトリおよび `tests/` ディレクトリは公開リポジトリには含まれていません。
 
@@ -96,7 +105,7 @@ the instruction, and return the number of T-states consumed.
 | タイミング | `step()` が消費 T ステート数を返す；1 NTSC フレームあたり 59,659 T ステート |
 | 既知の制限 | OTIR/INIR 等のブロック I/O 命令はページ境界をまたぐ場合にサイクル精度でない；R レジスタはオペコードフェッチ時のみインクリメント |
 
-### VDP — TMS9918A
+### VDP — TMS9918A（MSX1）
 
 | 項目 | 詳細 |
 |------|------|
@@ -108,6 +117,22 @@ the instruction, and return the number of T-states consumed.
 | 出力 | 1 フレームあたり 256×192 の色インデックスバッファ；フロントエンドが TMS9918A パレットを使って RGB24 に変換 |
 | 割り込み | VBlank が INT コールバックをトリガ；ステータスレジスタのビット 7 は読み出し時にクリア |
 | 既知の制限 | フレーム途中でのレジスタ変更タイミングと非文書化のスプライトオーバーフロー動作はエミュレートされていない |
+
+### VDP — Yamaha V9938（MSX2）
+
+| 項目 | 詳細 |
+|------|------|
+| 実装 | `msx/vdp/v9938.py`、`msx/vdp/v9938_renderer.py` |
+| VRAM | 128 KB |
+| コントロールレジスタ | ポート 0x99 経由の 28 レジスタ（R#0–R#27）；コマンドレジスタ 15 本（R#32–R#46） |
+| スクリーンモード | SCREEN 0–8：テキスト 40 桁からグラフィック 7 まで；主対象は SCREEN 5（グラフィック 4、256×212×16 色） |
+| パレット | 16 エントリ、9 ビット GRB333；ポート 0x9A 経由でプログラマブル；リセット時に MSX2 標準デフォルトパレットをロード |
+| ステータスレジスタ | S#0（VBlank/スプライトフラグ）、S#1（水平ライン割り込みフラグ FH）、S#2（コマンドエンジン CE/TR、リトレース HR/VR） |
+| 割り込み | VBlank（IE0、R#1 ビット 5）および水平ライン（IE1、R#0 ビット 4）；命令境界ごとにサンプリングするレベルベース IRQ |
+| 水平ライン割り込み | `display_line == (R#19 − R#23) & 0xFF` かつアクティブ表示域内で発火 |
+| コマンドエンジン | HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH；論理演算 IMP/AND/OR/XOR/NOT；近似サイクルタイミング |
+| バンディングレンダラ | フレーム途中のレジスタ・パレット書き込みを `_reg_write_log` にキャプチャ；バンドごとのレジスタスナップショットを使ってフレームを複数パスで描画 |
+| 既知の制限 | コマンドタイミングは近似値；ビームレースの書き込みやフレーム内の VRAM ダブルバッファは忠実に再現されない |
 
 ### PSG — AY-3-8910
 
@@ -142,6 +167,23 @@ the instruction, and return the number of T-states consumed.
 | ポート 0xAA | キーボード行セレクタ（ビット 0–3） |
 | 既知の制限 | カセットインターフェース（ポート 0xAA のビット 4–7）は実装されていない |
 
+### RAM マッパー
+
+| 項目 | 詳細 |
+|------|------|
+| 実装 | `msx/ram_mapper.py` |
+| 容量 | 128 KB（8 セグメント × 16 KB） |
+| セグメントレジスタ | ポート 0xFC（ページ 0）、0xFD（ページ 1）、0xFE（ページ 2）、0xFF（ページ 3） |
+| マッピング | 各 16 KB CPU ページが独立して 8 セグメントのうち 1 つを選択 |
+
+### RTC — RP5C01
+
+| 項目 | 詳細 |
+|------|------|
+| 実装 | `msx/rtc.py` |
+| ポート | 0xB4（レジスタ選択）、0xB5（データ読み書き） |
+| 既知の制限 | クロック読み出しはホストシステム時刻を反映；アラームおよびタイマー出力は未実装 |
+
 ### メモリバス / スロットシステム
 
 | 項目 | 詳細 |
@@ -150,22 +192,27 @@ the instruction, and return the number of T-states consumed.
 | アドレス空間 | フラット 64 KB（0x0000–0xFFFF）、4 つの 16 KB ページ |
 | スロット 0 | BIOS ROM（読み取り専用） |
 | スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；スロット 2 ROM が未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視） |
-| スロット 3 | 0x8000–0xFFFF の 32 KB RAM |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視） |
+| スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
+| スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
 ### カートリッジマッパー
 
 | マッパー | 説明 |
 |---------|------|
 | `FlatMapper` | バンク切り替えなし；ROM を 32 KB カートリッジ領域全体にミラー |
-| `Ascii8Mapper` | 0x4000/0x6000/0x8000/0xA000 に 4 つの 8 KB ウィンドウ；コントロールレジスタは 0x6000–0x7FFF |
-| `Ascii16Mapper` | 0x4000 と 0x8000 に 2 つの 16 KB ウィンドウ；コントロールレジスタは 0x6000–0x7FFF |
-| `KonamiMapper` | 0x6000/0x8000/0xA000 に 3 つの 8 KB ウィンドウ；バンクレジスタはウィンドウベースアドレスへの書き込みで選択 |
+| `Ascii8Mapper` | 4 つの 8 KB ウィンドウ；コントロールレジスタは 0x6000–0x7FFF |
+| `Ascii16Mapper` | 2 つの 16 KB ウィンドウ；コントロールレジスタは 0x6000–0x7FFF |
+| `KonamiMapper` | 3 つの 8 KB ウィンドウ；バンクレジスタはウィンドウベースアドレスへの書き込みで選択 |
 | `KonamiSCCMapper` | Konami と同じだが、0x9000 への 0x3F 書き込みで SCC を有効化 |
+| `MajutsushiMapper` | ASCII8 派生型；0x9000 への書き込みで DAC 出力 |
+| `ASCII8SRAM2`、`ASCII8SRAM8` | ASCII8 + 2 KB または 8 KB バッテリーバックアップ SRAM |
+| `ASCII16SRAM2`、`ASCII16SRAM8` | ASCII16 + 2 KB または 8 KB バッテリーバックアップ SRAM |
+| `RTypeMapper` | 8 KB ウィンドウ；バンク 0 は ROM 先頭に固定 |
 
 マッパーは SHA1 ROM データベースから自動検出されます。`--mapper` オプションで上書き可能です。
 
-スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 では無効です。ROM データベースがスロット 2 カートリッジに対して `KonamiSCC` を返した場合、警告を標準エラー出力に表示したうえで `Konami` マッパーに自動フォールバックします。
+スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 では無効です。ROM データベースがスロット 2 カートリッジに対して `KonamiSCC` を返した場合、警告を stderr に表示したうえで `Konami` マッパーに自動フォールバックします。
 
 ### ROM データベース
 
@@ -174,7 +221,7 @@ the instruction, and return the number of T-states consumed.
 | 実装 | `msx/romdb.py` |
 | 検索キー | カートリッジ ROM の SHA1 ハッシュ |
 | データ | ROM ごとのゲームタイトルと推奨マッパー種別 |
-| データソース | [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) をベースに作成 |
+| データソース | [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml)（参照元；すべてのエントリは独自に収集した事実情報） |
 | フォールバック | PyYAML が未インストールの場合、または ROM がデータベースに未登録の場合、タイトルなしで起動し、マッパーは `--mapper auto` のヒューリスティックにフォールバック |
 
 ### I/O バス
@@ -204,7 +251,7 @@ the instruction, and return the number of T-states consumed.
 |-----------|--------------|------|
 | Pillow | 12.0 | スクリーンショットおよびステートセーブの PNG 出力 |
 | pysdl2 | 0.9.16 | ディスプレイ・オーディオフロントエンドの SDL2 バインディング |
-| PyYAML | 6.0 | ROM データベースのタイトル検索（なくてもエミュレータは動作します） |
+| PyYAML | 6.0 | ROM データベースのタイトル検索とマシン YAML 読み込み（なくてもエミュレータは動作します） |
 
 開発用依存関係（pytest、ruff、mypy）は `requirements-dev.txt` に記載されています。このプロジェクトは PyPI には公開されておらず、パッケージとしてインストールすることを想定していません。
 
@@ -222,9 +269,9 @@ the instruction, and return the number of T-states consumed.
 
 60 fps を維持できないプラットフォームでは、達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44,100 Hz で消費するため、60 fps を下回るとオーディオが劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善します。Raspberry Pi でリアルタイムに近い動作を目指す際に推奨されます。
 
-自動フレームスキップ（`--frame-skip auto`、デフォルト）は、締め切りに間に合わなかったフレームで VDP のピクセル描画を省略しつつ、毎フレームの VBlank 割り込みは発火し続けます。これにより 60 fps に近いが届かないホストでの表示の滑らかさが向上します。たとえば Raspberry Pi 5 + PyPy3（エミュレーション ~35〜45 fps）では、表示フレームレートが生の処理速度より高い ~25〜35 fps に改善します。オーディオ品質はフレームスキップの影響を受けません。60 fps 未満のプラットフォームではアンダーランが継続します。フレームスキップは `--frame-skip none` で無効化できます。
+自動フレームスキップ（`--frame-skip auto`、デフォルト）は、締め切りに間に合わなかったフレームで VDP のピクセル描画を省略しつつ、毎フレームの VBlank 割り込みは発火し続けます。たとえば Raspberry Pi 5 + PyPy3 でのエミュレーション速度が ~35〜45 fps の場合、表示フレームレートは ~25〜35 fps まで向上します。オーディオ品質はフレームスキップの影響を受けません。60 fps 未満のプラットフォームではアンダーランが継続します。フレームスキップは `--frame-skip none` で無効化できます。
 
-`--speed` はターゲットフレームレートを調整します（例：`--speed 2.0` は処理能力の十分なホストでゲームを 2 倍速で動作させます）。処理能力が不足しているホストでの補正や、低速なハードウェアでのオーディオ品質の改善はできません。
+`--speed` はターゲットフレームレートを調整します（例：`--speed 2.0` は処理能力の十分なホストでゲームを 2 倍速で動作させます）。処理能力が不足しているホストでの補正や低速なハードウェアでのオーディオ品質の改善はできません。
 
 ---
 
@@ -235,11 +282,20 @@ the instruction, and return the number of T-states consumed.
 **C-BIOS** は無償のオープンソース MSX BIOS 代替品であり、推奨される選択肢です。
 
 1. [https://cbios.sourceforge.net/](https://cbios.sourceforge.net/) から最新リリースをダウンロードします。
-2. アーカイブを展開し、以下のファイルをこのリポジトリの `roms/` ディレクトリにコピーします。
-   - `cbios_main_msx1.rom`
-3. CLI のデフォルト ROM パスは `roms/cbios_main_msx1.rom` です。異なるファイル名の場合は、最初の位置引数として指定してください。
+2. アーカイブを展開し、必要なファイルをこのリポジトリの `roms/cbios/` ディレクトリにコピーします。
 
-> **法的注記:** 市販のMSXマシンから取り出した著作権で保護された BIOS ダンプは使用しないでください。C-BIOS が無償で合法的に利用できる推奨の代替品です。`roms/` ディレクトリは `.gitignore` によってバージョン管理から除外されています。
+MSX1（`cbios_msx1_jp`、MSX1 カートリッジ検出時のデフォルト）の場合：
+- `cbios_main_msx1_jp.rom`
+- `cbios_logo_msx1.rom`
+
+MSX2（`cbios_msx2_jp`、カートリッジなし・MSX2 カートリッジ時のデフォルト）の場合：
+- `cbios_main_msx2.rom`
+- `cbios_logo_msx2.rom`
+- `cbios_sub.rom`
+
+マシン ID ごとに必要なファイル名は `config/machines/` 以下の対応する YAML に記載されています。
+
+> **法的注記:** 市販の MSX マシンから取り出した著作権で保護された BIOS ダンプは使用しないでください。C-BIOS が無償で合法的に利用できる推奨の代替品です。`roms/` ディレクトリは `.gitignore` によってバージョン管理から除外されています。
 
 ---
 
@@ -270,48 +326,64 @@ pip install -r requirements.txt
 ### エミュレータの起動
 
 ```bash
-# MSX BASIC のみ（カートリッジなし）
-python . roms/cbios_main_msx1.rom
+# MSX BASIC のみ — デフォルトマシン（cbios_msx2_jp、カートリッジなし）
+python .
 
-# ゲームカートリッジあり
-python . roms/cbios_main_msx1.rom path/to/game.rom
+# カートリッジあり — ROM データベースからマシンを自動判定
+python . path/to/game.rom
+
+# MSX1（日本）を明示指定
+python . path/to/game.rom --machine cbios_msx1_jp
+
+# MSX2（日本）を明示指定
+python . path/to/game.rom --machine cbios_msx2_jp
 
 # 2 倍速でエミュレーション
-python . roms/cbios_main_msx1.rom path/to/game.rom --speed 2.0
+python . path/to/game.rom --speed 2.0
 
 # デュアルカートリッジ（スロット 1 + スロット 2）
-python . roms/cbios_main_msx1.rom path/to/game1.rom --slot2 path/to/game2.rom
+python . path/to/game1.rom --slot2 path/to/game2.rom
 
-# デュアルカートリッジでマッパーを明示指定
-python . roms/cbios_main_msx1.rom path/to/game1.rom --mapper KonamiSCC --slot2 path/to/game2.rom --mapper2 Konami
-
-# マッパーを指定
-python . roms/cbios_main_msx1.rom path/to/game.rom --mapper KonamiSCC
+# マッパーを明示指定
+python . path/to/game.rom --mapper KonamiSCC
 
 # 最新のステートセーブから復帰
-python . roms/cbios_main_msx1.rom path/to/game.rom --resume
+python . path/to/game.rom --resume
 
 # 特定のステートファイルから復帰
-python . roms/cbios_main_msx1.rom path/to/game.rom --resume saves/salamander_20260605_120000.state
+python . path/to/game.rom --resume saves/game_20260605_120000.state
 
 # デバッグログを有効化
-python . roms/cbios_main_msx1.rom path/to/game.rom --debug --log trace.log
+python . path/to/game.rom --debug --log trace.log
+
+# 起動時にブレークポイントを設定
+python . path/to/game.rom --break-point C000,D000
+
+# 300 フレームをヘッドレスで実行して VDP トレースを取得（SDL ウィンドウなし）
+python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.log
 ```
 
 ### コマンドラインオプション
 
 | オプション | デフォルト | 説明 |
 |-----------|----------|------|
-| `rom` | `roms/cbios_main_msx1.rom` | MSX BIOS ROM のパス |
 | `cartridge` | _（なし）_ | カートリッジ ROM のパス |
+| `--machine MACHINE_ID` | _（自動）_ | マシン設定 ID（例：`cbios_msx2_jp`）；省略時は ROM データベースから自動判定 |
 | `--speed FLOAT` | `1.0` | エミュレーション速度の倍率 |
-| `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC` |
+| `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
-| `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`（スロット 2 では KonamiSCC 非対応） |
+| `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
 | `--resume [FILE]` | _（なし）_ | `saves/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
 | `--frame-skip MODE` | `auto` | フレームスキップ：`auto` で遅延フレームの VDP 描画を省略、`none` で無効化 |
 | `--debug` | オフ | 構造化診断ログを stderr に出力 |
 | `--log FILE` | _（なし）_ | 診断ログをファイルに書き出す（`--debug` が必要） |
+| `--vdp-trace` | オフ | VDP レジスタ書き込みトレースを stdout に出力 |
+| `--vdp-trace-out FILE` | stdout | VDP トレースを FILE に書き出す |
+| `--mapper-trace` | オフ | カートリッジマッパーのバンク切り替えトレースを出力（MAP\_BANK レコード） |
+| `--mapper-trace-out FILE` | stdout | マッパートレースを FILE に書き出す |
+| `--count-frame N` | _（なし）_ | N フレームをヘッドレスで実行して終了（SDL ウィンドウなし） |
+| `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個） |
+| `--watch-point ADDRS` | _（なし）_ | カンマ区切りのウォッチポイントアドレス（最大 4 個） |
 
 ### エミュレータ内のキー操作
 
@@ -337,40 +409,98 @@ python . roms/cbios_main_msx1.rom path/to/game.rom --debug --log trace.log
 | Z または , | トリガ A |
 | X または . | トリガ B |
 
-### プログラマティック API
+---
 
-```python
-from pathlib import Path
-from msx.machine import make_machine
+## マシン設定
 
-# ROM の読み込み
-rom = Path("roms/cbios_main_msx1.rom").read_bytes()
-cartridge = Path("game.rom").read_bytes()
+ハードウェア構成（VDP の種類、RAM サイズ、スロット配線、ROM ファイル）は `config/machines/` 以下の YAML ファイルで宣言されます。`--machine` フラグでマシン ID を指定します。省略時は ROM データベースが世代を自動判定します（MSX1 ROM → `cbios_msx1_jp`；MSX2 ROM またはカートリッジなし → `cbios_msx2_jp`）。
 
-# マシンの作成と配線（CPU、VDP、PSG、PPI、メモリ、I/O がすべて接続される）
-machine = make_machine(rom=rom, cartridge=cartridge)
+### 利用可能なマシン ID
 
-# CPU 命令を 1 ステップ実行；消費 T ステート数を返す
-t_states = machine.cpu.step()
+| ID | 世代 | 地域 | VDP |
+|----|------|------|-----|
+| `cbios_msx1` | MSX1 | インターナショナル | TMS9918A |
+| `cbios_msx1_jp` | MSX1 | 日本 | TMS9918A |
+| `cbios_msx1_eu` | MSX1 | ヨーロッパ | TMS9918A |
+| `cbios_msx1_br` | MSX1 | ブラジル | TMS9918A |
+| `cbios_msx2` | MSX2 | インターナショナル | V9938 |
+| `cbios_msx2_jp` | MSX2 | 日本（デフォルト） | V9938 |
+| `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
+| `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 
-# メモリの直接読み書き
-value = machine.memory.read(0x0000)
-machine.memory.write(0x8000, 0x42)
+### マシン YAML の構造
 
-# 1 NTSC フレームを実行（59,659 T ステート）
-# 49,152 バイト（256×192）の色インデックスバッファを返す
-frame_buf = machine.run_frame()
+マシンファイルには CPU、スロット配線、内蔵デバイスを宣言します。デバイス定義は `config/devices/` に分離して記述し、`ref:` で参照します。
 
-# CPU 状態の確認
-print(hex(machine.cpu.registers.PC))
-print(hex(machine.cpu.registers.A))
+```yaml
+schema_version: 1
+id: cbios_msx2
+name: "Generic MSX2 (C-BIOS, International)"
+generation: msx2
+video_standard: ntsc
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: cbios_main_msx2.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: null
+        - rom:
+            file: cbios_logo_msx2.rom
+            size_kb: 16
+            pages: [2]
+            sha1: null
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          content:
+            - rom:
+                file: cbios_sub.rom
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        2:
+          type: ram
+          size_kb: 128
+          mapper: standard
+
+builtin_devices:
+  - ref: ppi8255
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
 ```
+
+主なフィールド：
+
+| フィールド | 説明 |
+|-----------|------|
+| `generation` | `msx1` または `msx2`；VDP クラスとメモリモデルを決定 |
+| `cpu.clock_mhz` | Z80A クロック周波数（NTSC MSX は 3.579545 MHz） |
+| `slots.primary.N` | プライマリスロット N：`{type: cartridge}`、`{type: ram, ...}`、またはインライン ROM `content` |
+| `slots.primary.N.expanded` | `true` で 4 つのセカンダリスロットに拡張 |
+| `builtin_devices` | スロット非経由で直接配線するデバイス：VDP、PSG、PPI、RTC、RAM マッパー |
+| `overrides` | デバイスデフォルトへの浅いマージ（例：V9938 の `vram_kb: 128`） |
+| `sha1` | `null` はハッシュ検証なしで読み込む |
+
+独自のマシン定義を追加するには、`config/machines/` に新しい YAML ファイルを置き、その `id` を `--machine` に渡してください。デバイス YAML で `implemented: false` と記述されたエントリは、ロード時に警告を表示してスキップされます。
 
 ---
 
 ## テストの実行
 
-テストスイートは 498 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1245 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # すべてのテストを実行
@@ -396,10 +526,16 @@ py-msx-emulator/
 │   └── sdl2_frontend.py   # SDL2 ウィンドウ、オーディオ、イベントループ
 ├── msx/                   # コアエミュレータパッケージ
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
-│   ├── vdp/               # TMS9918A VDP（コアとレンダラ）
+│   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
+│   ├── debug/             # DebugLogger、CPU/I/O トレース、ハング検出器
+│   ├── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
 │   ├── machine.py         # コンポーネント配線とフレームループ
+│   ├── machine_loader.py  # YAML ベースのマシン設定ローダ
 │   ├── memory.py          # スロットベースのメモリバス
-│   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC）
+│   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC...）
+│   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
+│   ├── ram_mapper.py      # MSX2 RAM マッパー（128 KB、8 セグメント）
+│   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成
 │   ├── scc.py             # Konami SCC ウェーブテーブルシンセサイザ
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード）
@@ -408,13 +544,16 @@ py-msx-emulator/
 │   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
 │   ├── frame_timer.py     # 60 fps ペーシング + FPS 計測
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
-│   ├── state.py           # マシン状態のセーブ/ロード（pickle + PNG）
-│   └── debug/             # DebugLogger、CPU/I/O トレース、ハング検出器
-├── roms/                  # C-BIOS ROM ファイルをここに置く（バージョン管理外）
+│   └── state.py           # マシン状態のセーブ/ロード（pickle + PNG）
+├── config/
+│   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
+│   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
+├── roms/
+│   └── cbios/             # C-BIOS ROM ファイルをここに置く（バージョン管理外）
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 486 テスト（公開リポジトリには含まれていません）
+├── tests/                 # テストスイート — 1245 テスト（公開リポジトリには含まれていません）
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -438,13 +577,13 @@ py-msx-emulator/
 
 ### Issue とプルリクエスト
 
-現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に GitHub Issue で議論してください。沙羅曼蛇以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
+現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に GitHub Issue で議論してください。対象タイトル以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
 
 ---
 
 ## 謝辞
 
-- **[openMSX](https://openmsx.org/)** — ROM タイトルおよびマッパーデータベース（`msx/romdb.py`）は [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) をベースに作成しています。openMSX は GNU GPL v2 でリリースされています。
+- **[openMSX](https://openmsx.org/)** — ROM 識別データは openMSX softwaredb.xml（https://github.com/openMSX/openMSX）を参照していますが、すべてのエントリは独自に収集した事実情報です。openMSX は GNU GPL v2 でリリースされています。
 - **[C-BIOS](https://cbios.sourceforge.net/)** — テストに使用している無償の MSX BIOS 代替品。
 
 ---
