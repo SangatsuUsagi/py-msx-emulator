@@ -290,6 +290,8 @@ def run(
                 if not running:
                     break
 
+                joy_manager.tick()
+
                 # Run one frame (skip VDP pixel rendering when behind schedule)
                 skip_this_frame = _skip_counter > 0
                 frame_start_cycle = machine.cycle_count
