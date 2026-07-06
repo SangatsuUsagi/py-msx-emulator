@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
     from msx.mapper import Mapper
+    from msx.ram_mapper import RamMapper
 
 from msx.mapper import FlatMapper
 
 
-@dataclass
+@dataclass(slots=True)
 class Memory:
     rom: bytes
     ram: bytearray
@@ -20,27 +21,61 @@ class Memory:
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
     _logger: DebugLogger | None = field(default=None, repr=False)
-    logrom: bytes | None = field(default=None, repr=False)
+    extrom: bytes | None = field(default=None, repr=False)
+    ram_mapper: "RamMapper | None" = field(default=None, repr=False)
+    # MSX slot 3 secondary slot register: bits 7:6=page3, 5:4=page2, 3:2=page1, 1:0=page0
+    sub_slot_reg: int = 0x00
+    sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
+    sub0_rom: bytes | None = field(default=None, repr=False)
+    rom_name: str = ""
+    sub0_rom_name: str = ""
+    _rom_len: int = field(init=False, repr=False, default=0)
+    _extrom_len: int = field(init=False, repr=False, default=0)
 
-    def _slot(self, addr: int) -> int:
-        page = (addr >> 14) & 0x03
-        return (self.slot_register >> (page * 2)) & 0x03
+    def __post_init__(self) -> None:
+        self._rom_len = len(self.rom)
+        self._extrom_len = len(self.extrom) if self.extrom is not None else 0
+
+    def _page3_is_slot3(self) -> bool:
+        return self.sub_slot_enabled and ((self.slot_register >> 6) & 0x03) == 3
 
     def read(self, addr: int) -> int:
         addr = addr & 0xFFFF
         slot = (self.slot_register >> ((addr >> 14) * 2)) & 0x03  # page 0-3 → slot 0-3
         if slot == 0:
-            if self.logrom is not None and 0x8000 <= addr <= 0xBFFF:
+            if self.extrom is not None and 0x8000 <= addr <= 0xBFFF:
                 off = addr - 0x8000
-                return self.logrom[off] if off < len(self.logrom) else 0xFF
-            return self.rom[addr] if addr < len(self.rom) else 0xFF
+                return self.extrom[off] if off < self._extrom_len else 0xFF
+            return self.rom[addr] if addr < self._rom_len else 0xFF
         if slot == 1:
             return self._mapper.read(addr)
         if slot == 2:
             return self._mapper2.read(addr)
-        # slot 3: 32 KB RAM mapped to 0x8000-0xFFFF; addr - 0x8000 gives the array index.
-        # Pages 0/1 selecting slot 3 are not a standard MSX1 use case and are not supported.
-        return self.ram[addr - 0x8000]
+        # slot 3
+        # Secondary slot register intercept at 0xFFFF (only when page 3 = slot 3)
+        if addr == 0xFFFF and self._page3_is_slot3():
+            return (~self.sub_slot_reg) & 0xFF
+        page = (addr >> 14) & 0x03
+        sub = (self.sub_slot_reg >> (page * 2)) & 0x03
+        # Sub-slot dispatch (explicit per sub value for a clean port to match):
+        #   0: extension ROM in page 0 (if present), else main RAM
+        #   1: reserved / unmapped -> 0xFF
+        #   2, 3: main RAM
+        if sub == 0:
+            if self.sub0_rom is not None:
+                if addr <= 0x3FFF:
+                    return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
+                return 0xFF  # sub0_rom present but addr out of its page-0 range
+        elif sub == 1:
+            return 0xFF
+        # sub == 2, sub == 3, or sub == 0 without a sub0_rom -> RAM
+        if self.ram_mapper is not None:
+            return self.ram_mapper.read(addr)
+        # MSX1: flat RAM sits at the top of the address space (32 KB → base
+        # 0x8000). An access to a page selected to slot 3 without a RAM mapper
+        # can fall below that base (negative index); return open-bus 0xFF.
+        off = addr - (0x10000 - len(self.ram))
+        return self.ram[off] if 0 <= off < len(self.ram) else 0xFF
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
@@ -54,14 +89,34 @@ class Memory:
         if slot == 2:
             self._mapper2.write(addr, value)
             return
-        # slot 3: RAM
-        self.ram[addr - 0x8000] = value
+        # slot 3
+        # Secondary slot register intercept at 0xFFFF (only when page 3 = slot 3)
+        if addr == 0xFFFF and self._page3_is_slot3():
+            self.sub_slot_reg = value & 0xFF
+            return
+        page = (addr >> 14) & 0x03
+        sub = (self.sub_slot_reg >> (page * 2)) & 0x03
+        if sub == 1:
+            return  # reserved, ignore
+        if sub == 0 and self.sub0_rom is not None:
+            return  # sub0_rom is read-only
+        # sub-slots 0 (fallback), 2, and 3 → RAM mapper
+        if self.ram_mapper is not None:
+            self.ram_mapper.write(addr, value)
+            return
+        # MSX1 flat RAM (base at top of address space); ignore out-of-range writes.
+        off = addr - (0x10000 - len(self.ram))
+        if 0 <= off < len(self.ram):
+            self.ram[off] = value
 
-    def read_port_a8(self) -> int:
-        return self.slot_register & 0xFF
+    def main_ram_range(self) -> tuple[int, int]:
+        """Conventional main-RAM address window, for stack-sanity checks.
 
-    def write_port_a8(self, value: int) -> None:
-        old = self.slot_register
-        self.slot_register = value & 0xFF
-        if self._logger is not None:
-            self._logger.on_slot_register_write(old, self.slot_register, pc=0)
+        MSX1 flat RAM sits at the top of the address space, so the window is
+        derived from the RAM size. Mapper-backed (MSX2) RAM can appear in any
+        page, so the whole address space is treated as valid RAM.
+        """
+        if self.ram_mapper is not None:
+            return (0x0000, 0xFFFF)
+        low = max(0, 0x10000 - len(self.ram))
+        return (low, 0xFFFF)

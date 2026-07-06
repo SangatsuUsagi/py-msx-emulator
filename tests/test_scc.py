@@ -4,7 +4,6 @@ import struct
 from msx.psg import SAMPLES_PER_FRAME
 from msx.scc import SCC
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -211,3 +210,33 @@ def test_shared_waveform_ch4_ch5_doubles_output() -> None:
     s_both = _samples_as_int16(scc_both.generate_samples(SAMPLES_PER_FRAME))
     s_one  = _samples_as_int16(scc_one.generate_samples(SAMPLES_PER_FRAME))
     assert s_both == [2 * s for s in s_one]
+
+
+# ---------------------------------------------------------------------------
+# Register block mirroring and deformation register (0xE0-0xFF)
+# ---------------------------------------------------------------------------
+
+def test_register_block_mirrored_low_byte() -> None:
+    # The SCC decodes only the low 8 bits, so 0x110 mirrors offset 0x10.
+    scc = SCC()
+    scc.write(0x10, 0x7F)  # waveform byte at offset 0x10
+    assert scc.read(0x110) == 0x7F  # mirror (0x9910) decodes to offset 0x10
+
+
+def test_deformation_read_returns_ff() -> None:
+    assert SCC().read(0xE0) == 0xFF
+
+
+def test_deformation_access_does_not_corrupt_state() -> None:
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    before_wave = list(scc._waves[0])
+    before_freq = scc._freq[0]
+    before_vol = scc._vol[0]
+    before_enable = scc._enable
+    scc.read(0xF0)
+    scc.write(0xF0, 0x01)
+    scc.write(0xE8, 0xAB)
+    assert scc._waves[0] == before_wave
+    assert scc._freq[0] == before_freq
+    assert scc._vol[0] == before_vol
+    assert scc._enable == before_enable

@@ -1,0 +1,7 @@
+id: vdp_tms9918a
+type: io_device
+implemented: true
+name: Texas Instruments TMS9918A Video Display Processor (MSX1)
+chip: tms9918a
+io_ports: [0x98, 0x99]
+controls: video_display_processor

@@ -1,0 +1,49 @@
+schema_version: 1
+id: cbios_msx2_eu
+name: "Generic MSX2 (C-BIOS, Europe)"
+generation: msx2
+rom_base: roms/cbios
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: cbios_main_msx2_eu.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: null
+        - rom:
+            file: cbios_logo_msx2.rom
+            size_kb: 16
+            pages: [2]
+            sha1: null
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          content:
+            - rom:
+                file: cbios_sub.rom
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        2:
+          type: ram
+          size_kb: 128
+          mapper: standard
+
+builtin_devices:
+  - ref: ppi8255
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
+
+default_extensions: []

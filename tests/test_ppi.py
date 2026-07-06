@@ -33,9 +33,17 @@ def test_keyboard_read_returns_ff() -> None:
     assert ppi.read_port(0xA9) == 0xFF
 
 
-def test_port_aa_read_returns_ff() -> None:
+def test_port_aa_read_returns_last_written_port_c() -> None:
     ppi = make_ppi()
-    assert ppi.read_port(0xAA) == 0xFF
+    assert ppi.read_port(0xAA) == 0x00  # default Port C
+    ppi.write_port(0xAA, 0x47)          # CAPS LED (bit6) set, row 7
+    assert ppi.read_port(0xAA) == 0x47
+
+
+def test_port_aa_upper_nibble_reflected() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x40)  # CAPS LED (bit 6) set, row 0
+    assert ppi.read_port(0xAA) & 0x40
 
 
 def test_port_aa_write_stores_row() -> None:
@@ -71,6 +79,24 @@ def test_port_ab_read_returns_ff() -> None:
     assert ppi.read_port(0xAB) == 0xFF
 
 
-def test_port_ab_write_is_noop() -> None:
+def test_port_ab_bit_set_sets_single_port_c_bit() -> None:
     ppi = make_ppi()
-    ppi.write_port(0xAB, 0xFF)  # must not raise
+    ppi.write_port(0xAB, 0x0D)  # bit7=0, index 6 (bits 3-1), value 1 → set bit 6
+    assert ppi.read_port(0xAA) & (1 << 6)
+
+
+def test_port_ab_bit_reset_clears_single_port_c_bit() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x40)  # bit 6 set
+    ppi.write_port(0xAB, 0x0C)  # index 6, value 0 → clear bit 6
+    assert not (ppi.read_port(0xAA) & (1 << 6))
+
+
+def test_port_ab_mode_word_clears_port_c() -> None:
+    # Corrected behaviour (Phase 2): a real 8255 mode-set control word (bit 7 = 1)
+    # resets the output ports to 0, so Port C — including the keyboard row select
+    # — is cleared. (Previously the row was left untouched.)
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x43)   # CAPS LED (bit 6) + row 3 on Port C
+    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word → clears Port C
+    assert ppi.read_port(0xAA) == 0x00

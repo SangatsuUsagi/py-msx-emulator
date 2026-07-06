@@ -1,0 +1,8 @@
+id: vdp_v9938
+type: io_device
+implemented: true
+name: Yamaha V9938 Video Display Processor (MSX2)
+chip: v9938
+io_ports: [0x98, 0x99, 0x9A, 0x9B, 0x9C]
+controls: video_display_processor
+vram_kb: 128
