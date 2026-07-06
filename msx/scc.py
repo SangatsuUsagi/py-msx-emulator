@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import struct
 from dataclasses import dataclass, field
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
@@ -49,6 +48,9 @@ class SCC:
             return self._vol[addr - 0x8A] & 0x0F
         if addr == 0x8F:
             return self._enable & 0x1F
+        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) read
+        # back as 0xFF. Reading the deformation range is a harmless no-op here;
+        # rotation / frequency-mode emulation is intentionally omitted.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -73,7 +75,20 @@ class SCC:
         if addr == 0x8F:
             self._enable = value & 0x1F
             return
-        # Undefined offset — no-op.
+        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) are a
+        # safe no-op: they do not alter waveform/frequency/volume/enable state.
+
+    # --------------------------------------------------------------- reset
+
+    def reset(self) -> None:
+        """Restore power-on register and synthesis state (matches field defaults)."""
+        self._waves = [[0] * 32 for _ in range(4)]
+        self._freq = [0] * 5
+        self._vol = [0] * 5
+        self._enable = 0
+        self._phase_cnt = [0] * 5
+        self._phase_idx = [0] * 5
+        self._clk_frac = 0
 
     # -------------------------------------------------------- sample generation
 
@@ -85,19 +100,18 @@ class SCC:
             ticks = self._clk_frac // SAMPLE_RATE
             self._clk_frac %= SAMPLE_RATE
 
-            for ch in range(5):
-                period = max(1, self._freq[ch] + 1)
-                self._phase_cnt[ch] += ticks
-                while self._phase_cnt[ch] >= period:
-                    self._phase_cnt[ch] -= period
-                    self._phase_idx[ch] = (self._phase_idx[ch] + 1) % 32
-
+            # Single pass over the 5 channels: advance the phase (divmod instead
+            # of a subtract-loop) and accumulate the sample in one go.
             sample = 0
             for ch in range(5):
+                period = max(1, self._freq[ch] + 1)
+                steps, self._phase_cnt[ch] = divmod(self._phase_cnt[ch] + ticks, period)
+                idx = (self._phase_idx[ch] + steps) & 31  # 32-entry wave, & 31 == % 32
+                self._phase_idx[ch] = idx
                 if not (self._enable >> ch) & 1:
                     continue
                 wave_bank = min(ch, 3)  # ch 4 and 5 (idx 3,4) both use bank 3
-                raw = self._waves[wave_bank][self._phase_idx[ch]]
+                raw = self._waves[wave_bank][idx]
                 # Convert unsigned byte to signed 8-bit.
                 signed = raw if raw < 128 else raw - 256
                 sample += signed * self._vol[ch] * SCC_SCALE
@@ -107,6 +121,8 @@ class SCC:
             elif sample < -32768:
                 sample = -32768
 
-            struct.pack_into("<h", out, i * 2, sample)
+            # Signed 16-bit little-endian; masking yields two's-complement bytes.
+            out[i * 2] = sample & 0xFF
+            out[i * 2 + 1] = (sample >> 8) & 0xFF
 
         return out

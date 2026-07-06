@@ -1,10 +1,14 @@
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF
     return cpu
@@ -56,7 +60,6 @@ def test_nmi_fires_when_di() -> None:
     cpu = make_cpu([0x00])
     cpu.iff1 = False
     cpu.nmi_pending = True
-    saved_pc = cpu.registers.PC
     cycles = cpu.step()
     assert cpu.registers.PC == 0x0066
     assert cpu.iff1 is False
@@ -70,6 +73,23 @@ def test_nmi_fires_when_ei() -> None:
     cpu.step()
     assert cpu.registers.PC == 0x0066
     assert cpu.iff1 is False
+
+
+def test_nmi_saves_iff1_into_iff2_and_retn_restores() -> None:
+    # NMI acceptance copies IFF1 into IFF2 and clears IFF1; RETN (IFF1<-IFF2)
+    # at the end of the handler must restore the pre-NMI enable state.
+    rom = [0x00] * 0x0068
+    rom[0x0066] = 0xED
+    rom[0x0067] = 0x45  # RETN at the NMI vector
+    cpu = make_cpu(rom)
+    cpu.iff1 = True
+    cpu.iff2 = False
+    cpu.nmi_pending = True
+    cpu.step()  # accept NMI: IFF2 <- IFF1 (True), IFF1 <- False, PC <- 0x0066
+    assert cpu.iff1 is False
+    assert cpu.iff2 is True
+    cpu.step()  # RETN: IFF1 <- IFF2
+    assert cpu.iff1 is True
 
 
 def test_halt_nop_loop() -> None:

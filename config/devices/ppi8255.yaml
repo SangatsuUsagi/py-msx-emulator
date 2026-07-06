@@ -1,0 +1,10 @@
+id: ppi8255
+type: io_device
+implemented: true
+name: Intel 8255A Programmable Peripheral Interface
+chip: i8255a
+io_ports: [0xA8, 0xA9, 0xAA, 0xAB]
+controls: slot_register_and_keyboard_matrix
+# Keyboard layout: "int" (International) or "jp" (Japanese/JIS). Machines may
+# override this per builtin_devices entry (Japanese machines set "jp").
+keyboard_type: int

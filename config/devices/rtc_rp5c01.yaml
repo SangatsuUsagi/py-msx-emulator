@@ -1,0 +1,7 @@
+id: rtc_rp5c01
+type: io_device
+implemented: true
+name: Ricoh RP-5C01 Real-Time Clock
+chip: rp5c01
+io_ports: [0xB4, 0xB5]
+controls: real_time_clock

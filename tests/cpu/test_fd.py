@@ -1,11 +1,25 @@
+from msx.cpu import flags as F
+from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.cpu.z80 import Z80
 
 
 def make_cpu(rom: list[int]) -> Z80:
-    mem = Memory(rom=bytes(rom + [0] * (32768 - len(rom))), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
     return Z80(read_byte=mem.read, write_byte=mem.write)
+
+
+def make_cpu_mem(rom: list[int]) -> tuple[Z80, Memory]:
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    return Z80(read_byte=mem.read, write_byte=mem.write), mem
 
 
 def test_ld_iy_nn() -> None:
@@ -137,3 +151,87 @@ def test_sub_iyl() -> None:
     t = cpu.step()
     assert cpu.registers.A == 0x0D
     assert t == 8
+
+
+# ===========================================================================
+# Characterization tests (test-coverage-hardening Phase 0): mirror the DD/IX
+# section 2.1 coverage for the FD/IY prefix — (IY+d) load/ALU displacement,
+# ADD IY,rr, JP (IY). Values confirmed by running the opcodes; only the
+# documented S/Z/H/PV/N/C flags and register/memory state are asserted.
+# ===========================================================================
+
+
+def test_ld_iy_d_r_stores_register() -> None:
+    rom = [0xFD, 0x77, 0x01]  # LD (IY+1), A
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IY = 0xC000
+    cpu.registers.A = 0x5A
+    cpu.step()
+    assert mem.read(0xC001) == 0x5A
+
+
+def test_ld_r_iy_d_loads_register() -> None:
+    rom = [0xFD, 0x46, 0x03]  # LD B, (IY+3)
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    mem.write(0xC003, 0x88)
+    cpu.registers.IY = 0xC000
+    cpu.step()
+    assert cpu.registers.B == 0x88
+
+
+def test_add_a_iy_d() -> None:
+    rom = [0xFD, 0x86, 0x02]  # ADD A, (IY+2)
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    mem.write(0xC002, 0x05)
+    cpu.registers.IY = 0xC000
+    cpu.registers.A = 0x10
+    cpu.registers.F = 0
+    cpu.step()
+    assert cpu.registers.A == 0x15
+    assert cpu.registers.F == 0x00
+
+
+def test_cp_iy_d_equal() -> None:
+    rom = [0xFD, 0xBE, 0x02]  # CP (IY+2)
+    mem = Memory(
+        rom=bytes(rom + [0] * (32768 - len(rom))),
+        ram=bytearray(32768),
+        _mapper=FlatMapper(None),
+    )
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    mem.write(0xC002, 0x20)
+    cpu.registers.IY = 0xC000
+    cpu.registers.A = 0x20
+    cpu.registers.F = 0
+    cpu.step()
+    assert cpu.registers.A == 0x20  # A unchanged
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+
+
+def test_add_iy_iy() -> None:
+    cpu = make_cpu([0xFD, 0x29])  # ADD IY, IY
+    cpu.registers.IY = 0x1234
+    cpu.step()
+    assert cpu.registers.IY == 0x2468
+
+
+def test_jp_iy() -> None:
+    cpu = make_cpu([0xFD, 0xE9])  # JP (IY)
+    cpu.registers.IY = 0x4000
+    cpu.step()
+    assert cpu.registers.PC == 0x4000
