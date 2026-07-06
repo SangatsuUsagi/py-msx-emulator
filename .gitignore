@@ -1,4 +1,5 @@
 .claude/
+.serena/
 roms/**/*.rom
 roms/cbios-0.29a
 saves/*
