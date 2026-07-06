@@ -56,17 +56,6 @@ def lookup_system(cartridge: bytes) -> str | None:
     return str(entry["system"]) if "system" in entry else None
 
 
-def lookup_system(cartridge: bytes) -> str | None:
-    """Return the system string (e.g. 'MSX', 'MSX2') for the given cartridge ROM, or None."""
-    if not cartridge:
-        return None
-    sha1 = hashlib.sha1(cartridge).hexdigest()
-    entry = _load().get(sha1)
-    if entry is None:
-        return None
-    return str(entry["system"]) if "system" in entry else None
-
-
 def lookup_title(cartridge: bytes) -> str | None:
     """Return the title_jp for the given cartridge ROM, or None if not found."""
     entry = _entry(cartridge)
