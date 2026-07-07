@@ -1,6 +1,6 @@
 # Technical Implementation
 
-This document describes the internal structure of the MSX1/MSX2 emulator — CPU execution, interrupt handling, I/O dispatch, VDP rendering, and the memory subsystem. All claims are grounded in the source code under `msx/` and the component specifications under `openspec/specs/`.
+This document describes the internal structure of the MSX1/MSX2 emulator — CPU execution, interrupt handling, I/O dispatch, VDP rendering, and the memory subsystem.
 
 ---
 
@@ -321,6 +321,6 @@ A Rust/C++ port models them as `Option<Box<dyn Fn()>>` trait objects (or equival
 
 #### Spin loop in the frame timer
 
-`FrameTimer._wait()` uses `time.perf_counter()` in a busy-wait loop for the final sub-millisecond stretch before the frame deadline (`frame_timer.py:51`). In Python there is no way to hint to the scheduler that this is a spin.
+`FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the final sub-millisecond stretch before the frame deadline (`frame_timer.py:51`). In Python there is no way to hint to the scheduler that this is a spin.
 
 A Rust port inserts `std::hint::spin_loop()` inside the same loop to yield the CPU pipeline hint without sleeping, which can reduce power consumption and improve timing jitter on SMT cores.
