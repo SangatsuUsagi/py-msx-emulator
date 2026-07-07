@@ -20,7 +20,7 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 (msx-dbg cyc=720430 frm=12)
 ```
 
-`cyc` is the cumulative Z80 T-state count; `frm` is the completed-frame count. The displayed image is the last rendered frame. Type `c` to resume emulation, `q` to exit.
+`cyc` is the cumulative Z80 T-state count; `frm` is the completed-frame count. The displayed image is the last rendered frame. Type `c` to resume emulation, `q` to exit. Pressing Ctrl+C again while at the REPL prompt exits the emulator immediately (`sys.exit(0)`) — it does not cancel input or return to the prompt.
 
 ### Breakpoints and watchpoints at launch
 

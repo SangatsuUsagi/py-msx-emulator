@@ -47,7 +47,7 @@ py-msx-emulator is a functional MSX1/MSX2 emulator targeting accurate hardware r
 - **RAM mapper** — 128 KB main RAM (8 × 16 KB segments), segment registers at ports 0xFC–0xFF
 - **RTC** — RP5C01 real-time clock, ports 0xB4–0xB5
 - **Cartridge mappers** — Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC), ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type; auto-detected from a SHA1-based ROM database
-- **SDL2 frontend** — 768×576 window (256×192 × scale 3), hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
+- **SDL2 frontend** — 768×576 window by default (256×192 × scale 3; SCREEN 6/7 resize to maintain aspect ratio), hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
 - **Physical joystick** — SDL2 GameController and raw joystick APIs, hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
 - **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, mapper banks) via pickle, PNG screenshot alongside each save, `saves/latest.*` symlinks for quick resume
 - **ROM database** — SHA1 title lookup for automatic game title detection and mapper selection
@@ -81,13 +81,6 @@ the instruction, and return the number of T-states consumed.
 
 The scenarios map directly to unit tests, making it straightforward to verify that the implementation matches the specification. When a new feature is added or an existing component is changed, the spec is updated first and the implementation follows.
 
-### Spec coverage
-
-The following capabilities have specs defined:
-
-`z80-cpu` · `vdp-core` · `vdp-renderer` · `vdp-sprites` · `vdp-interrupt` · `psg` · `psg-synthesis` · `scc-sound-chip` · `ppi` · `memory-bus` · `mega-rom-mapper` · `io-bus` · `keyboard-matrix` · `joystick-input` · `physical-joystick` · `machine` · `frame-timer` · `hang-detector` · `romdb` · `debug-logger` · `cpu-trace-buffer` · `io-trace` · `boot-diagnostic` · `sdl2-frontend` · `state-save-load` · `v9938-vdp` · `v9938-state` · `v9938-cmd-registers` · `v9938-cmd-hmmv-hmmm` · `v9938-cmd-hmmc` · `v9938-cmd-stop` · `v9938-g4-renderer` · `vdp-banded-renderer` · `vdp-line-interrupt` · `vdp-cmd-timing` · `vdp-renderer-optimized` · `vdp-tracer` · `msx2-subslot` · `msx2-logo-rom` · `ram-memory-mapper` · `rtc` · `sram-mapper` · `machine-config-loader` · `z80-debugger` · `z80-disassembler` · `mapper-tracer` · `joystick-turbo` · `majutsushi-dac` · `cli`
-
-> Note: the `openspec/` directory and `tests/` directory are not included in the public repository.
 
 ---
 
@@ -98,11 +91,6 @@ The following capabilities have specs defined:
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py` |
-| Register file | AF, BC, DE, HL, IX, IY, SP, PC, I, R; shadow registers AF′, BC′, DE′, HL′ |
-| Instruction set | All 252 documented opcodes; CB, DD, ED, FD prefix tables |
-| Undocumented opcodes | DD/FD prefix: `LD r, IXH/IXL/IYH/IYL`, `LD IXH/IXL/IYH/IYL, r`, arithmetic with IXH/IXL/IYH/IYL; 8 T-states, correct flag behaviour |
-| Interrupts | Maskable INT (mode 1: jump to 0x0038; mode 2: I-register vector); NMI (push PC, jump to 0x0066) |
-| Timing | `step()` returns T-states consumed; 59,659 T-states per NTSC frame |
 | Known limitations | OTIR/INIR and similar block I/O instructions are not cycle-exact across page boundaries; R register increments only on opcode fetch |
 
 ### VDP — TMS9918A (MSX1)
@@ -110,12 +98,6 @@ The following capabilities have specs defined:
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/vdp/vdp.py`, `msx/vdp/renderer.py` |
-| VRAM | 16 KB |
-| Control registers | 8 registers (R0–R7) via port 0x99 |
-| Screen modes | Mode 0: Text 40-col (SCREEN 0); Mode 1: Graphic 1 (SCREEN 1); Mode 2: Graphic 2 (SCREEN 2); Mode 3: Multicolor (SCREEN 3) |
-| Sprites | 32 sprites, size 8×8 or 16×16, ×1/×2 magnification; 4 sprites/line limit; 5th-sprite flag; coincidence flag |
-| Output | 256×192 colour-index buffer per frame; frontend converts to RGB24 using TMS9918A palette |
-| Interrupt | VBlank triggers INT callback; status register bit 7 cleared on read |
 | Known limitations | Mid-frame register-change timing and undocumented sprite-overflow behaviour are not emulated |
 
 ### VDP — Yamaha V9938 (MSX2)
@@ -123,65 +105,35 @@ The following capabilities have specs defined:
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/vdp/v9938.py`, `msx/vdp/v9938_renderer.py` |
-| VRAM | 128 KB |
-| Control registers | 28 registers (R#0–R#27) via port 0x99; 15 command registers (R#32–R#46) |
-| Screen modes | SCREEN 0–8: Text 40-col through Graphic 7; SCREEN 5 (Graphic 4, 256×212×16) is the primary target mode |
-| Palette | 16 entries, 9-bit GRB333; programmable via port 0x9A; MSX2 standard default palette loaded at reset |
-| Status registers | S#0 (VBlank/sprite flags), S#1 (H-line interrupt flag FH), S#2 (command engine CE/TR, retrace HR/VR) |
-| Interrupt | VBlank (IE0, R#1 bit 5) and horizontal line (IE1, R#0 bit 4); level-based IRQ sampled at instruction boundaries |
-| H-line interrupt | Fires when `display_line == (R#19 − R#23) & 0xFF` and the line is within the active display area |
-| Command engine | HMMV, HMMM, HMMC, LMMV, LMMM, LMCM, LMMC, YMMM, LINE, PSET, POINT, SRCH; logical operations IMP/AND/OR/XOR/NOT; approximate cycle timing |
-| Banded renderer | Mid-frame register and palette writes captured in `_reg_write_log`; frame rendered in per-band passes using per-band register snapshots |
 | Known limitations | Command timing is approximate, not cycle-accurate; beam-raced blits and double-buffered VRAM updates within a single frame are not reproduced faithfully |
 
 ### PSG — AY-3-8910
 
-| Item | Detail |
-|------|--------|
-| Implementation | `msx/psg.py` |
-| Registers | 16 registers via ports 0xA0 (address latch), 0xA1 (write), 0xA2 (read) |
-| Tone channels | 3 channels (A, B, C), 12-bit period registers, square-wave |
-| Noise channel | 17-bit LFSR |
-| Envelope | 8 waveform shapes; quasi-logarithmic 16-step amplitude table |
-| Audio output | 44100 Hz, signed 16-bit mono; 735 samples per frame via `generate_samples(735)` |
+Implementation: `msx/psg.py`
 
 ### SCC — Konami SCC (Sound Creative Chip)
 
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/scc.py` |
-| Channels | 5 channels |
-| Waveforms | 4 waveform banks, 32 signed bytes each; channels 4 and 5 share bank 3 |
-| Frequency | 12-bit register per channel |
-| Volume | 4-bit register per channel |
 | Activation | KonamiSCC mapper activates SCC when 0x3F is written to 0x9000; registers appear at 0x9800 |
-| Mixing | SCC samples added to PSG samples per-sample, clipped to [−32768, 32767] |
 
 ### PPI — Intel i8255
 
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/ppi.py` |
-| Port 0xA8 | Primary slot register (read/write) |
-| Port 0xA9 | Keyboard matrix row read (8-bit active-low) |
-| Port 0xAA | Keyboard row selector (bits 0–3) |
 | Known limitations | Cassette interface (port 0xAA bits 4–7) is not implemented |
 
 ### RAM mapper
 
-| Item | Detail |
-|------|--------|
-| Implementation | `msx/ram_mapper.py` |
-| Capacity | 128 KB (8 segments × 16 KB) |
-| Segment registers | Port 0xFC (page 0), 0xFD (page 1), 0xFE (page 2), 0xFF (page 3) |
-| Mapping | Each 16 KB CPU page independently selects one of 8 segments |
+Implementation: `msx/ram_mapper.py`
 
 ### RTC — RP5C01
 
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/rtc.py` |
-| Ports | 0xB4 (register select), 0xB5 (data read/write) |
 | Known limitations | Clock reads reflect host system time; no alarm or timer output |
 
 ### Memory bus / slot system
@@ -220,24 +172,18 @@ Slot 2 uses a separate mapper controlled by `--mapper2` (auto-detected by defaul
 | Item | Detail |
 |------|--------|
 | Implementation | `msx/romdb.py` |
-| Lookup key | SHA1 hash of the cartridge ROM |
-| Data | Game title and recommended mapper type per ROM |
 | Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (referenced; all entries are independently compiled factual data) |
 | Fallback | If PyYAML is not installed, or the ROM is not found, the emulator continues without a title and falls back to `--mapper auto` heuristics |
 
 ### I/O bus
 
-| Item | Detail |
-|------|--------|
-| Implementation | `msx/io.py` |
-| Design | Range-based port registration; reads/writes dispatched to registered handler |
+Implementation: `msx/io.py` — range-based port registration; reads/writes dispatched to registered handler.
 
 ### Keyboard / joystick input
 
 | Item | Detail |
 |------|--------|
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
-| Key rows | Row 6: F1–F3, modifiers; Row 7: F4–F5, Tab, Return; Row 8: cursor keys, Space |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped |
 
@@ -383,8 +329,8 @@ python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.lo
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
-| `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
-| `--watch-point ADDRS` | _(none)_ | Comma-separated watchpoint addresses, max 4 |
+| `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 (MSX2 only) |
+| `--watch-point ADDRS` | _(none)_ | Watchpoint addresses, max 4 (MSX2 only); append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r` |
 
 ### In-emulator key bindings
 
