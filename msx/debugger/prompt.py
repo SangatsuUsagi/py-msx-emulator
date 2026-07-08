@@ -13,6 +13,7 @@ from msx.debugger.disasm import disassemble
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+    from msx.vdp.v9938 import V9938
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -606,31 +607,32 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
 def _print_vdp_fancy(vdp: object) -> None:
     from msx.vdp.v9938 import V9938
     assert isinstance(vdp, V9938)
+    print(f"  Screen : {_decode_screen_mode(vdp.regs[0], vdp.regs[1])}")
+    _print_vdp_vram_layout(vdp)
+    _print_vdp_display_control(vdp)
+    _print_vdp_command_state(vdp)
+    _print_vdp_status(vdp)
+
+
+def _print_vdp_vram_layout(vdp: V9938) -> None:
     r = vdp.regs          # R#0-R#27
-    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
-    s0 = vdp.status
-    s2 = vdp._status2
-
-    # --- Screen mode ---
-    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
-
-    # --- VRAM layout ---
-    _m4 = (r[0] >> 2) & 1  # R#0 bit2
-    _m5 = (r[0] >> 3) & 1  # R#0 bit3
-    name_base    = (r[2] & 0x60) << 10 if (_m4 or _m5) else (r[2] & 0x0F) << 10
+    m4 = (r[0] >> 2) & 1  # R#0 bit2
+    m5 = (r[0] >> 3) & 1  # R#0 bit3
+    name_base    = (r[2] & 0x60) << 10 if (m4 or m5) else (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
-    # R#5/R#11 → SAT base (512-byte aligned); colour table at SAT-0x200
-    _attr_reg    = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
-    sprite_attr  = _attr_reg & ~0x1FF & 0x1FFFF
-    _spr_col     = (sprite_attr - 0x200) & 0x1FFFF
+    # R#5/R#11 → SAT base (512-byte aligned; colour table sits at SAT-0x200)
+    attr_reg     = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
+    sprite_attr  = attr_reg & ~0x1FF & 0x1FFFF
     sprite_pat   = (r[6]  & 0x3F) << 11
     print(
         f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"
         f"  Pattern={pattern_base:05X}  SprAttr={sprite_attr:05X}  SprPat={sprite_pat:05X}"
     )
 
-    # --- Display control ---
+
+def _print_vdp_display_control(vdp: V9938) -> None:
+    r = vdp.regs
     disp    = "ON " if r[1] & 0x40 else "OFF"
     sprites = "OFF" if r[8] & 0x02 else "ON "
     height  = 212 if r[9] & 0x80 else 192
@@ -647,7 +649,10 @@ def _print_vdp_fancy(vdp: object) -> None:
         f"  Spr={spr_sz}/mag={spr_mag}  FG={fg:X} BG={bg:X}  {ie0} {ie1}"
     )
 
-    # --- VDP command state ---
+
+def _print_vdp_command_state(vdp: V9938) -> None:
+    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
+    s2 = vdp._status2
     sx  = c[0]  | (c[1]  & 0x01) << 8
     sy  = c[2]  | (c[3]  & 0x03) << 8
     dx  = c[4]  | (c[5]  & 0x01) << 8
@@ -676,7 +681,10 @@ def _print_vdp_fancy(vdp: object) -> None:
         f"  CLR={clr:02X}  DIR={dix}{diy}"
     )
 
-    # --- Status registers ---
+
+def _print_vdp_status(vdp: V9938) -> None:
+    s0 = vdp.status
+    s2 = vdp._status2
     tr  = "TR" if s2 & 0x80 else "  "
     ce  = "CE" if s2 & 0x01 else "  "
     vf  = "F"  if s0 & 0x80 else " "
@@ -779,7 +787,10 @@ def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None)
         if rm is not None:
             return f"seg={rm.banks[page]}"
     if primary in (1, 2) and page is not None:
-        mapper = getattr(mem, "_mapper" if primary == 1 else "_mapper2", None)
+        mapper = (
+            getattr(mem, "_mapper", None) if primary == 1
+            else getattr(mem, "_mapper2", None)
+        )
         info = _rom_mapper_bank_info(mapper, page) if mapper is not None else None
         if info is not None:
             return info
