@@ -10,6 +10,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class VDP:
+    """TMS9918A VDP for MSX1: 16 KB VRAM, 8 registers.
+
+    Integer-width contract (for a Rust/C++ port; consistent with the CPU
+    Registers width contract): ``vram`` bytes and ``regs`` / ``status`` entries
+    are u8; the VRAM address (``addr``) is 14-bit (kept masked ``& 0x3FFF``).
+    Sprite X positions can go negative before clipping (``x_byte -= 32``) and
+    must be typed signed (i16) in a port.
+    """
+
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
     regs: list[int] = field(default_factory=lambda: [0] * 8)
     addr: int = 0
