@@ -191,7 +191,11 @@ class V9938:
     _status1: int = field(default=0, init=False, repr=False)
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
-    _irq: bool = field(default=False, init=False, repr=False)
+    # Precomputed interrupt-request line state. A plain attribute (not a
+    # @property) so the per-instruction `cpu.int_pending = vdp.irq` read in the
+    # machine loop is a slot load, not a descriptor call. Updated only in
+    # _update_irq()/reset(); read-only by convention for external consumers.
+    irq: bool = field(default=False, init=False, repr=False)
     _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
     )
@@ -230,11 +234,6 @@ class V9938:
         self._read_buf = value
 
     @property
-    def irq(self) -> bool:
-        """Current interrupt-request line state (read-only)."""
-        return self._irq
-
-    @property
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
@@ -260,7 +259,7 @@ class V9938:
         return (ie0 and f) or (ie1 and fh)
 
     def _update_irq(self) -> None:
-        self._irq = self.irq_pending()
+        self.irq = self.irq_pending()
 
     def reset(self) -> None:
         """Restore power-on register/status/command-engine state (VRAM retained)."""
@@ -280,7 +279,7 @@ class V9938:
         self._latch = None
         self._pal_latch = None
         self._read_buf = 0
-        self._irq = False
+        self.irq = False
         self.display_line = 0
         self._line_cycle = 0
 
