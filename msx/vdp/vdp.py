@@ -5,7 +5,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
 
 
