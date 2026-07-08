@@ -18,18 +18,22 @@ _NUM_REGS = 28
 
 
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
-    """Apply V9938 logical operation (LOG[2:0]) at pixel level."""
-    if log_op == 0:
+    """Apply V9938 logical operation (LOG[2:0]) at pixel level.
+
+    LOG codes (see tracer._LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
+    Codes 5-7 are undefined and fall through to IMP (plain source copy).
+    """
+    if log_op == 0:  # IMP
         return src
-    if log_op == 1:
+    if log_op == 1:  # AND
         return src & dst
-    if log_op == 2:
+    if log_op == 2:  # OR
         return src | dst
-    if log_op == 3:
+    if log_op == 3:  # XOR
         return src ^ dst
-    if log_op == 4:
+    if log_op == 4:  # NOT
         return (~src) & mask
-    return src
+    return src  # 5-7 undefined → IMP
 
 
 # V9938 power-on default palette (the MSX2 standard palette), 9-bit packed as
@@ -70,12 +74,6 @@ _CMD_HMMM = 0xD
 _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
-_CMD_NAMES: dict[int, str] = {
-    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH", 0x7: "LINE",
-    0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM", 0xB: "LMMC", 0xC: "HMMV",
-    0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
-}
-
 # S2 status bits
 _S2_CE = 0x01  # command executing
 _S2_BD = 0x10  # border/colour detected (SRCH result)
@@ -113,10 +111,45 @@ _TSTATES_PER_LINE: int = 227
 _HBLANK_START: int = _TSTATES_PER_LINE * 1024 // 1368  # ~169
 
 
+@dataclass(slots=True)
+class _RegChange:
+    """A tracked register write, logged per scanline for banded rendering.
+
+    Tagged-union alternative to the old (line, reg, int | tuple) log entry:
+    a _RegChange sets regs[reg] = value; a _PaletteChange sets palette[idx] = rgb.
+    Consumers dispatch by type (isinstance) rather than a reg == -1 sentinel,
+    which maps directly to a Rust enum / C++ variant.
+    """
+
+    line: int
+    reg: int
+    value: int
+
+
+@dataclass(slots=True)
+class _PaletteChange:
+    """A palette write, logged per scanline for banded rendering (see _RegChange)."""
+
+    line: int
+    idx: int
+    rgb: int
+
+
 @dataclass
 class V9938:
     """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
-    hardware command engine."""
+    hardware command engine.
+
+    Integer-width contract (for a Rust/C++ port; consistent with the CPU
+    Registers width contract): ``vram`` bytes and ``regs`` / ``cmd_regs`` /
+    ``status`` entries are u8; the VRAM address (``_addr``) is 17-bit (kept
+    masked ``& 0x1FFFF``); palette entries are packed 9-bit GRB
+    (``(r << 6) | (g << 3) | b``). Values that are NOT a hardware-register
+    width and must be typed signed in a port: screen / sprite / command
+    coordinates that can go negative before clipping (e.g. ``x_byte -= 32``,
+    ``_cmd_x`` / ``_cmd_y``, the Bresenham error terms) → i16; the command
+    T-state countdown ``_cmd_remaining``, decremented below zero and tested
+    ``<= 0`` → i32."""
 
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
@@ -169,8 +202,12 @@ class V9938:
     _status1: int = field(default=0, init=False, repr=False)
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
-    _irq: bool = field(default=False, init=False, repr=False)
-    _reg_write_log: list[tuple[int, int, int | tuple[int, int]]] = field(
+    # Precomputed interrupt-request line state. A plain attribute (not a
+    # @property) so the per-instruction `cpu.int_pending = vdp.irq` read in the
+    # machine loop is a slot load, not a descriptor call. Updated only in
+    # _update_irq()/reset(); read-only by convention for external consumers.
+    irq: bool = field(default=False, init=False, repr=False)
+    _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
     )
     _frame_start_regs: list[int] = field(
@@ -208,11 +245,6 @@ class V9938:
         self._read_buf = value
 
     @property
-    def irq(self) -> bool:
-        """Current interrupt-request line state (read-only)."""
-        return self._irq
-
-    @property
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
@@ -238,7 +270,7 @@ class V9938:
         return (ie0 and f) or (ie1 and fh)
 
     def _update_irq(self) -> None:
-        self._irq = self.irq_pending()
+        self.irq = self.irq_pending()
 
     def reset(self) -> None:
         """Restore power-on register/status/command-engine state (VRAM retained)."""
@@ -258,7 +290,7 @@ class V9938:
         self._latch = None
         self._pal_latch = None
         self._read_buf = 0
-        self._irq = False
+        self.irq = False
         self.display_line = 0
         self._line_cycle = 0
 
@@ -306,6 +338,12 @@ class V9938:
     # ------------------------------------------------------------------
 
     def write_port(self, port: int, value: int) -> None:
+        """Dispatch a V9938 VDP port write.
+
+        0x98 = VRAM data (auto-increments the 17-bit address); 0x99 = control
+        (two-byte latch: register write or VRAM address setup); 0x9A = palette
+        data; 0x9B/0x9C = indirect register access (R#17-pointed register).
+        """
         value &= 0xFF
         if port == 0x98:
             self.vram[self._addr] = value
@@ -325,7 +363,7 @@ class V9938:
                     if reg < _NUM_REGS:
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
-                            self._reg_write_log.append((self.display_line, reg, low))
+                            self._reg_write_log.append(_RegChange(self.display_line, reg, low))
                         if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                             self._update_irq()
                     elif 32 <= reg <= 45:
@@ -354,7 +392,7 @@ class V9938:
                 idx = self.regs[16] & 0x0F
                 rgb = (r << 6) | (g << 3) | b
                 self.palette[idx] = rgb
-                self._reg_write_log.append((self.display_line, -1, (idx, rgb)))
+                self._reg_write_log.append(_PaletteChange(self.display_line, idx, rgb))
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
@@ -366,7 +404,7 @@ class V9938:
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
-                    self._reg_write_log.append((self.display_line, ptr, value))
+                    self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
                 if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                     self._update_irq()
             elif 32 <= ptr <= 45:
@@ -386,6 +424,12 @@ class V9938:
             self._cmd_data_write(value)
 
     def read_port(self, port: int) -> int:
+        """Dispatch a V9938 VDP port read.
+
+        0x98 = VRAM data (returns the read-ahead buffer, refills it, auto-
+        increments the 17-bit address); 0x99 = status register S#n, where R#15
+        selects which S#n is returned (reading also resets the control latch).
+        """
         if port == 0x98:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
@@ -506,9 +550,9 @@ class V9938:
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14])."""
-        cmr = self.cmd_regs[14]
-        cmd = (cmr >> 4) & 0xF
-        log = cmr & 0xF
+        r46 = self.cmd_regs[14]  # R#46: command byte (high nibble) + logic op (low)
+        cmd = (r46 >> 4) & 0xF
+        log = r46 & 0xF
 
         # Every command owns _cmd_code, not just the CPU-feed commands (HMMC/
         # LMMC/LMCM). The data-port handlers key off _cmd_code, so a completed

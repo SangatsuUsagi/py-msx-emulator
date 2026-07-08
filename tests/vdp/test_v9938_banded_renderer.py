@@ -1,5 +1,5 @@
 """Tests for V9938 band-split renderer."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
 from msx.vdp.v9938_renderer import _build_bands, render_frame
 
 _W = 256
@@ -62,7 +62,7 @@ def test_build_bands_empty_log() -> None:
 def test_build_bands_single_change() -> None:
     vdp = make_g4_vdp()
     vdp.begin_scanline(0)
-    vdp._reg_write_log = [(96, 0, 0x00)]  # write at display_line 96 → takes effect from line 97
+    vdp._reg_write_log = [_RegChange(96, 0, 0x00)]  # display_line 96 → effective from line 97
     bands = _build_bands(vdp)
     assert len(bands) == 2
     assert bands[0][0] == 0 and bands[0][1] == 97    # first band [0, 97)
@@ -72,7 +72,7 @@ def test_build_bands_single_change() -> None:
 def test_build_bands_multiple_changes() -> None:
     vdp = make_g4_vdp()
     vdp.begin_scanline(0)
-    vdp._reg_write_log = [(50, 7, 1), (100, 7, 2), (150, 7, 3)]
+    vdp._reg_write_log = [_RegChange(50, 7, 1), _RegChange(100, 7, 2), _RegChange(150, 7, 3)]
     bands = _build_bands(vdp)
     assert len(bands) == 4
     # writes at display_lines 50, 100, 150 → take effect from lines 51, 101, 151
@@ -105,7 +105,7 @@ def test_mode_change_at_line_96_produces_split() -> None:
     # Simulate mid-frame mode change at line 96 (switch to G4)
     # In G4: R#0 = 0x06 (M3+M4)
     vdp.display_line = 96
-    vdp._reg_write_log.append((96, 0, 0x06))
+    vdp._reg_write_log.append(_RegChange(96, 0, 0x06))
 
     # Also apply the change to regs (as write_port would do)
     vdp.regs[0] = 0x06
@@ -133,7 +133,7 @@ def test_first_band_uses_frame_start_regs() -> None:
 
     # During frame: change R#7 at line 64
     vdp.regs[7] = 0x09
-    vdp._reg_write_log.append((64, 7, 0x09))
+    vdp._reg_write_log.append(_RegChange(64, 7, 0x09))
 
     bands = _build_bands(vdp)
     assert len(bands) == 2
@@ -162,7 +162,7 @@ def test_palette_change_at_line_64_applies_to_lower_band() -> None:
     # Mid-frame: change palette[1] at line 64
     new_rgb = 0b111_001_001  # medium red
     vdp.palette[1] = new_rgb
-    vdp._reg_write_log.append((64, -1, (1, new_rgb)))  # sentinel: (palette_idx, rgb)
+    vdp._reg_write_log.append(_PaletteChange(64, 1, new_rgb))  # palette idx 1 → new_rgb
 
     bands = _build_bands(vdp)
     assert len(bands) == 2
@@ -189,7 +189,7 @@ def test_hline_vscroll_change_does_not_affect_trigger_line() -> None:
     vdp.begin_scanline(0)  # captures frame_start_regs[23]=0
 
     # H-line ISR writes R#23=60 during line 10's CPU window (display_line=9)
-    vdp._reg_write_log = [(9, 23, 60)]
+    vdp._reg_write_log = [_RegChange(9, 23, 60)]
 
     bands = _build_bands(vdp)
     assert len(bands) == 2

@@ -10,6 +10,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class VDP:
+    """TMS9918A VDP for MSX1: 16 KB VRAM, 8 registers.
+
+    Integer-width contract (for a Rust/C++ port; consistent with the CPU
+    Registers width contract): ``vram`` bytes and ``regs`` / ``status`` entries
+    are u8; the VRAM address (``addr``) is 14-bit (kept masked ``& 0x3FFF``).
+    Sprite X positions can go negative before clipping (``x_byte -= 32``) and
+    must be typed signed (i16) in a port.
+    """
+
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
     regs: list[int] = field(default_factory=lambda: [0] * 8)
     addr: int = 0
@@ -45,6 +54,12 @@ class VDP:
         self.read_buf = 0
 
     def write_port(self, port: int, value: int) -> None:
+        """Dispatch a TMS9918A VDP port write.
+
+        0x98 = VRAM data (writes at the current address, auto-increments it);
+        0x99 = control (two-byte latch: the second byte either writes a register
+        when bit 7 is set, or sets up the VRAM address otherwise).
+        """
         value = value & 0xFF
         if port == 0x98:
             self.vram[self.addr] = value
@@ -74,6 +89,12 @@ class VDP:
                         self.addr = (self.addr + 1) & 0x3FFF
 
     def read_port(self, port: int) -> int:
+        """Dispatch a TMS9918A VDP port read.
+
+        0x98 = VRAM data (returns the read-ahead buffer, refills it, auto-
+        increments the address); 0x99 = status register (clears VBlank + 5th-
+        sprite flags and resets the control write latch as a side effect).
+        """
         if port == 0x98:
             result = self.read_buf
             self.read_buf = self.vram[self.addr]
