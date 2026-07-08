@@ -1,12 +1,16 @@
-"""render_frame() for V9938 VDP — SCREEN 0–3 (TMS9918A-compatible modes).
+"""render_frame() for the V9938 VDP.
 
-SCREEN 4–8 dispatch stubs are included but return blank frames; those modes
-are implemented in later phases.
+Implements SCREEN 0–3 (TMS9918A-compatible modes) plus the V9938 bitmap modes
+SCREEN 4–8 (GRAPHIC 3–7) and sprite mode 2, with per-scanline banding for
+mid-frame register/palette changes.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Iterable
+
+from msx.vdp.v9938 import _PaletteChange, _RegChange
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -176,14 +180,14 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
     log = vdp._reg_write_log
     display_height = vdp.display_height
 
-    change_lines: dict[int, list[tuple[int, int | tuple[int, int]]]] = {}
-    for dl, reg, value in log:
+    change_lines: dict[int, list[_RegChange | _PaletteChange]] = {}
+    for entry in log:
         # Writes logged at display_line=N happen during line N+1's CPU window
         # (begin_scanline(N) fires after N's CPU budget; ISR runs in N+1's window).
         # The register change therefore takes effect from line N+1 onwards.
-        effective = dl + 1
+        effective = entry.line + 1
         if 0 < effective < display_height:
-            change_lines.setdefault(effective, []).append((reg, value))
+            change_lines.setdefault(effective, []).append(entry)
 
     if not change_lines:
         return []
@@ -196,14 +200,11 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
     for line in sorted(change_lines):
         if line > prev_y:
             bands.append((prev_y, line, list(cur_regs), list(cur_palette)))
-        for reg, value in change_lines[line]:
-            if reg == -1:
-                assert isinstance(value, tuple)
-                idx, rgb = value
-                cur_palette[idx] = rgb
+        for entry in change_lines[line]:
+            if isinstance(entry, _PaletteChange):
+                cur_palette[entry.idx] = entry.rgb
             else:
-                assert isinstance(value, int)
-                cur_regs[reg] = value
+                cur_regs[entry.reg] = entry.value
         prev_y = line
 
     if prev_y < display_height:
@@ -211,6 +212,21 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
 
     return bands
 
+
+
+@dataclass(slots=True)
+class _SatSegment:
+    """A run of consecutive bands sharing a sprite-attribute-table key.
+
+    Built in _render_banded to coalesce sprite passes: y0..y1 is the merged
+    scanline span, `regs` are the registers of the tallest band in the run
+    (used for that region's sprite pass), and `height` tracks that band's height.
+    """
+
+    y0: int
+    y1: int
+    regs: list[int]
+    height: int
 
 
 def _render_banded(vdp: "V9938") -> bytearray:
@@ -233,52 +249,60 @@ def _render_banded(vdp: "V9938") -> bytearray:
 
     saved_regs = vdp.regs[:]
     saved_palette = vdp.palette[:]
+    try:
+        # Background: one pass per band with that band's registers/palette (no sprites).
+        for y0, y1, band_regs, band_palette in bands:
+            vdp.regs = band_regs
+            vdp.palette = band_palette
+            _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
 
-    # Background: one pass per band with that band's registers/palette (no sprites).
-    for y0, y1, band_regs, band_palette in bands:
-        vdp.regs = band_regs
-        vdp.palette = band_palette
-        _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
+        # Sprites: normally a single full-frame pass with the main band's registers
+        # (drawing sprites per band would redraw the same SAT sprite at each band's
+        # vscroll → the duplicate/ghost bug). The exception is a mid-screen sprite
+        # attribute table switch (R#5/R#11), used for sprite multiplexing / "sprite
+        # doubler" (e.g. Space Manbow flips R#5 near screen centre to show a second
+        # set of 32 sprites in the lower half). There the regions read *different*
+        # SAT buffers, so one sprite pass per SAT region — each clipped to its
+        # scanline span — reproduces the doubler without the same-sprite ghost.
+        # Consecutive bands sharing a SAT base are merged so the pass count stays
+        # at the number of distinct SAT regions (one for ordinary games), keeping
+        # the cost ~unchanged. R#5 is only changed mid-active-display for this
+        # purpose, so gating on it does not affect non-multiplexed games.
+        def _sat_key(regs: list[int]) -> tuple[int, int]:
+            return (regs[5], regs[11] & 0x03)
 
-    # Sprites: normally a single full-frame pass with the main band's registers
-    # (drawing sprites per band would redraw the same SAT sprite at each band's
-    # vscroll → the duplicate/ghost bug). The exception is a mid-screen sprite
-    # attribute table switch (R#5/R#11), used for sprite multiplexing / "sprite
-    # doubler" (e.g. Space Manbow flips R#5 near screen centre to show a second
-    # set of 32 sprites in the lower half). There the regions read *different*
-    # SAT buffers, so one sprite pass per SAT region — each clipped to its
-    # scanline span — reproduces the doubler without the same-sprite ghost.
-    # Consecutive bands sharing a SAT base are merged so the pass count stays
-    # at the number of distinct SAT regions (one for ordinary games), keeping
-    # the cost ~unchanged. R#5 is only changed mid-active-display for this
-    # purpose, so gating on it does not affect non-multiplexed games.
-    def _sat_key(regs: list[int]) -> tuple[int, int]:
-        return (regs[5], regs[11] & 0x03)
+        sat_segments: list[_SatSegment] = []
+        for y0, y1, band_regs, _ in bands:
+            bh = y1 - y0
+            if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
+                seg = sat_segments[-1]
+                seg.y1 = y1
+                if bh > seg.height:
+                    seg.regs = band_regs
+                    seg.height = bh
+            else:
+                sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
 
-    sat_segments: list[list[Any]] = []  # [y0, y1, regs_of_largest_band, largest_band_h]
-    for y0, y1, band_regs, _ in bands:
-        bh = y1 - y0
-        if sat_segments and _sat_key(sat_segments[-1][2]) == _sat_key(band_regs):
-            seg = sat_segments[-1]
-            seg[1] = y1
-            if bh > seg[3]:
-                seg[2] = band_regs
-                seg[3] = bh
+        if len(sat_segments) <= 1:
+            # One SAT for the whole frame → original single pass (main band regs).
+            vdp.regs = main_regs
+            _render_sprites_for_mode(vdp, out, 0, full_h)
         else:
-            sat_segments.append([y0, y1, band_regs, bh])
+            for seg in sat_segments:
+                vdp.regs = seg.regs
+                _render_sprites_for_mode(vdp, out, seg.y0, min(seg.y1, full_h))
 
-    if len(sat_segments) <= 1:
-        # One SAT for the whole frame → original single pass (main band regs).
-        vdp.regs = main_regs
-        _render_sprites_for_mode(vdp, out, 0, full_h)
-    else:
-        for y0, y1, seg_regs, _ in sat_segments:
-            vdp.regs = seg_regs
-            _render_sprites_for_mode(vdp, out, y0, min(y1, full_h))
-
-    _finalize(vdp)
-    vdp.regs = saved_regs
-    vdp.palette = saved_palette
+        _finalize(vdp)
+    finally:
+        # Portability note: the band passes above temporarily rebind
+        # vdp.regs / vdp.palette to per-band snapshots (shared list objects held
+        # in `bands`). That reference-swap is a Python convenience that does not
+        # map to an ownership model — a port threads the band registers/palette
+        # as explicit parameters to the per-band renderers instead. The
+        # try/finally guarantees the live registers are restored even if a
+        # renderer raises mid-frame (the invariant is otherwise implicit).
+        vdp.regs = saved_regs
+        vdp.palette = saved_palette
     return out
 
 
@@ -403,10 +427,10 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
             cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F  # inline _color
-            fg = _hi if _hi else bd
-            _lo = cb & 0x0F
-            bg = _lo if _lo else bd
+            hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+            fg = hi_nib if hi_nib else bd
+            lo_nib = cb & 0x0F
+            bg = lo_nib if lo_nib else bd
             pat_tile = pat_base + tile * 8
             bx = col * 8
             for py in range(8):
@@ -452,10 +476,10 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             off = band_offset + tile * 8 + py
             pat = vdp.vram[(pat_base + off) & 0x1FFFF]
             cb  = vdp.vram[(col_base + off) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F  # inline _color
-            fg = _hi if _hi else bd
-            _lo = cb & 0x0F
-            bg = _lo if _lo else bd
+            hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+            fg = hi_nib if hi_nib else bd
+            lo_nib = cb & 0x0F
+            bg = lo_nib if lo_nib else bd
             bx = col * 8
             buf[scan_w + bx:scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -514,16 +538,17 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
-                _hi = (pat >> 4) & 0x0F  # inline _color
-                lc = _hi if _hi else bd
-                _lo = pat & 0x0F
-                rc = _lo if _lo else bd
+                hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+                lc = hi_nib if hi_nib else bd
+                lo_nib = pat & 0x0F
+                rc = lo_nib if lo_nib else bd
                 buf[scan * _W + bx:scan * _W + bx + 4] = _COLOR4[lc]
                 buf[scan * _W + bx + 4:scan * _W + bx + 8] = _COLOR4[rc]
 
 
 # ---------------------------------------------------------------------------
-# Sprite mode 1 — V9938 allows 8 sprites per scanline (vs 4 on TMS9918A)
+# Sprite mode 1 — keeps the TMS9918A limit of 4 sprites per scanline.
+# (Sprite mode 2, below, raises this to 8 per scanline.)
 # ---------------------------------------------------------------------------
 
 def _render_sprites(

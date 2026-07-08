@@ -13,7 +13,7 @@ from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.state import load_state, save_state
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _PaletteChange
 from msx.vdp.v9938_renderer import _INTENSITY3, _build_bands, grb332_to_rgb
 
 # Precomputed SCREEN 8 GRB332 → 3-byte RGB table (256 entries), for fast join.
@@ -90,7 +90,7 @@ def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
         # Check for mid-frame palette changes in the log.  _reg_write_log is
         # still valid here: it is cleared by begin_scanline(0) at the *next*
         # frame, not at the end of this one.
-        has_palette_change = any(entry[1] == -1 for entry in vdp._reg_write_log)
+        has_palette_change = any(isinstance(e, _PaletteChange) for e in vdp._reg_write_log)
         if has_palette_change:
             return _v9938_banded_to_rgb24(src, vdp)
 
