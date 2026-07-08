@@ -11,7 +11,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
 from msx.vdp.v9938 import _PaletteChange, _RegChange
-from msx.vdp.vdp import _channel_tables_indexed, _translate_rgb24
+from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -1019,9 +1019,7 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     mid-frame palette change, conversion is done per band. The 16-colour channel
     tables are cached on the VDP instance, keyed on the palette snapshot.
     """
-    r0 = vdp.regs[0]
-    is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
-    if is_g7:
+    if vdp.framebuffer_format is FramebufferFormat.GRB332:
         return _translate_rgb24(src, _GRB332_CHANNELS)
 
     # _reg_write_log is still valid here: it is cleared by begin_scanline(0) at
