@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.vdp.vdp import FramebufferFormat
+
 if TYPE_CHECKING:
     from msx.vdp.tracer import Tracer
 
@@ -278,6 +280,14 @@ class V9938:
 
     def _update_irq(self) -> None:
         self.irq = self.irq_pending()
+
+    @property
+    def framebuffer_format(self) -> FramebufferFormat:
+        """SCREEN 8 (G7, M4+M5) stores direct GRB332 pixels; all other modes
+        store 4-bit palette indices."""
+        r0 = self.regs[0]
+        is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)
+        return FramebufferFormat.GRB332 if is_g7 else FramebufferFormat.PALETTE_INDEX4
 
     def to_rgb24(self, src: bytearray) -> bytes:
         """Convert a palette-index / SCREEN 8 framebuffer to packed RGB24

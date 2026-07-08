@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from msx.debug.logger import DebugLogger
     from msx.vdp.tracer import Tracer
+
+
+class FramebufferFormat(Enum):
+    """Meaning of each byte in a VDP index framebuffer (see VDP.to_rgb24).
+
+    PALETTE_INDEX4 — the low 4 bits index the (fixed or programmable) 16-colour
+    palette. GRB332 — the whole byte is a direct SCREEN 8 (G7) colour. A port
+    carries this alongside the buffer instead of re-deriving it from registers.
+    """
+
+    PALETTE_INDEX4 = auto()
+    GRB332 = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +177,11 @@ class VDP:
             self.latch = None     # reading status resets the address latch
             return result & 0xFF
         return 0xFF
+
+    @property
+    def framebuffer_format(self) -> FramebufferFormat:
+        """TMS9918A framebuffers are always 4-bit palette indices."""
+        return FramebufferFormat.PALETTE_INDEX4
 
     def to_rgb24(self, src: bytearray) -> bytes:
         """Convert a palette-index framebuffer to packed RGB24.
