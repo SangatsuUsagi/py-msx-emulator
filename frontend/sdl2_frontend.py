@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import ctypes
-import datetime
 import sys
 from array import array
 from pathlib import Path
 from typing import Any
 
-from PIL import Image as _PIL_Image
-
 from msx.frame_timer import FrameTimer
 from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
+from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
 
 _SCREEN_WIDTH = 256
@@ -29,17 +27,6 @@ _S16_MIN: int = -32768
 # Auto frame-skip: bump the skip counter when a frame overruns its budget by
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
-
-
-def _save_screenshot(rgb_buf: bytes, w: int, h: int) -> None:
-    """Write the w×h RGB24 buffer to a timestamped PNG in saves/screenshots/."""
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path("saves") / "screenshots"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"screenshot_{stamp}.png"
-    img = _PIL_Image.frombytes("RGB", (w, h), bytes(rgb_buf))
-    img.save(path)
-    print(f"screenshot saved: {path}")
 
 
 def _init_sdl(
@@ -149,7 +136,7 @@ def _handle_events(
                 except Exception as exc:
                     print(f"load failed: {exc}", file=sys.stderr)
             elif event.key.keysym.sym == sdl2.SDLK_F10:
-                _save_screenshot(rgb_buf, tex_w, tex_h)
+                save_screenshot(rgb_buf, tex_w, tex_h)
             elif (event.key.keysym.sym == sdl2.SDLK_c
                   and (event.key.keysym.mod & sdl2.KMOD_CTRL)
                   and machine._debugger is not None):
