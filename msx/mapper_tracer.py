@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import IO
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 
 @dataclass
@@ -57,7 +60,9 @@ class MapperTracer:
         self.output.flush()
 
 
-def attach_to_machine(machine, *, output: IO[str] | None = None) -> "MapperTracer | None":
+def attach_to_machine(
+    machine: "Machine", *, output: IO[str] | None = None
+) -> "MapperTracer | None":
     """Attach an enabled MapperTracer to the cartridge ROM mapper(s) in slots 1/2.
 
     Wires the PC/cycle/frame accessors the same way the `ce` debugger command
