@@ -19,6 +19,13 @@ python_version = "3.10"
 strict = true
 ignore_missing_imports = true
 
+# The test suite is intentionally not held to --strict: tests rely on fixtures,
+# monkeypatch, and base-typed handles (e.g. machine.vdp) that make full typing
+# high-effort and low-value. Source (msx/, frontend/, scripts/) stays strict.
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
