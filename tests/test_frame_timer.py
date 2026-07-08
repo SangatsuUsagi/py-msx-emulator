@@ -72,8 +72,9 @@ def test_speed_zero_constructs_without_zero_division() -> None:
     assert timer._frame_interval > 0.0
 
 
-def test_set_speed_recomputes_frame_interval() -> None:
-    timer = FrameTimer(fps=60.0, speed=1.0)
-    timer.set_speed(2.0)
+def test_speed_multiplier_sets_frame_interval() -> None:
+    # The speed multiplier scales the frame interval at construction:
+    # 60 fps × 2.0 → 120 Hz → ≈8.333 ms.
+    timer = FrameTimer(fps=60.0, speed=2.0)
     assert timer.speed == 2.0
-    assert abs(timer._frame_interval - 1.0 / 120.0) < 1e-9  # ≈8.333 ms
+    assert abs(timer._frame_interval - 1.0 / 120.0) < 1e-9

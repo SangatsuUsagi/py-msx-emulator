@@ -52,7 +52,6 @@ _G7_SPRITE_PALETTE: tuple[int, ...] = tuple(
 
 # Solid-colour fill tables — avoids bytes([c]*N) allocation in hot tile loops.
 _COLOR4: tuple[bytes, ...] = tuple(bytes([c] * 4) for c in range(16))
-_COLOR8: tuple[bytes, ...] = tuple(bytes([c] * 8) for c in range(16))
 
 # LUT caches for G4/G6 and G5 pixel expansion via bytes.translate().
 # Keys: (tp: bool, border: int).  At most 32 entries each (2 × 16).

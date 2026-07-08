@@ -108,17 +108,6 @@ class PSG:
         # step therefore advances every `period` ticks (no *8 / *16 multiplier).
         self._env_cnt = self._env_period()
 
-    # ---------------------------------------------------------- tone channels
-
-    def _step_tone(self, ch: int, ticks: int) -> None:
-        fine = self.regs[ch * 2]
-        coarse = self.regs[ch * 2 + 1] & 0x0F
-        period = max(1, (coarse << 8) | fine)
-        self._tone_cnt[ch] -= ticks
-        while self._tone_cnt[ch] <= 0:
-            self._tone_cnt[ch] += period
-            self._tone_out[ch] ^= 1
-
     # --------------------------------------------------------------- noise
 
     def _step_noise(self, ticks: int) -> None:
