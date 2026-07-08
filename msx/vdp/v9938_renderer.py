@@ -404,10 +404,10 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
             cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F  # inline _color
-            fg = _hi if _hi else bd
-            _lo = cb & 0x0F
-            bg = _lo if _lo else bd
+            hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+            fg = hi_nib if hi_nib else bd
+            lo_nib = cb & 0x0F
+            bg = lo_nib if lo_nib else bd
             pat_tile = pat_base + tile * 8
             bx = col * 8
             for py in range(8):
@@ -453,10 +453,10 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             off = band_offset + tile * 8 + py
             pat = vdp.vram[(pat_base + off) & 0x1FFFF]
             cb  = vdp.vram[(col_base + off) & 0x1FFFF]
-            _hi = (cb >> 4) & 0x0F  # inline _color
-            fg = _hi if _hi else bd
-            _lo = cb & 0x0F
-            bg = _lo if _lo else bd
+            hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+            fg = hi_nib if hi_nib else bd
+            lo_nib = cb & 0x0F
+            bg = lo_nib if lo_nib else bd
             bx = col * 8
             buf[scan_w + bx:scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -515,16 +515,17 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
-                _hi = (pat >> 4) & 0x0F  # inline _color
-                lc = _hi if _hi else bd
-                _lo = pat & 0x0F
-                rc = _lo if _lo else bd
+                hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+                lc = hi_nib if hi_nib else bd
+                lo_nib = pat & 0x0F
+                rc = lo_nib if lo_nib else bd
                 buf[scan * _W + bx:scan * _W + bx + 4] = _COLOR4[lc]
                 buf[scan * _W + bx + 4:scan * _W + bx + 8] = _COLOR4[rc]
 
 
 # ---------------------------------------------------------------------------
-# Sprite mode 1 — V9938 allows 8 sprites per scanline (vs 4 on TMS9918A)
+# Sprite mode 1 — keeps the TMS9918A limit of 4 sprites per scanline.
+# (Sprite mode 2, below, raises this to 8 per scanline.)
 # ---------------------------------------------------------------------------
 
 def _render_sprites(

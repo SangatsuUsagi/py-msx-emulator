@@ -18,18 +18,22 @@ _NUM_REGS = 28
 
 
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
-    """Apply V9938 logical operation (LOG[2:0]) at pixel level."""
-    if log_op == 0:
+    """Apply V9938 logical operation (LOG[2:0]) at pixel level.
+
+    LOG codes (see tracer._LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
+    Codes 5-7 are undefined and fall through to IMP (plain source copy).
+    """
+    if log_op == 0:  # IMP
         return src
-    if log_op == 1:
+    if log_op == 1:  # AND
         return src & dst
-    if log_op == 2:
+    if log_op == 2:  # OR
         return src | dst
-    if log_op == 3:
+    if log_op == 3:  # XOR
         return src ^ dst
-    if log_op == 4:
+    if log_op == 4:  # NOT
         return (~src) & mask
-    return src
+    return src  # 5-7 undefined → IMP
 
 
 # V9938 power-on default palette (the MSX2 standard palette), 9-bit packed as
