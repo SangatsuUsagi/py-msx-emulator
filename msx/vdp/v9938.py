@@ -217,6 +217,13 @@ class V9938:
         default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False
     )
     debug_disable_sprites: bool = field(default=False, repr=False)  # render background only
+    # Instance-owned RGB24 conversion cache (see to_rgb24): the indexed-mode
+    # channel tables and the palette snapshot they were built from. Per-instance
+    # rather than a module global so two VDPs / a reset don't collide.
+    _rgb_lut_key: tuple[int, ...] = field(default=(), init=False, repr=False)
+    _rgb_channels: tuple[bytes, bytes, bytes] = field(
+        default_factory=lambda: (b"", b"", b""), init=False, repr=False
+    )
 
     # Public accessors mirroring the TMS9918A VDP field names, so cross-module
     # code (machine, state save/load) can use the same names for both VDP types.
@@ -271,6 +278,14 @@ class V9938:
 
     def _update_irq(self) -> None:
         self.irq = self.irq_pending()
+
+    def to_rgb24(self, src: bytearray) -> bytes:
+        """Convert a palette-index / SCREEN 8 framebuffer to packed RGB24
+        (programmable palette, GRB332, and mid-frame banded paths)."""
+        # Lazy import: v9938_renderer imports this module at load time, so the
+        # dependency is one-directional at import and resolved here at call time.
+        from msx.vdp import v9938_renderer
+        return v9938_renderer.to_rgb24(self, src)
 
     def reset(self) -> None:
         """Restore power-on register/status/command-engine state (VRAM retained)."""

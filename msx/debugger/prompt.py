@@ -516,12 +516,12 @@ class Debugger:
         saved_fc = getattr(vdp, "_frame_count", None)
         try:
             if isinstance(vdp, V9938):
+                from frontend.sdl2_frontend import _save_screenshot
                 from msx.vdp.v9938_renderer import render_frame as _render
-                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
                 idx = _render(vdp)
             else:
+                from frontend.sdl2_frontend import _save_screenshot
                 from msx.vdp.renderer import render_frame as _render_vdp
-                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
                 idx = _render_vdp(vdp)
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"ss: screenshot failed: {exc}")
@@ -531,7 +531,7 @@ class Debugger:
                 vdp._frame_count = saved_fc  # don't perturb the frame counter
         h = vdp.display_height
         w = (len(idx) // h) if h else 256
-        _save_screenshot(bytearray(_index_to_rgb24(idx, vdp)), w, h)
+        _save_screenshot(vdp.to_rgb24(idx), w, h)
 
     def _cmd_disable_sprites(self) -> None:
         vdp = self._machine.vdp
