@@ -1,7 +1,8 @@
-"""render_frame() for V9938 VDP — SCREEN 0–3 (TMS9918A-compatible modes).
+"""render_frame() for the V9938 VDP.
 
-SCREEN 4–8 dispatch stubs are included but return blank frames; those modes
-are implemented in later phases.
+Implements SCREEN 0–3 (TMS9918A-compatible modes) plus the V9938 bitmap modes
+SCREEN 4–8 (GRAPHIC 3–7) and sprite mode 2, with per-scanline banding for
+mid-frame register/palette changes.
 """
 from __future__ import annotations
 

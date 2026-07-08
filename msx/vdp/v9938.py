@@ -70,12 +70,6 @@ _CMD_HMMM = 0xD
 _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
-_CMD_NAMES: dict[int, str] = {
-    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH", 0x7: "LINE",
-    0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM", 0xB: "LMMC", 0xC: "HMMV",
-    0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
-}
-
 # S2 status bits
 _S2_CE = 0x01  # command executing
 _S2_BD = 0x10  # border/colour detected (SRCH result)
@@ -306,6 +300,12 @@ class V9938:
     # ------------------------------------------------------------------
 
     def write_port(self, port: int, value: int) -> None:
+        """Dispatch a V9938 VDP port write.
+
+        0x98 = VRAM data (auto-increments the 17-bit address); 0x99 = control
+        (two-byte latch: register write or VRAM address setup); 0x9A = palette
+        data; 0x9B/0x9C = indirect register access (R#17-pointed register).
+        """
         value &= 0xFF
         if port == 0x98:
             self.vram[self._addr] = value
@@ -386,6 +386,12 @@ class V9938:
             self._cmd_data_write(value)
 
     def read_port(self, port: int) -> int:
+        """Dispatch a V9938 VDP port read.
+
+        0x98 = VRAM data (returns the read-ahead buffer, refills it, auto-
+        increments the 17-bit address); 0x99 = status register S#n, where R#15
+        selects which S#n is returned (reading also resets the control latch).
+        """
         if port == 0x98:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
@@ -506,9 +512,9 @@ class V9938:
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14])."""
-        cmr = self.cmd_regs[14]
-        cmd = (cmr >> 4) & 0xF
-        log = cmr & 0xF
+        r46 = self.cmd_regs[14]  # R#46: command byte (high nibble) + logic op (low)
+        cmd = (r46 >> 4) & 0xF
+        log = r46 & 0xF
 
         # Every command owns _cmd_code, not just the CPU-feed commands (HMMC/
         # LMMC/LMCM). The data-port handlers key off _cmd_code, so a completed
