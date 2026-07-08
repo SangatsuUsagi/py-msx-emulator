@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,24 +80,24 @@ def _cpu_regs_to_dict(machine: "Machine") -> dict[str, int]:
     }
 
 
-def _restore_cpu_regs(machine: "Machine", d: dict[str, int]) -> None:
+def _restore_cpu_regs(machine: "Machine", regs: dict[str, int]) -> None:
     r = machine.cpu.registers
-    r.A = d["A"]
-    r.F = d["F"]
-    r.BC = d["BC"]
-    r.DE = d["DE"]
-    r.HL = d["HL"]
-    r.IX = d["IX"]
-    r.IY = d["IY"]
-    r.SP = d["SP"]
-    r.PC = d["PC"]
-    r.I = d["I"]
-    r.R = d["R"]
-    r.A_ = d["A_"]
-    r.F_ = d["F_"]
-    r.BC_ = d["BC_"]
-    r.DE_ = d["DE_"]
-    r.HL_ = d["HL_"]
+    r.A = regs["A"]
+    r.F = regs["F"]
+    r.BC = regs["BC"]
+    r.DE = regs["DE"]
+    r.HL = regs["HL"]
+    r.IX = regs["IX"]
+    r.IY = regs["IY"]
+    r.SP = regs["SP"]
+    r.PC = regs["PC"]
+    r.I = regs["I"]
+    r.R = regs["R"]
+    r.A_ = regs["A_"]
+    r.F_ = regs["F_"]
+    r.BC_ = regs["BC_"]
+    r.DE_ = regs["DE_"]
+    r.HL_ = regs["HL_"]
 
 
 def _psg_synth_to_dict(machine: "Machine") -> dict[str, object]:
@@ -116,19 +117,19 @@ def _psg_synth_to_dict(machine: "Machine") -> dict[str, object]:
     }
 
 
-def _restore_psg_synth(machine: "Machine", d: dict[str, object]) -> None:
+def _restore_psg_synth(machine: "Machine", synth: dict[str, object]) -> None:
     p = machine.psg
-    p._tone_cnt = list(d["_tone_cnt"])  # type: ignore[call-overload]
-    p._tone_out = list(d["_tone_out"])  # type: ignore[call-overload]
-    p._noise_cnt = int(d["_noise_cnt"])  # type: ignore[call-overload]
-    p._lfsr = int(d["_lfsr"])  # type: ignore[call-overload]
-    p._env_cnt = int(d["_env_cnt"])  # type: ignore[call-overload]
-    p._env_step = int(d["_env_step"])  # type: ignore[call-overload]
-    p._env_attack = int(d["_env_attack"])  # type: ignore[call-overload]
-    p._env_alternate = bool(d["_env_alternate"])
-    p._env_hold_flag = bool(d["_env_hold_flag"])
-    p._env_holding = bool(d["_env_holding"])
-    p._clk_frac = int(d["_clk_frac"])  # type: ignore[call-overload]
+    p._tone_cnt = list(synth["_tone_cnt"])  # type: ignore[call-overload]
+    p._tone_out = list(synth["_tone_out"])  # type: ignore[call-overload]
+    p._noise_cnt = int(synth["_noise_cnt"])  # type: ignore[call-overload]
+    p._lfsr = int(synth["_lfsr"])  # type: ignore[call-overload]
+    p._env_cnt = int(synth["_env_cnt"])  # type: ignore[call-overload]
+    p._env_step = int(synth["_env_step"])  # type: ignore[call-overload]
+    p._env_attack = int(synth["_env_attack"])  # type: ignore[call-overload]
+    p._env_alternate = bool(synth["_env_alternate"])
+    p._env_hold_flag = bool(synth["_env_hold_flag"])
+    p._env_holding = bool(synth["_env_holding"])
+    p._clk_frac = int(synth["_clk_frac"])  # type: ignore[call-overload]
 
 
 def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -146,17 +147,17 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     }
 
 
-def _restore_scc(machine: "Machine", d: dict[str, object] | None) -> None:
-    if machine.scc is None or d is None:
+def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> None:
+    if machine.scc is None or scc_state is None:
         return
     s = machine.scc
-    s._waves = [list(w) for w in d["_waves"]]  # type: ignore[attr-defined]
-    s._freq = list(d["_freq"])  # type: ignore[call-overload]
-    s._vol = list(d["_vol"])  # type: ignore[call-overload]
-    s._enable = int(d["_enable"])  # type: ignore[call-overload]
-    s._phase_cnt = list(d["_phase_cnt"])  # type: ignore[call-overload]
-    s._phase_idx = list(d["_phase_idx"])  # type: ignore[call-overload]
-    s._clk_frac = int(d["_clk_frac"])  # type: ignore[call-overload]
+    s._waves = [list(w) for w in scc_state["_waves"]]  # type: ignore[attr-defined]
+    s._freq = list(scc_state["_freq"])  # type: ignore[call-overload]
+    s._vol = list(scc_state["_vol"])  # type: ignore[call-overload]
+    s._enable = int(scc_state["_enable"])  # type: ignore[call-overload]
+    s._phase_cnt = list(scc_state["_phase_cnt"])  # type: ignore[call-overload]
+    s._phase_idx = list(scc_state["_phase_idx"])  # type: ignore[call-overload]
+    s._clk_frac = int(scc_state["_clk_frac"])  # type: ignore[call-overload]
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
@@ -286,14 +287,13 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
 def _update_symlink(link: Path, target: Path) -> None:
     """Atomically update (or create) a symlink to point at target."""
-    tmp = link.with_suffix(link.suffix + ".tmp")
+    tmp_link = link.with_suffix(link.suffix + ".tmp")
     try:
-        if tmp.exists() or tmp.is_symlink():
-            tmp.unlink()
-        os.symlink(target.name, tmp)
-        os.replace(tmp, link)
+        if tmp_link.exists() or tmp_link.is_symlink():
+            tmp_link.unlink()
+        os.symlink(target.name, tmp_link)
+        os.replace(tmp_link, link)
     except OSError as exc:
-        import sys
         print(f"warning: could not update symlink {link}: {exc}", file=sys.stderr)
 
 
@@ -305,30 +305,30 @@ def _sanitise_title(title: str) -> str:
     return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
-def _to_jsonable(obj: object) -> object:
+def _to_jsonable(node: object) -> object:
     """Recursively convert a snapshot dict to JSON-serialisable form.
 
     Byte blobs become ``{"__b64__": "<base64>"}``; lists and dicts recurse;
     scalars pass through unchanged.
     """
-    if isinstance(obj, (bytes, bytearray)):
-        return {"__b64__": base64.b64encode(bytes(obj)).decode("ascii")}
-    if isinstance(obj, dict):
-        return {k: _to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_to_jsonable(v) for v in obj]
-    return obj
+    if isinstance(node, (bytes, bytearray)):
+        return {"__b64__": base64.b64encode(bytes(node)).decode("ascii")}
+    if isinstance(node, dict):
+        return {k: _to_jsonable(v) for k, v in node.items()}
+    if isinstance(node, (list, tuple)):
+        return [_to_jsonable(v) for v in node]
+    return node
 
 
-def _from_jsonable(obj: object) -> object:
+def _from_jsonable(node: object) -> object:
     """Inverse of _to_jsonable: restore byte blobs (as bytearray) and containers."""
-    if isinstance(obj, dict):
-        if "__b64__" in obj and len(obj) == 1:
-            return bytearray(base64.b64decode(obj["__b64__"]))
-        return {k: _from_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_from_jsonable(v) for v in obj]
-    return obj
+    if isinstance(node, dict):
+        if "__b64__" in node and len(node) == 1:
+            return bytearray(base64.b64decode(node["__b64__"]))
+        return {k: _from_jsonable(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_from_jsonable(v) for v in node]
+    return node
 
 
 def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Path:
