@@ -208,8 +208,8 @@ class Machine:
 
         if self._break_conditions_active():
             try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
+                for line in range(lpf):
+                    line_end = (line + 1) * cpf // lpf
                     while total < line_end:
                         pc = cpu.registers.PC
                         if pc in self._breakpoints or pc == self._temp_breakpoint:
@@ -227,7 +227,7 @@ class Machine:
                         if self._post_step_break() and self._debugger is not None:
                             self._debugger.enter()
                     if vdp9938:
-                        vdp9938.begin_scanline(L)
+                        vdp9938.begin_scanline(line)
                         cpu.int_pending = vdp9938.irq
             except KeyboardInterrupt:
                 if self._debugger is not None:
@@ -247,8 +247,8 @@ class Machine:
             # readability cost of removing that per-instruction overhead.
             try:
                 if vdp9938 is not None:
-                    for L in range(lpf):
-                        line_end = (L + 1) * cpf // lpf
+                    for line in range(lpf):
+                        line_end = (line + 1) * cpf // lpf
                         line_cycles = 0
                         while total < line_end:
                             cpu.int_pending = vdp9938.irq
@@ -257,11 +257,11 @@ class Machine:
                             line_cycles += n
                             vdp9938.tick(n)
                         self.cycle_count += line_cycles
-                        vdp9938.begin_scanline(L)
+                        vdp9938.begin_scanline(line)
                         cpu.int_pending = vdp9938.irq
                 else:
-                    for L in range(lpf):
-                        line_end = (L + 1) * cpf // lpf
+                    for line in range(lpf):
+                        line_end = (line + 1) * cpf // lpf
                         line_cycles = 0
                         while total < line_end:
                             n = cpu_step()
@@ -275,8 +275,8 @@ class Machine:
                     raise
         else:
             try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
+                for line in range(lpf):
+                    line_end = (line + 1) * cpf // lpf
                     while total < line_end:
                         pc = cpu.registers.PC
                         if vdp9938:
@@ -295,7 +295,7 @@ class Machine:
                                 self._pc_repeat = 0
                             self._last_pc = pc
                     if vdp9938:
-                        vdp9938.begin_scanline(L)
+                        vdp9938.begin_scanline(line)
                         cpu.int_pending = vdp9938.irq
             except KeyboardInterrupt:
                 if self._debugger is not None:
