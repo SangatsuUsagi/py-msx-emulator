@@ -14,70 +14,6 @@ from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.state import load_state, save_state
-from msx.vdp.v9938 import V9938, _PaletteChange
-from msx.vdp.v9938_renderer import _INTENSITY3, _build_bands, grb332_to_rgb
-
-
-def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> bytes:
-    """Map an 8-bit-index buffer to packed RGB24 via per-channel bytes.translate.
-
-    Each of the three 256-byte tables maps a source byte to one output channel;
-    the strided slice assignment interleaves them. This replaces a per-pixel
-    Python loop (``b"".join([lut[x] for x in src])``) with three C-level
-    translate calls, ~5-8x faster per frame with byte-identical output.
-    """
-    rtab, gtab, btab = channels
-    out = bytearray(len(src) * 3)
-    out[0::3] = src.translate(rtab)
-    out[1::3] = src.translate(gtab)
-    out[2::3] = src.translate(btab)
-    return bytes(out)
-
-
-def _channel_tables_indexed(lut16: list[bytes]) -> tuple[bytes, bytes, bytes]:
-    """Three 256-byte (R, G, B) translate tables for a 16-entry RGB24 LUT.
-
-    Table index i maps through (i & 0x0F), folding the 4-bit palette-index mask
-    into the table so bytes.translate needs no separate masking step.
-    """
-    return (
-        bytes(lut16[i & 0x0F][0] for i in range(256)),
-        bytes(lut16[i & 0x0F][1] for i in range(256)),
-        bytes(lut16[i & 0x0F][2] for i in range(256)),
-    )
-
-
-# Precomputed SCREEN 8 GRB332 → 3-byte RGB table (256 entries), for fast join.
-_GRB332_BYTES: tuple[bytes, ...] = tuple(bytes(grb332_to_rgb(b)) for b in range(256))
-
-# Per-channel translate tables for the SCREEN 8 (GRB332) path — constant, so
-# they are built once here (each source byte is a full pixel, no index mask).
-_GRB332_CHANNELS: tuple[bytes, bytes, bytes] = (
-    bytes(t[0] for t in _GRB332_BYTES),
-    bytes(t[1] for t in _GRB332_BYTES),
-    bytes(t[2] for t in _GRB332_BYTES),
-)
-
-# Standard TMS9918A hardware palette — 16 (R, G, B) triples.
-# Index 0 = transparent (rendered as black).
-TMS9918A_PALETTE: tuple[tuple[int, int, int], ...] = (
-    (0,   0,   0),    # 0  transparent / black
-    (0,   0,   0),    # 1  black
-    (33,  200, 66),   # 2  medium green
-    (94,  220, 120),  # 3  light green
-    (84,  85,  237),  # 4  dark blue
-    (125, 118, 252),  # 5  light blue
-    (212, 82,  77),   # 6  dark red
-    (66,  235, 245),  # 7  cyan
-    (252, 85,  84),   # 8  medium red
-    (255, 121, 120),  # 9  light red
-    (212, 193, 84),   # 10 dark yellow
-    (230, 206, 128),  # 11 light yellow
-    (33,  176, 59),   # 12 dark green
-    (201, 91,  186),  # 13 magenta
-    (204, 204, 204),  # 14 grey
-    (255, 255, 255),  # 15 white
-)
 
 _SCREEN_WIDTH = 256
 _MAX_FRAME_SKIP: int = 4
@@ -94,115 +30,8 @@ _S16_MIN: int = -32768
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
 
-# TMS9918A palette as 3-byte RGB entries (for the MSX1 path).
-_TMS9918A_BYTES: tuple[bytes, ...] = tuple(bytes(c) for c in TMS9918A_PALETTE)
-# Per-channel translate tables for the MSX1 (TMS9918A) path — constant.
-_TMS9918A_CHANNELS: tuple[bytes, bytes, bytes] = _channel_tables_indexed(list(_TMS9918A_BYTES))
 
-
-def _make_lut16(palette: list[int]) -> list[bytes]:
-    """Build a 16-entry RGB24 bytes LUT from a 9-bit RGB333 palette."""
-    return [
-        bytes((_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7]))
-        for p in palette[:16]
-    ]
-
-
-# Cache the 16-entry LUT and its (R, G, B) translate tables keyed on a snapshot
-# of the palette; the palette only changes when the guest reprograms it, so
-# this avoids rebuilding them every frame.
-_LUT16_CACHE_KEY: tuple[int, ...] = ()
-_LUT16_CACHE: list[bytes] = _make_lut16([0] * 16)
-_CHANNELS_CACHE: tuple[bytes, bytes, bytes] = _channel_tables_indexed(_LUT16_CACHE)
-
-
-def _refresh_palette_cache(palette: list[int]) -> None:
-    global _LUT16_CACHE_KEY, _LUT16_CACHE, _CHANNELS_CACHE
-    key = tuple(palette[:16])
-    if key != _LUT16_CACHE_KEY:
-        _LUT16_CACHE_KEY = key
-        _LUT16_CACHE = _make_lut16(palette)
-        _CHANNELS_CACHE = _channel_tables_indexed(_LUT16_CACHE)
-
-
-def _cached_lut16(palette: list[int]) -> list[bytes]:
-    """Return _make_lut16(palette), rebuilding only when the palette changed."""
-    _refresh_palette_cache(palette)
-    return _LUT16_CACHE
-
-
-def _cached_channels16(palette: list[int]) -> tuple[bytes, bytes, bytes]:
-    """Return the (R, G, B) translate tables for the palette (cached with the LUT)."""
-    _refresh_palette_cache(palette)
-    return _CHANNELS_CACHE
-
-
-def _index_to_rgb24(src: bytearray, vdp: object) -> bytes:
-    """Map a palette-index (or SCREEN 8 GRB332) buffer to packed RGB24.
-
-    For V9938 indexed modes with mid-frame palette changes, applies each
-    band's palette snapshot to the correct scanlines so that colours written
-    via H-sync interrupt are rendered at the right lines rather than using the
-    end-of-frame palette for the whole frame.
-    """
-    if isinstance(vdp, V9938):
-        r0 = vdp.regs[0]
-        is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
-        if is_g7:
-            return _translate_rgb24(src, _GRB332_CHANNELS)
-
-        # Check for mid-frame palette changes in the log.  _reg_write_log is
-        # still valid here: it is cleared by begin_scanline(0) at the *next*
-        # frame, not at the end of this one.
-        has_palette_change = any(isinstance(e, _PaletteChange) for e in vdp._reg_write_log)
-        if has_palette_change:
-            return _v9938_banded_to_rgb24(src, vdp)
-
-        return _translate_rgb24(src, _cached_channels16(vdp.palette))
-    return _translate_rgb24(src, _TMS9918A_CHANNELS)
-
-
-def _v9938_banded_to_rgb24(src: bytearray, vdp: "V9938") -> bytes:
-    """Per-band palette→RGB24 conversion for mid-frame palette changes.
-
-    Reuses _build_bands() (which reads _reg_write_log / _frame_start_palette)
-    to determine which palette was active on each scanline, then applies the
-    correct 16-entry LUT per output line.  Display-adjust vertical offset
-    (R#18 high nibble) is accounted for: output line dy came from source line
-    dy - v_off, whose band determines the palette.
-    """
-    h = vdp.display_height
-    w = len(src) // h if h else _SCREEN_WIDTH
-
-    reg18 = vdp.regs[18]
-    v_off = ((reg18 >> 4) ^ 0x07) - 7   # signed line shift from R#18
-
-    bands = _build_bands(vdp)
-
-    # Build a per-source-line channel-table triple (fall back to the frame-start
-    # palette for source lines outside any band, e.g. the border area after the
-    # v_off shift). Tables are built once per band, not per row/pixel.
-    default_channels = _channel_tables_indexed(_make_lut16(vdp._frame_start_palette))
-    line_channels: list[tuple[bytes, bytes, bytes]] = [default_channels] * h
-    for _y0, _y1, _band_regs, band_palette in bands:
-        channels = _channel_tables_indexed(_make_lut16(band_palette))
-        for sy in range(max(0, _y0), min(h, _y1)):
-            line_channels[sy] = channels
-
-    out = bytearray(w * h * 3)
-    for dy in range(h):
-        sy = dy - v_off
-        rtab, gtab, btab = line_channels[sy] if 0 <= sy < h else default_channels
-        row = src[dy * w:dy * w + w]
-        o = dy * w * 3
-        end = o + w * 3
-        out[o:end:3] = row.translate(rtab)
-        out[o + 1:end:3] = row.translate(gtab)
-        out[o + 2:end:3] = row.translate(btab)
-    return bytes(out)
-
-
-def _save_screenshot(rgb_buf: bytearray, w: int, h: int) -> None:
+def _save_screenshot(rgb_buf: bytes, w: int, h: int) -> None:
     """Write the w×h RGB24 buffer to a timestamped PNG (screenshot_<ts>.png)
     in the current working directory."""
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -288,7 +117,7 @@ def _init_sdl(
 
 def _handle_events(
     sdl2: Any, event: Any, machine: Machine, window: Any, joy_manager: JoystickManager,
-    game_title: str, rgb_buf: bytearray, tex_w: int, tex_h: int, fullscreen: bool,
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
 ) -> tuple[bool, bool]:
     """Drain the SDL event queue, applying input and hotkeys.
 
@@ -385,7 +214,7 @@ def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -
 
 
 def _upload_to_texture(
-    sdl2: Any, texture: Any, rgb_buf: bytearray, tex_w: int, tex_h: int
+    sdl2: Any, texture: Any, rgb_buf: bytes, tex_w: int, tex_h: int
 ) -> None:
     """Copy the RGB24 frame buffer into the streaming texture, honouring the
     destination row stride SDL reports."""
@@ -470,7 +299,7 @@ def run(
     event = sdl2.SDL_Event()
     running = True
     _fullscreen = False
-    rgb_buf: bytearray = bytearray(_SCREEN_WIDTH * h * 3)
+    rgb_buf: bytes = bytes(_SCREEN_WIDTH * h * 3)
     _skip_counter: int = 0
 
     try:
@@ -493,7 +322,7 @@ def run(
                 index_buf = machine.run_frame(skip_render=skip_this_frame)
                 frame_end_cycle = machine.cycle_count
                 if not skip_this_frame:
-                    rgb_buf = _index_to_rgb24(index_buf, machine.vdp)
+                    rgb_buf = machine.vdp.to_rgb24(index_buf)
                     # The VDP resolution can change at runtime (R#9 LN: 192↔212;
                     # SCREEN 6/7 width). Recreate the texture and resize the window
                     # to match before uploading, or the texture copy would overflow.
