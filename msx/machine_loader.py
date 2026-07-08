@@ -63,7 +63,11 @@ _SRAM_SIZES: dict[str, int] = {
 def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
     """Resolve the mapper type and return it with the cartridge sha1 (computed
     once here so callers can reuse it for the SRAM save path)."""
-    sha1 = hashlib.sha1(cartridge, usedforsecurity=False).hexdigest() if cartridge is not None else None
+    sha1 = (
+        hashlib.sha1(cartridge, usedforsecurity=False).hexdigest()
+        if cartridge is not None
+        else None
+    )
     if mapper != "auto":
         return mapper, sha1
     if cartridge is None:
