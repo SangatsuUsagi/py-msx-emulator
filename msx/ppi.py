@@ -13,8 +13,6 @@ class PPI:
     # PPI Port C (0xAA): bits 3-0 = keyboard row select; bits 7-4 = output control
     # lines (bit4 tape motor, bit5 tape out, bit6 CAPS LED, bit7 key click).
     _port_c: int = field(default=0, repr=False)
-    # Last 8255 mode-set control word written to 0xAB.
-    _control: int = field(default=0, repr=False)
 
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
@@ -27,9 +25,9 @@ class PPI:
 
     def _write_control(self, value: int) -> None:
         if value & 0x80:
-            # Mode-set word: store it and clear the output ports, matching the
-            # real 8255 (a mode-set command resets all output latches to 0).
-            self._control = value
+            # Mode-set word: clear the output ports, matching the real 8255
+            # (a mode-set command resets all output latches to 0). The control
+            # word itself is not stored — port 0xAB is not readable.
             self._port_c = 0
         else:
             # Port C bit set/reset: bits 3-1 select the bit index, bit 0 the value.
