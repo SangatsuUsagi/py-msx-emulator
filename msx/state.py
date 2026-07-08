@@ -16,8 +16,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PIL import Image as _PIL_Image
-
 from msx.vdp.v9938 import V9938
 
 if TYPE_CHECKING:
@@ -354,8 +352,8 @@ def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Pa
         json.dump(_to_jsonable(asdict(snap)), f)
 
     from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    img = _PIL_Image.frombytes("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), bytes(rgb_buf))
-    img.save(png_path)
+    from msx.screenshot import write_rgb24_png
+    write_rgb24_png(rgb_buf, SCREEN_WIDTH, SCREEN_HEIGHT, png_path)
 
     _update_symlink(saves_dir / "latest.state", state_path)
     _update_symlink(saves_dir / "latest.png", png_path)

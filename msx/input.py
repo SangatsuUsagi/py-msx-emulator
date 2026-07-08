@@ -155,9 +155,6 @@ _JP_SYMBOLS: dict[int, tuple[int, int]] = {
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}
 KEY_MATRIX_JP: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_JP_SYMBOLS}
 
-# Backward-compatible default (International layout).
-KEY_MATRIX: dict[int, tuple[int, int]] = KEY_MATRIX_INT
-
 # JOY_MAP[key] = (port, bit)  port 0=Joy1, 1=Joy2
 # Per-joystick 6-bit active-low layout (bits 0-5 of the selected port):
 #   bit0=Up, bit1=Down, bit2=Left, bit3=Right, bit4=Trigger A, bit5=Trigger B
