@@ -32,10 +32,11 @@ _FRAME_OVERRUN_RATIO: float = 1.05
 
 
 def _save_screenshot(rgb_buf: bytes, w: int, h: int) -> None:
-    """Write the w×h RGB24 buffer to a timestamped PNG (screenshot_<ts>.png)
-    in the current working directory."""
+    """Write the w×h RGB24 buffer to a timestamped PNG in saves/screenshots/."""
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = f"screenshot_{stamp}.png"
+    out_dir = Path("saves") / "screenshots"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"screenshot_{stamp}.png"
     img = _PIL_Image.frombytes("RGB", (w, h), bytes(rgb_buf))
     img.save(path)
     print(f"screenshot saved: {path}")

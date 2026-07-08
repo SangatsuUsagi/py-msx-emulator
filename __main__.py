@@ -36,7 +36,7 @@ def main() -> None:
                         default="auto",
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
-                        help="Resume from a save state (default: saves/latest.state)")
+                        help="Resume from a save state (default: saves/states/latest.state)")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
