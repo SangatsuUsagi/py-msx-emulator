@@ -111,6 +111,30 @@ _TSTATES_PER_LINE: int = 227
 _HBLANK_START: int = _TSTATES_PER_LINE * 1024 // 1368  # ~169
 
 
+@dataclass(slots=True)
+class _RegChange:
+    """A tracked register write, logged per scanline for banded rendering.
+
+    Tagged-union alternative to the old (line, reg, int | tuple) log entry:
+    a _RegChange sets regs[reg] = value; a _PaletteChange sets palette[idx] = rgb.
+    Consumers dispatch by type (isinstance) rather than a reg == -1 sentinel,
+    which maps directly to a Rust enum / C++ variant.
+    """
+
+    line: int
+    reg: int
+    value: int
+
+
+@dataclass(slots=True)
+class _PaletteChange:
+    """A palette write, logged per scanline for banded rendering (see _RegChange)."""
+
+    line: int
+    idx: int
+    rgb: int
+
+
 @dataclass
 class V9938:
     """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
@@ -168,7 +192,7 @@ class V9938:
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     _irq: bool = field(default=False, init=False, repr=False)
-    _reg_write_log: list[tuple[int, int, int | tuple[int, int]]] = field(
+    _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
     )
     _frame_start_regs: list[int] = field(
@@ -329,7 +353,7 @@ class V9938:
                     if reg < _NUM_REGS:
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
-                            self._reg_write_log.append((self.display_line, reg, low))
+                            self._reg_write_log.append(_RegChange(self.display_line, reg, low))
                         if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                             self._update_irq()
                     elif 32 <= reg <= 45:
@@ -358,7 +382,7 @@ class V9938:
                 idx = self.regs[16] & 0x0F
                 rgb = (r << 6) | (g << 3) | b
                 self.palette[idx] = rgb
-                self._reg_write_log.append((self.display_line, -1, (idx, rgb)))
+                self._reg_write_log.append(_PaletteChange(self.display_line, idx, rgb))
                 self.regs[16] = (idx + 1) & 0x0F
         elif port == 0x9B:
             # During HMMC/LMMC: port 0x9B doubles as command data port.
@@ -370,7 +394,7 @@ class V9938:
             if ptr < _NUM_REGS:
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
-                    self._reg_write_log.append((self.display_line, ptr, value))
+                    self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
                 if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                     self._update_irq()
             elif 32 <= ptr <= 45:

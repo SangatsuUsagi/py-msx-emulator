@@ -1,5 +1,5 @@
 """Tests for V9938 sprite mode 2 (SCREEN 4–8)."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _RegChange
 from msx.vdp.v9938_renderer import render_frame
 
 # ---------------------------------------------------------------------------
@@ -650,7 +650,7 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
     vdp._frame_start_regs[5] = 0x70
     vdp.regs[5] = 0x78
     vdp._frame_start_palette = vdp.palette[:]
-    vdp._reg_write_log = [(95, 5, 0x78)]   # effective line 96
+    vdp._reg_write_log = [_RegChange(95, 5, 0x78)]   # effective line 96
 
     buf = render_frame(vdp)
 
