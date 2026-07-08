@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
 from msx.machine_loader import MachineSpec, _RomEntry, build_machine
 from msx.vdp.tracer import Tracer

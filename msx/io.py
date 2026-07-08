@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
 
 
 @dataclass
