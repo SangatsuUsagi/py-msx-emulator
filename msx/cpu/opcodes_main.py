@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from msx.cpu import flags as F
 
@@ -49,6 +49,24 @@ def _szp(v: int) -> int:
     if F.parity(v):
         f |= F.FLAG_PV
     return f
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic helpers — integer-width / overflow porting contract
+#
+# These rely on Python's arbitrary-precision int and MUST be widened when
+# porting to Rust/C++ (fixed-width, wrapping/panicking) integers:
+#   - Addition (_add8/_add16/_adc16): `result` is intentionally the UN-masked
+#     sum, so it can exceed the operand width (u8 -> up to 0x1FE, u16 -> up to
+#     0x1FFFF). Carry is `result > 0xFF`/`0xFFFF` and half-carry reads bit 4/12
+#     of `result`. A port must compute in a WIDER accumulator (u8->u16,
+#     u16->u32), test carry, then mask; it must NOT add in the result width.
+#   - Subtraction (_sub8/_dec8/_sbc16, and NEG via _sub8(cpu, 0, A), plus the
+#     CPI/CPD block search): `result` can be NEGATIVE. Borrow is `result < 0`
+#     and the low byte relies on Python two's-complement masking of a negative
+#     int (`-1 & 0xFF == 0xFF`). A port must compute in a SIGNED wider type
+#     (i16/i32), test `< 0` for borrow, then cast the low bits.
+# ---------------------------------------------------------------------------
 
 
 def _add8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
@@ -1027,8 +1045,6 @@ def _cc(cpu: Z80, cond: int) -> bool:
 # ---------------------------------------------------------------------------
 # Handler factory functions — build typed closures for regular opcode groups
 # ---------------------------------------------------------------------------
-
-from typing import Callable  # noqa: E402
 
 
 def _make_ld_r_r(dst: int, src: int) -> Callable[[Z80], int]:
