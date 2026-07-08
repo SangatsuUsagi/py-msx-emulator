@@ -5,6 +5,7 @@ import datetime
 import sys
 from array import array
 from pathlib import Path
+from typing import Any
 
 from PIL import Image as _PIL_Image
 
@@ -211,6 +212,213 @@ def _save_screenshot(rgb_buf: bytearray, w: int, h: int) -> None:
     print(f"screenshot saved: {path}")
 
 
+def _init_sdl(
+    sdl2: Any, game_title: str, win_w: int, win_h: int, tex_w: int, tex_h: int
+) -> tuple[Any, Any, Any, int]:
+    """Initialize SDL video/audio and create the window, renderer, streaming
+    texture, and audio device. Exits the process on a fatal SDL error.
+
+    Returns (window, renderer, texture, audio_dev); audio_dev is 0 when audio
+    could not be opened (video and input still work).
+    """
+    init_flags = (
+        sdl2.SDL_INIT_VIDEO
+        | sdl2.SDL_INIT_AUDIO
+        | sdl2.SDL_INIT_JOYSTICK
+        | sdl2.SDL_INIT_GAMECONTROLLER
+    )
+    if sdl2.SDL_Init(init_flags) != 0:
+        print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sys.exit(1)
+
+    window = sdl2.SDL_CreateWindow(
+        game_title.encode("utf-8"),
+        sdl2.SDL_WINDOWPOS_CENTERED,
+        sdl2.SDL_WINDOWPOS_CENTERED,
+        win_w,
+        win_h,
+        sdl2.SDL_WINDOW_SHOWN,
+    )
+    if not window:
+        print(f"SDL_CreateWindow error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sdl2.SDL_Quit()
+        sys.exit(1)
+
+    renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
+    if not renderer:
+        renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
+    if not renderer:
+        print(f"SDL_CreateRenderer error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sdl2.SDL_DestroyWindow(window)
+        sdl2.SDL_Quit()
+        sys.exit(1)
+
+    # Linear filtering so 512-wide SCREEN 6/7 textures downscale smoothly to the
+    # 256*scale window.
+    sdl2.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"1")
+
+    texture = sdl2.SDL_CreateTexture(
+        renderer,
+        sdl2.SDL_PIXELFORMAT_RGB24,
+        sdl2.SDL_TEXTUREACCESS_STREAMING,
+        tex_w,
+        tex_h,
+    )
+    if not texture:
+        print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        sdl2.SDL_DestroyRenderer(renderer)
+        sdl2.SDL_DestroyWindow(window)
+        sdl2.SDL_Quit()
+        sys.exit(1)
+
+    # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
+    # Fall back gracefully if unavailable — video and input remain functional.
+    desired = sdl2.SDL_AudioSpec(
+        _AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+    )
+    audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
+    if audio_dev == 0:
+        print(f"SDL audio warning: {sdl2.SDL_GetError().decode()} — continuing without audio",
+              file=sys.stderr)
+    else:
+        sdl2.SDL_PauseAudioDevice(audio_dev, 0)
+
+    return window, renderer, texture, audio_dev
+
+
+def _handle_events(
+    sdl2: Any, event: Any, machine: Machine, window: Any, joy_manager: JoystickManager,
+    game_title: str, rgb_buf: bytearray, tex_w: int, tex_h: int, fullscreen: bool,
+) -> tuple[bool, bool]:
+    """Drain the SDL event queue, applying input and hotkeys.
+
+    Returns (running, fullscreen): running is False once a quit is requested;
+    fullscreen is the (possibly toggled) window state. rgb_buf/tex_w/tex_h are
+    the previous frame's, used by F8 (save state) and F10 (screenshot).
+    """
+    running = True
+    while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
+        if event.type == sdl2.SDL_QUIT:
+            running = False
+        elif event.type == sdl2.SDL_KEYDOWN:
+            if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                running = False
+            elif event.key.keysym.sym == sdl2.SDLK_F11:
+                fullscreen = not fullscreen
+                flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if fullscreen else 0
+                if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+                    print(
+                        f"fullscreen toggle failed: {sdl2.SDL_GetError()}",
+                        file=sys.stderr,
+                    )
+            elif event.key.keysym.sym == sdl2.SDLK_F8:
+                save_state(machine, rgb_buf, game_title)
+            elif event.key.keysym.sym == sdl2.SDLK_F9:
+                try:
+                    load_state(machine)
+                except Exception as exc:
+                    print(f"load failed: {exc}", file=sys.stderr)
+            elif event.key.keysym.sym == sdl2.SDLK_F10:
+                _save_screenshot(rgb_buf, tex_w, tex_h)
+            elif (event.key.keysym.sym == sdl2.SDLK_c
+                  and (event.key.keysym.mod & sdl2.KMOD_CTRL)
+                  and machine._debugger is not None):
+                machine._debugger.enter()
+            else:
+                machine.input.key_down(event.key.keysym.sym)
+        elif event.type == sdl2.SDL_KEYUP:
+            machine.input.key_up(event.key.keysym.sym)
+        elif event.type in (
+            sdl2.SDL_CONTROLLERDEVICEADDED,
+            sdl2.SDL_CONTROLLERDEVICEREMOVED,
+            sdl2.SDL_JOYDEVICEADDED,
+            sdl2.SDL_JOYDEVICEREMOVED,
+            sdl2.SDL_CONTROLLERBUTTONDOWN,
+            sdl2.SDL_CONTROLLERBUTTONUP,
+            sdl2.SDL_CONTROLLERAXISMOTION,
+            sdl2.SDL_JOYBUTTONDOWN,
+            sdl2.SDL_JOYBUTTONUP,
+            sdl2.SDL_JOYAXISMOTION,
+            sdl2.SDL_JOYHATMOTION,
+        ):
+            joy_manager.handle_event(event)
+    return running, fullscreen
+
+
+def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -> bytes:
+    """Generate one frame of audio: PSG plus SCC/DAC when present, mixed and
+    clamped to signed 16-bit. Returns the PCM bytes to queue."""
+    psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+    extra_bufs = []
+    if machine.scc is not None:
+        extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
+    if machine.dac is not None:
+        extra_bufs.append(
+            machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle)
+        )
+    if not extra_bufs:
+        return bytes(psg_buf)
+
+    # Batch-decode each PCM buffer to signed 16-bit samples via array("h") (one
+    # C call per buffer) instead of a per-sample struct.unpack_from/pack_into.
+    # Sums are taken in Python ints so the clamp applies to the full mix, then
+    # re-encoded once. (array("h") is native byte order, matching the LE PCM on
+    # LE hosts.)
+    psg_arr = array("h")
+    psg_arr.frombytes(bytes(psg_buf))
+    extra_arrs = []
+    for buf in extra_bufs:
+        a = array("h")
+        a.frombytes(bytes(buf))
+        extra_arrs.append(a)
+    out_arr = array("h", bytes(2 * SAMPLES_PER_FRAME))
+    for i in range(SAMPLES_PER_FRAME):
+        total = psg_arr[i]
+        for a in extra_arrs:
+            total += a[i]
+        if total > _S16_MAX:
+            total = _S16_MAX
+        elif total < _S16_MIN:
+            total = _S16_MIN
+        out_arr[i] = total
+    return out_arr.tobytes()
+
+
+def _upload_to_texture(
+    sdl2: Any, texture: Any, rgb_buf: bytearray, tex_w: int, tex_h: int
+) -> None:
+    """Copy the RGB24 frame buffer into the streaming texture, honouring the
+    destination row stride SDL reports."""
+    pixels_ptr = ctypes.c_void_p()
+    pitch = ctypes.c_int()
+    if sdl2.SDL_LockTexture(
+        texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch)
+    ) != 0:
+        # Transient failure: skip this frame's pixel upload rather than writing
+        # through an invalid pointer.
+        print(f"SDL_LockTexture failed: {sdl2.SDL_GetError()}", file=sys.stderr)
+        return
+    # When the texture rows are tightly packed (pitch == width*3, RGB24) a single
+    # contiguous memmove is correct and fastest. Otherwise (driver row padding)
+    # copy row-by-row: width*3 source bytes into each pitch-strided destination
+    # row, so no source overrun and no padding is overwritten with pixel data.
+    row_bytes = tex_w * 3
+    dst_pitch = pitch.value
+    if dst_pitch == row_bytes:
+        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+    else:
+        dst_base = pixels_ptr.value
+        assert dst_base is not None
+        for row in range(tex_h):
+            src_off = row * row_bytes
+            ctypes.memmove(
+                dst_base + row * dst_pitch,
+                rgb_buf[src_off:src_off + row_bytes],
+                row_bytes,
+            )
+    sdl2.SDL_UnlockTexture(texture)
+
+
 def run(
     machine: Machine,
     scale: int = 3,
@@ -245,67 +453,10 @@ def run(
     win_w = _SCREEN_WIDTH * scale
     win_h = h * scale
 
-    init_flags = (
-        sdl2.SDL_INIT_VIDEO
-        | sdl2.SDL_INIT_AUDIO
-        | sdl2.SDL_INIT_JOYSTICK
-        | sdl2.SDL_INIT_GAMECONTROLLER
-    )
-    if sdl2.SDL_Init(init_flags) != 0:
-        print(f"SDL_Init error: {sdl2.SDL_GetError()}", file=sys.stderr)
-        sys.exit(1)
-
-    window = sdl2.SDL_CreateWindow(
-        game_title.encode("utf-8"),
-        sdl2.SDL_WINDOWPOS_CENTERED,
-        sdl2.SDL_WINDOWPOS_CENTERED,
-        win_w,
-        win_h,
-        sdl2.SDL_WINDOW_SHOWN,
-    )
-    if not window:
-        print(f"SDL_CreateWindow error: {sdl2.SDL_GetError()}", file=sys.stderr)
-        sdl2.SDL_Quit()
-        sys.exit(1)
-
-    renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
-    if not renderer:
-        renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
-    if not renderer:
-        print(f"SDL_CreateRenderer error: {sdl2.SDL_GetError()}", file=sys.stderr)
-        sdl2.SDL_DestroyWindow(window)
-        sdl2.SDL_Quit()
-        sys.exit(1)
-
-    # Linear filtering so 512-wide SCREEN 6/7 textures downscale smoothly to 256*scale window.
-    sdl2.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"1")
-
     tex_w, tex_h = _SCREEN_WIDTH, h
-    texture = sdl2.SDL_CreateTexture(
-        renderer,
-        sdl2.SDL_PIXELFORMAT_RGB24,
-        sdl2.SDL_TEXTUREACCESS_STREAMING,
-        tex_w,
-        tex_h,
+    window, renderer, texture, audio_dev = _init_sdl(
+        sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
-    if not texture:
-        print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}", file=sys.stderr)
-        sdl2.SDL_DestroyRenderer(renderer)
-        sdl2.SDL_DestroyWindow(window)
-        sdl2.SDL_Quit()
-        sys.exit(1)
-
-    # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
-    # Fall back gracefully if unavailable — video and input remain functional.
-    desired = sdl2.SDL_AudioSpec(
-        _AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
-    )
-    audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
-    if audio_dev == 0:
-        print(f"SDL audio warning: {sdl2.SDL_GetError().decode()} — continuing without audio",
-              file=sys.stderr)
-    else:
-        sdl2.SDL_PauseAudioDevice(audio_dev, 0)
 
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
 
@@ -325,52 +476,11 @@ def run(
     try:
         while running:
             try:
-                # Process events
-                while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
-                    if event.type == sdl2.SDL_QUIT:
-                        running = False
-                    elif event.type == sdl2.SDL_KEYDOWN:
-                        if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
-                            running = False
-                        elif event.key.keysym.sym == sdl2.SDLK_F11:
-                            _fullscreen = not _fullscreen
-                            flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if _fullscreen else 0
-                            if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-                                print(
-                                    f"fullscreen toggle failed: {sdl2.SDL_GetError()}",
-                                    file=sys.stderr,
-                                )
-                        elif event.key.keysym.sym == sdl2.SDLK_F8:
-                            save_state(machine, rgb_buf, game_title)
-                        elif event.key.keysym.sym == sdl2.SDLK_F9:
-                            try:
-                                load_state(machine)
-                            except Exception as exc:
-                                print(f"load failed: {exc}", file=sys.stderr)
-                        elif event.key.keysym.sym == sdl2.SDLK_F10:
-                            _save_screenshot(rgb_buf, tex_w, tex_h)
-                        elif (event.key.keysym.sym == sdl2.SDLK_c
-                              and (event.key.keysym.mod & sdl2.KMOD_CTRL)
-                              and machine._debugger is not None):
-                            machine._debugger.enter()
-                        else:
-                            machine.input.key_down(event.key.keysym.sym)
-                    elif event.type == sdl2.SDL_KEYUP:
-                        machine.input.key_up(event.key.keysym.sym)
-                    elif event.type in (
-                        sdl2.SDL_CONTROLLERDEVICEADDED,
-                        sdl2.SDL_CONTROLLERDEVICEREMOVED,
-                        sdl2.SDL_JOYDEVICEADDED,
-                        sdl2.SDL_JOYDEVICEREMOVED,
-                        sdl2.SDL_CONTROLLERBUTTONDOWN,
-                        sdl2.SDL_CONTROLLERBUTTONUP,
-                        sdl2.SDL_CONTROLLERAXISMOTION,
-                        sdl2.SDL_JOYBUTTONDOWN,
-                        sdl2.SDL_JOYBUTTONUP,
-                        sdl2.SDL_JOYAXISMOTION,
-                        sdl2.SDL_JOYHATMOTION,
-                    ):
-                        joy_manager.handle_event(event)
+                # Process events (input + hotkeys); updates running/fullscreen.
+                running, _fullscreen = _handle_events(
+                    sdl2, event, machine, window, joy_manager,
+                    game_title, rgb_buf, tex_w, tex_h, _fullscreen,
+                )
 
                 if not running:
                     break
@@ -411,80 +521,12 @@ def run(
 
                 # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
                 if audio_dev > 0:
-                    psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
-                    extra_bufs = []
-                    if machine.scc is not None:
-                        extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
-                    if machine.dac is not None:
-                        extra_bufs.append(
-                            machine.dac.generate_samples(
-                                SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
-                            )
-                        )
-                    if extra_bufs:
-                        # Batch-decode each PCM buffer to signed 16-bit samples
-                        # via array("h") (one C call per buffer) instead of a
-                        # per-sample struct.unpack_from/pack_into. Sums are taken
-                        # in Python ints so the clamp applies to the full mix,
-                        # then re-encoded once. (array("h") is native byte order,
-                        # which matches the little-endian PCM on LE hosts.)
-                        psg_arr = array("h")
-                        psg_arr.frombytes(bytes(psg_buf))
-                        extra_arrs = []
-                        for buf in extra_bufs:
-                            a = array("h")
-                            a.frombytes(bytes(buf))
-                            extra_arrs.append(a)
-                        out_arr = array("h", bytes(2 * SAMPLES_PER_FRAME))
-                        for i in range(SAMPLES_PER_FRAME):
-                            total = psg_arr[i]
-                            for a in extra_arrs:
-                                total += a[i]
-                            if total > _S16_MAX:
-                                total = _S16_MAX
-                            elif total < _S16_MIN:
-                                total = _S16_MIN
-                            out_arr[i] = total
-                        audio_buf = out_arr.tobytes()
-                    else:
-                        audio_buf = psg_buf
-                    sdl2.SDL_QueueAudio(audio_dev, bytes(audio_buf), len(audio_buf))
+                    audio_buf = _mix_audio(machine, frame_start_cycle, frame_end_cycle)
+                    sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
 
                 # Upload to texture only when frame was rendered
                 if not skip_this_frame:
-                    pixels_ptr = ctypes.c_void_p()
-                    pitch = ctypes.c_int()
-                    if sdl2.SDL_LockTexture(
-                        texture, None, ctypes.byref(pixels_ptr), ctypes.byref(pitch)
-                    ) != 0:
-                        # Transient failure: skip this frame's pixel upload rather
-                        # than writing through an invalid pointer.
-                        print(f"SDL_LockTexture failed: {sdl2.SDL_GetError()}", file=sys.stderr)
-                    else:
-                        # Honour the destination row stride SDL returns. When the
-                        # texture rows are tightly packed (pitch == width*3, RGB24),
-                        # a single contiguous memmove is correct and fastest.
-                        # Otherwise (driver row padding, or a future width) copy
-                        # row-by-row: width*3 source bytes into each pitch-strided
-                        # destination row, so no source overrun and no padding is
-                        # overwritten with pixel data.
-                        row_bytes = tex_w * 3
-                        dst_pitch = pitch.value
-                        if dst_pitch == row_bytes:
-                            # rgb_buf is already an immutable bytes from
-                            # _index_to_rgb24; memmove accepts it directly.
-                            ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
-                        else:
-                            dst_base = pixels_ptr.value
-                            assert dst_base is not None
-                            for row in range(tex_h):
-                                src_off = row * row_bytes
-                                ctypes.memmove(
-                                    dst_base + row * dst_pitch,
-                                    rgb_buf[src_off:src_off + row_bytes],
-                                    row_bytes,
-                                )
-                        sdl2.SDL_UnlockTexture(texture)
+                    _upload_to_texture(sdl2, texture, rgb_buf, tex_w, tex_h)
 
                 # Render (always — redisplays previous texture on skipped frames)
                 sdl2.SDL_RenderClear(renderer)
