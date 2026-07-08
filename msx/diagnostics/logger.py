@@ -50,9 +50,6 @@ class DebugLogger:
     # Boot diagnostic events
     # ------------------------------------------------------------------
 
-    def on_slot_register_write(self, old: int, new: int, pc: int) -> None:
-        self._emit("BOOT", f"slot_register: 0x{old:02X} → 0x{new:02X}  (PC={pc:04X})")
-
     def on_vdp_reg_write(self, reg: int, value: int, frame: int) -> None:
         if reg == 1:
             bl = (value >> 6) & 1
