@@ -3,6 +3,18 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class Registers:
+    """Z80 register file.
+
+    Width contract (load-bearing for a Rust/C++ port): every field is a bare
+    Python ``int`` here, but each has a fixed hardware width and is expected to
+    be kept already-masked to that width by whoever writes it —
+      - 8-bit (u8): A, F, I, R, and the shadow A_/F_.
+      - 16-bit (u16): BC, DE, HL, IX, IY, SP, PC, and the shadow BC_/DE_/HL_.
+    Callers mask on write (``& 0xFF`` / ``& 0xFFFF``); readers assume the value
+    is already in range. A port picks u8/u16 per field, at which point the
+    width is enforced by the type (and arithmetic must use wrapping semantics).
+    """
+
     # 8-bit primary fields — direct access, no property overhead
     A: int = 0xFF
     F: int = 0xFF
