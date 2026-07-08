@@ -138,7 +138,18 @@ class _PaletteChange:
 @dataclass
 class V9938:
     """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
-    hardware command engine."""
+    hardware command engine.
+
+    Integer-width contract (for a Rust/C++ port; consistent with the CPU
+    Registers width contract): ``vram`` bytes and ``regs`` / ``cmd_regs`` /
+    ``status`` entries are u8; the VRAM address (``_addr``) is 17-bit (kept
+    masked ``& 0x1FFFF``); palette entries are packed 9-bit GRB
+    (``(r << 6) | (g << 3) | b``). Values that are NOT a hardware-register
+    width and must be typed signed in a port: screen / sprite / command
+    coordinates that can go negative before clipping (e.g. ``x_byte -= 32``,
+    ``_cmd_x`` / ``_cmd_y``, the Bresenham error terms) → i16; the command
+    T-state countdown ``_cmd_remaining``, decremented below zero and tested
+    ``<= 0`` → i32."""
 
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
