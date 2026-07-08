@@ -1,6 +1,6 @@
 """Tests for the SDL2 frontend index→RGB24 palette conversion."""
 from frontend.sdl2_frontend import TMS9918A_PALETTE, _index_to_rgb24
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
 
 
 def _rgb(buf: bytearray, i: int) -> tuple[int, int, int]:
@@ -44,3 +44,21 @@ def test_v9938_screen8_uses_grb332_direct() -> None:
 def test_non_v9938_uses_tms_palette() -> None:
     out = _index_to_rgb24(bytearray([2]), object())
     assert _rgb(out, 0) == TMS9918A_PALETTE[2]
+
+
+def test_v9938_populated_reg_write_log_does_not_break_conversion() -> None:
+    """Regression: a non-empty _reg_write_log must not break index→RGB24.
+
+    A _PaletteChange entry triggers the mid-frame banded palette path, which
+    previously crashed accessing the old tuple/sentinel (entry[1] == -1) after
+    the log became a tagged union of _RegChange/_PaletteChange records.
+    """
+    vdp = V9938()
+    vdp.regs[0] = 0x06  # G4 / SCREEN 5
+    vdp.regs[1] = 0x40  # BL
+    vdp.begin_scanline(0)
+    vdp._reg_write_log.append(_RegChange(96, 0, 0x06))
+    vdp._reg_write_log.append(_PaletteChange(64, 1, 0b111_001_001))
+    buf = bytearray([1]) * (256 * vdp.display_height)
+    out = _index_to_rgb24(buf, vdp)
+    assert len(out) == len(buf) * 3
