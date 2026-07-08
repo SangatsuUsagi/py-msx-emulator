@@ -360,6 +360,10 @@ def _execute_cb(cpu: Z80) -> int:
     cycles = 8 if reg != 6 else 15
 
     if row == 0:
+        # Portability: this list-of-closures dispatch (like the module-level
+        # _DISPATCH / _ED_DISPATCH tables) is a Python idiom. A Rust/C++ port
+        # expresses it as a `match` or a static function-pointer array rather
+        # than indexing a list of function objects.
         fn = [_rlc, _rrc, _rl, _rr, _sla, _sra, _sll, _srl][bit]
         result = fn(cpu, v)
         _set_r(cpu, reg, result)
@@ -1424,6 +1428,10 @@ def _op_daa(cpu: Z80) -> int:
 
 def _op_cpl(cpu: Z80) -> int:
     r = cpu.registers
+    # Portability: Python's `~` is infinite-width two's complement
+    # (~x == -(x + 1)), so `(~r.A) & 0xFF` is correct only because of the mask.
+    # Same pattern in the CB RES handler (`v & ~(1 << bit)`). A fixed-width port
+    # applies `!` directly on a u8 with no mask needed.
     r.A = (~r.A) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV | F.FLAG_C)) | F.FLAG_H | F.FLAG_N
     return 4
