@@ -9,7 +9,7 @@ import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -84,38 +84,45 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str
     return found, sha1
 
 
+def _require_scc(scc: SCC | None) -> SCC:
+    if scc is None:
+        raise ValueError("KonamiSCC mapper requires an SCC instance")
+    return scc
+
+
+# mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
+# scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
+# with None normalised to b"". FlatMapper keeps the None-able cartridge (it
+# treats "no ROM" specially); the bank-switching mappers take rom_bytes.
+_MAPPER_BUILDERS: dict[
+    str, Callable[[bytes | None, bytes, bytearray | None, SCC | None], Mapper]
+] = {
+    "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
+    "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
+    "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
+    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
+    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
+    "ASCII16":      lambda cart, rom, sram, scc: Ascii16Mapper(rom),
+    "ASCII16SRAM2": lambda cart, rom, sram, scc: Ascii16Sram2Mapper(rom, sram=sram),
+    "ASCII16SRAM8": lambda cart, rom, sram, scc: Ascii16Sram8Mapper(rom, sram=sram),
+    "Konami":       lambda cart, rom, sram, scc: KonamiMapper(rom),
+    "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
+    "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
+    "KonamiSCC":    lambda cart, rom, sram, scc: KonamiSCCMapper(rom, scc=_require_scc(scc)),
+}
+
+
 def _make_mapper(
     mapper_type: str,
     cartridge: bytes | None,
     scc: SCC | None = None,
     sram: bytearray | None = None,
 ) -> Mapper:
-    if mapper_type in ("Mirrored", "Normal"):
-        return FlatMapper(cartridge)
+    builder = _MAPPER_BUILDERS.get(mapper_type)
+    if builder is None:
+        raise ValueError(f"unknown mapper type: {mapper_type!r}")
     rom_bytes = cartridge if cartridge is not None else b""
-    if mapper_type == "ASCII8":
-        return Ascii8Mapper(rom_bytes)
-    if mapper_type == "ASCII8SRAM2":
-        return Ascii8Sram2Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII8SRAM8":
-        return Ascii8Sram8Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII16":
-        return Ascii16Mapper(rom_bytes)
-    if mapper_type == "ASCII16SRAM2":
-        return Ascii16Sram2Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII16SRAM8":
-        return Ascii16Sram8Mapper(rom_bytes, sram=sram)
-    if mapper_type == "Konami":
-        return KonamiMapper(rom_bytes)
-    if mapper_type == "Majutsushi":
-        return MajutsushiMapper(rom_bytes)
-    if mapper_type == "R-Type":
-        return RTypeMapper(rom_bytes)
-    if mapper_type == "KonamiSCC":
-        if scc is None:
-            raise ValueError("KonamiSCC mapper requires an SCC instance")
-        return KonamiSCCMapper(rom_bytes, scc=scc)
-    raise ValueError(f"unknown mapper type: {mapper_type!r}")
+    return builder(cartridge, rom_bytes, sram, scc)
 
 
 # Standard MSX I/O port map (first, last), device_id -> ports. Used as the
