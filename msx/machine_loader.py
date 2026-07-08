@@ -567,7 +567,7 @@ def build_machine(
         # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not None
         # here, so cart_sha1 is set).
         assert cart_sha1 is not None
-        sram_save_path = Path("saves") / f"{cart_sha1}.sram"
+        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
         expected_size = _SRAM_SIZES[resolved]
         if sram_save_path.exists():
             raw = sram_save_path.read_bytes()

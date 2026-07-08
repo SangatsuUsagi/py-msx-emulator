@@ -296,9 +296,9 @@ class TestMachineLoaderSramIntegration:
         sha1 = hashlib.sha1(cartridge).hexdigest()
         expected_size = _SRAM_SIZES["ASCII8SRAM2"]
 
-        saves = tmp_path / "saves"
-        saves.mkdir()
-        sram_file = saves / f"{sha1}.sram"
+        sram_dir = tmp_path / "saves" / "sram"
+        sram_dir.mkdir(parents=True)
+        sram_file = sram_dir / f"{sha1}.sram"
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
