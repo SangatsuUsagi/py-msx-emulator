@@ -299,17 +299,17 @@ def run(
     frame_timer = FrameTimer(fps=60.0, speed=speed)
     event = sdl2.SDL_Event()
     running = True
-    _fullscreen = False
+    fullscreen = False
     rgb_buf: bytes = bytes(_SCREEN_WIDTH * h * 3)
-    _skip_counter: int = 0
+    skip_counter: int = 0
 
     try:
         while running:
             try:
                 # Process events (input + hotkeys); updates running/fullscreen.
-                running, _fullscreen = _handle_events(
+                running, fullscreen = _handle_events(
                     sdl2, event, machine, window, joy_manager,
-                    game_title, rgb_buf, tex_w, tex_h, _fullscreen,
+                    game_title, rgb_buf, tex_w, tex_h, fullscreen,
                 )
 
                 if not running:
@@ -318,7 +318,7 @@ def run(
                 joy_manager.tick()
 
                 # Run one frame (skip VDP pixel rendering when behind schedule)
-                skip_this_frame = _skip_counter > 0
+                skip_this_frame = skip_counter > 0
                 frame_start_cycle = machine.cycle_count
                 index_buf = machine.run_frame(skip_render=skip_this_frame)
                 frame_end_cycle = machine.cycle_count
@@ -367,9 +367,9 @@ def run(
                 elapsed = frame_timer.tick()
                 if frame_skip == "auto":
                     if elapsed > frame_timer._frame_interval * _FRAME_OVERRUN_RATIO:
-                        _skip_counter = min(_skip_counter + 1, _MAX_FRAME_SKIP)
+                        skip_counter = min(skip_counter + 1, _MAX_FRAME_SKIP)
                     else:
-                        _skip_counter = max(_skip_counter - 1, 0)
+                        skip_counter = max(skip_counter - 1, 0)
 
                 if frame_timer.fps_measured > 0:
                     title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
