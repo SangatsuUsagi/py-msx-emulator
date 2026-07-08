@@ -175,7 +175,7 @@ def main() -> None:
     if args.count_frame is not None:
         print(f"frames  : {args.count_frame} (headless)")
 
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
 
     # --- Build tracer ---
