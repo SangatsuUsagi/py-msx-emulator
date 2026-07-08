@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.vdp.vdp import VDP

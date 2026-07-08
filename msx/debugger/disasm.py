@@ -25,7 +25,6 @@ from typing import Callable
 # For DD/FD prefixed ops with displacement:
 #   {id} = signed displacement for (IX+d)/(IY+d)
 #   {ib} = immediate byte after displacement
-#   {iw} = 16-bit word after prefix
 
 # ---------------------------------------------------------------------------
 # Main opcode table (0x00–0xFF)
@@ -379,22 +378,19 @@ def _apply_template(tmpl: str, read: Callable[[int], int], addr: int, prefix_len
         addr: Base address of the instruction (before prefix).
         prefix_len: Number of prefix bytes consumed before the opcode byte.
     """
-    # Offset within instruction bytes:
-    #   prefix_len prefix bytes + 1 opcode byte already consumed
-    off = addr + prefix_len + 1
+    # Address of the operand bytes: prefix_len prefix bytes + 1 opcode byte are
+    # already consumed before them. (Only the {…}h placeholders occur in the
+    # opcode tables; bare {w}/{b0} are never emitted, so there are no branches
+    # for them.)
+    operand_addr = addr + prefix_len + 1
 
     if "{w}h" in tmpl:
-        lo = read(off & 0xFFFF)
-        hi = read((off + 1) & 0xFFFF)
+        lo = read(operand_addr & 0xFFFF)
+        hi = read((operand_addr + 1) & 0xFFFF)
         return tmpl.replace("{w}h", f"{(hi << 8) | lo:04X}h")
 
-    if "{w}" in tmpl:
-        lo = read(off & 0xFFFF)
-        hi = read((off + 1) & 0xFFFF)
-        return tmpl.replace("{w}", f"{(hi << 8) | lo:04X}h")
-
     if "{r}" in tmpl:
-        raw = read(off & 0xFFFF)
+        raw = read(operand_addr & 0xFFFF)
         # Relative jump: target = addr + total_size + signed_offset
         # Show signed offset for simplicity (consistent with common Z80 debuggers)
         s = _signed8(raw)
@@ -402,12 +398,8 @@ def _apply_template(tmpl: str, read: Callable[[int], int], addr: int, prefix_len
         return tmpl.replace("{r}", f"{target:04X}h")
 
     if "{b0}h" in tmpl:
-        b0 = read(off & 0xFFFF)
+        b0 = read(operand_addr & 0xFFFF)
         return tmpl.replace("{b0}h", f"{b0:02X}h")
-
-    if "{b0}" in tmpl:
-        b0 = read(off & 0xFFFF)
-        return tmpl.replace("{b0}", f"{b0:02X}h")
 
     return tmpl
 
@@ -434,16 +426,16 @@ def _apply_xy_template(tmpl: str, read: Callable[[int], int], addr: int) -> str:
         d = read(off_disp)
         return tmpl.replace("{id}", _fmt_disp(d))
 
-    if "{w}h" in tmpl or "{w}" in tmpl:
+    if "{w}h" in tmpl:
         lo = read((addr + 2) & 0xFFFF)
         hi = read((addr + 3) & 0xFFFF)
         val = f"{(hi << 8) | lo:04X}h"
-        return tmpl.replace("{w}h", val).replace("{w}", val)
+        return tmpl.replace("{w}h", val)
 
-    if "{b0}h" in tmpl or "{b0}" in tmpl:
+    if "{b0}h" in tmpl:
         b0 = read((addr + 2) & 0xFFFF)
         val = f"{b0:02X}h"
-        return tmpl.replace("{b0}h", val).replace("{b0}", val)
+        return tmpl.replace("{b0}h", val)
 
     return tmpl
 

@@ -7,7 +7,7 @@ from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
 if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
 
 
 # The opcode dispatch table is bound once at import time. opcodes_main

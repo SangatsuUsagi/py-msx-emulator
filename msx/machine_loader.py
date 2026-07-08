@@ -15,7 +15,7 @@ import yaml
 
 import msx.romdb as romdb
 from msx.cpu.z80 import Z80
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import (
