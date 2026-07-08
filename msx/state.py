@@ -331,8 +331,8 @@ def _from_jsonable(obj: object) -> object:
     return obj
 
 
-def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
-    """Serialise machine state and screenshot to saves/<title>_YYYYMMDD_HHMMSS.*
+def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Path:
+    """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
 
     Args:
         machine: Running machine to snapshot.
@@ -342,8 +342,8 @@ def save_state(machine: "Machine", rgb_buf: bytearray, title: str) -> Path:
     Returns:
         Path of the written .state file.
     """
-    saves_dir = Path("saves")
-    saves_dir.mkdir(exist_ok=True)
+    saves_dir = Path("saves") / "states"
+    saves_dir.mkdir(parents=True, exist_ok=True)
 
     stem = f"{_sanitise_title(title)}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     state_path = saves_dir / f"{stem}.state"
@@ -369,16 +369,18 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
 
     Args:
         machine: Running machine to restore into (callbacks remain intact).
-        path: Explicit .state file to load. When None, loads saves/latest.state.
+        path: Explicit .state file to load. When None, loads saves/states/latest.state.
 
     Raises:
         FileNotFoundError: If the target file does not exist.
         ValueError: If format version or mapper class does not match.
     """
     if path is None:
-        link = Path("saves") / "latest.state"
+        link = Path("saves") / "states" / "latest.state"
         if not link.exists():
-            raise FileNotFoundError("no save state found: saves/latest.state does not exist")
+            raise FileNotFoundError(
+                "no save state found: saves/states/latest.state does not exist"
+            )
         resolved = link.resolve()
     else:
         if not path.exists():
