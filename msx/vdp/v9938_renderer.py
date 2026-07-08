@@ -11,6 +11,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
 from msx.vdp.v9938 import _PaletteChange, _RegChange
+from msx.vdp.vdp import _channel_tables_indexed, _translate_rgb24
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -947,3 +948,89 @@ def _render_g7(
         row_base = (base + ((y + vscroll) & 0xFF) * _W) & 0x1FFFF
         bx = y * _W
         buf[bx:bx + _W] = vram[row_base:row_base + _W]  # whole row, one C-level copy
+
+
+# ---------------------------------------------------------------------------
+# Palette-index / SCREEN 8 → RGB24 conversion (V9938.to_rgb24 delegates here)
+# ---------------------------------------------------------------------------
+
+# SCREEN 8 GRB332 per-channel translate tables — constant (each byte is a full
+# pixel; no index mask). Built once from grb332_to_rgb.
+_GRB332_CHANNELS: tuple[bytes, bytes, bytes] = (
+    bytes(grb332_to_rgb(b)[0] for b in range(256)),
+    bytes(grb332_to_rgb(b)[1] for b in range(256)),
+    bytes(grb332_to_rgb(b)[2] for b in range(256)),
+)
+
+
+def _make_lut16(palette: list[int]) -> list[bytes]:
+    """Build a 16-entry RGB24 bytes LUT from a 9-bit RGB333 palette."""
+    return [
+        bytes((_INTENSITY3[(p >> 6) & 7], _INTENSITY3[(p >> 3) & 7], _INTENSITY3[p & 7]))
+        for p in palette[:16]
+    ]
+
+
+def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
+    """Per-band palette→RGB24 conversion for mid-frame palette changes.
+
+    Reuses _build_bands() (which reads _reg_write_log / _frame_start_palette) to
+    determine which palette was active on each scanline, then translates each
+    output line with that band's channel tables. Display-adjust vertical offset
+    (R#18 high nibble) is accounted for: output line dy came from source line
+    dy - v_off, whose band determines the palette.
+    """
+    h = vdp.display_height
+    w = len(src) // h if h else _W
+
+    reg18 = vdp.regs[18]
+    v_off = ((reg18 >> 4) ^ 0x07) - 7   # signed line shift from R#18
+
+    bands = _build_bands(vdp)
+
+    # Channel tables are built once per band (not per row/pixel); lines outside
+    # any band fall back to the frame-start palette (e.g. the border after the
+    # v_off shift).
+    default_channels = _channel_tables_indexed(_make_lut16(vdp._frame_start_palette))
+    line_channels: list[tuple[bytes, bytes, bytes]] = [default_channels] * h
+    for _y0, _y1, _band_regs, band_palette in bands:
+        channels = _channel_tables_indexed(_make_lut16(band_palette))
+        for sy in range(max(0, _y0), min(h, _y1)):
+            line_channels[sy] = channels
+
+    out = bytearray(w * h * 3)
+    for dy in range(h):
+        sy = dy - v_off
+        rtab, gtab, btab = line_channels[sy] if 0 <= sy < h else default_channels
+        row = src[dy * w:dy * w + w]
+        o = dy * w * 3
+        end = o + w * 3
+        out[o:end:3] = row.translate(rtab)
+        out[o + 1:end:3] = row.translate(gtab)
+        out[o + 2:end:3] = row.translate(btab)
+    return bytes(out)
+
+
+def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
+    """Convert a V9938 palette-index (or SCREEN 8 GRB332) framebuffer to RGB24.
+
+    SCREEN 8 (G7) maps each byte through the fixed GRB332 table; other modes use
+    the programmable 16-colour palette. When the register-write log records a
+    mid-frame palette change, conversion is done per band. The 16-colour channel
+    tables are cached on the VDP instance, keyed on the palette snapshot.
+    """
+    r0 = vdp.regs[0]
+    is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)  # M4+M5 = SCREEN 8
+    if is_g7:
+        return _translate_rgb24(src, _GRB332_CHANNELS)
+
+    # _reg_write_log is still valid here: it is cleared by begin_scanline(0) at
+    # the *next* frame, not at the end of this one.
+    if any(isinstance(e, _PaletteChange) for e in vdp._reg_write_log):
+        return _banded_to_rgb24(vdp, src)
+
+    key = tuple(vdp.palette[:16])
+    if key != vdp._rgb_lut_key:
+        vdp._rgb_lut_key = key
+        vdp._rgb_channels = _channel_tables_indexed(_make_lut16(vdp.palette))
+    return _translate_rgb24(src, vdp._rgb_channels)
