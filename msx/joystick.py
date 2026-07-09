@@ -42,10 +42,10 @@ class JoystickManager:
     _input: InputState
     _sdl: Any = field(default=None, repr=False)
 
-    _slots: list = field(default_factory=lambda: [None, None], init=False, repr=False)
+    _slots: list[Any] = field(default_factory=lambda: [None, None], init=False, repr=False)
     _is_gc: list[bool] = field(default_factory=lambda: [False, False], init=False, repr=False)
     _instance_ids: list[int] = field(default_factory=lambda: [-1, -1], init=False, repr=False)
-    _turbo_held: set = field(default_factory=set, init=False, repr=False)
+    _turbo_held: set[tuple[int, int]] = field(default_factory=set, init=False, repr=False)
     _turbo_counter: int = field(default=0, init=False, repr=False)
 
     def tick(self) -> None:

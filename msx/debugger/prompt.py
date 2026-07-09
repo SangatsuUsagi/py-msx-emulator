@@ -13,6 +13,7 @@ from msx.debugger.disasm import disassemble
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+    from msx.vdp.v9938 import V9938
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -32,6 +33,14 @@ _HELP = (
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
     "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | c | q"
 )
+
+# The machine caps hardware breakpoints and watchpoints at 4 each.
+MAX_BREAKPOINTS = 4
+MAX_WATCHPOINTS = 4
+# `da` disassembles a fixed window of instructions from the given address.
+_DISASM_WINDOW = 10
+# Screen width fallback for `ss` when the display height is unknown (0).
+_DEFAULT_WIDTH = 256
 
 
 class Debugger:
@@ -70,72 +79,26 @@ class Debugger:
             cmd = parts[0].lower()
             args = parts[1:]
 
-            # Uniform if/elif dispatch (Rust `match`-shaped). Commands that
-            # affect the REPL loop itself (c/q/g/so) return or fall through to
-            # the next prompt; the rest delegate to a _cmd_* handler.
+            # Loop-control commands resume/exit the REPL and are handled inline;
+            # every other command is a table lookup (_COMMANDS, below the class).
             if cmd == "c":
                 return
-            elif cmd == "q":
+            if cmd == "q":
                 sys.exit(0)
-            elif cmd == "g":
+            if cmd == "g":
                 if self._cmd_goto(args):
                     return
-            elif cmd == "so":
+                continue
+            if cmd == "so":
                 self._cmd_step_out()
                 return
-            elif cmd == "rc":
-                self._cmd_reg_cpu()
-            elif cmd == "rv":
-                self._cmd_reg_vdp()
-            elif cmd == "rp":
-                self._cmd_reg_palette()
-            elif cmd == "v":
-                self._cmd_vdp_status()
-            elif cmd == "dm":
-                self._cmd_dump(args)
-            elif cmd == "dv":
-                self._cmd_dump_vram(args)
-            elif cmd == "dvf":
-                self._cmd_dump_vram_file(args)
-            elif cmd == "ba":
-                self._cmd_break(["a"] + args)
-            elif cmd == "br":
-                self._cmd_break(["r"] + args)
-            elif cmd == "bl":
-                self._cmd_break(["l"])
-            elif cmd == "bh":
-                self._cmd_break_halt()
-            elif cmd == "bs":
-                self._cmd_break_sp(args)
-            elif cmd == "wa":
-                self._cmd_watch(["a"] + args)
-            elif cmd == "wd":
-                self._cmd_watch(["r"] + args)
-            elif cmd == "wl":
-                self._cmd_watch(["l"])
-            elif cmd == "da":
-                self._cmd_disasm(args)
-            elif cmd == "s":
-                self._cmd_step(args)
-            elif cmd == "te":
-                self._cmd_trace_enable()
-            elif cmd == "td":
-                self._cmd_trace_disable()
-            elif cmd == "ce":
-                self._cmd_mapper_trace_enable()
-            elif cmd == "cd":
-                self._cmd_mapper_trace_disable()
-            elif cmd == "ds":
-                self._cmd_disable_sprites()
-            elif cmd == "sl":
-                self._cmd_slot_active()
-            elif cmd == "st":
-                self._cmd_slot_tree()
-            elif cmd == "ss":
-                self._cmd_screenshot()
-            else:
+
+            handler = _COMMANDS.get(cmd)
+            if handler is None:
                 print(f"Unknown command: {cmd!r}")
                 print(f"  {_HELP}")
+            else:
+                handler(self, args)
 
     # ------------------------------------------------------------------
     # Command handlers
@@ -250,57 +213,67 @@ class Debugger:
             return
         print(f"dvf: wrote {len(vram)} bytes to {args[0]}")
 
+    def _parse_hex_addr(self, arg: str, cmd: str) -> int | None:
+        """Parse a 16-bit hex address, or print an error and return None."""
+        try:
+            return int(arg, 16) & 0xFFFF
+        except ValueError:
+            print(f"{cmd}: invalid address (hex expected)")
+            return None
+
     def _cmd_break(self, args: list[str]) -> None:
-        if not args:
-            print("Usage: ba ADDR | br ADDR | bl")
-            return
-        sub = args[0].lower()
-        current = list(self._machine._breakpoints)
-
+        """Dispatch ba/br/bl to add / remove / list breakpoints."""
+        sub = args[0].lower() if args else ""
         if sub == "l":
-            if not current:
-                print("  (no breakpoints)")
-            else:
-                for addr in sorted(current):
-                    print(f"  {addr:04X}h")
-            return
+            self._break_list()
+        elif sub == "a":
+            self._break_add(args[1:])
+        elif sub == "r":
+            self._break_remove(args[1:])
+        else:
+            print("Usage: ba ADDR | br ADDR | bl")
 
-        if sub == "a":
-            if len(args) < 2:
-                print("Usage: ba ADDR")
-                return
-            try:
-                addr = int(args[1], 16) & 0xFFFF
-            except ValueError:
-                print("ba: invalid address (hex expected)")
-                return
-            if len(current) >= 4:
-                print("ba: maximum 4 breakpoints reached")
-                return
-            if addr not in current:
-                current.append(addr)
-            self._machine.set_breakpoints(current)
-            print(f"  Breakpoint set at {addr:04X}h ({len(current)}/4)")
+    def _break_list(self) -> None:
+        """List the active breakpoints (bl)."""
+        current = sorted(self._machine._breakpoints)
+        if not current:
+            print("  (no breakpoints)")
             return
+        for addr in current:
+            print(f"  {addr:04X}h")
 
-        if sub == "r":
-            if len(args) < 2:
-                print("Usage: br ADDR")
-                return
-            try:
-                addr = int(args[1], 16) & 0xFFFF
-            except ValueError:
-                print("br: invalid address (hex expected)")
-                return
-            if addr not in current:
-                print(f"br: {addr:04X}h not in breakpoint list")
-                return
-            current.remove(addr)
-            self._machine.set_breakpoints(current)
-            print(f"  Breakpoint {addr:04X}h removed ({len(current)}/4)")
+    def _break_add(self, args: list[str]) -> None:
+        """Add a breakpoint at ADDR (ba), up to MAX_BREAKPOINTS."""
+        if not args:
+            print("Usage: ba ADDR")
             return
+        addr = self._parse_hex_addr(args[0], "ba")
+        if addr is None:
+            return
+        current = list(self._machine._breakpoints)
+        if len(current) >= MAX_BREAKPOINTS:
+            print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
+            return
+        if addr not in current:
+            current.append(addr)
+        self._machine.set_breakpoints(current)
+        print(f"  Breakpoint set at {addr:04X}h ({len(current)}/{MAX_BREAKPOINTS})")
 
-        print(f"Unknown break sub-command: {sub!r}. Use a, r, or l.")
+    def _break_remove(self, args: list[str]) -> None:
+        """Remove the breakpoint at ADDR (br)."""
+        if not args:
+            print("Usage: br ADDR")
+            return
+        addr = self._parse_hex_addr(args[0], "br")
+        if addr is None:
+            return
+        current = list(self._machine._breakpoints)
+        if addr not in current:
+            print(f"br: {addr:04X}h not in breakpoint list")
+            return
+        current.remove(addr)
+        self._machine.set_breakpoints(current)
+        print(f"  Breakpoint {addr:04X}h removed ({len(current)}/{MAX_BREAKPOINTS})")
 
     def _cmd_goto(self, args: list[str]) -> bool:
         """Set a one-shot run-to breakpoint. Returns True if emulation should resume."""
@@ -354,94 +327,100 @@ class Debugger:
         print(f"  Break on SP outside {low:04X}h-{high:04X}h")
 
     def _cmd_watch(self, args: list[str]) -> None:
-        if not args:
-            print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
-            return
-        sub = args[0].lower()
-
-        def _current_entries() -> list[tuple[int, str]]:
-            r_set = self._machine._watch_read
-            w_set = self._machine._watch_write
-            result = []
-            for addr in sorted(r_set | w_set):
-                mode = ("r" if addr in r_set else "") + ("w" if addr in w_set else "")
-                result.append((addr, mode))
-            return result
-
+        """Dispatch wa/wd/wl to add / remove / list watchpoints."""
+        sub = args[0].lower() if args else ""
         if sub == "l":
-            entries = _current_entries()
-            if not entries:
-                print("  (no watchpoints)")
-            else:
-                for addr, mode in entries:
-                    print(f"  {addr:04X}h [{mode}]")
-            return
+            self._watch_list()
+        elif sub == "a":
+            self._watch_add(args[1:])
+        elif sub == "r":
+            self._watch_remove(args[1:])
+        else:
+            print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
 
-        if sub == "a":
-            if len(args) < 2:
-                print("Usage: wa ADDR[,r|w|rw]")
-                return
-            tok = args[1]
-            if "," in tok:
-                addr_str, mode = tok.split(",", 1)
-            elif len(args) > 2:
-                addr_str, mode = tok, args[2]
-            else:
-                addr_str, mode = tok, "rw"
-            mode = mode.lower().strip()
-            if not mode or not all(c in "rw" for c in mode):
-                print(f"wa: invalid mode {mode!r} (use r, w, or rw)")
-                return
-            try:
-                addr = int(addr_str, 16) & 0xFFFF
-            except ValueError:
-                print("wa: invalid address (hex expected)")
-                return
-            entries = _current_entries()
-            if addr in [e[0] for e in entries]:
-                entries = [(a, mode if a == addr else m) for a, m in entries]
-            else:
-                if len(entries) >= 4:
-                    print("wa: maximum 4 watchpoints reached")
-                    return
-                entries.append((addr, mode))
-            self._machine.set_watchpoints(entries)
-            print(f"  Watchpoint set at {addr:04X}h [{mode}] ({len(entries)}/4)")
-            return
+    def _watch_entries(self) -> list[tuple[int, str]]:
+        """Current watchpoints as (addr, mode) pairs, sorted by address."""
+        r_set = self._machine._watch_read
+        w_set = self._machine._watch_write
+        result = []
+        for addr in sorted(r_set | w_set):
+            mode = ("r" if addr in r_set else "") + ("w" if addr in w_set else "")
+            result.append((addr, mode))
+        return result
 
-        if sub == "r":
-            if len(args) < 2:
-                print("Usage: wd ADDR")
-                return
-            try:
-                addr = int(args[1], 16) & 0xFFFF
-            except ValueError:
-                print("wd: invalid address (hex expected)")
-                return
-            entries = _current_entries()
-            if addr not in [e[0] for e in entries]:
-                print(f"wd: {addr:04X}h not in watchpoint list")
-                return
-            entries = [(a, m) for a, m in entries if a != addr]
-            self._machine.set_watchpoints(entries)
-            print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/4)")
-            return
+    def _parse_watch_mode(self, mode: str) -> str | None:
+        """Validate an r/w/rw watch mode, or print an error and return None."""
+        mode = mode.lower().strip()
+        if not mode or not all(c in "rw" for c in mode):
+            print(f"wa: invalid mode {mode!r} (use r, w, or rw)")
+            return None
+        return mode
 
-        print(f"Unknown watch sub-command: {sub!r}. Use a, r, or l.")
+    def _watch_list(self) -> None:
+        """List the active watchpoints (wl)."""
+        entries = self._watch_entries()
+        if not entries:
+            print("  (no watchpoints)")
+            return
+        for addr, mode in entries:
+            print(f"  {addr:04X}h [{mode}]")
+
+    def _watch_add(self, args: list[str]) -> None:
+        """Add/update a watchpoint at ADDR with an r/w/rw mode (wa)."""
+        if not args:
+            print("Usage: wa ADDR[,r|w|rw]")
+            return
+        tok = args[0]
+        if "," in tok:
+            addr_str, mode_str = tok.split(",", 1)
+        elif len(args) > 1:
+            addr_str, mode_str = tok, args[1]
+        else:
+            addr_str, mode_str = tok, "rw"
+        mode = self._parse_watch_mode(mode_str)
+        if mode is None:
+            return
+        addr = self._parse_hex_addr(addr_str, "wa")
+        if addr is None:
+            return
+        entries = self._watch_entries()
+        if addr in [e[0] for e in entries]:
+            entries = [(a, mode if a == addr else m) for a, m in entries]
+        else:
+            if len(entries) >= MAX_WATCHPOINTS:
+                print(f"wa: maximum {MAX_WATCHPOINTS} watchpoints reached")
+                return
+            entries.append((addr, mode))
+        self._machine.set_watchpoints(entries)
+        print(f"  Watchpoint set at {addr:04X}h [{mode}] ({len(entries)}/{MAX_WATCHPOINTS})")
+
+    def _watch_remove(self, args: list[str]) -> None:
+        """Remove the watchpoint at ADDR (wd)."""
+        if not args:
+            print("Usage: wd ADDR")
+            return
+        addr = self._parse_hex_addr(args[0], "wd")
+        if addr is None:
+            return
+        entries = self._watch_entries()
+        if addr not in [e[0] for e in entries]:
+            print(f"wd: {addr:04X}h not in watchpoint list")
+            return
+        entries = [(a, m) for a, m in entries if a != addr]
+        self._machine.set_watchpoints(entries)
+        print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/{MAX_WATCHPOINTS})")
 
     def _cmd_disasm(self, args: list[str]) -> None:
         r = self._machine.cpu.registers
         if args:
-            try:
-                addr = int(args[0], 16) & 0xFFFF
-            except ValueError:
-                print("disasm: invalid address (hex expected)")
+            addr = self._parse_hex_addr(args[0], "disasm")
+            if addr is None:
                 return
         else:
             addr = r.PC
 
         read = self._machine.cpu.read_byte
-        for _ in range(10):
+        for _ in range(_DISASM_WINDOW):
             line, size = _format_disasm(read, addr)
             print(f"  {addr:04X}: {line}")
             addr = (addr + size) & 0xFFFF
@@ -514,14 +493,13 @@ class Debugger:
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
         saved_fc = getattr(vdp, "_frame_count", None)
+        from msx.screenshot import save_screenshot
         try:
             if isinstance(vdp, V9938):
                 from msx.vdp.v9938_renderer import render_frame as _render
-                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
                 idx = _render(vdp)
             else:
                 from msx.vdp.renderer import render_frame as _render_vdp
-                from frontend.sdl2_frontend import _index_to_rgb24, _save_screenshot
                 idx = _render_vdp(vdp)
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"ss: screenshot failed: {exc}")
@@ -530,8 +508,8 @@ class Debugger:
             if saved_fc is not None:
                 vdp._frame_count = saved_fc  # don't perturb the frame counter
         h = vdp.display_height
-        w = (len(idx) // h) if h else 256
-        _save_screenshot(bytearray(_index_to_rgb24(idx, vdp)), w, h)
+        w = (len(idx) // h) if h else _DEFAULT_WIDTH
+        save_screenshot(vdp.to_rgb24(idx), w, h)
 
     def _cmd_disable_sprites(self) -> None:
         vdp = self._machine.vdp
@@ -629,31 +607,32 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
 def _print_vdp_fancy(vdp: object) -> None:
     from msx.vdp.v9938 import V9938
     assert isinstance(vdp, V9938)
+    print(f"  Screen : {_decode_screen_mode(vdp.regs[0], vdp.regs[1])}")
+    _print_vdp_vram_layout(vdp)
+    _print_vdp_display_control(vdp)
+    _print_vdp_command_state(vdp)
+    _print_vdp_status(vdp)
+
+
+def _print_vdp_vram_layout(vdp: V9938) -> None:
     r = vdp.regs          # R#0-R#27
-    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
-    s0 = vdp.status
-    s2 = vdp._status2
-
-    # --- Screen mode ---
-    print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
-
-    # --- VRAM layout ---
-    _m4 = (r[0] >> 2) & 1  # R#0 bit2
-    _m5 = (r[0] >> 3) & 1  # R#0 bit3
-    name_base    = (r[2] & 0x60) << 10 if (_m4 or _m5) else (r[2] & 0x0F) << 10
+    m4 = (r[0] >> 2) & 1  # R#0 bit2
+    m5 = (r[0] >> 3) & 1  # R#0 bit3
+    name_base    = (r[2] & 0x60) << 10 if (m4 or m5) else (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
-    # R#5/R#11 → SAT base (512-byte aligned); colour table at SAT-0x200
-    _attr_reg    = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
-    sprite_attr  = _attr_reg & ~0x1FF & 0x1FFFF
-    _spr_col     = (sprite_attr - 0x200) & 0x1FFFF
+    # R#5/R#11 → SAT base (512-byte aligned; colour table sits at SAT-0x200)
+    attr_reg     = (((r[11] & 0x03) << 15) | (r[5] << 7)) & 0x1FFFF
+    sprite_attr  = attr_reg & ~0x1FF & 0x1FFFF
     sprite_pat   = (r[6]  & 0x3F) << 11
     print(
         f"  VRAM   : Name={name_base:05X}  Color={color_base:05X}"
         f"  Pattern={pattern_base:05X}  SprAttr={sprite_attr:05X}  SprPat={sprite_pat:05X}"
     )
 
-    # --- Display control ---
+
+def _print_vdp_display_control(vdp: V9938) -> None:
+    r = vdp.regs
     disp    = "ON " if r[1] & 0x40 else "OFF"
     sprites = "OFF" if r[8] & 0x02 else "ON "
     height  = 212 if r[9] & 0x80 else 192
@@ -670,7 +649,10 @@ def _print_vdp_fancy(vdp: object) -> None:
         f"  Spr={spr_sz}/mag={spr_mag}  FG={fg:X} BG={bg:X}  {ie0} {ie1}"
     )
 
-    # --- VDP command state ---
+
+def _print_vdp_command_state(vdp: V9938) -> None:
+    c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
+    s2 = vdp._status2
     sx  = c[0]  | (c[1]  & 0x01) << 8
     sy  = c[2]  | (c[3]  & 0x03) << 8
     dx  = c[4]  | (c[5]  & 0x01) << 8
@@ -699,7 +681,10 @@ def _print_vdp_fancy(vdp: object) -> None:
         f"  CLR={clr:02X}  DIR={dix}{diy}"
     )
 
-    # --- Status registers ---
+
+def _print_vdp_status(vdp: V9938) -> None:
+    s0 = vdp.status
+    s2 = vdp._status2
     tr  = "TR" if s2 & 0x80 else "  "
     ce  = "CE" if s2 & 0x01 else "  "
     vf  = "F"  if s0 & 0x80 else " "
@@ -802,7 +787,10 @@ def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None)
         if rm is not None:
             return f"seg={rm.banks[page]}"
     if primary in (1, 2) and page is not None:
-        mapper = getattr(mem, "_mapper" if primary == 1 else "_mapper2", None)
+        mapper = (
+            getattr(mem, "_mapper", None) if primary == 1
+            else getattr(mem, "_mapper2", None)
+        )
         info = _rom_mapper_bank_info(mapper, page) if mapper is not None else None
         if info is not None:
             return info
@@ -824,3 +812,35 @@ def _sl_size(mem: object, primary: int, secondary: int | None) -> str:
         n = len(getattr(mem, "ram", b""))
         return f"{n // 1024}KB" if n else ""
     return ""
+
+
+# REPL command dispatch table (see Debugger.enter). Loop-control commands
+# (c/q/g/so) are handled inline in enter(); everything else maps here. The
+# short lambdas adapt each command's argument shape to its _cmd_* handler.
+_COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
+    "rc": lambda d, a: d._cmd_reg_cpu(),
+    "rv": lambda d, a: d._cmd_reg_vdp(),
+    "rp": lambda d, a: d._cmd_reg_palette(),
+    "v": lambda d, a: d._cmd_vdp_status(),
+    "dm": lambda d, a: d._cmd_dump(a),
+    "dv": lambda d, a: d._cmd_dump_vram(a),
+    "dvf": lambda d, a: d._cmd_dump_vram_file(a),
+    "ba": lambda d, a: d._cmd_break(["a"] + a),
+    "br": lambda d, a: d._cmd_break(["r"] + a),
+    "bl": lambda d, a: d._cmd_break(["l"]),
+    "bh": lambda d, a: d._cmd_break_halt(),
+    "bs": lambda d, a: d._cmd_break_sp(a),
+    "wa": lambda d, a: d._cmd_watch(["a"] + a),
+    "wd": lambda d, a: d._cmd_watch(["r"] + a),
+    "wl": lambda d, a: d._cmd_watch(["l"]),
+    "da": lambda d, a: d._cmd_disasm(a),
+    "s": lambda d, a: d._cmd_step(a),
+    "te": lambda d, a: d._cmd_trace_enable(),
+    "td": lambda d, a: d._cmd_trace_disable(),
+    "ce": lambda d, a: d._cmd_mapper_trace_enable(),
+    "cd": lambda d, a: d._cmd_mapper_trace_disable(),
+    "ds": lambda d, a: d._cmd_disable_sprites(),
+    "sl": lambda d, a: d._cmd_slot_active(),
+    "st": lambda d, a: d._cmd_slot_tree(),
+    "ss": lambda d, a: d._cmd_screenshot(),
+}

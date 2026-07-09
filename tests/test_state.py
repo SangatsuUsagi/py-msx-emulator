@@ -47,8 +47,8 @@ def test_save_state_creates_latest_symlinks(machine, saves_dir):
     state_path = save_state(machine, rgb, "test")
     png_path = state_path.with_suffix(".png")
 
-    latest_state = saves_dir / "latest.state"
-    latest_png = saves_dir / "latest.png"
+    latest_state = saves_dir / "states" / "latest.state"
+    latest_png = saves_dir / "states" / "latest.png"
     assert latest_state.is_symlink()
     assert latest_png.is_symlink()
     assert latest_state.resolve() == state_path.resolve()
@@ -114,10 +114,10 @@ def test_load_state_wrong_version_raises(machine, saves_dir):
         data = json.load(f)
 
     data["format_version"] = CURRENT_FORMAT_VERSION + 99
-    bad_path = saves_dir / "bad.state"
+    bad_path = saves_dir / "states" / "bad.state"
     with open(bad_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
-    latest = saves_dir / "latest.state"
+    latest = saves_dir / "states" / "latest.state"
     if latest.exists() or latest.is_symlink():
         latest.unlink()
     import os
