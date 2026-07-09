@@ -195,6 +195,10 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
 
+    # Portability note: `sram` is Optional and every access is guarded / masked
+    # with a `# type: ignore`. A Rust/C++ port makes SRAM non-optional (allocate
+    # a fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
+    # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
     sram: bytearray | None = None
     # Constant SRAM/ROM geometry, cached for the hot read() path — these depend
     # only on len(rom) and the class-constant _SRAM_SIZE, fixed after construction.

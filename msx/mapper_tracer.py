@@ -69,6 +69,12 @@ def attach_to_machine(
     does. Returns the tracer, or None when no bank-switching ROM mapper is
     present (flat mapper or empty slot), so callers can report the inert case.
     """
+    # Portability note: this attaches by reflection — `getattr`/`hasattr` probing
+    # for `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
+    # runtime. Rust/C++ has no such monkey-patching; a port matches on a
+    # `SupportsTracing` trait/interface (the `_BankTracing` base already gives
+    # every mapper the hook fields statically) and injects a typed accessor
+    # object, not lambdas.
     mem = machine.memory
     targets = []
     for attr in ("_mapper", "_mapper2"):
