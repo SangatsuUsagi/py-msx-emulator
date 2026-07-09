@@ -93,28 +93,45 @@ class SCC:
     # -------------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:
-        """Return n signed 16-bit little-endian mono PCM samples."""
-        out = bytearray(n * 2)
-        for i in range(n):
-            self._clk_frac += SCC_CLOCK
-            ticks = self._clk_frac // SAMPLE_RATE
-            self._clk_frac %= SAMPLE_RATE
+        """Return n signed 16-bit little-endian mono PCM samples.
 
-            # Single pass over the 5 channels: advance the phase (divmod instead
-            # of a subtract-loop) and accumulate the sample in one go.
+        Hot path (audio callback, 735 samples/frame): the registers are constant
+        across a buffer (the CPU only writes SCC registers between buffers), so
+        the per-channel period / volume / enable / waveform bank are precomputed
+        once, and the phase state is bound to locals — mirroring PSG.generate_
+        samples. Phase still advances for every channel each sample (even
+        disabled ones); only the accumulation is gated by enable. Behaviour is
+        identical to the straightforward per-sample form.
+        """
+        out = bytearray(n * 2)
+        freq = self._freq
+        vol = self._vol
+        waves = self._waves
+        enable = self._enable
+        # --- per-channel buffer-constant precompute ---
+        period = [max(1, freq[ch] + 1) for ch in range(5)]
+        volsc = [vol[ch] * SCC_SCALE for ch in range(5)]
+        en = [(enable >> ch) & 1 for ch in range(5)]
+        wave = [waves[ch if ch < 3 else 3] for ch in range(5)]  # ch 4/5 share bank 3
+        # --- bind phase state to locals (lists mutated in place; scalar clk written back) ---
+        pc = self._phase_cnt
+        pi = self._phase_idx
+        clk = self._clk_frac
+
+        for i in range(n):
+            clk += SCC_CLOCK
+            ticks = clk // SAMPLE_RATE
+            clk %= SAMPLE_RATE
+
             sample = 0
             for ch in range(5):
-                period = max(1, self._freq[ch] + 1)
-                steps, self._phase_cnt[ch] = divmod(self._phase_cnt[ch] + ticks, period)
-                idx = (self._phase_idx[ch] + steps) & 31  # 32-entry wave, & 31 == % 32
-                self._phase_idx[ch] = idx
-                if not (self._enable >> ch) & 1:
-                    continue
-                wave_bank = min(ch, 3)  # ch 4 and 5 (idx 3,4) both use bank 3
-                raw = self._waves[wave_bank][idx]
-                # Convert unsigned byte to signed 8-bit.
-                signed = raw if raw < 128 else raw - 256
-                sample += signed * self._vol[ch] * SCC_SCALE
+                steps, pc[ch] = divmod(pc[ch] + ticks, period[ch])
+                idx = (pi[ch] + steps) & 31  # 32-entry wave, & 31 == % 32
+                pi[ch] = idx
+                if en[ch]:
+                    raw = wave[ch][idx]
+                    signed = raw if raw < 128 else raw - 256  # unsigned byte -> signed 8-bit
+                    sample += signed * volsc[ch]
 
             if sample > 32767:
                 sample = 32767
@@ -125,4 +142,5 @@ class SCC:
             out[i * 2] = sample & 0xFF
             out[i * 2 + 1] = (sample >> 8) & 0xFF
 
+        self._clk_frac = clk
         return out
