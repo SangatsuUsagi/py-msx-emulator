@@ -13,13 +13,9 @@ from dataclasses import dataclass
 class RTC:
     """RTC stub: responds to ports 0xB4/0xB5, returns zero on all reads."""
 
-    _reg: int = 0  # address latch — accepted but ignored
-
     def read_port(self, port: int) -> int:
         """Return 0x00 for any RTC read (port 0xB4 or 0xB5)."""
         return 0x00
 
     def write_port(self, port: int, value: int) -> None:
-        """Accept writes silently (port 0xB4 sets address latch, 0xB5 is data)."""
-        if port == 0xB4:
-            self._reg = value & 0x0F
+        """Accept writes silently — the RTC is a stub (reads always return 0)."""

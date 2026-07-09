@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import IO
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 
 @dataclass
@@ -57,13 +60,21 @@ class MapperTracer:
         self.output.flush()
 
 
-def attach_to_machine(machine, *, output: IO[str] | None = None) -> "MapperTracer | None":
+def attach_to_machine(
+    machine: "Machine", *, output: IO[str] | None = None
+) -> "MapperTracer | None":
     """Attach an enabled MapperTracer to the cartridge ROM mapper(s) in slots 1/2.
 
     Wires the PC/cycle/frame accessors the same way the `ce` debugger command
     does. Returns the tracer, or None when no bank-switching ROM mapper is
     present (flat mapper or empty slot), so callers can report the inert case.
     """
+    # Portability note: this attaches by reflection — `getattr`/`hasattr` probing
+    # for `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
+    # runtime. Rust/C++ has no such monkey-patching; a port matches on a
+    # `SupportsTracing` trait/interface (the `_BankTracing` base already gives
+    # every mapper the hook fields statically) and injects a typed accessor
+    # object, not lambdas.
     mem = machine.memory
     targets = []
     for attr in ("_mapper", "_mapper2"):
