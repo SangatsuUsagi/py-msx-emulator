@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 
 
 def capture_logger(log_path: str | None = None) -> tuple[DebugLogger, StringIO]:

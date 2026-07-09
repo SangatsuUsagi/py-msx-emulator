@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from msx.cpu.z80 import Z80
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 

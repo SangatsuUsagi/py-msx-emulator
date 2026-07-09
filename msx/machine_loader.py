@@ -9,13 +9,13 @@ import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
 import msx.romdb as romdb
 from msx.cpu.z80 import Z80
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import (
@@ -63,7 +63,11 @@ _SRAM_SIZES: dict[str, int] = {
 def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
     """Resolve the mapper type and return it with the cartridge sha1 (computed
     once here so callers can reuse it for the SRAM save path)."""
-    sha1 = hashlib.sha1(cartridge, usedforsecurity=False).hexdigest() if cartridge is not None else None
+    sha1 = (
+        hashlib.sha1(cartridge, usedforsecurity=False).hexdigest()
+        if cartridge is not None
+        else None
+    )
     if mapper != "auto":
         return mapper, sha1
     if cartridge is None:
@@ -80,38 +84,57 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str
     return found, sha1
 
 
+def _require_scc(scc: SCC | None) -> SCC:
+    if scc is None:
+        raise ValueError("KonamiSCC mapper requires an SCC instance")
+    return scc
+
+
+# mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
+# scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
+# with None normalised to b"". FlatMapper keeps the None-able cartridge (it
+# treats "no ROM" specially); the bank-switching mappers take rom_bytes.
+_MAPPER_BUILDERS: dict[
+    str, Callable[[bytes | None, bytes, bytearray | None, SCC | None], Mapper]
+] = {
+    "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
+    "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
+    "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
+    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
+    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
+    "ASCII16":      lambda cart, rom, sram, scc: Ascii16Mapper(rom),
+    "ASCII16SRAM2": lambda cart, rom, sram, scc: Ascii16Sram2Mapper(rom, sram=sram),
+    "ASCII16SRAM8": lambda cart, rom, sram, scc: Ascii16Sram8Mapper(rom, sram=sram),
+    "Konami":       lambda cart, rom, sram, scc: KonamiMapper(rom),
+    "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
+    "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
+    "KonamiSCC":    lambda cart, rom, sram, scc: KonamiSCCMapper(rom, scc=_require_scc(scc)),
+}
+
+
 def _make_mapper(
     mapper_type: str,
     cartridge: bytes | None,
     scc: SCC | None = None,
     sram: bytearray | None = None,
 ) -> Mapper:
-    if mapper_type in ("Mirrored", "Normal"):
-        return FlatMapper(cartridge)
+    builder = _MAPPER_BUILDERS.get(mapper_type)
+    if builder is None:
+        raise ValueError(f"unknown mapper type: {mapper_type!r}")
     rom_bytes = cartridge if cartridge is not None else b""
-    if mapper_type == "ASCII8":
-        return Ascii8Mapper(rom_bytes)
-    if mapper_type == "ASCII8SRAM2":
-        return Ascii8Sram2Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII8SRAM8":
-        return Ascii8Sram8Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII16":
-        return Ascii16Mapper(rom_bytes)
-    if mapper_type == "ASCII16SRAM2":
-        return Ascii16Sram2Mapper(rom_bytes, sram=sram)
-    if mapper_type == "ASCII16SRAM8":
-        return Ascii16Sram8Mapper(rom_bytes, sram=sram)
-    if mapper_type == "Konami":
-        return KonamiMapper(rom_bytes)
-    if mapper_type == "Majutsushi":
-        return MajutsushiMapper(rom_bytes)
-    if mapper_type == "R-Type":
-        return RTypeMapper(rom_bytes)
-    if mapper_type == "KonamiSCC":
-        if scc is None:
-            raise ValueError("KonamiSCC mapper requires an SCC instance")
-        return KonamiSCCMapper(rom_bytes, scc=scc)
-    raise ValueError(f"unknown mapper type: {mapper_type!r}")
+    return builder(cartridge, rom_bytes, sram, scc)
+
+
+# Standard MSX I/O port map (first, last), device_id -> ports. Used as the
+# fallback when a device's YAML omits an explicit port range. The V9938 VDP
+# extends the high port to 0x9C; that case is handled at its call site.
+_DEFAULT_IO_PORTS: dict[str, tuple[int, int]] = {
+    "vdp_tms9918a": (0x98, 0x99),
+    "psg_ay8910": (0xA0, 0xA2),
+    "ppi8255": (0xA8, 0xAB),
+    "rtc_rp5c01": (0xB4, 0xB5),
+    "memory_mapper_standard": (0xFC, 0xFF),
+}
 
 
 # cycles_per_frame, lines_per_frame keyed by video standard
@@ -567,7 +590,7 @@ def build_machine(
         # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not None
         # here, so cart_sha1 is set).
         assert cart_sha1 is not None
-        sram_save_path = Path("saves") / f"{cart_sha1}.sram"
+        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
         expected_size = _SRAM_SIZES[resolved]
         if sram_save_path.exists():
             raw = sram_save_path.read_bytes()
@@ -605,7 +628,7 @@ def build_machine(
             io=io,
             logger=logger,
             tracer=tracer,
-            Machine=Machine,
+            machine_cls=Machine,
         )
     else:
         machine = _build_msx1(
@@ -620,7 +643,7 @@ def build_machine(
             psg=psg,
             io=io,
             logger=logger,
-            Machine=Machine,
+            machine_cls=Machine,
         )
 
     io._get_pc = lambda: machine.cpu.registers.PC
@@ -643,7 +666,7 @@ def _build_msx1(
     psg: PSG,
     io: IOBus,
     logger: DebugLogger | None,
-    Machine: Any,
+    machine_cls: Any,
 ) -> Any:
     memory = Memory(
         rom=main_bytes,
@@ -657,9 +680,9 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
-    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", (0x98, 0x99))
-    psg_s, psg_e = _io_range(spec, "psg_ay8910",   (0xA0, 0xA2))
-    ppi_s, ppi_e = _io_range(spec, "ppi8255",       (0xA8, 0xAB))
+    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", _DEFAULT_IO_PORTS["vdp_tms9918a"])
+    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
+    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
     io.register_read(vdp_s, vdp_e, vdp.read_port)
     io.register_write(vdp_s, vdp_e, vdp.write_port)
     io.register_read(psg_s, psg_e, psg.read_port)
@@ -667,7 +690,7 @@ def _build_msx1(
     io.register_read(ppi_s, ppi_e, ppi.read_port)
     io.register_write(ppi_s, ppi_e, ppi.write_port)
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    return Machine(
+    return machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
         cycles_per_frame=spec.cycles_per_frame,
@@ -690,7 +713,7 @@ def _build_msx2(
     io: IOBus,
     logger: DebugLogger | None,
     tracer: Tracer | None,
-    Machine: Any,
+    machine_cls: Any,
 ) -> Any:
     if extrom_override is not None:
         sub_bytes: bytes | None = extrom_override
@@ -719,9 +742,11 @@ def _build_msx2(
     ppi = PPI(memory=memory, _input=input_state)
 
     vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
-    vdp_s, vdp_e = _io_range(spec, vdp_dev_id,        (0x98, 0x9C if spec.has_v9938 else 0x99))
-    psg_s, psg_e = _io_range(spec, "psg_ay8910",       (0xA0, 0xA2))
-    ppi_s, ppi_e = _io_range(spec, "ppi8255",           (0xA8, 0xAB))
+    # V9938 extends the VDP high port to 0x9C (palette/indirect regs); TMS9918A stops at 0x99.
+    vdp_default_ports = (0x98, 0x9C) if spec.has_v9938 else _DEFAULT_IO_PORTS["vdp_tms9918a"]
+    vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
+    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
+    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
     io.register_read(vdp_s, vdp_e, vdp.read_port)
     io.register_write(vdp_s, vdp_e, vdp.write_port)
     io.register_read(psg_s, psg_e, psg.read_port)
@@ -729,16 +754,17 @@ def _build_msx2(
     io.register_read(ppi_s, ppi_e, ppi.read_port)
     io.register_write(ppi_s, ppi_e, ppi.write_port)
     if rtc is not None:
-        rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01",          (0xB4, 0xB5))
+        rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01", _DEFAULT_IO_PORTS["rtc_rp5c01"])
         io.register_read(rtc_s, rtc_e, rtc.read_port)
         io.register_write(rtc_s, rtc_e, rtc.write_port)
     if ram_mapper is not None:
-        ram_s, ram_e = _io_range(spec, "memory_mapper_standard", (0xFC, 0xFF))
+        ram_s, ram_e = _io_range(spec, "memory_mapper_standard",
+                                 _DEFAULT_IO_PORTS["memory_mapper_standard"])
         io.register_read(ram_s, ram_e, ram_mapper.read_port)
         io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
-    machine = Machine(
+    machine = machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
         cycles_per_frame=spec.cycles_per_frame,

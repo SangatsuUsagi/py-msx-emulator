@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from msx.cpu.z80 import Z80
-from msx.debug.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import MajutsushiMapper
@@ -198,113 +198,16 @@ class Machine:
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
-        cpu_step = self.cpu.step
+        # Select the frame loop by mode (break conditions / hot / logger) and
+        # let it run one frame; each arm owns its own Ctrl-C handling so the
+        # logger arm's post-loop halt-DI check stays reachable.
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
-        vdp_tick = vdp9938.tick if vdp9938 is not None else None
-        cpu = self.cpu
-        cpf = self.cycles_per_frame
-        lpf = self.lines_per_frame
-        total = 0
-
         if self._break_conditions_active():
-            try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
-                    while total < line_end:
-                        pc = cpu.registers.PC
-                        if pc in self._breakpoints or pc == self._temp_breakpoint:
-                            if pc == self._temp_breakpoint:
-                                self._temp_breakpoint = None
-                            if self._debugger is not None:
-                                self._debugger.enter()
-                        if vdp9938:
-                            cpu.int_pending = vdp9938.irq
-                        n = cpu_step()
-                        total += n
-                        self.cycle_count += n
-                        if vdp_tick:
-                            vdp_tick(n)
-                        if self._post_step_break() and self._debugger is not None:
-                            self._debugger.enter()
-                    if vdp9938:
-                        vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938.irq
-            except KeyboardInterrupt:
-                if self._debugger is not None:
-                    self._debugger.enter()
-                else:
-                    raise
+            self._run_frame_debug(vdp9938)
         elif self._logger is None:
-            # Hot path (no debugger, no logger). Two frame-invariants are lifted
-            # out of the inner loop: (1) the is_v9938 branch — split into a
-            # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
-            # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
-            # into a per-line local and flushed once per scanline instead of
-            # once per instruction. Line granularity is the finest flush
-            # allowed: io/dac read cycle_count *within* a frame, so a frame-end
-            # flush would starve them; a one-scanline lag matches the existing
-            # scanline-stepped timing. The duplicated loop body is the
-            # readability cost of removing that per-instruction overhead.
-            try:
-                if vdp9938 is not None:
-                    for L in range(lpf):
-                        line_end = (L + 1) * cpf // lpf
-                        line_cycles = 0
-                        while total < line_end:
-                            cpu.int_pending = vdp9938.irq
-                            n = cpu_step()
-                            total += n
-                            line_cycles += n
-                            vdp9938.tick(n)
-                        self.cycle_count += line_cycles
-                        vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938.irq
-                else:
-                    for L in range(lpf):
-                        line_end = (L + 1) * cpf // lpf
-                        line_cycles = 0
-                        while total < line_end:
-                            n = cpu_step()
-                            total += n
-                            line_cycles += n
-                        self.cycle_count += line_cycles
-            except KeyboardInterrupt:
-                if self._debugger is not None:
-                    self._debugger.enter()
-                else:
-                    raise
+            self._run_frame_fast(vdp9938)
         else:
-            try:
-                for L in range(lpf):
-                    line_end = (L + 1) * cpf // lpf
-                    while total < line_end:
-                        pc = cpu.registers.PC
-                        if vdp9938:
-                            cpu.int_pending = vdp9938.irq
-                        n = cpu_step()
-                        total += n
-                        self.cycle_count += n
-                        if vdp_tick:
-                            vdp_tick(n)
-                        if not (cpu.halted and cpu.iff1):
-                            if pc == self._last_pc:
-                                self._pc_repeat += 1
-                                if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                                    self._logger.on_hang_pc_loop(pc)
-                            else:
-                                self._pc_repeat = 0
-                            self._last_pc = pc
-                    if vdp9938:
-                        vdp9938.begin_scanline(L)
-                        cpu.int_pending = vdp9938.irq
-            except KeyboardInterrupt:
-                if self._debugger is not None:
-                    self._debugger.enter()
-                else:
-                    raise
-
-            if cpu.halted and not cpu.iff1:
-                self._logger.on_hang_halt_di(cpu.registers.PC)
+            self._run_frame_logged(vdp9938)
 
         if vdp9938 is not None:
             result = render_frame_v9938(vdp9938, skip_render=skip_render)
@@ -313,5 +216,125 @@ class Machine:
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
         return result
+
+    def _on_frame_interrupt(self) -> None:
+        """Ctrl-C handling shared by the frame loops: drop into the debugger if
+        one is attached, otherwise re-raise to abort the run."""
+        if self._debugger is not None:
+            self._debugger.enter()
+        else:
+            raise
+
+    def _run_frame_debug(self, vdp9938: V9938 | None) -> None:
+        """Frame loop with active break conditions: checks breakpoints and
+        post-step break conditions each instruction (debugger attached)."""
+        cpu = self.cpu
+        cpu_step = cpu.step
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
+        total = 0
+        try:
+            for line in range(lpf):
+                line_end = (line + 1) * cpf // lpf
+                while total < line_end:
+                    pc = cpu.registers.PC
+                    if pc in self._breakpoints or pc == self._temp_breakpoint:
+                        if pc == self._temp_breakpoint:
+                            self._temp_breakpoint = None
+                        if self._debugger is not None:
+                            self._debugger.enter()
+                    if vdp9938 is not None:
+                        cpu.int_pending = vdp9938.irq
+                    n = cpu_step()
+                    total += n
+                    self.cycle_count += n
+                    if vdp9938 is not None:
+                        vdp9938.tick(n)
+                    if self._post_step_break() and self._debugger is not None:
+                        self._debugger.enter()
+                if vdp9938 is not None:
+                    vdp9938.begin_scanline(line)
+                    cpu.int_pending = vdp9938.irq
+        except KeyboardInterrupt:
+            self._on_frame_interrupt()
+
+    def _run_frame_fast(self, vdp9938: V9938 | None) -> None:
+        # Hot path (no debugger, no logger). Two frame-invariants are lifted
+        # out of the inner loop: (1) the is_v9938 branch — split into a
+        # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
+        # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
+        # into a per-line local and flushed once per scanline instead of
+        # once per instruction. Line granularity is the finest flush
+        # allowed: io/dac read cycle_count *within* a frame, so a frame-end
+        # flush would starve them; a one-scanline lag matches the existing
+        # scanline-stepped timing. The duplicated loop body is the
+        # readability cost of removing that per-instruction overhead.
+        cpu = self.cpu
+        cpu_step = cpu.step
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
+        total = 0
+        try:
+            if vdp9938 is not None:
+                for line in range(lpf):
+                    line_end = (line + 1) * cpf // lpf
+                    line_cycles = 0
+                    while total < line_end:
+                        cpu.int_pending = vdp9938.irq
+                        n = cpu_step()
+                        total += n
+                        line_cycles += n
+                        vdp9938.tick(n)
+                    self.cycle_count += line_cycles
+                    vdp9938.begin_scanline(line)
+                    cpu.int_pending = vdp9938.irq
+            else:
+                for line in range(lpf):
+                    line_end = (line + 1) * cpf // lpf
+                    line_cycles = 0
+                    while total < line_end:
+                        n = cpu_step()
+                        total += n
+                        line_cycles += n
+                    self.cycle_count += line_cycles
+        except KeyboardInterrupt:
+            self._on_frame_interrupt()
+
+    def _run_frame_logged(self, vdp9938: V9938 | None) -> None:
+        """Frame loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
+        assert self._logger is not None
+        cpu = self.cpu
+        cpu_step = cpu.step
+        cpf = self.cycles_per_frame
+        lpf = self.lines_per_frame
+        total = 0
+        try:
+            for line in range(lpf):
+                line_end = (line + 1) * cpf // lpf
+                while total < line_end:
+                    pc = cpu.registers.PC
+                    if vdp9938 is not None:
+                        cpu.int_pending = vdp9938.irq
+                    n = cpu_step()
+                    total += n
+                    self.cycle_count += n
+                    if vdp9938 is not None:
+                        vdp9938.tick(n)
+                    if not (cpu.halted and cpu.iff1):
+                        if pc == self._last_pc:
+                            self._pc_repeat += 1
+                            if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
+                                self._logger.on_hang_pc_loop(pc)
+                        else:
+                            self._pc_repeat = 0
+                        self._last_pc = pc
+                if vdp9938 is not None:
+                    vdp9938.begin_scanline(line)
+                    cpu.int_pending = vdp9938.irq
+        except KeyboardInterrupt:
+            self._on_frame_interrupt()
+
+        if cpu.halted and not cpu.iff1:
+            self._logger.on_hang_halt_di(cpu.registers.PC)
 
 

@@ -36,7 +36,7 @@ def main() -> None:
                         default="auto",
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
-                        help="Resume from a save state (default: saves/latest.state)")
+                        help="Resume from a save state (default: saves/states/latest.state)")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
@@ -175,7 +175,7 @@ def main() -> None:
     if args.count_frame is not None:
         print(f"frames  : {args.count_frame} (headless)")
 
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
 
     # --- Build tracer ---

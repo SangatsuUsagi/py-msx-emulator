@@ -94,19 +94,26 @@ def _render_g1(vdp: VDP, buf: bytearray) -> None:
     pat_base = (vdp.regs[4] & 0x07) << 11
     col_base = vdp.regs[3] << 6
     bd = _backdrop(vdp)
+    # Same hot-loop treatment as _render_g2: vram/table locals, inlined _color,
+    # hoisted row pixel base. Behaviour-preserving.
+    vram = vdp.vram
+    row_bytes = _ROW_BYTES
 
     for row in range(24):
+        row_px_base = row * 8 * _W
         for col in range(32):
-            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
-            cb = vdp.vram[(col_base + tile // 8) & 0x3FFF]
-            fg = _color((cb >> 4) & 0x0F, bd)
-            bg = _color(cb & 0x0F, bd)
+            tile = vram[(name_base + row * 32 + col) & 0x3FFF]
+            cb = vram[(col_base + tile // 8) & 0x3FFF]
+            hi = (cb >> 4) & 0x0F
+            fg = hi if hi else bd
+            lo = cb & 0x0F
+            bg = lo if lo else bd
             pat_base_tile = pat_base + tile * 8
-            bx = col * 8
+            col_start = row_px_base + col * 8
             for py in range(8):
-                pat = vdp.vram[(pat_base_tile + py) & 0x3FFF]
-                row_start = (row * 8 + py) * _W + bx
-                buf[row_start:row_start + 8] = _ROW_BYTES[pat][fg][bg]
+                pat = vram[(pat_base_tile + py) & 0x3FFF]
+                row_start = col_start + py * _W
+                buf[row_start:row_start + 8] = row_bytes[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
@@ -123,21 +130,31 @@ def _render_g2(vdp: VDP, buf: bytearray) -> None:
     pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
     bd = _backdrop(vdp)
 
+    # Hot loop (~12K iterations/frame; ~22% of MSX1 wall time). Bind vram and
+    # the _ROW_BYTES table to locals, inline _color (fg = c if c else bd — the
+    # same inlining the V9938 renderer uses), and hoist the row pixel base out
+    # of the py loop. All behaviour-preserving; the goal is fewer per-iteration
+    # attribute/global lookups and function calls.
+    vram = vdp.vram
+    row_bytes = _ROW_BYTES
+
     for row in range(24):
-        band = row // 8
-        band_offset = band * 0x800
+        band_offset = (row // 8) * 0x800
+        row_px_base = row * 8 * _W
         for col in range(32):
-            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            tile = vram[(name_base + row * 32 + col) & 0x3FFF]
             tile_offset = band_offset + tile * 8
-            bx = col * 8
+            col_start = row_px_base + col * 8
             for py in range(8):
                 offset = tile_offset + py
-                pat = vdp.vram[(pat_base + (offset & pat_mask)) & 0x3FFF]
-                cb = vdp.vram[(col_base + (offset & col_mask)) & 0x3FFF]
-                fg = _color((cb >> 4) & 0x0F, bd)
-                bg = _color(cb & 0x0F, bd)
-                row_start = (row * 8 + py) * _W + bx
-                buf[row_start:row_start + 8] = _ROW_BYTES[pat][fg][bg]
+                pat = vram[(pat_base + (offset & pat_mask)) & 0x3FFF]
+                cb = vram[(col_base + (offset & col_mask)) & 0x3FFF]
+                hi = (cb >> 4) & 0x0F
+                fg = hi if hi else bd
+                lo = cb & 0x0F
+                bg = lo if lo else bd
+                row_start = col_start + py * _W
+                buf[row_start:row_start + 8] = row_bytes[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +238,7 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
     sat_base = (vdp.regs[5] & 0x7F) << 7
     spt_base = (vdp.regs[6] & 0x07) << 11
+    vram = vdp.vram
 
     line_count = [0] * _H
     fifth_set = False
@@ -228,13 +246,13 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
     coincidence = False
 
     for i in range(32):
-        y_byte = vdp.vram[(sat_base + i * 4) & 0x3FFF]
+        y_byte = vram[(sat_base + i * 4) & 0x3FFF]
         if y_byte == 0xD0:
             break
 
-        x_byte = vdp.vram[(sat_base + i * 4 + 1) & 0x3FFF]
-        pat_idx = vdp.vram[(sat_base + i * 4 + 2) & 0x3FFF]
-        attr = vdp.vram[(sat_base + i * 4 + 3) & 0x3FFF]
+        x_byte = vram[(sat_base + i * 4 + 1) & 0x3FFF]
+        pat_idx = vram[(sat_base + i * 4 + 2) & 0x3FFF]
+        attr = vram[(sat_base + i * 4 + 3) & 0x3FFF]
         color = attr & 0x0F
         if attr & 0x80:
             x_byte -= 32  # EC: shift 32px left; may go negative → clipped below
@@ -255,7 +273,7 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
         for line in lines:
             sprite_row = (line - y_top) & 0xFF  # guaranteed < render_size
 
-            if line_count[line] >= 4:
+            if line_count[line] >= 4:  # TMS9918A: max 4 sprites per scanline
                 if not fifth_set:
                     vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
                     fifth_set = True
@@ -306,20 +324,21 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 def _sprite_row_pixels(
     vdp: VDP, spt_base: int, pat_idx: int, si: int, src_row: int
 ) -> bytes:
+    vram = vdp.vram
     if si == 0:
-        b = vdp.vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
+        b = vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
         return bytes((b >> (7 - bit)) & 1 for bit in range(8))
 
     # TMS9918A 16x16 layout: base+0=upper-left, base+1=lower-left,
     #                          base+2=upper-right, base+3=lower-right
     base = pat_idx & 0xFC
     if src_row < 8:
-        left = vdp.vram[(spt_base + base * 8 + src_row) & 0x3FFF]
-        right = vdp.vram[(spt_base + (base + 2) * 8 + src_row) & 0x3FFF]
+        left = vram[(spt_base + base * 8 + src_row) & 0x3FFF]
+        right = vram[(spt_base + (base + 2) * 8 + src_row) & 0x3FFF]
     else:
         r = src_row - 8
-        left = vdp.vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
-        right = vdp.vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
+        left = vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
+        right = vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
 
     left_bits = bytes((left >> (7 - b)) & 1 for b in range(8))
     right_bits = bytes((right >> (7 - b)) & 1 for b in range(8))
