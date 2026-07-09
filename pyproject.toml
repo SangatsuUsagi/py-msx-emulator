@@ -52,3 +52,12 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["msx", "frontend"]
+
+# numpy is not a project dependency; it is pulled into the dev env only as a
+# transitive dep of scalene, and its type stubs use Python 3.12 `type` syntax
+# that fails under python_version = "3.10". Skip analysing it (source never
+# imports numpy; PIL's stubs reference it).
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+follow_imports_for_stubs = true
