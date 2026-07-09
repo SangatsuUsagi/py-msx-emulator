@@ -7,7 +7,7 @@ from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
 if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
 
 
 # The opcode dispatch table is bound once at import time. opcodes_main
@@ -61,6 +61,10 @@ class Z80:
     def _fetch(self) -> int:
         b = self.read_byte(self.registers.PC)
         self.registers.PC = (self.registers.PC + 1) & 0xFFFF
+        # R is a 7-bit refresh counter: only bits 0-6 increment. On real
+        # hardware bit 7 is preserved (sticky) across increments; here we mask
+        # it to 0x7F, so bit 7 reads as 0. A port replicating exact R behaviour
+        # must keep bit 7 separately rather than masking it away.
         self.registers.R = (self.registers.R + 1) & 0x7F
         return b
 

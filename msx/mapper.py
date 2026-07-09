@@ -195,11 +195,23 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
 
+    # Portability note: `sram` is Optional and every access is guarded / masked
+    # with a `# type: ignore`. A Rust/C++ port makes SRAM non-optional (allocate
+    # a fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
+    # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
     sram: bytearray | None = None
+    # Constant SRAM/ROM geometry, cached for the hot read() path — these depend
+    # only on len(rom) and the class-constant _SRAM_SIZE, fixed after construction.
+    _c_enable_bit: int = field(default=0, init=False, repr=False)
+    _c_block_mask: int = field(default=0, init=False, repr=False)
+    _c_rom_len: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
+        self._c_enable_bit = self._num_pages()        # == _sram_enable_bit()
+        self._c_block_mask = self._sram_block_mask()
+        self._c_rom_len = len(self.rom)
 
     def _sram_enable_bit(self) -> int:
         return self._num_pages()
@@ -226,10 +238,15 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             window, base = 2, 0x8000
         else:
             window, base = 3, 0xA000
-        if self._is_sram_bank(window):
-            return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
-        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
+        # Hot path: SRAM/ROM geometry is cached (see __post_init__); the
+        # _is_sram_bank / _sram_offset helpers below hold the un-inlined form
+        # used by write() and the tests.
+        bank = self._banks[window]
+        if (self._SRAM_PAGES & (1 << (window + 2))) and (bank & self._c_enable_bit):
+            offset = ((bank & self._c_block_mask) * _PAGE_8K + (addr - base)) & self._SRAM_MASK
+            return self.sram[offset]  # type: ignore[index]
+        page_offset = bank * _PAGE_8K + (addr - base)
+        if 0 <= page_offset < self._c_rom_len:
             return self.rom[page_offset]
         return 0xFF
 

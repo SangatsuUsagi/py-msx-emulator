@@ -13,7 +13,6 @@ from msx.input import (
     _K_SPACE,
     _K_UP,
     JOY_MAP,
-    KEY_MATRIX,
     KEY_MATRIX_INT,
     KEY_MATRIX_JP,
     InputState,
@@ -22,6 +21,10 @@ from msx.input import (
     _K_w,
     _K_x,
 )
+
+# The tests assert the International layout; alias it locally (production no
+# longer exports a bare KEY_MATRIX default — it selects INT/JP explicitly).
+KEY_MATRIX = KEY_MATRIX_INT
 
 
 def make_input() -> InputState:

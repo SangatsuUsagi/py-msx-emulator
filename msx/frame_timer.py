@@ -32,11 +32,6 @@ class FrameTimer:
             return 1.0 / 60.0
         return 1.0 / rate
 
-    def set_speed(self, speed: float) -> None:
-        """Update the speed multiplier and recompute the frame interval."""
-        self.speed = speed
-        self._frame_interval = self._compute_interval()
-
     def tick(self) -> float:
         """Block until the next frame deadline; return the measured frame time.
 

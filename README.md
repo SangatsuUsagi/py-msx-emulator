@@ -4,7 +4,7 @@ A functionally accurate MSX1/MSX2 emulator written in pure Python, driven by mac
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1245%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1248%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -49,7 +49,7 @@ py-msx-emulator is a functional MSX1/MSX2 emulator targeting accurate hardware r
 - **Cartridge mappers** — Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC), ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type; auto-detected from a SHA1-based ROM database
 - **SDL2 frontend** — 768×576 window by default (256×192 × scale 3; SCREEN 6/7 resize to maintain aspect ratio), hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
 - **Physical joystick** — SDL2 GameController and raw joystick APIs, hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
-- **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, mapper banks) via pickle, PNG screenshot alongside each save, `saves/latest.*` symlinks for quick resume
+- **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, mapper banks) as a stdlib JSON container, PNG screenshot alongside each save, `saves/states/latest.*` symlinks for quick resume
 - **ROM database** — SHA1 title lookup for automatic game title detection and mapper selection
 - **Interactive debugger** — REPL accessible via Ctrl+C or breakpoint hit; breakpoints/watchpoints, step execution, register/VRAM dump, disassembly, VDP trace, mapper trace, slot inspector
 - **Debug tooling** — opt-in structured logging, CPU instruction trace, I/O port trace, hang detector
@@ -298,7 +298,7 @@ python . path/to/game.rom --mapper KonamiSCC
 python . path/to/game.rom --resume
 
 # Resume from a specific save file
-python . path/to/game.rom --resume saves/game_20260605_120000.state
+python . path/to/game.rom --resume saves/states/game_20260605_120000.state
 
 # Enable debug logging
 python . path/to/game.rom --debug --log trace.log
@@ -320,7 +320,7 @@ python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.lo
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
-| `--resume [FILE]` | _(none)_ | Resume from `saves/latest.state`, or a specific `.state` file |
+| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames; `none` disables |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
 | `--log FILE` | _(none)_ | Write diagnostic log to a file (requires `--debug`) |
@@ -337,9 +337,9 @@ python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.lo
 | Key | Action |
 |-----|--------|
 | Esc | Quit |
-| F8 | Save state to `saves/<title>_YYYYMMDD_HHMMSS.state`* |
+| F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
-| F10 | Save screenshot to `screenshot_YYYYMMDD_HHMMSS.png` |
+| F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Toggle fullscreen |
 | F1–F5 | Passed through to the MSX keyboard matrix |
 
@@ -474,7 +474,7 @@ py-msx-emulator/
 ├── msx/                   # Core emulator package
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
-│   ├── debug/             # DebugLogger, CPU/I/O trace, hang detector
+│   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
 │   ├── debugger/          # Interactive REPL (prompt, disassembler)
 │   ├── machine.py         # Component wiring and frame loop
 │   ├── machine_loader.py  # YAML-based machine configuration loader
@@ -491,7 +491,8 @@ py-msx-emulator/
 │   ├── joystick.py        # Physical joystick manager (SDL2)
 │   ├── frame_timer.py     # 60 fps pacing + FPS measurement
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
-│   └── state.py           # Save/load machine state (pickle + PNG)
+│   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
+│   └── state.py           # Save/load machine state (JSON + PNG)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)

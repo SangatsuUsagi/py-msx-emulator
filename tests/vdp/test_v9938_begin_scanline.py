@@ -1,5 +1,5 @@
 """Tests for V9938 begin_scanline() and line-interrupt match."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _RegChange
 
 
 def make_vdp() -> V9938:
@@ -142,6 +142,6 @@ def test_vblank_irq_when_ie0_at_vblank() -> None:
 
 def test_reg_write_log_cleared_at_frame_start() -> None:
     vdp = make_vdp()
-    vdp._reg_write_log.append((10, 7, 0x01))
+    vdp._reg_write_log.append(_RegChange(10, 7, 0x01))
     vdp.begin_scanline(0)
     assert vdp._reg_write_log == []

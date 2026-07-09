@@ -5,12 +5,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TextIO
 
+# Keys are the (M1, M2, M3) mode-bit tuple (TMS9918A R0/R1 screen-mode bits).
 _VDP_MODE_NAMES = {
     (0, 0, 0): "G1 (Screen 1)",
     (0, 0, 1): "G2 (Screen 2)",
     (0, 1, 0): "MC (Screen 3)",
     (1, 0, 0): "Text (Screen 0)",
 }
+
+# HALT+DI hang keys are offset past the 16-bit PC range so they never collide
+# with PC-loop keys in the shared _reported_hangs set.
+_HALT_DI_KEY_BASE = 0x10000
 
 
 @dataclass
@@ -44,9 +49,6 @@ class DebugLogger:
     # ------------------------------------------------------------------
     # Boot diagnostic events
     # ------------------------------------------------------------------
-
-    def on_slot_register_write(self, old: int, new: int, pc: int) -> None:
-        self._emit("BOOT", f"slot_register: 0x{old:02X} → 0x{new:02X}  (PC={pc:04X})")
 
     def on_vdp_reg_write(self, reg: int, value: int, frame: int) -> None:
         if reg == 1:
@@ -93,7 +95,7 @@ class DebugLogger:
         self._emit("HANG", f"PC-loop detected  PC={pc:04X}")
 
     def on_hang_halt_di(self, pc: int) -> None:
-        key = pc | 0x10000  # separate namespace from PC-loop keys
+        key = pc | _HALT_DI_KEY_BASE
         if key in self._reported_hangs:
             return
         self._reported_hangs.add(key)

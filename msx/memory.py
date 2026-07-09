@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from msx.debug.logger import DebugLogger
+    from msx.diagnostics.logger import DebugLogger
     from msx.mapper import Mapper
     from msx.ram_mapper import RamMapper
 
