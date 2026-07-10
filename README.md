@@ -208,7 +208,7 @@ Development dependencies (pytest, ruff, mypy) are in `requirements-dev.txt`. Thi
 
 Measured with the `--benchmark` CLI flag: a headless run, unthrottled (no `FrameTimer` pacing), started from a saved mid-game scene via `--resume` (BIOS boot time is excluded from the measurement). Every frame still runs full CPU emulation and VDP-to-offscreen-buffer rendering, the same cost paid during interactive play — but `--benchmark` never opens an SDL window, generates audio samples, or performs texture upload/blit, so real interactive sessions run somewhat slower than the raw numbers below.
 
-For each (runtime, game) pair, [`extras/run_benchmarks.py`](extras/run_benchmarks.py) ran 10 trials of 10 seconds, discarded the fastest and slowest, and averaged the remaining 8 into the score. Raw per-run figures: [`extras/benchmark_results_m5pro.md`](extras/benchmark_results_m5pro.md), [`extras/benchmark_results_rpi5.md`](extras/benchmark_results_rpi5.md).
+For each (runtime, game) pair, 10 trials of 10 seconds were run, the fastest and slowest were discarded, and the remaining 8 were averaged into the score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 |----------|---------|------|--------------------------|--------------------|
