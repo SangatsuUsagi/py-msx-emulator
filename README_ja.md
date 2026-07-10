@@ -208,7 +208,7 @@ the instruction, and return the number of T-states consumed.
 
 `--benchmark` CLI オプションで計測しています。ヘッドレス・無制限速度（`FrameTimer` によるペーシングなし）で実行し、`--resume` により保存済みの中盤シーンから開始します（BIOS 起動時間は計測から除外）。CPU エミュレーションとオフスクリーンバッファへの VDP 描画は毎フレーム実行され、インタラクティブ再生時と同じ描画コストを負担しますが、`--benchmark` は SDL ウィンドウの作成・オーディオサンプル生成・テクスチャアップロード/ブリットを一切行わないため、実際のインタラクティブセッションはここに示す生の数値よりもいくらか遅くなります。
 
-各（ランタイム、ゲーム）の組み合わせについて、[`extras/run_benchmarks.py`](extras/run_benchmarks.py) が 10 秒間のトライアルを 10 回実行し、最速・最遅を除いた残り 8 回の平均をスコアとしています。生の実行結果は [`extras/benchmark_results_m5pro.md`](extras/benchmark_results_m5pro.md)、[`extras/benchmark_results_rpi5.md`](extras/benchmark_results_rpi5.md) を参照してください。
+各（ランタイム、ゲーム）の組み合わせについて、10 秒間のトライアルを 10 回実行し、最速・最遅を除いた残り 8 回の平均をスコアとしています。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 |----------------|-----------|--------|--------------------------|--------------------|
