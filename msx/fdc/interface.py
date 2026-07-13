@@ -30,7 +30,7 @@ class FloppyDisk:
         self.controller = controller
         self.drives = drives
         self.disk_rom = disk_rom
-        self.selected = 0
+        # The active drive is tracked solely via self.controller.drive.
         self.controller.drive = self.drives[0]
 
     def mount(self, image: DskDiskImage | None, drive: int = 0) -> None:
@@ -155,7 +155,6 @@ class SonyPhilipsInterface(FloppyDisk):
             else:
                 idx = None
             if idx is not None and idx < len(self.drives):
-                self.selected = idx
                 self.controller.drive = self.drives[idx]
             else:
                 self.controller.drive = None

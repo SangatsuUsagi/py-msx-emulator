@@ -38,6 +38,8 @@ class DiskDrive:
         self.image = image
 
     def unmount(self) -> None:
+        # Kept for the symmetric mount()/unmount() public API; runtime ejection
+        # currently goes through mount(None) / FloppyDisk.swap(drive, None).
         self.image = None
 
     def _geometry(self) -> tuple[int, int]:
