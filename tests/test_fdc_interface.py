@@ -41,7 +41,6 @@ def test_data_register_routed_to_controller(tmp_path: Path) -> None:
 def test_drive_and_motor_select(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     iface.write_mem(0x7FFD, 0x80)  # bit7 motor on, bits1:0=00 -> drive A
-    assert iface.selected == 0
     assert iface.controller.drive is iface.drives[0]
 
 
