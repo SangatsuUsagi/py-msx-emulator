@@ -613,7 +613,8 @@ def build_machine(
     logo_override: bytes | None = None,
     extrom_override: bytes | None = None,
     disk_rom_override: bytes | None = None,
-    disc1: Path | None = None,
+    fdd1: Path | None = None,
+    fdd2: Path | None = None,
 ) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
     """Build a Machine from a resolved MachineSpec.
 
@@ -714,7 +715,7 @@ def build_machine(
             tracer=tracer,
             machine_cls=Machine,
             disk_rom_override=disk_rom_override,
-            disc1=disc1,
+            fdd_images=[fdd1, fdd2],
         )
     else:
         machine = _build_msx1(
@@ -785,9 +786,12 @@ def _build_msx1(
 
 
 def _build_fdc(
-    spec: MachineSpec, disc1: Path | None, disk_rom_override: bytes | None
+    spec: MachineSpec,
+    fdd_images: list[Path | None],
+    disk_rom_override: bytes | None,
 ) -> Any:
-    """Construct the FloppyDisk device from spec.fdc, mounting disc1 into drive A."""
+    """Construct the FloppyDisk device from spec.fdc, mounting each image in
+    fdd_images into the drive with the matching index (fdd_images[0] -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import SonyPhilipsInterface
@@ -802,8 +806,17 @@ def _build_fdc(
     controller = WD2793()
     # connection_style was validated by the loader; only 'sony' exists today.
     device = SonyPhilipsInterface(controller, drives, disk_rom=disk_rom)
-    if disc1 is not None:
-        device.mount(DskDiskImage(disc1), drive=0)
+    for idx, image_path in enumerate(fdd_images):
+        if image_path is None:
+            continue
+        if idx >= len(drives):
+            print(
+                f"warning: --fdd{idx + 1} given but machine has only "
+                f"{len(drives)} drive(s); ignoring",
+                file=sys.stderr,
+            )
+            continue
+        device.mount(DskDiskImage(image_path), drive=idx)
     return device
 
 
@@ -824,7 +837,7 @@ def _build_msx2(
     tracer: Tracer | None,
     machine_cls: Any,
     disk_rom_override: bytes | None = None,
-    disc1: Path | None = None,
+    fdd_images: list[Path | None] | None = None,
 ) -> Any:
     if extrom_override is not None:
         sub_bytes: bytes | None = extrom_override
@@ -846,7 +859,8 @@ def _build_msx2(
         flat_ram_subslot = None
 
     fdc_device = (
-        _build_fdc(spec, disc1, disk_rom_override) if spec.fdc is not None else None
+        _build_fdc(spec, fdd_images or [], disk_rom_override)
+        if spec.fdc is not None else None
     )
     memory = Memory(
         rom=main_bytes,

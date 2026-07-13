@@ -121,7 +121,7 @@ def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
     tests/test_fdc_acceptance.py. This test confirms boot stays stable with a
     disk present. Manual procedure:
 
-        python . --machine hb_f1xd --disc1 blank.dsk
+        python . --machine hb_f1xd --fdd1 blank.dsk
         CALL FORMAT            (choose drive A, 720 KB)
         SAVE "A:TEST"          then  FILES  ->  TEST.BAS listed
         (exit)                 blank.dsk now contains the formatted filesystem
@@ -129,7 +129,7 @@ def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
     blank = tmp_path / "blank.dsk"
     blank.write_bytes(bytes(737280))
     spec = _spec()
-    machine = build_machine(spec, disc1=blank)
+    machine = build_machine(spec, fdd1=blank)
     display_seen = False
     for _ in range(300):
         machine.run_frame()
