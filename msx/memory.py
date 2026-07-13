@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
+    from msx.fdc.interface import FloppyDisk
     from msx.mapper import Mapper
     from msx.ram_mapper import RamMapper
 
@@ -31,6 +32,9 @@ class Memory:
     # RAM in this sub-slot only, the SUB ROM in sub-slot 0 page 0, and open bus
     # everywhere else. None keeps the legacy mapper / MSX1 flat-top behaviour.
     flat_ram_subslot: int | None = field(default=None)
+    # Memory-mapped floppy interface in slot 3 sub-slot 0 page 1 (0x4000-0x7FFF);
+    # duck-typed with read_mem(addr)/write_mem(addr, value). None when no FDC.
+    fdc: "FloppyDisk | None" = field(default=None, repr=False)
     rom_name: str = ""
     sub0_rom_name: str = ""
     _rom_len: int = field(init=False, repr=False, default=0)
@@ -128,6 +132,8 @@ class Memory:
         if sub == 0:
             if page == 0 and self.sub0_rom is not None:
                 return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
+            if page == 1 and self.fdc is not None:
+                return self.fdc.read_mem(addr)
             return 0xFF
         if sub == self.flat_ram_subslot:
             return self.ram[addr] if addr < len(self.ram) else 0xFF
@@ -135,11 +141,14 @@ class Memory:
 
     def _write_slot3_flat(self, addr: int, value: int, page: int, sub: int) -> None:
         """Data-driven MSX2 slot-3 write (see _read_slot3_flat)."""
+        if sub == 0:
+            if page == 1 and self.fdc is not None:
+                self.fdc.write_mem(addr, value)
+            return  # SUB ROM (page 0) and open-bus pages ignore writes
         if sub == self.flat_ram_subslot:
             if addr < len(self.ram):
                 self.ram[addr] = value
-            return
-        # Sub-slot 0 (SUB ROM / FDC page 1) and empty sub-slots ignore writes.
+        # Empty sub-slots ignore writes.
 
     def main_ram_range(self) -> tuple[int, int]:
         """Conventional main-RAM address window, for stack-sanity checks.

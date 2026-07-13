@@ -1,0 +1,7 @@
+id: fdc_wd2793
+type: fdc
+implemented: true
+# Western Digital WD2793 floppy disk controller. Machines reference this via an
+# `fdc:` block in a slot 3 sub-slot 0 declaration, which also names the DISK ROM,
+# the connection style, and the drive count.
+controller: wd2793
