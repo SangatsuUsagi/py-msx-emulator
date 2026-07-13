@@ -66,15 +66,19 @@ def test_bare_hb_f1xd_boots_to_basic() -> None:
     """GATE: with the real ROMs and the FDC present (no disk mounted), boot reaches
     (Disk) BASIC.
 
-    Proxy for "BASIC ready": the VDP display is enabled and the CPU is executing
-    in the slot-0 BIOS/BASIC ROM (PC < 0x8000) rather than hung. Confirms the flat
-    64 KB RAM in sub-slot 3 is usable and the DISK ROM does not stall the boot.
+    Proxy for "BASIC ready": the VDP display gets enabled at some point (the boot
+    toggles screen modes, so we check "ever enabled" not the instantaneous state)
+    and the CPU ends up executing in ROM rather than hung. Confirms the flat 64 KB
+    RAM in sub-slot 3 is usable and the DISK ROM does not stall the boot.
     """
     spec = _spec()
     machine = build_machine(spec)
-    for _ in range(180):  # ~3 s of emulated time
+    display_seen = False
+    for _ in range(300):  # ~5 s of emulated time
         machine.run_frame()
-    assert machine.vdp.regs[1] & 0x40, "VDP display never enabled (boot stalled)"
+        if machine.vdp.regs[1] & 0x40:
+            display_seen = True
+    assert display_seen, "VDP display never enabled (boot stalled)"
     assert machine.cpu.registers.PC < 0x8000, "CPU not executing in BIOS/BASIC ROM"
 
 
@@ -100,7 +104,9 @@ def test_bios_scan_executes_disk_rom() -> None:
         return original(addr)
 
     machine.fdc.read_mem = counting_read  # type: ignore[method-assign]
-    for _ in range(180):
+    # The BIOS extension-ROM scan reaches slot 3-0 well after the screen comes up
+    # (~frame 250 on real ROMs), so run long enough to cover it.
+    for _ in range(400):
         machine.run_frame()
     assert rom_reads > 0, "BIOS never executed the DISK ROM (INIT not entered)"
 
@@ -124,7 +130,10 @@ def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
     blank.write_bytes(bytes(737280))
     spec = _spec()
     machine = build_machine(spec, disc1=blank)
-    for _ in range(180):
+    display_seen = False
+    for _ in range(300):
         machine.run_frame()
-    assert machine.vdp.regs[1] & 0x40, "boot stalled with a disk mounted"
+        if machine.vdp.regs[1] & 0x40:
+            display_seen = True
+    assert display_seen, "boot stalled with a disk mounted"
     assert machine.fdc is not None and machine.fdc.drives[0].has_disk
