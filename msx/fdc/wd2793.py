@@ -248,6 +248,19 @@ class WD2793:
         if value & 0x08:  # immediate-interrupt condition bit
             self._intrq = True
 
+    def abort(self) -> None:
+        """Abort any in-progress transfer, leaving the controller idle.
+
+        Used on a disk swap so no read/write buffer keeps referencing the
+        previous medium. Unlike reset() this preserves the TRACK/SECTOR registers
+        (the head does not move when a disk is exchanged).
+        """
+        self._mode = "idle"
+        self._drq = False
+        self._buffer = bytearray()
+        self._index = 0
+        self.status_reg &= ~(BUSY | S_DRQ)
+
     def _end_command(self) -> None:
         self._mode = "idle"
         self._drq = False

@@ -74,3 +74,19 @@ def test_rom_write_is_ignored(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     iface.write_mem(0x4000, 0x55)
     assert iface.read_mem(0x4000) == 0xC3
+
+
+# --- disk-change signal (for runtime swap) --------------------------------
+
+def test_disk_change_reported_then_consumed(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    iface.controller.drive.disk_changed = True
+    first = iface.read_mem(0x7FFD)
+    assert first & 0x04 == 0        # bit 2 = 0 -> disk changed
+    second = iface.read_mem(0x7FFD)
+    assert second & 0x04            # consumed: reverts to not-changed
+
+
+def test_disk_change_not_set_reports_not_changed(tmp_path: Path) -> None:
+    iface = _iface(tmp_path)
+    assert iface.read_mem(0x7FFD) & 0x04  # no swap -> not changed

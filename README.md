@@ -47,12 +47,12 @@ py-msx-emulator is a functional MSX1/MSX2 emulator targeting accurate hardware r
 - **RAM mapper** — 128 KB main RAM (8 × 16 KB segments), segment registers at ports 0xFC–0xFF
 - **RTC** — RP5C01 real-time clock, ports 0xB4–0xB5
 - **Cartridge mappers** — Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC), ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type; auto-detected from a SHA1-based ROM database
-- **Floppy disk drive (WD2793)** — generic FDC layer (disk image / drive / controller / connection-style interface) with a WD2793 controller and Sony/Philips connection style, as used by the Sony HB-F1XD; memory-mapped registers in slot 3 sub-slot 0, `*.dsk` images mounted via `--fdd1`, supports Disk BASIC boot, `CALL FORMAT`, and file read/write with write-back on exit
+- **Floppy disk drive (WD2793)** — generic FDC layer (disk image / drive / controller / connection-style interface) with a WD2793 controller and Sony/Philips connection style, as used by the Sony HB-F1XD; memory-mapped registers in slot 3 sub-slot 0, `*.dsk` images mounted via `--fdd1`, supports Disk BASIC boot, `CALL FORMAT`, and file read/write with write-back on exit; disks can be swapped at runtime from the debugger REPL (`fdd1`/`fdd2`)
 - **SDL2 frontend** — 768×576 window by default (256×192 × scale 3; SCREEN 6/7 resize to maintain aspect ratio), hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
 - **Physical joystick** — SDL2 GameController and raw joystick APIs, hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
 - **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, mapper banks) as a stdlib JSON container, PNG screenshot alongside each save, `saves/states/latest.*` symlinks for quick resume
 - **ROM database** — SHA1 title lookup for automatic game title detection and mapper selection
-- **Interactive debugger** — REPL accessible via Ctrl+C or breakpoint hit; breakpoints/watchpoints, step execution, register/VRAM dump, disassembly, VDP trace, mapper trace, slot inspector
+- **Interactive debugger** — REPL accessible via Ctrl+C or breakpoint hit; breakpoints/watchpoints, step execution, register/VRAM dump, disassembly, VDP trace, mapper trace, slot inspector, floppy disk swap (`fdd1`/`fdd2 [FILE|-]`)
 - **Debug tooling** — opt-in structured logging, CPU instruction trace, I/O port trace, hang detector
 - **Pure Python** — no C extensions; runs wherever Python 3.10 and SDL2 are available
 

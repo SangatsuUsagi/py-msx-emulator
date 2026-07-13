@@ -31,7 +31,8 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
 _HELP = (
     "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
-    "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | c | q"
+    "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | "
+    "fdd1/fdd2 [FILE|-] | c | q"
 )
 
 # The machine caps hardware breakpoints and watchpoints at 4 each.
@@ -558,6 +559,47 @@ class Debugger:
                 suffix = f"  {size}" if size else ""
                 print(f"  Primary {prim}{role_str}  {content}{suffix}")
 
+    def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
+        """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
+
+        No argument prints the current mount; a path mounts that *.dsk (relative
+        to the cwd or absolute, ~ expanded); `-` ejects. On `c` the WD2793 uses
+        the new disk. Errors are reported without changing the current disk.
+        """
+        from pathlib import Path
+
+        from msx.fdc.disk_image import DskDiskImage
+
+        label = f"fdd{drive_index + 1}"
+        fdc = getattr(self._machine, "fdc", None)
+        if fdc is None:
+            print(f"{label}: this machine has no floppy interface")
+            return
+        if drive_index >= len(fdc.drives):
+            print(f"{label}: machine has only {len(fdc.drives)} drive(s)")
+            return
+        drive = fdc.drives[drive_index]
+        if not args:
+            path = getattr(drive.image, "path", None)
+            print(f"{label}: {path if path is not None else 'empty'}")
+            return
+        arg = args[0]
+        if arg == "-":
+            fdc.swap(drive_index, None)
+            print(f"{label}: ejected")
+            return
+        path = Path(arg).expanduser()
+        if not path.exists():
+            print(f"{label}: file not found: {path}")
+            return
+        try:
+            image = DskDiskImage(path)
+        except (ValueError, OSError) as exc:
+            print(f"{label}: cannot mount {path}: {exc}")
+            return
+        fdc.swap(drive_index, image)
+        print(f"{label}: mounted {path}")
+
 
 # ---------------------------------------------------------------------------
 # VDP fancy display helpers (module-level, no instance state needed)
@@ -843,4 +885,6 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "sl": lambda d, a: d._cmd_slot_active(),
     "st": lambda d, a: d._cmd_slot_tree(),
     "ss": lambda d, a: d._cmd_screenshot(),
+    "fdd1": lambda d, a: d._cmd_fdd(a, 0),
+    "fdd2": lambda d, a: d._cmd_fdd(a, 1),
 }
