@@ -229,3 +229,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+
+# MSX floppy disk images (user-supplied; create with scripts/make_blank_dsk.py)
+*.dsk
