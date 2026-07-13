@@ -41,6 +41,10 @@ class RTC:
     _reset: int = 0
     # 4 blocks x 13 nibbles. Blocks 2/3 hold the BIOS CMOS config.
     _regs: list[int] = field(default_factory=lambda: [0] * (4 * 13), repr=False)
+    # Clock reference captured once at construction (frozen). Deterministic within
+    # a run and non-zero, which is all the BIOS power-on check needs; avoids
+    # calling the wall clock on every register read.
+    _epoch: datetime = field(default_factory=datetime.now, repr=False)
 
     def read_port(self, port: int) -> int:
         """Read the register-select port (0xB4, write-only) or data port (0xB5)."""
@@ -83,7 +87,7 @@ class RTC:
     def _update_time_regs(self) -> None:
         """Overlay the current host time into block 0 (BCD digits) and the leap
         counter into block 1, matching openMSX's RealTime mode."""
-        now = datetime.now()
+        now = self._epoch
         year = (now.year - 1980) % 100
         rp_wday = (now.weekday() + 1) % 7  # Python Mon=0..Sun=6 -> RP5C01 Sun=0
         r = self._regs
