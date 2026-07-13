@@ -22,8 +22,9 @@ class DiskDrive:
 
     def __init__(self, image: DskDiskImage | None = None):
         self.image = image
-        self.track = 0   # physical head position
-        self.side = 0    # selected side (0 or 1)
+        self.track = 0          # physical head position
+        self.side = 0           # selected side (0 or 1)
+        self.disk_changed = False  # set on a media swap; consumed by a status read
 
     @property
     def has_disk(self) -> bool:

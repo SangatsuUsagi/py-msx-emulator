@@ -37,6 +37,21 @@ class FloppyDisk:
         """Mount (or unmount with None) an image into a drive."""
         self.drives[drive].mount(image)
 
+    def swap(self, drive: int, image: DskDiskImage | None) -> None:
+        """Replace a drive's image at runtime (hot swap / eject).
+
+        Flushes the outgoing image so pending writes reach its file, mounts the
+        new image (or None to eject), asserts the drive's disk-change signal so
+        Disk BASIC re-reads the new medium, and aborts any in-progress controller
+        transfer so no buffer keeps referencing the previous disk.
+        """
+        target = self.drives[drive]
+        if target.image is not None:
+            target.image.flush()
+        target.mount(image)
+        target.disk_changed = True
+        self.controller.abort()
+
     def flush(self) -> None:
         """Flush every mounted image's pending writes back to its file."""
         for d in self.drives:
@@ -94,9 +109,17 @@ class SonyPhilipsInterface(FloppyDisk):
         if reg == 0x3FFC:
             return self.side_reg & 0xFF
         if reg == 0x3FFD:
-            # bit 2 = 0 iff the disk changed; we report "not changed" (bit 2 = 1)
-            # so the DISK ROM does not loop asking for a disk to be inserted.
-            return (self.drive_reg & ~0x04) | 0x04
+            # bit 2 = 0 iff the disk changed since the last status read. The read
+            # is consuming (openMSX PhilipsFDC / diskChanged): it reports the
+            # change once, then reverts to "not changed" so the DISK ROM re-reads
+            # a swapped-in disk once instead of looping.
+            res = self.drive_reg & ~0x04
+            drive = self.controller.drive
+            if drive is not None and drive.disk_changed:
+                drive.disk_changed = False  # consume
+            else:
+                res |= 0x04  # not changed
+            return res
         if reg == 0x3FFE:
             return 0xFF  # not connected
         # 0x3FFF: drive control lines, active low (bit 6 = !INTRQ, bit 7 = !DRQ).
