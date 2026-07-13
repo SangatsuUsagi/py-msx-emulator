@@ -13,8 +13,17 @@ BUSY (bit 0) is common to both.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 from msx.fdc.disk_drive import DiskDrive
+
+
+class Mode(Enum):
+    """Controller transfer state (an enum, not a string, for a clean port)."""
+    IDLE = 0
+    READ = 1
+    WRITE = 2
+    WRITE_TRACK = 3
 
 # Status register bits (shared byte; meaning depends on command type).
 BUSY: int = 0x01
@@ -26,7 +35,8 @@ NOT_READY: int = 0x80
 
 SECTOR_SIZE: int = 512
 # Approximate 2DD MFM track capacity; WRITE TRACK consumes this many bytes then
-# terminates (see module note). Tunable against the real DISK ROM in phase 7.
+# terminates. The DISK ROM polls DRQ (not a byte count), so any value in this
+# range works — the exact count is not observable by software.
 TRACK_BYTES: int = 6250
 
 
@@ -46,7 +56,7 @@ class WD2793:
     status_reg: int = 0
     _intrq: bool = False
     _drq: bool = False
-    _mode: str = "idle"  # idle | read | write | write_track
+    _mode: Mode = Mode.IDLE
     _buffer: bytearray = field(default_factory=bytearray)
     _index: int = 0
     _step_dir: int = 1
@@ -59,7 +69,7 @@ class WD2793:
         self.status_reg = 0
         self._intrq = False
         self._drq = False
-        self._mode = "idle"
+        self._mode = Mode.IDLE
         self._buffer = bytearray()
         self._index = 0
         self._step_dir = 1
@@ -96,7 +106,7 @@ class WD2793:
     def set_data(self, value: int) -> None:
         value &= 0xFF
         self.data_reg = value
-        if self._mode == "write":
+        if self._mode == Mode.WRITE:
             self._buffer.append(value)
             self._index += 1
             if self._index >= SECTOR_SIZE:
@@ -105,7 +115,7 @@ class WD2793:
                         self.track_reg, self.drive.side, self.sector_reg, bytes(self._buffer)
                     )
                 self._end_command()
-        elif self._mode == "write_track":
+        elif self._mode == Mode.WRITE_TRACK:
             self._index += 1
             if self._index >= TRACK_BYTES:
                 if self.drive is not None:
@@ -132,7 +142,7 @@ class WD2793:
         return self.sector_reg & 0xFF
 
     def get_data(self) -> int:
-        if self._mode == "read" and self._index < len(self._buffer):
+        if self._mode == Mode.READ and self._index < len(self._buffer):
             value = self._buffer[self._index]
             self._index += 1
             self.data_reg = value
@@ -173,7 +183,7 @@ class WD2793:
         elif self.drive.write_protected:
             status |= WRITE_PROTECTED
         self.status_reg = status
-        self._mode = "idle"
+        self._mode = Mode.IDLE
         self._drq = False
         self._intrq = True
 
@@ -190,7 +200,7 @@ class WD2793:
             return
         self._buffer = bytearray(data)
         self._index = 0
-        self._mode = "read"
+        self._mode = Mode.READ
         self._drq = True
         self.status_reg = BUSY | S_DRQ
 
@@ -206,7 +216,7 @@ class WD2793:
             return
         self._buffer = bytearray()
         self._index = 0
-        self._mode = "write"
+        self._mode = Mode.WRITE
         self._drq = True
         self.status_reg = BUSY | S_DRQ
 
@@ -221,7 +231,7 @@ class WD2793:
             self._end_command()
             return
         self._index = 0
-        self._mode = "write_track"
+        self._mode = Mode.WRITE_TRACK
         self._drq = True
         self.status_reg = BUSY | S_DRQ
 
@@ -236,13 +246,13 @@ class WD2793:
             [self.track_reg & 0xFF, self.drive.side & 1, 1, 2, 0, 0]
         )
         self._index = 0
-        self._mode = "read"
+        self._mode = Mode.READ
         self._drq = True
         self.status_reg = BUSY | S_DRQ
         self.sector_reg = self.track_reg & 0xFF  # WD quirk: sector reg gets track
 
     def _force_interrupt(self, value: int) -> None:
-        self._mode = "idle"
+        self._mode = Mode.IDLE
         self._drq = False
         self.status_reg &= ~(BUSY | S_DRQ)
         if value & 0x08:  # immediate-interrupt condition bit
@@ -255,14 +265,14 @@ class WD2793:
         previous medium. Unlike reset() this preserves the TRACK/SECTOR registers
         (the head does not move when a disk is exchanged).
         """
-        self._mode = "idle"
+        self._mode = Mode.IDLE
         self._drq = False
         self._buffer = bytearray()
         self._index = 0
         self.status_reg &= ~(BUSY | S_DRQ)
 
     def _end_command(self) -> None:
-        self._mode = "idle"
+        self._mode = Mode.IDLE
         self._drq = False
         self.status_reg &= ~(BUSY | S_DRQ)
         self._intrq = True

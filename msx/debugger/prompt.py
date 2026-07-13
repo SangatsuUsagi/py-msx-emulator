@@ -566,12 +566,13 @@ class Debugger:
         to the cwd or absolute, ~ expanded); `-` ejects. On `c` the WD2793 uses
         the new disk. Errors are reported without changing the current disk.
         """
+        # Local imports keep the debugger free of an FDC import at module load.
         from pathlib import Path
 
         from msx.fdc.disk_image import DskDiskImage
 
         label = f"fdd{drive_index + 1}"
-        fdc = getattr(self._machine, "fdc", None)
+        fdc = self._machine.fdc
         if fdc is None:
             print(f"{label}: this machine has no floppy interface")
             return
@@ -580,8 +581,10 @@ class Debugger:
             return
         drive = fdc.drives[drive_index]
         if not args:
-            path = getattr(drive.image, "path", None)
-            print(f"{label}: {path if path is not None else 'empty'}")
+            if drive.image is not None:
+                print(f"{label}: {drive.image.path}")
+            else:
+                print(f"{label}: empty")
             return
         arg = args[0]
         if arg == "-":

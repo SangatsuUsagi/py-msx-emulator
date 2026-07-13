@@ -6,7 +6,7 @@ from pathlib import Path
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
-from msx.fdc.wd2793 import BUSY, WD2793
+from msx.fdc.wd2793 import BUSY, WD2793, Mode
 
 _2DD = 737280
 
@@ -55,7 +55,7 @@ def test_swap_aborts_in_progress_transfer(tmp_path: Path) -> None:
     assert iface.controller.get_status() & BUSY
     iface.swap(0, DskDiskImage(_blank(tmp_path / "b.dsk")))
     assert not (iface.controller.get_status() & BUSY)
-    assert iface.controller._mode == "idle"
+    assert iface.controller._mode is Mode.IDLE
 
 
 def test_swap_sets_disk_change(tmp_path: Path) -> None:
