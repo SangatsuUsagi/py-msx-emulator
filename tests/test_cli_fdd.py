@@ -1,4 +1,4 @@
-"""CLI --disc1 tests — patches filesystem and SDL2, never opens a real window."""
+"""CLI --fdd1/--fdd2 tests — patches filesystem and SDL2, never opens a window."""
 from __future__ import annotations
 
 import importlib.util
@@ -12,13 +12,13 @@ import pytest
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
-def _run_main(argv: list[str], *, disc_exists: bool = True) -> tuple[int, str, str]:
+def _run_main(argv: list[str], *, fdd_exists: bool = True) -> tuple[int, str, str]:
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
 
     def fake_exists(self: Path) -> bool:
         if self.name.endswith(".dsk"):
-            return disc_exists
+            return fdd_exists
         return True
 
     def fake_read_bytes(self: Path) -> bytes:
@@ -44,29 +44,39 @@ def _run_main(argv: list[str], *, disc_exists: bool = True) -> tuple[int, str, s
             return int(exc.code or 0), stdout_buf.getvalue(), stderr_buf.getvalue()
 
 
-def test_disc1_missing_file_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--machine", "hb_f1xd", "--disc1", "nope.dsk"],
-                                disc_exists=False)
+def test_fdd1_missing_file_exits_nonzero() -> None:
+    code, _out, err = _run_main(["--machine", "hb_f1xd", "--fdd1", "nope.dsk"],
+                                fdd_exists=False)
     assert code != 0
     assert "disk image not found" in err.lower()
 
 
-def test_disc1_mounted_on_hb_f1xd(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fdd1_mounted_on_hb_f1xd(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
-    code, out, _err = _run_main(["--machine", "hb_f1xd", "--disc1", "game.dsk"])
+    code, out, _err = _run_main(["--machine", "hb_f1xd", "--fdd1", "game.dsk"])
     assert code == 0
-    assert "disc1" in out
+    assert "fdd1" in out
     assert "game.dsk" in out
 
 
-def test_disc1_without_floppy_machine_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fdd1_without_floppy_machine_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
     # Default machine (cbios_msx2_jp) has no floppy interface.
-    code, _out, err = _run_main(["--machine", "cbios_msx2_jp", "--disc1", "game.dsk"])
+    code, _out, err = _run_main(["--machine", "cbios_msx2_jp", "--fdd1", "game.dsk"])
     assert code == 0
     assert "no floppy interface" in err.lower()
+
+
+def test_fdd2_on_single_drive_machine_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    import msx.romdb as romdb
+    monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
+
+    # HB-F1XD declares a single drive, so drive B has nowhere to mount.
+    code, _out, err = _run_main(["--machine", "hb_f1xd", "--fdd2", "b.dsk"])
+    assert code == 0
+    assert "only 1 drive" in err.lower()

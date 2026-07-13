@@ -35,8 +35,10 @@ def main() -> None:
                                  "Konami", "Majutsushi"],
                         default="auto",
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
-    parser.add_argument("--disc1", default=None, metavar="DSK",
+    parser.add_argument("--fdd1", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive A")
+    parser.add_argument("--fdd2", default=None, metavar="DSK",
+                        help="Floppy disk image (*.dsk) to mount in drive B")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
                         help="Resume from a save state (default: saves/states/latest.state)")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
@@ -84,10 +86,12 @@ def main() -> None:
         print(f"error: slot 2 ROM not found: {slot2_path}", file=sys.stderr)
         sys.exit(1)
 
-    disc1_path = Path(args.disc1) if args.disc1 else None
-    if disc1_path is not None and not disc1_path.exists():
-        print(f"error: disk image not found: {disc1_path}", file=sys.stderr)
-        sys.exit(1)
+    fdd1_path = Path(args.fdd1) if args.fdd1 else None
+    fdd2_path = Path(args.fdd2) if args.fdd2 else None
+    for label, fdd_path in (("--fdd1", fdd1_path), ("--fdd2", fdd2_path)):
+        if fdd_path is not None and not fdd_path.exists():
+            print(f"error: disk image not found ({label}): {fdd_path}", file=sys.stderr)
+            sys.exit(1)
 
     cartridge: bytes | None = cart_path.read_bytes() if cart_path else None
     cartridge2: bytes | None = slot2_path.read_bytes() if slot2_path else None
@@ -117,10 +121,11 @@ def main() -> None:
         sys.exit(1)
 
     # --- Disk image only applies to machines with a floppy interface ---
-    if disc1_path is not None and spec.fdc is None:
-        print("warning: --disc1 given but machine has no floppy interface; ignoring",
-              file=sys.stderr)
-        disc1_path = None
+    if (fdd1_path is not None or fdd2_path is not None) and spec.fdc is None:
+        print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
+              "ignoring", file=sys.stderr)
+        fdd1_path = None
+        fdd2_path = None
 
     # --- Resolve display mapper for summary ---
     if args.mapper != "auto":
@@ -188,8 +193,10 @@ def main() -> None:
     print(f"bios    : {spec.main_rom_entry.file}")
     if spec.generation == "msx2" and spec.sub_rom_entry is not None:
         print(f"ext     : {spec.sub_rom_entry.file}")
-    if disc1_path is not None:
-        print(f"disc1   : {disc1_path}")
+    if fdd1_path is not None:
+        print(f"fdd1    : {fdd1_path}")
+    if fdd2_path is not None:
+        print(f"fdd2    : {fdd2_path}")
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
@@ -225,7 +232,8 @@ def main() -> None:
                 mapper2=args.mapper2,
                 logger=logger,
                 tracer=tracer,
-                disc1=disc1_path,
+                fdd1=fdd1_path,
+                fdd2=fdd2_path,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)
