@@ -19,6 +19,7 @@ from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
     from msx.debugger.prompt import Debugger
+    from msx.fdc.interface import FloppyDisk
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
@@ -39,6 +40,7 @@ class Machine:
     psg: PSG
     scc: SCC | None = field(default=None)
     dac: MajutsushiMapper | None = field(default=None)
+    fdc: "FloppyDisk | None" = field(default=None)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME

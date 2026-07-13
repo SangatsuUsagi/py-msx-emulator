@@ -8,9 +8,10 @@ cpu:
   type: z80a
   clock_mhz: 3.579545
 
-# Phase 1 (bare boot): BIOS+BASIC, SUB ROM, and a flat 64 KB RAM only — no
-# floppy interface yet. The DISK ROM + WD2793 fdc block is added in phase 5.
-# ROM filenames/SHA1 reuse openMSX's Sony_HB-F1XD.xml values (SHA1 advisory).
+# Sony HB-F1XD: BIOS+BASIC, SUB ROM, WD2793 floppy interface (DISK ROM +
+# memory-mapped FDC registers, Sony/Philips connection style) in slot 3 sub-slot
+# 0, and a flat 64 KB RAM in sub-slot 3. ROM filenames/SHA1 reuse openMSX's
+# Sony_HB-F1XD.xml values (SHA1 advisory).
 slots:
   primary:
     0:
@@ -32,6 +33,16 @@ slots:
                 size_kb: 16
                 pages: [0]
                 sha1: 0fbd45ef3dd7bb82d4c31f1947884f411f1ca344
+          fdc:
+            ref: fdc_wd2793
+            controller: wd2793
+            connection_style: sony
+            drives: 1
+            rom:
+              file: hb-f1xd_disk.rom
+              size_kb: 16
+              pages: [1]
+              sha1: 12f2cc79b3d09723840bae774be48c0d721ec1c6
         3:
           type: ram
           size_kb: 64
