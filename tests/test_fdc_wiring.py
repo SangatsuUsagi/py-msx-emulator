@@ -110,11 +110,11 @@ def test_disk_rom_and_registers_routed_through_memory(tmp_path: Path) -> None:
     assert mem.read(0x0000) == 0xAB
 
 
-def test_disc1_mounts_into_drive_a(tmp_path: Path) -> None:
+def test_fdd1_mounts_into_drive_a(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     dsk.write_bytes(bytes(_2DD))
-    machine = build_machine(_fdc_spec(tmp_path), disc1=dsk)
+    machine = build_machine(_fdc_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     assert machine.fdc.drives[0].has_disk is True
     assert isinstance(machine.fdc.drives[0].image, DskDiskImage)
