@@ -1,0 +1,47 @@
+schema_version: 1
+id: hb_f1xd
+name: "Sony HB-F1XD (MSX2, Japan)"
+generation: msx2
+video_standard: ntsc
+rom_base: roms/hb_f1xd
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+
+# Phase 1 (bare boot): BIOS+BASIC, SUB ROM, and a flat 64 KB RAM only — no
+# floppy interface yet. The DISK ROM + WD2793 fdc block is added in phase 5.
+# ROM filenames/SHA1 reuse openMSX's Sony_HB-F1XD.xml values (SHA1 advisory).
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: hb-f1xd_basic-bios2.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: 4ce41fcc1a603411ec4e99556409c442078f0ecf
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          content:
+            - rom:
+                file: hb-f1xd_msx2sub.rom
+                size_kb: 16
+                pages: [0]
+                sha1: 0fbd45ef3dd7bb82d4c31f1947884f411f1ca344
+        3:
+          type: ram
+          size_kb: 64
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+
+default_extensions: []

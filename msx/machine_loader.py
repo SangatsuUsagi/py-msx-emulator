@@ -200,6 +200,11 @@ class MachineSpec:
     cycles_per_frame: int = 59_659   # NTSC default
     lines_per_frame: int = 262       # NTSC default
 
+    # MSX2 flat (non-mapper) RAM sub-slot, e.g. HB-F1XD's 64 KB in sub-slot 3.
+    # None when RAM is mapper-backed (the common C-BIOS case).
+    flat_ram_subslot: int | None = None
+    flat_ram_size_kb: int = 64
+
 
 # ---------------------------------------------------------------------------
 # Pass 1: device registry
@@ -296,10 +301,18 @@ def _parse_slot3_msx1(slot3: dict[str, Any]) -> int:
 
 def _parse_slot3_msx2(
     slot3: dict[str, Any], machine_id: str
-) -> tuple[_RomEntry | None, bool]:
-    """Return (sub_rom_entry, has_ram_mapper) for an MSX2 slot 3 declaration."""
+) -> tuple[_RomEntry | None, bool, int | None, int]:
+    """Resolve an MSX2 slot 3 declaration.
+
+    Returns (sub_rom_entry, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb).
+    A sub-slot declaring `type: ram` without `mapper: standard` is a flat
+    (non-mapper) RAM (e.g. HB-F1XD's 64 KB in sub-slot 3); a `mapper: standard`
+    sub-slot sets has_ram_mapper as before.
+    """
     sub_rom: _RomEntry | None = None
     has_ram_mapper = False
+    flat_ram_subslot: int | None = None
+    flat_ram_size_kb = 64
     if slot3.get("expanded"):
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         sub0: Any = secondary.get(0, {})
@@ -311,12 +324,17 @@ def _parse_slot3_msx2(
                         rom_data, f"machine '{machine_id}' slot 3 sub-slot 0"
                     )
                     break
-        for sub_val in secondary.values():
-            if isinstance(sub_val, dict) and sub_val.get("mapper") == "standard":
+        for sub_idx, sub_val in secondary.items():
+            if not isinstance(sub_val, dict):
+                continue
+            if sub_val.get("mapper") == "standard":
                 has_ram_mapper = True
+            elif sub_val.get("type") == "ram":
+                flat_ram_subslot = sub_idx
+                flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
         has_ram_mapper = True
-    return sub_rom, has_ram_mapper
+    return sub_rom, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb
 
 
 # ---------------------------------------------------------------------------
@@ -402,13 +420,16 @@ def load_machine_spec(
     sub_rom_entry: _RomEntry | None = None
     has_ram_mapper = False
     ram_size_kb = 32
+    flat_ram_subslot: int | None = None
+    flat_ram_size_kb = 64
 
     slot3: Any = primary.get(3, {})
     if not isinstance(slot3, dict):
         slot3 = {}
 
     if generation == "msx2":
-        sub_rom_entry, has_ram_mapper = _parse_slot3_msx2(slot3, machine_id)
+        (sub_rom_entry, has_ram_mapper,
+         flat_ram_subslot, flat_ram_size_kb) = _parse_slot3_msx2(slot3, machine_id)
     else:
         ram_size_kb = _parse_slot3_msx1(slot3)
 
@@ -471,6 +492,8 @@ def load_machine_spec(
         device_io_ports=device_io_ports,
         cycles_per_frame=cycles_per_frame,
         lines_per_frame=lines_per_frame,
+        flat_ram_subslot=flat_ram_subslot,
+        flat_ram_size_kb=flat_ram_size_kb,
     )
 
 
@@ -722,10 +745,20 @@ def _build_msx2(
     else:
         sub_bytes = None
 
-    ram_mapper: RamMapper | None = RamMapper() if spec.has_ram_mapper else None
+    # Flat (non-mapper) RAM machines (e.g. HB-F1XD) allocate their full RAM and
+    # use the data-driven slot-3 sub-slot dispatch; mapper machines keep the
+    # 32 KB + RamMapper wiring unchanged.
+    if spec.flat_ram_subslot is not None and not spec.has_ram_mapper:
+        ram_mapper: RamMapper | None = None
+        ram_bytes = bytearray(spec.flat_ram_size_kb * 1024)
+        flat_ram_subslot: int | None = spec.flat_ram_subslot
+    else:
+        ram_mapper = RamMapper() if spec.has_ram_mapper else None
+        ram_bytes = bytearray(32768)
+        flat_ram_subslot = None
     memory = Memory(
         rom=main_bytes,
-        ram=bytearray(32768),
+        ram=ram_bytes,
         _mapper=mapper_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
@@ -734,6 +767,7 @@ def _build_msx2(
         sub0_rom=sub_bytes,
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
+        flat_ram_subslot=flat_ram_subslot,
         rom_name=spec.main_rom_entry.file,
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
