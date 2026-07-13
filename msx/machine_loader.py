@@ -52,6 +52,12 @@ _SUPPORTED_MAPPERS = frozenset({
     "R-Type",
 })
 
+# Supported FDC controller chips and connection styles, selected by machine YAML.
+# New entries here (plus a builder branch in _build_fdc) add hardware without
+# touching Memory.
+_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793"})
+_SUPPORTED_FDC_STYLES = frozenset({"sony"})
+
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
     "ASCII8SRAM8": 8192,
@@ -168,6 +174,15 @@ class _RomEntry:
 
 
 @dataclass
+class _FdcDef:
+    """Resolved floppy interface: DISK ROM entry, controller, style, drive count."""
+    disk_rom_entry: _RomEntry
+    controller: str
+    connection_style: str
+    drives: int
+
+
+@dataclass
 class MachineSpec:
     """Fully-resolved machine wiring, ready for instantiation."""
 
@@ -204,6 +219,9 @@ class MachineSpec:
     # None when RAM is mapper-backed (the common C-BIOS case).
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
+
+    # Floppy interface in slot 3 sub-slot 0, or None when the machine has none.
+    fdc: _FdcDef | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -299,20 +317,58 @@ def _parse_slot3_msx1(slot3: dict[str, Any]) -> int:
     return int(slot3.get("size_kb", 32))
 
 
+def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
+    """Resolve an optional `fdc:` block in slot 3 sub-slot 0.
+
+    Raises:
+        MachineLoadError: On a missing DISK ROM entry, or an unsupported
+            controller type or connection style.
+    """
+    fdc_raw: Any = sub0.get("fdc")
+    if not isinstance(fdc_raw, dict):
+        return None
+    context = f"machine '{machine_id}' slot 3 sub-slot 0 fdc"
+    rom_data: Any = fdc_raw.get("rom")
+    if not isinstance(rom_data, dict):
+        raise MachineLoadError(f"{context}: missing required 'rom' entry")
+    disk_rom_entry = _parse_rom_entry(rom_data, context)
+    controller = str(fdc_raw.get("controller", "wd2793")).lower()
+    if controller not in _SUPPORTED_FDC_CONTROLLERS:
+        raise MachineLoadError(
+            f"{context}: unsupported controller {controller!r} "
+            f"(supported: {sorted(_SUPPORTED_FDC_CONTROLLERS)})"
+        )
+    style = str(fdc_raw.get("connection_style", "sony")).lower()
+    if style not in _SUPPORTED_FDC_STYLES:
+        raise MachineLoadError(
+            f"{context}: unsupported connection_style {style!r} "
+            f"(supported: {sorted(_SUPPORTED_FDC_STYLES)})"
+        )
+    drives = int(fdc_raw.get("drives", 1))
+    return _FdcDef(
+        disk_rom_entry=disk_rom_entry,
+        controller=controller,
+        connection_style=style,
+        drives=max(1, drives),
+    )
+
+
 def _parse_slot3_msx2(
     slot3: dict[str, Any], machine_id: str
-) -> tuple[_RomEntry | None, bool, int | None, int]:
+) -> tuple[_RomEntry | None, bool, int | None, int, _FdcDef | None]:
     """Resolve an MSX2 slot 3 declaration.
 
-    Returns (sub_rom_entry, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb).
-    A sub-slot declaring `type: ram` without `mapper: standard` is a flat
+    Returns (sub_rom_entry, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb,
+    fdc). A sub-slot declaring `type: ram` without `mapper: standard` is a flat
     (non-mapper) RAM (e.g. HB-F1XD's 64 KB in sub-slot 3); a `mapper: standard`
-    sub-slot sets has_ram_mapper as before.
+    sub-slot sets has_ram_mapper as before. An `fdc:` block in sub-slot 0
+    resolves the floppy interface.
     """
     sub_rom: _RomEntry | None = None
     has_ram_mapper = False
     flat_ram_subslot: int | None = None
     flat_ram_size_kb = 64
+    fdc: _FdcDef | None = None
     if slot3.get("expanded"):
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         sub0: Any = secondary.get(0, {})
@@ -324,6 +380,7 @@ def _parse_slot3_msx2(
                         rom_data, f"machine '{machine_id}' slot 3 sub-slot 0"
                     )
                     break
+            fdc = _parse_fdc(sub0, machine_id)
         for sub_idx, sub_val in secondary.items():
             if not isinstance(sub_val, dict):
                 continue
@@ -334,7 +391,7 @@ def _parse_slot3_msx2(
                 flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
         has_ram_mapper = True
-    return sub_rom, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb
+    return sub_rom, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb, fdc
 
 
 # ---------------------------------------------------------------------------
@@ -422,14 +479,15 @@ def load_machine_spec(
     ram_size_kb = 32
     flat_ram_subslot: int | None = None
     flat_ram_size_kb = 64
+    fdc: _FdcDef | None = None
 
     slot3: Any = primary.get(3, {})
     if not isinstance(slot3, dict):
         slot3 = {}
 
     if generation == "msx2":
-        (sub_rom_entry, has_ram_mapper,
-         flat_ram_subslot, flat_ram_size_kb) = _parse_slot3_msx2(slot3, machine_id)
+        (sub_rom_entry, has_ram_mapper, flat_ram_subslot,
+         flat_ram_size_kb, fdc) = _parse_slot3_msx2(slot3, machine_id)
     else:
         ram_size_kb = _parse_slot3_msx1(slot3)
 
@@ -494,6 +552,7 @@ def load_machine_spec(
         lines_per_frame=lines_per_frame,
         flat_ram_subslot=flat_ram_subslot,
         flat_ram_size_kb=flat_ram_size_kb,
+        fdc=fdc,
     )
 
 
@@ -553,6 +612,8 @@ def build_machine(
     bios_override: bytes | None = None,
     logo_override: bytes | None = None,
     extrom_override: bytes | None = None,
+    disk_rom_override: bytes | None = None,
+    disc1: Path | None = None,
 ) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
     """Build a Machine from a resolved MachineSpec.
 
@@ -652,6 +713,8 @@ def build_machine(
             logger=logger,
             tracer=tracer,
             machine_cls=Machine,
+            disk_rom_override=disk_rom_override,
+            disc1=disc1,
         )
     else:
         machine = _build_msx1(
@@ -721,6 +784,29 @@ def _build_msx1(
     )
 
 
+def _build_fdc(
+    spec: MachineSpec, disc1: Path | None, disk_rom_override: bytes | None
+) -> Any:
+    """Construct the FloppyDisk device from spec.fdc, mounting disc1 into drive A."""
+    from msx.fdc.disk_drive import DiskDrive
+    from msx.fdc.disk_image import DskDiskImage
+    from msx.fdc.interface import SonyPhilipsInterface
+    from msx.fdc.wd2793 import WD2793
+
+    assert spec.fdc is not None
+    if disk_rom_override is not None:
+        disk_rom: bytes | None = disk_rom_override
+    else:
+        disk_rom = _load_rom(spec.rom_base_dir, spec.fdc.disk_rom_entry.file, required=True)
+    drives = [DiskDrive() for _ in range(spec.fdc.drives)]
+    controller = WD2793()
+    # connection_style was validated by the loader; only 'sony' exists today.
+    device = SonyPhilipsInterface(controller, drives, disk_rom=disk_rom)
+    if disc1 is not None:
+        device.mount(DskDiskImage(disc1), drive=0)
+    return device
+
+
 def _build_msx2(
     *,
     spec: MachineSpec,
@@ -737,6 +823,8 @@ def _build_msx2(
     logger: DebugLogger | None,
     tracer: Tracer | None,
     machine_cls: Any,
+    disk_rom_override: bytes | None = None,
+    disc1: Path | None = None,
 ) -> Any:
     if extrom_override is not None:
         sub_bytes: bytes | None = extrom_override
@@ -756,6 +844,10 @@ def _build_msx2(
         ram_mapper = RamMapper() if spec.has_ram_mapper else None
         ram_bytes = bytearray(32768)
         flat_ram_subslot = None
+
+    fdc_device = (
+        _build_fdc(spec, disc1, disk_rom_override) if spec.fdc is not None else None
+    )
     memory = Memory(
         rom=main_bytes,
         ram=ram_bytes,
@@ -768,6 +860,7 @@ def _build_msx2(
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
         flat_ram_subslot=flat_ram_subslot,
+        fdc=fdc_device,
         rom_name=spec.main_rom_entry.file,
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
@@ -803,6 +896,7 @@ def _build_msx2(
         input=input_state, _logger=logger,
         cycles_per_frame=spec.cycles_per_frame,
         lines_per_frame=spec.lines_per_frame,
+        fdc=fdc_device,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer
