@@ -206,17 +206,24 @@ Development dependencies (pytest, ruff, mypy) are in `requirements-dev.txt`. Thi
 
 ## Performance
 
-Measured running Salamander (KonamiSCC mapper) at `--speed 1.0` (target: 60 fps).
+Measured with the `--benchmark` CLI flag: a headless run, unthrottled (no `FrameTimer` pacing), started from a saved mid-game scene via `--resume` (BIOS boot time is excluded from the measurement). Every frame still runs full CPU emulation and VDP-to-offscreen-buffer rendering, the same cost paid during interactive play — but `--benchmark` never opens an SDL window, generates audio samples, or performs texture upload/blit, so real interactive sessions run somewhat slower than the raw numbers below.
 
-| Platform | Runtime | Measured FPS | Notes |
-|----------|---------|-------------|-------|
-| Apple MacBook (M5 Pro) | Python 3.12 | ~60 fps | Real-time playable |
-| Raspberry Pi 5 | Python 3.12 | ~16 fps | ~27% of real-time; game runs in slow motion |
-| Raspberry Pi 5 | PyPy3 | ~35–45 fps | ~60–75% of real-time; significantly faster than CPython |
+For each (runtime, game) pair, 10 trials of 10 seconds were run, the fastest and slowest were discarded, and the remaining 8 were averaged into the score.
 
-On platforms that cannot sustain 60 fps, the game runs in slow motion at a rate proportional to the achieved frame rate. Audio will degrade (clicks or silence) below 60 fps because samples are generated per-frame while the audio device always consumes at 44 100 Hz. PyPy3 is a drop-in alternative that substantially improves throughput on slower hardware and is the recommended way to get closer to real-time on a Raspberry Pi.
+| Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
+|----------|---------|------|--------------------------|--------------------|
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 221.09 | ~3.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 429.98 | ~7.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1542.85 | ~25.7× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1676.95 | ~28.0× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 53.10 | ~0.9× (below target) |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 102.81 | ~1.7× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 81.31 | ~1.4× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 366.00 | ~6.1× |
 
-Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel rendering on frames that miss the deadline while still firing the VBlank interrupt every frame. This improves display smoothness on hosts near but below 60 fps — on Raspberry Pi 5 with PyPy3 (~35–45 fps emulation), the visible frame rate reaches ~25–35 fps instead of the raw throughput. Audio quality is unaffected by frame skip; underruns remain on any platform below 60 fps. Frame skip can be disabled with `--frame-skip none`.
+On platforms that cannot sustain 60 fps interactively, the game runs in slow motion at a rate proportional to the achieved frame rate. Audio will degrade (clicks or silence) below 60 fps because samples are generated per-frame while the audio device always consumes at 44 100 Hz. In this measurement, only Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the heaviest rendering/audio load among the target titles) falls short of the raw 60 fps target; PyPy pushes it comfortably above. Dragon Slayer 4 (MSX2, V9938 renderer) clears the target on every combination tested, including Raspberry Pi 5 with CPython. PyPy3 is a drop-in alternative that substantially improves throughput on slower hardware and is the recommended way to get closer to (or further above) real-time on constrained hardware like a Raspberry Pi.
+
+Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel rendering on frames that miss the deadline while still firing the VBlank interrupt every frame. This improves display smoothness on hosts near but below the 60 fps target. Audio quality is unaffected by frame skip; underruns remain on any platform below 60 fps. Frame skip can be disabled with `--frame-skip none`.
 
 `--speed` scales the target frame rate (e.g. `--speed 2.0` runs the game at 2× real time on a capable host). It does not compensate for insufficient host throughput and does not improve audio quality on slow hardware.
 
@@ -308,6 +315,12 @@ python . path/to/game.rom --break-point C000,D000
 
 # Run 300 frames headlessly and capture VDP trace (no SDL window)
 python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.log
+
+# Benchmark: run headlessly for 10s (default) and report average FPS
+python . path/to/game.rom --benchmark
+
+# Benchmark for 30s starting from a saved scene
+python . path/to/game.rom --benchmark 30 --resume saves/states/game_20260605_120000.state
 ```
 
 ### Command-line options
@@ -329,6 +342,7 @@ python . path/to/game.rom --count-frame 300 --vdp-trace --vdp-trace-out trace.lo
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
+| `--benchmark [SECONDS]` | _(none)_ | Run headlessly, unthrottled, for SECONDS (default: 10) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 (MSX2 only) |
 | `--watch-point ADDRS` | _(none)_ | Watchpoint addresses, max 4 (MSX2 only); append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r` |
 
