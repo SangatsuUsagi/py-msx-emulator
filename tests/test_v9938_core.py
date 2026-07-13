@@ -306,3 +306,49 @@ def test_display_width_256_for_screen8() -> None:
     vdp = V9938()
     vdp.regs[0] = 0x0E  # M3+M4+M5 → SCREEN 8 (G7), 256 wide 8bpp
     assert vdp.display_width == 256
+
+
+# ---------------------------------------------------------------------------
+# Port 0x9B: indirect register access via the R#17 pointer (auto-increment)
+# ---------------------------------------------------------------------------
+
+def _set_r17(vdp: V9938, value: int) -> None:
+    """Point R#17 at a register (bit7 set = no auto-increment)."""
+    vdp.write_port(0x99, value & 0xFF)
+    vdp.write_port(0x99, 0x80 | 17)
+
+
+def test_indirect_write_auto_increments_r17() -> None:
+    vdp = V9938()
+    _set_r17(vdp, 0)  # point R#0, auto-increment on
+    for val in (0x00, 0x20, 0x06, 0x80):
+        vdp.write_port(0x9B, val)
+    assert vdp.regs[0] == 0x00
+    assert vdp.regs[1] == 0x20
+    assert vdp.regs[2] == 0x06
+    assert vdp.regs[3] == 0x80
+
+
+def test_indirect_write_through_r17_continues_to_r18() -> None:
+    """Writing a register table across R#17 must keep advancing (17 -> 18),
+    not restart from the value just stored into R#17. Regression: the MSX2 BIOS
+    writes R#0-R#23 in one auto-incrementing block; storing R#17=0 mid-block
+    used to reset the pointer to 1 and clobber R#1+."""
+    vdp = V9938()
+    _set_r17(vdp, 15)  # point R#15, auto-increment on
+    # R#15, R#16, R#17(=0), R#18, R#19
+    for val in (0x01, 0x02, 0x00, 0x44, 0x55):
+        vdp.write_port(0x9B, val)
+    assert vdp.regs[18] == 0x44
+    assert vdp.regs[19] == 0x55
+
+
+def test_indirect_write_no_increment_when_aii_set() -> None:
+    vdp = V9938()
+    # point R#2 with AII (bit7) set -> no auto-increment: all writes hit R#2
+    vdp.write_port(0x99, 0x80 | 2)
+    vdp.write_port(0x99, 0x80 | 17)
+    for val in (0x11, 0x22, 0x33):
+        vdp.write_port(0x9B, val)
+    assert vdp.regs[2] == 0x33
+    assert vdp.regs[3] == 0x00
