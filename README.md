@@ -47,6 +47,7 @@ py-msx-emulator is a functional MSX1/MSX2 emulator targeting accurate hardware r
 - **RAM mapper** — 128 KB main RAM (8 × 16 KB segments), segment registers at ports 0xFC–0xFF
 - **RTC** — RP5C01 real-time clock, ports 0xB4–0xB5
 - **Cartridge mappers** — Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC), ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type; auto-detected from a SHA1-based ROM database
+- **Floppy disk drive (WD2793)** — generic FDC layer (disk image / drive / controller / connection-style interface) with a WD2793 controller and Sony/Philips connection style, as used by the Sony HB-F1XD; memory-mapped registers in slot 3 sub-slot 0, `*.dsk` images mounted via `--disc1`, supports Disk BASIC boot, `CALL FORMAT`, and file read/write with write-back on exit
 - **SDL2 frontend** — 768×576 window by default (256×192 × scale 3; SCREEN 6/7 resize to maintain aspect ratio), hardware palette, mono audio at 44100 Hz, fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP pixel render suppressed on late frames; VBlank interrupt still fires every frame)
 - **Physical joystick** — SDL2 GameController and raw joystick APIs, hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
 - **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, mapper banks) as a stdlib JSON container, PNG screenshot alongside each save, `saves/states/latest.*` symlinks for quick resume
@@ -298,6 +299,12 @@ python . path/to/game.rom --speed 2.0
 # Dual cartridge (slot 1 and slot 2)
 python . path/to/game1.rom --slot2 path/to/game2.rom
 
+# Sony HB-F1XD with a floppy disk mounted in drive A (boots Disk BASIC)
+python . --machine hb_f1xd --disc1 path/to/disk.dsk
+
+# Create a blank 720 KB disk to format with CALL FORMAT
+python scripts/make_blank_dsk.py blank.dsk
+
 # Force a specific mapper type
 python . path/to/game.rom --mapper KonamiSCC
 
@@ -333,6 +340,7 @@ python . path/to/game.rom --benchmark 30 --resume saves/states/game_20260605_120
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
+| `--disc1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames; `none` disables |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
@@ -388,6 +396,11 @@ Hardware topology — VDP type, RAM size, slot wiring, ROM files — is declared
 | `cbios_msx2_jp` | MSX2 | Japan (default) | V9938 |
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
+| `hb_f1xd` | MSX2 | Japan | V9938 |
+
+`hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
+disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and
+`hb-f1xd_disk.rom` under `roms/hb_f1xd/` and mount a disk with `--disc1`.
 
 ### Machine YAML structure
 

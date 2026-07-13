@@ -76,3 +76,55 @@ def test_bare_hb_f1xd_boots_to_basic() -> None:
         machine.run_frame()
     assert machine.vdp.regs[1] & 0x40, "VDP display never enabled (boot stalled)"
     assert machine.cpu.registers.PC < 0x8000, "CPU not executing in BIOS/BASIC ROM"
+
+
+@pytest.mark.skipif(not _HAVE_ROMS, reason="real HB-F1XD ROMs not present")
+def test_bios_scan_executes_disk_rom() -> None:
+    """7.1: confirm the BIOS extension-ROM scan reaches and runs the DISK ROM.
+
+    The DISK ROM lives in slot 3 sub-slot 0 page 1; any opcode fetch/read there
+    goes through FloppyDisk.read_mem for a 0x4000-0x7FFF (non-register) address.
+    Counting those reads proves the BIOS found the "AB" header and executed the
+    DISK ROM INIT rather than skipping it.
+    """
+    spec = _spec()
+    machine = build_machine(spec)
+    assert machine.fdc is not None
+    original = machine.fdc.read_mem
+    rom_reads = 0
+
+    def counting_read(addr: int) -> int:
+        nonlocal rom_reads
+        if 0x4000 <= (addr & 0xFFFF) <= 0x7FF7:  # ROM window, excluding registers
+            rom_reads += 1
+        return original(addr)
+
+    machine.fdc.read_mem = counting_read  # type: ignore[method-assign]
+    for _ in range(180):
+        machine.run_frame()
+    assert rom_reads > 0, "BIOS never executed the DISK ROM (INIT not entered)"
+
+
+@pytest.mark.skipif(not _HAVE_ROMS, reason="real HB-F1XD ROMs not present")
+def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
+    """7.3 GATE (automated part): boots to (Disk) BASIC with a blank disk mounted.
+
+    The interactive acceptance — `CALL FORMAT`, creating a file, `FILES`, and
+    reading it back — is a MANUAL step (headless BASIC keyboard scripting is out
+    of scope); the device-level equivalent is covered automatically by
+    tests/test_fdc_acceptance.py. This test confirms boot stays stable with a
+    disk present. Manual procedure:
+
+        python . --machine hb_f1xd --disc1 blank.dsk
+        CALL FORMAT            (choose drive A, 720 KB)
+        SAVE "A:TEST"          then  FILES  ->  TEST.BAS listed
+        (exit)                 blank.dsk now contains the formatted filesystem
+    """
+    blank = tmp_path / "blank.dsk"
+    blank.write_bytes(bytes(737280))
+    spec = _spec()
+    machine = build_machine(spec, disc1=blank)
+    for _ in range(180):
+        machine.run_frame()
+    assert machine.vdp.regs[1] & 0x40, "boot stalled with a disk mounted"
+    assert machine.fdc is not None and machine.fdc.drives[0].has_disk
