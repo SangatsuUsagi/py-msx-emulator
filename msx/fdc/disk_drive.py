@@ -1,26 +1,24 @@
 """A single floppy disk drive: head position, side, and geometry mapping.
 
 Translates the FDC's (track, side, sector) request into a logical sector number
-(LSN) for the mounted image. Milestone 1 uses fixed 720 KB 2DD geometry
-(9 sectors/track, 2 sides, 80 tracks); boot-sector BPB detection is a follow-up.
+(LSN) for the mounted image, using the mounted image's geometry (derived from its
+boot-sector BPB, falling back to 720 KB 2DD). The LSN ordering interleaves sides
+within a cylinder (MSX-DOS ``.dsk`` layout):
+``LSN = (track * sides + side) * sectors_per_track + (sector - 1)``.
 """
 from __future__ import annotations
 
-from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.disk_image import (
+    FALLBACK_SECTORS_PER_TRACK,
+    FALLBACK_SIDES,
+    DskDiskImage,
+)
 
-# Fixed 720 KB 2DD geometry (see module docstring; BPB detection is deferred).
-SECTORS_PER_TRACK: int = 9
-SIDES: int = 2
 FORMAT_FILL: int = 0xE5
 
 
 class DiskDrive:
-    """One drive with a physical head position and an optional mounted image.
-
-    LSN ordering interleaves sides within a cylinder (MSX-DOS ``.dsk`` layout):
-    ``LSN = (track * SIDES + side) * SECTORS_PER_TRACK + (sector - 1)`` with
-    ``sector`` 1-based as issued by the FDC.
-    """
+    """One drive with a physical head position and an optional mounted image."""
 
     def __init__(self, image: DskDiskImage | None = None):
         self.image = image
@@ -41,9 +39,16 @@ class DiskDrive:
     def unmount(self) -> None:
         self.image = None
 
+    def _geometry(self) -> tuple[int, int]:
+        """(sectors_per_track, sides) from the mounted image, or the 2DD default."""
+        if self.image is not None:
+            return self.image.sectors_per_track, self.image.sides
+        return FALLBACK_SECTORS_PER_TRACK, FALLBACK_SIDES
+
     def lsn(self, track: int, side: int, sector: int) -> int:
         """Logical sector number for (track, side, 1-based sector)."""
-        return (track * SIDES + side) * SECTORS_PER_TRACK + (sector - 1)
+        spt, sides = self._geometry()
+        return (track * sides + side) * spt + (sector - 1)
 
     def read_sector(self, track: int, side: int, sector: int) -> bytes | None:
         """Return sector bytes, or None if no disk / sector out of geometry."""
@@ -71,8 +76,9 @@ class DiskDrive:
         """
         if self.image is None or self.image.write_protected:
             return False
+        spt, _ = self._geometry()
         blank = bytes([fill & 0xFF]) * 512
-        for sector in range(1, SECTORS_PER_TRACK + 1):
+        for sector in range(1, spt + 1):
             lsn = self.lsn(track, side, sector)
             if 0 <= lsn < self.image.num_sectors:
                 self.image.write_sector(lsn, blank)
