@@ -15,7 +15,7 @@ from msx.machine_loader import build_machine, load_device_registry, load_machine
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
 _ROM_DIR = _ROOT / "roms" / "hb_f1xd"
-_REQUIRED_ROMS = ("hb-f1xd_basic-bios2.rom", "hb-f1xd_msx2sub.rom")
+_REQUIRED_ROMS = ("hb-f1xd_basic-bios2.rom", "hb-f1xd_msx2sub.rom", "hb-f1xd_disk.rom")
 _HAVE_ROMS = all((_ROM_DIR / name).exists() for name in _REQUIRED_ROMS)
 
 
@@ -36,7 +36,10 @@ def test_loader_resolves_flat_ram_subslot() -> None:
 def test_build_wires_flat_64k_ram() -> None:
     spec = _spec()
     machine = build_machine(
-        spec, bios_override=bytes(32768), extrom_override=bytes(16384)
+        spec,
+        bios_override=bytes(32768),
+        extrom_override=bytes(16384),
+        disk_rom_override=bytes(16384),
     )
     assert machine.memory.flat_ram_subslot == 3
     assert machine.memory.ram_mapper is None
@@ -46,7 +49,10 @@ def test_build_wires_flat_64k_ram() -> None:
 def test_flat_ram_read_write_through_machine_memory() -> None:
     spec = _spec()
     machine = build_machine(
-        spec, bios_override=bytes(32768), extrom_override=bytes(16384)
+        spec,
+        bios_override=bytes(32768),
+        extrom_override=bytes(16384),
+        disk_rom_override=bytes(16384),
     )
     mem = machine.memory
     mem.slot_register = 0xFF   # all pages -> slot 3
@@ -57,11 +63,12 @@ def test_flat_ram_read_write_through_machine_memory() -> None:
 
 @pytest.mark.skipif(not _HAVE_ROMS, reason="real HB-F1XD ROMs not present")
 def test_bare_hb_f1xd_boots_to_basic() -> None:
-    """GATE: with real BIOS+SUB ROMs and no floppy, boot reaches MSX BASIC.
+    """GATE: with the real ROMs and the FDC present (no disk mounted), boot reaches
+    (Disk) BASIC.
 
     Proxy for "BASIC ready": the VDP display is enabled and the CPU is executing
-    in the slot-0 BIOS/BASIC ROM (PC < 0x8000) rather than hung. Confirms the
-    flat 64 KB RAM in sub-slot 3 is usable as system RAM.
+    in the slot-0 BIOS/BASIC ROM (PC < 0x8000) rather than hung. Confirms the flat
+    64 KB RAM in sub-slot 3 is usable and the DISK ROM does not stall the boot.
     """
     spec = _spec()
     machine = build_machine(spec)
