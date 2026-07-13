@@ -443,8 +443,13 @@ class V9938:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
                 self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=self._frame_count)
-            if not (self.regs[17] & 0x80):  # AII (bit7) clear → auto-increment
-                self.regs[17] = (self.regs[17] & 0xC0) | (((self.regs[17] & 0x3F) + 1) & 0x3F)
+            # Auto-increment the R#17 pointer from its value BEFORE this write.
+            # The MSX2 BIOS writes a full R#0-R#23 table via auto-increment; when
+            # the pointer reaches R#17 the table stores a value into R#17 itself,
+            # and the sequence must continue to R#18 (not restart from the value
+            # just written). The AII bit reflects the post-write R#17.
+            if not (r17_before & 0x80):  # AII (bit7) clear → auto-increment
+                self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
         elif port == 0x9C:
             self._cmd_data_write(value)
 
