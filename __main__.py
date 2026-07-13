@@ -52,6 +52,10 @@ def main() -> None:
     parser.add_argument("--count-frame", type=int, default=None, metavar="N",
                         dest="count_frame",
                         help="Run exactly N frames headlessly and exit (no SDL window)")
+    parser.add_argument("--benchmark", nargs="?", type=float, const=10.0, default=None,
+                        metavar="SECONDS",
+                        help="Run headlessly, unthrottled, for SECONDS (default: 10) and "
+                             "report average FPS (no SDL window)")
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
                         help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
@@ -60,6 +64,10 @@ def main() -> None:
                         help="Comma-separated watchpoint addresses, max 4 (MSX2 only; "
                              "breaks on read or write)")
     args = parser.parse_args()
+
+    if args.benchmark is not None and args.count_frame is not None:
+        print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
@@ -174,6 +182,8 @@ def main() -> None:
         print(f"map-trace: {'stdout' if args.mapper_trace_out is None else args.mapper_trace_out}")
     if args.count_frame is not None:
         print(f"frames  : {args.count_frame} (headless)")
+    if args.benchmark is not None:
+        print(f"benchmark: {args.benchmark}s (headless)")
 
     from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -228,6 +238,24 @@ def main() -> None:
         if args.count_frame is not None:
             for _ in range(args.count_frame):
                 machine.run_frame()
+        elif args.benchmark is not None:
+            import time
+
+            from msx.state import load_state
+            if args.resume is not None:
+                load_state(machine, path=Path(args.resume) if args.resume else None)
+
+            frame_count = 0
+            start = time.perf_counter()
+            deadline = start + args.benchmark
+            while time.perf_counter() < deadline:
+                machine.run_frame()
+                frame_count += 1
+            elapsed = time.perf_counter() - start
+
+            print(f"frames  : {frame_count}")
+            print(f"elapsed : {elapsed:.2f}s")
+            print(f"avg fps : {frame_count / elapsed:.2f}")
         else:
             from frontend.sdl2_frontend import run
             run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
