@@ -9,9 +9,12 @@ import hashlib
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
+
+if TYPE_CHECKING:
+    from msx.fdc.interface import FloppyDisk
 
 import msx.romdb as romdb
 from msx.cpu.z80 import Z80
@@ -180,6 +183,16 @@ class _FdcDef:
     controller: str
     connection_style: str
     drives: int
+
+
+@dataclass
+class _Slot3Msx2:
+    """Resolved MSX2 slot 3 layout (named to avoid a positional tuple)."""
+    sub_rom: _RomEntry | None = None
+    has_ram_mapper: bool = False
+    flat_ram_subslot: int | None = None
+    flat_ram_size_kb: int = 64
+    fdc: _FdcDef | None = None
 
 
 @dataclass
@@ -353,22 +366,15 @@ def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
     )
 
 
-def _parse_slot3_msx2(
-    slot3: dict[str, Any], machine_id: str
-) -> tuple[_RomEntry | None, bool, int | None, int, _FdcDef | None]:
-    """Resolve an MSX2 slot 3 declaration.
+def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
+    """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
-    Returns (sub_rom_entry, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb,
-    fdc). A sub-slot declaring `type: ram` without `mapper: standard` is a flat
+    A sub-slot declaring `type: ram` without `mapper: standard` is a flat
     (non-mapper) RAM (e.g. HB-F1XD's 64 KB in sub-slot 3); a `mapper: standard`
     sub-slot sets has_ram_mapper as before. An `fdc:` block in sub-slot 0
     resolves the floppy interface.
     """
-    sub_rom: _RomEntry | None = None
-    has_ram_mapper = False
-    flat_ram_subslot: int | None = None
-    flat_ram_size_kb = 64
-    fdc: _FdcDef | None = None
+    result = _Slot3Msx2()
     if slot3.get("expanded"):
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         sub0: Any = secondary.get(0, {})
@@ -376,22 +382,22 @@ def _parse_slot3_msx2(
             for item in sub0.get("content", []):
                 rom_data: Any = item.get("rom")
                 if isinstance(rom_data, dict):
-                    sub_rom = _parse_rom_entry(
+                    result.sub_rom = _parse_rom_entry(
                         rom_data, f"machine '{machine_id}' slot 3 sub-slot 0"
                     )
                     break
-            fdc = _parse_fdc(sub0, machine_id)
+            result.fdc = _parse_fdc(sub0, machine_id)
         for sub_idx, sub_val in secondary.items():
             if not isinstance(sub_val, dict):
                 continue
             if sub_val.get("mapper") == "standard":
-                has_ram_mapper = True
+                result.has_ram_mapper = True
             elif sub_val.get("type") == "ram":
-                flat_ram_subslot = sub_idx
-                flat_ram_size_kb = int(sub_val.get("size_kb", 64))
+                result.flat_ram_subslot = sub_idx
+                result.flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
-        has_ram_mapper = True
-    return sub_rom, has_ram_mapper, flat_ram_subslot, flat_ram_size_kb, fdc
+        result.has_ram_mapper = True
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -486,8 +492,12 @@ def load_machine_spec(
         slot3 = {}
 
     if generation == "msx2":
-        (sub_rom_entry, has_ram_mapper, flat_ram_subslot,
-         flat_ram_size_kb, fdc) = _parse_slot3_msx2(slot3, machine_id)
+        s3 = _parse_slot3_msx2(slot3, machine_id)
+        sub_rom_entry = s3.sub_rom
+        has_ram_mapper = s3.has_ram_mapper
+        flat_ram_subslot = s3.flat_ram_subslot
+        flat_ram_size_kb = s3.flat_ram_size_kb
+        fdc = s3.fdc
     else:
         ram_size_kb = _parse_slot3_msx1(slot3)
 
@@ -789,7 +799,7 @@ def _build_fdc(
     spec: MachineSpec,
     fdd_images: list[Path | None],
     disk_rom_override: bytes | None,
-) -> Any:
+) -> "FloppyDisk":
     """Construct the FloppyDisk device from spec.fdc, mounting each image in
     fdd_images into the drive with the matching index (fdd_images[0] -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive

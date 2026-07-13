@@ -14,6 +14,7 @@ from msx.fdc.wd2793 import (
     TRACK_BYTES,
     WD2793,
     WRITE_PROTECTED,
+    Mode,
 )
 
 _2DD = 737280
@@ -136,7 +137,7 @@ def test_force_interrupt_aborts_busy_command(tmp_path: Path) -> None:
     assert wd.get_status() & BUSY
     wd.set_command(0xD0)          # FORCE INTERRUPT
     assert not (wd.get_status() & BUSY)
-    assert wd._mode == "idle"
+    assert wd._mode is Mode.IDLE
 
 
 def test_multi_sector_flag_decoded_as_single(tmp_path: Path) -> None:

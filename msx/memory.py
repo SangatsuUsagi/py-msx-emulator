@@ -33,7 +33,8 @@ class Memory:
     # everywhere else. None keeps the legacy mapper / MSX1 flat-top behaviour.
     flat_ram_subslot: int | None = field(default=None)
     # Memory-mapped floppy interface in slot 3 sub-slot 0 page 1 (0x4000-0x7FFF);
-    # duck-typed with read_mem(addr)/write_mem(addr, value). None when no FDC.
+    # the concrete FloppyDisk base exposes read_mem(addr)/write_mem(addr, value).
+    # None when the machine has no FDC.
     fdc: "FloppyDisk | None" = field(default=None, repr=False)
     rom_name: str = ""
     sub0_rom_name: str = ""
@@ -65,8 +66,21 @@ class Memory:
             return (~self.sub_slot_reg) & 0xFF
         page = (addr >> 14) & 0x03
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        if self.flat_ram_subslot is not None:
-            return self._read_slot3_flat(addr, page, sub)
+        frs = self.flat_ram_subslot
+        if frs is not None:
+            # Data-driven MSX2 slot-3 (e.g. HB-F1XD), inlined for the per-access
+            # hot path: SUB ROM in sub-slot 0 page 0, memory-mapped FDC in sub-slot
+            # 0 page 1, flat 64 KB RAM (offset == address) in `frs`, else open bus.
+            if sub == 0:
+                if page == 0 and self.sub0_rom is not None:
+                    return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
+                if page == 1 and self.fdc is not None:
+                    return self.fdc.read_mem(addr)
+                return 0xFF
+            if sub == frs:
+                ram = self.ram
+                return ram[addr] if addr < len(ram) else 0xFF
+            return 0xFF
         # Sub-slot dispatch (explicit per sub value for a clean port to match):
         #   0: extension ROM in page 0 (if present), else main RAM
         #   1: reserved / unmapped -> 0xFF
@@ -106,9 +120,18 @@ class Memory:
             return
         page = (addr >> 14) & 0x03
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        if self.flat_ram_subslot is not None:
-            self._write_slot3_flat(addr, value, page, sub)
-            return
+        frs = self.flat_ram_subslot
+        if frs is not None:
+            # Data-driven MSX2 slot-3 write, inlined for the hot path (see read()).
+            if sub == 0:
+                if page == 1 and self.fdc is not None:
+                    self.fdc.write_mem(addr, value)
+                return  # SUB ROM (page 0) / open-bus pages ignore writes
+            if sub == frs:
+                ram = self.ram
+                if addr < len(ram):
+                    ram[addr] = value
+            return  # empty sub-slots ignore writes
         if sub == 1:
             return  # reserved, ignore
         if sub == 0 and self.sub0_rom is not None:
@@ -121,34 +144,6 @@ class Memory:
         off = addr - (0x10000 - len(self.ram))
         if 0 <= off < len(self.ram):
             self.ram[off] = value
-
-    def _read_slot3_flat(self, addr: int, page: int, sub: int) -> int:
-        """Data-driven MSX2 slot-3 read (e.g. HB-F1XD).
-
-        Sub-slot 0 page 0 serves the SUB ROM; the designated flat-RAM sub-slot
-        serves 64 KB of RAM (offset == address); every other sub-slot/page is
-        open bus (0xFF). The FDC in sub-slot 0 page 1 is wired by a later change.
-        """
-        if sub == 0:
-            if page == 0 and self.sub0_rom is not None:
-                return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
-            if page == 1 and self.fdc is not None:
-                return self.fdc.read_mem(addr)
-            return 0xFF
-        if sub == self.flat_ram_subslot:
-            return self.ram[addr] if addr < len(self.ram) else 0xFF
-        return 0xFF
-
-    def _write_slot3_flat(self, addr: int, value: int, page: int, sub: int) -> None:
-        """Data-driven MSX2 slot-3 write (see _read_slot3_flat)."""
-        if sub == 0:
-            if page == 1 and self.fdc is not None:
-                self.fdc.write_mem(addr, value)
-            return  # SUB ROM (page 0) and open-bus pages ignore writes
-        if sub == self.flat_ram_subslot:
-            if addr < len(self.ram):
-                self.ram[addr] = value
-        # Empty sub-slots ignore writes.
 
     def main_ram_range(self) -> tuple[int, int]:
         """Conventional main-RAM address window, for stack-sanity checks.

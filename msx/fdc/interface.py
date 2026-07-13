@@ -54,9 +54,9 @@ class FloppyDisk:
 
     def flush(self) -> None:
         """Flush every mounted image's pending writes back to its file."""
-        for d in self.drives:
-            if d.image is not None:
-                d.image.flush()
+        for drive in self.drives:
+            if drive.image is not None:
+                drive.image.flush()
 
     def read_mem(self, addr: int) -> int:
         raise NotImplementedError
@@ -142,8 +142,8 @@ class SonyPhilipsInterface(FloppyDisk):
         elif reg == 0x3FFC:
             # bit 0 = side select
             self.side_reg = value
-            for d in self.drives:
-                d.side = value & 1
+            for drive in self.drives:
+                drive.side = value & 1
         elif reg == 0x3FFD:
             # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none); bit 7 -> motor.
             self.drive_reg = value
