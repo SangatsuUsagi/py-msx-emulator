@@ -11,6 +11,11 @@ from pathlib import Path
 
 SECTOR_SIZE: int = 512
 
+# Fallback geometry when the boot sector holds no recognised MSX-DOS BPB
+# (e.g. a blank/unformatted image): 720 KB 2DD, 9 sectors/track, 2 sides.
+FALLBACK_SECTORS_PER_TRACK: int = 9
+FALLBACK_SIDES: int = 2
+
 
 class DskDiskImage:
     """Linear 512-byte-sector disk image backed by a ``*.dsk`` file.
@@ -37,6 +42,29 @@ class DskDiskImage:
         if write_protected is None:
             write_protected = not os.access(self.path, os.W_OK)
         self._write_protected = bool(write_protected)
+        self.sectors_per_track, self.sides = self._read_geometry()
+
+    def _read_geometry(self) -> tuple[int, int]:
+        """Derive (sectors_per_track, sides) from the FAT12 boot-sector BPB.
+
+        BPB fields (little-endian): 0x0B bytes/sector, 0x13 total sectors,
+        0x18 sectors/track, 0x1A number of heads. Falls back to 720 KB 2DD when
+        the boot sector is not a recognised MSX-DOS BPB (e.g. a blank image),
+        validated by a 512-byte sector size, sane geometry, and a total-sector
+        count that matches the file size.
+        """
+        d = self._data
+        if len(d) >= SECTOR_SIZE:
+            bytes_per_sector = d[0x0B] | (d[0x0C] << 8)
+            total = d[0x13] | (d[0x14] << 8)
+            spt = d[0x18] | (d[0x19] << 8)
+            heads = d[0x1A] | (d[0x1B] << 8)
+            if (bytes_per_sector == SECTOR_SIZE
+                    and 1 <= spt <= 63
+                    and heads in (1, 2)
+                    and total == self.num_sectors):
+                return spt, heads
+        return FALLBACK_SECTORS_PER_TRACK, FALLBACK_SIDES
 
     @property
     def num_sectors(self) -> int:
