@@ -122,3 +122,68 @@ def test_format_track_blanks_sectors_to_e5(tmp_path: Path) -> None:
     assert drive.format_track(2, 1) is True
     sector = drive.read_sector(2, 1, 1)
     assert sector == b"\xe5" * SECTOR_SIZE
+
+
+# --- BPB geometry detection ----------------------------------------------
+
+def _bpb_image(path: Path, *, total: int, spt: int, heads: int,
+               bytes_per_sector: int = 512) -> Path:
+    """Create a *.dsk whose LSN 0 holds a FAT12 BPB with the given geometry."""
+    data = bytearray(total * 512)
+    data[0x00:0x03] = b"\xeb\xfe\x90"          # jump + nop
+    data[0x0B] = bytes_per_sector & 0xFF
+    data[0x0C] = (bytes_per_sector >> 8) & 0xFF
+    data[0x13] = total & 0xFF
+    data[0x14] = (total >> 8) & 0xFF
+    data[0x18] = spt & 0xFF
+    data[0x19] = (spt >> 8) & 0xFF
+    data[0x1A] = heads & 0xFF
+    data[0x1B] = (heads >> 8) & 0xFF
+    path.write_bytes(data)
+    return path
+
+
+def test_bpb_720k_double_sided(tmp_path: Path) -> None:
+    img = DskDiskImage(_bpb_image(tmp_path / "2dd.dsk", total=1440, spt=9, heads=2))
+    assert img.sectors_per_track == 9
+    assert img.sides == 2
+
+
+def test_bpb_360k_single_sided(tmp_path: Path) -> None:
+    img = DskDiskImage(_bpb_image(tmp_path / "1dd.dsk", total=720, spt=9, heads=1))
+    assert img.sectors_per_track == 9
+    assert img.sides == 1
+
+
+def test_single_sided_geometry_changes_lsn(tmp_path: Path) -> None:
+    """With sides=1 the second track begins after one side, not two."""
+    drive = DiskDrive(DskDiskImage(_bpb_image(tmp_path / "1dd.dsk", total=720,
+                                              spt=9, heads=1)))
+    assert drive.lsn(1, 0, 1) == 9   # single-sided: track 1 after 1 side x 9
+    assert drive.lsn(0, 0, 1) == 0
+
+
+def test_blank_image_falls_back_to_2dd(tmp_path: Path) -> None:
+    img = DskDiskImage(_make_dsk(tmp_path / "blank.dsk", fill=0xE5))
+    assert (img.sectors_per_track, img.sides) == (9, 2)
+
+
+def test_invalid_bpb_falls_back_to_2dd(tmp_path: Path) -> None:
+    # Wrong bytes-per-sector (not 512) -> not a recognised BPB.
+    img = DskDiskImage(_bpb_image(tmp_path / "bad.dsk", total=1440, spt=8,
+                                  heads=1, bytes_per_sector=256))
+    assert (img.sectors_per_track, img.sides) == (9, 2)
+
+
+def test_bpb_total_mismatch_falls_back(tmp_path: Path) -> None:
+    # BPB total (700) disagrees with the actual file size (1440 sectors).
+    p = tmp_path / "mismatch.dsk"
+    _make_dsk(p)  # 1440-sector file
+    data = bytearray(p.read_bytes())
+    data[0x0B:0x0D] = b"\x00\x02"  # 512
+    data[0x13:0x15] = (700).to_bytes(2, "little")
+    data[0x18:0x1A] = (9).to_bytes(2, "little")
+    data[0x1A:0x1C] = (1).to_bytes(2, "little")
+    p.write_bytes(data)
+    img = DskDiskImage(p)
+    assert (img.sectors_per_track, img.sides) == (9, 2)
