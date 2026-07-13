@@ -35,6 +35,8 @@ def main() -> None:
                                  "Konami", "Majutsushi"],
                         default="auto",
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
+    parser.add_argument("--disc1", default=None, metavar="DSK",
+                        help="Floppy disk image (*.dsk) to mount in drive A")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
                         help="Resume from a save state (default: saves/states/latest.state)")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
@@ -82,6 +84,11 @@ def main() -> None:
         print(f"error: slot 2 ROM not found: {slot2_path}", file=sys.stderr)
         sys.exit(1)
 
+    disc1_path = Path(args.disc1) if args.disc1 else None
+    if disc1_path is not None and not disc1_path.exists():
+        print(f"error: disk image not found: {disc1_path}", file=sys.stderr)
+        sys.exit(1)
+
     cartridge: bytes | None = cart_path.read_bytes() if cart_path else None
     cartridge2: bytes | None = slot2_path.read_bytes() if slot2_path else None
 
@@ -108,6 +115,12 @@ def main() -> None:
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    # --- Disk image only applies to machines with a floppy interface ---
+    if disc1_path is not None and spec.fdc is None:
+        print("warning: --disc1 given but machine has no floppy interface; ignoring",
+              file=sys.stderr)
+        disc1_path = None
 
     # --- Resolve display mapper for summary ---
     if args.mapper != "auto":
@@ -175,6 +188,8 @@ def main() -> None:
     print(f"bios    : {spec.main_rom_entry.file}")
     if spec.generation == "msx2" and spec.sub_rom_entry is not None:
         print(f"ext     : {spec.sub_rom_entry.file}")
+    if disc1_path is not None:
+        print(f"disc1   : {disc1_path}")
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
@@ -210,6 +225,7 @@ def main() -> None:
                 mapper2=args.mapper2,
                 logger=logger,
                 tracer=tracer,
+                disc1=disc1_path,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -272,6 +288,9 @@ def main() -> None:
             if hasattr(mapper, "save_sram"):
                 machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
                 mapper.save_sram(machine.sram_save_path)
+        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
+        if machine is not None and machine.fdc is not None:
+            machine.fdc.flush()
 
 
 if __name__ == "__main__":
