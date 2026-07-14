@@ -10,7 +10,7 @@ from msx.psg import SAMPLE_RATE
 # (software PCM upsampled from ~11 kHz, the ultrasonic tone carrier) while leaving
 # the audible band essentially flat, mirroring the analog RC filter on real MSX
 # audio output.
-_DEFAULT_CUTOFF_HZ: float = 10_000.0
+_DEFAULT_CUTOFF_HZ: float = 8_000.0
 _BUTTERWORTH_Q: float = 0.7071067811865476   # 1/sqrt(2)
 
 
