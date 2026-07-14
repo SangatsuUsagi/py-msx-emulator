@@ -246,19 +246,46 @@ class PSG:
             ticks = clk_frac // SAMPLE_RATE
             clk_frac %= SAMPLE_RATE
 
-            # tone channels (inline _step_tone)
-            tc0 -= ticks
-            while tc0 <= 0:
-                tc0 += tp0
+            # tone channels (inline _step_tone).  Integrate the square wave over
+            # the sample instead of point-sampling: hi0/hi1/hi2 count the PSG
+            # ticks the output was high across the `ticks` clocks of this sample.
+            # For audible tones (no toggle within a sample) hi == ticks or 0, so
+            # this is identical to point-sampling; for ultrasonic tones (period
+            # 0/1, the software-PCM carrier) it yields the ~50% duty average the
+            # real analog output produces, instead of aliasing to full/zero.
+            rem = ticks
+            hi0 = 0
+            while tc0 <= rem:
+                if to0:
+                    hi0 += tc0
+                rem -= tc0
                 to0 ^= 1
-            tc1 -= ticks
-            while tc1 <= 0:
-                tc1 += tp1
+                tc0 = tp0
+            if to0:
+                hi0 += rem
+            tc0 -= rem
+            rem = ticks
+            hi1 = 0
+            while tc1 <= rem:
+                if to1:
+                    hi1 += tc1
+                rem -= tc1
                 to1 ^= 1
-            tc2 -= ticks
-            while tc2 <= 0:
-                tc2 += tp2
+                tc1 = tp1
+            if to1:
+                hi1 += rem
+            tc1 -= rem
+            rem = ticks
+            hi2 = 0
+            while tc2 <= rem:
+                if to2:
+                    hi2 += tc2
+                rem -= tc2
                 to2 ^= 1
+                tc2 = tp2
+            if to2:
+                hi2 += rem
+            tc2 -= rem
 
             # noise (inline _step_noise): 17-bit LFSR, taps at bits 0 and 3
             nc -= ticks
@@ -287,14 +314,28 @@ class PSG:
             env_amp = _VOL_TABLE[(env_step ^ env_attack) >> 1]
             noise_bit = lfsr & 1
 
-            # mixer: channel output = tone AND noise (disabled generator → 1)
+            # mixer: channel output = tone AND noise (disabled generator → 1).
+            # Tone contributes its integrated level hiN/ticks; noise (broadband)
+            # is point-sampled. Disabled tone → full level (hi == ticks).
             sample = 0
-            if (to0 if tone_en0 else 1) & (noise_bit if noise_en0 else 1):
-                sample += env_amp if env0 else va0
-            if (to1 if tone_en1 else 1) & (noise_bit if noise_en1 else 1):
-                sample += env_amp if env1 else va1
-            if (to2 if tone_en2 else 1) & (noise_bit if noise_en2 else 1):
-                sample += env_amp if env2 else va2
+            if noise_bit if noise_en0 else 1:
+                amp = env_amp if env0 else va0
+                if not tone_en0 or hi0 == ticks:
+                    sample += amp
+                elif hi0:
+                    sample += amp * hi0 // ticks
+            if noise_bit if noise_en1 else 1:
+                amp = env_amp if env1 else va1
+                if not tone_en1 or hi1 == ticks:
+                    sample += amp
+                elif hi1:
+                    sample += amp * hi1 // ticks
+            if noise_bit if noise_en2 else 1:
+                amp = env_amp if env2 else va2
+                if not tone_en2 or hi2 == ticks:
+                    sample += amp
+                elif hi2:
+                    sample += amp * hi2 // ticks
 
             if sample > 32767:
                 sample = 32767
