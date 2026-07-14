@@ -6,6 +6,7 @@ from array import array
 from pathlib import Path
 from typing import Any
 
+from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
 from msx.joystick import JoystickManager
 from msx.machine import Machine
@@ -162,9 +163,16 @@ def _handle_events(
     return running, fullscreen
 
 
-def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -> bytes:
+def _mix_audio(
+    machine: Machine,
+    frame_start_cycle: int,
+    frame_end_cycle: int,
+    audio_filter: BiquadLowPass | None = None,
+) -> bytes:
     """Generate one frame of audio: PSG plus SCC/DAC when present, mixed and
-    clamped to signed 16-bit. Returns the PCM bytes to queue."""
+    clamped to signed 16-bit. When `audio_filter` is given, the final mixed
+    buffer is passed through it (modelling the analog output low-pass) before
+    being returned. Returns the PCM bytes to queue."""
     psg_buf = machine.psg.generate_samples(
         SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
     )
@@ -176,7 +184,7 @@ def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -
             machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle)
         )
     if not extra_bufs:
-        return bytes(psg_buf)
+        return audio_filter.filter(bytes(psg_buf)) if audio_filter else bytes(psg_buf)
 
     # Batch-decode each PCM buffer to signed 16-bit samples via array("h") (one
     # C call per buffer) instead of a per-sample struct.unpack_from/pack_into.
@@ -200,7 +208,8 @@ def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -
         elif total < _S16_MIN:
             total = _S16_MIN
         out_arr[i] = total
-    return out_arr.tobytes()
+    mixed = out_arr.tobytes()
+    return audio_filter.filter(mixed) if audio_filter else mixed
 
 
 def _upload_to_texture(
@@ -277,6 +286,11 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
+    # Analog-style output low-pass; one persistent instance so IIR state carries
+    # across frames. Reset here so playback starts from clean history.
+    audio_filter = BiquadLowPass()
+    audio_filter.reset()
+
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
 
     if resume is not None:
@@ -340,7 +354,9 @@ def run(
 
                 # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
                 if audio_dev > 0:
-                    audio_buf = _mix_audio(machine, frame_start_cycle, frame_end_cycle)
+                    audio_buf = _mix_audio(
+                        machine, frame_start_cycle, frame_end_cycle, audio_filter
+                    )
                     sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
 
                 # Upload to texture only when frame was rendered
