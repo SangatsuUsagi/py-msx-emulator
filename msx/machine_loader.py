@@ -228,6 +228,10 @@ class MachineSpec:
     cycles_per_frame: int = 59_659   # NTSC default
     lines_per_frame: int = 262       # NTSC default
 
+    # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
+    # 0 = pure datasheet Z80; MSX machines set 1 (the MSX M1 wait state).
+    m1_wait_states: int = 0
+
     # MSX2 flat (non-mapper) RAM sub-slot, e.g. HB-F1XD's 64 KB in sub-slot 3.
     # None when RAM is mapper-backed (the common C-BIOS case).
     flat_ram_subslot: int | None = None
@@ -467,6 +471,10 @@ def load_machine_spec(
         )
     cycles_per_frame, lines_per_frame = _TIMING[video_standard]
 
+    # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
+    cpu_block: dict[str, Any] = raw.get("cpu", {}) or {}
+    m1_wait_states = int(cpu_block.get("m1_wait_states", 0))
+
     # --- Slot parsing ---
     slots: dict[str, Any] = raw.get("slots", {})
     primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
@@ -560,6 +568,7 @@ def load_machine_spec(
         device_io_ports=device_io_ports,
         cycles_per_frame=cycles_per_frame,
         lines_per_frame=lines_per_frame,
+        m1_wait_states=m1_wait_states,
         flat_ram_subslot=flat_ram_subslot,
         flat_ram_size_kb=flat_ram_size_kb,
         fdc=fdc,
@@ -789,7 +798,8 @@ def _build_msx1(
     io.register_write(psg_s, psg_e, psg.write_port)
     io.register_read(ppi_s, ppi_e, ppi.read_port)
     io.register_write(ppi_s, ppi_e, ppi.write_port)
-    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
+    cpu = Z80(read_byte=memory.read, write_byte=memory.write,
+              m1_wait_states=spec.m1_wait_states, _logger=logger)
     return machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
@@ -917,7 +927,8 @@ def _build_msx2(
         io.register_read(ram_s, ram_e, ram_mapper.read_port)
         io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
-    cpu = Z80(read_byte=memory.read, write_byte=memory.write, _logger=logger)
+    cpu = Z80(read_byte=memory.read, write_byte=memory.write,
+              m1_wait_states=spec.m1_wait_states, _logger=logger)
     machine = machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,

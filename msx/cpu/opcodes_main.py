@@ -1579,20 +1579,25 @@ def _op_out_n_a(cpu: Z80) -> int:
     return 11
 
 
+# Prefix handlers add one M1 wait for the second opcode fetch (the byte after the
+# prefix). step() already charged the wait for the prefix byte itself. A DD/FD
+# chain re-enters _op_prefix_dd/_op_prefix_fd via dispatch, so each prefix byte
+# gets exactly one wait; for DDCB/FDCB the displacement and final opcode are
+# operand reads (not M1s) and correctly get none.
 def _op_prefix_cb(cpu: Z80) -> int:
-    return _execute_cb(cpu)
+    return _execute_cb(cpu) + cpu.m1_wait_states
 
 
 def _op_prefix_dd(cpu: Z80) -> int:
-    return _execute_dd_fd(cpu, use_iy=False)
+    return _execute_dd_fd(cpu, use_iy=False) + cpu.m1_wait_states
 
 
 def _op_prefix_fd(cpu: Z80) -> int:
-    return _execute_dd_fd(cpu, use_iy=True)
+    return _execute_dd_fd(cpu, use_iy=True) + cpu.m1_wait_states
 
 
 def _op_prefix_ed(cpu: Z80) -> int:
-    return _execute_ed(cpu)
+    return _execute_ed(cpu) + cpu.m1_wait_states
 
 
 # ---------------------------------------------------------------------------
