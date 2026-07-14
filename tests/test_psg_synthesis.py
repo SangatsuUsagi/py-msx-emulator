@@ -1,7 +1,7 @@
 """Tests for AY-3-8910 PSG synthesiser: tone, noise, envelope, mixer, generate_samples."""
 import struct
 
-from msx.psg import PSG, SAMPLES_PER_FRAME
+from msx.psg import _VOL_TABLE, PSG, SAMPLES_PER_FRAME
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -416,3 +416,21 @@ def test_generator_continuity_across_segment_boundary() -> None:
     _write(sub, 8, 15)          # same value mid-frame -> boundary but no change
     sub_out = sub.generate_samples(200, 0, 1000)
     assert sub_out == ref_out
+
+
+def test_zero_period_tone_carrier_is_not_chopped() -> None:
+    """Software PCM uses tone period 0 (ultrasonic carrier) with tone enabled;
+    the volume register carries the PCM. Point-sampling would alias the ~223 kHz
+    square into a full/zero chop; integrating over the sample yields the ~50%
+    duty average, so a constant volume gives a steady (non-chopped) level."""
+    psg = PSG()
+    psg.regs[7] = 0x3E          # ch0 tone enabled (bit0=0), noise off, others off
+    _set_tone_period(psg, 0, 0)  # period 0 -> ultrasonic carrier
+    psg.regs[8] = 15            # constant full volume
+    s = struct.unpack("<735h", bytes(psg.generate_samples(735)))
+    full = _VOL_TABLE[15]
+    assert all(x > 0 for x in s[1:])          # no zeroed (chopped) samples
+    lo, hi = min(s[1:]), max(s[1:])
+    # Level sits near the 50% duty average (small ±ripple from 5-vs-6 ticks per
+    # sample), never the full/zero alternation that point-sampling would alias to.
+    assert full * 0.3 < lo <= hi < full * 0.7
