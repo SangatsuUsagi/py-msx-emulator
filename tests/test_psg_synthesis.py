@@ -326,3 +326,93 @@ def test_440hz_tone_nonzero_and_transitions() -> None:
     # There must be both zero and non-zero samples (square wave transitions).
     assert any(s == 0 for s in samples)
     assert any(s > 0 for s in samples)
+
+
+# ---------------------------------------------------------------------------
+# Sub-frame register-write timing (software PCM)
+# ---------------------------------------------------------------------------
+
+def _write(psg: PSG, reg: int, value: int) -> None:
+    psg.write_port(0xA0, reg)
+    psg.write_port(0xA1, value)
+
+
+def test_subframe_volume_writes_reproduced() -> None:
+    """Volume writes at distinct cycles within a frame appear at the matching
+    sample positions (PCM not collapsed to the last value)."""
+    psg = PSG()
+    cyc = [0]
+    psg._get_cycle = lambda: cyc[0]
+    n, fs, fe = 100, 0, 1000
+    cyc[0] = 0
+    _write(psg, 7, 0x09)   # ch0: tone+noise disabled -> constant DC = volume(reg8)
+    _write(psg, 8, 15)     # sample 0: full volume
+    cyc[0] = 250
+    _write(psg, 8, 0)      # sample 25: silence
+    cyc[0] = 750
+    _write(psg, 8, 15)     # sample 75: full volume
+    s = struct.unpack("<%dh" % n, bytes(psg.generate_samples(n, fs, fe)))
+    assert s[10] != 0      # first quarter: full
+    assert s[40] == 0      # middle: silent
+    assert s[90] != 0      # last quarter: full
+
+
+def test_single_midframe_write_takes_effect_near_half() -> None:
+    psg = PSG()
+    cyc = [0]
+    psg._get_cycle = lambda: cyc[0]
+    n, fs, fe = 100, 0, 1000
+    cyc[0] = 0
+    _write(psg, 7, 0x09)
+    _write(psg, 8, 15)     # loud from start
+    cyc[0] = 500           # midpoint -> sample 50
+    _write(psg, 8, 0)      # silence from half
+    s = struct.unpack("<%dh" % n, bytes(psg.generate_samples(n, fs, fe)))
+    assert s[10] != 0 and s[40] != 0     # first half loud
+    assert s[60] == 0 and s[90] == 0     # second half silent
+
+
+def test_fast_path_when_no_frame_window() -> None:
+    """generate_samples(n) with no frame window uses the final registers (fast
+    path) and equals a fresh PSG rendered from those same registers."""
+    a = PSG()
+    b = PSG()
+    for reg, val in ((7, 0x38), (8, 12), (0, 0x55), (1, 0x01)):
+        _write(a, reg, val)
+    b.regs = list(a.regs)  # same final registers, no events
+    assert a.generate_samples(64) == b.generate_samples(64)
+
+
+def test_event_buffer_is_bounded_without_generate() -> None:
+    from msx.psg import _MAX_EVENTS
+    psg = PSG()
+    cyc = [0]
+    psg._get_cycle = lambda: cyc[0]
+    for i in range(_MAX_EVENTS + 500):
+        cyc[0] = i
+        _write(psg, 8, i & 0x0F)
+    assert len(psg._events) <= _MAX_EVENTS
+
+
+def test_generator_continuity_across_segment_boundary() -> None:
+    """A mid-frame write must not reset the tone counters: rendering in two
+    segments equals rendering the whole frame with the write applied up front."""
+    # Reference: whole frame at final registers (no sub-frame write).
+    ref = PSG()
+    ref.regs[7] = 0x38          # ch0 tone enabled (bit0=0), others off
+    _set_tone_period(ref, 0, 300)
+    ref.regs[8] = 15
+    ref_out = ref.generate_samples(200)
+    # Same registers, but reg 8 (re-)written mid-frame to the SAME value via the
+    # sub-frame path: output must be identical (write is a no-op change).
+    sub = PSG()
+    cyc = [0]
+    sub._get_cycle = lambda: cyc[0]
+    sub.regs[7] = 0x38
+    _set_tone_period(sub, 0, 300)
+    cyc[0] = 0
+    _write(sub, 8, 15)          # at sample 0
+    cyc[0] = 500
+    _write(sub, 8, 15)          # same value mid-frame -> boundary but no change
+    sub_out = sub.generate_samples(200, 0, 1000)
+    assert sub_out == ref_out

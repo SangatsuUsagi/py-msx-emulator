@@ -746,6 +746,9 @@ def build_machine(
     io._get_pc = lambda: machine.cpu.registers.PC
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
+    # PSG software PCM: timestamp register writes so generate_samples can place
+    # them at their sub-frame sample positions (mirrors the DAC wiring).
+    machine.psg._get_cycle = lambda: machine.cycle_count
     machine.sram_save_path = sram_save_path
     return machine
 
