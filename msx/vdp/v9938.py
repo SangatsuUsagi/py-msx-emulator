@@ -245,6 +245,17 @@ class V9938:
     def addr(self, value: int) -> None:
         self._addr = value
 
+    def _set_addr_high(self, r14: int) -> None:
+        """Writing R#14 relocates A14-A16 of the live VRAM address pointer.
+
+        On the V9938 R#14 IS the top 3 bits of the address counter, so a write
+        to it moves the current pointer's bank immediately (some software sets
+        the low address first, then selects the bank via R#14 before streaming
+        VRAM data). Keeping R#14 only as a static register would leave the
+        pointer in the previous bank and write to the wrong VRAM address.
+        """
+        self._addr = ((r14 & 0x07) << 14) | (self._addr & 0x3FFF)
+
     @property
     def read_buf(self) -> int:
         return self._read_buf
@@ -391,6 +402,8 @@ class V9938:
                             self._reg_write_log.append(_RegChange(self.display_line, reg, low))
                         if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                             self._update_irq()
+                        elif reg == 14:
+                            self._set_addr_high(low)
                     elif 32 <= reg <= 45:
                         self.cmd_regs[reg - 32] = low
                         if reg == 44:
@@ -432,6 +445,8 @@ class V9938:
                     self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
                 if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                     self._update_irq()
+                elif ptr == 14:
+                    self._set_addr_high(value)
             elif 32 <= ptr <= 45:
                 self.cmd_regs[ptr - 32] = value
                 if ptr == 44:

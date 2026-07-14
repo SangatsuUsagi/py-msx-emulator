@@ -352,3 +352,41 @@ def test_indirect_write_no_increment_when_aii_set() -> None:
         vdp.write_port(0x9B, val)
     assert vdp.regs[2] == 0x33
     assert vdp.regs[3] == 0x00
+
+
+# ---------------------------------------------------------------------------
+# R#14 is the top 3 bits of the VRAM address pointer (writing it relocates it)
+# ---------------------------------------------------------------------------
+
+def test_r14_write_relocates_vram_pointer() -> None:
+    """Setting the low address then writing R#14 must move the live pointer's
+    bank (A14-A16), so a following port-0x98 write lands in the new bank."""
+    vdp = V9938()
+    vdp.write_port(0x99, 0x00)          # address low byte = 0
+    vdp.write_port(0x99, 0x40)          # write-mode, A8-A13 = 0 -> _addr = 0x00000
+    assert vdp.addr == 0x00000
+    vdp.write_port(0x99, 6)             # data for R#14
+    vdp.write_port(0x99, 0x80 | 14)     # R#14 = 6 -> pointer bank 6
+    assert vdp.addr == (6 << 14)        # 0x18000
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.vram[0x18000] == 0xAB
+
+
+def test_r14_preserves_low_14_bits() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0x34)          # low
+    vdp.write_port(0x99, 0x40 | 0x12)   # write-mode, A8-A13 = 0x12 -> _addr=0x1234
+    assert vdp.addr == 0x1234
+    vdp.write_port(0x99, 3)
+    vdp.write_port(0x99, 0x80 | 14)     # R#14 = 3
+    assert vdp.addr == ((3 << 14) | 0x1234)
+
+
+def test_r14_via_indirect_relocates_pointer() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0x00)
+    vdp.write_port(0x99, 0x40)          # _addr = 0
+    vdp.write_port(0x99, 14)
+    vdp.write_port(0x99, 0x80 | 17)     # R#17 -> point R#14
+    vdp.write_port(0x9B, 5)             # indirect write R#14 = 5
+    assert vdp.addr == (5 << 14)
