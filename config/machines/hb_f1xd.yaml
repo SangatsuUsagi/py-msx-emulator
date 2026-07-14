@@ -7,6 +7,7 @@ rom_base: roms/hb_f1xd
 cpu:
   type: z80a
   clock_mhz: 3.579545
+  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
 
 # Sony HB-F1XD: BIOS+BASIC, SUB ROM, WD2793 floppy interface (DISK ROM +
 # memory-mapped FDC registers, Sony/Philips connection style) in slot 3 sub-slot
