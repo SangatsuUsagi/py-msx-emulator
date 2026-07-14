@@ -432,3 +432,21 @@ def test_load_machine_spec_string_slot_keys(tmp_path: Path) -> None:
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
     assert spec.main_rom_entry.file == "main.rom"  # slot 0 resolved
     assert spec.ram_size_kb == 64                  # slot 3 resolved
+
+
+def test_m1_wait_states_absent_defaults_to_zero(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx1.yaml", _msx1_machine_yaml())
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.m1_wait_states == 0
+
+
+def test_m1_wait_states_read_from_cpu_block(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    yaml_text = _msx1_machine_yaml().replace(
+        "clock_mhz: 3.579545",
+        "clock_mhz: 3.579545\n      m1_wait_states: 1",
+    )
+    _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.m1_wait_states == 1
