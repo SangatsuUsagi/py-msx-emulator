@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 from msx.input import InputState
 
@@ -9,6 +10,16 @@ _REG_IO_PORT_A = 14
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
 SAMPLE_RATE: int = 44_100
 SAMPLES_PER_FRAME: int = 735  # 44100 // 60
+# Upper bound on recorded register writes per audio buffer. Far above any real
+# frame's write count; caps memory if generate_samples is never called (headless).
+_MAX_EVENTS: int = 4096
+
+# Generator-state snapshot for sub-frame replay rewind: tone counters, tone
+# outputs, noise counter, LFSR, envelope counter/step/attack, three envelope
+# flags, and the clock fraction.
+_GenState = tuple[
+    list[int], list[int], int, int, int, int, int, bool, bool, bool, int
+]
 
 # AY-3-8910 quasi-logarithmic amplitude table (level 0–15 → 16-bit amplitude).
 # Each consecutive step is approximately √2 (≈3 dB).  Three channels at max
@@ -24,6 +35,15 @@ class PSG:
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
     _input: InputState | None = field(default=None, repr=False)
+
+    # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
+    # _get_cycle so generate_samples can place them at their in-frame sample
+    # positions (reproduces software PCM). _regs_base / _gen_base snapshot the
+    # register + generator state at the frame's first write, for replay rewind.
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
+    _regs_base: list[int] = field(default_factory=list, init=False, repr=False)
+    _gen_base: _GenState | None = field(default=None, init=False, repr=False)
 
     # --- synthesiser state (not part of __init__) ---
     _tone_cnt: list[int] = field(default_factory=lambda: [1, 1, 1], init=False, repr=False)
@@ -46,8 +66,16 @@ class PSG:
         if port == 0xA0:
             self.latch = value & 0x0F
         elif port == 0xA1:
-            self.regs[self.latch] = value
-            if self.latch == 13:
+            reg = self.latch
+            if len(self._events) < _MAX_EVENTS:
+                if not self._events:
+                    # Frame's first write: snapshot state to rewind to at replay.
+                    self._regs_base = self.regs[:]
+                    self._gen_base = self._snapshot_gen()
+                cyc = self._get_cycle() if self._get_cycle is not None else 0
+                self._events.append((cyc, reg, value))
+            self.regs[reg] = value
+            if reg == 13:
                 self._reset_envelope()
 
     def read_port(self, port: int) -> int:
@@ -80,6 +108,8 @@ class PSG:
         self._env_hold_flag = False
         self._env_holding = False
         self._clk_frac = 0
+        self._events = []
+        self._gen_base = None
 
     # --------------------------------------------------------- envelope reset
 
@@ -164,17 +194,16 @@ class PSG:
 
     # ---------------------------------------------------- sample generation
 
-    def generate_samples(self, n: int) -> bytearray:
-        """Return n signed 16-bit little-endian mono PCM samples.
+    def _render(self, out: bytearray, lo: int, hi: int) -> None:
+        """Synthesise samples [lo, hi) into `out` from the current registers.
 
-        Hot path (44 100 samples/s): the registers are constant across a buffer
-        (the CPU only writes PSG registers between buffers), so all periods /
-        mixer enables / volumes are precomputed once, and the tone/noise/
-        envelope generators are inlined with their state hoisted to locals and
-        written back after the loop. Behaviour is identical to the _step_*
-        methods (kept below for the unit tests that drive them directly).
+        The registers are constant across the range (one segment), so all
+        periods / mixer enables / volumes are precomputed once and the tone/
+        noise/envelope generators are inlined with their state hoisted to locals
+        and written back after the loop. generate_samples() calls this once per
+        constant-register segment (once for the whole buffer when there are no
+        mid-frame writes). Behaviour matches the _step_* methods kept above.
         """
-        out = bytearray(n * 2)
         regs = self.regs
 
         # --- precompute buffer-constant register-derived values ---
@@ -211,25 +240,52 @@ class PSG:
         env_holding = self._env_holding
         clk_frac = self._clk_frac
 
-        for i in range(n):
+        for i in range(lo, hi):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
             clk_frac += PSG_CLOCK
             ticks = clk_frac // SAMPLE_RATE
             clk_frac %= SAMPLE_RATE
 
-            # tone channels (inline _step_tone)
-            tc0 -= ticks
-            while tc0 <= 0:
-                tc0 += tp0
+            # tone channels (inline _step_tone).  Integrate the square wave over
+            # the sample instead of point-sampling: hi0/hi1/hi2 count the PSG
+            # ticks the output was high across the `ticks` clocks of this sample.
+            # For audible tones (no toggle within a sample) hi == ticks or 0, so
+            # this is identical to point-sampling; for ultrasonic tones (period
+            # 0/1, the software-PCM carrier) it yields the ~50% duty average the
+            # real analog output produces, instead of aliasing to full/zero.
+            rem = ticks
+            hi0 = 0
+            while tc0 <= rem:
+                if to0:
+                    hi0 += tc0
+                rem -= tc0
                 to0 ^= 1
-            tc1 -= ticks
-            while tc1 <= 0:
-                tc1 += tp1
+                tc0 = tp0
+            if to0:
+                hi0 += rem
+            tc0 -= rem
+            rem = ticks
+            hi1 = 0
+            while tc1 <= rem:
+                if to1:
+                    hi1 += tc1
+                rem -= tc1
                 to1 ^= 1
-            tc2 -= ticks
-            while tc2 <= 0:
-                tc2 += tp2
+                tc1 = tp1
+            if to1:
+                hi1 += rem
+            tc1 -= rem
+            rem = ticks
+            hi2 = 0
+            while tc2 <= rem:
+                if to2:
+                    hi2 += tc2
+                rem -= tc2
                 to2 ^= 1
+                tc2 = tp2
+            if to2:
+                hi2 += rem
+            tc2 -= rem
 
             # noise (inline _step_noise): 17-bit LFSR, taps at bits 0 and 3
             nc -= ticks
@@ -258,14 +314,28 @@ class PSG:
             env_amp = _VOL_TABLE[(env_step ^ env_attack) >> 1]
             noise_bit = lfsr & 1
 
-            # mixer: channel output = tone AND noise (disabled generator → 1)
+            # mixer: channel output = tone AND noise (disabled generator → 1).
+            # Tone contributes its integrated level hiN/ticks; noise (broadband)
+            # is point-sampled. Disabled tone → full level (hi == ticks).
             sample = 0
-            if (to0 if tone_en0 else 1) & (noise_bit if noise_en0 else 1):
-                sample += env_amp if env0 else va0
-            if (to1 if tone_en1 else 1) & (noise_bit if noise_en1 else 1):
-                sample += env_amp if env1 else va1
-            if (to2 if tone_en2 else 1) & (noise_bit if noise_en2 else 1):
-                sample += env_amp if env2 else va2
+            if noise_bit if noise_en0 else 1:
+                amp = env_amp if env0 else va0
+                if not tone_en0 or hi0 == ticks:
+                    sample += amp
+                elif hi0:
+                    sample += amp * hi0 // ticks
+            if noise_bit if noise_en1 else 1:
+                amp = env_amp if env1 else va1
+                if not tone_en1 or hi1 == ticks:
+                    sample += amp
+                elif hi1:
+                    sample += amp * hi1 // ticks
+            if noise_bit if noise_en2 else 1:
+                amp = env_amp if env2 else va2
+                if not tone_en2 or hi2 == ticks:
+                    sample += amp
+                elif hi2:
+                    sample += amp * hi2 // ticks
 
             if sample > 32767:
                 sample = 32767
@@ -286,4 +356,61 @@ class PSG:
         self._env_holding = env_holding
         self._clk_frac = clk_frac
 
+    def generate_samples(
+        self, n: int, frame_start: int = 0, frame_end: int = 0
+    ) -> bytearray:
+        """Return n signed 16-bit little-endian mono PCM samples.
+
+        Register writes recorded during the frame (write_port) are applied at
+        their sub-frame sample positions, so software PCM played through rapid
+        volume-register writes is reproduced. With no recorded writes — or no
+        frame window (frame_end <= frame_start) — the whole buffer is one
+        constant-register segment (the fast path, unchanged behaviour).
+        """
+        out = bytearray(n * 2)
+        events = self._events
+        if not events or frame_end <= frame_start or self._gen_base is None:
+            self._events = []
+            self._render(out, 0, n)
+            return out
+        # Sub-frame replay: rewind to the frame-start register + generator state,
+        # then render segments split at each write's computed sample position.
+        final = self.regs[:]
+        self.regs[:] = self._regs_base
+        self._restore_gen(self._gen_base)
+        span = frame_end - frame_start
+        lo = 0
+        for cyc, reg, val in events:
+            pos = (cyc - frame_start) * n // span
+            if pos < 0:
+                pos = 0
+            elif pos > n:
+                pos = n
+            if pos > lo:
+                self._render(out, lo, pos)
+                lo = pos
+            self.regs[reg] = val
+            if reg == 13:
+                self._reset_envelope()
+        if lo < n:
+            self._render(out, lo, n)
+        # Restore the true final register state (also covers any capped events).
+        self.regs[:] = final
+        self._events = []
+        self._gen_base = None
         return out
+
+    def _snapshot_gen(self) -> _GenState:
+        """Capture generator state to rewind to for sub-frame replay."""
+        return (
+            self._tone_cnt[:], self._tone_out[:], self._noise_cnt, self._lfsr,
+            self._env_cnt, self._env_step, self._env_attack, self._env_alternate,
+            self._env_hold_flag, self._env_holding, self._clk_frac,
+        )
+
+    def _restore_gen(self, s: _GenState) -> None:
+        (tc, to, self._noise_cnt, self._lfsr, self._env_cnt, self._env_step,
+         self._env_attack, self._env_alternate, self._env_hold_flag,
+         self._env_holding, self._clk_frac) = s
+        self._tone_cnt[:] = tc
+        self._tone_out[:] = to

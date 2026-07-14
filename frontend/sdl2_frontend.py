@@ -165,7 +165,9 @@ def _handle_events(
 def _mix_audio(machine: Machine, frame_start_cycle: int, frame_end_cycle: int) -> bytes:
     """Generate one frame of audio: PSG plus SCC/DAC when present, mixed and
     clamped to signed 16-bit. Returns the PCM bytes to queue."""
-    psg_buf = machine.psg.generate_samples(SAMPLES_PER_FRAME)
+    psg_buf = machine.psg.generate_samples(
+        SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
+    )
     extra_bufs = []
     if machine.scc is not None:
         extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
