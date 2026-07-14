@@ -124,3 +124,12 @@ def test_run_frame_clears_ce_for_small_hmmv() -> None:
 
     machine.run_frame()
     assert vdp._status2 & 0x01 == 0  # CE cleared within one frame
+
+
+def test_build_machine_wires_psg_get_cycle() -> None:
+    """build_machine wires the PSG cycle source so register writes are
+    timestamped for sub-frame audio (mirrors the DAC wiring)."""
+    machine = make_machine_msx2(bytes(32768), bytes(32768))
+    assert machine.psg._get_cycle is not None
+    machine.cycle_count = 4242
+    assert machine.psg._get_cycle() == 4242
