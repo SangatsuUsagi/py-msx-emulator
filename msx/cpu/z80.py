@@ -46,6 +46,11 @@ class Z80:
     nmi_pending: bool = False
     ei_pending: bool = False
     instruction_pc: int = 0
+    # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
+    # the core reusable for non-MSX systems); MSX machines configure 1 (the MSX
+    # M1 wait state, matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
+    # from the machine config.
+    m1_wait_states: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
 
     def reset(self) -> None:
@@ -128,7 +133,8 @@ class Z80:
         self.ei_pending = False
 
         if self.halted:
-            return 4
+            # A halted CPU keeps executing internal NOPs, each an M1 cycle.
+            return 4 + self.m1_wait_states
 
         r = self.registers
         pc = r.PC
@@ -138,4 +144,6 @@ class Z80:
         r.R = (r.R + 1) & 0x7F
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
-        return _DISPATCH[opcode](self)
+        # + the M1 wait for this opcode fetch. Prefixed instructions add one more
+        # per prefix byte inside their prefix handlers (each is its own M1).
+        return _DISPATCH[opcode](self) + self.m1_wait_states

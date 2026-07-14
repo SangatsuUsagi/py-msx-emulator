@@ -7,6 +7,7 @@ rom_base: roms/cbios
 cpu:
   type: z80a
   clock_mhz: 3.579545
+  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
 
 slots:
   primary:
