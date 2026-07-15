@@ -116,6 +116,13 @@ class Machine:
         crash-signature conditions) invoke `hook(reason, pc)` instead of
         entering the blocking interactive debugger REPL. `reason` is one of
         "user_request", "breakpoint", "watchpoint", or "step_complete".
+
+        Portability note: this is the *only* seam the core exposes to the RPC
+        adapter (msx/rpc_server.py). The core has no knowledge of sockets, JSON,
+        or threads — it just calls this generic callback. In a Rust/C++ port this
+        becomes a `trait PauseSink` (and `reason` an `enum PauseReason`), so the
+        RPC layer can live in a separate, feature-gated crate. See the crate-split
+        note in msx/rpc_server.py.
         """
         self._pause_hook = hook
 
