@@ -51,6 +51,8 @@ from typing import TYPE_CHECKING, Any
 
 from msx.debugger.disasm import disassemble
 from msx.input import KEY_NAME_TO_CELL
+from msx.machine import PAUSE_STEP_COMPLETE as REASON_STEP
+from msx.machine import PAUSE_USER_REQUEST as REASON_USER
 from msx.screenshot import encode_rgb24_png
 
 if TYPE_CHECKING:
@@ -64,14 +66,11 @@ ERR_PARSE = -32700
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
 ERR_NEED_PAUSED = 1
-ERR_NEED_RUNNING = 2
+ERR_NEED_RUNNING = 2  # reserved: declared in the wire spec; no handler needs it yet
 ERR_INTERNAL = 3
 
-# Valid pause reasons pushed to clients and reported by debugger.status.
-REASON_USER = "user_request"
-REASON_BREAKPOINT = "breakpoint"
-REASON_WATCHPOINT = "watchpoint"
-REASON_STEP = "step_complete"
+# Pause reasons (REASON_USER / REASON_STEP) come from msx.machine, the single
+# source of truth; the machine emits "breakpoint" / "watchpoint" directly.
 
 _DISPATCH_TIMEOUT_S = 30.0
 
@@ -103,6 +102,16 @@ class PauseState:
     The frontend loop reads :attr:`paused` to decide whether to step the machine;
     RPC handlers and the machine pause hook write it. Kept as a tiny mutable
     object (not a dataclass with slots) so both sides hold the same reference.
+
+    This is the adapter-side pause flag; its core-side counterpart is
+    ``Machine._pause_requested`` / ``_resume_skip_pc`` (which drive the debug
+    frame loop). :meth:`DebugServer.on_pause` is where the two meet: the machine
+    sets ``_pause_requested`` and calls the hook, which sets ``paused`` here.
+
+    Threading / portability: these plain fields are written by the emulator
+    thread (``on_pause``, handlers via ``drain``) and by the socket thread
+    (``cpu.continue_sync``), and read by the frontend loop — safe here only
+    because of the GIL. A Rust/C++ port must guard this with a mutex/atomics.
     """
 
     def __init__(self) -> None:
@@ -365,7 +374,16 @@ class DebugServer:
         return {"id": req_id, "error": {"code": code, "message": message}}
 
     def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
-        """Resume and block (on the socket thread) until the next pause event."""
+        """Resume and block (on the socket thread) until the next pause event.
+
+        Portability seam: this runs on the socket thread yet calls into the core
+        (``Machine.prepare_resume`` and reading ``cpu.registers.PC``). It is safe
+        here only because of the GIL and because the machine is quiescent by the
+        time the pause event fires (the debug loop has returned). A Rust/C++ port
+        cannot take ``&mut Machine`` from two threads; it must route continue as a
+        command handled on the emulator thread, keeping the pause hook as the only
+        callback out of the core.
+        """
         req_id = req.get("id")
         params = req.get("params") or {}
         if not isinstance(params, dict):
@@ -405,8 +423,11 @@ class DebugServer:
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
     def capture_rgb(self) -> tuple[bytes, int, int]:
-        """Render the current VDP frame to RGB24 without perturbing the frame
-        counter. Returns (rgb_bytes, width, height)."""
+        """Render the current VDP frame to RGB24 without advancing the frame counter.
+
+        Returns:
+            (rgb_bytes, width, height) for the current frame.
+        """
         from msx.vdp.renderer import render_frame
         from msx.vdp.v9938 import V9938
         from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -718,6 +739,8 @@ def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
     rgb, width, height = server.capture_rgb()
+    # save_state writes a fixed native-resolution (256x192) thumbnail, so match
+    # that size for V9938 modes whose frame can be taller (e.g. 212 lines).
     if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
         rgb, _, _ = _scale_to(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
     saved = save_state(server.machine, rgb, title)

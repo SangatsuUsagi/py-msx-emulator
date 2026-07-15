@@ -226,7 +226,10 @@ def test_press_key_named_auto_release(rig) -> None:
     r = client.result("input.press_key_named", {"key": "space", "duration_ms": 20})
     assert (r["row"], r["bit"]) == (8, 0)
     assert machine.input.matrix[8] & 1 == 0  # pressed now
-    deadline = time.time() + 1.0
+    # Auto-release (20 ms) is processed by the background drain loop; poll with a
+    # generous ceiling so the assert can't race a briefly-starved worker thread.
+    # The loop exits as soon as the bit is set, so the normal case stays fast.
+    deadline = time.time() + 3.0
     while time.time() < deadline and machine.input.matrix[8] & 1 == 0:
         time.sleep(0.005)
     assert machine.input.matrix[8] & 1 == 1  # auto-released
