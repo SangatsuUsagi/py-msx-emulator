@@ -140,6 +140,17 @@ def test_continue_sync_timeout(rig) -> None:
     assert r["reason"] == "timeout"
 
 
+def test_watchpoint_read_hit(rig) -> None:
+    _machine, _srv, client = rig
+    _pause(client)
+    wp = client.result("debug.set_watchpoint", {"address": "0x0050", "mode": "r"})
+    assert wp["mode"] == "r"
+    r = client.result("cpu.continue_sync", {"timeout_ms": 3000})
+    assert r["paused"] is True
+    assert r["reason"] == "watchpoint"
+    assert client.result("debug.remove_watchpoint", {"id": wp["id"]})["removed"] is True
+
+
 def test_list_and_remove_breakpoint(rig) -> None:
     _machine, _srv, client = rig
     bp = client.result("debug.set_breakpoint", {"address": "C000"})

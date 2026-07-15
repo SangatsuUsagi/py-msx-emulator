@@ -5,6 +5,9 @@ requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0", "Pillow>=12.0", "pysdl2>=0.9.16"]
 
 [project.optional-dependencies]
+# MCP server for Claude Code integration (only needed to run tools/mcp_server.py;
+# the emulator and its socket RPC server have no extra runtime dependency).
+mcp = ["mcp[cli]>=1.0"]
 # Full dev toolset; kept in sync with requirements-dev.txt.
 dev = [
     # Testing
@@ -26,6 +29,8 @@ dev = [
     # Profiling
     "scalene>=1.5",
     "py-spy>=0.4",
+    # MCP server (so its tests can run in the dev environment)
+    "mcp[cli]>=1.0",
 ]
 
 [tool.ruff]

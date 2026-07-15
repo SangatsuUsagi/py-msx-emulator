@@ -27,3 +27,6 @@ deptry>=0.20
 # Profiling
 scalene>=1.5
 py-spy>=0.4
+
+# MCP server for Claude Code integration (tools/mcp_server.py)
+mcp[cli]>=1.0
