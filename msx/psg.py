@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from msx.input import InputState
 
@@ -14,12 +14,21 @@ SAMPLES_PER_FRAME: int = 735  # 44100 // 60
 # frame's write count; caps memory if generate_samples is never called (headless).
 _MAX_EVENTS: int = 4096
 
-# Generator-state snapshot for sub-frame replay rewind: tone counters, tone
-# outputs, noise counter, LFSR, envelope counter/step/attack, three envelope
-# flags, and the clock fraction.
-_GenState = tuple[
-    list[int], list[int], int, int, int, int, int, bool, bool, bool, int
-]
+# Generator-state snapshot for sub-frame replay rewind. A NamedTuple (not a bare
+# tuple) so snapshot/restore reference fields by name — order-independent and
+# self-documenting; it maps directly to a plain struct in a Rust/C++ port.
+class _GenState(NamedTuple):
+    tone_cnt: list[int]
+    tone_out: list[int]
+    noise_cnt: int
+    lfsr: int
+    env_cnt: int
+    env_step: int
+    env_attack: int
+    env_alternate: bool
+    env_hold_flag: bool
+    env_holding: bool
+    clk_frac: int
 
 # AY-3-8910 quasi-logarithmic amplitude table (level 0–15 → 16-bit amplitude).
 # Each consecutive step is approximately √2 (≈3 dB).  Three channels at max
@@ -40,7 +49,16 @@ class PSG:
     # _get_cycle so generate_samples can place them at their in-frame sample
     # positions (reproduces software PCM). _regs_base / _gen_base snapshot the
     # register + generator state at the frame's first write, for replay rewind.
+    #
+    # Portability note: _get_cycle is a closure assigned at wiring time
+    # (machine_loader sets `lambda: machine.cycle_count`), capturing the Machine
+    # that owns this PSG — a reference cycle Rust/C++ cannot express as a plain
+    # Fn field. A port should thread the cycle count through write_port (via the
+    # IOBus write dispatch) or hold a clock handle resolved once at construction,
+    # mirroring the bus-hook notes on Z80/VDP/mapper.
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # Recorded writes as (cycle, reg, value); a port would use a small struct.
+    # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
     _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
     _regs_base: list[int] = field(default_factory=list, init=False, repr=False)
     _gen_base: _GenState | None = field(default=None, init=False, repr=False)
@@ -116,6 +134,12 @@ class PSG:
     def _env_period(self) -> int:
         return max(1, (self.regs[12] << 8) | self.regs[11])
 
+    # _env_output_level, _step_noise, _step_envelope, and _mix_channel below are
+    # the readable per-generator reference implementations. The hot path (_render)
+    # inlines the identical logic for speed; these are kept as the executable spec
+    # and are exercised directly by the fine-grained unit tests. Keep them in sync
+    # with _render (or delete both the method and its test if a generator is ever
+    # dropped) — they are intentionally not called from production code.
     def _env_output_level(self) -> int:
         """Current 4-bit envelope level (0-15) from the step/attack model."""
         return (self._env_step ^ self._env_attack) >> 1
@@ -194,8 +218,8 @@ class PSG:
 
     # ---------------------------------------------------- sample generation
 
-    def _render(self, out: bytearray, lo: int, hi: int) -> None:
-        """Synthesise samples [lo, hi) into `out` from the current registers.
+    def _render(self, out: bytearray, start: int, end: int) -> None:
+        """Synthesise samples [start, end) into `out` from the current registers.
 
         The registers are constant across the range (one segment), so all
         periods / mixer enables / volumes are precomputed once and the tone/
@@ -219,6 +243,7 @@ class PSG:
         noise_en0 = not (r7 & 0x08)
         noise_en1 = not (r7 & 0x10)
         noise_en2 = not (r7 & 0x20)
+        any_noise = noise_en0 or noise_en1 or noise_en2
         vr0, vr1, vr2 = regs[8], regs[9], regs[10]
         va0 = _VOL_TABLE[vr0 & 0x0F]
         va1 = _VOL_TABLE[vr1 & 0x0F]
@@ -226,6 +251,7 @@ class PSG:
         env0 = bool(vr0 & 0x10)
         env1 = bool(vr1 & 0x10)
         env2 = bool(vr2 & 0x10)
+        any_env = env0 or env1 or env2
 
         # --- hoist generator state to locals ---
         tc0, tc1, tc2 = self._tone_cnt
@@ -240,7 +266,7 @@ class PSG:
         env_holding = self._env_holding
         clk_frac = self._clk_frac
 
-        for i in range(lo, hi):
+        for i in range(start, end):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
             clk_frac += PSG_CLOCK
             ticks = clk_frac // SAMPLE_RATE
@@ -264,6 +290,7 @@ class PSG:
             if to0:
                 hi0 += rem
             tc0 -= rem
+            # channels 1 and 2: identical integration, unrolled for the hot loop
             rem = ticks
             hi1 = 0
             while tc1 <= rem:
@@ -287,56 +314,69 @@ class PSG:
                 hi2 += rem
             tc2 -= rem
 
-            # noise (inline _step_noise): 17-bit LFSR, taps at bits 0 and 3
-            nc -= ticks
-            while nc <= 0:
-                nc += np2
-                feedback = (lfsr ^ (lfsr >> 3)) & 1
-                lfsr = ((lfsr >> 1) | (feedback << 16)) & 0x1FFFF
-
-            # envelope (inline _step_envelope)
-            if not env_holding:
-                env_cnt -= ticks
-                while env_cnt <= 0:
-                    env_cnt += ep
-                    env_step -= 1
-                    if env_step < 0:
-                        if env_hold_flag:
-                            if env_alternate:
-                                env_attack ^= 0x1F
-                            env_holding = True
-                            env_step = 0
-                            break
-                        if env_alternate and (env_step & 0x20):
-                            env_attack ^= 0x1F
-                        env_step &= 0x1F
-
-            env_amp = _VOL_TABLE[(env_step ^ env_attack) >> 1]
+            # noise (inline _step_noise): 17-bit LFSR, taps at bits 0 and 3.
+            # Skipped when no channel enables noise — its output is unused then, so
+            # this only desyncs the LFSR's (pseudo-random, inaudible) phase for a
+            # later re-enable, in exchange for dropping the hottest _render loop.
+            if any_noise:
+                nc -= ticks
+                while nc <= 0:
+                    nc += np2
+                    feedback = (lfsr ^ (lfsr >> 3)) & 1
+                    lfsr = ((lfsr >> 1) | (feedback << 16)) & 0x1FFFF
             noise_bit = lfsr & 1
+
+            # envelope (inline _step_envelope). Skipped when no channel routes the
+            # envelope (env_amp is unused then); a later re-enable is self-correcting
+            # via the R13 write that calls _reset_envelope.
+            if any_env:
+                if not env_holding:
+                    env_cnt -= ticks
+                    while env_cnt <= 0:
+                        env_cnt += ep
+                        env_step -= 1
+                        if env_step < 0:
+                            if env_hold_flag:
+                                if env_alternate:
+                                    env_attack ^= 0x1F
+                                env_holding = True
+                                env_step = 0
+                                break
+                            if env_alternate and (env_step & 0x20):
+                                env_attack ^= 0x1F
+                            env_step &= 0x1F
+                env_amp = _VOL_TABLE[(env_step ^ env_attack) >> 1]
+            else:
+                env_amp = 0
 
             # mixer: channel output = tone AND noise (disabled generator → 1).
             # Tone contributes its integrated level hiN/ticks; noise (broadband)
             # is point-sampled. Disabled tone → full level (hi == ticks).
+            # A channel passes noise when noise is disabled for it, or enabled and
+            # the LFSR bit is high (noise gates the channel; disabled → constant 1).
             sample = 0
-            if noise_bit if noise_en0 else 1:
+            if noise_bit or not noise_en0:
                 amp = env_amp if env0 else va0
                 if not tone_en0 or hi0 == ticks:
                     sample += amp
                 elif hi0:
                     sample += amp * hi0 // ticks
-            if noise_bit if noise_en1 else 1:
+            if noise_bit or not noise_en1:
                 amp = env_amp if env1 else va1
                 if not tone_en1 or hi1 == ticks:
                     sample += amp
                 elif hi1:
                     sample += amp * hi1 // ticks
-            if noise_bit if noise_en2 else 1:
+            if noise_bit or not noise_en2:
                 amp = env_amp if env2 else va2
                 if not tone_en2 or hi2 == ticks:
                     sample += amp
                 elif hi2:
                     sample += amp * hi2 // ticks
 
+            # sample is a non-negative i32 here (3 channels × 12287 max = 36861
+            # pre-clamp); amp * hiN // ticks is floor division on non-negative
+            # operands, matching truncating integer division in a Rust/C++ port.
             if sample > 32767:
                 sample = 32767
 
@@ -402,15 +442,21 @@ class PSG:
 
     def _snapshot_gen(self) -> _GenState:
         """Capture generator state to rewind to for sub-frame replay."""
-        return (
+        return _GenState(
             self._tone_cnt[:], self._tone_out[:], self._noise_cnt, self._lfsr,
             self._env_cnt, self._env_step, self._env_attack, self._env_alternate,
             self._env_hold_flag, self._env_holding, self._clk_frac,
         )
 
-    def _restore_gen(self, s: _GenState) -> None:
-        (tc, to, self._noise_cnt, self._lfsr, self._env_cnt, self._env_step,
-         self._env_attack, self._env_alternate, self._env_hold_flag,
-         self._env_holding, self._clk_frac) = s
-        self._tone_cnt[:] = tc
-        self._tone_out[:] = to
+    def _restore_gen(self, snapshot: _GenState) -> None:
+        self._tone_cnt[:] = snapshot.tone_cnt
+        self._tone_out[:] = snapshot.tone_out
+        self._noise_cnt = snapshot.noise_cnt
+        self._lfsr = snapshot.lfsr
+        self._env_cnt = snapshot.env_cnt
+        self._env_step = snapshot.env_step
+        self._env_attack = snapshot.env_attack
+        self._env_alternate = snapshot.env_alternate
+        self._env_hold_flag = snapshot.env_hold_flag
+        self._env_holding = snapshot.env_holding
+        self._clk_frac = snapshot.clk_frac

@@ -192,17 +192,17 @@ def _mix_audio(
     # re-encoded once. (array("h") is native byte order, matching the LE PCM on
     # LE hosts.)
     psg_arr = array("h")
-    psg_arr.frombytes(bytes(psg_buf))
+    psg_arr.frombytes(psg_buf)
     extra_arrs = []
     for buf in extra_bufs:
-        a = array("h")
-        a.frombytes(bytes(buf))
-        extra_arrs.append(a)
+        chan_arr = array("h")
+        chan_arr.frombytes(buf)
+        extra_arrs.append(chan_arr)
     out_arr = array("h", bytes(2 * SAMPLES_PER_FRAME))
     for i in range(SAMPLES_PER_FRAME):
         total = psg_arr[i]
-        for a in extra_arrs:
-            total += a[i]
+        for chan_arr in extra_arrs:
+            total += chan_arr[i]
         if total > _S16_MAX:
             total = _S16_MAX
         elif total < _S16_MIN:
@@ -287,9 +287,8 @@ def run(
     )
 
     # Analog-style output low-pass; one persistent instance so IIR state carries
-    # across frames. Reset here so playback starts from clean history.
+    # across frames (it starts from the clean state __init__ already zeroes).
     audio_filter = BiquadLowPass()
-    audio_filter.reset()
 
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
 
