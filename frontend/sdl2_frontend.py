@@ -4,7 +4,7 @@ import ctypes
 import sys
 from array import array
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
@@ -13,6 +13,9 @@ from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
+
+if TYPE_CHECKING:
+    from msx.rpc_server import DebugServer
 
 _SCREEN_WIDTH = 256
 _MAX_FRAME_SKIP: int = 4
@@ -254,6 +257,7 @@ def run(
     game_title: str = "py-msx-emulator",
     resume: str | None = None,
     frame_skip: str = "auto",
+    rpc_server: "DebugServer | None" = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -318,6 +322,18 @@ def run(
                     break
 
                 joy_manager.tick()
+
+                # Service RPC calls between frames (on this, the emulator thread).
+                # While paused, keep the window and socket alive but freeze the
+                # CPU: redisplay the last frame, pace, and skip emulation.
+                if rpc_server is not None:
+                    rpc_server.drain()
+                    if rpc_server.pause_state.paused:
+                        sdl2.SDL_RenderClear(renderer)
+                        sdl2.SDL_RenderCopy(renderer, texture, None, None)
+                        sdl2.SDL_RenderPresent(renderer)
+                        frame_timer.tick()
+                        continue
 
                 # Run one frame (skip VDP pixel rendering when behind schedule)
                 skip_this_frame = skip_counter > 0
