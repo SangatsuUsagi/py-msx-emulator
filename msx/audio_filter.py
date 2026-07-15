@@ -2,8 +2,19 @@ from __future__ import annotations
 
 import math
 import struct
+from functools import lru_cache
 
 from msx.psg import SAMPLE_RATE
+
+
+@lru_cache(maxsize=8)
+def _unpacker(n: int) -> struct.Struct:
+    """Cached little-endian signed-16 unpacker for an n-sample buffer.
+
+    filter() is called with a constant buffer length per session, so caching the
+    compiled Struct avoids re-parsing the format string on every frame.
+    """
+    return struct.Struct("<%dh" % n)
 
 # Default output filter: 2-pole Butterworth low-pass. The cutoff tames the
 # out-of-band imaging/ripple that point-sampling synthesis leaves near Nyquist
@@ -21,6 +32,11 @@ class BiquadLowPass:
     computed once at construction. Buffers are filtered sample-by-sample with
     Direct Form I, carrying the two previous inputs/outputs across calls so
     successive buffers are continuous.
+
+    The coefficients and recurrence use f64 (host libm); output is not
+    bit-reproducible across platforms/ports. This only affects the audio output
+    path — it never feeds emulation state or save-states — so it is not a
+    determinism concern for the core.
     """
 
     def __init__(
@@ -67,7 +83,7 @@ class BiquadLowPass:
         rounded to the nearest integer and clipped to the signed 16-bit range.
         """
         n = len(buf) // 2
-        samples = struct.unpack("<%dh" % n, buf)
+        samples = _unpacker(n).unpack(buf)
         b0, b1, b2, a1, a2 = self.b0, self.b1, self.b2, self.a1, self.a2
         x1, x2, y1, y2 = self._x1, self._x2, self._y1, self._y2
 
