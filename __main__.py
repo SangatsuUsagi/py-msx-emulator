@@ -67,6 +67,11 @@ def main() -> None:
                         dest="watch_point",
                         help="Comma-separated watchpoint addresses, max 4 (MSX2 only; "
                              "breaks on read or write)")
+    parser.add_argument("--rpc", action="store_true",
+                        help="Enable the embedded Unix-socket JSON-RPC control server "
+                             "(interactive SDL run mode only; off by default)")
+    parser.add_argument("--rpc-socket", metavar="PATH", dest="rpc_socket", default=None,
+                        help="Unix socket path for --rpc (default: /tmp/py_msx_emu.sock)")
     args = parser.parse_args()
 
     if args.benchmark is not None and args.count_frame is not None:
@@ -222,6 +227,7 @@ def main() -> None:
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
+    rpc_server = None
     try:
         try:
             machine = build_machine(
@@ -281,10 +287,19 @@ def main() -> None:
             print(f"elapsed : {elapsed:.2f}s")
             print(f"avg fps : {frame_count / elapsed:.2f}")
         else:
+            if args.rpc:
+                from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
+                sock_path = args.rpc_socket or DEFAULT_SOCKET_PATH
+                rpc_server = DebugServer(machine, sock_path=sock_path)
+                machine.set_pause_hook(rpc_server.on_pause)
+                rpc_server.start()
+                print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
             run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
-                frame_skip=args.frame_skip)
+                frame_skip=args.frame_skip, rpc_server=rpc_server)
     finally:
+        if rpc_server is not None:
+            rpc_server.stop()
         if logger is not None:
             logger.close()
         if _trace_file is not None:
