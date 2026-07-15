@@ -31,6 +31,14 @@ HANG_PC_REPEAT_THRESHOLD: int = 1000
 SCREEN_WIDTH: int = 256
 SCREEN_HEIGHT: int = 192
 
+# Pause reasons passed to the pause hook — the single source of truth, shared
+# with the RPC adapter (msx/rpc_server.py imports these). A Rust/C++ port
+# promotes them to an `enum PauseReason`.
+PAUSE_USER_REQUEST: str = "user_request"
+PAUSE_BREAKPOINT: str = "breakpoint"
+PAUSE_WATCHPOINT: str = "watchpoint"
+PAUSE_STEP_COMPLETE: str = "step_complete"
+
 
 @dataclass
 class Machine:
@@ -175,10 +183,14 @@ class Machine:
             or self._sp_range is not None
             or self._temp_breakpoint is not None
             or self._stepout_sp is not None
-            # With a pause hook installed (RPC attached), always use the debug
-            # loop so pause requests (breakpoints and watchpoints) can return at
-            # the break point. The hot fast/logged loops stay untouched.
-            or self._pause_hook is not None
+            # Watchpoints need the per-instruction loop so a hit can return at the
+            # break boundary (via the pause hook) instead of running to frame end.
+            # NOTE: mere RPC attachment does NOT force the debug loop — a bare
+            # attached "continue" runs at fast-loop speed; only real break
+            # conditions (breakpoints/watchpoints) route here. An async
+            # debugger.pause is handled at frame granularity by the frontend.
+            or bool(self._watch_read)
+            or bool(self._watch_write)
         )
 
     def _post_step_break(self) -> bool:
@@ -236,14 +248,14 @@ class Machine:
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
-            self._enter_break("watchpoint")
+            self._enter_break(PAUSE_WATCHPOINT)
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
-            self._enter_break("watchpoint")
+            self._enter_break(PAUSE_WATCHPOINT)
         self.memory.write(addr, value)
 
     def step(self) -> int:
@@ -274,7 +286,7 @@ class Machine:
         drop into the debugger if either is present, otherwise re-raise to
         abort the run."""
         if self._pause_hook is not None:
-            self._pause_hook("user_request", self.cpu.registers.PC)
+            self._pause_hook(PAUSE_USER_REQUEST, self.cpu.registers.PC)
         elif self._debugger is not None:
             self._debugger.enter()
         else:
@@ -300,7 +312,7 @@ class Machine:
                     elif pc in self._breakpoints or pc == self._temp_breakpoint:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
-                        self._enter_break("breakpoint")
+                        self._enter_break(PAUSE_BREAKPOINT)
                         if self._pause_requested:
                             return
                     if vdp9938 is not None:
@@ -311,7 +323,7 @@ class Machine:
                     if vdp9938 is not None:
                         vdp9938.tick(n)
                     if self._post_step_break():
-                        self._enter_break("breakpoint")
+                        self._enter_break(PAUSE_BREAKPOINT)
                     if self._pause_requested:
                         # A watchpoint (or post-step condition) requested a pause
                         # during this instruction; stop at the boundary.
