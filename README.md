@@ -452,6 +452,8 @@ python . path/to/game.rom --benchmark 30 --resume saves/states/game_20260605_120
 | `--benchmark [SECONDS]`   | _(none)_ | Run headlessly, unthrottled, for SECONDS (default: 10) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS`     | _(none)_ | Comma-separated hex breakpoint addresses, max 4 (MSX2 only)                                                                                                                     |
 | `--watch-point ADDRS`     | _(none)_ | Watchpoint addresses, max 4 (MSX2 only); append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r`          |
+| `--rpc`                   | off      | Enable the embedded Unix-socket JSON-RPC control server (interactive run mode). See [Remote control](#remote-control-socket-rpc--mcp)                                            |
+| `--rpc-socket PATH`       | `/tmp/py_msx_emu.sock` | Unix socket path for `--rpc` (no effect without `--rpc`)                                                                                                            |
 
 ### In-emulator key bindings
 
@@ -477,6 +479,75 @@ the cartridge is not in the database.
 | D / →  | Right     |
 | Z or , | Trigger A |
 | X or . | Trigger B |
+
+---
+
+## Remote control (Socket RPC & MCP)
+
+The emulator can expose a small local control surface so external tools — shell
+scripts, a test harness, or an AI coding agent — can pause, inspect, and drive a
+running instance. There are two layers:
+
+- **Socket RPC** — a Unix-domain-socket JSON-RPC server embedded in the emulator
+  process (`msx/rpc_server.py`). It is **off by default**; enable it with `--rpc`.
+- **MCP server** — a standalone stdio server (`tools/mcp_server.py`) that wraps the
+  socket RPC as [Model Context Protocol](https://modelcontextprotocol.io) tools, so a
+  client like Claude Code can call emulator functions as native tools (and receive
+  screenshots as inline images).
+
+```
+MCP client  ──stdio/MCP──▶  tools/mcp_server.py  ──Unix socket──▶  emulator (--rpc)
+```
+
+### Enabling the RPC server
+
+```bash
+# Start the emulator with the control socket enabled
+python . path/to/cartridge.rom --rpc
+
+# Optional: use a custom socket path (e.g. for multiple instances)
+python . path/to/cartridge.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
+```
+
+The RPC methods cover debugger pause/step/continue, breakpoints and watchpoints,
+memory and VRAM read/write, disassembly, VDP registers, keyboard/joystick
+injection, screenshot capture, save-state, and disk swap. The wire protocol and
+full method reference are documented in
+[`extras/msx_emulator_rpc_spec.md`](extras/msx_emulator_rpc_spec.md).
+
+Quick manual test with the bundled client:
+
+```bash
+python tools/rpc_client.py debugger.status
+python tools/rpc_client.py memory.read address=0xC000 length=16
+```
+
+### Registering the MCP server
+
+The MCP server needs the optional `mcp` dependency:
+
+```bash
+pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0'
+```
+
+Register it once with Claude Code (writes `.mcp.json`):
+
+```bash
+claude mcp add --transport stdio --scope project msx-emulator \
+    -- python tools/mcp_server.py
+claude mcp list        # msx-emulator  ●  connected
+```
+
+Point the MCP server at a non-default socket via the `MSX_RPC_SOCKET` environment
+variable (settable in the `.mcp.json` `env` block).
+
+### Security notes
+
+- The Unix socket is reachable only by local processes running as the same user.
+- `memory.write` and `cpu.step` mutate machine state and are **paused-only**.
+- There is no authentication; on a shared host, restrict the socket with
+  `chmod 600`. The server is opt-in (`--rpc`) precisely because it is a control
+  surface — no socket exists unless you ask for one.
 
 ---
 
