@@ -16,13 +16,19 @@ per platform in a Rust/C++ port; the dispatch table and handler contract
 """
 from __future__ import annotations
 
+import base64
 import json
 import queue
 import socket
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from msx.debugger.disasm import disassemble
+from msx.input import KEY_NAME_TO_CELL
+from msx.screenshot import encode_rgb24_png
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -108,6 +114,21 @@ class DebugServer:
         self._client_lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._handlers: dict[str, Handler] = {}
+        # Set when the machine pauses; cpu.continue_sync waits on it.
+        self._pause_event = threading.Event()
+        # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
+        # surface is decoupled from the interactive debugger's REPL state.
+        self._breakpoints: dict[int, int] = {}
+        self._watchpoints: dict[int, tuple[int, str]] = {}
+        self._next_bp_id = 0
+        self._next_wp_id = 0
+        # Desired joystick state per port (1, 2): direction/trigger booleans.
+        self._joy: dict[int, dict[str, bool]] = {
+            1: _blank_joy_state(),
+            2: _blank_joy_state(),
+        }
+        # Pending named-key auto-releases: (monotonic_deadline, row, bit).
+        self._key_releases: list[tuple[float, int, int]] = []
         self._register_handlers()
 
     # -- lifecycle ----------------------------------------------------------
@@ -156,6 +177,7 @@ class DebugServer:
         emulator thread when a break event fires.
         """
         self._pause_state.set_paused(reason)
+        self._pause_event.set()
         self._push_paused(reason, pc)
 
     def _push_paused(self, reason: str, pc: int) -> None:
@@ -163,7 +185,7 @@ class DebugServer:
             "notification": "paused",
             "reason": reason,
             "pc": hex16(pc),
-            "registers": self._registers_dict(),
+            "registers": self.registers_dict(),
         }
         self._send_to_client(frame)
 
@@ -218,6 +240,11 @@ class DebugServer:
         if not isinstance(req, dict):
             self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
             return
+        # cpu.continue_sync blocks until the next pause; handle it on this socket
+        # thread (never the emulator thread) so the machine keeps running.
+        if req.get("method") == "cpu.continue_sync":
+            self._send(conn, self._continue_sync(req))
+            return
         result_box: list[dict[str, Any]] = []
         done = threading.Event()
         self._queue.put((req, result_box, done))
@@ -235,7 +262,11 @@ class DebugServer:
     # -- main-thread dispatch ----------------------------------------------
 
     def drain(self) -> None:
-        """Process all queued requests. MUST be called on the emulator thread."""
+        """Process pending auto-releases and queued requests.
+
+        MUST be called on the emulator thread (once per host-loop iteration).
+        """
+        self._process_key_releases()
         while True:
             try:
                 req, result_box, done = self._queue.get_nowait()
@@ -285,7 +316,7 @@ class DebugServer:
 
     # -- shared handler helpers --------------------------------------------
 
-    def _registers_dict(self) -> dict[str, Any]:
+    def registers_dict(self) -> dict[str, Any]:
         """Serialise the Z80 register file to the spec's hex-string shape."""
         r = self._machine.cpu.registers
         return {
@@ -302,12 +333,137 @@ class DebugServer:
         if not self._pause_state.paused:
             raise RpcError(ERR_NEED_PAUSED, "emulator must be paused for this operation")
 
+    @staticmethod
+    def _ok(req_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+        return {"id": req_id, "result": result}
+
+    @staticmethod
+    def _err(req_id: Any, code: int, message: str) -> dict[str, Any]:
+        return {"id": req_id, "error": {"code": code, "message": message}}
+
+    def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
+        """Resume and block (on the socket thread) until the next pause event."""
+        req_id = req.get("id")
+        params = req.get("params") or {}
+        if not isinstance(params, dict):
+            return self._err(req_id, ERR_INVALID_PARAMS, "params must be an object")
+        if not self._pause_state.paused:
+            return self._err(req_id, ERR_NEED_PAUSED, "emulator must be paused to continue")
+        timeout_ms = params.get("timeout_ms", 5000)
+        try:
+            timeout_s = float(timeout_ms) / 1000.0
+        except (TypeError, ValueError):
+            return self._err(req_id, ERR_INVALID_PARAMS, "timeout_ms must be a number")
+        self._pause_event.clear()
+        self._machine.prepare_resume()
+        self._pause_state.set_running()
+        if self._pause_event.wait(timeout=timeout_s):
+            return self._ok(req_id, {
+                "paused": True,
+                "reason": self._pause_state.reason,
+                "pc": hex16(self._machine.cpu.registers.PC),
+                "registers": self.registers_dict(),
+            })
+        return self._ok(req_id, {"paused": False, "reason": "timeout"})
+
+    def _process_key_releases(self) -> None:
+        if not self._key_releases:
+            return
+        now = time.monotonic()
+        still_pending: list[tuple[float, int, int]] = []
+        for deadline, row, bit in self._key_releases:
+            if now >= deadline:
+                self._machine.input.set_key_state(row, bit, False)
+            else:
+                still_pending.append((deadline, row, bit))
+        self._key_releases = still_pending
+
+    def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
+        self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
+
+    def capture_rgb(self) -> tuple[bytes, int, int]:
+        """Render the current VDP frame to RGB24 without perturbing the frame
+        counter. Returns (rgb_bytes, width, height)."""
+        from msx.vdp.renderer import render_frame
+        from msx.vdp.v9938 import V9938
+        from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
+
+        vdp = self._machine.vdp
+        saved_fc = getattr(vdp, "_frame_count", None)
+        try:
+            idx = render_frame_v9938(vdp) if isinstance(vdp, V9938) else render_frame(vdp)
+        finally:
+            if saved_fc is not None:
+                vdp._frame_count = saved_fc
+        h = vdp.display_height
+        w = (len(idx) // h) if h else 256
+        return vdp.to_rgb24(idx), w, h
+
+    def alloc_breakpoint(self, address: int) -> int:
+        bp_id = self._next_bp_id
+        self._next_bp_id += 1
+        self._breakpoints[bp_id] = address
+        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        return bp_id
+
+    def remove_breakpoint(self, bp_id: int) -> bool:
+        if bp_id not in self._breakpoints:
+            return False
+        del self._breakpoints[bp_id]
+        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        return True
+
+    def alloc_watchpoint(self, address: int, mode: str) -> int:
+        wp_id = self._next_wp_id
+        self._next_wp_id += 1
+        self._watchpoints[wp_id] = (address, mode)
+        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        return wp_id
+
+    def remove_watchpoint(self, wp_id: int) -> bool:
+        if wp_id not in self._watchpoints:
+            return False
+        del self._watchpoints[wp_id]
+        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        return True
+
+    @property
+    def breakpoints(self) -> dict[int, int]:
+        return self._breakpoints
+
+    @property
+    def joystick_state(self) -> dict[int, dict[str, bool]]:
+        return self._joy
+
     # -- handler registration ----------------------------------------------
 
     def _register_handlers(self) -> None:
         self._handlers.update({
             "debugger.status": _h_debugger_status,
             "debugger.pause": _h_debugger_pause,
+            "cpu.step": _h_cpu_step,
+            "cpu.continue": _h_cpu_continue,
+            "cpu.get_registers": _h_cpu_get_registers,
+            "debug.set_breakpoint": _h_set_breakpoint,
+            "debug.remove_breakpoint": _h_remove_breakpoint,
+            "debug.list_breakpoints": _h_list_breakpoints,
+            "debug.set_watchpoint": _h_set_watchpoint,
+            "debug.remove_watchpoint": _h_remove_watchpoint,
+            "memory.read": _h_memory_read,
+            "memory.write": _h_memory_write,
+            "memory.read_vram": _h_memory_read_vram,
+            "memory.disassemble": _h_memory_disassemble,
+            "vdp.get_registers": _h_vdp_get_registers,
+            "vdp.get_status": _h_vdp_get_status,
+            "input.press_key": _h_input_press_key,
+            "input.release_key": _h_input_release_key,
+            "input.press_key_named": _h_input_press_key_named,
+            "input.joystick": _h_input_joystick,
+            "input.joystick_release": _h_input_joystick_release,
+            "screen.capture": _h_screen_capture,
+            "state.save": _h_state_save,
+            "state.load": _h_state_load,
+            "fdd.swap": _h_fdd_swap,
         })
 
 
@@ -331,3 +487,327 @@ def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, 
         "pc": hex16(server.machine.cpu.registers.PC),
         "reason": REASON_USER,
     }
+
+
+# ── CPU / execution ──────────────────────────────────────────────────────────
+
+def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    server.require_paused()
+    m = server.machine
+    pc_before = m.cpu.registers.PC
+    mnemonic, _size = disassemble(m.memory.read, pc_before)
+    t_states = m.step()
+    server.pause_state.set_paused(REASON_STEP)
+    return {
+        "pc": hex16(m.cpu.registers.PC),
+        "t_states": t_states,
+        "mnemonic": mnemonic,
+        "registers": server.registers_dict(),
+    }
+
+
+def _h_cpu_continue(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    server.require_paused()
+    server.machine.prepare_resume()
+    server.pause_state.set_running()
+    return {"running": True}
+
+
+def _h_cpu_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    return {"registers": server.registers_dict()}
+
+
+# ── Breakpoints / watchpoints ────────────────────────────────────────────────
+
+def _h_set_breakpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    addr = _parse_addr(params.get("address"))
+    bp_id = server.alloc_breakpoint(addr)
+    return {"id": bp_id, "address": hex16(addr), "active": True}
+
+
+def _h_remove_breakpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    return {"removed": server.remove_breakpoint(_require_int(params, "id"))}
+
+
+def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "breakpoints": [
+            {"id": i, "address": hex16(a), "active": True}
+            for i, a in sorted(server.breakpoints.items())
+        ]
+    }
+
+
+def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    addr = _parse_addr(params.get("address"))
+    mode = params.get("mode", "rw")
+    if mode not in ("r", "w", "rw"):
+        raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
+    wp_id = server.alloc_watchpoint(addr, mode)
+    return {"id": wp_id, "address": hex16(addr), "mode": mode, "active": True}
+
+
+def _h_remove_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    return {"removed": server.remove_watchpoint(_require_int(params, "id"))}
+
+
+# ── Memory ──────────────────────────────────────────────────────────────────
+
+def _h_memory_read(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    addr = _parse_addr(params.get("address"))
+    length = _require_int(params, "length", default=16)
+    read = server.machine.memory.read
+    data = _fmt_bytes(read((addr + i) & 0xFFFF) for i in range(length))
+    return {"address": hex16(addr), "data": data}
+
+
+def _h_memory_write(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    server.require_paused()
+    addr = _parse_addr(params.get("address"))
+    values = _parse_hex_bytes(params.get("data"))
+    write = server.machine.memory.write
+    for i, value in enumerate(values):
+        write((addr + i) & 0xFFFF, value)
+    return {"written": len(values)}
+
+
+def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    addr = _parse_addr(params.get("address"))
+    length = _require_int(params, "length", default=32)
+    vram = server.machine.vdp.vram
+    size = len(vram)
+    data = _fmt_bytes(vram[(addr + i) % size] for i in range(length))
+    return {"address": hex16(addr), "data": data}
+
+
+def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    addr = _parse_addr(params.get("address"))
+    count = _require_int(params, "count", default=10)
+    read = server.machine.memory.read
+    instructions: list[dict[str, Any]] = []
+    cur = addr
+    for _ in range(count):
+        mnemonic, size = disassemble(read, cur)
+        raw = _fmt_bytes(read((cur + i) & 0xFFFF) for i in range(size))
+        instructions.append({"address": hex16(cur), "bytes": raw, "mnemonic": mnemonic})
+        cur = (cur + size) & 0xFFFF
+    return {"instructions": instructions}
+
+
+# ── VDP ─────────────────────────────────────────────────────────────────────
+
+def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    from msx.vdp.v9938 import V9938
+
+    vdp = server.machine.vdp
+    vtype = "V9938" if isinstance(vdp, V9938) else "TMS9918A"
+    registers = {f"R{i}": hex8(v) for i, v in enumerate(vdp.regs)}
+    return {"type": vtype, "registers": registers}
+
+
+def _h_vdp_get_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    return {"status": hex8(server.machine.vdp.status)}
+
+
+# ── Input injection ──────────────────────────────────────────────────────────
+
+def _h_input_press_key(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    row = _require_int(params, "row")
+    bit = _require_int(params, "bit")
+    _set_key(server, row, bit, True)
+    return {"row": row, "bit": bit, "pressed": True}
+
+
+def _h_input_release_key(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    row = _require_int(params, "row")
+    bit = _require_int(params, "bit")
+    _set_key(server, row, bit, False)
+    return {"row": row, "bit": bit, "pressed": False}
+
+
+def _h_input_press_key_named(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    name = params.get("key")
+    if not isinstance(name, str):
+        raise RpcError(ERR_INVALID_PARAMS, "key must be a string")
+    cell = KEY_NAME_TO_CELL.get(name.upper())
+    if cell is None:
+        raise RpcError(ERR_INVALID_PARAMS, f"unknown key name: {name}")
+    duration_ms = _require_int(params, "duration_ms", default=100)
+    row, bit = cell
+    server.machine.input.set_key_state(row, bit, True)
+    server.schedule_key_release(row, bit, duration_ms)
+    return {"key": name.upper(), "row": row, "bit": bit, "duration_ms": duration_ms}
+
+
+def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    port = _require_int(params, "port", default=1)
+    if port not in (1, 2):
+        raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
+    state = server.joystick_state[port]
+    inp = server.machine.input
+    port_idx = port - 1
+    for name, bit in _JOY_BITS.items():
+        pressed = bool(params.get(name, False))
+        state[name] = pressed
+        if pressed:
+            inp.joystick_button_down(port_idx, bit)
+        else:
+            inp.joystick_button_up(port_idx, bit)
+    return {"port": port, "state": dict(state)}
+
+
+def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    port = _require_int(params, "port", default=1)
+    if port not in (1, 2):
+        raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
+    state = server.joystick_state[port]
+    inp = server.machine.input
+    port_idx = port - 1
+    for name, bit in _JOY_BITS.items():
+        state[name] = False
+        inp.joystick_button_up(port_idx, bit)
+    return {"port": port, "released": True}
+
+
+# ── Screenshot ───────────────────────────────────────────────────────────────
+
+def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    scale = _require_int(params, "scale", default=1)
+    rgb, width, height = server.capture_rgb()
+    if scale > 1:
+        rgb, width, height = _scale_rgb(rgb, width, height, scale)
+    png = encode_rgb24_png(rgb, width, height)
+    return {
+        "width": width,
+        "height": height,
+        "format": "png",
+        "encoding": "base64",
+        "data": base64.b64encode(png).decode("ascii"),
+    }
+
+
+# ── State save / load ────────────────────────────────────────────────────────
+
+def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+    from msx.state import save_state
+
+    path = params.get("path")
+    title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
+    rgb, width, height = server.capture_rgb()
+    if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
+        rgb, _, _ = _scale_to(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
+    saved = save_state(server.machine, rgb, title)
+    return {"path": str(saved)}
+
+
+def _h_state_load(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    from msx.state import load_state
+
+    path = params.get("path")
+    if not isinstance(path, str) or not path:
+        raise RpcError(ERR_INVALID_PARAMS, "path is required")
+    load_state(server.machine, Path(path))
+    return {"path": path, "loaded": True}
+
+
+# ── Floppy disk ──────────────────────────────────────────────────────────────
+
+def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    from msx.fdc.disk_image import DskDiskImage
+
+    drive = _require_int(params, "drive")
+    if drive not in (1, 2):
+        raise RpcError(ERR_INVALID_PARAMS, "drive must be 1 or 2")
+    fdc = server.machine.fdc
+    if fdc is None:
+        raise RpcError(ERR_INTERNAL, "machine has no floppy interface")
+    path = params.get("path")
+    drive_idx = drive - 1
+    if path:
+        fdc.swap(drive_idx, DskDiskImage(str(path)))
+        return {"drive": drive, "path": str(path), "mounted": True}
+    fdc.swap(drive_idx, None)
+    return {"drive": drive, "path": None, "mounted": False}
+
+
+# ---------------------------------------------------------------------------
+# Handler helpers
+# ---------------------------------------------------------------------------
+
+# Per-joystick direction/trigger bit within the 6-bit active-low port state.
+_JOY_BITS: dict[str, int] = {
+    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
+}
+
+
+class _Missing:
+    pass
+
+
+_MISSING = _Missing()
+
+
+def _blank_joy_state() -> dict[str, bool]:
+    return {name: False for name in _JOY_BITS}
+
+
+def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
+    try:
+        server.machine.input.set_key_state(row, bit, pressed)
+    except ValueError as exc:
+        raise RpcError(ERR_INVALID_PARAMS, str(exc)) from None
+
+
+def _parse_addr(value: Any) -> int:
+    if isinstance(value, bool):
+        raise RpcError(ERR_INVALID_PARAMS, "address must be an integer or hex string")
+    if isinstance(value, int):
+        return value & 0xFFFF
+    if not isinstance(value, str) or not value:
+        raise RpcError(ERR_INVALID_PARAMS, "address is required")
+    try:
+        return int(value, 16) & 0xFFFF
+    except ValueError:
+        raise RpcError(ERR_INVALID_PARAMS, f"invalid address: {value}") from None
+
+
+def _require_int(params: dict[str, Any], name: str, default: Any = _MISSING) -> int:
+    if name not in params:
+        if isinstance(default, _Missing):
+            raise RpcError(ERR_INVALID_PARAMS, f"missing required param: {name}")
+        return int(default)
+    value = params[name]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RpcError(ERR_INVALID_PARAMS, f"{name} must be an integer")
+    return int(value)
+
+
+def _fmt_bytes(values: Any) -> str:
+    return " ".join(f"{v & 0xFF:02X}" for v in values)
+
+
+def _parse_hex_bytes(data: Any) -> list[int]:
+    if not isinstance(data, str):
+        raise RpcError(ERR_INVALID_PARAMS, "data must be a space-separated hex string")
+    out: list[int] = []
+    for token in data.split():
+        try:
+            out.append(int(token, 16) & 0xFF)
+        except ValueError:
+            raise RpcError(ERR_INVALID_PARAMS, f"invalid hex byte: {token}") from None
+    return out
+
+
+def _scale_rgb(rgb: bytes, width: int, height: int, scale: int) -> tuple[bytes, int, int]:
+    return _scale_to(rgb, width, height, width * scale, height * scale)
+
+
+def _scale_to(
+    rgb: bytes, width: int, height: int, out_w: int, out_h: int
+) -> tuple[bytes, int, int]:
+    from PIL import Image as _Image
+
+    img = _Image.frombytes("RGB", (width, height), bytes(rgb))
+    scaled = img.resize((out_w, out_h), _Image.Resampling.NEAREST)
+    return scaled.tobytes(), out_w, out_h

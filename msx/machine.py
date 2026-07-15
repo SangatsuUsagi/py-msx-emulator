@@ -54,6 +54,12 @@ class Machine:
     _pause_hook: Callable[[str, int], None] | None = field(
         default=None, init=False, repr=False
     )
+    # Async pause plumbing used when a pause hook is installed: a break sets
+    # _pause_requested so the debug frame loop returns at the break point, and
+    # resume records _resume_skip_pc so continue does not immediately re-break
+    # the instruction we are paused on.
+    _pause_requested: bool = field(default=False, init=False, repr=False)
+    _resume_skip_pc: int | None = field(default=None, init=False, repr=False)
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -115,11 +121,22 @@ class Machine:
 
     def _enter_break(self, reason: str) -> None:
         """Dispatch a break event: notify the pause hook if one is installed,
-        otherwise fall back to the interactive debugger REPL when attached."""
+        otherwise fall back to the interactive debugger REPL when attached.
+
+        In hook mode this also raises _pause_requested so the debug frame loop
+        returns at the break point instead of running on to the frame end."""
         if self._pause_hook is not None:
+            self._pause_requested = True
             self._pause_hook(reason, self.cpu.registers.PC)
         elif self._debugger is not None:
             self._debugger.enter()
+
+    def prepare_resume(self) -> None:
+        """Arm a resume: clear the pause request and skip re-breaking on the
+        instruction we are paused at, so continue does not immediately retrigger
+        the same breakpoint. Called by the RPC continue handlers."""
+        self._pause_requested = False
+        self._resume_skip_pc = self.cpu.registers.PC
 
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
@@ -151,6 +168,10 @@ class Machine:
             or self._sp_range is not None
             or self._temp_breakpoint is not None
             or self._stepout_sp is not None
+            # With a pause hook installed (RPC attached), always use the debug
+            # loop so pause requests (breakpoints and watchpoints) can return at
+            # the break point. The hot fast/logged loops stay untouched.
+            or self._pause_hook is not None
         )
 
     def _post_step_break(self) -> bool:
@@ -265,10 +286,16 @@ class Machine:
                 line_end = (line + 1) * cpf // lpf
                 while total < line_end:
                     pc = cpu.registers.PC
-                    if pc in self._breakpoints or pc == self._temp_breakpoint:
+                    if pc == self._resume_skip_pc:
+                        # First check after a resume: step past the breakpoint
+                        # we are paused on without re-breaking.
+                        self._resume_skip_pc = None
+                    elif pc in self._breakpoints or pc == self._temp_breakpoint:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
                         self._enter_break("breakpoint")
+                        if self._pause_requested:
+                            return
                     if vdp9938 is not None:
                         cpu.int_pending = vdp9938.irq
                     n = cpu_step()
@@ -278,6 +305,10 @@ class Machine:
                         vdp9938.tick(n)
                     if self._post_step_break():
                         self._enter_break("breakpoint")
+                    if self._pause_requested:
+                        # A watchpoint (or post-step condition) requested a pause
+                        # during this instruction; stop at the boundary.
+                        return
                 if vdp9938 is not None:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
