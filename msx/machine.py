@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,6 +49,11 @@ class Machine:
     sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
+    # Optional programmatic pause sink (e.g. the RPC server). When set, break
+    # events call it with (reason, pc) instead of entering the interactive REPL.
+    _pause_hook: Callable[[str, int], None] | None = field(
+        default=None, init=False, repr=False
+    )
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -96,6 +102,24 @@ class Machine:
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.slot_register = 0x00
         self.memory.sub_slot_reg = 0x00
+
+    def set_pause_hook(self, hook: Callable[[str, int], None] | None) -> None:
+        """Install (or clear) a programmatic pause sink.
+
+        When set, break events (breakpoints, watchpoints, Ctrl-C, and the
+        crash-signature conditions) invoke `hook(reason, pc)` instead of
+        entering the blocking interactive debugger REPL. `reason` is one of
+        "user_request", "breakpoint", "watchpoint", or "step_complete".
+        """
+        self._pause_hook = hook
+
+    def _enter_break(self, reason: str) -> None:
+        """Dispatch a break event: notify the pause hook if one is installed,
+        otherwise fall back to the interactive debugger REPL when attached."""
+        if self._pause_hook is not None:
+            self._pause_hook(reason, self.cpu.registers.PC)
+        elif self._debugger is not None:
+            self._debugger.enter()
 
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
@@ -184,16 +208,14 @@ class Machine:
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
-            if self._debugger is not None:
-                self._debugger.enter()
+            self._enter_break("watchpoint")
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
-            if self._debugger is not None:
-                self._debugger.enter()
+            self._enter_break("watchpoint")
         self.memory.write(addr, value)
 
     def step(self) -> int:
@@ -220,9 +242,12 @@ class Machine:
         return result
 
     def _on_frame_interrupt(self) -> None:
-        """Ctrl-C handling shared by the frame loops: drop into the debugger if
-        one is attached, otherwise re-raise to abort the run."""
-        if self._debugger is not None:
+        """Ctrl-C handling shared by the frame loops: notify the pause hook or
+        drop into the debugger if either is present, otherwise re-raise to
+        abort the run."""
+        if self._pause_hook is not None:
+            self._pause_hook("user_request", self.cpu.registers.PC)
+        elif self._debugger is not None:
             self._debugger.enter()
         else:
             raise
@@ -243,8 +268,7 @@ class Machine:
                     if pc in self._breakpoints or pc == self._temp_breakpoint:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
-                        if self._debugger is not None:
-                            self._debugger.enter()
+                        self._enter_break("breakpoint")
                     if vdp9938 is not None:
                         cpu.int_pending = vdp9938.irq
                     n = cpu_step()
@@ -252,8 +276,8 @@ class Machine:
                     self.cycle_count += n
                     if vdp9938 is not None:
                         vdp9938.tick(n)
-                    if self._post_step_break() and self._debugger is not None:
-                        self._debugger.enter()
+                    if self._post_step_break():
+                        self._enter_break("breakpoint")
                 if vdp9938 is not None:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
