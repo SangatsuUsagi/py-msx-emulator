@@ -10,9 +10,32 @@ CPU/VDP hot path free of locks.
 Only the transport, dispatch, and pause plumbing live here. Method handlers are
 registered in :meth:`DebugServer._register_handlers`.
 
-Portability note: the socket/threading layer is host glue and would be rewritten
-per platform in a Rust/C++ port; the dispatch table and handler contract
-(``handler(server, params) -> dict``) are the portable part.
+Portability / crate-split note
+------------------------------
+This module is a self-contained *adapter*, not part of the emulator core: the
+dependency direction is one-way. No module under ``msx/`` imports this file, and
+``socket``/``queue``/``threading`` appear nowhere else in the core — this file is
+the only place they live. The core (``machine``, ``cpu``, ``vdp``, ``memory``)
+knows nothing about RPC; it only exposes a generic pause seam
+(``Machine.set_pause_hook(Callable[[str, int], None])``). This adapter depends on
+the core, never the reverse.
+
+A Rust/C++ port keeps the same layering as separate crates/targets:
+
+    msx-core     cpu / vdp / memory / machine — no socket/json/thread deps;
+                 the pause seam becomes a `trait PauseSink` (and the reason
+                 strings become an `enum PauseReason`).
+    msx-rpc      this DebugServer — depends on msx-core + serde_json, behind a
+                 `#[cfg(feature = "rpc")]` gate (or a standalone crate) so JSON
+                 never reaches the core.
+    msx-frontend the SDL2 binary — depends on core, optionally on rpc.
+
+Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_json
+(C++: nlohmann/json); daemon thread -> std::thread; queue bridge -> mpsc channel
+(C++: queue + mutex + condition_variable); per-call reply Event -> oneshot channel
+/ Condvar; dispatch table -> HashMap<String, fn>. The ``tools/`` MCP server and
+CLI client are separate processes that speak only the newline-JSON wire protocol,
+so they are language-agnostic and stay as-is under any core port.
 """
 from __future__ import annotations
 
