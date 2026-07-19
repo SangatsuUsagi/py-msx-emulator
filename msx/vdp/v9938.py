@@ -346,11 +346,14 @@ class V9938:
         # active display. Lines >= 256 can never match the 8-bit compare.
         # Subtracting R#23 (vertical scroll) is intentional and matches openMSX
         # (VDP.cc scheduleHScan): the split line is compared as (R#19 - R#23) & 0xFF.
+        # FH (S#1 bit0) is gated by IE1: openMSX only raises irqHorizontal when
+        # IE1 is set (VDP.cc:412). A split program that parks the compare in the
+        # bottom border with IE1 cleared must NOT latch FH, or re-enabling IE1 in
+        # the vblank ISR fires a spurious interrupt (see extras notes).
         effective = (self.regs[19] - self.regs[23]) & 0xFF
-        if line == effective:
+        if line == effective and (self.regs[0] & 0x10):  # IE1
             self._status1 |= 0x01  # FH
-            if self.regs[0] & 0x10:  # IE1
-                self._update_irq()
+            self._update_irq()
 
     # ------------------------------------------------------------------
     # Command timer
@@ -397,6 +400,8 @@ class V9938:
                 if value & 0x80:
                     reg = value & 0x3F
                     if reg < _NUM_REGS:
+                        if reg == 0 and (self.regs[0] & 0x10) and not (low & 0x10):
+                            self._status1 &= ~0x01  # IE1 falling edge clears FH (openMSX VDP.cc:1182)
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
                             self._reg_write_log.append(_RegChange(self.display_line, reg, low))
@@ -440,6 +445,8 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
+                if ptr == 0 and (self.regs[0] & 0x10) and not (value & 0x10):
+                    self._status1 &= ~0x01  # IE1 falling edge clears FH (openMSX VDP.cc:1182)
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
                     self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
