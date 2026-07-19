@@ -52,6 +52,12 @@ Active breakpoints and watchpoints are reported to stderr on startup.
 **`h`**, **`?`** — print the one-line command summary. Also shown automatically
 after an unrecognized command.
 
+> **Filenames with spaces:** command arguments are split on whitespace, so wrap
+> any path that contains a space in double quotes — e.g. `fdd1 "MY DISK 1.dsk"`
+> or `ld "saves/states/my checkpoint.state"`. This applies to every command that
+> takes a filename (`fdd1`/`fdd2`, `ld`, `sv`, `dvf`). An unterminated quote
+> reports `Parse error` and leaves the emulator state untouched.
+
 ### Execution flow
 
 **`c`** — resume emulation.
@@ -329,9 +335,14 @@ prints `this machine has no floppy interface`.
 fdd1: /path/to/game.dsk
 (dbg) fdd1 disk2.dsk
 fdd1: mounted disk2.dsk
+(dbg) fdd1 "MY DISK 1.dsk"
+fdd1: mounted MY DISK 1.dsk
 (dbg) fdd1 -
 fdd1: ejected
 ```
+
+A path containing spaces must be double-quoted (see the note under
+[Command reference](#command-reference)).
 
 ---
 

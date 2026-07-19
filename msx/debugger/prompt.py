@@ -6,6 +6,7 @@ Runs in the main thread; emulation is paused while the REPL is active.
 
 from __future__ import annotations
 
+import shlex
 import sys
 from typing import TYPE_CHECKING, Callable
 
@@ -76,7 +77,14 @@ class Debugger:
             if not line:
                 continue
 
-            parts = line.split()
+            # shlex so quoted arguments keep spaces, e.g. fdd1 "MY DISK.dsk".
+            try:
+                parts = shlex.split(line)
+            except ValueError as exc:  # unbalanced quotes
+                print(f"Parse error: {exc}")
+                continue
+            if not parts:
+                continue
             cmd = parts[0].lower()
             args = parts[1:]
 
