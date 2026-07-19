@@ -232,3 +232,6 @@ __marimo__/
 
 # MSX floppy disk images (user-supplied; create with scripts/make_blank_dsk.py)
 *.dsk
+
+# Project-local MCP server registration (personal socket override)
+.mcp.json
