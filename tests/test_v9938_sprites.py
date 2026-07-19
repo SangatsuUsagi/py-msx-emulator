@@ -658,6 +658,40 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
     assert buf[150 * 256 + 0] == 7, "lower region shows SAT-B sprite (doubler)"
 
 
+def test_sprite_pass_split_on_vscroll_no_ghost() -> None:
+    """A split screen whose regions carry different R#23 (vertical scroll) but
+    share one SAT must position each region's sprites with that region's vscroll.
+    Sprites belonging to the main region (main vscroll) must not leak into the
+    top region, which scrolls differently (the Space Manbow top-border ghost)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00       # SPG at 0x0000
+    vdp.vram[0] = 0xFF       # pattern 0, row 0: 8 opaque pixels
+
+    # Sprite 0 → screen line 5 under the MAIN vscroll (0); under the TOP vscroll
+    # (0x28) it maps outside the top region, so real hardware never shows it in
+    # lines 0-31. The old single-vscroll pass drew it at line 5 (the ghost).
+    _write_sat_entry(vdp, 0, y=4, x=0, pat=0)     # y_top = 5
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    # Sprite 1 → screen line 100, a legitimate main-region sprite.
+    _write_sat_entry(vdp, 1, y=99, x=0, pat=0)    # y_top = 100
+    _write_col_entry(vdp, sprite_idx=1, line_idx=0, color=7)
+    _terminate_sat(vdp, after_idx=2)
+
+    # Top region lines 0-30 use vscroll 0x28; R#23 → 0 from line 31 on.
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_regs[23] = 0x28
+    vdp.regs[23] = 0x00
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp._reg_write_log = [_RegChange(30, 23, 0x00)]   # effective line 31
+
+    buf = render_frame(vdp)
+
+    assert buf[5 * 256 + 0] == 0, "no ghost sprite in the top region"
+    assert buf[100 * 256 + 0] == 7, "main-region sprite still drawn"
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 4 (GRAPHIC 3): G2-style tile background + sprite mode 2 composited
 # on top. Guards that sprites are drawn OVER the background plane in SCREEN 4.
