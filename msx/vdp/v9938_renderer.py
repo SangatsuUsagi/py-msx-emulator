@@ -135,26 +135,59 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     return _apply_display_adjust(vdp, buf)
 
 
+def _r18_offset(reg18: int) -> tuple[int, int]:
+    """Decode R#18 into (horizontal, vertical) pixel offsets (openMSX): each
+    nibble adjust = (nibble ^ 7), offset = adjust - 7, range -7..+8; the
+    BIOS-neutral nibble 0 → 0. Positive offset moves the picture right/down."""
+    h_off = ((reg18 & 0x0F) ^ 0x07) - 7
+    v_off = ((reg18 >> 4) ^ 0x07) - 7
+    return h_off, v_off
+
+
 def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
-    """Apply R#18 display adjust: shift the whole picture horizontally/vertically
-    and fill the exposed edges with the border colour.
+    """Apply R#18 display adjust: shift the picture horizontally/vertically and
+    fill the exposed edges with the border colour.
 
-    Each nibble of R#18 encodes an offset (openMSX): adjust = (nibble ^ 7),
-    pixel/line offset = adjust - 7, range -7..+8; the BIOS-neutral nibble 0 → 0.
-    Positive offset moves the picture right/down.
+    The horizontal adjust is applied *per scanline* from R#18's value at that
+    line: a mid-frame R#18 change (openMSX applies it at the next line,
+    VDP.cc case 18 → syncAtNextLine) dot-scrolls only the lines below it, so a
+    split screen that adjusts only its lower half shifts just that region. The
+    whole VDP output (background and sprites) shifts together, matching openMSX
+    where both derive from getLeftSprites. The vertical adjust is a frame-level
+    display position, taken from R#18 at frame start.
     """
-    reg18 = vdp.regs[18]
-    h_off = ((reg18 & 0x0F) ^ 0x07) - 7        # dots, +ve = right
-    v_off = ((reg18 >> 4) ^ 0x07) - 7          # lines, +ve = down
-    if h_off == 0 and v_off == 0:
-        return buf
-
     h = vdp.display_height
     w = vdp.display_width
+
+    r18_changes = sorted(
+        (e.line + 1, e.value)
+        for e in vdp._reg_write_log
+        if isinstance(e, _RegChange) and e.reg == 18
+    )
+    # Base is R#18 at the top of the frame. When R#18 changed mid-frame that is
+    # the frame-start snapshot (the live regs hold the final, post-change value);
+    # with no mid-frame change the live regs already hold the frame-start value.
+    frame_start_regs = getattr(vdp, "_frame_start_regs", None)
+    base18 = frame_start_regs[18] if (r18_changes and frame_start_regs) else vdp.regs[18]
+
+    # Per-row horizontal offset (dots), seeded with the frame-start value and
+    # updated at each logged R#18 change (effective from the next line, matching
+    # the band model where a write logged at line N takes effect at line N+1).
+    base_h, v_off = _r18_offset(base18)
+    row_h = [base_h] * h
+    for eff, val in r18_changes:
+        if eff < h:
+            ho, _ = _r18_offset(val)
+            for y in range(eff, h):
+                row_h[y] = ho
+
+    if v_off == 0 and not any(row_h):
+        return buf
+
     r0 = vdp.regs[0]
     is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
     border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
-    h_shift = h_off * (w // 256)               # 512-wide modes shift 2 buffer px per dot
+    scale = w // 256                           # 512-wide modes shift 2 buffer px per dot
 
     out = bytearray([border]) * (w * h)
     for sy in range(h):
@@ -163,6 +196,7 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
             continue
         srow = sy * w
         drow = dy * w
+        h_shift = row_h[sy] * scale
         if h_shift == 0:
             out[drow:drow + w] = buf[srow:srow + w]
         elif h_shift > 0:
