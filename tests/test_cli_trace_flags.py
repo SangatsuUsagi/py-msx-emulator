@@ -95,6 +95,44 @@ class TestCountFrameCLI:
         rf.assert_not_called()
 
 
+class TestCountFrameResume:
+    def test_resume_loads_state_before_the_headless_loop(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        def fake_load_state(machine: Machine, path: Path | None = None) -> None:
+            calls.append(("load_state", path))
+
+        def fake_run_frame() -> None:
+            calls.append(("run_frame", None))
+
+        with patch("msx.state.load_state", side_effect=fake_load_state) as load_state_mock, \
+             patch.object(Machine, "run_frame", side_effect=fake_run_frame):
+            code, _out, _err = _run_main(["--count-frame", "3", "--resume"])
+        assert code == 0
+        assert load_state_mock.call_count == 1
+        assert load_state_mock.call_args.kwargs["path"] is None
+        # The state must be restored before any frame of the headless run.
+        assert calls[0] == ("load_state", None)
+        assert [c for c in calls if c[0] == "run_frame"] == [("run_frame", None)] * 3
+
+    def test_resume_with_explicit_path_loads_that_state(self) -> None:
+        with patch("msx.state.load_state") as load_state_mock, \
+             patch.object(Machine, "run_frame", return_value=None) as rf:
+            code, _out, _err = _run_main(
+                ["--count-frame", "3", "--resume", "path/to/scene.state"])
+        assert code == 0
+        load_state_mock.assert_called_once()
+        assert load_state_mock.call_args.kwargs["path"] == Path("path/to/scene.state")
+        assert rf.call_count == 3
+
+    def test_no_resume_flag_does_not_load_state(self) -> None:
+        with patch("msx.state.load_state") as load_state_mock, \
+             patch.object(Machine, "run_frame", return_value=None):
+            code, _out, _err = _run_main(["--count-frame", "3"])
+        assert code == 0
+        load_state_mock.assert_not_called()
+
+
 class TestMapperTraceCLI:
     def test_inert_without_bank_switching_mapper(self) -> None:
         # Zero ROM cartridge -> flat mapper; flag is accepted but inert.

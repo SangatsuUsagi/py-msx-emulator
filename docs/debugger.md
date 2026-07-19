@@ -49,11 +49,19 @@ Active breakpoints and watchpoints are reported to stderr on startup.
 
 ## Command reference
 
+**`h`**, **`?`** — print the one-line command summary. Also shown automatically
+after an unrecognized command.
+
 ### Execution flow
 
 **`c`** — resume emulation.
 
 **`q`** — exit the emulator (process exits with code 0).
+
+**`reset`** — full power-on reset: CPU, PSG, SCC (if present), VDP, and the
+primary/secondary slot registers. Memory/VRAM contents are retained.
+Emulation resumes immediately afterward, same as `c` — there is nothing left
+to inspect at the pre-reset PC.
 
 **`s [N]`** — step `N` Z80 instructions (decimal; default 1). After stepping,
 prints a compact register summary and the next instruction:
@@ -66,6 +74,13 @@ prints a compact register summary and the next instruction:
 **`g ADDR`** — resume emulation and run until PC reaches `ADDR` (hex). One-shot
 temporary breakpoint — cleared once hit, does not consume a `ba` slot, and does
 not alter permanent breakpoints.
+
+**`gf N`** — resume emulation and run until the frame counter (the `frm=`
+value shown in the prompt) reaches the decimal frame number `N`. One-shot,
+checked once per rendered frame rather than per instruction, so it does not
+slow down execution the way an active `ba`/`g` breakpoint does. `N` must be
+greater than the current frame count; otherwise `gf` prints an error and does
+not resume.
 
 **`so`** — step out: resume until SP rises above its value at the time `so` was
 issued (i.e. the current routine returns). See _Known limitations_ for edge
@@ -326,6 +341,36 @@ fdd1: ejected
 `screenshot_YYYYMMDD_HHMMSS.png` to the working directory. The internal frame
 counter is preserved; `ss` has no side-effect on emulation state. Useful for
 correlating a visual snapshot with `v`/`dv`/`rv` output taken at the same pause.
+
+---
+
+### State save / load
+
+**`sv [TITLE]`** — save the full machine state (CPU, VDP, mappers, RAM) to
+`saves/states/<title>_YYYYMMDD_HHMMSS.state`, the same format and location
+used by the socket RPC `state.save` method (see
+[`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md)). With no argument, a default
+title is used; an argument supplies the title (not a file path). The REPL
+stays open.
+
+**`ld FILE`** — restore machine state from a previously saved `.state` file.
+The REPL stays open with no implicit resume, so the loaded state can be
+inspected or advanced precisely with `s` or `gf`. A missing file, or a
+snapshot with an incompatible `format_version` or machine type, prints an
+error without raising.
+
+```
+(msx-dbg cyc=720000 frm=1999) sv before-glitch
+state saved: saves/states/before-glitch_20260101_120000.state
+(msx-dbg cyc=720000 frm=1999) gf 2080
+  Running to frame 2080 ...
+
+... (reopens once frame 2080 is reached) ...
+(msx-dbg cyc=... frm=2080) ld saves/states/before-glitch_20260101_120000.state
+  Loaded state from saves/states/before-glitch_20260101_120000.state
+(msx-dbg cyc=720000 frm=1999) gf 2001
+  Running to frame 2001 ...
+```
 
 ---
 

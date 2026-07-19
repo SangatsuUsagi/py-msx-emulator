@@ -81,6 +81,9 @@ class Machine:
     # Targeted execution control (debugger g/so); one-shot, cleared on hit.
     _temp_breakpoint: int | None = field(default=None, init=False, repr=False)
     _stepout_sp: int | None = field(default=None, init=False, repr=False)
+    # One-shot run-to-frame breakpoint (debugger 'gf'); checked once per
+    # run_frame() call, not per instruction — see set_frame_breakpoint.
+    _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Portability note: this wires the CPU's memory/IO bus by reassigning
@@ -174,6 +177,10 @@ class Machine:
     def set_step_out(self, sp: int) -> None:
         """Break (once) when SP rises above sp, i.e. the current routine returns."""
         self._stepout_sp = sp
+
+    def set_frame_breakpoint(self, frame: int | None) -> None:
+        """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared when hit."""
+        self._frame_breakpoint = frame
 
     def _break_conditions_active(self) -> bool:
         """True when any execution-break condition needs the per-instruction loop."""
@@ -279,6 +286,12 @@ class Machine:
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
+        # Frame breakpoint (debugger 'gf'): checked once per frame, after the
+        # frame is fully rendered and counted, so it never forces the slower
+        # per-instruction debug loop the way a PC breakpoint does.
+        if self._frame_breakpoint is not None and self.vdp._frame_count == self._frame_breakpoint:
+            self._frame_breakpoint = None
+            self._enter_break(PAUSE_BREAKPOINT)
         return result
 
     def _on_frame_interrupt(self) -> None:

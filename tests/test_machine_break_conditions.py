@@ -157,4 +157,51 @@ def test_so_returns_to_caller() -> None:
         m.run_frame()
     assert m.cpu.registers.PC == 0x0003
     assert m.cpu.registers.SP > sp_inside
+
+
+# ---------------------------------------------------------------------------
+# gf — frame breakpoint
+# ---------------------------------------------------------------------------
+
+class _CountingDebugger:
+    """Fake debugger that records enter() calls without aborting run_frame."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def enter(self) -> None:
+        self.calls += 1
+
+
+def test_frame_breakpoint_fires_at_target_frame() -> None:
+    m = _build(rom=bytes(32768))  # all NOPs
+    _arm(m)
+    m.set_frame_breakpoint(2)
+    m.run_frame()
+    assert m.vdp._frame_count == 1
+    with pytest.raises(_Stop):
+        m.run_frame()
+    assert m.vdp._frame_count == 2
+
+
+def test_frame_breakpoint_does_not_fire_before_target() -> None:
+    m = _build(rom=bytes(32768))
+    _arm(m)
+    m.set_frame_breakpoint(2)
+    m.run_frame()  # frame 1 — should not fire
+    assert m.vdp._frame_count == 1
+
+
+def test_frame_breakpoint_clears_after_firing() -> None:
+    m = _build(rom=bytes(32768))
+    debugger = _CountingDebugger()
+    m._debugger = debugger
+    m.set_frame_breakpoint(1)
+    m.run_frame()
+    assert debugger.calls == 1
+    assert m._frame_breakpoint is None
+    # Running further frames must not re-trigger the cleared breakpoint.
+    m.run_frame()
+    m.run_frame()
+    assert debugger.calls == 1
     assert m._stepout_sp is None
