@@ -58,10 +58,10 @@ class _Client:
 
 
 @pytest.fixture
-def rig(tmp_path) -> Iterator[tuple]:
+def rig(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))  # all NOP
     machine.memory.slot_register = 0xD4  # RAM at page 3 (0xC000+)
-    srv = DebugServer(machine, sock_path=str(tmp_path / "h.sock"))
+    srv = DebugServer(machine, sock_path=str(sock_dir / "h.sock"))
     machine.set_pause_hook(srv.on_pause)
     srv.start()
 

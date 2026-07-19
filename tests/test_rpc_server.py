@@ -52,9 +52,9 @@ class _Client:
 
 
 @pytest.fixture
-def server(tmp_path) -> Iterator[DebugServer]:
+def server(sock_dir) -> Iterator[DebugServer]:
     machine = make_machine(rom=bytes(32768))
-    srv = DebugServer(machine, sock_path=str(tmp_path / "rpc.sock"))
+    srv = DebugServer(machine, sock_path=str(sock_dir / "rpc.sock"))
     srv.start()
 
     stop = threading.Event()
@@ -161,8 +161,8 @@ def test_registers_shape(server: DebugServer) -> None:
     client.close()
 
 
-def test_stale_socket_file_replaced(tmp_path) -> None:
-    path = tmp_path / "stale.sock"
+def test_stale_socket_file_replaced(sock_dir) -> None:
+    path = sock_dir / "stale.sock"
     path.write_text("not a socket")
     machine = make_machine(rom=bytes(32768))
     srv = DebugServer(machine, sock_path=str(path))

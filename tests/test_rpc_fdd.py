@@ -50,10 +50,10 @@ class _Client:
 
 
 @pytest.fixture
-def fdd_rig(tmp_path) -> Iterator[tuple]:
+def fdd_rig(tmp_path, sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))
     machine.fdc = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
-    srv = DebugServer(machine, sock_path=str(tmp_path / "fdd.sock"))
+    srv = DebugServer(machine, sock_path=str(sock_dir / "fdd.sock"))
     srv.start()
     stop = threading.Event()
 
@@ -98,10 +98,10 @@ def test_fdd_eject(fdd_rig) -> None:
     assert machine.fdc.drives[0].image is None
 
 
-def test_fdd_no_interface_errors(tmp_path) -> None:
+def test_fdd_no_interface_errors(sock_dir) -> None:
     machine = make_machine(rom=bytes(32768))  # no FDC
     assert machine.fdc is None
-    srv = DebugServer(machine, sock_path=str(tmp_path / "nofdd.sock"))
+    srv = DebugServer(machine, sock_path=str(sock_dir / "nofdd.sock"))
     resp = srv._dispatch(
         {"id": "1", "method": "fdd.swap", "params": {"drive": 1, "path": "x.dsk"}}
     )
