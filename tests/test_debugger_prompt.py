@@ -901,7 +901,7 @@ class TestStateSave:
         tall_rgb = b"\x00" * (256 * 212 * 3)
         native_rgb = b"\x00" * (256 * 192 * 3)
         with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
-            with patch("msx.debugger.prompt._scale_rgb24", return_value=native_rgb) as mock_scale:
+            with patch("msx.screenshot.scale_rgb24", return_value=native_rgb) as mock_scale:
                 with patch("msx.state.save_state") as mock_save:
                     dbg._cmd_state_save([])
         mock_scale.assert_called_once_with(tall_rgb, 256, 212, 256, 192)

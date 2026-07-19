@@ -60,9 +60,9 @@ def test_parse_params_bad_kv() -> None:
 
 
 @pytest.fixture
-def live_sock(tmp_path) -> Iterator[str]:
+def live_sock(sock_dir) -> Iterator[str]:
     machine = make_machine(rom=bytes(32768))
-    sock = str(tmp_path / "cli.sock")
+    sock = str(sock_dir / "cli.sock")
     srv = DebugServer(machine, sock_path=sock)
     srv.start()
     stop = threading.Event()
@@ -92,9 +92,9 @@ def test_main_prints_result(live_sock, capsys) -> None:
     assert "paused" in out["result"]
 
 
-def test_main_unreachable_exits(tmp_path) -> None:
+def test_main_unreachable_exits(sock_dir) -> None:
     mod = _load("rpc_client_unreach")
-    argv = [".", "--socket", str(tmp_path / "nope.sock"), "debugger.status"]
+    argv = [".", "--socket", str(sock_dir / "nope.sock"), "debugger.status"]
     with patch.object(sys, "argv", argv), pytest.raises(SystemExit) as exc:
         mod.main()
     assert exc.value.code == 1

@@ -30,10 +30,10 @@ def _load(name: str, filename: str):
 
 
 @pytest.fixture
-def live(tmp_path) -> Iterator[tuple]:
+def live(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))
     machine.memory.slot_register = 0xD4
-    sock = str(tmp_path / "mcp.sock")
+    sock = str(sock_dir / "mcp.sock")
     srv = DebugServer(machine, sock_path=sock)
     machine.set_pause_hook(srv.on_pause)
     srv.start()
@@ -91,9 +91,9 @@ def test_rpc_raises_on_emulator_error(live) -> None:
         mod._rpc("does.not.exist")
 
 
-def test_rpc_raises_when_unreachable(tmp_path) -> None:
+def test_rpc_raises_when_unreachable(sock_dir) -> None:
     mod = _load("mcp_server_unreach", "mcp_server.py")
-    mod.SOCK_PATH = str(tmp_path / "nope.sock")
+    mod.SOCK_PATH = str(sock_dir / "nope.sock")
     with pytest.raises(RuntimeError, match="Cannot connect"):
         mod._rpc("debugger.status")
 

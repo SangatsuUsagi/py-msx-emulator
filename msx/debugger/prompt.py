@@ -28,18 +28,6 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     return f"{raw_bytes:<12}  {mnem}", size
 
 
-def _scale_rgb24(rgb: bytes, width: int, height: int, out_w: int, out_h: int) -> bytes:
-    """Nearest-neighbour resize an RGB24 buffer.
-
-    Used by `sv` to match `save_state`'s fixed native-resolution thumbnail size
-    for V9938 modes whose frame is taller (e.g. 212 lines).
-    """
-    from PIL import Image
-
-    img = Image.frombytes("RGB", (width, height), bytes(rgb))
-    return img.resize((out_w, out_h), Image.Resampling.NEAREST).tobytes()
-
-
 _HELP = (
     "Commands: h/? | rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
@@ -534,29 +522,15 @@ class Debugger:
                 disabled = True
         print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
 
-    def _render_rgb24(self) -> tuple[bytearray, int, int]:
-        """Render the *current* VDP state to RGB24 without perturbing frame state.
+    def _render_rgb24(self) -> tuple[bytes, int, int]:
+        """Render the current VDP state to RGB24 without perturbing frame state.
 
         Shared by `ss` (screenshot) and `sv` (state save) so both reflect the
         paused instant, correlated with the v / dv / db dumps taken at the same
         moment, without advancing vdp._frame_count.
         """
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        saved_fc = getattr(vdp, "_frame_count", None)
-        try:
-            if isinstance(vdp, V9938):
-                from msx.vdp.v9938_renderer import render_frame as _render
-                idx = _render(vdp)
-            else:
-                from msx.vdp.renderer import render_frame as _render_vdp
-                idx = _render_vdp(vdp)
-        finally:
-            if saved_fc is not None:
-                vdp._frame_count = saved_fc  # don't perturb the frame counter
-        h = vdp.display_height
-        w = (len(idx) // h) if h else _DEFAULT_WIDTH
-        return vdp.to_rgb24(idx), w, h
+        from msx.screenshot import render_current_rgb24
+        return render_current_rgb24(self._machine.vdp, _DEFAULT_WIDTH)
 
     def _cmd_screenshot(self) -> None:
         from msx.screenshot import save_screenshot
@@ -574,6 +548,7 @@ class Debugger:
         the RPC `state.save` contract — it is not a file path. REPL stays open.
         """
         from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+        from msx.screenshot import scale_rgb24
         from msx.state import save_state
 
         title = args[0] if args else "msx_dbg_checkpoint"
@@ -583,7 +558,7 @@ class Debugger:
             print(f"sv: render failed: {exc}")
             return
         if (w, h) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-            rgb = _scale_rgb24(rgb, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
+            rgb = scale_rgb24(rgb, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
         save_state(self._machine, rgb, title)
 
     def _cmd_state_load(self, args: list[str]) -> None:

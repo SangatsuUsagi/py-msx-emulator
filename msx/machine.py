@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,13 +32,20 @@ HANG_PC_REPEAT_THRESHOLD: int = 1000
 SCREEN_WIDTH: int = 256
 SCREEN_HEIGHT: int = 192
 
-# Pause reasons passed to the pause hook — the single source of truth, shared
-# with the RPC adapter (msx/rpc_server.py imports these). A Rust/C++ port
-# promotes them to an `enum PauseReason`.
-PAUSE_USER_REQUEST: str = "user_request"
-PAUSE_BREAKPOINT: str = "breakpoint"
-PAUSE_WATCHPOINT: str = "watchpoint"
-PAUSE_STEP_COMPLETE: str = "step_complete"
+
+class PauseReason(str, enum.Enum):
+    """Why the emulator paused — passed to the pause hook, and the single source
+    of truth shared with the RPC adapter (msx/rpc_server.py imports it).
+
+    Subclasses `str` so each member serializes to its wire value (e.g.
+    ``"breakpoint"``) and compares equal to that string, keeping the JSON-RPC
+    contract unchanged. A Rust/C++ port maps it 1:1 to `enum PauseReason`.
+    """
+
+    USER_REQUEST = "user_request"
+    BREAKPOINT = "breakpoint"
+    WATCHPOINT = "watchpoint"
+    STEP_COMPLETE = "step_complete"
 
 
 @dataclass
@@ -59,7 +67,7 @@ class Machine:
     _debugger: Debugger | None = field(default=None, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
-    _pause_hook: Callable[[str, int], None] | None = field(
+    _pause_hook: Callable[[PauseReason, int], None] | None = field(
         default=None, init=False, repr=False
     )
     # Async pause plumbing used when a pause hook is installed: a break sets
@@ -120,13 +128,13 @@ class Machine:
         self.memory.slot_register = 0x00
         self.memory.sub_slot_reg = 0x00
 
-    def set_pause_hook(self, hook: Callable[[str, int], None] | None) -> None:
+    def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.
 
         When set, break events (breakpoints, watchpoints, Ctrl-C, and the
         crash-signature conditions) invoke `hook(reason, pc)` instead of
-        entering the blocking interactive debugger REPL. `reason` is one of
-        "user_request", "breakpoint", "watchpoint", or "step_complete".
+        entering the blocking interactive debugger REPL. `reason` is a
+        `PauseReason` member.
 
         Portability note: this is the *only* seam the core exposes to the RPC
         adapter (msx/rpc_server.py). The core has no knowledge of sockets, JSON,
@@ -137,7 +145,7 @@ class Machine:
         """
         self._pause_hook = hook
 
-    def _enter_break(self, reason: str) -> None:
+    def _enter_break(self, reason: PauseReason) -> None:
         """Dispatch a break event: notify the pause hook if one is installed,
         otherwise fall back to the interactive debugger REPL when attached.
 
@@ -255,14 +263,14 @@ class Machine:
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
-            self._enter_break(PAUSE_WATCHPOINT)
+            self._enter_break(PauseReason.WATCHPOINT)
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
             print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
-            self._enter_break(PAUSE_WATCHPOINT)
+            self._enter_break(PauseReason.WATCHPOINT)
         self.memory.write(addr, value)
 
     def step(self) -> int:
@@ -291,7 +299,7 @@ class Machine:
         # per-instruction debug loop the way a PC breakpoint does.
         if self._frame_breakpoint is not None and self.vdp._frame_count == self._frame_breakpoint:
             self._frame_breakpoint = None
-            self._enter_break(PAUSE_BREAKPOINT)
+            self._enter_break(PauseReason.BREAKPOINT)
         return result
 
     def _on_frame_interrupt(self) -> None:
@@ -299,7 +307,7 @@ class Machine:
         drop into the debugger if either is present, otherwise re-raise to
         abort the run."""
         if self._pause_hook is not None:
-            self._pause_hook(PAUSE_USER_REQUEST, self.cpu.registers.PC)
+            self._pause_hook(PauseReason.USER_REQUEST, self.cpu.registers.PC)
         elif self._debugger is not None:
             self._debugger.enter()
         else:
@@ -325,7 +333,7 @@ class Machine:
                     elif pc in self._breakpoints or pc == self._temp_breakpoint:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
-                        self._enter_break(PAUSE_BREAKPOINT)
+                        self._enter_break(PauseReason.BREAKPOINT)
                         if self._pause_requested:
                             return
                     if vdp9938 is not None:
@@ -336,7 +344,7 @@ class Machine:
                     if vdp9938 is not None:
                         vdp9938.tick(n)
                     if self._post_step_break():
-                        self._enter_break(PAUSE_BREAKPOINT)
+                        self._enter_break(PauseReason.BREAKPOINT)
                     if self._pause_requested:
                         # A watchpoint (or post-step condition) requested a pause
                         # during this instruction; stop at the boundary.

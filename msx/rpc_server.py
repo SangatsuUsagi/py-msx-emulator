@@ -51,12 +51,17 @@ from typing import TYPE_CHECKING, Any
 
 from msx.debugger.disasm import disassemble
 from msx.input import KEY_NAME_TO_CELL
-from msx.machine import PAUSE_STEP_COMPLETE as REASON_STEP
-from msx.machine import PAUSE_USER_REQUEST as REASON_USER
-from msx.screenshot import encode_rgb24_png
+from msx.machine import PauseReason
+from msx.screenshot import encode_rgb24_png, render_current_rgb24, scale_rgb24
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+
+# Pause reasons come from msx.machine.PauseReason, the single source of truth;
+# aliased here for the handler call sites. The machine emits BREAKPOINT /
+# WATCHPOINT directly through the pause hook.
+REASON_USER = PauseReason.USER_REQUEST
+REASON_STEP = PauseReason.STEP_COMPLETE
 
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
@@ -66,11 +71,7 @@ ERR_PARSE = -32700
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
 ERR_NEED_PAUSED = 1
-ERR_NEED_RUNNING = 2  # reserved: declared in the wire spec; no handler needs it yet
 ERR_INTERNAL = 3
-
-# Pause reasons (REASON_USER / REASON_STEP) come from msx.machine, the single
-# source of truth; the machine emits "breakpoint" / "watchpoint" directly.
 
 _DISPATCH_TIMEOUT_S = 30.0
 
@@ -428,20 +429,7 @@ class DebugServer:
         Returns:
             (rgb_bytes, width, height) for the current frame.
         """
-        from msx.vdp.renderer import render_frame
-        from msx.vdp.v9938 import V9938
-        from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
-
-        vdp = self._machine.vdp
-        saved_fc = getattr(vdp, "_frame_count", None)
-        try:
-            idx = render_frame_v9938(vdp) if isinstance(vdp, V9938) else render_frame(vdp)
-        finally:
-            if saved_fc is not None:
-                vdp._frame_count = saved_fc
-        h = vdp.display_height
-        w = (len(idx) // h) if h else 256
-        return vdp.to_rgb24(idx), w, h
+        return render_current_rgb24(self._machine.vdp)
 
     def alloc_breakpoint(self, address: int) -> int:
         bp_id = self._next_bp_id
@@ -719,7 +707,9 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     scale = _require_int(params, "scale", default=1)
     rgb, width, height = server.capture_rgb()
     if scale > 1:
-        rgb, width, height = _scale_rgb(rgb, width, height, scale)
+        out_w, out_h = width * scale, height * scale
+        rgb = scale_rgb24(rgb, width, height, out_w, out_h)
+        width, height = out_w, out_h
     png = encode_rgb24_png(rgb, width, height)
     return {
         "width": width,
@@ -742,7 +732,7 @@ def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
     # save_state writes a fixed native-resolution (256x192) thumbnail, so match
     # that size for V9938 modes whose frame can be taller (e.g. 212 lines).
     if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-        rgb, _, _ = _scale_to(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
+        rgb = scale_rgb24(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
     saved = save_state(server.machine, rgb, title)
     return {"path": str(saved)}
 
@@ -845,15 +835,3 @@ def _parse_hex_bytes(data: Any) -> list[int]:
     return out
 
 
-def _scale_rgb(rgb: bytes, width: int, height: int, scale: int) -> tuple[bytes, int, int]:
-    return _scale_to(rgb, width, height, width * scale, height * scale)
-
-
-def _scale_to(
-    rgb: bytes, width: int, height: int, out_w: int, out_h: int
-) -> tuple[bytes, int, int]:
-    from PIL import Image as _Image
-
-    img = _Image.frombytes("RGB", (width, height), bytes(rgb))
-    scaled = img.resize((out_w, out_h), _Image.Resampling.NEAREST)
-    return scaled.tobytes(), out_w, out_h
