@@ -302,8 +302,18 @@ def _render_banded(vdp: "V9938") -> bytearray:
         # at the number of distinct SAT regions (one for ordinary games), keeping
         # the cost ~unchanged. R#5 is only changed mid-active-display for this
         # purpose, so gating on it does not affect non-multiplexed games.
-        def _sat_key(regs: list[int]) -> tuple[int, int]:
-            return (regs[5], regs[11] & 0x03)
+        #
+        # R#23 (vertical scroll) is part of the key too: a sprite pass positions
+        # every sprite with a single vscroll, but a split screen can change R#23
+        # mid-frame (a status/score region on a different vscroll than the play
+        # area). Without splitting on R#23, sprites belonging to one region are
+        # positioned with the other region's vscroll and leak across the boundary
+        # (a ghost in the region that should not show them). Splitting draws each
+        # region's sprites with its own vscroll, clipped to its scanline span —
+        # matching real hardware's per-line vscroll at region granularity. Games
+        # with a single frame-wide vscroll are unaffected (still one segment).
+        def _sat_key(regs: list[int]) -> tuple[int, int, int]:
+            return (regs[5], regs[11] & 0x03, regs[23])
 
         sat_segments: list[_SatSegment] = []
         for y0, y1, band_regs, _ in bands:
