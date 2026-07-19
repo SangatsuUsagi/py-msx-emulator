@@ -97,8 +97,10 @@ _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states /
 _CYCLES_PER_PIXEL: int = _CYCLES_PER_BYTE
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
-# Command-engine registers (R#32-R#46) and SAT registers are excluded.
-_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 19, 23})
+# Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
+# tracked so a mid-frame display-adjust change (per-region dot scroll, e.g. a
+# split screen that dot-scrolls only its lower half) shifts the correct bands.
+_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
 
 # S#2 status bits
 _S2_HR = 0x20  # horizontal retrace (set during horizontal blanking)

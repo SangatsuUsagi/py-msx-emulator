@@ -1,5 +1,5 @@
 """Tests for R#18 display adjust (screen position correction)."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _RegChange
 from msx.vdp.v9938_renderer import _apply_display_adjust, render_frame
 
 
@@ -63,3 +63,23 @@ def test_render_frame_applies_r18() -> None:
     buf = render_frame(vdp)
     assert buf[3] == 5
     assert buf[0] == 0    # exposed edge = border
+
+
+def test_r18_midframe_change_shifts_only_lower_region() -> None:
+    # A split screen that dot-scrolls only its lower half (e.g. SCREEN 5 top,
+    # SCREEN 4 bottom): R#18 is neutral at frame start and changes mid-frame.
+    # Rows above the change stay put; rows from the next line on shift.
+    w = 256
+    vdp = V9938()
+    vdp._frame_start_regs = vdp.regs[:]          # R#18 neutral at frame start
+    # R#18 written on line 31 → effective from line 32 (openMSX syncAtNextLine).
+    vdp._reg_write_log.append(_RegChange(31, 18, 0x0E))  # low nibble E → h_off +2
+    # Live regs hold the post-change value; the top region must NOT read it.
+    vdp.regs[18] = 0x0E
+    buf = bytearray(w * 192)
+    buf[20 * w + 10] = 5   # top region (line 20 < 32)
+    buf[80 * w + 10] = 7   # bottom region (line 80 >= 32)
+    out = _apply_display_adjust(vdp, buf)
+    assert out[20 * w + 10] == 5   # top unshifted
+    assert out[80 * w + 12] == 7   # bottom shifted right by 2
+    assert out[80 * w + 10] == 0   # bottom exposed edge = border
