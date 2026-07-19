@@ -786,3 +786,153 @@ class TestWatchList:
         assert "1234h [rw]" in out
         assert "5678h [w]" in out
         assert out.index("1234h") < out.index("5678h")
+
+
+# ---------------------------------------------------------------------------
+# gf — frame breakpoint
+# ---------------------------------------------------------------------------
+
+class TestGotoFrame:
+    def test_gf_arms_frame_breakpoint_and_resumes(self, capsys):
+        m = _make_machine()
+        m.vdp._frame_count = 100
+        assert Debugger(m)._cmd_goto_frame(["150"]) is True
+        m.set_frame_breakpoint.assert_called_once_with(150)
+        assert "150" in capsys.readouterr().out
+
+    def test_gf_no_args_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto_frame([]) is False
+        m.set_frame_breakpoint.assert_not_called()
+        assert "Usage" in capsys.readouterr().out
+
+    def test_gf_invalid_number_does_not_resume(self, capsys):
+        m = _make_machine()
+        assert Debugger(m)._cmd_goto_frame(["zz"]) is False
+        m.set_frame_breakpoint.assert_not_called()
+
+    def test_gf_rejects_current_or_past_frame(self, capsys):
+        m = _make_machine()
+        m.vdp._frame_count = 100
+        assert Debugger(m)._cmd_goto_frame(["100"]) is False
+        m.set_frame_breakpoint.assert_not_called()
+        assert "already reached" in capsys.readouterr().out
+
+    def test_gf_in_repl_resumes_without_c(self, capsys):
+        m = _make_machine()
+        m.vdp._frame_count = 100
+        inputs = iter(["gf 150"])
+        with patch("builtins.input", side_effect=inputs):
+            Debugger(m).enter()
+        m.set_frame_breakpoint.assert_called_once_with(150)
+
+
+# ---------------------------------------------------------------------------
+# reset — power-on reset with implicit resume
+# ---------------------------------------------------------------------------
+
+class TestReset:
+    def test_reset_calls_machine_reset(self, capsys):
+        m = _make_machine()
+        Debugger(m)._cmd_reset()
+        m.reset.assert_called_once()
+
+    def test_reset_prints_pc(self, capsys):
+        m = _make_machine(pc=0x0000)
+        Debugger(m)._cmd_reset()
+        out = capsys.readouterr().out
+        assert "reset" in out.lower()
+        assert "0000h" in out
+
+    def test_reset_in_repl_resumes_without_c(self, capsys):
+        m = _make_machine()
+        inputs = iter(["reset"])
+        with patch("builtins.input", side_effect=inputs):
+            Debugger(m).enter()
+        m.reset.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# h / ? — command summary
+# ---------------------------------------------------------------------------
+
+class TestHelp:
+    def test_h_shows_help(self, capsys):
+        m = _make_machine()
+        inputs = iter(["h", "c"])
+        with patch("builtins.input", side_effect=inputs):
+            Debugger(m).enter()
+        assert "Commands:" in capsys.readouterr().out
+
+    def test_question_mark_shows_help(self, capsys):
+        m = _make_machine()
+        inputs = iter(["?", "c"])
+        with patch("builtins.input", side_effect=inputs):
+            Debugger(m).enter()
+        assert "Commands:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# sv — save machine state
+# ---------------------------------------------------------------------------
+
+class TestStateSave:
+    def test_sv_default_title(self, capsys):
+        m = _make_machine()
+        dbg = Debugger(m)
+        rgb = b"\x00" * (256 * 192 * 3)
+        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+            with patch("msx.state.save_state") as mock_save:
+                dbg._cmd_state_save([])
+        mock_save.assert_called_once_with(m, rgb, "msx_dbg_checkpoint")
+
+    def test_sv_with_title_argument(self, capsys):
+        m = _make_machine()
+        dbg = Debugger(m)
+        rgb = b"\x00" * (256 * 192 * 3)
+        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+            with patch("msx.state.save_state") as mock_save:
+                dbg._cmd_state_save(["my-checkpoint"])
+        mock_save.assert_called_once_with(m, rgb, "my-checkpoint")
+
+    def test_sv_scales_a_taller_than_native_frame(self, capsys):
+        m = _make_machine()
+        dbg = Debugger(m)
+        tall_rgb = b"\x00" * (256 * 212 * 3)
+        native_rgb = b"\x00" * (256 * 192 * 3)
+        with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
+            with patch("msx.debugger.prompt._scale_rgb24", return_value=native_rgb) as mock_scale:
+                with patch("msx.state.save_state") as mock_save:
+                    dbg._cmd_state_save([])
+        mock_scale.assert_called_once_with(tall_rgb, 256, 212, 256, 192)
+        mock_save.assert_called_once_with(m, native_rgb, "msx_dbg_checkpoint")
+
+
+# ---------------------------------------------------------------------------
+# ld — load machine state
+# ---------------------------------------------------------------------------
+
+class TestStateLoad:
+    def test_ld_no_args_shows_usage(self, capsys):
+        m = _make_machine()
+        Debugger(m)._cmd_state_load([])
+        assert "Usage" in capsys.readouterr().out
+
+    def test_ld_calls_load_state(self, capsys):
+        m = _make_machine()
+        with patch("msx.state.load_state") as mock_load:
+            Debugger(m)._cmd_state_load(["saves/states/foo.state"])
+        assert mock_load.call_count == 1
+        assert mock_load.call_args[0][0] is m
+
+    def test_ld_missing_file_reports_error_without_raising(self, capsys):
+        m = _make_machine()
+        with patch("msx.state.load_state", side_effect=FileNotFoundError("no such file")):
+            Debugger(m)._cmd_state_load(["saves/states/missing.state"])
+        assert "ld:" in capsys.readouterr().out
+
+    def test_ld_incompatible_snapshot_reports_error_without_raising(self, capsys):
+        m = _make_machine()
+        with patch("msx.state.load_state", side_effect=ValueError("machine type mismatch")):
+            Debugger(m)._cmd_state_load(["saves/states/bad.state"])
+        assert "ld:" in capsys.readouterr().out

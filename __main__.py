@@ -266,6 +266,10 @@ def main() -> None:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
         if args.count_frame is not None:
+            if args.resume is not None:
+                from msx.state import load_state
+                load_state(machine, path=Path(args.resume) if args.resume else None)
+
             for _ in range(args.count_frame):
                 machine.run_frame()
         elif args.benchmark is not None:

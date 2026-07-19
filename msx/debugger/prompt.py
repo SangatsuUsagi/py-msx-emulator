@@ -28,11 +28,23 @@ def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     return f"{raw_bytes:<12}  {mnem}", size
 
 
+def _scale_rgb24(rgb: bytes, width: int, height: int, out_w: int, out_h: int) -> bytes:
+    """Nearest-neighbour resize an RGB24 buffer.
+
+    Used by `sv` to match `save_state`'s fixed native-resolution thumbnail size
+    for V9938 modes whose frame is taller (e.g. 212 lines).
+    """
+    from PIL import Image
+
+    img = Image.frombytes("RGB", (width, height), bytes(rgb))
+    return img.resize((out_w, out_h), Image.Resampling.NEAREST).tobytes()
+
+
 _HELP = (
-    "Commands: rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
+    "Commands: h/? | rc | rv | rp | v | dm ADDR [SIZE] | dv VADDR [SIZE] | dvf FILE | "
     "ba/br/bl ADDR | bh | bs [LOW HIGH|off] | wa/wd/wl ADDR | da [ADDR] | s [N] | "
-    "g ADDR | so | te | td | ce | cd | ds | sl | st | ss | "
-    "fdd1/fdd2 [FILE|-] | c | q"
+    "g ADDR | gf N | so | te | td | ce | cd | ds | sl | st | ss | "
+    "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | reset | c | q"
 )
 
 # The machine caps hardware breakpoints and watchpoints at 4 each.
@@ -92,6 +104,13 @@ class Debugger:
                 continue
             if cmd == "so":
                 self._cmd_step_out()
+                return
+            if cmd == "gf":
+                if self._cmd_goto_frame(args):
+                    return
+                continue
+            if cmd == "reset":
+                self._cmd_reset()
                 return
 
             handler = _COMMANDS.get(cmd)
@@ -290,6 +309,34 @@ class Debugger:
         print(f"  Running to {addr:04X}h ...")
         return True
 
+    def _cmd_goto_frame(self, args: list[str]) -> bool:
+        """Set a one-shot run-to-frame breakpoint. Returns True if emulation should resume."""
+        if not args:
+            print("Usage: gf N")
+            return False
+        try:
+            target = int(args[0])
+        except ValueError:
+            print("gf: invalid frame number (decimal expected)")
+            return False
+        current = getattr(self._machine.vdp, "_frame_count", 0)
+        if target <= current:
+            print(f"gf: target frame {target} already reached (current: {current})")
+            return False
+        self._machine.set_frame_breakpoint(target)
+        print(f"  Running to frame {target} ...")
+        return True
+
+    def _cmd_reset(self) -> None:
+        """Full power-on reset of CPU/PSG/SCC/VDP and slot registers (reset).
+
+        Resumes emulation afterward, same as `c` — there is nothing left to
+        inspect at the pre-reset PC.
+        """
+        self._machine.reset()
+        pc = self._machine.cpu.registers.PC
+        print(f"  Machine reset. Resuming at PC={pc:04X}h ...")
+
     def _cmd_step_out(self) -> None:
         """Run until the current routine returns (SP rises above its current value)."""
         sp = self._machine.cpu.registers.SP
@@ -487,14 +534,16 @@ class Debugger:
                 disabled = True
         print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
 
-    def _cmd_screenshot(self) -> None:
-        # Render the *current* VDP state and save it as a PNG, so a screenshot can
-        # be captured deterministically at the paused point and correlated with
-        # the v / dv / db dumps taken at the same moment.
+    def _render_rgb24(self) -> tuple[bytearray, int, int]:
+        """Render the *current* VDP state to RGB24 without perturbing frame state.
+
+        Shared by `ss` (screenshot) and `sv` (state save) so both reflect the
+        paused instant, correlated with the v / dv / db dumps taken at the same
+        moment, without advancing vdp._frame_count.
+        """
         from msx.vdp.v9938 import V9938
         vdp = self._machine.vdp
         saved_fc = getattr(vdp, "_frame_count", None)
-        from msx.screenshot import save_screenshot
         try:
             if isinstance(vdp, V9938):
                 from msx.vdp.v9938_renderer import render_frame as _render
@@ -502,15 +551,61 @@ class Debugger:
             else:
                 from msx.vdp.renderer import render_frame as _render_vdp
                 idx = _render_vdp(vdp)
-        except Exception as exc:  # rendering is best-effort for a debug command
-            print(f"ss: screenshot failed: {exc}")
-            return
         finally:
             if saved_fc is not None:
                 vdp._frame_count = saved_fc  # don't perturb the frame counter
         h = vdp.display_height
         w = (len(idx) // h) if h else _DEFAULT_WIDTH
-        save_screenshot(vdp.to_rgb24(idx), w, h)
+        return vdp.to_rgb24(idx), w, h
+
+    def _cmd_screenshot(self) -> None:
+        from msx.screenshot import save_screenshot
+        try:
+            rgb, w, h = self._render_rgb24()
+        except Exception as exc:  # rendering is best-effort for a debug command
+            print(f"ss: screenshot failed: {exc}")
+            return
+        save_screenshot(rgb, w, h)
+
+    def _cmd_state_save(self, args: list[str]) -> None:
+        """`sv [TITLE]`: save full machine state (CPU/VDP/mapper/RAM) to saves/states/.
+
+        TITLE (a default is used when omitted) becomes the filename stem, matching
+        the RPC `state.save` contract — it is not a file path. REPL stays open.
+        """
+        from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+        from msx.state import save_state
+
+        title = args[0] if args else "msx_dbg_checkpoint"
+        try:
+            rgb, w, h = self._render_rgb24()
+        except Exception as exc:  # rendering is best-effort for a debug command
+            print(f"sv: render failed: {exc}")
+            return
+        if (w, h) != (SCREEN_WIDTH, SCREEN_HEIGHT):
+            rgb = _scale_rgb24(rgb, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
+        save_state(self._machine, rgb, title)
+
+    def _cmd_state_load(self, args: list[str]) -> None:
+        """`ld FILE`: restore machine state from a previously saved .state file.
+
+        REPL stays open with no implicit resume, so the loaded state can be
+        inspected or advanced precisely with `s` / `gf`.
+        """
+        from pathlib import Path
+
+        from msx.state import load_state
+
+        if not args:
+            print("Usage: ld FILE")
+            return
+        path = Path(args[0])
+        try:
+            load_state(self._machine, path)
+        except (ValueError, OSError) as exc:
+            print(f"ld: {exc}")
+            return
+        print(f"  Loaded state from {path}")
 
     def _cmd_disable_sprites(self) -> None:
         vdp = self._machine.vdp
@@ -860,9 +955,11 @@ def _sl_size(mem: object, primary: int, secondary: int | None) -> str:
 
 
 # REPL command dispatch table (see Debugger.enter). Loop-control commands
-# (c/q/g/so) are handled inline in enter(); everything else maps here. The
-# short lambdas adapt each command's argument shape to its _cmd_* handler.
+# (c/q/g/gf/so/reset) are handled inline in enter(); everything else maps here.
+# The short lambdas adapt each command's argument shape to its _cmd_* handler.
 _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
+    "h": lambda d, a: print(f"  {_HELP}"),
+    "?": lambda d, a: print(f"  {_HELP}"),
     "rc": lambda d, a: d._cmd_reg_cpu(),
     "rv": lambda d, a: d._cmd_reg_vdp(),
     "rp": lambda d, a: d._cmd_reg_palette(),
@@ -888,6 +985,8 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "sl": lambda d, a: d._cmd_slot_active(),
     "st": lambda d, a: d._cmd_slot_tree(),
     "ss": lambda d, a: d._cmd_screenshot(),
+    "sv": lambda d, a: d._cmd_state_save(a),
+    "ld": lambda d, a: d._cmd_state_load(a),
     "fdd1": lambda d, a: d._cmd_fdd(a, 0),
     "fdd2": lambda d, a: d._cmd_fdd(a, 1),
 }
