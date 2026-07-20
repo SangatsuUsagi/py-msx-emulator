@@ -692,6 +692,38 @@ def test_sprite_pass_split_on_vscroll_no_ghost() -> None:
     assert buf[100 * 256 + 0] == 7, "main-region sprite still drawn"
 
 
+def test_sprite_visible_in_both_vscroll_regions() -> None:
+    """One sprite (single SAT) whose VRAM band maps into BOTH the top and the
+    bottom region under each region's own R#23 must render in both places. The
+    per-line vscroll pass evaluates each scanline against its own vscroll, so a
+    sprite genuinely straddling the split appears twice (matching openMSX, which
+    re-reads R#23 per line) — it is not confined to a single region."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00       # SPG at 0x0000
+    vdp.vram[0] = 0xFF       # pattern 0, row 0: 8 opaque pixels
+
+    # Sprite 0, y_top = 45. Top region vscroll 0x28 → visible at screen line 5
+    # (sprite_row 0); bottom region vscroll 0 → visible at screen line 45.
+    _write_sat_entry(vdp, 0, y=44, x=0, pat=0)     # y_top = 45
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    _terminate_sat(vdp, after_idx=1)
+
+    # Top region lines 0-30 use vscroll 0x28; R#23 → 0 from line 31 on.
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_regs[23] = 0x28
+    vdp.regs[23] = 0x00
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp._reg_write_log = [_RegChange(30, 23, 0x00)]   # effective line 31
+
+    buf = render_frame(vdp)
+
+    assert buf[5 * 256 + 0] == 6, "sprite shows in top region under top vscroll"
+    assert buf[45 * 256 + 0] == 6, "same sprite shows in bottom region under its vscroll"
+    assert buf[20 * 256 + 0] == 0, "not visible between the two mapped bands"
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 4 (GRAPHIC 3): G2-style tile background + sprite mode 2 composited
 # on top. Guards that sprites are drawn OVER the background plane in SCREEN 4.
