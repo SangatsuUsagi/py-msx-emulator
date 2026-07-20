@@ -123,8 +123,8 @@ def test_port_99_read_resets_latch_when_status_reg_not_zero() -> None:
     # Reading the status port resets the write latch regardless of which status
     # register R#15 selects. Resetting it only for S#0 lets a half-finished
     # write (interrupted between its two bytes) desync the latch permanently,
-    # corrupting every later register write. (This froze Space Manbow: R#15 was
-    # stuck at 2 because its R#15:=0 writes never completed.)
+    # corrupting every later register write. (This froze a Konami SCC MegaROM
+    # title: R#15 was stuck at 2 because its R#15:=0 writes never completed.)
     vdp = V9938()
     vdp.write_port(0x99, 0x02)
     vdp.write_port(0x99, 0x80 | 15)  # R#15 = 2 → status reads select S#2

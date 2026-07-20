@@ -65,8 +65,8 @@ def test_bank_page_wrap(mapper: KonamiSCCMapper) -> None:
 
 def test_writes_outside_register_zones_ignored(mapper: KonamiSCCMapper) -> None:
     # Bank registers are only the low 2 KB of each window. Writes elsewhere
-    # (e.g. a BIOS RAM test hitting 0xBF00) must NOT switch a bank — this was
-    # the Metal Gear 2 boot bug: 0xBF00 wrongly set bank 3.
+    # (e.g. a BIOS RAM test hitting 0xBF00) must NOT switch a bank — a known
+    # boot bug in a Konami SCC MegaROM title: 0xBF00 wrongly set bank 3.
     mapper.write(0xBF00, 0x0F)
     assert mapper.read(0xA000) == 3  # bank 3 unchanged
     mapper.write(0x6000, 4)
