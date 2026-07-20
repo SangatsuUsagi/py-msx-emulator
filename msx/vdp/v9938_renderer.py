@@ -144,43 +144,57 @@ def _r18_offset(reg18: int) -> tuple[int, int]:
     return h_off, v_off
 
 
+def _r18_row_offsets(vdp: "V9938", h: int) -> tuple[list[int], int]:
+    """Per-scanline horizontal offset (dots) and the frame-level vertical offset,
+    derived from R#18 at frame start plus mid-frame R#18 changes.
+
+    A change logged at line N takes effect from line N+1 (openMSX applies R#18 at
+    the next line, VDP.cc case 18 → syncAtNextLine), so each change overrides the
+    horizontal offset for the lines below it. Sorting by effective line (a stable
+    sort keeps later same-line writes last) lets the fill walk consecutive change
+    points in a single pass. The vertical offset is a frame-level display
+    position, taken from R#18 at frame start.
+    """
+    r18_changes = sorted(
+        ((e.line + 1, e.value)
+         for e in vdp._reg_write_log
+         if isinstance(e, _RegChange) and e.reg == 18),
+        key=lambda c: c[0],
+    )
+    # Base is R#18 at the top of the frame. When R#18 changed mid-frame the live
+    # regs hold the final post-change value, so read the frame-start snapshot;
+    # with no mid-frame change the live regs already hold the frame-start value.
+    base18 = vdp._frame_start_regs[18] if r18_changes else vdp.regs[18]
+
+    base_h, v_off = _r18_offset(base18)
+    row_h = [base_h] * h
+    # Fill each row with the offset in force there: for change i, that is its own
+    # offset from its effective line up to the next change point (single pass).
+    for idx, (eff_line, reg18_val) in enumerate(r18_changes):
+        if eff_line >= h:
+            break
+        next_eff = r18_changes[idx + 1][0] if idx + 1 < len(r18_changes) else h
+        h_off, _ = _r18_offset(reg18_val)
+        for y in range(eff_line, min(next_eff, h)):
+            row_h[y] = h_off
+    return row_h, v_off
+
+
 def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     """Apply R#18 display adjust: shift the picture horizontally/vertically and
     fill the exposed edges with the border colour.
 
     The horizontal adjust is applied *per scanline* from R#18's value at that
-    line: a mid-frame R#18 change (openMSX applies it at the next line,
-    VDP.cc case 18 → syncAtNextLine) dot-scrolls only the lines below it, so a
-    split screen that adjusts only its lower half shifts just that region. The
-    whole VDP output (background and sprites) shifts together, matching openMSX
-    where both derive from getLeftSprites. The vertical adjust is a frame-level
-    display position, taken from R#18 at frame start.
+    line, so a split screen that adjusts only its lower half shifts just that
+    region. The whole VDP output (background and sprites) shifts together,
+    matching openMSX where both derive from getLeftSprites.
     """
     h = vdp.display_height
     w = vdp.display_width
 
-    r18_changes = sorted(
-        (e.line + 1, e.value)
-        for e in vdp._reg_write_log
-        if isinstance(e, _RegChange) and e.reg == 18
-    )
-    # Base is R#18 at the top of the frame. When R#18 changed mid-frame that is
-    # the frame-start snapshot (the live regs hold the final, post-change value);
-    # with no mid-frame change the live regs already hold the frame-start value.
-    frame_start_regs = getattr(vdp, "_frame_start_regs", None)
-    base18 = frame_start_regs[18] if (r18_changes and frame_start_regs) else vdp.regs[18]
-
-    # Per-row horizontal offset (dots), seeded with the frame-start value and
-    # updated at each logged R#18 change (effective from the next line, matching
-    # the band model where a write logged at line N takes effect at line N+1).
-    base_h, v_off = _r18_offset(base18)
-    row_h = [base_h] * h
-    for eff, val in r18_changes:
-        if eff < h:
-            ho, _ = _r18_offset(val)
-            for y in range(eff, h):
-                row_h[y] = ho
-
+    row_h, v_off = _r18_row_offsets(vdp, h)
+    # Nothing to do when there is no vertical shift and every scanline offset is
+    # zero — the common BIOS-neutral R#18 = 0 case.
     if v_off == 0 and not any(row_h):
         return buf
 
@@ -216,6 +230,11 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
 
     change_lines: dict[int, list[_RegChange | _PaletteChange]] = {}
     for entry in log:
+        # R#18 (display adjust) is logged for _apply_display_adjust but no band
+        # renderer reads regs[18], so splitting a band on it only produces a
+        # background re-render identical to the band above — skip it here.
+        if isinstance(entry, _RegChange) and entry.reg == 18:
+            continue
         # Writes logged at display_line=N happen during line N+1's CPU window
         # (begin_scanline(N) fires after N's CPU budget; ISR runs in N+1's window).
         # The register change therefore takes effect from line N+1 onwards.
@@ -1026,8 +1045,13 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     h = vdp.display_height
     w = len(src) // h if h else _W
 
-    reg18 = vdp.regs[18]
-    v_off = ((reg18 >> 4) ^ 0x07) - 7   # signed line shift from R#18
+    # Vertical shift must match _apply_display_adjust: use the frame-start R#18
+    # when it changed mid-frame (live regs hold the post-change value), else live.
+    r18_changed = any(
+        isinstance(e, _RegChange) and e.reg == 18 for e in vdp._reg_write_log
+    )
+    base18 = vdp._frame_start_regs[18] if r18_changed else vdp.regs[18]
+    _, v_off = _r18_offset(base18)   # signed line shift from R#18
 
     bands = _build_bands(vdp)
 
