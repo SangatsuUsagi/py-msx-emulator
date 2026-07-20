@@ -1,4 +1,4 @@
-"""Tests for RTypeMapper (Irem R-Type mapper).
+"""Tests for RTypeMapper (Irem's ASCII16 MegaROM variant mapper).
 
 Layout (per openMSX RomRType.cc):
   0x4000-0x7FFF: Fixed to LAST 16 KB of ROM (page N-1)

@@ -226,9 +226,9 @@ def test_screen4_renders_g2_tiles() -> None:
 
 def test_screen4_name_table_above_16k() -> None:
     """V9938 GRAPHIC2/3 use the full 7-bit R#2, so the name table may sit above
-    the 16 KB an MSX1 4-bit mask would allow. Space Manbow places it at 0xC000
-    (R#2=0x30); a 4-bit mask would read it from 0x0000 (the pattern table) and
-    render garbage."""
+    the 16 KB an MSX1 4-bit mask would allow. A Konami SCC MegaROM cartridge
+    places it at 0xC000 (R#2=0x30); a 4-bit mask would read it from 0x0000 (the
+    pattern table) and render garbage."""
     vdp = V9938()
     _set_screen4(vdp)
 
@@ -246,8 +246,8 @@ def test_screen4_name_table_above_16k() -> None:
 
 def test_screen4_vertical_scroll_r23() -> None:
     """R#23 vertical scroll applies to GRAPHIC2/3 (a no-op when R#23 = 0). With
-    R#23 = 8, screen line 0 shows VRAM line 8 = name row 1 (Space Manbow sets
-    R#23 to position its scrolling playfield)."""
+    R#23 = 8, screen line 0 shows VRAM line 8 = name row 1 (a scrolling-playfield
+    title sets R#23 to position its playfield)."""
     vdp = V9938()
     _set_screen4(vdp)
 

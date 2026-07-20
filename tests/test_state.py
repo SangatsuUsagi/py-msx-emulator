@@ -68,9 +68,9 @@ def test_save_state_title_sanitised(machine, saves_dir):
     rgb = bytearray(256 * 192 * 3)
     # Spaces become underscores; non-ASCII (e.g. Japanese) is now preserved;
     # filesystem-unsafe characters are stripped.
-    path = save_state(machine, rgb, "グラディウス Gradius")
+    path = save_state(machine, rgb, "テスト タイトル")
     assert " " not in path.name
-    assert "グラディウス_Gradius" in path.name
+    assert "テスト_タイトル" in path.name
 
 def test_save_state_title_strips_unsafe_chars(machine, saves_dir):
     rgb = bytearray(256 * 192 * 3)

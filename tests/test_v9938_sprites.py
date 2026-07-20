@@ -623,9 +623,9 @@ def test_spd_bit_clear_allows_sprites() -> None:
 
 def test_sprite_doubler_mid_screen_sat_switch() -> None:
     """A mid-frame R#5 change switches the sprite attribute table base, letting a
-    game show a second set of 32 sprites in the lower screen region (e.g. Space
-    Manbow). Sprites from the second SAT must appear in the lower region; the old
-    single-SAT-per-frame pass dropped them."""
+    game show a second set of 32 sprites in the lower screen region (a sprite
+    multiplexer title). Sprites from the second SAT must appear in the lower
+    region; the old single-SAT-per-frame pass dropped them."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[6] = 0x00       # sprite pattern generator at 0x0000
@@ -662,7 +662,7 @@ def test_sprite_pass_split_on_vscroll_no_ghost() -> None:
     """A split screen whose regions carry different R#23 (vertical scroll) but
     share one SAT must position each region's sprites with that region's vscroll.
     Sprites belonging to the main region (main vscroll) must not leak into the
-    top region, which scrolls differently (the Space Manbow top-border ghost)."""
+    top region, which scrolls differently (the split-screen top-border ghost)."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
