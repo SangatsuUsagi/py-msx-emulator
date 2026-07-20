@@ -81,6 +81,10 @@ _S2_CE = 0x01  # command executing
 _S2_BD = 0x10  # border/colour detected (SRCH result)
 _S2_TR = 0x80  # transfer ready (CPU may send next byte)
 
+# Line-interrupt (horizontal scanline) bits
+_R0_IE1 = 0x10  # R#0 bit4: horizontal (line) interrupt enable
+_S1_FH = 0x01   # S#1 bit0: horizontal-scanline interrupt flag (line match)
+
 # ARG register (R#45) bit assignments
 _ARG_MAJ = 0x01  # LINE: major axis (0=X, 1=Y)
 _ARG_EQ = 0x02   # SRCH: 0=stop on equal, 1=stop on not-equal
@@ -287,12 +291,22 @@ class V9938:
     def irq_pending(self) -> bool:
         ie0 = bool(self.regs[1] & 0x20)
         f = bool(self.status & 0x80)
-        ie1 = bool(self.regs[0] & 0x10)
-        fh = bool(self._status1 & 0x01)
+        ie1 = bool(self.regs[0] & _R0_IE1)
+        fh = bool(self._status1 & _S1_FH)
         return (ie0 and f) or (ie1 and fh)
 
     def _update_irq(self) -> None:
         self.irq = self.irq_pending()
+
+    def _apply_r0_write(self, new_r0: int) -> None:
+        """Handle side effects of writing R#0 before the new value is stored.
+
+        IE1 falling edge clears FH (openMSX VDP.cc:1182): a split program that
+        re-enables IE1 in the vblank ISR must not see a stale FH latched while
+        IE1 was off.
+        """
+        if (self.regs[0] & _R0_IE1) and not (new_r0 & _R0_IE1):
+            self._status1 &= ~_S1_FH
 
     @property
     def framebuffer_format(self) -> FramebufferFormat:
@@ -352,9 +366,11 @@ class V9938:
         # IE1 is set (VDP.cc:412). A split program that parks the compare in the
         # bottom border with IE1 cleared must NOT latch FH, or re-enabling IE1 in
         # the vblank ISR fires a spurious interrupt (see extras notes).
+        # regs are u8 (0-255); the & 0xFF gives the 8-bit wrapping difference
+        # (regs[19] - regs[23] may go negative — a port uses u8 wrapping_sub).
         effective = (self.regs[19] - self.regs[23]) & 0xFF
-        if line == effective and (self.regs[0] & 0x10):  # IE1
-            self._status1 |= 0x01  # FH
+        if line == effective and (self.regs[0] & _R0_IE1):
+            self._status1 |= _S1_FH
             self._update_irq()
 
     # ------------------------------------------------------------------
@@ -402,8 +418,8 @@ class V9938:
                 if value & 0x80:
                     reg = value & 0x3F
                     if reg < _NUM_REGS:
-                        if reg == 0 and (self.regs[0] & 0x10) and not (low & 0x10):
-                            self._status1 &= ~0x01  # IE1 falling edge clears FH (openMSX VDP.cc:1182)
+                        if reg == 0:
+                            self._apply_r0_write(low)
                         self.regs[reg] = low
                         if reg in _DISPLAY_REGS:
                             self._reg_write_log.append(_RegChange(self.display_line, reg, low))
@@ -447,8 +463,8 @@ class V9938:
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
-                if ptr == 0 and (self.regs[0] & 0x10) and not (value & 0x10):
-                    self._status1 &= ~0x01  # IE1 falling edge clears FH (openMSX VDP.cc:1182)
+                if ptr == 0:
+                    self._apply_r0_write(value)
                 self.regs[ptr] = value
                 if ptr in _DISPLAY_REGS:
                     self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
@@ -515,7 +531,7 @@ class V9938:
                 return self._status7
             if self.regs[15] == 1:
                 result = self._status1
-                self._status1 &= ~0x01  # clear FH
+                self._status1 &= ~_S1_FH  # reading S#1 clears FH
                 self._update_irq()
                 return result & 0xFF
             if self.regs[15] == 8:
