@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, NamedTuple
 
 from msx.vdp.v9938 import _PaletteChange, _RegChange
 from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
@@ -324,9 +324,9 @@ def _render_banded(vdp: "V9938") -> bytearray:
         # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
         # only changed mid-active-display for this purpose, so keying on it does
         # not affect non-multiplexed games.
-        # Per-line vertical scroll (R#23) and SPD sprite-disable (R#8 bit 1). A
-        # split screen may blank sprites over just its status band (SPD=1 there,
-        # 0 in the play area); the sprite pass reads these instead of the scalars.
+        # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
+        # sprites over just its status band (SPD=1 there, 0 in the play area). Build
+        # it alongside row_vscroll so the sprite pass reads both per line.
         row_vscroll = [0] * full_h
         row_spd = [False] * full_h
         for y0, y1, band_regs, _ in bands:
@@ -732,37 +732,43 @@ def _render_sprites(
         vdp.status |= 0x20
 
 
-def _vscroll_runs(
-    row_vscroll: list[int] | None, default: int, y_start: int, scan_hi: int,
-    row_spd: list[bool] | None = None, default_spd: bool = False,
-) -> list[tuple[int, int, int, bool]]:
-    """Group scanlines [y_start, scan_hi) into (lo, hi, vscroll, enabled) runs of
-    constant vertical scroll AND constant sprite-enable (R#8 SPD). `enabled` is the
-    inverse of SPD (True → draw sprites). With no per-line schedule (or single
-    values) this is one run spanning the whole range, so the common case stays a
-    single per-sprite scan."""
+class _SpriteRun(NamedTuple):
+    """A run of consecutive scanlines [lo, hi) with constant vertical scroll
+    (R#23) and constant sprite-enable. `enabled` is False where R#8 SPD blanks
+    sprites, so the sprite pass skips the run entirely."""
+    lo: int
+    hi: int
+    vscroll: int
+    enabled: bool
+
+
+def _sprite_runs(
+    row_vscroll: list[int] | None, default_vscroll: int, y_start: int, scan_hi: int,
+    row_spd: list[bool] | None = None,
+) -> list[_SpriteRun]:
+    """Group scanlines [y_start, scan_hi) into runs of constant vertical scroll
+    (R#23) AND constant sprite-enable (R#8 SPD). With no per-line schedule this is
+    one run over the whole range, so the common non-banded case stays a single
+    per-sprite scan. A None row_spd means sprites are enabled throughout — the
+    scalar whole-pass-disable case is handled by the caller's early return."""
     if y_start >= scan_hi:
         return []
+    if row_vscroll is None and row_spd is None:
+        return [_SpriteRun(y_start, scan_hi, default_vscroll, True)]
 
-    def vsc_at(y: int) -> int:
-        return default if row_vscroll is None else row_vscroll[y]
-
-    def spd_at(y: int) -> bool:
-        return default_spd if row_spd is None else row_spd[y]
-
-    runs: list[tuple[int, int, int, bool]] = []
+    runs: list[_SpriteRun] = []
     lo = y_start
-    cur_v = vsc_at(y_start)
-    cur_s = spd_at(y_start)
+    cur_vsc = default_vscroll if row_vscroll is None else row_vscroll[y_start]
+    cur_spd = False if row_spd is None else row_spd[y_start]
     for y in range(y_start + 1, scan_hi):
-        v = vsc_at(y)
-        s = spd_at(y)
-        if v != cur_v or s != cur_s:
-            runs.append((lo, y, cur_v, not cur_s))
+        vsc = default_vscroll if row_vscroll is None else row_vscroll[y]
+        spd = False if row_spd is None else row_spd[y]
+        if vsc != cur_vsc or spd != cur_spd:
+            runs.append(_SpriteRun(lo, y, cur_vsc, not cur_spd))
             lo = y
-            cur_v = v
-            cur_s = s
-    runs.append((lo, scan_hi, cur_v, not cur_s))
+            cur_vsc = vsc
+            cur_spd = spd
+    runs.append(_SpriteRun(lo, scan_hi, cur_vsc, not cur_spd))
     return runs
 
 
@@ -821,8 +827,7 @@ def _render_sprites_mode2(
     # range into runs of constant vscroll AND constant sprite-enable (one run for
     # the usual single R#23/R#8; more only when a split changes either). Runs
     # whose SPD is set are skipped, so a band that blanks its sprites draws none.
-    vscroll_runs = _vscroll_runs(row_vscroll, vdp.regs[23], y_start, scan_hi,
-                                 row_spd, spd_scalar)
+    sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -852,17 +857,18 @@ def _render_sprites_mode2(
         # taken only when it crosses line 255. Per-sprite line order is immaterial
         # to the accumulated line_count / 9S / cc0 / coincidence state, and the
         # runs partition the scanlines, so this matches the old single-vscroll scan.
-        for run_lo, run_hi, vsc, enabled in vscroll_runs:
-            if not enabled:  # SPD set over this run: sprites blanked here
+        for run in sprite_runs:
+            if not run.enabled:  # SPD set over this run: sprites blanked here
                 continue
+            vsc = run.vscroll  # bound locally: read per line in the inner loop
             base_line = (y_top - vsc) & 0xFF
             end = base_line + max_sprite_rows
             lines2: Iterable[int]
             if end <= 256:
-                lines2 = range(max(run_lo, base_line), min(run_hi, end))
+                lines2 = range(max(run.lo, base_line), min(run.hi, end))
             else:
-                lines2 = chain(range(run_lo, min(run_hi, end - 256)),
-                               range(max(run_lo, base_line), run_hi))
+                lines2 = chain(range(run.lo, min(run.hi, end - 256)),
+                               range(max(run.lo, base_line), run.hi))
 
             for line in lines2:
                 # Sprite Y is in VRAM coordinate space; account for vertical scroll.
