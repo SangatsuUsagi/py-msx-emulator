@@ -578,12 +578,12 @@ def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
 # ---------------------------------------------------------------------------
 
 def test_spd_bit_disables_all_sprites() -> None:
-    """R#8 bit 2 (SPD=1) disables sprite rendering entirely."""
+    """R#8 bit 1 (SPD=1) disables sprite rendering entirely."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
     vdp.regs[6] = 0x00
-    vdp.regs[8] = 0x04  # SPD=1 (bit 2)
+    vdp.regs[8] = 0x02  # SPD=1 (bit 1)
 
     _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
     _terminate_sat(vdp, after_idx=1)
@@ -598,7 +598,7 @@ def test_spd_bit_disables_all_sprites() -> None:
 
 
 def test_spd_bit_clear_allows_sprites() -> None:
-    """R#8 bit 2 = 0 (SPD=0) allows normal sprite rendering."""
+    """R#8 bit 1 = 0 (SPD=0) allows normal sprite rendering."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
@@ -722,6 +722,41 @@ def test_sprite_visible_in_both_vscroll_regions() -> None:
     assert buf[5 * 256 + 0] == 6, "sprite shows in top region under top vscroll"
     assert buf[45 * 256 + 0] == 6, "same sprite shows in bottom region under its vscroll"
     assert buf[20 * 256 + 0] == 0, "not visible between the two mapped bands"
+
+
+def test_spd_blanks_sprites_per_band() -> None:
+    """A split screen may blank sprites over just its status band by setting SPD
+    (R#8 bit 1) there while leaving them enabled in the play band. A sprite whose
+    VRAM band maps into BOTH regions under each region's R#23 must therefore render
+    only in the SPD=0 band, not the SPD=1 one — the real-hardware fix for the
+    split-screen status-bar ghost (SPD is applied per scanline, like R#23)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00       # SPG at 0x0000
+    vdp.vram[0] = 0xFF       # pattern 0, row 0: 8 opaque pixels
+
+    # Sprite 0, y_top = 45: top region vscroll 0x28 → screen line 5; bottom region
+    # vscroll 0 → screen line 45. Same geometry as the dual-region case above.
+    _write_sat_entry(vdp, 0, y=44, x=0, pat=0)     # y_top = 45
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    _terminate_sat(vdp, after_idx=1)
+
+    # Top region lines 0-30: vscroll 0x28 AND SPD=1 (sprites blanked, the status
+    # band). From line 31: vscroll 0, SPD=0 (play area).
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_regs[23] = 0x28
+    vdp._frame_start_regs[8] = 0x02   # SPD=1 in the top band
+    vdp.regs[23] = 0x00
+    vdp.regs[8] = 0x00
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp._reg_write_log = [_RegChange(30, 23, 0x00),   # effective line 31
+                          _RegChange(30, 8, 0x00)]
+
+    buf = render_frame(vdp)
+
+    assert buf[5 * 256 + 0] == 0, "top-band copy blanked by SPD=1 (no status ghost)"
+    assert buf[45 * 256 + 0] == 6, "play-band sprite still drawn (SPD=0)"
 
 
 # ---------------------------------------------------------------------------
