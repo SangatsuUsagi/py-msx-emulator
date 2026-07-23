@@ -45,7 +45,9 @@ def test_empty_log_identical_to_single_pass() -> None:
     from msx.vdp.v9938_renderer import _render_pass
     expected = _render_pass(vdp2)
 
-    assert result == expected
+    # render_frame pads the 192-line frame to the constant 212-line output; the
+    # active picture (rows 10..201) must match the single-pass render.
+    assert result[10 * 256:(10 + 192) * 256] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +113,7 @@ def test_mode_change_at_line_96_produces_split() -> None:
     vdp.regs[0] = 0x06
 
     result = render_frame(vdp)
-    assert len(result) == _W * 192
+    assert len(result) == _W * 212
 
     # Upper half [0..95]: rendered in G1 mode (border=palette[1])
     # Lower half [96..191]: rendered in G4 mode

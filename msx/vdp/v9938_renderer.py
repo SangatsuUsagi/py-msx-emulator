@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
+from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
 from msx.vdp.v9938 import _PaletteChange, _RegChange
 from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
 
@@ -116,7 +117,12 @@ _TEXT6_BYTES: list[list[list[bytes]]] = [
 
 
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
-    """Render one frame; return bytearray of palette indices (length 256×display_height).
+    """Render one frame; return bytearray of palette indices.
+
+    The returned buffer always has the constant output height (length
+    display_width × OUTPUT_H, i.e. 256×212 or 512×212 for SCREEN 6/7). A
+    192-line frame (R#9 LN=0) is centred with border rows above and below so the
+    displayed image keeps a stable geometry regardless of LN.
 
     Frame counting is owned by the caller (Machine.run_frame), not the renderer.
     """
@@ -132,7 +138,10 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
     log = vdp._reg_write_log
     buf = _render_banded(vdp) if log else _render_pass(vdp)
-    return _apply_display_adjust(vdp, buf)
+    buf = _apply_display_adjust(vdp, buf)
+    return pad_to_output_height(
+        buf, vdp.display_height, vdp.display_width, _border_color(vdp)
+    )
 
 
 def _r18_offset(reg18: int) -> tuple[int, int]:
@@ -180,6 +189,18 @@ def _r18_row_offsets(vdp: "V9938", h: int) -> tuple[list[int], int]:
     return row_h, v_off
 
 
+def _border_color(vdp: "V9938") -> int:
+    """Border-colour byte for the current mode.
+
+    SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour; every other
+    mode uses the low nibble of R#7 as a palette index. Shared by the R#18
+    display-adjust fill and the output-height padding so the two cannot drift.
+    """
+    r0 = vdp.regs[0]
+    is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
+    return vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+
+
 def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     """Apply R#18 display adjust: shift the picture horizontally/vertically and
     fill the exposed edges with the border colour.
@@ -198,9 +219,7 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     if v_off == 0 and not any(row_h):
         return buf
 
-    r0 = vdp.regs[0]
-    is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
-    border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+    border = _border_color(vdp)
     scale = w // 256                           # 512-wide modes shift 2 buffer px per dot
 
     out = bytearray([border]) * (w * h)
@@ -1119,9 +1138,14 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     output line with that band's channel tables. Display-adjust vertical offset
     (R#18 high nibble) is accounted for: output line dy came from source line
     dy - v_off, whose band determines the palette.
+
+    src is the padded output-height buffer (OUTPUT_H rows). When the native
+    active height is 192 the picture occupies rows [pad, pad + native_h); the
+    top/bottom border pad rows use the frame-start palette.
     """
-    h = vdp.display_height
-    w = len(src) // h if h else _W
+    native_h = vdp.display_height
+    w = len(src) // OUTPUT_H
+    pad = pad_rows(native_h)  # 10 when native_h == 192, 0 when 212
 
     # Vertical shift must match _apply_display_adjust: use the frame-start R#18
     # when it changed mid-frame (live regs hold the post-change value), else live.
@@ -1135,18 +1159,24 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
 
     # Channel tables are built once per band (not per row/pixel); lines outside
     # any band fall back to the frame-start palette (e.g. the border after the
-    # v_off shift).
+    # v_off shift, and the top/bottom output-height pad rows).
     default_channels = _channel_tables_indexed(_make_lut16(vdp._frame_start_palette))
-    line_channels: list[tuple[bytes, bytes, bytes]] = [default_channels] * h
+    line_channels: list[tuple[bytes, bytes, bytes]] = [default_channels] * native_h
     for _y0, _y1, _band_regs, band_palette in bands:
         channels = _channel_tables_indexed(_make_lut16(band_palette))
-        for sy in range(max(0, _y0), min(h, _y1)):
+        for sy in range(max(0, _y0), min(native_h, _y1)):
             line_channels[sy] = channels
 
-    out = bytearray(w * h * 3)
-    for dy in range(h):
-        sy = dy - v_off
-        rtab, gtab, btab = line_channels[sy] if 0 <= sy < h else default_channels
+    out = bytearray(w * OUTPUT_H * 3)
+    for dy in range(OUTPUT_H):
+        ny = dy - pad  # native index-buffer row this output row maps to
+        if 0 <= ny < native_h:
+            sy = ny - v_off
+            rtab, gtab, btab = (
+                line_channels[sy] if 0 <= sy < native_h else default_channels
+            )
+        else:
+            rtab, gtab, btab = default_channels
         row = src[dy * w:dy * w + w]
         o = dy * w * 3
         end = o + w * 3

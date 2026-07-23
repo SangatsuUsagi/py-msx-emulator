@@ -197,9 +197,12 @@ current instruction PC.
 
 Implemented in `msx/vdp/vdp.py` with the renderer in `msx/vdp/renderer.py`. It
 has 16 KB VRAM, 8 control registers, and supports screen modes 0–3 (Text,
-Graphic 1/2, Multicolor). The full 256×192 frame is rendered at the end of
+Graphic 1/2, Multicolor). The 256×192 active frame is rendered at the end of
 `Machine.run_frame()` by `render_frame()`, which also calls `_finalize()` to set
-the VBlank flag and invoke `on_interrupt`.
+the VBlank flag and invoke `on_interrupt`. The renderer then pads that frame to
+a constant 256×212 output (10 border rows top and bottom) via the shared
+`msx/vdp/_geometry.py` helper, so every frame keeps a stable 4:3 geometry
+regardless of the VDP's active line count (see V9938 `display_height` below).
 
 ### V9938 (MSX2)
 

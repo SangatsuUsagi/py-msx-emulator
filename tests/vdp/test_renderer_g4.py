@@ -14,9 +14,10 @@ def _make_g4_vdp(ln: bool = False) -> V9938:
     return vdp
 
 
-def test_g4_render_frame_size_192() -> None:
+def test_g4_render_frame_size_192_padded_to_212() -> None:
+    # 192-line mode (LN=0) is padded to the constant 212-line output height.
     buf = render_frame(_make_g4_vdp())
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212
 
 
 def test_g4_render_frame_size_212_with_ln() -> None:

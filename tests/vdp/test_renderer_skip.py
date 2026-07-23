@@ -34,4 +34,4 @@ def test_skip_render_sets_vblank_status_bit(vdp_with_interrupt: VDP) -> None:
 def test_normal_render_returns_full_buffer(bare_vdp: VDP) -> None:
     bare_vdp.regs[1] = 0x40  # BL=1
     buf = render_frame(bare_vdp, skip_render=False)
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212

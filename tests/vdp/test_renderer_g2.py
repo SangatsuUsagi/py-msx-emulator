@@ -1,5 +1,13 @@
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
+from tests.render_geometry import active_region
+
+
+def _active(vdp: VDP) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
 
 # Layout:
 #   name table   at 0x1800  (R2=0x06)
@@ -23,7 +31,7 @@ def make_g2_vdp() -> VDP:
 
 def test_g2_frame_dimensions() -> None:
     buf = render_frame(make_g2_vdp())
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212
 
 
 def test_g2_single_tile_colour_row() -> None:
@@ -35,7 +43,7 @@ def test_g2_single_tile_colour_row() -> None:
     # Colour row 0 for tile 0x00 in band 0: fg=15 (white), bg=1 (black)
     vdp.vram[_COLOR + 0x00 * 8 + 0] = 0xF1
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # All 8 pixels in top-left tile row 0 should be fg=15
     for px in range(8):
@@ -51,7 +59,7 @@ def test_g2_per_row_colour() -> None:
     vdp.vram[_PAT + 1] = 0x00
     vdp.vram[_COLOR + 1] = 0x32   # fg=3, bg=2 for row 1
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[0 * 256 + 0] == 15  # row 0, all fg
     assert buf[1 * 256 + 0] == 2   # row 1, all bg (clear bits)
@@ -68,7 +76,7 @@ def test_g2_band_boundary_row8() -> None:
     # Colour for tile 0x01 in band 1, row 0: fg=7
     vdp.vram[_COLOR + 0x800 + 0x01 * 8 + 0] = 0x71
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # Display row 64 = tile row 8, pixel row 0 within tile
     assert buf[64 * 256 + 0] == 7
@@ -81,14 +89,14 @@ def test_g2_band_two_row16() -> None:
     vdp.vram[_PAT + 0x1000 + 0x02 * 8 + 0] = 0xFF
     vdp.vram[_COLOR + 0x1000 + 0x02 * 8 + 0] = 0xA1  # fg=10
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[128 * 256 + 0] == 10
 
 
 def test_g2_full_pixel_count() -> None:
     buf = render_frame(make_g2_vdp())
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212
 
 
 def test_g2_pattern_band_aliasing_r4_zero() -> None:
@@ -105,7 +113,7 @@ def test_g2_pattern_band_aliasing_r4_zero() -> None:
     vdp.vram[_NAME + 8 * 32 + 0] = 0x01
     vdp.vram[_NAME + 16 * 32 + 0] = 0x01
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # Band1 row (y=64) and band2 row (y=128) must use band0 pattern and colour
     assert buf[64 * 256 + 0] == 5, f"band1 row got {buf[64*256+0]}, expected 5"

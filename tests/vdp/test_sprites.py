@@ -1,5 +1,13 @@
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
+from tests.render_geometry import active_region
+
+
+def _active(vdp: VDP) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
 
 # Sprite attribute table at 0x1000  (R5=0x20, (0x20&0x7F)<<7=0x1000)
 # Sprite pattern table at 0x0000  (R6=0x00, (0x00&0x07)<<11=0x0000)
@@ -39,7 +47,7 @@ def test_terminator_stops_sprite_processing() -> None:
     _sat_entry(vdp, 1, 0x00, 0, 0, 0x0F)   # y_top=1, colour=15
     vdp.vram[_SPT + 0] = 0xFF               # pattern all set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] != 15, "sprite after terminator must not be rendered"
 
@@ -57,7 +65,7 @@ def test_8x8_sprite_renders_pixels() -> None:
     # Terminator for remaining sprites
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] == 15   # y=1 (y_top), x=0 → pixel set
     assert buf[1 * 256 + 1] == 1    # bit 6 clear → backdrop
@@ -69,7 +77,7 @@ def test_8x8_colour_zero_transparent() -> None:
     vdp.vram[_SPT + 0] = 0xFF
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] == 1   # transparent → backdrop, not painted
 
@@ -85,7 +93,7 @@ def test_y_off_by_one() -> None:
     vdp.vram[_SPT + 0] = 0x80
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[6 * 256 + 0] == 15   # appears at line 6
     assert buf[5 * 256 + 0] != 15   # not at line 5
@@ -106,7 +114,7 @@ def test_16x16_top_row_uses_pattern_pair() -> None:
     vdp.vram[_SPT + 2 * 8 + 0] = 0x01   # upper-right: pixel 7 (=15 in 16px) set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] == 15    # upper-left pixel 0
     assert buf[1 * 256 + 15] == 15   # upper-right pixel 15
@@ -122,7 +130,7 @@ def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80   # lower-left: pixel 0 set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[9 * 256 + 0] == 15   # line 9 = y_top+8 = bottom half row 0
 
@@ -140,7 +148,7 @@ def test_lower_index_sprite_wins() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80   # pattern 1, pixel 0 set
     _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] == 5   # sprite 0 (lower index) wins
 
@@ -219,7 +227,7 @@ def test_ec_bit_shifts_sprite_left_32() -> None:
     vdp.vram[_SPT + 0] = 0x80             # bit 7 only → pixel at x_pos+0
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 8] == 15, "EC bit: sprite at X=40 should appear at X=8"
     assert buf[1 * 256 + 40] == 1, "no sprite at X=40 (un-shifted position)"
@@ -232,7 +240,7 @@ def test_ec_bit_x0_clips_off_left_edge() -> None:
     vdp.vram[_SPT + 0] = 0xFF             # all 8 pixels set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # No pixels should appear anywhere — all clipped off left edge
     assert all(buf[1 * 256 + x] == 1 for x in range(256)), \
