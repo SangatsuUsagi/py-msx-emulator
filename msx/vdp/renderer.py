@@ -3,6 +3,8 @@ from __future__ import annotations
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
+from msx.vdp._geometry import OUTPUT_H, pad_to_output_height
+
 if TYPE_CHECKING:
     from msx.vdp.vdp import VDP
 
@@ -34,7 +36,9 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     border = vdp.regs[7] & 0x0F
 
     if not (r1 & 0x40):  # BL (Blank) bit clear → blank display
-        buf = bytearray([border] * (_W * _H))
+        # bytearray([b]) * n is a single C-level fill; [b] * n would first build
+        # an n-element Python list (≈48× slower on this per-frame path).
+        buf = bytearray([border]) * (_W * OUTPUT_H)
         _finalize(vdp)
         return buf
 
@@ -64,7 +68,9 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
             _render_sprites(vdp, buf)
 
     _finalize(vdp)
-    return buf
+    # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
+    # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
+    return pad_to_output_height(buf, h, _W, border)
 
 
 def _finalize(vdp: VDP) -> None:

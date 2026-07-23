@@ -141,7 +141,7 @@ io.register_write(0x98, 0x9B, vdp.write_port)
 
 ### TMS9918A（MSX1）
 
-`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のフルフレームは `Machine.run_frame()` の末尾で `render_frame()` によって描画され、VBlank フラグのセットと `on_interrupt` コールバックの呼び出しも行われます。
+`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のアクティブフレームは `Machine.run_frame()` の末尾で `render_frame()` によって描画され、VBlank フラグのセットと `on_interrupt` コールバックの呼び出しも行われます。その後レンダラは、共有ヘルパー `msx/vdp/_geometry.py` を通じてこのフレームを一定の 256×212 出力（上下に 10 行ずつのボーダー行）にパディングします。これにより、VDP のアクティブライン数によらず全フレームが安定した 4:3 のジオメトリを保ちます（後述の V9938 `display_height` を参照）。
 
 ### V9938（MSX2）
 

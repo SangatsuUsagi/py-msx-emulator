@@ -18,11 +18,12 @@ def _make_msx2() -> object:
 # run_frame buffer size
 # ---------------------------------------------------------------------------
 
-def test_run_frame_returns_192_line_buffer() -> None:
+def test_run_frame_returns_212_line_buffer() -> None:
     machine = _make_msx2()
     machine.vdp.regs[1] |= 0x40  # BL
     buf = machine.run_frame()
-    assert len(buf) == 256 * 192
+    # A 192-line frame (LN=0) is padded to the constant 212-line output height.
+    assert len(buf) == 256 * 212
 
 
 def test_run_frame_skip_render_returns_empty_buffer() -> None:

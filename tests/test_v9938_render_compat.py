@@ -1,6 +1,15 @@
 """Tests for msx.vdp.v9938_renderer: SCREEN 0–3 TMS9918A-compatible rendering."""
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
+from tests.render_geometry import active_region
+
+
+def _active(vdp: V9938) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
+
 
 
 def _enable(vdp: V9938) -> None:
@@ -33,7 +42,7 @@ def test_render_frame_does_not_own_frame_count() -> None:
 def test_buffer_size_192_by_default() -> None:
     vdp = V9938()
     _enable(vdp)
-    assert len(render_frame(vdp)) == 256 * 192
+    assert len(render_frame(vdp)) == 256 * 212
 
 
 def test_buffer_size_212_when_ln_set() -> None:
@@ -85,7 +94,7 @@ def test_screen1_foreground_colour_from_attribute_table() -> None:
     for py in range(8):       # pattern tile 0: all foreground bits
         vdp.vram[0x0800 + py] = 0xFF
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 4  # foreground colour index 4
 
 
@@ -100,7 +109,7 @@ def test_screen1_background_colour_from_attribute_table() -> None:
     vdp.vram[0x2000] = 0x41   # fg=4, bg=1
     # pattern all 0x00 (background) — vram zero-initialised
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 1  # background colour index 1
 
 
@@ -122,7 +131,7 @@ def test_screen2_per_row_colour() -> None:
     vdp.vram[0x0000] = 0xFF   # pattern tile 0, row 0: all foreground
     vdp.vram[0x2000] = 0x65   # colour tile 0, row 0: fg=6, bg=5
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 6  # foreground colour index 6
 
 
@@ -143,7 +152,7 @@ def test_screen2_second_row_has_independent_colour() -> None:
     vdp.vram[0x2000] = 0x65
     vdp.vram[0x2001] = 0x35
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0 * 256 + 0] == 6   # line 0: fg=6
     assert buf[1 * 256 + 0] == 3   # line 1: fg=3
 
@@ -174,7 +183,7 @@ def test_sprite_pixel_placed_at_correct_position() -> None:
 
     vdp.vram[0x0800] = 0x80  # pattern 0, row 0: leftmost bit set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     # y=0 → y_top=1; sprite appears at scan line 1, column 0
     assert buf[1 * 256 + 0] == 7
 
@@ -212,7 +221,7 @@ def test_text1_colours_from_r7() -> None:
     vdp.vram[0x0000] = 0x00     # char 0 at col 0
     vdp.vram[0x0800] = 0xFF     # pattern row 0 all set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[8] == 3   # col 0, first text pixel = fg=3
 
 
@@ -226,7 +235,7 @@ def test_text1_fg_zero_uses_palette_index_0() -> None:
     vdp.vram[0x0000] = 0x00
     vdp.vram[0x0800] = 0xFF
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[8] == 0   # fg=0 → index 0 (was incorrectly forced to 1)
 
 
@@ -244,7 +253,7 @@ def test_mc_top_bottom_half_bytes() -> None:
     vdp.vram[0x0000] = 0xF7      # top half: left=15, right=7
     vdp.vram[0x0001] = 0x3A      # bottom half: left=3, right=10
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     for scan in range(4):        # top half → pattern byte +0
         assert buf[scan * 256 + 0] == 15
@@ -275,7 +284,7 @@ def test_g3_pattern_base_uses_r4_bits_5_2() -> None:
         vdp.vram[0x8000 + py] = 0xFF   # pattern generator at 0x8000: solid tile 0
         vdp.vram[0x2000 + py] = 0xF1   # colour: fg=15, bg=1
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # Pattern read from 0x8000 (not 0x0000, which is the zero-filled name table)
     assert buf[5 * 256 + 5] == 15
@@ -294,5 +303,5 @@ def test_screen2_pattern_base_bit2_still_zero() -> None:
     vdp.vram[0x1800] = 0x00     # tile 0
     vdp.vram[0x0000] = 0xFF     # pattern row 0 solid
     vdp.vram[0x2000] = 0x65     # fg=6, bg=5
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 6

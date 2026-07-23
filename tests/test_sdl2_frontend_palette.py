@@ -60,6 +60,8 @@ def test_v9938_populated_reg_write_log_does_not_break_conversion() -> None:
     vdp.begin_scanline(0)
     vdp._reg_write_log.append(_RegChange(96, 0, 0x06))
     vdp._reg_write_log.append(_PaletteChange(64, 1, 0b111_001_001))
-    buf = bytearray([1]) * (256 * vdp.display_height)
+    # render_frame now emits the constant 212-line output height, so to_rgb24
+    # consumes a 212-row buffer regardless of display_height (192 here).
+    buf = bytearray([1]) * (256 * 212)
     out = vdp.to_rgb24(buf)
     assert len(out) == len(buf) * 3
