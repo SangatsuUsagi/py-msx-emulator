@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1478%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1485%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -80,8 +80,11 @@ platform-specific dependency is pysdl2, for the display and audio frontend.
   registers in slot 3 sub-slot 0, `*.dsk` images mounted via `--fdd1`, supports
   Disk BASIC boot, `CALL FORMAT`, and file read/write with write-back on exit;
   disks can be swapped at runtime from the debugger REPL (`fdd1`/`fdd2`)
-- **SDL2 frontend** — 768×576 window by default (256×192 × scale 3; SCREEN 6/7
-  resize to maintain aspect ratio), hardware palette, mono audio at 44100 Hz
+- **SDL2 frontend** — fixed 768×636 window (256×212 × scale 3) for every
+  machine and mode; the rendered frame is always 212 lines (192-line SCREEN
+  modes are centred with border rows) so a 4:3 CRT aspect is kept regardless of
+  R#9 LN, and SCREEN 6/7 (512-wide) downscale to the same window width to
+  preserve pixel aspect, hardware palette, mono audio at 44100 Hz
   with an **analog-style output low-pass filter** (2-pole Butterworth, modelling
   the RC filter on real MSX audio out to remove residual imaging/aliasing),
   fullscreen toggle, screenshot, state save/load, automatic frame skip (VDP
@@ -655,7 +658,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1478 tests spanning unit tests
+The test suite covers all major components with 1485 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -711,7 +714,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1478 tests
+├── tests/                 # Test suite — 1485 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration

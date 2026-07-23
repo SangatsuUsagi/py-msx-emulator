@@ -1,5 +1,13 @@
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
+from tests.render_geometry import active_region
+
+
+def _active(vdp: VDP) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
 
 # Layout:
 #   name table  at 0x3800  (R2=0x0E)
@@ -19,7 +27,7 @@ def make_mc_vdp() -> VDP:
 
 def test_mc_frame_dimensions() -> None:
     buf = render_frame(make_mc_vdp())
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212
 
 
 def test_mc_block_left_right_colour() -> None:
@@ -28,7 +36,7 @@ def test_mc_block_left_right_colour() -> None:
     # Pattern row 0: high nibble=15 (left 4px), low nibble=7 (right 4px)
     vdp.vram[_PAT + 0] = 0xF7
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     for px in range(4):
         assert buf[px] == 15, f"left px {px} expected 15 got {buf[px]}"
@@ -45,7 +53,7 @@ def test_mc_top_bottom_half_bytes() -> None:
     vdp.vram[_PAT + 0] = 0xF7   # top half: left=15, right=7
     vdp.vram[_PAT + 1] = 0x3A   # bottom half: left=3, right=10
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     for scan in range(4):       # top half → PAT+0
         assert buf[scan * 256 + 0] == 15
@@ -62,7 +70,7 @@ def test_mc_char_row_selects_byte_pair() -> None:
     vdp.vram[_NAME + 1 * 32 + 0] = 0x00   # tile 0 at (col 0, char row 1)
     vdp.vram[_PAT + 2] = 0x5C             # row 1 top half: left=5, right=12
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[8 * 256 + 0] == 5    # scanline 8 (char row 1, top half), left
     assert buf[8 * 256 + 4] == 12   # right
@@ -74,7 +82,7 @@ def test_mc_transparent_colour_uses_backdrop() -> None:
     vdp.vram[_NAME + 0] = 0x00
     vdp.vram[_PAT + 0] = 0x00      # both nibbles = 0 (transparent)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[0] == 4   # transparent → backdrop
     assert buf[4] == 4
@@ -82,4 +90,4 @@ def test_mc_transparent_colour_uses_backdrop() -> None:
 
 def test_mc_full_grid_dimensions() -> None:
     buf = render_frame(make_mc_vdp())
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212

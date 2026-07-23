@@ -1,6 +1,15 @@
 """Tests for V9938 MSX2-specific screen modes: SCREEN 4–8."""
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import grb332_to_rgb, render_frame
+from tests.render_geometry import active_region
+
+
+def _active(vdp: V9938) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
+
 
 
 def _enable(vdp: V9938) -> None:
@@ -17,10 +26,10 @@ def _set_screen5(vdp: V9938) -> None:
     vdp.regs[0] = 0x06  # M3=bit1, M4=bit2
 
 
-def test_screen5_buffer_size_192() -> None:
+def test_screen5_buffer_size_192_padded_to_212() -> None:
     vdp = V9938()
     _set_screen5(vdp)
-    assert len(render_frame(vdp)) == 256 * 192
+    assert len(render_frame(vdp)) == 256 * 212
 
 
 def test_screen5_buffer_size_212_when_ln_set() -> None:
@@ -37,7 +46,7 @@ def test_screen5_high_nibble_is_left_pixel() -> None:
     vdp.regs[2] = 0x00
     vdp.vram[0] = 0x5A  # high nibble=5 (left), low nibble=A=10 (right)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 5   # pixel 0: high nibble
 
 
@@ -47,7 +56,7 @@ def test_screen5_low_nibble_is_right_pixel() -> None:
     vdp.regs[2] = 0x00
     vdp.vram[0] = 0x5A  # high nibble=5, low nibble=10
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1] == 10  # pixel 1: low nibble
 
 
@@ -60,7 +69,7 @@ def test_screen5_palette_indices_in_buffer() -> None:
     vdp.vram[0] = 0x12   # pixels 0=1, 1=2
     vdp.vram[1] = 0x34   # pixels 2=3, 3=4
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 1
     assert buf[1] == 2
     assert buf[2] == 3
@@ -76,7 +85,7 @@ def test_screen5_vram_base_from_r2() -> None:
     vdp.vram[0x0000] = 0xFF  # decoy at base 0 — must NOT appear in output
     vdp.vram[0x8000] = 0xAB  # actual base: pixel 0=0xA=10, pixel 1=0xB=11
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 0x0A   # high nibble of 0xAB
     assert buf[1] == 0x0B   # low nibble
 
@@ -88,7 +97,7 @@ def test_screen5_second_row_offset() -> None:
     vdp.regs[2] = 0x00  # base = 0
     vdp.vram[128] = 0xCD  # row 1, first byte: pixel(1,0)=0xC, pixel(1,1)=0xD
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 0x0C
     assert buf[1 * 256 + 1] == 0x0D
 
@@ -103,10 +112,10 @@ def _set_screen8(vdp: V9938) -> None:
     vdp.regs[0] = 0x0E  # M3=bit1, M4=bit2, M5=bit3
 
 
-def test_screen8_buffer_size_192() -> None:
+def test_screen8_buffer_size_192_padded_to_212() -> None:
     vdp = V9938()
     _set_screen8(vdp)
-    assert len(render_frame(vdp)) == 256 * 192
+    assert len(render_frame(vdp)) == 256 * 212
 
 
 def test_screen8_raw_vram_byte_in_buffer() -> None:
@@ -116,7 +125,7 @@ def test_screen8_raw_vram_byte_in_buffer() -> None:
     vdp.regs[2] = 0x00  # base = 0
     vdp.vram[0] = 0b11111011  # GRB332: G=7,R=6,B=3
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 0b11111011
 
 
@@ -126,7 +135,7 @@ def test_screen8_second_pixel() -> None:
     vdp.regs[2] = 0x00
     vdp.vram[1] = 0x24  # second pixel
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1] == 0x24
 
 
@@ -138,7 +147,7 @@ def test_screen8_vram_base_from_r2() -> None:
     vdp.vram[0x0000]  = 0xFF   # decoy at offset 0 — must NOT appear
     vdp.vram[0x10000] = 0x42   # first pixel at actual base
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 0x42
 
 
@@ -201,10 +210,10 @@ def _set_screen4(vdp: V9938) -> None:
     vdp.regs[0] = 0x04  # M4=bit2
 
 
-def test_screen4_buffer_size_192() -> None:
+def test_screen4_buffer_size_192_padded_to_212() -> None:
     vdp = V9938()
     _set_screen4(vdp)
-    assert len(render_frame(vdp)) == 256 * 192
+    assert len(render_frame(vdp)) == 256 * 212
 
 
 def test_screen4_renders_g2_tiles() -> None:
@@ -220,7 +229,7 @@ def test_screen4_renders_g2_tiles() -> None:
     vdp.vram[0x0000] = 0xFF    # pattern row 0: all fg
     vdp.vram[0x2000] = 0x65    # colour: fg=6, bg=5
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 6
 
 
@@ -240,7 +249,7 @@ def test_screen4_name_table_above_16k() -> None:
     vdp.vram[0x0000] = 0xFF    # pattern row 0: all fg
     vdp.vram[0x2000] = 0x65    # colour: fg=6, bg=5
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 6
 
 
@@ -261,7 +270,7 @@ def test_screen4_vertical_scroll_r23() -> None:
     vdp.vram[0x0008] = 0xFF    # pattern tile 1 row 0: all fg
     vdp.vram[0x2008] = 0x65    # colour tile 1 row 0: fg=6, bg=5
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 6         # line 0 shows the scrolled-in row 1, foreground colour 6
 
 
@@ -275,10 +284,10 @@ def _set_screen6(vdp: V9938) -> None:
     vdp.regs[0] = 0x08  # M5=bit3
 
 
-def test_screen6_buffer_size_192() -> None:
+def test_screen6_buffer_size_192_padded_to_212() -> None:
     vdp = V9938()
     _set_screen6(vdp)
-    assert len(render_frame(vdp)) == 512 * 192
+    assert len(render_frame(vdp)) == 512 * 212
 
 
 def test_screen6_buffer_size_212_when_ln_set() -> None:
@@ -296,7 +305,7 @@ def test_screen6_four_pixels_per_byte() -> None:
     # bits 7:6 = 0b11 = 3; 5:4 = 0b10 = 2; 3:2 = 0b01 = 1; 1:0 = 0b00 = 0.
     vdp.vram[0] = 0b11_10_01_00
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 3
     assert buf[1] == 2
     assert buf[2] == 1
@@ -311,7 +320,7 @@ def test_screen6_second_output_byte() -> None:
     vdp.vram[0] = 0x00
     vdp.vram[1] = 0b10_01_11_00
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[4] == 2   # bits 7:6 of byte 1
     assert buf[5] == 1   # bits 5:4
     assert buf[6] == 3   # bits 3:2
@@ -325,7 +334,7 @@ def test_screen6_vram_base_from_r2() -> None:
     vdp.vram[0x0000] = 0x00   # decoy — must not appear
     vdp.vram[0x8000] = 0b11_00_00_00   # pixel 0 = colour 3
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 3
 
 
@@ -339,10 +348,10 @@ def _set_screen7(vdp: V9938) -> None:
     vdp.regs[0] = 0x0A  # M3=bit1, M5=bit3
 
 
-def test_screen7_buffer_size_192() -> None:
+def test_screen7_buffer_size_192_padded_to_212() -> None:
     vdp = V9938()
     _set_screen7(vdp)
-    assert len(render_frame(vdp)) == 512 * 192
+    assert len(render_frame(vdp)) == 512 * 212
 
 
 def test_screen7_two_pixels_per_byte() -> None:
@@ -352,7 +361,7 @@ def test_screen7_two_pixels_per_byte() -> None:
     vdp.regs[2] = 0x00
     vdp.vram[0] = 0xAB   # pixel 0 = 0xA, pixel 1 = 0xB
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 0x0A
     assert buf[1] == 0x0B
 
@@ -364,7 +373,7 @@ def test_screen7_second_byte_is_next_two_pixels() -> None:
     vdp.vram[0] = 0xAB
     vdp.vram[1] = 0xCD   # pixels 2 and 3
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[2] == 0x0C
     assert buf[3] == 0x0D
 
@@ -377,7 +386,7 @@ def test_screen7_vram_base_from_r2() -> None:
     vdp.vram[0x0000]  = 0xFF   # decoy
     vdp.vram[0x10000] = 0x5E   # high nibble = 5
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[0] == 5
 
 
@@ -388,5 +397,61 @@ def test_screen7_second_row_offset() -> None:
     vdp.regs[2] = 0x00
     vdp.vram[256] = 0x70   # row 1, first byte: high nibble = 7
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 512 + 0] == 7
+
+
+# ---------------------------------------------------------------------------
+# Constant output height: 192-line frames are padded to 212 with border rows
+# ---------------------------------------------------------------------------
+
+def test_screen5_192_padded_with_masked_border_rows() -> None:
+    """SCREEN 5 (LN=0) output is 256x212 with 10 border rows top and bottom,
+    using the R#7 low-nibble palette index as the border colour."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[7] = 0x37  # low nibble 7 → border index 7 (high nibble ignored)
+    buf = render_frame(vdp)
+    assert len(buf) == 256 * 212
+    # Top 10 rows and bottom 10 rows are border colour 7.
+    assert all(b == 7 for b in buf[:10 * 256])
+    assert all(b == 7 for b in buf[(10 + 192) * 256:])
+
+
+def test_screen8_192_padded_with_raw_byte_border_rows() -> None:
+    """SCREEN 8 (G7) uses the raw R#7 byte (not the low nibble) as the direct
+    GRB332 border colour for the padding rows."""
+    vdp = V9938()
+    _set_screen8(vdp)
+    vdp.regs[7] = 0xB5  # full byte is the GRB332 border colour
+    buf = render_frame(vdp)
+    assert len(buf) == 256 * 212
+    assert all(b == 0xB5 for b in buf[:10 * 256])
+    assert all(b == 0xB5 for b in buf[(10 + 192) * 256:])
+
+
+def test_screen5_212_mode_not_padded() -> None:
+    """With LN=1 the native height is already 212; no border padding is added."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[9] = 0x80  # LN=1
+    vdp.regs[7] = 0x07
+    vdp.vram[0] = 0x9A  # pixel (0,0) = 9
+    buf = render_frame(vdp)
+    assert len(buf) == 256 * 212
+    # Row 0 holds active content (no top border rows inserted).
+    assert buf[0] == 9
+
+
+def test_midframe_ln_toggle_still_212_rows() -> None:
+    """A mid-frame R#9 LN toggle (banded render) still yields exactly 212 output
+    rows — the constant output height, not doubled or re-padded."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.begin_scanline(0)
+    # Toggle LN=1 partway down the frame; live regs end at 212-line mode.
+    from msx.vdp.v9938 import _RegChange
+    vdp._reg_write_log.append(_RegChange(96, 9, 0x80))
+    vdp.regs[9] = 0x80
+    buf = render_frame(vdp)
+    assert len(buf) == 256 * 212
