@@ -835,14 +835,16 @@ def _render_sprites_mode2(
         # per-line colour table byte instead.
 
         y_top = (y_byte + 1) & 0xFF
-        # NOTE (speculative, from b24fb1d): clip the sprite to VRAM rows < 256
-        # rather than letting the pattern wrap row 255→0. openMSX does NOT clip
-        # (it uses a plain (line - y) & 0xFF < magSize test, so a sprite near
-        # Y=255 wraps onto the top of the screen). This clip therefore diverges
-        # from openMSX and suppresses partially-above-top sprites; it is kept for
-        # now only because it is currently harmless (post-terminator garbage is
-        # gone) — revisit if top-edge sprites look wrong.
-        max_sprite_rows = min(render_size, 256 - y_top)
+        # A sprite spans render_size rows in VRAM-Y space, wrapping row 255→0, and
+        # is positioned on screen at (y_top - vsc); openMSX applies no VRAM-row clip
+        # (it tests (line - y) & 0xFF < magSize per line). The screen-line wrap is
+        # handled below by the end > 256 branch. An earlier build clipped to
+        # 256 - y_top, but that is in VRAM-Y space, so with vertical scroll it
+        # wrongly truncated a sprite whose screen band is nowhere near the bottom
+        # (a high-Y sprite pulled up by R#23) — e.g. y_top=251, vsc=62 → screen
+        # line 189, clipped to 5 rows. The terminator (y==0xD8) already stops the
+        # scan, so no clip is needed.
+        max_sprite_rows = render_size
 
         # Scan only the sprite's visible band, per constant-vscroll run. Sprite Y
         # is in VRAM space, so within a run the screen-line band starts at

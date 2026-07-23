@@ -759,6 +759,33 @@ def test_spd_blanks_sprites_per_band() -> None:
     assert buf[45 * 256 + 0] == 6, "play-band sprite still drawn (SPD=0)"
 
 
+def test_high_y_sprite_pulled_up_by_vscroll_renders_full_height() -> None:
+    """A high-VRAM-Y sprite (near 255) pulled onto mid-screen by R#23 vertical
+    scroll must render its full height. An earlier VRAM-row clip (256 - y_top) cut
+    it short because the clip was in VRAM-Y space, not screen space: a sprite at
+    y_top=251 pulled to screen line 189 by vscroll=62 showed only 5 of its 8 rows.
+    openMSX applies no such clip (its per-line (line - y) & 0xFF < magSize test
+    wraps VRAM row 255->0), so the full sprite must appear."""
+    vdp = V9938()
+    _set_screen5(vdp)            # SI=0 → 8x8 sprites (render_size 8)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[23] = 151          # vertical scroll (whole frame, non-banded)
+    for row in range(8):
+        vdp.vram[row] = 0xFF    # pattern 0, rows 0-7: opaque pixel at x=0
+    _write_sat_entry(vdp, 0, y=250, x=0, pat=0)   # y_top = 251 (near VRAM top)
+    for line_idx in range(8):
+        _write_col_entry(vdp, sprite_idx=0, line_idx=line_idx, color=7)
+    _terminate_sat(vdp, after_idx=1)
+
+    buf = render_frame(vdp)
+
+    # base_line = (251 - 151) & 0xFF = 100; all 8 rows must appear at 100..107
+    # (the old 256 - y_top = 5 clip cut this to rows 100..104).
+    for y in range(100, 108):
+        assert buf[y * 256 + 0] == 7, f"row {y} of the pulled-up sprite is missing"
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 4 (GRAPHIC 3): G2-style tile background + sprite mode 2 composited
 # on top. Guards that sprites are drawn OVER the background plane in SCREEN 4.
