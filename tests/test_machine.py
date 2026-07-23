@@ -37,7 +37,7 @@ def test_step_nop_returns_4() -> None:
 def test_run_frame_returns_correct_size() -> None:
     m = _make_machine()
     buf = m.run_frame()
-    assert len(buf) == 256 * 192
+    assert len(buf) == 256 * 212  # 192-line frame padded to the constant output height
 
 
 def test_run_frame_skip_render_returns_empty_buffer() -> None:

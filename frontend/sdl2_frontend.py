@@ -13,11 +13,16 @@ from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
+from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
     from msx.rpc_server import DebugServer
 
 _SCREEN_WIDTH = 256
+# Every rendered frame is padded to a constant output height (see
+# msx/vdp/_geometry.py), so the window/texture height is fixed regardless of R#9
+# LN (192↔212). Only the width still varies (256, or 512 for SCREEN 6/7).
+_SCREEN_HEIGHT = OUTPUT_H
 _MAX_FRAME_SKIP: int = 4
 
 # Audio output format. The sample rate must match what msx.psg's
@@ -281,7 +286,7 @@ def run(
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
 
-    h = machine.vdp.display_height
+    h = _SCREEN_HEIGHT  # constant output height; render_frame pads 192→212
     win_w = _SCREEN_WIDTH * scale
     win_h = h * scale
 
@@ -342,11 +347,12 @@ def run(
                 frame_end_cycle = machine.cycle_count
                 if not skip_this_frame:
                     rgb_buf = machine.vdp.to_rgb24(index_buf)
-                    # The VDP resolution can change at runtime (R#9 LN: 192↔212;
-                    # SCREEN 6/7 width). Recreate the texture and resize the window
-                    # to match before uploading, or the texture copy would overflow.
-                    new_h = machine.vdp.display_height
-                    new_w = (len(index_buf) // new_h) if new_h else tex_w
+                    # The output height is constant (192-line frames are padded to
+                    # 212); only the width can change at runtime (SCREEN 6/7 is
+                    # 512-wide). Recreate the texture / resize the window on a width
+                    # change before uploading, or the texture copy would overflow.
+                    new_h = _SCREEN_HEIGHT
+                    new_w = (len(index_buf) // new_h) if index_buf else tex_w
                     if (new_w, new_h) != (tex_w, tex_h):
                         tex_w, tex_h = new_w, new_h
                         sdl2.SDL_DestroyTexture(texture)

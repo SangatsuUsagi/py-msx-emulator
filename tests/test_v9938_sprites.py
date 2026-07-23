@@ -1,6 +1,15 @@
 """Tests for V9938 sprite mode 2 (SCREEN 4–8)."""
 from msx.vdp.v9938 import V9938, _RegChange
 from msx.vdp.v9938_renderer import render_frame
+from tests.render_geometry import active_region
+
+
+def _active(vdp: V9938) -> bytearray:
+    """render_frame() output with the constant output-height border padding
+    stripped, so pixel-position assertions use native scanline coordinates."""
+    return active_region(render_frame(vdp), vdp.display_height)
+
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +80,7 @@ def test_sprite_mode2_colour_from_colour_table() -> None:
 
     vdp.vram[0] = 0x80  # pattern 0, row 0: leftmost bit set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     # y=0 → y_top=1; sprite at scan line 1, col 0
     assert buf[1 * 256 + 0] == 6
 
@@ -93,7 +102,7 @@ def test_sprite_mode2_terminator_is_216_not_208() -> None:
     _write_col_entry(vdp, sprite_idx=2, line_idx=0, color=7)
     vdp.vram[0] = 0x80  # pattern 0, row 0: leftmost bit set (shared by both)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 6           # idx0 before terminator: drawn
     assert buf[10 * 256 + 0] == 0          # idx2 after terminator: not drawn
 
@@ -111,7 +120,7 @@ def test_sprite_mode2_y208_is_not_a_terminator() -> None:
     _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=5)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[209 * 256 + 0] == 5  # 0xD0 is a normal sprite, rendered
 
 
@@ -135,7 +144,7 @@ def test_sprite_mode2_terminator_chains_lower_priority_sprites() -> None:
         _write_col_entry(vdp, sprite_idx=idx, line_idx=0, color=7)
     vdp.vram[0] = 0x80  # pattern 0, row 0: leftmost bit set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 6   # sprite 0 (before terminator): drawn
     assert buf[3 * 256 + 0] == 6   # sprite 2 (before terminator): drawn
     for line in (11, 12, 13):      # sprites 4,5,6 (after terminator): all hidden
@@ -156,7 +165,7 @@ def test_sprite_mode2_sat_attr_colour_bits_ignored() -> None:
     _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=9)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 9
 
 
@@ -177,7 +186,7 @@ def test_sprite_mode2_colour_per_scanline() -> None:
     vdp.vram[0] = 0x80  # pattern 0, row 0
     vdp.vram[1] = 0x80  # pattern 0, row 1
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 3
     assert buf[2 * 256 + 0] == 5
 
@@ -200,7 +209,7 @@ def test_sprite_mode2_early_clock_shifts_x_left() -> None:
     _write_col_entry(vdp, 0, 0, color=7, ec=True)
     vdp.vram[0] = 0x80  # leftmost pixel
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 32] == 7   # pixel at shifted position
     assert buf[1 * 256 + 64] != 7   # original position is not set
 
@@ -218,7 +227,7 @@ def test_sprite_mode2_no_early_clock_without_flag() -> None:
     _write_col_entry(vdp, 0, 0, color=7)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 64] == 7   # pixel at original position
     assert buf[1 * 256 + 32] != 7
 
@@ -246,7 +255,7 @@ def test_sprite_mode2_or_mode_blends_with_higher_priority() -> None:
 
     vdp.vram[0] = 0x80  # pattern 0 row 0: leftmost pixel
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     # 3 | 4 = 7
     assert buf[1 * 256 + 0] == 7
 
@@ -268,7 +277,7 @@ def test_sprite_mode2_no_or_mode_higher_priority_wins() -> None:
 
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 3  # sprite 0 colour wins
 
 
@@ -369,7 +378,7 @@ def test_sprite_mode2_9th_sprite_not_rendered() -> None:
 
     vdp.vram[0] = 0x80  # leftmost pixel for all patterns
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     # Sprites 0–7 each occupy one column; sprite 8 is at x=64 but must NOT be rendered
     # Sprite 7 is at x=56, colour=8 → buf[1*256+56] == 8
     assert buf[1 * 256 + 56] == 8   # sprite 7 (last rendered)
@@ -413,7 +422,7 @@ def test_sprite_mode2_leading_cc_sprite_invisible() -> None:
     _terminate_sat(vdp, after_idx=2)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 3   # CC=0 shows; leading CC=1 neither drawn nor OR'd (not 4, not 7)
 
 
@@ -429,7 +438,7 @@ def test_sprite_mode2_lone_cc_sprite_invisible() -> None:
     _terminate_sat(vdp, after_idx=1)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] != 5   # not drawn (backdrop shows)
 
 
@@ -447,7 +456,7 @@ def test_sprite_mode2_cc_after_cc0_still_ors() -> None:
     _terminate_sat(vdp, after_idx=2)
     vdp.vram[0] = 0x80
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 7   # 3 | 4
 
 
@@ -466,7 +475,7 @@ def test_sprite_mode2_screen8_uses_fixed_sprite_palette() -> None:
     _write_col_entry(vdp, 0, 0, color=8)
     vdp.vram[0] = 0x80  # sprite pattern row 0, leftmost pixel
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 0x9D   # fixed GRAPHIC7 sprite palette entry 8
     assert buf[1 * 256 + 0] != 0x3C   # not the programmable-palette result
 
@@ -499,7 +508,7 @@ def test_sprite_mode2_16x16_quadrant_layout() -> None:
     for ln in range(16):
         _write_col_entry(vdp, 0, ln, color=6)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 0] == 6    # top-left  px 0
     assert buf[1 * 256 + 15] == 6   # top-right px 15
     assert buf[9 * 256 + 0] == 6    # bottom-left  px 0  (screen line 9 = sprite row 8)
@@ -522,7 +531,7 @@ def test_sprite_mode2_16x16_right_edge_clips_no_wrap() -> None:
     for ln in range(16):
         _write_col_entry(vdp, 0, ln, color=7)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert buf[1 * 256 + 255] == 7   # last on-screen pixel drawn
     assert buf[1 * 256 + 0] != 7     # right half clipped, not wrapped to the left
 
@@ -543,7 +552,7 @@ def test_sprite_mode2_16x16_early_clock_off_left_edge() -> None:
     for ln in range(16):
         _write_col_entry(vdp, 0, ln, color=7, ec=True)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert 7 not in buf[1 * 256:2 * 256]  # nothing drawn on the line, no wrap
 
 
@@ -565,7 +574,7 @@ def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
     _write_col_entry(vdp, 0, 0, color=7)
     vdp.vram[0] = 0x80  # pattern row 0, leftmost dot
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
     assert len(buf) == 512 * vdp.display_height
     # sprite dot at sx=10 → doubled to columns 20 and 21 on scan line 1
     assert buf[1 * 512 + 20] == 7
@@ -590,7 +599,7 @@ def test_spd_bit_disables_all_sprites() -> None:
     _write_col_entry(vdp, 0, 0, color=7)
     vdp.vram[0] = 0xFF  # all pixels set in pattern row 0
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # Sprite should not appear on line 1 (y_top=1)
     assert all(buf[1 * 256 + x] != 7 for x in range(8)), \
@@ -610,7 +619,7 @@ def test_spd_bit_clear_allows_sprites() -> None:
     _write_col_entry(vdp, 0, 0, color=7)
     vdp.vram[0] = 0x80  # bit 7 only → pixel at x=0
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[1 * 256 + 0] == 7, "SPD=0: sprite must render normally"
 
@@ -652,7 +661,7 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
     vdp._frame_start_palette = vdp.palette[:]
     vdp._reg_write_log = [_RegChange(95, 5, 0x78)]   # effective line 96
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[10 * 256 + 0] == 6, "upper region shows SAT-A sprite"
     assert buf[150 * 256 + 0] == 7, "lower region shows SAT-B sprite (doubler)"
@@ -686,7 +695,7 @@ def test_sprite_pass_split_on_vscroll_no_ghost() -> None:
     vdp._frame_start_palette = vdp.palette[:]
     vdp._reg_write_log = [_RegChange(30, 23, 0x00)]   # effective line 31
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[5 * 256 + 0] == 0, "no ghost sprite in the top region"
     assert buf[100 * 256 + 0] == 7, "main-region sprite still drawn"
@@ -717,7 +726,7 @@ def test_sprite_visible_in_both_vscroll_regions() -> None:
     vdp._frame_start_palette = vdp.palette[:]
     vdp._reg_write_log = [_RegChange(30, 23, 0x00)]   # effective line 31
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[5 * 256 + 0] == 6, "sprite shows in top region under top vscroll"
     assert buf[45 * 256 + 0] == 6, "same sprite shows in bottom region under its vscroll"
@@ -753,7 +762,7 @@ def test_spd_blanks_sprites_per_band() -> None:
     vdp._reg_write_log = [_RegChange(30, 23, 0x00),   # effective line 31
                           _RegChange(30, 8, 0x00)]
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     assert buf[5 * 256 + 0] == 0, "top-band copy blanked by SPD=1 (no status ghost)"
     assert buf[45 * 256 + 0] == 6, "play-band sprite still drawn (SPD=0)"
@@ -778,7 +787,7 @@ def test_high_y_sprite_pulled_up_by_vscroll_renders_full_height() -> None:
         _write_col_entry(vdp, sprite_idx=0, line_idx=line_idx, color=7)
     _terminate_sat(vdp, after_idx=1)
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # base_line = (251 - 151) & 0xFF = 100; all 8 rows must appear at 100..107
     # (the old 256 - y_top = 5 clip cut this to rows 100..104).
@@ -817,7 +826,7 @@ def test_screen4_sprite_drawn_over_g3_background() -> None:
     _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
     vdp.vram[0] = 0xFF            # sprite pattern 0, row 0: 8 pixels set
 
-    buf = render_frame(vdp)
+    buf = _active(vdp)
 
     # Background shows the tile colour where no sprite covers it
     assert buf[5 * 256 + 100] == 9, "G3 background tile colour"

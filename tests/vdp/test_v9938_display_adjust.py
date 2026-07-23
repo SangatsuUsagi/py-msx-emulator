@@ -60,7 +60,10 @@ def test_render_frame_applies_r18() -> None:
     vdp.regs[0] = 0x06    # SCREEN 5 (G4)
     vdp.vram[0] = 0x50    # pixel (0,0) = colour 5
     vdp.regs[18] = 0x0D   # h_off = +3
-    buf = render_frame(vdp)
+    raw = render_frame(vdp)
+    # render_frame pads the 192-line frame to 212 (10 border rows on top); the
+    # active picture starts at padded row 10.
+    buf = raw[10 * 256:]
     assert buf[3] == 5
     assert buf[0] == 0    # exposed edge = border
 
