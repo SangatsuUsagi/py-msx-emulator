@@ -767,3 +767,20 @@ considered on a best-effort basis.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## History
+
+- **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
+- **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.
+- **v2.3.4** (2026-07-19) — Add per-line banding for the display-adjust register.
+- **v2.3.3** (2026-07-19) — Fix handling of filenames with spaces.
+- **v2.3.2** (2026-07-19) — Fix V9938 line-interrupt handling.
+- **v2.3.1** (2026-07-19) — Refactor the socket RPC and MCP server.
+- **v2.3.0** (2026-07-19) — Add a socket RPC interface and MCP server.
+- **v2.2.1** (2026-07-15) — Add cycle-accurate CPU timing and PSG PCM playback.
+- **v2.2.0** (2026-07-13) — Add support for the Sony HB-F1XD (FDD + RTC).
+- **v2.1.0** (2026-07-13) — Improve MSX2 emulation performance.
+- **v2.0.0** (2026-07-06) — Add MSX2 CBIOS support.
+- **v1.0.0** (2026-06-07) — Initial release.
