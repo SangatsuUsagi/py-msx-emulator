@@ -60,6 +60,16 @@ def _build_step_table(base_sec: float) -> tuple[float, ...]:
 _ATTACK_STEP = _build_step_table(_ATTACK_BASE_SEC)
 _DECAY_STEP = _build_step_table(_DECAY_BASE_SEC)
 
+# Rhythm-mode percussion voices (HH/SD/TOM/TC) are simplified to a fixed
+# envelope per voice rather than a user-configurable ADSR (real hardware also
+# does not expose separate rates for these). Fast attack for all; decay speed
+# differs per voice for a recognisably distinct feel.
+_PERC_ATTACK_STEP = _ATTACK_STEP[15]
+_PERC_DECAY_HH = _DECAY_STEP[13]
+_PERC_DECAY_SD = _DECAY_STEP[9]
+_PERC_DECAY_TOM = _DECAY_STEP[9]
+_PERC_DECAY_TC = _DECAY_STEP[5]
+
 # Envelope generator states.
 _EG_OFF = 0
 _EG_ATTACK = 1
@@ -158,6 +168,16 @@ class Opll:
     _mod_fb2: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
     _prev_kon: list[bool] = field(default_factory=lambda: [False] * 9, init=False, repr=False)
 
+    # Rhythm mode (register 0x0E): HH/SD reuse channel 7's mod/car envelope
+    # slots, TOM/TC reuse channel 8's (channels 7/8's normal melody use is
+    # suppressed while rhythm is enabled, so this is conflict-free). Only the
+    # edge-detect flags and the shared noise LFSR need dedicated fields.
+    _prev_hh: bool = field(default=False, init=False, repr=False)
+    _prev_sd: bool = field(default=False, init=False, repr=False)
+    _prev_tom: bool = field(default=False, init=False, repr=False)
+    _prev_tc: bool = field(default=False, init=False, repr=False)
+    _noise_lfsr: int = field(default=0x1FFFF, init=False, repr=False)
+
     # ------------------------------------------------------------------ I/O
 
     def write_addr(self, value: int) -> None:
@@ -200,6 +220,11 @@ class Opll:
         self._mod_fb1 = [0.0] * 9
         self._mod_fb2 = [0.0] * 9
         self._prev_kon = [False] * 9
+        self._prev_hh = False
+        self._prev_sd = False
+        self._prev_tom = False
+        self._prev_tc = False
+        self._noise_lfsr = 0x1FFFF
 
     # -------------------------------------------------------- sample generation
 
@@ -259,6 +284,30 @@ class Opll:
             car_eg_type[ch] = patch.car_eg_type
             kons[ch] = kon
 
+        # Rhythm mode (register 0x0E): BD stays a normal 2-op FM voice on
+        # channel 6, keyed by bit 0x10 instead of its own KON register.
+        # Channels 7/8's ordinary melody use is suppressed (kons forced
+        # False); HH/SD/TOM/TC are synthesised separately below, reusing
+        # channel 7/8's now-idle mod/car envelope and phase state.
+        rhythm = bool(regs[0x0E] & 0x20)
+        if rhythm:
+            kons[6] = bool(regs[0x0E] & 0x10)
+            kons[7] = False
+            kons[8] = False
+            hh_kon = bool(regs[0x0E] & 0x01)
+            sd_kon = bool(regs[0x0E] & 0x08)
+            tom_kon = bool(regs[0x0E] & 0x04)
+            tc_kon = bool(regs[0x0E] & 0x02)
+            hh_vol = 1.0 - ((regs[0x37] >> 4) / 15.0)
+            sd_vol = 1.0 - ((regs[0x37] & 0x0F) / 15.0)
+            tom_vol = 1.0 - ((regs[0x38] >> 4) / 15.0)
+            tc_vol = 1.0 - ((regs[0x38] & 0x0F) / 15.0)
+            # TOM is a single fixed-multiplier tone at channel 8's own pitch.
+            mod_inc[8] = car_inc[8]
+        else:
+            hh_kon = sd_kon = tom_kon = tc_kon = False
+            hh_vol = sd_vol = tom_vol = tc_vol = 0.0
+
         mod_phase = self._mod_phase
         car_phase = self._car_phase
         mod_level = self._mod_level
@@ -288,9 +337,41 @@ class Opll:
                     car_state[ch] = _EG_RELEASE
             prev_kon[ch] = kon
 
+        if rhythm:
+            if hh_kon and not self._prev_hh:
+                mod_state[7] = _EG_ATTACK
+                mod_level[7] = 0.0
+            elif not hh_kon and self._prev_hh:
+                mod_state[7] = _EG_RELEASE
+            self._prev_hh = hh_kon
+
+            if sd_kon and not self._prev_sd:
+                car_state[7] = _EG_ATTACK
+                car_level[7] = 0.0
+            elif not sd_kon and self._prev_sd:
+                car_state[7] = _EG_RELEASE
+            self._prev_sd = sd_kon
+
+            if tom_kon and not self._prev_tom:
+                mod_state[8] = _EG_ATTACK
+                mod_level[8] = 0.0
+                mod_phase[8] = 0.0
+            elif not tom_kon and self._prev_tom:
+                mod_state[8] = _EG_RELEASE
+            self._prev_tom = tom_kon
+
+            if tc_kon and not self._prev_tc:
+                car_state[8] = _EG_ATTACK
+                car_level[8] = 0.0
+            elif not tc_kon and self._prev_tc:
+                car_state[8] = _EG_RELEASE
+            self._prev_tc = tc_kon
+
         for i in range(n):
             sample = 0.0
             for ch in range(9):
+                if rhythm and ch >= 7:
+                    continue  # channels 7/8 repurposed for HH/SD/TOM/TC below
                 m_state = mod_state[ch]
                 m_level = mod_level[ch]
                 if m_state == _EG_ATTACK:
@@ -345,6 +426,87 @@ class Opll:
 
                 mod_phase[ch] = (mod_phase[ch] + mod_inc[ch]) % TABLE_SIZE
                 car_phase[ch] = (car_phase[ch] + car_inc[ch]) % TABLE_SIZE
+
+            if rhythm:
+                # HH (noise, channel 7 mod slot)
+                state = mod_state[7]
+                level = mod_level[7]
+                if state == _EG_ATTACK:
+                    level += _PERC_ATTACK_STEP
+                    if level >= 1.0:
+                        level = 1.0
+                        state = _EG_DECAY
+                elif state == _EG_DECAY or state == _EG_RELEASE:
+                    level -= _PERC_DECAY_HH
+                    if level <= 0.0:
+                        level = 0.0
+                        state = _EG_OFF
+                mod_state[7] = state
+                mod_level[7] = level
+
+                # SD (noise, channel 7 car slot)
+                state = car_state[7]
+                level = car_level[7]
+                if state == _EG_ATTACK:
+                    level += _PERC_ATTACK_STEP
+                    if level >= 1.0:
+                        level = 1.0
+                        state = _EG_DECAY
+                elif state == _EG_DECAY or state == _EG_RELEASE:
+                    level -= _PERC_DECAY_SD
+                    if level <= 0.0:
+                        level = 0.0
+                        state = _EG_OFF
+                car_state[7] = state
+                car_level[7] = level
+
+                # TOM (tone, channel 8 mod slot)
+                state = mod_state[8]
+                level = mod_level[8]
+                if state == _EG_ATTACK:
+                    level += _PERC_ATTACK_STEP
+                    if level >= 1.0:
+                        level = 1.0
+                        state = _EG_DECAY
+                elif state == _EG_DECAY or state == _EG_RELEASE:
+                    level -= _PERC_DECAY_TOM
+                    if level <= 0.0:
+                        level = 0.0
+                        state = _EG_OFF
+                mod_state[8] = state
+                mod_level[8] = level
+
+                # TC (noise, channel 8 car slot)
+                state = car_state[8]
+                level = car_level[8]
+                if state == _EG_ATTACK:
+                    level += _PERC_ATTACK_STEP
+                    if level >= 1.0:
+                        level = 1.0
+                        state = _EG_DECAY
+                elif state == _EG_DECAY or state == _EG_RELEASE:
+                    level -= _PERC_DECAY_TC
+                    if level <= 0.0:
+                        level = 0.0
+                        state = _EG_OFF
+                car_state[8] = state
+                car_level[8] = level
+
+                noise = self._noise_lfsr
+                noise_bit = (noise ^ (noise >> 1)) & 1
+                noise = (noise >> 1) | (noise_bit << 16)
+                self._noise_lfsr = noise
+                noise_signed = 1.0 if noise_bit else -1.0
+
+                if mod_state[7] != _EG_OFF:
+                    sample += noise_signed * mod_level[7] * hh_vol * 0.6
+                if car_state[7] != _EG_OFF:
+                    sample += noise_signed * car_level[7] * sd_vol * 0.8
+                if mod_state[8] != _EG_OFF:
+                    mod_phase[8] = (mod_phase[8] + mod_inc[8]) % TABLE_SIZE
+                    sample += sin_table[int(mod_phase[8]) & _TABLE_MASK] * mod_level[8] * tom_vol
+                if car_state[8] != _EG_OFF:
+                    sample += noise_signed * car_level[8] * tc_vol * 0.5
 
             scaled = int(sample * 3200.0)
             if scaled > 32767:
