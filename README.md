@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1485%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1545%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -62,6 +62,13 @@ platform-specific dependency is pysdl2, for the display and audio frontend.
 - **Konami SCC** — 5-channel wavetable synthesiser with 4 waveform banks (32
   samples each), 12-bit frequency and 4-bit volume per channel, mixed into the
   audio output alongside PSG
+- **FM-PAC (MSX-MUSIC)** — optional overlay cartridge enabled with `--fmpac`,
+  placed in primary slot 2: 64 KB banked ROM, 8 KB battery-backed SRAM with
+  openMSX-compatible magic-value unlock (persisted to `saves/sram/fmpac.sram`),
+  and a YM2413 (OPLL) FM sound chip — 9-channel 2-operator melody synthesis (15
+  built-in instruments + a user-defined tone), ADSR envelopes, and rhythm mode
+  (bass drum, snare, tom, top cymbal, hi-hat), mixed into the audio output
+  alongside PSG/SCC
 - **i8255 PPI** — slot-select register (port 0xA8), 11-row × 8-bit MSX keyboard
   matrix (port 0xA9), row selection (port 0xAA)
 - **MSX1 slot system** — 4-page × 4-slot dispatch, BIOS ROM in slot 0, cartridge
@@ -93,8 +100,8 @@ platform-specific dependency is pysdl2, for the display and audio frontend.
 - **Physical joystick** — SDL2 GameController and raw joystick APIs,
   hot-plug/unplug, keyboard joystick emulation (WASD + ZX/.,)
 - **State save/load** — complete hardware snapshot (CPU, RAM, VDP, PSG, SCC,
-  mapper banks) as a stdlib JSON container, PNG screenshot alongside each save,
-  `saves/states/latest.*` symlinks for quick resume
+  FM-PAC/OPLL, mapper banks) as a stdlib JSON container, PNG screenshot
+  alongside each save, `saves/states/latest.*` symlinks for quick resume
 - **ROM database** — SHA1 title lookup for automatic game title detection and
   mapper selection
 - **Interactive debugger** — REPL accessible via Ctrl+C or breakpoint hit;
@@ -175,6 +182,18 @@ Implementation: `msx/psg.py`
 | -------------- | ----------------------------------------------------------------------------------------- |
 | Implementation | `msx/scc.py`                                                                              |
 | Activation     | KonamiSCC mapper activates SCC when 0x3F is written to 0x9000; registers appear at 0x9800 |
+
+### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
+
+| Item              | Detail                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Implementation    | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip)                                              |
+| Activation        | `--fmpac` overlays the cartridge in primary slot 2 (any base `--machine`); ROM at `roms/fmpac/fmpac.rom`         |
+| Memory map        | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`; 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`); memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`), enable register (`0x7FF6`) |
+| I/O ports         | `0x7C`/`0x7D`, gated by the enable register's bit 0                                                              |
+| SRAM persistence  | `saves/sram/fmpac.sram`, loaded on start and saved on exit                                                       |
+| OPLL synthesis    | 9-channel 2-operator FM (15 preset instruments + user tone), ADSR envelopes, rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) |
+| Known limitations | Simplified relative to real hardware: linear-domain envelope ramps (not the chip's logarithmic curves), no AM/vibrato LFO, no key-scale rate/level; audibly-correct, not sample-exact (see `msx/opll.py` module docstring) |
 
 ### Audio output filter
 
@@ -408,6 +427,9 @@ python tools/make_blank_dsk.py blank.dsk
 
 # Force a specific mapper type
 python . path/to/game.rom --mapper KonamiSCC
+
+# Add an FM-PAC (MSX-MUSIC) cartridge in slot 2 alongside a game in slot 1
+python . path/to/game.rom --fmpac
 
 # Resume from the most recent save state
 python . path/to/game.rom --resume
@@ -698,6 +720,8 @@ py-msx-emulator/
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
 │   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
 │   ├── scc.py             # Konami SCC wavetable synthesiser
+│   ├── fmpac.py           # FM-PAC cartridge (banked ROM, SRAM, OPLL routing)
+│   ├── opll.py            # YM2413 (OPLL) FM sound chip
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard)
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
