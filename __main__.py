@@ -30,6 +30,9 @@ def main() -> None:
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
+    parser.add_argument("--fmpac", action="store_true",
+                        help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
+                             "(conflicts with --slot2)")
     parser.add_argument("--mapper2",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
                                  "Konami", "Majutsushi"],
@@ -77,6 +80,10 @@ def main() -> None:
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
         sys.exit(1)
+    if args.fmpac and args.slot2:
+        print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
+              file=sys.stderr)
+        sys.exit(1)
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
@@ -116,11 +123,13 @@ def main() -> None:
         MachineLoadError,
         build_machine,
         load_device_registry,
+        load_fmpac_overlay,
         load_machine_spec,
     )
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
+        fmpac_overlay = load_fmpac_overlay(_CONFIG_DIR, _PROJECT_ROOT) if args.fmpac else None
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -202,6 +211,8 @@ def main() -> None:
         print(f"fdd1    : {fdd1_path}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
+    if fmpac_overlay is not None:
+        print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
@@ -240,6 +251,7 @@ def main() -> None:
                 tracer=tracer,
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
+                fmpac_overlay=fmpac_overlay,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -315,6 +327,13 @@ def main() -> None:
             if hasattr(mapper, "save_sram"):
                 machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
                 mapper.save_sram(machine.sram_save_path)
+        if (
+            machine is not None
+            and machine.fmpac is not None
+            and machine.fmpac_sram_save_path is not None
+        ):
+            machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+            machine.fmpac.save_sram(machine.fmpac_sram_save_path)
         # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
         if machine is not None and machine.fdc is not None:
             machine.fdc.flush()

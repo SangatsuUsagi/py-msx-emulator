@@ -1,0 +1,166 @@
+"""FM-PAC cartridge: banked ROM + YM2413 (OPLL) + 8 KB battery-backed SRAM.
+
+Ground truth: openMSX `MSXFmPac`/`MSXMusicBase`. Window is the primary-slot
+0x4000-0x7FFF page pair (bank-switched ROM, magic-unlocked SRAM, and the
+memory-mapped OPLL registers all live here); addresses outside the window
+read 0xFF and ignore writes.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.opll import Opll
+
+__all__ = ["FmPac", "SRAM_SIZE"]
+
+_WINDOW_BASE = 0x4000
+_WINDOW_SIZE = 0x4000
+_BANK_SIZE = 0x4000
+SRAM_SIZE = 8192
+
+# Window-relative (address & 0x3FFF) offsets of the fixed registers.
+_OFF_MAGIC_LO = 0x1FFE
+_OFF_MAGIC_HI = 0x1FFF
+_OFF_OPLL_ADDR = 0x3FF4
+_OFF_OPLL_DATA = 0x3FF5
+_OFF_ENABLE = 0x3FF6
+_OFF_BANK = 0x3FF7
+
+_MAGIC_R1FFE = 0x4D
+_MAGIC_R1FFF = 0x69
+
+_ENABLE_IO_OPLL = 0x01     # bit 0: gates the I/O-port (0x7C/0x7D) OPLL access
+_ENABLE_WRITE_PROTECT = 0x10  # bit 4: freezes the magic registers
+_ENABLE_MASK = 0x11
+
+
+@dataclass
+class FmPac:
+    """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
+
+    rom: bytes
+    opll: "Opll"
+    sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE))
+    _bank: int = field(default=0, init=False, repr=False)
+    _enable: int = field(default=0, init=False, repr=False)
+    _r1ffe: int = field(default=0, init=False, repr=False)
+    _r1fff: int = field(default=0, init=False, repr=False)
+    _sram_enabled: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if len(self.sram) != SRAM_SIZE:
+            self.sram = bytearray(SRAM_SIZE)
+
+    # ------------------------------------------------------------- CPU memory
+
+    def read(self, addr: int) -> int:
+        if not (_WINDOW_BASE <= addr < _WINDOW_BASE + _WINDOW_SIZE):
+            return 0xFF
+        off = addr - _WINDOW_BASE
+        if off == _OFF_ENABLE:
+            return self._enable
+        if off == _OFF_BANK:
+            return self._bank
+        if self._sram_enabled:
+            if off < _OFF_MAGIC_LO:
+                return self.sram[off]
+            if off == _OFF_MAGIC_LO:
+                return self._r1ffe
+            if off == _OFF_MAGIC_HI:
+                return self._r1fff
+            return 0xFF
+        return self.rom[self._bank * _BANK_SIZE + off]
+
+    def write(self, addr: int, value: int) -> None:
+        if not (_WINDOW_BASE <= addr < _WINDOW_BASE + _WINDOW_SIZE):
+            return
+        off = addr - _WINDOW_BASE
+        value &= 0xFF
+        if off == _OFF_MAGIC_LO:
+            if not (self._enable & _ENABLE_WRITE_PROTECT):
+                self._r1ffe = value
+                self._check_sram_enable()
+            return
+        if off == _OFF_MAGIC_HI:
+            if not (self._enable & _ENABLE_WRITE_PROTECT):
+                self._r1fff = value
+                self._check_sram_enable()
+            return
+        if off == _OFF_OPLL_ADDR:
+            self.opll.write_addr(value)
+            return
+        if off == _OFF_OPLL_DATA:
+            self.opll.write_data(value)
+            return
+        if off == _OFF_ENABLE:
+            self._enable = value & _ENABLE_MASK
+            if self._enable & _ENABLE_WRITE_PROTECT:
+                # Actual value doesn't matter, only that it no longer matches
+                # the magic combination (mirrors openMSX MSXFmPac::writeMem).
+                self._r1ffe = 0
+                self._r1fff = 0
+                self._check_sram_enable()
+            return
+        if off == _OFF_BANK:
+            self._bank = value & 0x03
+            return
+        if self._sram_enabled and off < _OFF_MAGIC_LO:
+            self.sram[off] = value
+
+    def _check_sram_enable(self) -> None:
+        self._sram_enabled = self._r1ffe == _MAGIC_R1FFE and self._r1fff == _MAGIC_R1FFF
+
+    # ---------------------------------------------------------------- I/O ports
+
+    def read_port(self, port: int) -> int:
+        return 0xFF
+
+    def write_port(self, port: int, value: int) -> None:
+        if not (self._enable & _ENABLE_IO_OPLL):
+            return
+        if port & 1:
+            self.opll.write_data(value)
+        else:
+            self.opll.write_addr(value)
+
+    # --------------------------------------------------------------------- reset
+
+    def reset(self) -> None:
+        self.opll.reset()
+        self._bank = 0
+        self._enable = 0
+        self._r1ffe = 0
+        self._r1fff = 0
+        self._sram_enabled = False
+
+    # ---------------------------------------------------------------------- SRAM
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)
+
+    def load_sram(self, data: bytes) -> None:
+        """Initialise SRAM from a loaded save file. Ignores wrong-size data."""
+        if len(data) == SRAM_SIZE:
+            self.sram[:] = data
+
+    # ------------------------------------------------------------- save-state
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "sram": bytes(self.sram),
+            "bank": self._bank,
+            "enable": self._enable,
+            "r1ffe": self._r1ffe,
+            "r1fff": self._r1fff,
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        self.sram[:] = state["sram"]  # type: ignore[call-overload]
+        self._bank = int(state["bank"])  # type: ignore[call-overload]
+        self._enable = int(state["enable"])  # type: ignore[call-overload]
+        self._r1ffe = int(state["r1ffe"])  # type: ignore[call-overload]
+        self._r1fff = int(state["r1fff"])  # type: ignore[call-overload]
+        self._check_sram_enable()

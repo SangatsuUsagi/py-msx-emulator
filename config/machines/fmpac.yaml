@@ -1,0 +1,18 @@
+schema_version: 1
+id: fmpac
+name: "FM-PAC (MSX-MUSIC + 8 KB SRAM)"
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --fmpac) to place the FM-PAC
+# cartridge in a primary slot. Does not declare its own CPU/VDP/RAM.
+overlay: true
+slot: 2
+
+rom_base: roms/fmpac
+rom:
+  file: fmpac.rom
+  size_kb: 64
+
+sram:
+  size_kb: 8
+  save_file: saves/sram/fmpac.sram

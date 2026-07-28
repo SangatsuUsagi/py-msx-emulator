@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 import msx.romdb as romdb
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
+from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
+from msx.fmpac import FmPac
 from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import (
@@ -36,6 +38,7 @@ from msx.mapper import (
     RTypeMapper,
 )
 from msx.memory import Memory
+from msx.opll import Opll
 from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
@@ -239,6 +242,17 @@ class MachineSpec:
 
     # Floppy interface in slot 3 sub-slot 0, or None when the machine has none.
     fdc: _FdcDef | None = None
+
+
+@dataclass
+class _FmPacOverlay:
+    """Resolved FM-PAC overlay (config/machines/fmpac.yaml): ROM + SRAM save
+    path for the --fmpac flag. Not a machine spec — applied on top of one."""
+
+    rom_base_dir: Path
+    rom_entry: _RomEntry
+    slot: int
+    sram_save_path: Path
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +590,65 @@ def load_machine_spec(
 
 
 # ---------------------------------------------------------------------------
+# FM-PAC overlay (config/machines/fmpac.yaml)
+# ---------------------------------------------------------------------------
+
+def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
+    """Load and validate the FM-PAC overlay fragment.
+
+    Args:
+        config_dir: Path to the config/ directory.
+        project_root: Project root used to resolve rom_base and the SRAM save
+            path relative paths.
+
+    Returns:
+        A resolved _FmPacOverlay, ready for build_machine(fmpac_overlay=...).
+
+    Raises:
+        MachineLoadError: On missing file, bad schema_version, or a missing
+            'rom' entry.
+    """
+    path = config_dir / "machines" / "fmpac.yaml"
+    if not path.exists():
+        raise MachineLoadError(f"FM-PAC overlay not found: {path}")
+
+    with path.open(encoding="utf-8") as fh:
+        raw: Any = yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
+
+    schema_version: Any = raw.get("schema_version")
+    if schema_version != 1:
+        raise MachineLoadError(
+            f"{path}: unsupported schema_version {schema_version!r} (expected 1)"
+        )
+
+    slot = int(raw.get("slot", 2))
+    if slot != 2:
+        raise MachineLoadError(
+            f"{path}: unsupported FM-PAC slot {slot!r} (only slot 2 is supported)"
+        )
+    rom_base: str = str(raw.get("rom_base", "roms/fmpac"))
+    rom_base_dir = project_root / rom_base
+
+    rom_data: Any = raw.get("rom")
+    if not isinstance(rom_data, dict):
+        raise MachineLoadError(f"{path}: missing required 'rom' entry")
+    rom_entry = _parse_rom_entry(rom_data, f"FM-PAC overlay '{path}'")
+
+    sram_data: Any = raw.get("sram")
+    save_file = str(sram_data.get("save_file", "saves/sram/fmpac.sram")) \
+        if isinstance(sram_data, dict) else "saves/sram/fmpac.sram"
+
+    return _FmPacOverlay(
+        rom_base_dir=rom_base_dir,
+        rom_entry=rom_entry,
+        slot=slot,
+        sram_save_path=Path(save_file),
+    )
+
+
+# ---------------------------------------------------------------------------
 # I/O port range helper
 # ---------------------------------------------------------------------------
 
@@ -634,6 +707,7 @@ def build_machine(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
+    fmpac_overlay: _FmPacOverlay | None = None,
 ) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
     """Build a Machine from a resolved MachineSpec.
 
@@ -713,9 +787,38 @@ def build_machine(
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     )
 
+    # FM-PAC overlay: occupies primary slot 2 (load_fmpac_overlay validates this),
+    # replacing whatever slot-2 cartridge mapper was resolved above.
+    fmpac_device: FmPac | None = None
+    if fmpac_overlay is not None:
+        fmpac_rom = _load_rom(
+            fmpac_overlay.rom_base_dir, fmpac_overlay.rom_entry.file, required=True
+        )
+        assert fmpac_rom is not None
+        fmpac_sram: bytearray | None = None
+        if fmpac_overlay.sram_save_path.exists():
+            raw_sram = fmpac_overlay.sram_save_path.read_bytes()
+            if len(raw_sram) == FMPAC_SRAM_SIZE:
+                fmpac_sram = bytearray(raw_sram)
+            else:
+                print(
+                    f"warning: FM-PAC SRAM file {fmpac_overlay.sram_save_path} has wrong "
+                    f"size ({len(raw_sram)} != {FMPAC_SRAM_SIZE}), starting fresh",
+                    file=sys.stderr,
+                )
+        fmpac_device = FmPac(
+            rom=fmpac_rom,
+            opll=Opll(),
+            sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
+        )
+        mapper2_instance = fmpac_device
+
     input_state = InputState(keyboard_type=spec.keyboard_type)
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
+    if fmpac_device is not None:
+        io.register_read(0x7C, 0x7D, fmpac_device.read_port)
+        io.register_write(0x7C, 0x7D, fmpac_device.write_port)
 
     if spec.generation == "msx2":
         machine = _build_msx2(
@@ -759,6 +862,10 @@ def build_machine(
     # them at their sub-frame sample positions (mirrors the DAC wiring).
     machine.psg._get_cycle = lambda: machine.cycle_count
     machine.sram_save_path = sram_save_path
+    machine.fmpac = fmpac_device
+    machine.fmpac_sram_save_path = (
+        fmpac_overlay.sram_save_path if fmpac_overlay is not None else None
+    )
     return machine
 
 

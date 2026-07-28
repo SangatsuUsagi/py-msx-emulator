@@ -22,6 +22,7 @@ from msx.vdp.vdp import VDP
 if TYPE_CHECKING:
     from msx.debugger.prompt import Debugger
     from msx.fdc.interface import FloppyDisk
+    from msx.fmpac import FmPac
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
@@ -58,11 +59,13 @@ class Machine:
     scc: SCC | None = field(default=None)
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
+    fmpac: "FmPac | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
+    fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
@@ -123,6 +126,8 @@ class Machine:
         self.psg.reset()
         if self.scc is not None:
             self.scc.reset()
+        if self.fmpac is not None:
+            self.fmpac.reset()
         self.vdp.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.slot_register = 0x00
