@@ -303,6 +303,16 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
 # ---------------------------------------------------------------------------
 
 def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
+    """Parse a `rom: {file, size_kb, pages, sha1}` block into a _RomEntry.
+
+    This is the one shared slot-resident-device ROM schema in the loader: it
+    parses every `rom:` block in the codebase, with the same shape and the
+    same validation, regardless of where that ROM lives — slot 0 main/logo
+    ROM and the MSX2 slot 3 sub ROM (_parse_slot0, _parse_slot3_msx2), the
+    FDC's DISK ROM (_parse_fdc), and the FM-PAC overlay's ROM
+    (load_fmpac_overlay). A new ROM-bearing device added to the loader should
+    reuse this rather than hand-rolling another parser.
+    """
     file: Any = entry.get("file")
     if not file:
         raise MachineLoadError(f"{context}: ROM entry missing required field 'file'")
