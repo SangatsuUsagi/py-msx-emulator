@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
-__all__ = ["Opll", "SAMPLE_RATE", "SAMPLES_PER_FRAME"]
+__all__ = ["Opll", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
 
 _CLOCK = 3_579_545  # Hz — full MSX CPU clock
 
@@ -150,6 +150,16 @@ _INST_ROM: tuple[bytes, ...] = (
 _PRESETS: tuple[_Patch, ...] = tuple(_decode_patch(data) for data in _INST_ROM)
 
 
+def note_frequency(fnum: int, block: int) -> float:
+    """Return the note frequency in Hz for a 9-bit F-number and 3-bit block.
+
+    Standard YM2413 formula: f = Fnum * 2^Block * clock / (2^19 * 72). Verified
+    against the commonly documented reference note A4 (440 Hz) = Fnum 290 at
+    block 4 (see tests/test_opll.py).
+    """
+    return fnum * (1 << block) * _CLOCK / (1 << 19) / 72.0
+
+
 @dataclass
 class Opll:
     # Register file: index 0x00-0x38 covers user-tone, rhythm/test, and the
@@ -266,7 +276,7 @@ class Opll:
             inst_idx = inst_vol >> 4
             vol = inst_vol & 0x0F
             patch = user_patch if inst_idx == 0 else _PRESETS[inst_idx - 1]
-            freq_hz = fnum * (1 << block) * _CLOCK / (1 << 19) / 72.0
+            freq_hz = note_frequency(fnum, block)
 
             mod_inc[ch] = freq_hz * patch.mod_multi * TABLE_SIZE / SAMPLE_RATE
             car_inc[ch] = freq_hz * patch.car_multi * TABLE_SIZE / SAMPLE_RATE

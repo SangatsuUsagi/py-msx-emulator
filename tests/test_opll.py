@@ -11,7 +11,7 @@ from array import array
 
 import pytest
 
-from msx.opll import SAMPLE_RATE, Opll
+from msx.opll import SAMPLE_RATE, Opll, note_frequency
 
 _LOUD_INSTRUMENT_VOL = 0x10  # instrument=1 (violin), vol=0 (loudest)
 
@@ -149,3 +149,18 @@ def test_multiple_channels_sound_together() -> None:
 @pytest.mark.parametrize("sample_rate", [SAMPLE_RATE])
 def test_sample_rate_matches_psg(sample_rate: int) -> None:
     assert sample_rate == 44_100
+
+
+# ---------------------------------------------------------------------------
+# Note frequency accuracy (standard YM2413 Fnum/Block formula)
+# ---------------------------------------------------------------------------
+
+def test_a4_frequency_matches_reference() -> None:
+    # A4 = 440 Hz is the commonly documented reference: Fnum 290 at block 4.
+    assert note_frequency(290, 4) == pytest.approx(440.0, abs=0.5)
+
+
+def test_octave_doubles_frequency() -> None:
+    base = note_frequency(300, 3)
+    octave_up = note_frequency(300, 4)
+    assert octave_up == pytest.approx(base * 2.0, rel=1e-9)
