@@ -177,10 +177,10 @@ def _mix_audio(
     frame_end_cycle: int,
     audio_filter: BiquadLowPass | None = None,
 ) -> bytes:
-    """Generate one frame of audio: PSG plus SCC/DAC when present, mixed and
-    clamped to signed 16-bit. When `audio_filter` is given, the final mixed
-    buffer is passed through it (modelling the analog output low-pass) before
-    being returned. Returns the PCM bytes to queue."""
+    """Generate one frame of audio: PSG plus SCC/DAC/OPLL (FM-PAC) when
+    present, mixed and clamped to signed 16-bit. When `audio_filter` is given,
+    the final mixed buffer is passed through it (modelling the analog output
+    low-pass) before being returned. Returns the PCM bytes to queue."""
     psg_buf = machine.psg.generate_samples(
         SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
     )
@@ -191,6 +191,8 @@ def _mix_audio(
         extra_bufs.append(
             machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle)
         )
+    if machine.fmpac is not None:
+        extra_bufs.append(machine.fmpac.opll.generate_samples(SAMPLES_PER_FRAME))
     if not extra_bufs:
         return audio_filter.filter(bytes(psg_buf)) if audio_filter else bytes(psg_buf)
 
