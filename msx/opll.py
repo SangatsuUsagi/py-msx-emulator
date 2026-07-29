@@ -9,8 +9,12 @@ pitch follow the real chip; timbre is audibly-correct, not sample-exact.
 Ground truth for the register map and instrument ROM data: openMSX
 YM2413Okazaki (itself derived from Mitsutaka Okazaki's emu2413).
 
-Rhythm mode (register 0x0E) is not implemented yet (Phase 3): channels 6-8
-always behave as ordinary melody channels.
+Rhythm mode (register 0x0E) repurposes channels 6-8: channel 6 (BD) stays a
+normal 2-op FM voice but is forced onto the fixed built-in drum patch;
+channel 7's mod/car (HH/SD) and channel 8's mod/car (TOM/CYM) reuse another
+fixed drum patch's mod/car halves, with HH/SD/CYM synthesised as noise
+(instead of the real chip's phase-derived taps) and TOM as a single tone —
+see generate_samples.
 """
 from __future__ import annotations
 
@@ -59,16 +63,6 @@ def _build_step_table(base_sec: float) -> tuple[float, ...]:
 
 _ATTACK_STEP = _build_step_table(_ATTACK_BASE_SEC)
 _DECAY_STEP = _build_step_table(_DECAY_BASE_SEC)
-
-# Rhythm-mode percussion voices (HH/SD/TOM/TC) are simplified to a fixed
-# envelope per voice rather than a user-configurable ADSR (real hardware also
-# does not expose separate rates for these). Fast attack for all; decay speed
-# differs per voice for a recognisably distinct feel.
-_PERC_ATTACK_STEP = _ATTACK_STEP[15]
-_PERC_DECAY_HH = _DECAY_STEP[13]
-_PERC_DECAY_SD = _DECAY_STEP[9]
-_PERC_DECAY_TOM = _DECAY_STEP[9]
-_PERC_DECAY_TC = _DECAY_STEP[5]
 
 # Envelope generator states.
 _EG_OFF = 0
@@ -148,6 +142,15 @@ _INST_ROM: tuple[bytes, ...] = (
     bytes((0x21, 0x01, 0x89, 0x03, 0xF1, 0xE4, 0xF0, 0x23)),
 )
 _PRESETS: tuple[_Patch, ...] = tuple(_decode_patch(data) for data in _INST_ROM)
+
+# Fixed rhythm-mode instrument ROM (indices 16-18 in openMSX's inst_data):
+# ch6 (BD) uses the full patch; ch7's mod=HH/car=SD and ch8's mod=TOM/car=CYM
+# split one patch's mod/car halves each. Real hardware forces these the
+# moment rhythm mode is enabled, ignoring whatever instrument index is in
+# registers 0x36-0x38 (only the volume nibbles there still apply).
+_DRUM_BD: _Patch = _decode_patch(bytes((0x07, 0x21, 0x14, 0x00, 0xEE, 0xF8, 0xFF, 0xF8)))
+_DRUM_HH_SD: _Patch = _decode_patch(bytes((0x01, 0x31, 0x00, 0x00, 0xF8, 0xF7, 0xF8, 0xF7)))
+_DRUM_TOM_CYM: _Patch = _decode_patch(bytes((0x25, 0x11, 0x00, 0x00, 0xF8, 0xFA, 0xF8, 0x55)))
 
 
 def note_frequency(fnum: int, block: int) -> float:
@@ -267,6 +270,12 @@ class Opll:
         car_eg_type = [0] * 9
         kons = [False] * 9
 
+        # Rhythm mode (register 0x0E): while enabled, ch6 (BD) is forced onto
+        # the fixed built-in drum patch instead of whatever instrument index
+        # is in register 0x36 — matches real hardware, which locks channels
+        # 6-8 to the drum patch ROM the moment rhythm turns on.
+        rhythm = bool(regs[0x0E] & 0x20)
+
         for ch in range(9):
             freq_reg = regs[0x20 + ch]
             fnum = regs[0x10 + ch] | ((freq_reg & 0x01) << 8)
@@ -275,7 +284,10 @@ class Opll:
             inst_vol = regs[0x30 + ch]
             inst_idx = inst_vol >> 4
             vol = inst_vol & 0x0F
-            patch = user_patch if inst_idx == 0 else _PRESETS[inst_idx - 1]
+            if rhythm and ch == 6:
+                patch = _DRUM_BD
+            else:
+                patch = user_patch if inst_idx == 0 else _PRESETS[inst_idx - 1]
             freq_hz = note_frequency(fnum, block)
 
             mod_inc[ch] = freq_hz * patch.mod_multi * TABLE_SIZE / SAMPLE_RATE
@@ -294,12 +306,14 @@ class Opll:
             car_eg_type[ch] = patch.car_eg_type
             kons[ch] = kon
 
-        # Rhythm mode (register 0x0E): BD stays a normal 2-op FM voice on
-        # channel 6, keyed by bit 0x10 instead of its own KON register.
+        # BD (channel 6) stays a normal 2-op FM voice, keyed by bit 0x10
+        # instead of its own KON register (patch already forced above).
         # Channels 7/8's ordinary melody use is suppressed (kons forced
         # False); HH/SD/TOM/TC are synthesised separately below, reusing
-        # channel 7/8's now-idle mod/car envelope and phase state.
-        rhythm = bool(regs[0x0E] & 0x20)
+        # channel 7/8's now-idle mod/car envelope and phase state, driven by
+        # the fixed drum patches' own AR/DR/SL/RR and pitch multiplier —
+        # matches real hardware; only the volume nibbles in registers
+        # 0x37/0x38 stay register-driven.
         if rhythm:
             kons[6] = bool(regs[0x0E] & 0x10)
             kons[7] = False
@@ -312,11 +326,48 @@ class Opll:
             sd_vol = 1.0 - ((regs[0x37] & 0x0F) / 15.0)
             tom_vol = 1.0 - ((regs[0x38] >> 4) / 15.0)
             tc_vol = 1.0 - ((regs[0x38] & 0x0F) / 15.0)
-            # TOM is a single fixed-multiplier tone at channel 8's own pitch.
-            mod_inc[8] = car_inc[8]
+
+            hh_ar_step = _ATTACK_STEP[_DRUM_HH_SD.mod_ar]
+            hh_dr_step = _DECAY_STEP[_DRUM_HH_SD.mod_dr]
+            hh_sl_frac = 1.0 - (_DRUM_HH_SD.mod_sl / 15.0)
+            hh_rr_step = _DECAY_STEP[_DRUM_HH_SD.mod_rr]
+            sd_ar_step = _ATTACK_STEP[_DRUM_HH_SD.car_ar]
+            sd_dr_step = _DECAY_STEP[_DRUM_HH_SD.car_dr]
+            sd_sl_frac = 1.0 - (_DRUM_HH_SD.car_sl / 15.0)
+            sd_rr_step = _DECAY_STEP[_DRUM_HH_SD.car_rr]
+            sd_eg_type = _DRUM_HH_SD.car_eg_type
+
+            tom_ar_step = _ATTACK_STEP[_DRUM_TOM_CYM.mod_ar]
+            tom_dr_step = _DECAY_STEP[_DRUM_TOM_CYM.mod_dr]
+            tom_sl_frac = 1.0 - (_DRUM_TOM_CYM.mod_sl / 15.0)
+            tom_rr_step = _DECAY_STEP[_DRUM_TOM_CYM.mod_rr]
+            tc_ar_step = _ATTACK_STEP[_DRUM_TOM_CYM.car_ar]
+            tc_dr_step = _DECAY_STEP[_DRUM_TOM_CYM.car_dr]
+            tc_sl_frac = 1.0 - (_DRUM_TOM_CYM.car_sl / 15.0)
+            tc_rr_step = _DECAY_STEP[_DRUM_TOM_CYM.car_rr]
+            tc_eg_type = _DRUM_TOM_CYM.car_eg_type
+
+            # TOM's own tone uses channel 8's F-number/block (registers
+            # 0x18/0x28) at the fixed drum patch's modulator pitch
+            # multiplier — not whatever the generic per-channel loop above
+            # computed for ch8, since regs[0x38]'s high nibble is TOM's
+            # volume in rhythm mode, not an instrument index.
+            tom_freq_reg = regs[0x28]
+            tom_fnum = regs[0x18] | ((tom_freq_reg & 0x01) << 8)
+            tom_block = (tom_freq_reg >> 1) & 0x07
+            mod_inc[8] = (
+                note_frequency(tom_fnum, tom_block) * _DRUM_TOM_CYM.mod_multi
+                * TABLE_SIZE / SAMPLE_RATE
+            )
         else:
             hh_kon = sd_kon = tom_kon = tc_kon = False
             hh_vol = sd_vol = tom_vol = tc_vol = 0.0
+            hh_ar_step = hh_dr_step = hh_sl_frac = hh_rr_step = 0.0
+            sd_ar_step = sd_dr_step = sd_sl_frac = sd_rr_step = 0.0
+            sd_eg_type = 0
+            tom_ar_step = tom_dr_step = tom_sl_frac = tom_rr_step = 0.0
+            tc_ar_step = tc_dr_step = tc_sl_frac = tc_rr_step = 0.0
+            tc_eg_type = 0
 
         mod_phase = self._mod_phase
         car_phase = self._car_phase
@@ -438,64 +489,88 @@ class Opll:
                 car_phase[ch] = (car_phase[ch] + car_inc[ch]) % TABLE_SIZE
 
             if rhythm:
-                # HH (noise, channel 7 mod slot)
+                # HH (noise, channel 7 mod slot) — mod-style: DECAY always
+                # settles into SUSTAIN (holds at level) like a melody
+                # channel's modulator; RELEASE uses the patch's own RR.
                 state = mod_state[7]
                 level = mod_level[7]
                 if state == _EG_ATTACK:
-                    level += _PERC_ATTACK_STEP
+                    level += hh_ar_step
                     if level >= 1.0:
                         level = 1.0
                         state = _EG_DECAY
-                elif state == _EG_DECAY or state == _EG_RELEASE:
-                    level -= _PERC_DECAY_HH
+                elif state == _EG_DECAY:
+                    level -= hh_dr_step
+                    if level <= hh_sl_frac:
+                        level = hh_sl_frac
+                        state = _EG_SUSTAIN
+                elif state == _EG_RELEASE:
+                    level -= hh_rr_step
                     if level <= 0.0:
                         level = 0.0
                         state = _EG_OFF
                 mod_state[7] = state
                 mod_level[7] = level
 
-                # SD (noise, channel 7 car slot)
+                # SD (noise, channel 7 car slot) — car-style: DECAY settles
+                # into SUSTAIN only if the drum patch's EG type holds it,
+                # else falls straight to RELEASE (matches a melody carrier).
                 state = car_state[7]
                 level = car_level[7]
                 if state == _EG_ATTACK:
-                    level += _PERC_ATTACK_STEP
+                    level += sd_ar_step
                     if level >= 1.0:
                         level = 1.0
                         state = _EG_DECAY
-                elif state == _EG_DECAY or state == _EG_RELEASE:
-                    level -= _PERC_DECAY_SD
+                elif state == _EG_DECAY:
+                    level -= sd_dr_step
+                    if level <= sd_sl_frac:
+                        level = sd_sl_frac
+                        state = _EG_SUSTAIN if sd_eg_type else _EG_RELEASE
+                elif state == _EG_RELEASE:
+                    level -= sd_rr_step
                     if level <= 0.0:
                         level = 0.0
                         state = _EG_OFF
                 car_state[7] = state
                 car_level[7] = level
 
-                # TOM (tone, channel 8 mod slot)
+                # TOM (tone, channel 8 mod slot) — mod-style, same as HH.
                 state = mod_state[8]
                 level = mod_level[8]
                 if state == _EG_ATTACK:
-                    level += _PERC_ATTACK_STEP
+                    level += tom_ar_step
                     if level >= 1.0:
                         level = 1.0
                         state = _EG_DECAY
-                elif state == _EG_DECAY or state == _EG_RELEASE:
-                    level -= _PERC_DECAY_TOM
+                elif state == _EG_DECAY:
+                    level -= tom_dr_step
+                    if level <= tom_sl_frac:
+                        level = tom_sl_frac
+                        state = _EG_SUSTAIN
+                elif state == _EG_RELEASE:
+                    level -= tom_rr_step
                     if level <= 0.0:
                         level = 0.0
                         state = _EG_OFF
                 mod_state[8] = state
                 mod_level[8] = level
 
-                # TC (noise, channel 8 car slot)
+                # TC (noise, channel 8 car slot) — car-style, same as SD.
                 state = car_state[8]
                 level = car_level[8]
                 if state == _EG_ATTACK:
-                    level += _PERC_ATTACK_STEP
+                    level += tc_ar_step
                     if level >= 1.0:
                         level = 1.0
                         state = _EG_DECAY
-                elif state == _EG_DECAY or state == _EG_RELEASE:
-                    level -= _PERC_DECAY_TC
+                elif state == _EG_DECAY:
+                    level -= tc_dr_step
+                    if level <= tc_sl_frac:
+                        level = tc_sl_frac
+                        state = _EG_SUSTAIN if tc_eg_type else _EG_RELEASE
+                elif state == _EG_RELEASE:
+                    level -= tc_rr_step
                     if level <= 0.0:
                         level = 0.0
                         state = _EG_OFF

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from array import array
 
+import pytest
+
 from msx.opll import Opll
 
 _RHYTHM_ENABLE = 0x20
@@ -130,3 +132,46 @@ def test_rhythm_off_after_being_on_restores_channel7_melody() -> None:
     for _ in range(4):
         buf = o.generate_samples(735)
     assert _max_abs(buf) > 0
+
+
+# ---------------------------------------------------------------------------
+# BD/HH/SD/TOM/CYM are locked to the fixed drum patch ROM while rhythm is
+# on, independent of registers 0x36-0x38's instrument/volume nibbles — real
+# hardware forces this the moment rhythm mode turns on (openMSX
+# setRhythmFlags: ch6/7/8.setPatch(16/17/18, ...)).
+# ---------------------------------------------------------------------------
+
+def test_bd_ignores_instrument_register_uses_fixed_drum_patch() -> None:
+    o = Opll()
+    # Leave register 0x36 (and the user-tone registers 0x00-0x07) at their
+    # power-on default of 0: naively treating 0x36's high nibble as an
+    # instrument index would select the all-zero user tone (AR=0 on both
+    # operators), which is effectively silent for many frames. The fixed
+    # drum patch has a fast attack and must produce clearly audible output.
+    assert o.read_reg(0x36) == 0
+    o.write_reg(0x16, 0x50)
+    o.write_reg(0x26, 0x06)  # block=3
+    o.write_reg(0x0E, _RHYTHM_ENABLE | _BD_BIT)
+    buf = o.generate_samples(735)  # fast-attack drum patch: check the first buffer
+    assert _max_abs(buf) > 500
+
+
+def test_tom_pitch_independent_of_tom_volume_register() -> None:
+    # Register 0x38's high nibble is TOM's *volume* in rhythm mode, not an
+    # instrument index — TOM's pitch multiplier must come from the fixed
+    # drum patch, not from misreading that nibble as an instrument select.
+    o1 = Opll()
+    o1.write_reg(0x18, 0x50)
+    o1.write_reg(0x28, 0x06)
+    o1.write_reg(0x0E, _RHYTHM_ENABLE | _TOM_BIT)
+    o1.write_reg(0x38, 0x00)  # volume nibble 0
+    o1.generate_samples(100)
+
+    o2 = Opll()
+    o2.write_reg(0x18, 0x50)
+    o2.write_reg(0x28, 0x06)
+    o2.write_reg(0x0E, _RHYTHM_ENABLE | _TOM_BIT)
+    o2.write_reg(0x38, 0xF0)  # volume nibble 15 (different volume, same pitch)
+    o2.generate_samples(100)
+
+    assert o1._mod_phase[8] == pytest.approx(o2._mod_phase[8], abs=1e-6)
