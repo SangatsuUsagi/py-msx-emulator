@@ -171,26 +171,8 @@ def _fmpac_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fmpac is None:
         return None
     fm = machine.fmpac
-    opll = fm.opll
     state = fm.snapshot()  # sram, bank, enable, r1ffe, r1fff
-    state["opll"] = {
-        "_regs": bytes(opll._regs),
-        "_addr_latch": opll._addr_latch,
-        "_mod_phase": list(opll._mod_phase),
-        "_car_phase": list(opll._car_phase),
-        "_mod_level": list(opll._mod_level),
-        "_car_level": list(opll._car_level),
-        "_mod_state": list(opll._mod_state),
-        "_car_state": list(opll._car_state),
-        "_mod_fb1": list(opll._mod_fb1),
-        "_mod_fb2": list(opll._mod_fb2),
-        "_prev_kon": list(opll._prev_kon),
-        "_prev_hh": opll._prev_hh,
-        "_prev_sd": opll._prev_sd,
-        "_prev_tom": opll._prev_tom,
-        "_prev_tc": opll._prev_tc,
-        "_noise_lfsr": opll._noise_lfsr,
-    }
+    state["opll"] = fm.opll.snapshot()
     return state
 
 
@@ -199,24 +181,7 @@ def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) ->
         return
     fm = machine.fmpac
     fm.restore(fmpac_state)  # sram, bank, enable, r1ffe, r1fff; recomputes sram_enabled
-    opll_state: dict[str, object] = fmpac_state["opll"]  # type: ignore[assignment]
-    opll = fm.opll
-    opll._regs = bytearray(opll_state["_regs"])  # type: ignore[call-overload]
-    opll._addr_latch = int(opll_state["_addr_latch"])  # type: ignore[call-overload]
-    opll._mod_phase = list(opll_state["_mod_phase"])  # type: ignore[call-overload]
-    opll._car_phase = list(opll_state["_car_phase"])  # type: ignore[call-overload]
-    opll._mod_level = list(opll_state["_mod_level"])  # type: ignore[call-overload]
-    opll._car_level = list(opll_state["_car_level"])  # type: ignore[call-overload]
-    opll._mod_state = list(opll_state["_mod_state"])  # type: ignore[call-overload]
-    opll._car_state = list(opll_state["_car_state"])  # type: ignore[call-overload]
-    opll._mod_fb1 = list(opll_state["_mod_fb1"])  # type: ignore[call-overload]
-    opll._mod_fb2 = list(opll_state["_mod_fb2"])  # type: ignore[call-overload]
-    opll._prev_kon = list(opll_state["_prev_kon"])  # type: ignore[call-overload]
-    opll._prev_hh = bool(opll_state["_prev_hh"])
-    opll._prev_sd = bool(opll_state["_prev_sd"])
-    opll._prev_tom = bool(opll_state["_prev_tom"])
-    opll._prev_tc = bool(opll_state["_prev_tc"])
-    opll._noise_lfsr = int(opll_state["_noise_lfsr"])  # type: ignore[call-overload]
+    fm.opll.restore(fmpac_state["opll"])  # type: ignore[arg-type]
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
