@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1545%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1563%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -192,8 +192,8 @@ Implementation: `msx/psg.py`
 | Memory map        | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`; 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`); memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`), enable register (`0x7FF6`) |
 | I/O ports         | `0x7C`/`0x7D`, gated by the enable register's bit 0                                                              |
 | SRAM persistence  | `saves/sram/fmpac.sram`, loaded on start and saved on exit                                                       |
-| OPLL synthesis    | 9-channel 2-operator FM (15 preset instruments + user tone), ADSR envelopes, rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) |
-| Known limitations | Simplified relative to real hardware: linear-domain envelope ramps (not the chip's logarithmic curves), no AM/vibrato LFO, no key-scale rate/level; audibly-correct, not sample-exact (see `msx/opll.py` module docstring) |
+| OPLL synthesis    | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
+| Known limitations | Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the analog-style low-pass cleans up the residual imaging. Only the YM2413 instrument set is included (no VRC7 / YMF281 banks); no channel masking / stereo pan |
 
 ### Audio output filter
 

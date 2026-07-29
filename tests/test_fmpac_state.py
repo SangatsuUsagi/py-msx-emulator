@@ -149,44 +149,39 @@ def test_roundtrip_preserves_opll_synthesis_state(saves_dir: Path, tmp_path: Pat
     opll.write_reg(0x20, 0x16)  # block=3, KON=1
     opll.generate_samples(200)  # advance partway into attack/decay
 
-    mod_phase = list(opll._mod_phase)
-    car_phase = list(opll._car_phase)
-    mod_level = list(opll._mod_level)
-    car_level = list(opll._car_level)
-    mod_state = list(opll._mod_state)
-    car_state = list(opll._car_state)
-    prev_kon = list(opll._prev_kon)
-
     save_state(machine, _RGB, "test")
+    # Continuing from the pre-save state must produce a specific stream.
+    expected = bytes(opll.generate_samples(500))
+
     opll.reset()
     load_state(machine)
-
-    assert opll._mod_phase == mod_phase
-    assert opll._car_phase == car_phase
-    assert opll._mod_level == mod_level
-    assert opll._car_level == car_level
-    assert opll._mod_state == mod_state
-    assert opll._car_state == car_state
-    assert opll._prev_kon == prev_kon
+    # After a save/reset/load, the very same continuation must be bit-identical
+    # — proving the full synthesis state (phase, envelope, feedback) round-trips.
+    assert bytes(opll.generate_samples(500)) == expected
 
 
 def test_roundtrip_preserves_rhythm_state(saves_dir: Path, tmp_path: Path) -> None:
     machine = _fmpac_machine(tmp_path)
     assert machine.fmpac is not None
     opll = machine.fmpac.opll
+    opll.write_reg(0x16, 0x40)
+    opll.write_reg(0x26, 0x06)
     opll.write_reg(0x0E, 0x21)  # rhythm on + HH key
     opll.write_reg(0x37, 0x00)
-    opll.generate_samples(10)
+    opll.generate_samples(200)
 
-    noise_before = opll._noise_lfsr
-    prev_hh_before = opll._prev_hh
+    noise_before = opll._noise
+    rhythm_before = opll._rhythm_mode
 
     save_state(machine, _RGB, "test")
+    expected = bytes(opll.generate_samples(500))
+
     opll.reset()
     load_state(machine)
 
-    assert opll._noise_lfsr == noise_before
-    assert opll._prev_hh == prev_hh_before
+    assert opll._noise == noise_before
+    assert opll._rhythm_mode == rhythm_before
+    assert bytes(opll.generate_samples(500)) == expected
 
 
 # ---------------------------------------------------------------------------

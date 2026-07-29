@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1545%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1563%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -114,8 +114,8 @@
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）；8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）；メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
 | SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
-| OPLL 音源合成 | 9 チャンネル 2 オペレータ FM（内蔵 15 音色 + ユーザー音色）、ADSR エンベロープ、リズムモード（レジスタ 0x0E：バスドラム、スネア、タム、トップシンバル、ハイハット） |
-| 既知の制限 | 実機に対して簡略化：エンベロープは対数カーブではなく線形ランプ、AM/ビブラート LFO 非対応、キースケールレート/レベル非対応；音として正しいが実機とサンプル単位で一致しない（`msx/opll.py` のモジュール docstring 参照） |
+| OPLL 音源合成 | emu2413 v1.5.9 の忠実移植：対数ドメイン合成（log-sin + exp テーブル）、キースケール付きの実機エンベロープレートテーブル、AM/PM LFO、YM2413 音色 ROM、実機のショートノイズ/LFSR タップに基づくリズムモード（レジスタ 0x0E：バスドラム、スネア、タム、トップシンバル、ハイハット） |
+| 既知の制限 | 出力レート変換は emu2413 の窓付き sinc リサンプラではなく積算平均デシメータ（チップ clk/72 → 44100 Hz）を使用。残留イメージングはアナログ風ローパスで除去。YM2413 音色セットのみ（VRC7 / YMF281 バンクなし）、チャンネルマスク/ステレオパンなし |
 
 ### オーディオ出力フィルタ
 

@@ -1,604 +1,985 @@
-"""YM2413 (OPLL) FM sound chip: register file + 9-channel 2-operator melody
-synthesis.
+"""YM2413 (OPLL) FM sound chip — a faithful Python port of emu2413 v1.5.9.
 
-Simplified relative to real hardware (see openspec/changes/add-fmpac-msx-music
-design.md, Non-Goals): linear-domain envelope ramps instead of the chip's
-logarithmic curves, no AM/vibrato LFO, no key-scale rate/level. Register
-semantics (instrument ROM, F-number/block, ADSR rates, feedback) and note
-pitch follow the real chip; timbre is audibly-correct, not sample-exact.
-Ground truth for the register map and instrument ROM data: openMSX
-YM2413Okazaki (itself derived from Mitsutaka Okazaki's emu2413).
+Ported from Mitsutaka Okazaki's emu2413
+(https://github.com/digital-sound-antiques/emu2413, MIT-licensed) — the
+reference OPLL implementation. This reproduces the chip's log-domain
+synthesis: a log-sin phase-generator table, an exp output table, the
+hardware envelope-rate tables (with key-scale), the AM/PM LFO, the
+instrument ROM, and rhythm mode with the real short-noise / LFSR taps. The
+exp and log-sin tables are computed here from the same formulas the C
+reference tabulates (verified to reproduce its literals exactly).
 
-Rhythm mode (register 0x0E) repurposes channels 6-8: channel 6 (BD) stays a
-normal 2-op FM voice but is forced onto the fixed built-in drum patch;
-channel 7's mod/car (HH/SD) and channel 8's mod/car (TOM/CYM) reuse another
-fixed drum patch's mod/car halves, with HH/SD/CYM synthesised as noise
-(instead of the real chip's phase-derived taps) and TOM as a single tone —
-see generate_samples.
+Differences from emu2413, all intentional:
+- Output rate conversion uses a plain accumulate-and-average decimator from
+  the chip's native clk/72 rate to 44100 Hz, not emu2413's windowed-sinc
+  converter. The analog-style low-pass in the SDL frontend cleans up the
+  residual imaging.
+- Only the YM2413 instrument set (chip type 0) is included; the VRC7 / YMF281
+  patch banks are not.
+- Channel masking / stereo panning are omitted (mono mix only).
+
+Public interface (register latch/data + generate_samples) is unchanged, so
+msx/fmpac.py drives it exactly as before.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
 __all__ = ["Opll", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
 
-_CLOCK = 3_579_545  # Hz — full MSX CPU clock
+_CLOCK = 3_579_545  # Hz — full MSX CPU clock; the chip runs at clk / 72.
 
-# Phase table (sine lookup), TABLE_SIZE must be a power of two.
-_TABLE_BITS = 10
-TABLE_SIZE = 1 << _TABLE_BITS
-_TABLE_MASK = TABLE_SIZE - 1
-SIN_TABLE: tuple[float, ...] = tuple(
-    math.sin(2.0 * math.pi * i / TABLE_SIZE) for i in range(TABLE_SIZE)
+# --- fixed-point / range constants (emu2413 names) ---
+_DP_BITS = 19
+_DP_WIDTH = 1 << _DP_BITS
+_PG_BITS = 10
+_PG_WIDTH = 1 << _PG_BITS
+_DP_BASE_BITS = _DP_BITS - _PG_BITS  # 9
+
+_EG_STEP = 0.375
+_EG_BITS = 7
+_EG_MUTE = (1 << _EG_BITS) - 1  # 127
+_EG_MAX = _EG_MUTE - 4          # 123
+_DAMPER_RATE = 12
+
+
+def _tl2eg(d: int) -> int:
+    return d << 1
+
+
+# --- envelope states (emu2413 enum order) ---
+_ATTACK = 0
+_DECAY = 1
+_SUSTAIN = 2
+_RELEASE = 3
+_DAMP = 4
+
+# --- rhythm slot indices: MOD(ch)=2*ch, CAR(ch)=2*ch+1 ---
+_SLOT_BD1 = 12  # MOD(6)
+_SLOT_BD2 = 13  # CAR(6)
+_SLOT_HH = 14   # MOD(7)
+_SLOT_SD = 15   # CAR(7)
+_SLOT_TOM = 16  # MOD(8)
+_SLOT_CYM = 17  # CAR(8)
+
+
+# ---------------------------------------------------------------------------
+# Static tables (built once at import; formulas match emu2413's tabulations)
+# ---------------------------------------------------------------------------
+
+def _build_exp_table() -> list[int]:
+    # exp_table[x] = round((2^(x/256) - 1) * 1024)
+    return [int((2 ** (x / 256.0) - 1) * 1024 + 0.5) for x in range(256)]
+
+
+def _build_sin_tables() -> tuple[list[int], list[int]]:
+    # fullsin_table[x] = round(-log2(sin((x + 0.5) * pi / (PG_WIDTH/4) / 2)) * 256)
+    # for the first quarter, then mirrored/sign-extended (makeSinTable).
+    full = [0] * _PG_WIDTH
+    quarter = _PG_WIDTH // 4  # 256
+    for x in range(quarter):
+        full[x] = int(-math.log2(math.sin((x + 0.5) * math.pi / (quarter * 2))) * 256 + 0.5)
+    for x in range(quarter):
+        full[quarter + x] = full[quarter - x - 1]
+    for x in range(_PG_WIDTH // 2):
+        full[_PG_WIDTH // 2 + x] = 0x8000 | full[x]
+    half = [0] * _PG_WIDTH
+    for x in range(_PG_WIDTH // 2):
+        half[x] = full[x]
+    for x in range(_PG_WIDTH // 2, _PG_WIDTH):
+        half[x] = 0xFFF
+    return full, half
+
+
+_EXP_TABLE = _build_exp_table()
+_FULLSIN_TABLE, _HALFSIN_TABLE = _build_sin_tables()
+_WAVE_TABLE_MAP = (_FULLSIN_TABLE, _HALFSIN_TABLE)
+
+# Pitch-modulation table (offset to fnum), indexed [ (fnum>>6)&7 ][ (pm_phase>>10)&7 ].
+_PM_TABLE: tuple[tuple[int, ...], ...] = (
+    (0, 0, 0, 0, 0, 0, 0, 0),
+    (0, 0, 1, 0, 0, 0, -1, 0),
+    (0, 1, 2, 1, 0, -1, -2, -1),
+    (0, 1, 3, 1, 0, -1, -3, -1),
+    (0, 2, 4, 2, 0, -2, -4, -2),
+    (0, 2, 5, 2, 0, -2, -5, -2),
+    (0, 3, 6, 3, 0, -3, -6, -3),
+    (0, 3, 7, 3, 0, -3, -7, -3),
 )
 
-# Frequency multiplier per 4-bit "multiple" register value (standard OPL/OPLL
-# ML table; value 0 means x0.5).
-_MULTI_TABLE: tuple[float, ...] = (0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15)
-
-# Self-feedback phase-offset scale per 3-bit FB register value (0 = none,
-# doubling per step).
-_FB_SCALE: tuple[float, ...] = (0.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0)
-
-# How much a modulator's (envelope+TL-scaled) output shifts the carrier's
-# phase index, in table units. Tuned for audible FM richness at low TL.
-_MOD_DEPTH = TABLE_SIZE / 2.0
-
-# Envelope segment durations (seconds for a full 0<->1 sweep at rate=1),
-# halving per rate step; rate 0 is a very slow near-static approximation of
-# the real chip's "never completes" behaviour.
-_ATTACK_BASE_SEC = 2.5
-_DECAY_BASE_SEC = 5.0
-
-
-def _build_step_table(base_sec: float) -> tuple[float, ...]:
-    steps = [1.0 / (SAMPLE_RATE * base_sec * 16)]  # rate 0
-    for rate in range(1, 16):
-        steps.append(1.0 / max(1.0, SAMPLE_RATE * base_sec / (2**rate)))
-    return tuple(steps)
-
-
-_ATTACK_STEP = _build_step_table(_ATTACK_BASE_SEC)
-_DECAY_STEP = _build_step_table(_DECAY_BASE_SEC)
-
-# Envelope generator states.
-_EG_OFF = 0
-_EG_ATTACK = 1
-_EG_DECAY = 2
-_EG_SUSTAIN = 3
-_EG_RELEASE = 4
-
-
-@dataclass(frozen=True)
-class _Patch:
-    """Decoded 2-operator instrument parameters (register-byte layout below)."""
-
-    mod_multi: float
-    mod_tl: int      # 0-63, modulator total level (attenuation)
-    fb: int           # 0-7, modulator self-feedback
-    mod_ar: int
-    mod_dr: int
-    mod_sl: int
-    mod_rr: int
-    car_multi: float
-    car_eg_type: int  # 1 = hold at sustain level while key on, 0 = keep decaying
-    car_ar: int
-    car_dr: int
-    car_sl: int
-    car_rr: int
-
-
-def _decode_patch(data: bytes) -> _Patch:
-    """Decode 8 instrument-ROM/user-tone bytes (registers 0x00-0x07 layout).
-
-    byte0: mod EG-type/KR (unused here) + multi (bits0-3)
-    byte1: car multi (bits0-3) + car EG-type (bit5)
-    byte2: mod KSL (unused, bits6-7) + mod TL (bits0-5)
-    byte3: car WF (bit4, unused) + mod WF (bit3, unused) + FB (bits0-2)
-    byte4: mod AR (bits4-7) + mod DR (bits0-3)
-    byte5: car AR (bits4-7) + car DR (bits0-3)
-    byte6: mod SL (bits4-7) + mod RR (bits0-3)
-    byte7: car SL (bits4-7) + car RR (bits0-3)
-    """
-    return _Patch(
-        mod_multi=_MULTI_TABLE[data[0] & 0x0F],
-        mod_tl=data[2] & 0x3F,
-        fb=data[3] & 0x07,
-        mod_ar=(data[4] >> 4) & 0x0F,
-        mod_dr=data[4] & 0x0F,
-        mod_sl=(data[6] >> 4) & 0x0F,
-        mod_rr=data[6] & 0x0F,
-        car_multi=_MULTI_TABLE[data[1] & 0x0F],
-        car_eg_type=(data[1] >> 5) & 1,
-        car_ar=(data[5] >> 4) & 0x0F,
-        car_dr=data[5] & 0x0F,
-        car_sl=(data[7] >> 4) & 0x0F,
-        car_rr=data[7] & 0x0F,
-    )
-
-
-# Canonical YM2413 instrument ROM (registers 0x00-0x07 byte layout), indices
-# 1-15: violin, guitar, piano, flute, clarinet, oboe, trumpet, organ, horn,
-# synthesizer, harpsichord, vibraphone, synth bass, acoustic bass, electric
-# guitar. Index 0 (user tone) is decoded live from registers 0x00-0x07.
-_INST_ROM: tuple[bytes, ...] = (
-    bytes((0x61, 0x61, 0x1E, 0x17, 0xF0, 0x7F, 0x00, 0x17)),
-    bytes((0x13, 0x41, 0x16, 0x0E, 0xFD, 0xF4, 0x23, 0x23)),
-    bytes((0x03, 0x01, 0x9A, 0x04, 0xF3, 0xF3, 0x13, 0xF3)),
-    bytes((0x11, 0x61, 0x0E, 0x07, 0xFA, 0x64, 0x70, 0x17)),
-    bytes((0x22, 0x21, 0x1E, 0x06, 0xF0, 0x76, 0x00, 0x28)),
-    bytes((0x21, 0x22, 0x16, 0x05, 0xF0, 0x71, 0x00, 0x18)),
-    bytes((0x21, 0x61, 0x1D, 0x07, 0x82, 0x80, 0x17, 0x17)),
-    bytes((0x23, 0x21, 0x2D, 0x16, 0x90, 0x90, 0x00, 0x07)),
-    bytes((0x21, 0x21, 0x1B, 0x06, 0x64, 0x65, 0x10, 0x17)),
-    bytes((0x21, 0x21, 0x0B, 0x1A, 0x85, 0xA0, 0x70, 0x07)),
-    bytes((0x23, 0x01, 0x83, 0x10, 0xFF, 0xB4, 0x10, 0xF4)),
-    bytes((0x97, 0xC1, 0x20, 0x07, 0xFF, 0xF4, 0x22, 0x22)),
-    bytes((0x61, 0x00, 0x0C, 0x05, 0xC2, 0xF6, 0x40, 0x44)),
-    bytes((0x01, 0x01, 0x56, 0x03, 0x94, 0xC2, 0x03, 0x12)),
-    bytes((0x21, 0x01, 0x89, 0x03, 0xF1, 0xE4, 0xF0, 0x23)),
+# Amplitude-modulation LFO table (each element repeats 64 cycles). Length 210.
+_AM_TABLE: tuple[int, ...] = (
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+    4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,
+    6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7,
+    8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9,
+    10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11,
+    12, 12, 12, 12, 12, 12, 12, 12,
+    13, 13, 13,
+    12, 12, 12, 12, 12, 12, 12, 12,
+    11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 10, 10, 10, 10, 10, 10,
+    9, 9, 9, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 8, 8, 8,
+    7, 7, 7, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 6,
+    5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
+    3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2,
+    1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
 )
-_PRESETS: tuple[_Patch, ...] = tuple(_decode_patch(data) for data in _INST_ROM)
 
-# Fixed rhythm-mode instrument ROM (indices 16-18 in openMSX's inst_data):
-# ch6 (BD) uses the full patch; ch7's mod=HH/car=SD and ch8's mod=TOM/car=CYM
-# split one patch's mod/car halves each. Real hardware forces these the
-# moment rhythm mode is enabled, ignoring whatever instrument index is in
-# registers 0x36-0x38 (only the volume nibbles there still apply).
-_DRUM_BD: _Patch = _decode_patch(bytes((0x07, 0x21, 0x14, 0x00, 0xEE, 0xF8, 0xFF, 0xF8)))
-_DRUM_HH_SD: _Patch = _decode_patch(bytes((0x01, 0x31, 0x00, 0x00, 0xF8, 0xF7, 0xF8, 0xF7)))
-_DRUM_TOM_CYM: _Patch = _decode_patch(bytes((0x25, 0x11, 0x00, 0x00, 0xF8, 0xFA, 0xF8, 0x55)))
+# Envelope decay increment step table (andete's research).
+_EG_STEP_TABLES: tuple[tuple[int, ...], ...] = (
+    (0, 1, 0, 1, 0, 1, 0, 1),
+    (0, 1, 0, 1, 1, 1, 0, 1),
+    (0, 1, 1, 1, 0, 1, 1, 1),
+    (0, 1, 1, 1, 1, 1, 1, 1),
+)
+
+_ML_TABLE: tuple[int, ...] = (
+    1, 1 * 2, 2 * 2, 3 * 2, 4 * 2, 5 * 2, 6 * 2, 7 * 2,
+    8 * 2, 9 * 2, 10 * 2, 10 * 2, 12 * 2, 12 * 2, 15 * 2, 15 * 2,
+)
+
+
+def _db2(x: float) -> float:
+    return x * 2.0
+
+
+_KL_TABLE: tuple[float, ...] = (
+    _db2(0.000), _db2(9.000), _db2(12.000), _db2(13.875), _db2(15.000), _db2(16.125),
+    _db2(16.875), _db2(17.625), _db2(18.000), _db2(18.750), _db2(19.125), _db2(19.500),
+    _db2(19.875), _db2(20.250), _db2(20.625), _db2(21.000),
+)
+
+
+def _build_tll_table() -> list[list[list[int]]]:
+    # tll_table[(block<<4)|fnum][TL][KL]
+    result = [[[0] * 4 for _ in range(64)] for _ in range(8 * 16)]
+    for fnum in range(16):
+        for block in range(8):
+            for tl in range(64):
+                for kl in range(4):
+                    if kl == 0:
+                        result[(block << 4) | fnum][tl][kl] = _tl2eg(tl)
+                    else:
+                        tmp = int(_KL_TABLE[fnum] - _db2(3.000) * (7 - block))
+                        if tmp <= 0:
+                            result[(block << 4) | fnum][tl][kl] = _tl2eg(tl)
+                        else:
+                            result[(block << 4) | fnum][tl][kl] = (
+                                int((tmp >> (3 - kl)) / _EG_STEP) + _tl2eg(tl)
+                            )
+    return result
+
+
+def _build_rks_table() -> list[list[int]]:
+    result = [[0, 0] for _ in range(8 * 2)]
+    for fnum8 in range(2):
+        for block in range(8):
+            result[(block << 1) | fnum8][1] = (block << 1) + fnum8
+            result[(block << 1) | fnum8][0] = block >> 1
+    return result
+
+
+_TLL_TABLE = _build_tll_table()
+_RKS_TABLE = _build_rks_table()
+
+# YM2413 instrument ROM (emu2413 default_inst[0]): 16 melody tones (index 0 =
+# user) + 3 rhythm patches (BD, HH/SD, TOM/CYM).
+_DEFAULT_INST: tuple[tuple[int, ...], ...] = (
+    (0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),  # 0: user
+    (0x71, 0x61, 0x1E, 0x17, 0xD0, 0x78, 0x00, 0x17),  # 1: violin
+    (0x13, 0x41, 0x1A, 0x0D, 0xD8, 0xF7, 0x23, 0x13),  # 2: guitar
+    (0x13, 0x01, 0x99, 0x00, 0xF2, 0xC4, 0x21, 0x23),  # 3: piano
+    (0x11, 0x61, 0x0E, 0x07, 0x8D, 0x64, 0x70, 0x27),  # 4: flute
+    (0x32, 0x21, 0x1E, 0x06, 0xE1, 0x76, 0x01, 0x28),  # 5: clarinet
+    (0x31, 0x22, 0x16, 0x05, 0xE0, 0x71, 0x00, 0x18),  # 6: oboe
+    (0x21, 0x61, 0x1D, 0x07, 0x82, 0x81, 0x11, 0x07),  # 7: trumpet
+    (0x33, 0x21, 0x2D, 0x13, 0xB0, 0x70, 0x00, 0x07),  # 8: organ
+    (0x61, 0x61, 0x1B, 0x06, 0x64, 0x65, 0x10, 0x17),  # 9: horn
+    (0x41, 0x61, 0x0B, 0x18, 0x85, 0xF0, 0x81, 0x07),  # A: synthesizer
+    (0x33, 0x01, 0x83, 0x11, 0xEA, 0xEF, 0x10, 0x04),  # B: harpsichord
+    (0x17, 0xC1, 0x24, 0x07, 0xF8, 0xF8, 0x22, 0x12),  # C: vibraphone
+    (0x61, 0x50, 0x0C, 0x05, 0xD2, 0xF5, 0x40, 0x42),  # D: synth bass
+    (0x01, 0x01, 0x55, 0x03, 0xE9, 0x90, 0x03, 0x02),  # E: acoustic bass
+    (0x41, 0x41, 0x89, 0x03, 0xF1, 0xE4, 0xC0, 0x13),  # F: electric guitar
+    (0x01, 0x01, 0x18, 0x0F, 0xDF, 0xF8, 0x6A, 0x6D),  # R: bass drum
+    (0x01, 0x01, 0x00, 0x00, 0xC8, 0xD8, 0xA7, 0x68),  # R: high-hat(M)/snare(C)
+    (0x05, 0x01, 0x00, 0x00, 0xF8, 0xAA, 0x59, 0x55),  # R: tom(M)/top-cymbal(C)
+)
 
 
 def note_frequency(fnum: int, block: int) -> float:
     """Return the note frequency in Hz for a 9-bit F-number and 3-bit block.
 
-    Standard YM2413 formula: f = Fnum * 2^Block * clock / (2^19 * 72). Verified
-    against the commonly documented reference note A4 (440 Hz) = Fnum 290 at
-    block 4 (see tests/test_opll.py).
+    Standard YM2413 formula f = Fnum * 2^Block * clock / (2^19 * 72). Kept for
+    documentation and tests; the synthesis path uses the phase accumulator
+    directly (calc_phase), which is mathematically equivalent.
     """
     return fnum * (1 << block) * _CLOCK / (1 << 19) / 72.0
 
 
 @dataclass
+class _Patch:
+    __slots__ = ("AM", "PM", "EG", "KR", "ML", "KL", "TL", "FB", "WS",
+                 "AR", "DR", "SL", "RR")
+    AM: int
+    PM: int
+    EG: int
+    KR: int
+    ML: int
+    KL: int
+    TL: int
+    FB: int
+    WS: int
+    AR: int
+    DR: int
+    SL: int
+    RR: int
+
+
+def _null_patch() -> _Patch:
+    return _Patch(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+
+def _dump_to_patch(dump: tuple[int, ...] | bytes, off: int = 0) -> tuple[_Patch, _Patch]:
+    """Decode 8 instrument bytes into (modulator, carrier) patches (OPLL_dumpToPatch)."""
+    d0, d1, d2, d3, d4, d5, d6, d7 = (dump[off + i] for i in range(8))
+    mod = _Patch(
+        AM=(d0 >> 7) & 1, PM=(d0 >> 6) & 1, EG=(d0 >> 5) & 1, KR=(d0 >> 4) & 1,
+        ML=d0 & 15, KL=(d2 >> 6) & 3, TL=d2 & 63, FB=d3 & 7, WS=(d3 >> 3) & 1,
+        AR=(d4 >> 4) & 15, DR=d4 & 15, SL=(d6 >> 4) & 15, RR=d6 & 15,
+    )
+    car = _Patch(
+        AM=(d1 >> 7) & 1, PM=(d1 >> 6) & 1, EG=(d1 >> 5) & 1, KR=(d1 >> 4) & 1,
+        ML=d1 & 15, KL=(d3 >> 6) & 3, TL=0, FB=0, WS=(d3 >> 4) & 1,
+        AR=(d5 >> 4) & 15, DR=d5 & 15, SL=(d7 >> 4) & 15, RR=d7 & 15,
+    )
+    return mod, car
+
+
+class _Slot:
+    __slots__ = (
+        "number", "type", "pg_keep", "wave_table", "pg_phase", "output",
+        "eg_state", "eg_shift", "eg_rate_h", "eg_rate_l", "rks", "tll",
+        "key_flag", "sus_flag", "blk_fnum", "blk", "fnum", "volume",
+        "pg_out", "eg_out", "patch", "update_requests",
+    )
+
+    def __init__(self, number: int) -> None:
+        self.number = number
+        self.type = number % 2
+        self.pg_keep = 0
+        self.wave_table = _WAVE_TABLE_MAP[0]
+        self.pg_phase = 0
+        self.output = [0, 0]
+        self.eg_state = _RELEASE
+        self.eg_shift = 0
+        self.eg_rate_h = 0
+        self.eg_rate_l = 0
+        self.rks = 0
+        self.tll = 0
+        self.key_flag = 0
+        self.sus_flag = 0
+        self.blk_fnum = 0
+        self.blk = 0
+        self.fnum = 0
+        self.volume = 0
+        self.pg_out = 0
+        self.eg_out = _EG_MUTE
+        self.patch: _Patch = _null_patch()
+        self.update_requests = 0
+
+
+_UPDATE_WS = 1
+_UPDATE_TLL = 2
+_UPDATE_RKS = 4
+_UPDATE_EG = 8
+_UPDATE_ALL = 255
+
+
+@dataclass
 class Opll:
-    # Register file: index 0x00-0x38 covers user-tone, rhythm/test, and the
-    # per-channel F-number/block/key-on/sustain/instrument/volume registers.
-    _regs: bytearray = field(default_factory=lambda: bytearray(0x40), init=False, repr=False)
-    _addr_latch: int = field(default=0, init=False, repr=False)
+    _reg: bytearray = field(default_factory=lambda: bytearray(0x40), init=False, repr=False)
+    _slot: list[_Slot] = field(
+        default_factory=lambda: [_Slot(i) for i in range(18)], init=False, repr=False
+    )
+    # 19 instruments × (mod, car). Presets rebuilt at reset; user tone (index 0)
+    # tracks registers 0x00-0x07.
+    _patch: list[_Patch] = field(
+        default_factory=lambda: [_null_patch() for _ in range(19 * 2)],
+        init=False, repr=False,
+    )
+    _patch_number: list[int] = field(
+        default_factory=lambda: [0] * 9, init=False, repr=False
+    )
+    _adr: int = field(default=0, init=False, repr=False)
+    _pm_phase: int = field(default=0, init=False, repr=False)
+    _am_phase: int = field(default=0, init=False, repr=False)
+    _lfo_am: int = field(default=0, init=False, repr=False)
+    _noise: int = field(default=1, init=False, repr=False)
+    _short_noise: int = field(default=0, init=False, repr=False)
+    _test_flag: int = field(default=0, init=False, repr=False)
+    _rhythm_mode: int = field(default=0, init=False, repr=False)
+    _slot_key_status: int = field(default=0, init=False, repr=False)
+    _eg_counter: int = field(default=0, init=False, repr=False)
+    _ch_out: list[int] = field(default_factory=lambda: [0] * 14, init=False, repr=False)
+    _out_time: float = field(default=0.0, init=False, repr=False)
 
-    # Synthesis state, one entry per channel (0-8).
-    _mod_phase: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _car_phase: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _mod_level: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _car_level: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _mod_state: list[int] = field(default_factory=lambda: [_EG_OFF] * 9, init=False, repr=False)
-    _car_state: list[int] = field(default_factory=lambda: [_EG_OFF] * 9, init=False, repr=False)
-    _mod_fb1: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _mod_fb2: list[float] = field(default_factory=lambda: [0.0] * 9, init=False, repr=False)
-    _prev_kon: list[bool] = field(default_factory=lambda: [False] * 9, init=False, repr=False)
+    def __post_init__(self) -> None:
+        self.reset()
 
-    # Rhythm mode (register 0x0E): HH/SD reuse channel 7's mod/car envelope
-    # slots, TOM/TC reuse channel 8's (channels 7/8's normal melody use is
-    # suppressed while rhythm is enabled, so this is conflict-free). Only the
-    # edge-detect flags and the shared noise LFSR need dedicated fields.
-    _prev_hh: bool = field(default=False, init=False, repr=False)
-    _prev_sd: bool = field(default=False, init=False, repr=False)
-    _prev_tom: bool = field(default=False, init=False, repr=False)
-    _prev_tc: bool = field(default=False, init=False, repr=False)
-    _noise_lfsr: int = field(default=0x1FFFF, init=False, repr=False)
-
-    # ------------------------------------------------------------------ I/O
+    # ------------------------------------------------------------------ public I/O
 
     def write_addr(self, value: int) -> None:
         """Latch a register address (register-select write)."""
-        self._addr_latch = value & 0xFF
+        self._adr = value & 0xFF
 
     def write_data(self, value: int) -> None:
         """Write a data byte to the currently latched register address."""
-        self.write_reg(self._addr_latch, value)
+        self._write_reg(self._adr, value & 0xFF)
 
     def write_reg(self, index: int, value: int) -> None:
         """Write value directly to register index (bypasses the latch)."""
-        index &= 0xFF
-        if index < len(self._regs):
-            self._regs[index] = value & 0xFF
+        self._write_reg(index & 0xFF, value & 0xFF)
 
     def read_reg(self, index: int) -> int:
         """Return the stored value of register index (0 if out of range)."""
         index &= 0xFF
-        if index < len(self._regs):
-            return self._regs[index]
+        if index < 0x40:
+            return self._reg[index]
         return 0
 
     def read(self) -> int:
         """OPLL is write-only; any read returns 0xFF."""
         return 0xFF
 
-    # --------------------------------------------------------------- reset
+    # ------------------------------------------------------------------- reset
 
     def reset(self) -> None:
-        """Restore power-on register state and silence all channels."""
-        self._regs = bytearray(0x40)
-        self._addr_latch = 0
-        self._mod_phase = [0.0] * 9
-        self._car_phase = [0.0] * 9
-        self._mod_level = [0.0] * 9
-        self._car_level = [0.0] * 9
-        self._mod_state = [_EG_OFF] * 9
-        self._car_state = [_EG_OFF] * 9
-        self._mod_fb1 = [0.0] * 9
-        self._mod_fb2 = [0.0] * 9
-        self._prev_kon = [False] * 9
-        self._prev_hh = False
-        self._prev_sd = False
-        self._prev_tom = False
-        self._prev_tc = False
-        self._noise_lfsr = 0x1FFFF
+        """Power-on reset (OPLL_reset): clear registers, slots, and LFO/noise."""
+        self._adr = 0
+        self._pm_phase = 0
+        self._am_phase = 0
+        self._lfo_am = 0
+        self._noise = 1
+        self._rhythm_mode = 0
+        self._slot_key_status = 0
+        self._eg_counter = 0
+        self._short_noise = 0
+        self._test_flag = 0
+        self._out_time = 0.0
+        for i in range(18):
+            self._slot[i] = _Slot(i)
+        # Build the default YM2413 patch bank (mod/car per instrument).
+        for i in range(19):
+            mod, car = _dump_to_patch(_DEFAULT_INST[i])
+            self._patch[i * 2 + 0] = mod
+            self._patch[i * 2 + 1] = car
+        self._patch_number = [0] * 9
+        for i in range(9):
+            self._set_patch(i, 0)
+        for i in range(14):
+            self._ch_out[i] = 0
+        for i in range(0x40):
+            self._write_reg(i, 0)
 
-    # -------------------------------------------------------- sample generation
+    # ------------------------------------------------------- register updates
+
+    def _mod(self, ch: int) -> _Slot:
+        return self._slot[ch << 1]
+
+    def _car(self, ch: int) -> _Slot:
+        return self._slot[(ch << 1) | 1]
+
+    def _request_update(self, slot: _Slot, flag: int) -> None:
+        slot.update_requests |= flag
+
+    def _get_parameter_rate(self, slot: _Slot) -> int:
+        if (slot.type & 1) == 0 and slot.key_flag == 0:
+            return 0
+        st = slot.eg_state
+        if st == _ATTACK:
+            return slot.patch.AR
+        if st == _DECAY:
+            return slot.patch.DR
+        if st == _SUSTAIN:
+            return 0 if slot.patch.EG else slot.patch.RR
+        if st == _RELEASE:
+            if slot.sus_flag:
+                return 5
+            if slot.patch.EG:
+                return slot.patch.RR
+            return 7
+        if st == _DAMP:
+            return _DAMPER_RATE
+        return 0
+
+    def _commit_slot_update(self, slot: _Slot) -> None:
+        req = slot.update_requests
+        if req & _UPDATE_WS:
+            slot.wave_table = _WAVE_TABLE_MAP[slot.patch.WS]
+        if req & _UPDATE_TLL:
+            idx = slot.blk_fnum >> 5
+            if (slot.type & 1) == 0:
+                slot.tll = _TLL_TABLE[idx][slot.patch.TL][slot.patch.KL]
+            else:
+                slot.tll = _TLL_TABLE[idx][slot.volume][slot.patch.KL]
+        if req & _UPDATE_RKS:
+            slot.rks = _RKS_TABLE[slot.blk_fnum >> 8][slot.patch.KR]
+        if req & (_UPDATE_RKS | _UPDATE_EG):
+            p_rate = self._get_parameter_rate(slot)
+            if p_rate == 0:
+                slot.eg_shift = 0
+                slot.eg_rate_h = 0
+                slot.eg_rate_l = 0
+                slot.update_requests = 0
+                return
+            slot.eg_rate_h = min(15, p_rate + (slot.rks >> 2))
+            slot.eg_rate_l = slot.rks & 3
+            if slot.eg_state == _ATTACK:
+                slot.eg_shift = (13 - slot.eg_rate_h) if 0 < slot.eg_rate_h < 12 else 0
+            else:
+                slot.eg_shift = (13 - slot.eg_rate_h) if slot.eg_rate_h < 13 else 0
+        slot.update_requests = 0
+
+    def _slot_on(self, i: int) -> None:
+        slot = self._slot[i]
+        slot.key_flag = 1
+        slot.eg_state = _DAMP
+        self._request_update(slot, _UPDATE_EG)
+
+    def _slot_off(self, i: int) -> None:
+        slot = self._slot[i]
+        slot.key_flag = 0
+        if slot.type & 1:
+            slot.eg_state = _RELEASE
+            self._request_update(slot, _UPDATE_EG)
+
+    def _update_key_status(self) -> None:
+        r14 = self._reg[0x0E]
+        rhythm = (r14 >> 5) & 1
+        new_status = 0
+        for ch in range(9):
+            if self._reg[0x20 + ch] & 0x10:
+                new_status |= 3 << (ch * 2)
+        if rhythm:
+            if r14 & 0x10:
+                new_status |= 3 << _SLOT_BD1
+            if r14 & 0x01:
+                new_status |= 1 << _SLOT_HH
+            if r14 & 0x08:
+                new_status |= 1 << _SLOT_SD
+            if r14 & 0x04:
+                new_status |= 1 << _SLOT_TOM
+            if r14 & 0x02:
+                new_status |= 1 << _SLOT_CYM
+        updated = self._slot_key_status ^ new_status
+        if updated:
+            for i in range(18):
+                if (updated >> i) & 1:
+                    if (new_status >> i) & 1:
+                        self._slot_on(i)
+                    else:
+                        self._slot_off(i)
+        self._slot_key_status = new_status
+
+    def _set_patch(self, ch: int, num: int) -> None:
+        self._patch_number[ch] = num
+        self._mod(ch).patch = self._patch[num * 2 + 0]
+        self._car(ch).patch = self._patch[num * 2 + 1]
+        self._request_update(self._mod(ch), _UPDATE_ALL)
+        self._request_update(self._car(ch), _UPDATE_ALL)
+
+    def _set_sus_flag(self, ch: int, flag: int) -> None:
+        car = self._car(ch)
+        car.sus_flag = flag
+        self._request_update(car, _UPDATE_EG)
+        mod = self._mod(ch)
+        if mod.type & 1:
+            mod.sus_flag = flag
+            self._request_update(mod, _UPDATE_EG)
+
+    def _set_volume(self, ch: int, volume: int) -> None:
+        car = self._car(ch)
+        car.volume = volume
+        self._request_update(car, _UPDATE_TLL)
+
+    def _set_slot_volume(self, slot: _Slot, volume: int) -> None:
+        slot.volume = volume
+        self._request_update(slot, _UPDATE_TLL)
+
+    def _set_fnumber(self, ch: int, fnum: int) -> None:
+        car = self._car(ch)
+        mod = self._mod(ch)
+        car.fnum = fnum
+        car.blk_fnum = (car.blk_fnum & 0xE00) | (fnum & 0x1FF)
+        mod.fnum = fnum
+        mod.blk_fnum = (mod.blk_fnum & 0xE00) | (fnum & 0x1FF)
+        self._request_update(car, _UPDATE_EG | _UPDATE_RKS | _UPDATE_TLL)
+        self._request_update(mod, _UPDATE_EG | _UPDATE_RKS | _UPDATE_TLL)
+
+    def _set_block(self, ch: int, blk: int) -> None:
+        car = self._car(ch)
+        mod = self._mod(ch)
+        car.blk = blk
+        car.blk_fnum = ((blk & 7) << 9) | (car.blk_fnum & 0x1FF)
+        mod.blk = blk
+        mod.blk_fnum = ((blk & 7) << 9) | (mod.blk_fnum & 0x1FF)
+        self._request_update(car, _UPDATE_EG | _UPDATE_RKS | _UPDATE_TLL)
+        self._request_update(mod, _UPDATE_EG | _UPDATE_RKS | _UPDATE_TLL)
+
+    def _update_rhythm_mode(self) -> None:
+        new_mode = (self._reg[0x0E] >> 5) & 1
+        if self._rhythm_mode != new_mode:
+            if new_mode:
+                self._slot[_SLOT_HH].type = 3
+                self._slot[_SLOT_HH].pg_keep = 1
+                self._slot[_SLOT_SD].type = 3
+                self._slot[_SLOT_TOM].type = 3
+                self._slot[_SLOT_CYM].type = 3
+                self._slot[_SLOT_CYM].pg_keep = 1
+                self._set_patch(6, 16)
+                self._set_patch(7, 17)
+                self._set_patch(8, 18)
+                self._set_slot_volume(self._slot[_SLOT_HH], ((self._reg[0x37] >> 4) & 15) << 2)
+                self._set_slot_volume(self._slot[_SLOT_TOM], ((self._reg[0x38] >> 4) & 15) << 2)
+            else:
+                self._slot[_SLOT_HH].type = 0
+                self._slot[_SLOT_HH].pg_keep = 0
+                self._slot[_SLOT_SD].type = 1
+                self._slot[_SLOT_TOM].type = 0
+                self._slot[_SLOT_CYM].type = 1
+                self._slot[_SLOT_CYM].pg_keep = 0
+                self._set_patch(6, self._reg[0x36] >> 4)
+                self._set_patch(7, self._reg[0x37] >> 4)
+                self._set_patch(8, self._reg[0x38] >> 4)
+        self._rhythm_mode = new_mode
+
+    def _write_reg(self, reg: int, data: int) -> None:
+        if reg >= 0x40:
+            return
+        # Mirror registers (0x19-0x1f, 0x29-0x2f, 0x39-0x3f) map down by 9.
+        if (0x19 <= reg <= 0x1F) or (0x29 <= reg <= 0x2F) or (0x39 <= reg <= 0x3F):
+            reg -= 9
+        self._reg[reg] = data
+
+        if reg == 0x00 or reg == 0x01:
+            p = self._patch[reg]  # patch[0]=mod user, patch[1]=car user
+            p.AM = (data >> 7) & 1
+            p.PM = (data >> 6) & 1
+            p.EG = (data >> 5) & 1
+            p.KR = (data >> 4) & 1
+            p.ML = data & 15
+            for i in range(9):
+                if self._patch_number[i] == 0:
+                    slot = self._mod(i) if reg == 0x00 else self._car(i)
+                    self._request_update(slot, _UPDATE_RKS | _UPDATE_EG)
+        elif reg == 0x02:
+            p = self._patch[0]
+            p.KL = (data >> 6) & 3
+            p.TL = data & 63
+            for i in range(9):
+                if self._patch_number[i] == 0:
+                    self._request_update(self._mod(i), _UPDATE_TLL)
+        elif reg == 0x03:
+            self._patch[1].KL = (data >> 6) & 3
+            self._patch[1].WS = (data >> 4) & 1
+            self._patch[0].WS = (data >> 3) & 1
+            self._patch[0].FB = data & 7
+            for i in range(9):
+                if self._patch_number[i] == 0:
+                    self._request_update(self._mod(i), _UPDATE_WS)
+                    self._request_update(self._car(i), _UPDATE_WS | _UPDATE_TLL)
+        elif reg == 0x04 or reg == 0x05:
+            p = self._patch[0] if reg == 0x04 else self._patch[1]
+            p.AR = (data >> 4) & 15
+            p.DR = data & 15
+            for i in range(9):
+                if self._patch_number[i] == 0:
+                    slot = self._mod(i) if reg == 0x04 else self._car(i)
+                    self._request_update(slot, _UPDATE_EG)
+        elif reg == 0x06 or reg == 0x07:
+            p = self._patch[0] if reg == 0x06 else self._patch[1]
+            p.SL = (data >> 4) & 15
+            p.RR = data & 15
+            for i in range(9):
+                if self._patch_number[i] == 0:
+                    slot = self._mod(i) if reg == 0x06 else self._car(i)
+                    self._request_update(slot, _UPDATE_EG)
+        elif reg == 0x0E:
+            self._update_rhythm_mode()
+            self._update_key_status()
+        elif reg == 0x0F:
+            self._test_flag = data
+        elif 0x10 <= reg <= 0x18:
+            ch = reg - 0x10
+            self._set_fnumber(ch, data + ((self._reg[0x20 + ch] & 1) << 8))
+        elif 0x20 <= reg <= 0x28:
+            ch = reg - 0x20
+            self._set_fnumber(ch, ((data & 1) << 8) + self._reg[0x10 + ch])
+            self._set_block(ch, (data >> 1) & 7)
+            self._set_sus_flag(ch, (data >> 5) & 1)
+            self._update_key_status()
+        elif 0x30 <= reg <= 0x38:
+            if (self._reg[0x0E] & 32) and reg >= 0x36:
+                if reg == 0x37:
+                    self._set_slot_volume(self._mod(7), ((data >> 4) & 15) << 2)
+                elif reg == 0x38:
+                    self._set_slot_volume(self._mod(8), ((data >> 4) & 15) << 2)
+            else:
+                self._set_patch(reg - 0x30, (data >> 4) & 15)
+            self._set_volume(reg - 0x30, (data & 15) << 2)
+
+    # ------------------------------------------------------- synthesis engine
+
+    def _update_ampm(self) -> None:
+        if self._test_flag & 2:
+            self._pm_phase = 0
+            self._am_phase = 0
+        else:
+            self._pm_phase = (self._pm_phase + (1024 if self._test_flag & 8 else 1)) & 0xFFFFFFFF
+            self._am_phase += 64 if self._test_flag & 8 else 1
+        self._lfo_am = _AM_TABLE[(self._am_phase >> 6) % len(_AM_TABLE)]
+
+    def _update_noise(self, cycle: int) -> None:
+        noise = self._noise
+        for _ in range(cycle):
+            if noise & 1:
+                noise ^= 0x800200
+            noise >>= 1
+        self._noise = noise
+
+    def _update_short_noise(self) -> None:
+        pg_hh = self._slot[_SLOT_HH].pg_out
+        pg_cym = self._slot[_SLOT_CYM].pg_out
+        h_bit2 = (pg_hh >> (_PG_BITS - 8)) & 1
+        h_bit7 = (pg_hh >> (_PG_BITS - 3)) & 1
+        h_bit3 = (pg_hh >> (_PG_BITS - 7)) & 1
+        c_bit3 = (pg_cym >> (_PG_BITS - 7)) & 1
+        c_bit5 = (pg_cym >> (_PG_BITS - 5)) & 1
+        self._short_noise = (h_bit2 ^ h_bit7) | (h_bit3 ^ c_bit5) | (c_bit3 ^ c_bit5)
+
+    def _calc_phase(self, slot: _Slot, reset: int) -> None:
+        if slot.patch.PM:
+            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7]
+        else:
+            pm = 0
+        if reset:
+            slot.pg_phase = 0
+        slot.pg_phase = (
+            slot.pg_phase
+            + ((((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[slot.patch.ML]) << slot.blk >> 2)
+        ) & (_DP_WIDTH - 1)
+        slot.pg_out = slot.pg_phase >> _DP_BASE_BITS
+
+    def _lookup_attack_step(self, slot: _Slot, counter: int) -> int:
+        rh = slot.eg_rate_h
+        if rh == 12:
+            index = (counter & 0xC) >> 1
+            return 4 - _EG_STEP_TABLES[slot.eg_rate_l][index]
+        if rh == 13:
+            index = (counter & 0xC) >> 1
+            return 3 - _EG_STEP_TABLES[slot.eg_rate_l][index]
+        if rh == 14:
+            index = (counter & 0xC) >> 1
+            return 2 - _EG_STEP_TABLES[slot.eg_rate_l][index]
+        if rh == 0 or rh == 15:
+            return 0
+        index = counter >> slot.eg_shift
+        return 4 if _EG_STEP_TABLES[slot.eg_rate_l][index & 7] else 0
+
+    def _lookup_decay_step(self, slot: _Slot, counter: int) -> int:
+        rh = slot.eg_rate_h
+        if rh == 0:
+            return 0
+        if rh == 13:
+            index = ((counter & 0xC) >> 1) | (counter & 1)
+            return _EG_STEP_TABLES[slot.eg_rate_l][index]
+        if rh == 14:
+            index = (counter & 0xC) >> 1
+            return _EG_STEP_TABLES[slot.eg_rate_l][index] + 1
+        if rh == 15:
+            return 2
+        index = counter >> slot.eg_shift
+        return _EG_STEP_TABLES[slot.eg_rate_l][index & 7]
+
+    def _start_envelope(self, slot: _Slot) -> None:
+        if min(15, slot.patch.AR + (slot.rks >> 2)) == 15:
+            slot.eg_state = _DECAY
+            slot.eg_out = 0
+        else:
+            slot.eg_state = _ATTACK
+        self._request_update(slot, _UPDATE_EG)
+
+    def _calc_envelope(self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int) -> None:
+        mask = (1 << slot.eg_shift) - 1
+        if slot.eg_state == _ATTACK:
+            if 0 < slot.eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
+                s = self._lookup_attack_step(slot, eg_counter)
+                if s > 0:
+                    slot.eg_out = max(0, slot.eg_out - (slot.eg_out >> s) - 1)
+        else:
+            if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
+                step = self._lookup_decay_step(slot, eg_counter)
+                slot.eg_out = min(_EG_MUTE, slot.eg_out + step)
+
+        st = slot.eg_state
+        if st == _DAMP:
+            if slot.eg_out >= _EG_MAX and (eg_counter & mask) == 0:
+                self._start_envelope(slot)
+                if slot.type & 1:
+                    if not slot.pg_keep:
+                        slot.pg_phase = 0
+                    if buddy is not None and not buddy.pg_keep:
+                        buddy.pg_phase = 0
+        elif st == _ATTACK:
+            if slot.eg_out == 0:
+                slot.eg_state = _DECAY
+                self._request_update(slot, _UPDATE_EG)
+        elif st == _DECAY:
+            if (slot.eg_out >> 3) == slot.patch.SL:
+                slot.eg_state = _SUSTAIN
+                self._request_update(slot, _UPDATE_EG)
+
+        if test:
+            slot.eg_out = 0
+
+    def _update_slots(self) -> None:
+        self._eg_counter += 1
+        eg_counter = self._eg_counter
+        test = self._test_flag
+        slots = self._slot
+        for i in range(18):
+            slot = slots[i]
+            if slot.type == 0:
+                buddy: _Slot | None = slots[i + 1]
+            elif slot.type == 1:
+                buddy = slots[i - 1]
+            else:
+                buddy = None
+            if slot.update_requests:
+                self._commit_slot_update(slot)
+            self._calc_envelope(slot, buddy, eg_counter, test & 1)
+            self._calc_phase(slot, test & 4)
+
+    @staticmethod
+    def _lookup_exp_table(i: int) -> int:
+        t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+        res = t >> ((i & 0x7F00) >> 8)
+        if i & 0x8000:
+            # ~res on a 16-bit value, matching emu2413's int16_t arithmetic.
+            res = ~res
+        return res << 1
+
+    def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
+        if slot.eg_out > _EG_MAX:
+            return 0
+        att = min(_EG_MUTE, slot.eg_out + slot.tll + am) << 4
+        return self._lookup_exp_table(h + att)
+
+    def _calc_slot_car(self, ch: int, fm: int) -> int:
+        slot = self._car(ch)
+        am = self._lfo_am if slot.patch.AM else 0
+        slot.output[1] = slot.output[0]
+        idx = (slot.pg_out + 2 * (fm >> 1)) & (_PG_WIDTH - 1)
+        slot.output[0] = self._to_linear(slot.wave_table[idx], slot, am)
+        return slot.output[0]
+
+    def _calc_slot_mod(self, ch: int) -> int:
+        slot = self._mod(ch)
+        if slot.patch.FB > 0:
+            fm = (slot.output[1] + slot.output[0]) >> (9 - slot.patch.FB)
+        else:
+            fm = 0
+        am = self._lfo_am if slot.patch.AM else 0
+        slot.output[1] = slot.output[0]
+        idx = (slot.pg_out + fm) & (_PG_WIDTH - 1)
+        slot.output[0] = self._to_linear(slot.wave_table[idx], slot, am)
+        return slot.output[0]
+
+    def _calc_slot_tom(self) -> int:
+        slot = self._mod(8)
+        return self._to_linear(slot.wave_table[slot.pg_out], slot, 0)
+
+    def _calc_slot_snare(self) -> int:
+        slot = self._car(7)
+        if (slot.pg_out >> (_PG_BITS - 2)) & 1:
+            phase = 0x300 if (self._noise & 1) else 0x200
+        else:
+            phase = 0x0 if (self._noise & 1) else 0x100
+        return self._to_linear(slot.wave_table[phase], slot, 0)
+
+    def _calc_slot_cym(self) -> int:
+        slot = self._car(8)
+        phase = 0x300 if self._short_noise else 0x100
+        return self._to_linear(slot.wave_table[phase], slot, 0)
+
+    def _calc_slot_hat(self) -> int:
+        slot = self._mod(7)
+        if self._short_noise:
+            phase = 0x2D0 if (self._noise & 1) else 0x234
+        else:
+            phase = 0x34 if (self._noise & 1) else 0xD0
+        return self._to_linear(slot.wave_table[phase], slot, 0)
+
+    def _update_output(self) -> None:
+        self._update_ampm()
+        self._update_short_noise()
+        self._update_slots()
+        out = self._ch_out
+
+        for i in range(6):
+            out[i] = -(self._calc_slot_car(i, self._calc_slot_mod(i))) >> 1
+
+        if not self._rhythm_mode:
+            out[6] = -(self._calc_slot_car(6, self._calc_slot_mod(6))) >> 1
+        else:
+            out[9] = self._calc_slot_car(6, self._calc_slot_mod(6))
+        self._update_noise(14)
+
+        if not self._rhythm_mode:
+            out[7] = -(self._calc_slot_car(7, self._calc_slot_mod(7))) >> 1
+        else:
+            out[10] = self._calc_slot_hat()
+            out[11] = self._calc_slot_snare()
+        self._update_noise(2)
+
+        if not self._rhythm_mode:
+            out[8] = -(self._calc_slot_car(8, self._calc_slot_mod(8))) >> 1
+        else:
+            out[12] = self._calc_slot_tom()
+            out[13] = self._calc_slot_cym()
+        self._update_noise(2)
+
+    def _mix(self) -> int:
+        total = 0
+        out = self._ch_out
+        for i in range(14):
+            total += out[i]
+        return total
+
+    # ------------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:
-        """Return n signed 16-bit little-endian mono PCM samples.
+        """Return n signed 16-bit little-endian mono PCM samples at SAMPLE_RATE.
 
-        Registers are treated as constant across the buffer (mirrors
-        PSG/SCC.generate_samples): per-channel frequency, instrument, and
-        volume are decoded once, while phase and envelope state persist
-        across calls in instance fields.
+        Runs the chip at its native clk/72 rate and decimates to the output
+        rate with an accumulate-and-average step (emu2413's OPLL_calc timing,
+        minus the windowed-sinc resampler). Gain is fixed so a mix of a few
+        loud channels sits comfortably below full scale.
         """
         out = bytearray(n * 2)
-        regs = self._regs
-
-        user_patch = _decode_patch(bytes(regs[0:8]))
-
-        mod_inc = [0.0] * 9
-        car_inc = [0.0] * 9
-        vol_scale = [0.0] * 9
-        tl_scale = [0.0] * 9
-        fb_scale = [0.0] * 9
-        mod_sl_frac = [0.0] * 9
-        car_sl_frac = [0.0] * 9
-        mod_ar_step = [0.0] * 9
-        mod_dr_step = [0.0] * 9
-        mod_rr_step = [0.0] * 9
-        car_ar_step = [0.0] * 9
-        car_dr_step = [0.0] * 9
-        car_rr_step = [0.0] * 9
-        car_eg_type = [0] * 9
-        kons = [False] * 9
-
-        # Rhythm mode (register 0x0E): while enabled, ch6 (BD) is forced onto
-        # the fixed built-in drum patch instead of whatever instrument index
-        # is in register 0x36 — matches real hardware, which locks channels
-        # 6-8 to the drum patch ROM the moment rhythm turns on.
-        rhythm = bool(regs[0x0E] & 0x20)
-
-        for ch in range(9):
-            freq_reg = regs[0x20 + ch]
-            fnum = regs[0x10 + ch] | ((freq_reg & 0x01) << 8)
-            block = (freq_reg >> 1) & 0x07
-            kon = bool(freq_reg & 0x10)
-            inst_vol = regs[0x30 + ch]
-            inst_idx = inst_vol >> 4
-            vol = inst_vol & 0x0F
-            if rhythm and ch == 6:
-                patch = _DRUM_BD
-            else:
-                patch = user_patch if inst_idx == 0 else _PRESETS[inst_idx - 1]
-            freq_hz = note_frequency(fnum, block)
-
-            mod_inc[ch] = freq_hz * patch.mod_multi * TABLE_SIZE / SAMPLE_RATE
-            car_inc[ch] = freq_hz * patch.car_multi * TABLE_SIZE / SAMPLE_RATE
-            vol_scale[ch] = 1.0 - (vol / 15.0)
-            tl_scale[ch] = 1.0 - (patch.mod_tl / 63.0)
-            fb_scale[ch] = _FB_SCALE[patch.fb]
-            mod_sl_frac[ch] = 1.0 - (patch.mod_sl / 15.0)
-            car_sl_frac[ch] = 1.0 - (patch.car_sl / 15.0)
-            mod_ar_step[ch] = _ATTACK_STEP[patch.mod_ar]
-            mod_dr_step[ch] = _DECAY_STEP[patch.mod_dr]
-            mod_rr_step[ch] = _DECAY_STEP[patch.mod_rr]
-            car_ar_step[ch] = _ATTACK_STEP[patch.car_ar]
-            car_dr_step[ch] = _DECAY_STEP[patch.car_dr]
-            car_rr_step[ch] = _DECAY_STEP[patch.car_rr]
-            car_eg_type[ch] = patch.car_eg_type
-            kons[ch] = kon
-
-        # BD (channel 6) stays a normal 2-op FM voice, keyed by bit 0x10
-        # instead of its own KON register (patch already forced above).
-        # Channels 7/8's ordinary melody use is suppressed (kons forced
-        # False); HH/SD/TOM/TC are synthesised separately below, reusing
-        # channel 7/8's now-idle mod/car envelope and phase state, driven by
-        # the fixed drum patches' own AR/DR/SL/RR and pitch multiplier —
-        # matches real hardware; only the volume nibbles in registers
-        # 0x37/0x38 stay register-driven.
-        if rhythm:
-            kons[6] = bool(regs[0x0E] & 0x10)
-            kons[7] = False
-            kons[8] = False
-            hh_kon = bool(regs[0x0E] & 0x01)
-            sd_kon = bool(regs[0x0E] & 0x08)
-            tom_kon = bool(regs[0x0E] & 0x04)
-            tc_kon = bool(regs[0x0E] & 0x02)
-            hh_vol = 1.0 - ((regs[0x37] >> 4) / 15.0)
-            sd_vol = 1.0 - ((regs[0x37] & 0x0F) / 15.0)
-            tom_vol = 1.0 - ((regs[0x38] >> 4) / 15.0)
-            tc_vol = 1.0 - ((regs[0x38] & 0x0F) / 15.0)
-
-            hh_ar_step = _ATTACK_STEP[_DRUM_HH_SD.mod_ar]
-            hh_dr_step = _DECAY_STEP[_DRUM_HH_SD.mod_dr]
-            hh_sl_frac = 1.0 - (_DRUM_HH_SD.mod_sl / 15.0)
-            hh_rr_step = _DECAY_STEP[_DRUM_HH_SD.mod_rr]
-            sd_ar_step = _ATTACK_STEP[_DRUM_HH_SD.car_ar]
-            sd_dr_step = _DECAY_STEP[_DRUM_HH_SD.car_dr]
-            sd_sl_frac = 1.0 - (_DRUM_HH_SD.car_sl / 15.0)
-            sd_rr_step = _DECAY_STEP[_DRUM_HH_SD.car_rr]
-            sd_eg_type = _DRUM_HH_SD.car_eg_type
-
-            tom_ar_step = _ATTACK_STEP[_DRUM_TOM_CYM.mod_ar]
-            tom_dr_step = _DECAY_STEP[_DRUM_TOM_CYM.mod_dr]
-            tom_sl_frac = 1.0 - (_DRUM_TOM_CYM.mod_sl / 15.0)
-            tom_rr_step = _DECAY_STEP[_DRUM_TOM_CYM.mod_rr]
-            tc_ar_step = _ATTACK_STEP[_DRUM_TOM_CYM.car_ar]
-            tc_dr_step = _DECAY_STEP[_DRUM_TOM_CYM.car_dr]
-            tc_sl_frac = 1.0 - (_DRUM_TOM_CYM.car_sl / 15.0)
-            tc_rr_step = _DECAY_STEP[_DRUM_TOM_CYM.car_rr]
-            tc_eg_type = _DRUM_TOM_CYM.car_eg_type
-
-            # TOM's own tone uses channel 8's F-number/block (registers
-            # 0x18/0x28) at the fixed drum patch's modulator pitch
-            # multiplier — not whatever the generic per-channel loop above
-            # computed for ch8, since regs[0x38]'s high nibble is TOM's
-            # volume in rhythm mode, not an instrument index.
-            tom_freq_reg = regs[0x28]
-            tom_fnum = regs[0x18] | ((tom_freq_reg & 0x01) << 8)
-            tom_block = (tom_freq_reg >> 1) & 0x07
-            mod_inc[8] = (
-                note_frequency(tom_fnum, tom_block) * _DRUM_TOM_CYM.mod_multi
-                * TABLE_SIZE / SAMPLE_RATE
-            )
-        else:
-            hh_kon = sd_kon = tom_kon = tc_kon = False
-            hh_vol = sd_vol = tom_vol = tc_vol = 0.0
-            hh_ar_step = hh_dr_step = hh_sl_frac = hh_rr_step = 0.0
-            sd_ar_step = sd_dr_step = sd_sl_frac = sd_rr_step = 0.0
-            sd_eg_type = 0
-            tom_ar_step = tom_dr_step = tom_sl_frac = tom_rr_step = 0.0
-            tc_ar_step = tc_dr_step = tc_sl_frac = tc_rr_step = 0.0
-            tc_eg_type = 0
-
-        mod_phase = self._mod_phase
-        car_phase = self._car_phase
-        mod_level = self._mod_level
-        car_level = self._car_level
-        mod_state = self._mod_state
-        car_state = self._car_state
-        mod_fb1 = self._mod_fb1
-        mod_fb2 = self._mod_fb2
-        prev_kon = self._prev_kon
-        sin_table = SIN_TABLE
-
-        # Key-on/off edge detection: buffer granularity (once per call), not
-        # per-instruction — an acceptable coarsening (see module docstring).
-        for ch in range(9):
-            kon = kons[ch]
-            if kon and not prev_kon[ch]:
-                mod_state[ch] = _EG_ATTACK
-                mod_level[ch] = 0.0
-                car_state[ch] = _EG_ATTACK
-                car_level[ch] = 0.0
-                mod_phase[ch] = 0.0
-                car_phase[ch] = 0.0
-            elif not kon and prev_kon[ch]:
-                if mod_state[ch] != _EG_OFF:
-                    mod_state[ch] = _EG_RELEASE
-                if car_state[ch] != _EG_OFF:
-                    car_state[ch] = _EG_RELEASE
-            prev_kon[ch] = kon
-
-        if rhythm:
-            if hh_kon and not self._prev_hh:
-                mod_state[7] = _EG_ATTACK
-                mod_level[7] = 0.0
-            elif not hh_kon and self._prev_hh:
-                mod_state[7] = _EG_RELEASE
-            self._prev_hh = hh_kon
-
-            if sd_kon and not self._prev_sd:
-                car_state[7] = _EG_ATTACK
-                car_level[7] = 0.0
-            elif not sd_kon and self._prev_sd:
-                car_state[7] = _EG_RELEASE
-            self._prev_sd = sd_kon
-
-            if tom_kon and not self._prev_tom:
-                mod_state[8] = _EG_ATTACK
-                mod_level[8] = 0.0
-                mod_phase[8] = 0.0
-            elif not tom_kon and self._prev_tom:
-                mod_state[8] = _EG_RELEASE
-            self._prev_tom = tom_kon
-
-            if tc_kon and not self._prev_tc:
-                car_state[8] = _EG_ATTACK
-                car_level[8] = 0.0
-            elif not tc_kon and self._prev_tc:
-                car_state[8] = _EG_RELEASE
-            self._prev_tc = tc_kon
-
+        out_step = _CLOCK / 72.0
+        inp_step = float(SAMPLE_RATE)
+        out_time = self._out_time
         for i in range(n):
-            sample = 0.0
-            for ch in range(9):
-                if rhythm and ch >= 7:
-                    continue  # channels 7/8 repurposed for HH/SD/TOM/TC below
-                m_state = mod_state[ch]
-                m_level = mod_level[ch]
-                if m_state == _EG_ATTACK:
-                    m_level += mod_ar_step[ch]
-                    if m_level >= 1.0:
-                        m_level = 1.0
-                        m_state = _EG_DECAY
-                elif m_state == _EG_DECAY:
-                    m_level -= mod_dr_step[ch]
-                    if m_level <= mod_sl_frac[ch]:
-                        m_level = mod_sl_frac[ch]
-                        m_state = _EG_SUSTAIN
-                elif m_state == _EG_RELEASE:
-                    m_level -= mod_rr_step[ch]
-                    if m_level <= 0.0:
-                        m_level = 0.0
-                        m_state = _EG_OFF
-                mod_state[ch] = m_state
-                mod_level[ch] = m_level
-
-                c_state = car_state[ch]
-                c_level = car_level[ch]
-                if c_state == _EG_ATTACK:
-                    c_level += car_ar_step[ch]
-                    if c_level >= 1.0:
-                        c_level = 1.0
-                        c_state = _EG_DECAY
-                elif c_state == _EG_DECAY:
-                    c_level -= car_dr_step[ch]
-                    if c_level <= car_sl_frac[ch]:
-                        c_level = car_sl_frac[ch]
-                        c_state = _EG_SUSTAIN if car_eg_type[ch] else _EG_RELEASE
-                elif c_state == _EG_RELEASE:
-                    c_level -= car_rr_step[ch]
-                    if c_level <= 0.0:
-                        c_level = 0.0
-                        c_state = _EG_OFF
-                car_state[ch] = c_state
-                car_level[ch] = c_level
-
-                if c_state == _EG_OFF:
-                    continue
-
-                fb_off = (mod_fb1[ch] + mod_fb2[ch]) * 0.5 * fb_scale[ch]
-                mod_idx = int(mod_phase[ch] + fb_off) & _TABLE_MASK
-                mod_out = sin_table[mod_idx] * m_level * tl_scale[ch]
-                mod_fb2[ch] = mod_fb1[ch]
-                mod_fb1[ch] = mod_out
-
-                car_idx = int(car_phase[ch] + mod_out * _MOD_DEPTH) & _TABLE_MASK
-                sample += sin_table[car_idx] * c_level * vol_scale[ch]
-
-                mod_phase[ch] = (mod_phase[ch] + mod_inc[ch]) % TABLE_SIZE
-                car_phase[ch] = (car_phase[ch] + car_inc[ch]) % TABLE_SIZE
-
-            if rhythm:
-                # HH (noise, channel 7 mod slot) — mod-style: DECAY always
-                # settles into SUSTAIN (holds at level) like a melody
-                # channel's modulator; RELEASE uses the patch's own RR.
-                state = mod_state[7]
-                level = mod_level[7]
-                if state == _EG_ATTACK:
-                    level += hh_ar_step
-                    if level >= 1.0:
-                        level = 1.0
-                        state = _EG_DECAY
-                elif state == _EG_DECAY:
-                    level -= hh_dr_step
-                    if level <= hh_sl_frac:
-                        level = hh_sl_frac
-                        state = _EG_SUSTAIN
-                elif state == _EG_RELEASE:
-                    level -= hh_rr_step
-                    if level <= 0.0:
-                        level = 0.0
-                        state = _EG_OFF
-                mod_state[7] = state
-                mod_level[7] = level
-
-                # SD (noise, channel 7 car slot) — car-style: DECAY settles
-                # into SUSTAIN only if the drum patch's EG type holds it,
-                # else falls straight to RELEASE (matches a melody carrier).
-                state = car_state[7]
-                level = car_level[7]
-                if state == _EG_ATTACK:
-                    level += sd_ar_step
-                    if level >= 1.0:
-                        level = 1.0
-                        state = _EG_DECAY
-                elif state == _EG_DECAY:
-                    level -= sd_dr_step
-                    if level <= sd_sl_frac:
-                        level = sd_sl_frac
-                        state = _EG_SUSTAIN if sd_eg_type else _EG_RELEASE
-                elif state == _EG_RELEASE:
-                    level -= sd_rr_step
-                    if level <= 0.0:
-                        level = 0.0
-                        state = _EG_OFF
-                car_state[7] = state
-                car_level[7] = level
-
-                # TOM (tone, channel 8 mod slot) — mod-style, same as HH.
-                state = mod_state[8]
-                level = mod_level[8]
-                if state == _EG_ATTACK:
-                    level += tom_ar_step
-                    if level >= 1.0:
-                        level = 1.0
-                        state = _EG_DECAY
-                elif state == _EG_DECAY:
-                    level -= tom_dr_step
-                    if level <= tom_sl_frac:
-                        level = tom_sl_frac
-                        state = _EG_SUSTAIN
-                elif state == _EG_RELEASE:
-                    level -= tom_rr_step
-                    if level <= 0.0:
-                        level = 0.0
-                        state = _EG_OFF
-                mod_state[8] = state
-                mod_level[8] = level
-
-                # TC (noise, channel 8 car slot) — car-style, same as SD.
-                state = car_state[8]
-                level = car_level[8]
-                if state == _EG_ATTACK:
-                    level += tc_ar_step
-                    if level >= 1.0:
-                        level = 1.0
-                        state = _EG_DECAY
-                elif state == _EG_DECAY:
-                    level -= tc_dr_step
-                    if level <= tc_sl_frac:
-                        level = tc_sl_frac
-                        state = _EG_SUSTAIN if tc_eg_type else _EG_RELEASE
-                elif state == _EG_RELEASE:
-                    level -= tc_rr_step
-                    if level <= 0.0:
-                        level = 0.0
-                        state = _EG_OFF
-                car_state[8] = state
-                car_level[8] = level
-
-                noise = self._noise_lfsr
-                noise_bit = (noise ^ (noise >> 1)) & 1
-                noise = (noise >> 1) | (noise_bit << 16)
-                self._noise_lfsr = noise
-                noise_signed = 1.0 if noise_bit else -1.0
-
-                if mod_state[7] != _EG_OFF:
-                    sample += noise_signed * mod_level[7] * hh_vol * 0.6
-                if car_state[7] != _EG_OFF:
-                    sample += noise_signed * car_level[7] * sd_vol * 0.8
-                if mod_state[8] != _EG_OFF:
-                    mod_phase[8] = (mod_phase[8] + mod_inc[8]) % TABLE_SIZE
-                    sample += sin_table[int(mod_phase[8]) & _TABLE_MASK] * mod_level[8] * tom_vol
-                if car_state[8] != _EG_OFF:
-                    sample += noise_signed * car_level[8] * tc_vol * 0.5
-
-            scaled = int(sample * 3200.0)
+            acc = 0
+            cnt = 0
+            while out_step > out_time:
+                out_time += inp_step
+                self._update_output()
+                acc += self._mix()
+                cnt += 1
+            out_time -= out_step
+            raw = (acc // cnt) if cnt else 0
+            scaled = raw * _OUTPUT_GAIN
             if scaled > 32767:
                 scaled = 32767
             elif scaled < -32768:
                 scaled = -32768
             out[i * 2] = scaled & 0xFF
             out[i * 2 + 1] = (scaled >> 8) & 0xFF
-
+        self._out_time = out_time
         return out
+
+    # --------------------------------------------------------- save / restore
+
+    def snapshot(self) -> dict[str, object]:
+        """Capture full chip state for save-state (paired with restore)."""
+        return {
+            "reg": bytes(self._reg),
+            "patch_number": list(self._patch_number),
+            "user_patch": [_patch_fields(self._patch[0]), _patch_fields(self._patch[1])],
+            "slots": [_slot_fields(s) for s in self._slot],
+            "adr": self._adr,
+            "pm_phase": self._pm_phase,
+            "am_phase": self._am_phase,
+            "lfo_am": self._lfo_am,
+            "noise": self._noise,
+            "short_noise": self._short_noise,
+            "test_flag": self._test_flag,
+            "rhythm_mode": self._rhythm_mode,
+            "slot_key_status": self._slot_key_status,
+            "eg_counter": self._eg_counter,
+            "ch_out": list(self._ch_out),
+            "out_time": self._out_time,
+        }
+
+    def restore(self, state: dict[str, Any]) -> None:
+        """Restore chip state produced by snapshot()."""
+        self._reg = bytearray(state["reg"])
+        self._patch_number = [int(x) for x in state["patch_number"]]
+        # Rebuild the fixed preset bank, then the user tone from its saved fields.
+        for i in range(19):
+            mod, car = _dump_to_patch(_DEFAULT_INST[i])
+            self._patch[i * 2 + 0] = mod
+            self._patch[i * 2 + 1] = car
+        _set_patch_fields(self._patch[0], state["user_patch"][0])
+        _set_patch_fields(self._patch[1], state["user_patch"][1])
+        for ch in range(9):
+            self._mod(ch).patch = self._patch[self._patch_number[ch] * 2 + 0]
+            self._car(ch).patch = self._patch[self._patch_number[ch] * 2 + 1]
+        for i, sf in enumerate(state["slots"]):
+            _restore_slot_fields(self._slot[i], sf)
+        self._adr = int(state["adr"])
+        self._pm_phase = int(state["pm_phase"])
+        self._am_phase = int(state["am_phase"])
+        self._lfo_am = int(state["lfo_am"])
+        self._noise = int(state["noise"])
+        self._short_noise = int(state["short_noise"])
+        self._test_flag = int(state["test_flag"])
+        self._rhythm_mode = int(state["rhythm_mode"])
+        self._slot_key_status = int(state["slot_key_status"])
+        self._eg_counter = int(state["eg_counter"])
+        self._ch_out = [int(x) for x in state["ch_out"]]
+        self._out_time = float(state["out_time"])
+
+
+# Output gain from the chip's raw mix (each channel roughly ±4000 pre-mix,
+# melody halved) to signed 16-bit. Tuned so a loud chord peaks well under
+# full scale while a single note is clearly audible.
+_OUTPUT_GAIN = 3
+
+_PATCH_ATTRS = ("AM", "PM", "EG", "KR", "ML", "KL", "TL", "FB", "WS", "AR", "DR", "SL", "RR")
+_SLOT_SCALAR_ATTRS = (
+    "type", "pg_keep", "pg_phase", "eg_state", "eg_shift", "eg_rate_h", "eg_rate_l",
+    "rks", "tll", "key_flag", "sus_flag", "blk_fnum", "blk", "fnum", "volume",
+    "pg_out", "eg_out", "update_requests",
+)
+
+
+def _patch_fields(p: _Patch) -> list[int]:
+    return [getattr(p, a) for a in _PATCH_ATTRS]
+
+
+def _set_patch_fields(p: _Patch, vals: list[Any]) -> None:
+    for a, v in zip(_PATCH_ATTRS, vals):
+        setattr(p, a, int(v))
+
+
+def _slot_fields(s: _Slot) -> dict[str, object]:
+    d: dict[str, object] = {a: getattr(s, a) for a in _SLOT_SCALAR_ATTRS}
+    d["output"] = list(s.output)
+    d["ws"] = 1 if s.wave_table is _HALFSIN_TABLE else 0
+    return d
+
+
+def _restore_slot_fields(s: _Slot, sf: dict[str, Any]) -> None:
+    for a in _SLOT_SCALAR_ATTRS:
+        setattr(s, a, int(sf[a]))
+    s.output = [int(x) for x in sf["output"]]
+    s.wave_table = _WAVE_TABLE_MAP[int(sf["ws"])]

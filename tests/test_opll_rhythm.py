@@ -1,16 +1,13 @@
 """YM2413 (OPLL) rhythm mode: register 0x0E enable + 5 percussion voices.
 
-Ground truth for the register map: openMSX YM2413Okazaki. Synthesis is
-simplified (noise-based HH/SD/TC, single-tone TOM, full 2-op FM BD) — see
-msx/opll.py module docstring. These tests check that each instrument bit
-independently contributes audible PCM and that rhythm-off restores ordinary
-melody behaviour on channels 6-8, not sample-exact timbre.
+The chip is a faithful port of emu2413 v1.5.9 (see msx/opll.py). These tests
+check that each rhythm instrument bit independently contributes audible PCM,
+that BD/HH/SD/TOM/CYM lock to the fixed drum patch ROM, and that rhythm-off
+restores ordinary melody behaviour on channels 6-8.
 """
 from __future__ import annotations
 
 from array import array
-
-import pytest
 
 from msx.opll import Opll
 
@@ -174,4 +171,6 @@ def test_tom_pitch_independent_of_tom_volume_register() -> None:
     o2.write_reg(0x38, 0xF0)  # volume nibble 15 (different volume, same pitch)
     o2.generate_samples(100)
 
-    assert o1._mod_phase[8] == pytest.approx(o2._mod_phase[8], abs=1e-6)
+    # TOM is MOD(8) = slot 16; its phase accumulator must be identical
+    # regardless of the volume nibble (volume affects amplitude, not pitch).
+    assert o1._slot[16].pg_phase == o2._slot[16].pg_phase
