@@ -178,15 +178,15 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
     data = path.read_bytes()
     assert len(data) == SRAM_SIZE
 
-    dst = FmPac(rom=_bank_rom(), opll=Opll())
-    dst.load_sram(data)
+    dst = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(data))
     dst.write(0x5FFE, 0x4D)
     dst.write(0x5FFF, 0x69)
     assert dst.read(0x4000) == 0xAB
 
 
-def test_load_sram_ignores_wrong_size(fmpac: FmPac) -> None:
-    fmpac.load_sram(b"\x00" * 100)
+def test_wrong_size_sram_starts_blank() -> None:
+    # The constructor replaces a wrong-size SRAM image with a fresh blank one.
+    fmpac = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(b"\x00" * 100))
     assert fmpac.sram == bytearray(SRAM_SIZE)
 
 

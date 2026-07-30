@@ -45,6 +45,10 @@ _EG_BITS = 7
 _EG_MUTE = (1 << _EG_BITS) - 1  # 127
 _EG_MAX = _EG_MUTE - 4          # 123
 _DAMPER_RATE = 12
+# Fixed release rates (emu2413 get_parameter_rate, RELEASE branch): a note with
+# the sustain flag set releases at rate 5; a percussive tone (patch EG=0) at 7.
+_SUS_RELEASE_RATE = 5
+_PERC_RELEASE_RATE = 7
 
 
 def _tl2eg(d: int) -> int:
@@ -303,6 +307,13 @@ _UPDATE_ALL = 255
 
 @dataclass
 class Opll:
+    """YM2413 (OPLL) chip instance (emu2413 v1.5.9 port; see module docstring).
+
+    Public surface: write_addr / write_data / write_reg / read_reg / read for
+    register access, generate_samples(n) for PCM, reset(), and snapshot()/
+    restore() for save-state. All other members mirror the emu2413 internals.
+    """
+
     _reg: bytearray = field(default_factory=lambda: bytearray(0x40), init=False, repr=False)
     _slot: list[_Slot] = field(
         default_factory=lambda: [_Slot(i) for i in range(18)], init=False, repr=False
@@ -398,7 +409,7 @@ class Opll:
     def _request_update(self, slot: _Slot, flag: int) -> None:
         slot.update_requests |= flag
 
-    def _get_parameter_rate(self, slot: _Slot) -> int:
+    def _get_parameter_rate(self, slot: _Slot) -> int:  # emu2413: get_parameter_rate
         if (slot.type & 1) == 0 and slot.key_flag == 0:
             return 0
         st = slot.eg_state
@@ -410,10 +421,10 @@ class Opll:
             return 0 if slot.patch.EG else slot.patch.RR
         if st == _RELEASE:
             if slot.sus_flag:
-                return 5
+                return _SUS_RELEASE_RATE
             if slot.patch.EG:
                 return slot.patch.RR
-            return 7
+            return _PERC_RELEASE_RATE
         if st == _DAMP:
             return _DAMPER_RATE
         return 0
@@ -559,7 +570,7 @@ class Opll:
                 self._set_patch(8, self._reg[0x38] >> 4)
         self._rhythm_mode = new_mode
 
-    def _write_reg(self, reg: int, data: int) -> None:
+    def _write_reg(self, reg: int, data: int) -> None:  # emu2413: OPLL_writeReg
         if reg >= 0x40:
             return
         # Mirror registers (0x19-0x1f, 0x29-0x2f, 0x39-0x3f) map down by 9.
@@ -642,7 +653,10 @@ class Opll:
             self._am_phase = 0
         else:
             self._pm_phase = (self._pm_phase + (1024 if self._test_flag & 8 else 1)) & 0xFFFFFFFF
-            self._am_phase += 64 if self._test_flag & 8 else 1
+            # Mask to uint32 like emu2413's am_phase; 210 (len(_AM_TABLE)) does not
+            # divide 2^32, so an unbounded accumulator would pick a different table
+            # entry than hardware at the wrap boundary.
+            self._am_phase = (self._am_phase + (64 if self._test_flag & 8 else 1)) & 0xFFFFFFFF
         self._lfo_am = _AM_TABLE[(self._am_phase >> 6) % len(_AM_TABLE)]
 
     def _update_noise(self, cycle: int) -> None:
@@ -715,7 +729,9 @@ class Opll:
             slot.eg_state = _ATTACK
         self._request_update(slot, _UPDATE_EG)
 
-    def _calc_envelope(self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int) -> None:
+    def _calc_envelope(  # emu2413: calc_envelope
+        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int
+    ) -> None:
         mask = (1 << slot.eg_shift) - 1
         if slot.eg_state == _ATTACK:
             if 0 < slot.eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
@@ -724,8 +740,8 @@ class Opll:
                     slot.eg_out = max(0, slot.eg_out - (slot.eg_out >> s) - 1)
         else:
             if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
-                step = self._lookup_decay_step(slot, eg_counter)
-                slot.eg_out = min(_EG_MUTE, slot.eg_out + step)
+                step = slot.eg_out + self._lookup_decay_step(slot, eg_counter)
+                slot.eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
 
         st = slot.eg_state
         if st == _DAMP:
@@ -766,31 +782,30 @@ class Opll:
             self._calc_envelope(slot, buddy, eg_counter, test & 1)
             self._calc_phase(slot, test & 4)
 
-    @staticmethod
-    def _lookup_exp_table(i: int) -> int:
+    def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
+        # emu2413: to_linear + lookup_exp_table, folded together — this runs once
+        # per operator per chip tick (the hottest site), so min() and the exp
+        # lookup are inlined rather than kept as separate calls.
+        if slot.eg_out > _EG_MAX:
+            return 0
+        s = slot.eg_out + slot.tll + am
+        i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
         t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
         res = t >> ((i & 0x7F00) >> 8)
         if i & 0x8000:
-            # ~res on a 16-bit value, matching emu2413's int16_t arithmetic.
+            # ~res on the int16 intermediate, matching emu2413's int16_t arithmetic
+            # (exp-table max ~2042 keeps res << 1 within int16 range).
             res = ~res
         return res << 1
 
-    def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
-        if slot.eg_out > _EG_MAX:
-            return 0
-        att = min(_EG_MUTE, slot.eg_out + slot.tll + am) << 4
-        return self._lookup_exp_table(h + att)
-
-    def _calc_slot_car(self, ch: int, fm: int) -> int:
-        slot = self._car(ch)
+    def _calc_slot_car(self, slot: _Slot, fm: int) -> int:
         am = self._lfo_am if slot.patch.AM else 0
         slot.output[1] = slot.output[0]
         idx = (slot.pg_out + 2 * (fm >> 1)) & (_PG_WIDTH - 1)
         slot.output[0] = self._to_linear(slot.wave_table[idx], slot, am)
         return slot.output[0]
 
-    def _calc_slot_mod(self, ch: int) -> int:
-        slot = self._mod(ch)
+    def _calc_slot_mod(self, slot: _Slot) -> int:
         if slot.patch.FB > 0:
             fm = (slot.output[1] + slot.output[0]) >> (9 - slot.patch.FB)
         else:
@@ -831,25 +846,31 @@ class Opll:
         self._update_short_noise()
         self._update_slots()
         out = self._ch_out
+        slots = self._slot  # resolve mod/car by index inline (hot path)
 
         for i in range(6):
-            out[i] = -(self._calc_slot_car(i, self._calc_slot_mod(i))) >> 1
+            mod = slots[i << 1]
+            car = slots[(i << 1) | 1]
+            out[i] = -(self._calc_slot_car(car, self._calc_slot_mod(mod))) >> 1
 
+        mod6, car6 = slots[12], slots[13]
         if not self._rhythm_mode:
-            out[6] = -(self._calc_slot_car(6, self._calc_slot_mod(6))) >> 1
+            out[6] = -(self._calc_slot_car(car6, self._calc_slot_mod(mod6))) >> 1
         else:
-            out[9] = self._calc_slot_car(6, self._calc_slot_mod(6))
+            out[9] = self._calc_slot_car(car6, self._calc_slot_mod(mod6))
         self._update_noise(14)
 
         if not self._rhythm_mode:
-            out[7] = -(self._calc_slot_car(7, self._calc_slot_mod(7))) >> 1
+            mod7, car7 = slots[14], slots[15]
+            out[7] = -(self._calc_slot_car(car7, self._calc_slot_mod(mod7))) >> 1
         else:
             out[10] = self._calc_slot_hat()
             out[11] = self._calc_slot_snare()
         self._update_noise(2)
 
         if not self._rhythm_mode:
-            out[8] = -(self._calc_slot_car(8, self._calc_slot_mod(8))) >> 1
+            mod8, car8 = slots[16], slots[17]
+            out[8] = -(self._calc_slot_car(car8, self._calc_slot_mod(mod8))) >> 1
         else:
             out[12] = self._calc_slot_tom()
             out[13] = self._calc_slot_cym()
@@ -954,32 +975,65 @@ class Opll:
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
 
-_PATCH_ATTRS = ("AM", "PM", "EG", "KR", "ML", "KL", "TL", "FB", "WS", "AR", "DR", "SL", "RR")
-_SLOT_SCALAR_ATTRS = (
-    "type", "pg_keep", "pg_phase", "eg_state", "eg_shift", "eg_rate_h", "eg_rate_l",
-    "rks", "tll", "key_flag", "sus_flag", "blk_fnum", "blk", "fnum", "volume",
-    "pg_out", "eg_out", "update_requests",
-)
+# Save-state helpers emit/consume each field explicitly (rather than by
+# getattr/setattr reflection), so the snapshot dict maps 1:1 onto the emu2413
+# OPLL_PATCH / OPLL_SLOT structs and ports directly to a serde/JSON struct.
 
 
-def _patch_fields(p: _Patch) -> list[int]:
-    return [getattr(p, a) for a in _PATCH_ATTRS]
+def _patch_fields(p: _Patch) -> dict[str, int]:
+    return {
+        "AM": p.AM, "PM": p.PM, "EG": p.EG, "KR": p.KR, "ML": p.ML, "KL": p.KL,
+        "TL": p.TL, "FB": p.FB, "WS": p.WS, "AR": p.AR, "DR": p.DR, "SL": p.SL, "RR": p.RR,
+    }
 
 
-def _set_patch_fields(p: _Patch, vals: list[Any]) -> None:
-    for a, v in zip(_PATCH_ATTRS, vals):
-        setattr(p, a, int(v))
+def _set_patch_fields(p: _Patch, d: dict[str, Any]) -> None:
+    p.AM = int(d["AM"])
+    p.PM = int(d["PM"])
+    p.EG = int(d["EG"])
+    p.KR = int(d["KR"])
+    p.ML = int(d["ML"])
+    p.KL = int(d["KL"])
+    p.TL = int(d["TL"])
+    p.FB = int(d["FB"])
+    p.WS = int(d["WS"])
+    p.AR = int(d["AR"])
+    p.DR = int(d["DR"])
+    p.SL = int(d["SL"])
+    p.RR = int(d["RR"])
 
 
-def _slot_fields(s: _Slot) -> dict[str, object]:
-    d: dict[str, object] = {a: getattr(s, a) for a in _SLOT_SCALAR_ATTRS}
-    d["output"] = list(s.output)
-    d["ws"] = 1 if s.wave_table is _HALFSIN_TABLE else 0
-    return d
+def _slot_fields(s: _Slot) -> dict[str, Any]:
+    return {
+        "type": s.type, "pg_keep": s.pg_keep, "pg_phase": s.pg_phase,
+        "eg_state": s.eg_state, "eg_shift": s.eg_shift, "eg_rate_h": s.eg_rate_h,
+        "eg_rate_l": s.eg_rate_l, "rks": s.rks, "tll": s.tll, "key_flag": s.key_flag,
+        "sus_flag": s.sus_flag, "blk_fnum": s.blk_fnum, "blk": s.blk, "fnum": s.fnum,
+        "volume": s.volume, "pg_out": s.pg_out, "eg_out": s.eg_out,
+        "update_requests": s.update_requests,
+        "output": list(s.output),
+        "ws": 1 if s.wave_table is _HALFSIN_TABLE else 0,
+    }
 
 
-def _restore_slot_fields(s: _Slot, sf: dict[str, Any]) -> None:
-    for a in _SLOT_SCALAR_ATTRS:
-        setattr(s, a, int(sf[a]))
-    s.output = [int(x) for x in sf["output"]]
-    s.wave_table = _WAVE_TABLE_MAP[int(sf["ws"])]
+def _restore_slot_fields(s: _Slot, d: dict[str, Any]) -> None:
+    s.type = int(d["type"])
+    s.pg_keep = int(d["pg_keep"])
+    s.pg_phase = int(d["pg_phase"])
+    s.eg_state = int(d["eg_state"])
+    s.eg_shift = int(d["eg_shift"])
+    s.eg_rate_h = int(d["eg_rate_h"])
+    s.eg_rate_l = int(d["eg_rate_l"])
+    s.rks = int(d["rks"])
+    s.tll = int(d["tll"])
+    s.key_flag = int(d["key_flag"])
+    s.sus_flag = int(d["sus_flag"])
+    s.blk_fnum = int(d["blk_fnum"])
+    s.blk = int(d["blk"])
+    s.fnum = int(d["fnum"])
+    s.volume = int(d["volume"])
+    s.pg_out = int(d["pg_out"])
+    s.eg_out = int(d["eg_out"])
+    s.update_requests = int(d["update_requests"])
+    s.output = [int(x) for x in d["output"]]
+    s.wave_table = _WAVE_TABLE_MAP[int(d["ws"])]

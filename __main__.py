@@ -9,7 +9,69 @@ _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
 
-def main() -> None:
+def _parse_breakpoints(spec: str | None) -> list[int]:
+    """Parse a comma-separated hex breakpoint list into up to 4 addresses."""
+    addrs: list[int] = []
+    if spec is None:
+        return addrs
+    for tok in spec.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            addrs.append(int(tok, 16) & 0xFFFF)
+        except ValueError:
+            print(f"error: invalid breakpoint address: {tok!r} (expected hex)",
+                  file=sys.stderr)
+            sys.exit(1)
+    if len(addrs) > 4:
+        print("warning: more than 4 breakpoints given; only first 4 will be used",
+              file=sys.stderr)
+        addrs = addrs[:4]
+    return addrs
+
+
+def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
+    """Parse a comma-separated `addr[,mode]` watchpoint list (mode in r/w/rw,
+    default rw) into up to 4 (addr, mode) entries."""
+    entries: list[tuple[int, str]] = []
+    if spec is None:
+        return entries
+    pending_addr: int | None = None
+    for tok in spec.split(","):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        if tok in ("r", "w", "rw"):
+            if pending_addr is not None:
+                entries.append((pending_addr, tok))
+                pending_addr = None
+            else:
+                print(f"error: mode {tok!r} without preceding address", file=sys.stderr)
+                sys.exit(1)
+        else:
+            if pending_addr is not None:
+                entries.append((pending_addr, "rw"))
+            try:
+                pending_addr = int(tok, 16) & 0xFFFF
+            except ValueError:
+                print(
+                    f"error: invalid watchpoint token: {tok!r} "
+                    f"(hex address or r/w/rw expected)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+    if pending_addr is not None:
+        entries.append((pending_addr, "rw"))
+    if len(entries) > 4:
+        print("warning: more than 4 watchpoints given; only first 4 will be used",
+              file=sys.stderr)
+        entries = entries[:4]
+    return entries
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser (see `python . --help` for the options)."""
     parser = argparse.ArgumentParser(description="py-msx-emulator")
     parser.add_argument("cartridge", nargs="?", default=None,
                         help="Cartridge ROM path")
@@ -75,7 +137,11 @@ def main() -> None:
                              "(interactive SDL run mode only; off by default)")
     parser.add_argument("--rpc-socket", metavar="PATH", dest="rpc_socket", default=None,
                         help="Unix socket path for --rpc (default: /tmp/py_msx_emu.sock)")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
@@ -149,57 +215,8 @@ def main() -> None:
     else:
         display_mapper = "auto"
 
-    # --- Parse --break-point ---
-    breakpoint_addrs: list[int] = []
-    if args.break_point is not None:
-        for tok in args.break_point.split(","):
-            tok = tok.strip()
-            if not tok:
-                continue
-            try:
-                breakpoint_addrs.append(int(tok, 16) & 0xFFFF)
-            except ValueError:
-                print(f"error: invalid breakpoint address: {tok!r} (expected hex)",
-                      file=sys.stderr)
-                sys.exit(1)
-        if len(breakpoint_addrs) > 4:
-            print("warning: more than 4 breakpoints given; only first 4 will be used",
-                  file=sys.stderr)
-            breakpoint_addrs = breakpoint_addrs[:4]
-
-    # --- Parse --watch-point ---
-    watchpoint_entries: list[tuple[int, str]] = []
-    if args.watch_point is not None:
-        _pending_addr: int | None = None
-        for tok in args.watch_point.split(","):
-            tok = tok.strip().lower()
-            if not tok:
-                continue
-            if tok in ("r", "w", "rw"):
-                if _pending_addr is not None:
-                    watchpoint_entries.append((_pending_addr, tok))
-                    _pending_addr = None
-                else:
-                    print(f"error: mode {tok!r} without preceding address", file=sys.stderr)
-                    sys.exit(1)
-            else:
-                if _pending_addr is not None:
-                    watchpoint_entries.append((_pending_addr, "rw"))
-                try:
-                    _pending_addr = int(tok, 16) & 0xFFFF
-                except ValueError:
-                    print(
-                        f"error: invalid watchpoint token: {tok!r} "
-                        f"(hex address or r/w/rw expected)",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-        if _pending_addr is not None:
-            watchpoint_entries.append((_pending_addr, "rw"))
-        if len(watchpoint_entries) > 4:
-            print("warning: more than 4 watchpoints given; only first 4 will be used",
-                  file=sys.stderr)
-            watchpoint_entries = watchpoint_entries[:4]
+    breakpoint_addrs = _parse_breakpoints(args.break_point)
+    watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     # --- Startup summary ---
     print(f"machine : {spec.name}")

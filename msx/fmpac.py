@@ -141,10 +141,8 @@ class FmPac:
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)
 
-    def load_sram(self, data: bytes) -> None:
-        """Initialise SRAM from a loaded save file. Ignores wrong-size data."""
-        if len(data) == SRAM_SIZE:
-            self.sram[:] = data
+    # Loading a saved SRAM image is done by passing it as the `sram=`
+    # constructor argument; __post_init__ blanks a wrong-size image.
 
     # ------------------------------------------------------------- save-state
 
