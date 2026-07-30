@@ -1,8 +1,17 @@
 """YM2413 (OPLL) FM sound chip — a faithful Python port of emu2413 v1.5.9.
 
-Ported from Mitsutaka Okazaki's emu2413
-(https://github.com/digital-sound-antiques/emu2413, MIT-licensed) — the
-reference OPLL implementation. This reproduces the chip's log-domain
+Source / acknowledgement
+------------------------
+This module is a Python port of emu2413, the reference OPLL emulator by
+Mitsutaka Okazaki:
+
+    emu2413 v1.5.9 — Copyright (c) Mitsutaka Okazaki, MIT-licensed.
+    https://github.com/digital-sound-antiques/emu2413
+
+The log-domain synthesis, the envelope-rate and instrument-ROM tables, the
+AM/PM LFO, and the rhythm-mode noise taps all follow that implementation.
+Grateful thanks to the author and contributors for documenting the chip so
+thoroughly. This port reproduces the chip's log-domain
 synthesis: a log-sin phase-generator table, an exp output table, the
 hardware envelope-rate tables (with key-scale), the AM/PM LFO, the
 instrument ROM, and rhythm mode with the real short-noise / LFSR taps. The

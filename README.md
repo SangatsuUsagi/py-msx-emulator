@@ -783,6 +783,9 @@ considered on a best-effort basis.
   openMSX softwaredb.xml (https://github.com/openMSX/openMSX), but all entries
   are independently compiled factual data. openMSX is released under the GNU GPL
   v2.
+- **[emu2413](https://github.com/digital-sound-antiques/emu2413)** by Mitsutaka
+  Okazaki — the YM2413 (OPLL) chip in `msx/opll.py` is a Python port of emu2413
+  v1.5.9. emu2413 is released under the MIT license.
 - **[C-BIOS](https://cbios.sourceforge.net/)** — recommended free MSX BIOS
   replacement used for testing.
 
@@ -796,6 +799,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
 - **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
 - **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.
 - **v2.3.4** (2026-07-19) — Add per-line banding for the display-adjust register.

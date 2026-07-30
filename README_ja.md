@@ -641,6 +641,7 @@ py-msx-emulator/
 ## 謝辞
 
 - **[openMSX](https://openmsx.org/)** — ROM 識別データは openMSX softwaredb.xml（https://github.com/openMSX/openMSX）を参照していますが、すべてのエントリは独自に収集した事実情報です。openMSX は GNU GPL v2 でリリースされています。
+- **[emu2413](https://github.com/digital-sound-antiques/emu2413)**（Mitsutaka Okazaki 氏）— `msx/opll.py` の YM2413（OPLL）チップは emu2413 v1.5.9 の Python 移植です。emu2413 は MIT ライセンスでリリースされています。
 - **[C-BIOS](https://cbios.sourceforge.net/)** — テストに使用している無償の MSX BIOS 代替品。
 
 ---
@@ -653,6 +654,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.0** (2026-07-30) — FM-PAC（MSX-MUSIC）カートリッジと YM2413（OPLL）FM 音源チップを追加
 - **v2.3.6** (2026-07-23) — 描画出力を212ラインの固定高さに統一
 - **v2.3.5** (2026-07-20) — 上部スプリット画面由来のスプライトゴースト表示を修正
 - **v2.3.4** (2026-07-19) — 表示調整レジスタの行単位バンディングを追加
