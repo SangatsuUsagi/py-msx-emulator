@@ -81,18 +81,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Enable diagnostic logging")
     parser.add_argument("--log", metavar="FILE",
                         help="Write diagnostic log to FILE (requires --debug)")
-    parser.add_argument("--speed", type=float, default=1.0,
+    parser.add_argument("--speed", type=float, default=None,
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--mapper",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
                                  "Konami", "KonamiSCC", "Majutsushi",
                                  "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
                                  "R-Type"],
-                        default="auto",
+                        default=None,
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
-    parser.add_argument("--fmpac", action="store_true",
+    parser.add_argument("--fmpac", action="store_const", const=True, default=None,
                         help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
                              "(conflicts with --slot2)")
     parser.add_argument("--mapper2",
@@ -132,7 +132,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         dest="watch_point",
                         help="Comma-separated watchpoint addresses, max 4 (MSX2 only; "
                              "breaks on read or write)")
-    parser.add_argument("--rpc", action="store_true",
+    parser.add_argument("--rpc", action="store_const", const=True, default=None,
                         help="Enable the embedded Unix-socket JSON-RPC control server "
                              "(interactive SDL run mode only; off by default)")
     parser.add_argument("--rpc-socket", metavar="PATH", dest="rpc_socket", default=None,
@@ -143,10 +143,34 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
+    # Load py_emulator.yaml and resolve effective options with the precedence
+    # built-in default < config file < CLI argument. A CLI flag left unset is
+    # None (see the sentinel defaults above), so it never masks a config value.
+    from msx.app_config import (
+        DEFAULT_MAPPER,
+        DEFAULT_SPEED,
+        AppConfigError,
+        load_app_config,
+    )
+    try:
+        app_cfg = load_app_config(_PROJECT_ROOT)
+    except AppConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    speed_eff = args.speed if args.speed is not None else (
+        app_cfg.speed if app_cfg.speed is not None else DEFAULT_SPEED)
+    mapper_eff = args.mapper if args.mapper is not None else (
+        app_cfg.mapper if app_cfg.mapper is not None else DEFAULT_MAPPER)
+    fmpac_eff = args.fmpac if args.fmpac is not None else (
+        app_cfg.fmpac if app_cfg.fmpac is not None else False)
+    rpc_enabled_eff = args.rpc if args.rpc is not None else (
+        app_cfg.rpc_enabled if app_cfg.rpc_enabled is not None else False)
+
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
         sys.exit(1)
-    if args.fmpac and args.slot2:
+    if fmpac_eff and args.slot2:
         print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
               file=sys.stderr)
         sys.exit(1)
@@ -175,10 +199,13 @@ def main() -> None:
     cartridge2: bytes | None = slot2_path.read_bytes() if slot2_path else None
 
     # --- Resolve machine ID ---
-    # Priority: --machine > ROM DB (MSX1 → cbios_msx1_jp) > default cbios_msx2_jp
+    # Priority: --machine > py_emulator.yaml machine > ROM DB (MSX1 →
+    # cbios_msx1_jp) > default cbios_msx2_jp
     db_system = lookup_system(cartridge) if cartridge else None
     if args.machine is not None:
         machine_id = args.machine
+    elif app_cfg.machine is not None:
+        machine_id = app_cfg.machine
     elif db_system == "MSX":
         machine_id = "cbios_msx1_jp"
     else:
@@ -195,7 +222,7 @@ def main() -> None:
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        fmpac_overlay = load_fmpac_overlay(_CONFIG_DIR, _PROJECT_ROOT) if args.fmpac else None
+        fmpac_overlay = load_fmpac_overlay(_CONFIG_DIR, _PROJECT_ROOT) if fmpac_eff else None
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -208,8 +235,8 @@ def main() -> None:
         fdd2_path = None
 
     # --- Resolve display mapper for summary ---
-    if args.mapper != "auto":
-        display_mapper = args.mapper
+    if mapper_eff != "auto":
+        display_mapper = mapper_eff
     elif cartridge:
         display_mapper = lookup(cartridge) or "auto"
     else:
@@ -261,7 +288,7 @@ def main() -> None:
             machine = build_machine(
                 spec,
                 cartridge=cartridge,
-                mapper=args.mapper,
+                mapper=mapper_eff,
                 cartridge2=cartridge2,
                 mapper2=args.mapper2,
                 logger=logger,
@@ -320,16 +347,17 @@ def main() -> None:
             print(f"elapsed : {elapsed:.2f}s")
             print(f"avg fps : {frame_count / elapsed:.2f}")
         else:
-            if args.rpc:
+            if rpc_enabled_eff:
                 from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
-                sock_path = args.rpc_socket or DEFAULT_SOCKET_PATH
+                sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
                 rpc_server = DebugServer(machine, sock_path=sock_path)
                 machine.set_pause_hook(rpc_server.on_pause)
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
-            run(machine, speed=args.speed, game_title=game_title, resume=args.resume,
-                frame_skip=args.frame_skip, rpc_server=rpc_server)
+            run(machine, speed=speed_eff, game_title=game_title, resume=args.resume,
+                frame_skip=args.frame_skip, rpc_server=rpc_server,
+                gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period())
     finally:
         if rpc_server is not None:
             rpc_server.stop()
