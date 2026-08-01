@@ -405,3 +405,36 @@ def test_releasing_one_turbo_does_not_affect_other() -> None:
     assert (0, 4) in mgr._turbo_held  # Y still active
     mgr.tick()  # Y turbo still fires
     assert inp.joy1 & (1 << 4) == 0
+
+
+# ---------------------------------------------------------------------------
+# Configurable turbo period and button map (py_emulator.yaml)
+# ---------------------------------------------------------------------------
+
+def test_tick_honours_configured_turbo_period() -> None:
+    inp = InputState()
+    sdl = make_sdl(is_gc=True)
+    mgr = JoystickManager(_input=inp, _sdl=sdl, _turbo_period=2)
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+
+    mgr.tick()  # frame 0: ON
+    assert inp.joy1 & (1 << 5) == 0
+    mgr.tick()  # frame 1: OFF
+    assert inp.joy1 & (1 << 5) != 0
+    mgr.tick()  # frame 2: ON again (period 2)
+    assert inp.joy1 & (1 << 5) == 0
+
+
+def test_configured_button_map_rebinds_trigger() -> None:
+    inp = InputState()
+    sdl = make_sdl(is_gc=True)
+    # SDL button b (index 1) drives Trigger A (bit 4) instead of the default A.
+    mgr = JoystickManager(
+        _input=inp, _sdl=sdl,
+        _gc_button_bit={1: 4, 0: 5},
+        _gc_turbo_button_bit={3: 4, 2: 5},
+    )
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    assert inp.joy1 & (1 << 4) == 0  # Trigger A pressed via button b

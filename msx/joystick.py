@@ -13,8 +13,9 @@ TURBO_ON_COUNT: int = 1  # frames ON per cycle (ON-OFF-OFF pattern)
 # Both ports maintain their own 6-bit state independently in InputState.
 _PORT_BIT_COUNT = 6
 
-# GameController button → bit index within the port's 6-bit joystick state
-_GC_BUTTON_BIT = {
+# Default GameController button → bit index within the port's 6-bit joystick
+# state. Overridable per instance via py_emulator.yaml (see msx.app_config).
+_DEFAULT_GC_BUTTON_BIT = {
     0: 4,   # SDL_CONTROLLER_BUTTON_A  → Trigger A
     1: 5,   # SDL_CONTROLLER_BUTTON_B  → Trigger B
     11: 0,  # SDL_CONTROLLER_BUTTON_DPAD_UP
@@ -23,8 +24,9 @@ _GC_BUTTON_BIT = {
     14: 3,  # SDL_CONTROLLER_BUTTON_DPAD_RIGHT
 }
 
-# GameController button → bit index (turbo fire; same bits as A/B but driven by tick())
-_GC_TURBO_BUTTON_BIT = {
+# Default GameController button → bit index (turbo fire; same bits as A/B but
+# driven by tick()). Overridable per instance via py_emulator.yaml.
+_DEFAULT_GC_TURBO_BUTTON_BIT = {
     2: 5,   # SDL_CONTROLLER_BUTTON_X → Trigger B (turbo)
     3: 4,   # SDL_CONTROLLER_BUTTON_Y → Trigger A (turbo)
 }
@@ -42,6 +44,16 @@ class JoystickManager:
     _input: InputState
     _sdl: Any = field(default=None, repr=False)
 
+    # GameController button maps and turbo period; default to the built-in
+    # tables/rate but may be replaced from py_emulator.yaml (see msx.app_config).
+    _gc_button_bit: dict[int, int] = field(
+        default_factory=lambda: dict(_DEFAULT_GC_BUTTON_BIT), repr=False
+    )
+    _gc_turbo_button_bit: dict[int, int] = field(
+        default_factory=lambda: dict(_DEFAULT_GC_TURBO_BUTTON_BIT), repr=False
+    )
+    _turbo_period: int = TURBO_PERIOD
+
     _slots: list[Any] = field(default_factory=lambda: [None, None], init=False, repr=False)
     _is_gc: list[bool] = field(default_factory=lambda: [False, False], init=False, repr=False)
     _instance_ids: list[int] = field(default_factory=lambda: [-1, -1], init=False, repr=False)
@@ -52,7 +64,7 @@ class JoystickManager:
         """Advance the turbo fire state machine by one emulated frame."""
         if not self._turbo_held:
             return
-        on = (self._turbo_counter % TURBO_PERIOD) < TURBO_ON_COUNT
+        on = (self._turbo_counter % self._turbo_period) < TURBO_ON_COUNT
         for port, bit in self._turbo_held:
             if on:
                 self._input.joystick_button_down(port, bit)
@@ -150,14 +162,14 @@ class JoystickManager:
         if port is None:
             return
         button = int(event.cbutton.button)
-        if button in _GC_BUTTON_BIT:
-            bit = _GC_BUTTON_BIT[button]
+        if button in self._gc_button_bit:
+            bit = self._gc_button_bit[button]
             if event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
                 self._input.joystick_button_down(port, bit)
             else:
                 self._input.joystick_button_up(port, bit)
-        elif button in _GC_TURBO_BUTTON_BIT:
-            bit = _GC_TURBO_BUTTON_BIT[button]
+        elif button in self._gc_turbo_button_bit:
+            bit = self._gc_turbo_button_bit[button]
             if event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
                 if not self._turbo_held:
                     self._turbo_counter = 0

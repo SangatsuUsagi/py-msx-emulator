@@ -265,6 +265,8 @@ def run(
     resume: str | None = None,
     frame_skip: str = "auto",
     rpc_server: "DebugServer | None" = None,
+    gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
+    turbo_period: int | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -277,6 +279,9 @@ def run(
             None starts fresh.
         frame_skip: "auto" adapts the skip counter to frame overruns; any other
             value disables frame skipping.
+        gamepad_map: optional (direct, turbo) GameController button→bit maps from
+            py_emulator.yaml; None uses the built-in defaults.
+        turbo_period: optional turbo-fire per-frame period; None uses the default.
 
     Runtime hotkeys: ESC quit, F8 save state, F9 load state, F10 screenshot,
     F11 toggle fullscreen, Ctrl-C break into the debugger (if attached).
@@ -301,7 +306,12 @@ def run(
     # across frames (it starts from the clean state __init__ already zeroes).
     audio_filter = BiquadLowPass()
 
-    joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2)
+    joy_kwargs: dict[str, Any] = {}
+    if gamepad_map is not None:
+        joy_kwargs["_gc_button_bit"], joy_kwargs["_gc_turbo_button_bit"] = gamepad_map
+    if turbo_period is not None:
+        joy_kwargs["_turbo_period"] = turbo_period
+    joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2, **joy_kwargs)
 
     if resume is not None:
         try:
