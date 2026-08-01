@@ -4,9 +4,20 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any, TypeVar
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
+
+# Hardware debug register count (MSX2): caps the breakpoint/watchpoint lists.
+_MAX_BREAKPOINTS = 4
+
+_T = TypeVar("_T")
+
+
+def _first_set(*candidates: _T | None) -> _T:
+    """Return the first non-None value (CLI < config file < built-in default)."""
+    return next(v for v in candidates if v is not None)
 
 
 def _parse_breakpoints(spec: str | None) -> list[int]:
@@ -24,10 +35,10 @@ def _parse_breakpoints(spec: str | None) -> list[int]:
             print(f"error: invalid breakpoint address: {tok!r} (expected hex)",
                   file=sys.stderr)
             sys.exit(1)
-    if len(addrs) > 4:
-        print("warning: more than 4 breakpoints given; only first 4 will be used",
-              file=sys.stderr)
-        addrs = addrs[:4]
+    if len(addrs) > _MAX_BREAKPOINTS:
+        print(f"warning: more than {_MAX_BREAKPOINTS} breakpoints given; "
+              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
+        addrs = addrs[:_MAX_BREAKPOINTS]
     return addrs
 
 
@@ -63,10 +74,10 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
                 sys.exit(1)
     if pending_addr is not None:
         entries.append((pending_addr, "rw"))
-    if len(entries) > 4:
-        print("warning: more than 4 watchpoints given; only first 4 will be used",
-              file=sys.stderr)
-        entries = entries[:4]
+    if len(entries) > _MAX_BREAKPOINTS:
+        print(f"warning: more than {_MAX_BREAKPOINTS} watchpoints given; "
+              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
+        entries = entries[:_MAX_BREAKPOINTS]
     return entries
 
 
@@ -121,10 +132,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--count-frame", type=int, default=None, metavar="N",
                         dest="count_frame",
                         help="Run exactly N frames headlessly and exit (no SDL window)")
-    parser.add_argument("--benchmark", nargs="?", type=float, const=10.0, default=None,
-                        metavar="SECONDS",
-                        help="Run headlessly, unthrottled, for SECONDS (default: 10) and "
-                             "report average FPS (no SDL window)")
+    parser.add_argument("--benchmark", nargs="?", type=int, const=10000, default=None,
+                        metavar="FRAMES",
+                        help="Run headlessly, unthrottled, for FRAMES frames (default: 10000) "
+                             "and report average FPS (no SDL window)")
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
                         help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
@@ -138,6 +149,128 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rpc-socket", metavar="PATH", dest="rpc_socket", default=None,
                         help="Unix socket path for --rpc (default: /tmp/py_msx_emu.sock)")
     return parser
+
+
+def _resolve_paths(
+    args: argparse.Namespace,
+) -> tuple[Path | None, Path | None, Path | None, Path | None, bytes | None, bytes | None]:
+    """Validate the cartridge/slot-2/floppy paths and read the ROM bytes.
+
+    Exits the process with an error if any given path does not exist. Returns
+    (cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2).
+    """
+    cart_path = Path(args.cartridge) if args.cartridge else None
+    slot2_path = Path(args.slot2) if args.slot2 else None
+    if cart_path is not None and not cart_path.exists():
+        print(f"error: cartridge not found: {cart_path}", file=sys.stderr)
+        sys.exit(1)
+    if slot2_path is not None and not slot2_path.exists():
+        print(f"error: slot 2 ROM not found: {slot2_path}", file=sys.stderr)
+        sys.exit(1)
+
+    fdd1_path = Path(args.fdd1) if args.fdd1 else None
+    fdd2_path = Path(args.fdd2) if args.fdd2 else None
+    for label, fdd_path in (("--fdd1", fdd1_path), ("--fdd2", fdd2_path)):
+        if fdd_path is not None and not fdd_path.exists():
+            print(f"error: disk image not found ({label}): {fdd_path}", file=sys.stderr)
+            sys.exit(1)
+
+    cartridge = cart_path.read_bytes() if cart_path else None
+    cartridge2 = slot2_path.read_bytes() if slot2_path else None
+    return cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2
+
+
+def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str | None) -> str:
+    """Pick the machine ID: --machine > config file > ROM DB (MSX1) > MSX2 default."""
+    if args.machine is not None:
+        return str(args.machine)
+    if app_cfg.machine is not None:
+        return str(app_cfg.machine)
+    if db_system == "MSX":
+        return "cbios_msx1_jp"
+    return "cbios_msx2_jp"
+
+
+def _print_startup_summary(
+    spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    fmpac_overlay: Any, args: argparse.Namespace,
+) -> None:
+    print(f"machine : {spec.name}")
+    print(f"rom_base: {spec.rom_base_dir}")
+    print(f"bios    : {spec.main_rom_entry.file}")
+    if spec.generation == "msx2" and spec.sub_rom_entry is not None:
+        print(f"ext     : {spec.sub_rom_entry.file}")
+    if fdd1_path is not None:
+        print(f"fdd1    : {fdd1_path}")
+    if fdd2_path is not None:
+        print(f"fdd2    : {fdd2_path}")
+    if fmpac_overlay is not None:
+        print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
+    print(f"mapper  : {display_mapper}")
+    if args.vdp_trace:
+        print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
+    if args.mapper_trace:
+        print(f"map-trace: {'stdout' if args.mapper_trace_out is None else args.mapper_trace_out}")
+    if args.count_frame is not None:
+        print(f"frames  : {args.count_frame} (headless)")
+    if args.benchmark is not None:
+        print(f"benchmark: {args.benchmark} frames (headless)")
+
+
+def _run_headless_frames(machine: Any, count_frame: int, resume: str | None) -> None:
+    """Run exactly `count_frame` frames headlessly (no SDL window)."""
+    if resume is not None:
+        from msx.state import load_state
+        load_state(machine, path=Path(resume) if resume else None)
+    for _ in range(count_frame):
+        machine.run_frame()
+
+
+def _run_benchmark(machine: Any, frames: int, resume: str | None) -> None:
+    """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
+    import time
+
+    from msx.state import load_state
+    if resume is not None:
+        load_state(machine, path=Path(resume) if resume else None)
+
+    start = time.perf_counter()
+    for _ in range(frames):
+        machine.run_frame()
+    elapsed = time.perf_counter() - start
+
+    print(f"frames  : {frames}")
+    print(f"elapsed : {elapsed:.2f}s")
+    print(f"avg fps : {frames / elapsed:.2f}")
+
+
+def _cleanup(
+    machine: Any, rpc_server: Any, logger: Any, trace_file: Any, mapper_trace_file: Any,
+) -> None:
+    """Tear down open resources and flush SRAM / disk writes on exit."""
+    if rpc_server is not None:
+        rpc_server.stop()
+    if logger is not None:
+        logger.close()
+    if trace_file is not None:
+        trace_file.close()
+    if mapper_trace_file is not None:
+        mapper_trace_file.close()
+    if machine is not None and machine.sram_save_path is not None:
+        mapper = machine.memory._mapper
+        if hasattr(mapper, "save_sram"):
+            machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+            mapper.save_sram(machine.sram_save_path)
+    if (
+        machine is not None
+        and machine.fmpac is not None
+        and machine.fmpac_sram_save_path is not None
+    ):
+        machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+        machine.fmpac.save_sram(machine.fmpac_sram_save_path)
+    # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
+    if machine is not None and machine.fdc is not None:
+        machine.fdc.flush()
 
 
 def main() -> None:
@@ -158,14 +291,10 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    speed_eff = args.speed if args.speed is not None else (
-        app_cfg.speed if app_cfg.speed is not None else DEFAULT_SPEED)
-    mapper_eff = args.mapper if args.mapper is not None else (
-        app_cfg.mapper if app_cfg.mapper is not None else DEFAULT_MAPPER)
-    fmpac_eff = args.fmpac if args.fmpac is not None else (
-        app_cfg.fmpac if app_cfg.fmpac is not None else False)
-    rpc_enabled_eff = args.rpc if args.rpc is not None else (
-        app_cfg.rpc_enabled if app_cfg.rpc_enabled is not None else False)
+    speed_eff = _first_set(args.speed, app_cfg.speed, DEFAULT_SPEED)
+    mapper_eff = _first_set(args.mapper, app_cfg.mapper, DEFAULT_MAPPER)
+    fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, False)
+    rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, False)
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
@@ -177,39 +306,11 @@ def main() -> None:
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
-    # --- Load cartridge bytes early (needed for DB lookups) ---
-    cart_path = Path(args.cartridge) if args.cartridge else None
-    slot2_path = Path(args.slot2) if args.slot2 else None
+    (cart_path, slot2_path, fdd1_path, fdd2_path,
+     cartridge, cartridge2) = _resolve_paths(args)
 
-    if cart_path is not None and not cart_path.exists():
-        print(f"error: cartridge not found: {cart_path}", file=sys.stderr)
-        sys.exit(1)
-    if slot2_path is not None and not slot2_path.exists():
-        print(f"error: slot 2 ROM not found: {slot2_path}", file=sys.stderr)
-        sys.exit(1)
-
-    fdd1_path = Path(args.fdd1) if args.fdd1 else None
-    fdd2_path = Path(args.fdd2) if args.fdd2 else None
-    for label, fdd_path in (("--fdd1", fdd1_path), ("--fdd2", fdd2_path)):
-        if fdd_path is not None and not fdd_path.exists():
-            print(f"error: disk image not found ({label}): {fdd_path}", file=sys.stderr)
-            sys.exit(1)
-
-    cartridge: bytes | None = cart_path.read_bytes() if cart_path else None
-    cartridge2: bytes | None = slot2_path.read_bytes() if slot2_path else None
-
-    # --- Resolve machine ID ---
-    # Priority: --machine > py_emulator.yaml machine > ROM DB (MSX1 →
-    # cbios_msx1_jp) > default cbios_msx2_jp
     db_system = lookup_system(cartridge) if cartridge else None
-    if args.machine is not None:
-        machine_id = args.machine
-    elif app_cfg.machine is not None:
-        machine_id = app_cfg.machine
-    elif db_system == "MSX":
-        machine_id = "cbios_msx1_jp"
-    else:
-        machine_id = "cbios_msx2_jp"
+    machine_id = _resolve_machine_id(args, app_cfg, db_system)
 
     # --- Load machine spec from YAML ---
     from msx.machine_loader import (
@@ -245,27 +346,7 @@ def main() -> None:
     breakpoint_addrs = _parse_breakpoints(args.break_point)
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
-    # --- Startup summary ---
-    print(f"machine : {spec.name}")
-    print(f"rom_base: {spec.rom_base_dir}")
-    print(f"bios    : {spec.main_rom_entry.file}")
-    if spec.generation == "msx2" and spec.sub_rom_entry is not None:
-        print(f"ext     : {spec.sub_rom_entry.file}")
-    if fdd1_path is not None:
-        print(f"fdd1    : {fdd1_path}")
-    if fdd2_path is not None:
-        print(f"fdd2    : {fdd2_path}")
-    if fmpac_overlay is not None:
-        print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
-    print(f"mapper  : {display_mapper}")
-    if args.vdp_trace:
-        print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
-    if args.mapper_trace:
-        print(f"map-trace: {'stdout' if args.mapper_trace_out is None else args.mapper_trace_out}")
-    if args.count_frame is not None:
-        print(f"frames  : {args.count_frame} (headless)")
-    if args.benchmark is not None:
-        print(f"benchmark: {args.benchmark}s (headless)")
+    _print_startup_summary(spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, args)
 
     from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -322,30 +403,9 @@ def main() -> None:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
         if args.count_frame is not None:
-            if args.resume is not None:
-                from msx.state import load_state
-                load_state(machine, path=Path(args.resume) if args.resume else None)
-
-            for _ in range(args.count_frame):
-                machine.run_frame()
+            _run_headless_frames(machine, args.count_frame, args.resume)
         elif args.benchmark is not None:
-            import time
-
-            from msx.state import load_state
-            if args.resume is not None:
-                load_state(machine, path=Path(args.resume) if args.resume else None)
-
-            frame_count = 0
-            start = time.perf_counter()
-            deadline = start + args.benchmark
-            while time.perf_counter() < deadline:
-                machine.run_frame()
-                frame_count += 1
-            elapsed = time.perf_counter() - start
-
-            print(f"frames  : {frame_count}")
-            print(f"elapsed : {elapsed:.2f}s")
-            print(f"avg fps : {frame_count / elapsed:.2f}")
+            _run_benchmark(machine, args.benchmark, args.resume)
         else:
             if rpc_enabled_eff:
                 from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
@@ -359,29 +419,7 @@ def main() -> None:
                 frame_skip=args.frame_skip, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period())
     finally:
-        if rpc_server is not None:
-            rpc_server.stop()
-        if logger is not None:
-            logger.close()
-        if _trace_file is not None:
-            _trace_file.close()
-        if _mapper_trace_file is not None:
-            _mapper_trace_file.close()
-        if machine is not None and machine.sram_save_path is not None:
-            mapper = machine.memory._mapper
-            if hasattr(mapper, "save_sram"):
-                machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-                mapper.save_sram(machine.sram_save_path)
-        if (
-            machine is not None
-            and machine.fmpac is not None
-            and machine.fmpac_sram_save_path is not None
-        ):
-            machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-            machine.fmpac.save_sram(machine.fmpac_sram_save_path)
-        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
-        if machine is not None and machine.fdc is not None:
-            machine.fdc.flush()
+        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ def test_cli_speed_overrides_config() -> None:
 
 
 def test_builtin_speed_when_neither_set() -> None:
-    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"])
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
     assert run_mock.call_args.kwargs["speed"] == 1.0
 
 
@@ -103,7 +103,8 @@ def test_cli_mapper_overrides_config() -> None:
 
 
 def test_builtin_mapper_auto_when_neither_set() -> None:
-    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"])
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["mapper"] == "auto"
 
 
@@ -124,7 +125,7 @@ def test_cli_machine_overrides_config() -> None:
 
 
 def test_default_machine_when_neither_set() -> None:
-    _c, _o, _e, _run, _build, _fmpac, spec_spy = _run_main([])
+    _c, _o, _e, _run, _build, _fmpac, spec_spy = _run_main([], app_cfg=AppConfig())
     assert spec_spy.call_args.args[0] == "cbios_msx2_jp"
 
 
@@ -139,7 +140,8 @@ def test_config_fmpac_enables_overlay() -> None:
 
 
 def test_no_fmpac_overlay_by_default() -> None:
-    _c, _o, _e, _run, _build, fmpac_mock, _spy = _run_main(["--machine", "cbios_msx1"])
+    _c, _o, _e, _run, _build, fmpac_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
     fmpac_mock.assert_not_called()
 
 

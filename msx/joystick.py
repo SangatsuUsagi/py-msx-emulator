@@ -12,6 +12,12 @@ TURBO_ON_COUNT: int = 1  # frames ON per cycle (ON-OFF-OFF pattern)
 # Each port uses bits 0-5: up(0) down(1) left(2) right(3) trigA(4) trigB(5).
 # Both ports maintain their own 6-bit state independently in InputState.
 _PORT_BIT_COUNT = 6
+_BIT_UP = 0
+_BIT_DOWN = 1
+_BIT_LEFT = 2
+_BIT_RIGHT = 3
+_BIT_TRIGGER_A = 4
+_BIT_TRIGGER_B = 5
 
 # Default GameController button → bit index within the port's 6-bit joystick
 # state. Overridable per instance via py_emulator.yaml (see msx.app_config).
@@ -31,12 +37,18 @@ _DEFAULT_GC_TURBO_BUTTON_BIT = {
     3: 4,   # SDL_CONTROLLER_BUTTON_Y → Trigger A (turbo)
 }
 
-# GameController axis → (negative_bit_offset, positive_bit_offset)
+# Analog-stick axis → (negative_bit_offset, positive_bit_offset). Shared by the
+# GameController and raw-joystick axis handlers.
 # macOS SDL2 reports left-stick Y as positive=up, negative=down (inverted from SDL2 spec)
-_GC_AXIS_BIT = {
+_AXIS_BIT = {
     0: (2, 3),  # left-stick X: neg=left, pos=right
     1: (1, 0),  # left-stick Y: neg=down, pos=up
 }
+
+# Raw-joystick (non-GameController) button index → MSX bit. Buttons 0/1 are
+# direct triggers; 2/3 drive the same triggers through the turbo state machine.
+_JOY_BUTTON_BIT = {0: _BIT_TRIGGER_A, 1: _BIT_TRIGGER_B}
+_JOY_TURBO_BUTTON_BIT = {2: _BIT_TRIGGER_A, 3: _BIT_TRIGGER_B}
 
 
 @dataclass
@@ -178,15 +190,11 @@ class JoystickManager:
                 self._turbo_held.discard((port, bit))
                 self._input.joystick_button_up(port, bit)
 
-    def _handle_gc_axis(self, event: Any) -> None:
-        port = self._port_for_instance(event.caxis.which)
-        if port is None:
+    def _apply_axis(self, port: int, axis: int, value: int) -> None:
+        """Apply one analog-stick axis reading to the port's direction bits."""
+        if axis not in _AXIS_BIT:
             return
-        axis = int(event.caxis.axis)
-        if axis not in _GC_AXIS_BIT:
-            return
-        neg_bit, pos_bit = _GC_AXIS_BIT[axis]
-        value = int(event.caxis.value)
+        neg_bit, pos_bit = _AXIS_BIT[axis]
         if value < -AXIS_DEAD_ZONE:
             self._input.joystick_button_down(port, neg_bit)
             self._input.joystick_button_up(port, pos_bit)
@@ -197,35 +205,26 @@ class JoystickManager:
             self._input.joystick_button_up(port, neg_bit)
             self._input.joystick_button_up(port, pos_bit)
 
+    def _handle_gc_axis(self, event: Any) -> None:
+        port = self._port_for_instance(event.caxis.which)
+        if port is None:
+            return
+        self._apply_axis(port, int(event.caxis.axis), int(event.caxis.value))
+
     def _handle_joy_button(self, event: Any) -> None:
         sdl = self._sdl
         port = self._port_for_instance(event.jbutton.which)
         if port is None:
             return
         btn = int(event.jbutton.button)
-        if btn == 0:
-            bit = 4  # Trigger A
+        if btn in _JOY_BUTTON_BIT:
+            bit = _JOY_BUTTON_BIT[btn]
             if event.type == sdl.SDL_JOYBUTTONDOWN:
                 self._input.joystick_button_down(port, bit)
             else:
                 self._input.joystick_button_up(port, bit)
-        elif btn == 1:
-            bit = 5  # Trigger B
-            if event.type == sdl.SDL_JOYBUTTONDOWN:
-                self._input.joystick_button_down(port, bit)
-            else:
-                self._input.joystick_button_up(port, bit)
-        elif btn == 2:
-            bit = 4  # Trigger A (turbo)
-            if event.type == sdl.SDL_JOYBUTTONDOWN:
-                if not self._turbo_held:
-                    self._turbo_counter = 0
-                self._turbo_held.add((port, bit))
-            else:
-                self._turbo_held.discard((port, bit))
-                self._input.joystick_button_up(port, bit)
-        elif btn == 3:
-            bit = 5  # Trigger B (turbo)
+        elif btn in _JOY_TURBO_BUTTON_BIT:
+            bit = _JOY_TURBO_BUTTON_BIT[btn]
             if event.type == sdl.SDL_JOYBUTTONDOWN:
                 if not self._turbo_held:
                     self._turbo_counter = 0
@@ -238,20 +237,7 @@ class JoystickManager:
         port = self._port_for_instance(event.jaxis.which)
         if port is None:
             return
-        axis = int(event.jaxis.axis)
-        if axis not in _GC_AXIS_BIT:
-            return
-        neg_bit, pos_bit = _GC_AXIS_BIT[axis]
-        value = int(event.jaxis.value)
-        if value < -AXIS_DEAD_ZONE:
-            self._input.joystick_button_down(port, neg_bit)
-            self._input.joystick_button_up(port, pos_bit)
-        elif value > AXIS_DEAD_ZONE:
-            self._input.joystick_button_up(port, neg_bit)
-            self._input.joystick_button_down(port, pos_bit)
-        else:
-            self._input.joystick_button_up(port, neg_bit)
-            self._input.joystick_button_up(port, pos_bit)
+        self._apply_axis(port, int(event.jaxis.axis), int(event.jaxis.value))
 
     def _handle_joy_hat(self, event: Any) -> None:
         sdl = self._sdl
@@ -259,19 +245,13 @@ class JoystickManager:
         if port is None:
             return
         hat = int(event.jhat.value)
-        if hat & sdl.SDL_HAT_UP:
-            self._input.joystick_button_down(port, 0)
-        else:
-            self._input.joystick_button_up(port, 0)
-        if hat & sdl.SDL_HAT_DOWN:
-            self._input.joystick_button_down(port, 1)
-        else:
-            self._input.joystick_button_up(port, 1)
-        if hat & sdl.SDL_HAT_LEFT:
-            self._input.joystick_button_down(port, 2)
-        else:
-            self._input.joystick_button_up(port, 2)
-        if hat & sdl.SDL_HAT_RIGHT:
-            self._input.joystick_button_down(port, 3)
-        else:
-            self._input.joystick_button_up(port, 3)
+        for mask, bit in (
+            (sdl.SDL_HAT_UP, _BIT_UP),
+            (sdl.SDL_HAT_DOWN, _BIT_DOWN),
+            (sdl.SDL_HAT_LEFT, _BIT_LEFT),
+            (sdl.SDL_HAT_RIGHT, _BIT_RIGHT),
+        ):
+            if hat & mask:
+                self._input.joystick_button_down(port, bit)
+            else:
+                self._input.joystick_button_up(port, bit)

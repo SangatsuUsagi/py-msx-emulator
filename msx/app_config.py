@@ -22,8 +22,6 @@ CONFIG_FILENAME = "py_emulator.yaml"
 # either the config file or the CLI.
 DEFAULT_SPEED = 1.0
 DEFAULT_MAPPER = "auto"
-DEFAULT_RPC_SOCKET = "/tmp/py_msx_emu.sock"
-DEFAULT_TURBO_HZ = 20.0
 DEFAULT_TURBO_PERIOD = 3
 
 # Accepted cartridge mapper names (mirrors the --mapper CLI choices).
@@ -228,8 +226,10 @@ def _parse_joystick(joystick: Any, cfg: AppConfig) -> None:
             print(f"warning: {CONFIG_FILENAME}: unknown key 'joystick.{key}' (ignored)",
                   file=sys.stderr)
     cfg.turbo_hz = _opt_positive_float(joystick, "turbo_hz")
+    _parse_joystick_buttons(joystick.get("buttons"), cfg)
 
-    buttons = joystick.get("buttons")
+
+def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
     if buttons is None:
         return
     if not isinstance(buttons, dict):
@@ -246,6 +246,10 @@ def _parse_joystick(joystick: Any, cfg: AppConfig) -> None:
                 f"(expected one of {', '.join(_GC_BUTTON_NAME_TO_INDEX)})"
             )
         cfg.gamepad_buttons[func] = label
-    # Surface duplicate-button conflicts at load time.
+    _validate_no_duplicate_buttons(cfg)
+
+
+def _validate_no_duplicate_buttons(cfg: AppConfig) -> None:
+    """Surface duplicate-button conflicts at load time (raises AppConfigError)."""
     cfg.gamepad_maps()
 

@@ -257,6 +257,43 @@ def _upload_to_texture(
     sdl2.SDL_UnlockTexture(texture)
 
 
+def _resize_texture_if_needed(
+    sdl2: Any, renderer: Any, window: Any, texture: Any,
+    index_buf: Any, tex_w: int, tex_h: int, scale: int,
+) -> tuple[Any, int, int, bool]:
+    """Recreate the streaming texture and resize the window when the frame width
+    changes (SCREEN 6/7 is 512-wide; the output height is constant). Returns the
+    (possibly new) texture, its width/height, and False if recreation failed."""
+    new_h = _SCREEN_HEIGHT
+    new_w = (len(index_buf) // new_h) if index_buf else tex_w
+    if (new_w, new_h) == (tex_w, tex_h):
+        return texture, tex_w, tex_h, True
+    tex_w, tex_h = new_w, new_h
+    sdl2.SDL_DestroyTexture(texture)
+    texture = sdl2.SDL_CreateTexture(
+        renderer,
+        sdl2.SDL_PIXELFORMAT_RGB24,
+        sdl2.SDL_TEXTUREACCESS_STREAMING,
+        tex_w,
+        tex_h,
+    )
+    if not texture:
+        print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}", file=sys.stderr)
+        return texture, tex_w, tex_h, False
+    # 512-wide modes (SCREEN 6/7) display at 256*scale to keep aspect ratio; SDL
+    # scales the texture down via bilinear filter.
+    win_display_w = _SCREEN_WIDTH if tex_w > _SCREEN_WIDTH else tex_w
+    sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
+    return texture, tex_w, tex_h, True
+
+
+def _update_skip_counter(skip_counter: int, elapsed: float, frame_interval: float) -> int:
+    """Adapt the auto frame-skip counter to how far the last frame overran."""
+    if elapsed > frame_interval * _FRAME_OVERRUN_RATIO:
+        return min(skip_counter + 1, _MAX_FRAME_SKIP)
+    return max(skip_counter - 1, 0)
+
+
 def run(
     machine: Machine,
     scale: int = 3,
@@ -293,11 +330,11 @@ def run(
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
 
-    h = _SCREEN_HEIGHT  # constant output height; render_frame pads 192→212
+    screen_h = _SCREEN_HEIGHT  # constant output height; render_frame pads 192→212
     win_w = _SCREEN_WIDTH * scale
-    win_h = h * scale
+    win_h = screen_h * scale
 
-    tex_w, tex_h = _SCREEN_WIDTH, h
+    tex_w, tex_h = _SCREEN_WIDTH, screen_h
     window, renderer, texture, audio_dev = _init_sdl(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
@@ -323,7 +360,7 @@ def run(
     event = sdl2.SDL_Event()
     running = True
     fullscreen = False
-    rgb_buf: bytes = bytes(_SCREEN_WIDTH * h * 3)
+    rgb_buf: bytes = bytes(_SCREEN_WIDTH * screen_h * 3)
     skip_counter: int = 0
 
     try:
@@ -363,27 +400,11 @@ def run(
                     # 212); only the width can change at runtime (SCREEN 6/7 is
                     # 512-wide). Recreate the texture / resize the window on a width
                     # change before uploading, or the texture copy would overflow.
-                    new_h = _SCREEN_HEIGHT
-                    new_w = (len(index_buf) // new_h) if index_buf else tex_w
-                    if (new_w, new_h) != (tex_w, tex_h):
-                        tex_w, tex_h = new_w, new_h
-                        sdl2.SDL_DestroyTexture(texture)
-                        texture = sdl2.SDL_CreateTexture(
-                            renderer,
-                            sdl2.SDL_PIXELFORMAT_RGB24,
-                            sdl2.SDL_TEXTUREACCESS_STREAMING,
-                            tex_w,
-                            tex_h,
-                        )
-                        if not texture:
-                            print(f"SDL_CreateTexture error: {sdl2.SDL_GetError()}",
-                                  file=sys.stderr)
-                            running = False
-                            break
-                        # 512-wide modes (SCREEN 6/7) display at 256*scale to keep
-                        # aspect ratio; SDL scales the texture down via bilinear filter.
-                        win_display_w = _SCREEN_WIDTH if tex_w > _SCREEN_WIDTH else tex_w
-                        sdl2.SDL_SetWindowSize(window, win_display_w * scale, tex_h * scale)
+                    texture, tex_w, tex_h, running = _resize_texture_if_needed(
+                        sdl2, renderer, window, texture, index_buf, tex_w, tex_h, scale
+                    )
+                    if not running:
+                        break
 
                 # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
                 if audio_dev > 0:
@@ -404,10 +425,9 @@ def run(
                 # Frame pacing + skip counter update
                 elapsed = frame_timer.tick()
                 if frame_skip == "auto":
-                    if elapsed > frame_timer._frame_interval * _FRAME_OVERRUN_RATIO:
-                        skip_counter = min(skip_counter + 1, _MAX_FRAME_SKIP)
-                    else:
-                        skip_counter = max(skip_counter - 1, 0)
+                    skip_counter = _update_skip_counter(
+                        skip_counter, elapsed, frame_timer.frame_interval
+                    )
 
                 if frame_timer.fps_measured > 0:
                     title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]".encode("utf-8")
