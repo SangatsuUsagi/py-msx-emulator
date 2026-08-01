@@ -480,6 +480,49 @@ python . path/to/game.rom --benchmark 30 --resume saves/states/game_20260605_120
 | `--rpc`                   | off      | Enable the embedded Unix-socket JSON-RPC control server (interactive run mode). See [Remote control](#remote-control-socket-rpc--mcp)                                            |
 | `--rpc-socket PATH`       | `/tmp/py_msx_emu.sock` | Unix socket path for `--rpc` (no effect without `--rpc`)                                                                                                            |
 
+### Configuration file (`py_emulator.yaml`)
+
+Frequently-used defaults can be set in an optional `py_emulator.yaml` at the
+repository root instead of typing flags every run. Copy the bundled
+`py_emulator.example.yaml` to `py_emulator.yaml` and edit it:
+
+```bash
+cp py_emulator.example.yaml py_emulator.yaml
+```
+
+Values resolve with the precedence **built-in default < `py_emulator.yaml` <
+command-line argument** — a flag you pass always wins, and the file only fills in
+options you did not pass. If the file is absent, behaviour is unchanged. The file
+is git-ignored, so local settings stay out of version control.
+
+```yaml
+machine: cbios_msx2_jp   # default machine ID (auto-detected when unset)
+speed: 1.0               # emulation speed multiplier
+mapper: auto             # slot 1 mapper (see --mapper choices)
+fmpac: false             # overlay an FM-PAC in slot 2
+
+rpc:
+  enabled: false
+  socket: /tmp/py_msx_emu.sock
+
+joystick:
+  turbo_hz: 20           # auto-fire rate (round(60 / turbo_hz) frames)
+  buttons:               # SDL GameController button per MSX function
+    up: dpup
+    down: dpdown
+    left: dpleft
+    right: dpright
+    trigger_a: a
+    trigger_b: b
+    turbo_a: y           # auto-fire Trigger A
+    turbo_b: x           # auto-fire Trigger B
+```
+
+Only `machine`, `speed`, `mapper`, `fmpac`, and RPC/gamepad settings are
+configurable; the gamepad button map applies to the SDL GameController path (both
+ports share one map). See `py_emulator.example.yaml` for the full annotated list
+and valid button labels.
+
 ### In-emulator key bindings
 
 | Key   | Action                                                                |
