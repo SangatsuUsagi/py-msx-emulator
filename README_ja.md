@@ -364,6 +364,48 @@ python . path/to/game.rom --benchmark 30 --resume saves/states/game_20260605_120
 | `--rpc` | オフ | 組み込みの Unix ソケット JSON-RPC 制御サーバを有効化（対話実行モード）。[リモート制御](#リモート制御socket-rpc--mcp)を参照 |
 | `--rpc-socket PATH` | `/tmp/py_msx_emu.sock` | `--rpc` 用の Unix ソケットパス（`--rpc` なしでは無効） |
 
+### 設定ファイル（`py_emulator.yaml`）
+
+よく使うデフォルト値は、毎回フラグを指定する代わりにリポジトリルートの任意の
+`py_emulator.yaml` で設定できます。同梱の `py_emulator.example.yaml` を
+`py_emulator.yaml` にコピーして編集してください。
+
+```bash
+cp py_emulator.example.yaml py_emulator.yaml
+```
+
+値の優先順位は **組み込みデフォルト < `py_emulator.yaml` < コマンドライン引数**
+です。指定したフラグが常に優先され、ファイルは指定しなかった項目のみを補います。
+ファイルが無い場合の挙動は従来どおりです。このファイルは git 管理対象外
+（gitignore）なので、ローカル設定はバージョン管理に入りません。
+
+```yaml
+machine: cbios_msx2_jp   # デフォルトのマシン ID（未設定なら自動判定）
+speed: 1.0               # エミュレーション速度倍率
+mapper: auto             # スロット 1 マッパー（--mapper の選択肢参照）
+fmpac: false             # スロット 2 に FM-PAC を重ねる
+
+rpc:
+  enabled: false
+  socket: /tmp/py_msx_emu.sock
+
+joystick:
+  turbo_hz: 20           # 連射レート（round(60 / turbo_hz) フレーム）
+  buttons:               # MSX 機能ごとの SDL GameController ボタン
+    up: dpup
+    down: dpdown
+    left: dpleft
+    right: dpright
+    trigger_a: a
+    trigger_b: b
+    turbo_a: y           # Trigger A の連射
+    turbo_b: x           # Trigger B の連射
+```
+
+設定できるのは `machine`・`speed`・`mapper`・`fmpac` と RPC / ゲームパッド設定
+のみです。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
+全項目と有効なボタン名は `py_emulator.example.yaml` を参照してください。
+
 ### エミュレータ内のキー操作
 
 | キー | 動作 |
