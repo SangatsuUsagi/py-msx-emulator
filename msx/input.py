@@ -76,6 +76,7 @@ _K_LSHIFT   = 1073742049   # SDL_SCANCODE_LSHIFT = 225
 _K_LALT     = 1073742050   # SDL_SCANCODE_LALT = 226
 _K_RCTRL    = 1073742052   # SDL_SCANCODE_RCTRL = 228
 _K_RSHIFT   = 1073742053   # SDL_SCANCODE_RSHIFT = 229
+_K_RALT     = 1073742054   # SDL_SCANCODE_RALT = 230
 
 # MSX keyboard matrix: maps an SDL2 key constant to a (row, bit) cell.
 # Active-low: a cleared bit = key pressed.
@@ -117,12 +118,13 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     _K_LALT: (6, 2),   # left Alt/Option → MSX GRAPH
     _K_CAPSLOCK: (6, 3),
     _K_F1: (6, 5), _K_F2: (6, 6), _K_F3: (6, 7),
-    # Row 7: F4, F5, ESC, TAB, BS, RETURN
+    # Row 7: F4, F5, ESC, TAB, BS, RETURN, SELECT (via right Alt/Option)
     _K_F4: (7, 0),
     _K_F5: (7, 1),
     _K_ESCAPE: (7, 2),
     _K_TAB: (7, 3),
     _K_BACKSPACE: (7, 5),
+    _K_RALT: (7, 6),   # right Alt/Option → MSX SELECT
     _K_RETURN: (7, 7),
     # Row 8: space, editing keys, cursor keys
     _K_SPACE: (8, 0),
