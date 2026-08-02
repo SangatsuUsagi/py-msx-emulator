@@ -1,4 +1,4 @@
-"""Left Alt+F1..F5 and Right Alt hotkey combo tests for `_handle_events`.
+"""Ctrl+F1..F5 and Right Alt hotkey combo tests for `_handle_events`.
 
 Exercises the real `InputState` matrix through a minimal fake `sdl2` module:
 events are scripted as (type, sym, mod) tuples and copied into a real ctypes
@@ -7,7 +7,7 @@ events are scripted as (type, sym, mod) tuples and copied into a real ctypes
 """
 import ctypes
 
-from frontend.sdl2_frontend import _AltComboState, _handle_events
+from frontend.sdl2_frontend import _CtrlComboState, _handle_events
 from msx.input import KEY_MATRIX_INT, KEY_NAME_TO_CELL, InputState
 
 
@@ -51,6 +51,8 @@ class _FakeSDL:
     SDLK_F10 = -10
     SDLK_F11 = -11
     SDLK_c = ord("c")
+    SDLK_LCTRL = 1073742048
+    SDLK_RCTRL = 1073742052
     SDLK_LALT = 1073742050
     SDLK_RALT = 1073742054
     KMOD_CTRL = 0x0040
@@ -82,17 +84,17 @@ def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
 
 class _Harness:
     """Drives `_handle_events` across multiple scripted event batches while
-    keeping the same machine/alt-combo/event state, like consecutive frames."""
+    keeping the same machine/ctrl-combo/event state, like consecutive frames."""
 
     def __init__(self) -> None:
         self.machine = _FakeMachine()
-        self.alt_combo = _AltComboState()
+        self.ctrl_combo = _CtrlComboState()
         self._event = _Event()
 
     def send(self, script: list[tuple[int, int, int]]) -> None:
         sdl = _FakeSDL(script, self._event)
         _handle_events(
-            sdl, self._event, self.machine, None, None, self.alt_combo,
+            sdl, self._event, self.machine, None, None, self.ctrl_combo,
             "", b"", 0, 0, False,
         )
 
@@ -106,25 +108,27 @@ _INS = KEY_NAME_TO_CELL["INS"]
 _DEL = KEY_NAME_TO_CELL["DEL"]
 _STOP = KEY_NAME_TO_CELL["STOP"]
 _SELECT = KEY_NAME_TO_CELL["SELECT"]
+_CTRL = KEY_MATRIX_INT[_FakeSDL.SDLK_LCTRL]
 _GRAPH = KEY_MATRIX_INT[_FakeSDL.SDLK_LALT]
+_CODE_KANA = KEY_MATRIX_INT[_FakeSDL.SDLK_RALT]
 _F1_CELL = KEY_MATRIX_INT[_FakeSDL.SDLK_F1]
 
 
-def test_left_alt_f1_asserts_home_not_f1_or_graph() -> None:
+def test_ctrl_f1_asserts_home_not_f1_or_ctrl() -> None:
     h = _Harness()
     h.send([
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
         (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0),
     ])
     assert _asserted(h.matrix, _HOME)
     assert not _asserted(h.matrix, _F1_CELL)
-    assert not _asserted(h.matrix, _GRAPH)
+    assert not _asserted(h.matrix, _CTRL)
 
 
-def test_left_alt_f4_asserts_stop_and_f5_asserts_select() -> None:
+def test_ctrl_f4_asserts_stop_and_f5_asserts_select() -> None:
     h = _Harness()
     h.send([
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
         (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F4, 0),
     ])
     assert _asserted(h.matrix, _STOP)
@@ -134,31 +138,59 @@ def test_left_alt_f4_asserts_stop_and_f5_asserts_select() -> None:
     assert _asserted(h.matrix, _SELECT)
 
 
-def test_releasing_fkey_first_restores_graph() -> None:
+def test_releasing_fkey_first_restores_ctrl() -> None:
     h = _Harness()
     h.send([
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
         (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F2, 0),
     ])
     assert _asserted(h.matrix, _INS)
     h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_F2, 0)])
     assert not _asserted(h.matrix, _INS)
-    assert _asserted(h.matrix, _GRAPH)  # Alt is still held
+    assert _asserted(h.matrix, _CTRL)  # Ctrl is still held
 
 
-def test_releasing_alt_first_ends_combo_without_graph() -> None:
+def test_releasing_ctrl_first_ends_combo_without_ctrl_bit() -> None:
     h = _Harness()
     h.send([
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
         (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F3, 0),
     ])
     assert _asserted(h.matrix, _DEL)
-    h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_LALT, 0)])
+    h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_LCTRL, 0)])
     assert not _asserted(h.matrix, _DEL)
-    assert not _asserted(h.matrix, _GRAPH)
+    assert not _asserted(h.matrix, _CTRL)
 
 
-def test_plain_left_alt_still_sends_graph() -> None:
+def test_plain_ctrl_still_sends_ctrl() -> None:
+    h = _Harness()
+    h.send([(_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0)])
+    assert _asserted(h.matrix, _CTRL)
+    h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_LCTRL, 0)])
+    assert not _asserted(h.matrix, _CTRL)
+
+
+def test_second_fkey_during_active_combo_is_ignored() -> None:
+    h = _Harness()
+    h.send([
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F4, 0),
+    ])
+    assert _asserted(h.matrix, _HOME)
+    assert not _asserted(h.matrix, _STOP)
+    assert h.ctrl_combo.active_fkey == _FakeSDL.SDLK_F1
+
+
+def test_fkey_without_ctrl_behaves_as_before() -> None:
+    h = _Harness()
+    h.send([(_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0)])
+    assert _asserted(h.matrix, _F1_CELL)
+    assert not _asserted(h.matrix, _HOME)
+
+
+def test_left_alt_still_sends_graph() -> None:
+    # Unaffected by the Ctrl+F-key combo: Left Alt keeps its baseline mapping.
     h = _Harness()
     h.send([(_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0)])
     assert _asserted(h.matrix, _GRAPH)
@@ -166,28 +198,34 @@ def test_plain_left_alt_still_sends_graph() -> None:
     assert not _asserted(h.matrix, _GRAPH)
 
 
-def test_second_fkey_during_active_combo_is_ignored() -> None:
-    h = _Harness()
-    h.send([
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LALT, 0),
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0),
-        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F4, 0),
-    ])
-    assert _asserted(h.matrix, _HOME)
-    assert not _asserted(h.matrix, _STOP)
-    assert h.alt_combo.active_fkey == _FakeSDL.SDLK_F1
-
-
-def test_fkey_without_alt_behaves_as_before() -> None:
-    h = _Harness()
-    h.send([(_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0)])
-    assert _asserted(h.matrix, _F1_CELL)
-    assert not _asserted(h.matrix, _HOME)
-
-
-def test_right_alt_sends_select_through_normal_path() -> None:
+def test_right_alt_sends_code_kana_through_normal_path() -> None:
     h = _Harness()
     h.send([(_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_RALT, 0)])
-    assert _asserted(h.matrix, _SELECT)
+    assert _asserted(h.matrix, _CODE_KANA)
     h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_RALT, 0)])
-    assert not _asserted(h.matrix, _SELECT)
+    assert not _asserted(h.matrix, _CODE_KANA)
+
+
+def test_right_ctrl_also_triggers_combo() -> None:
+    # Left and Right Ctrl share one matrix cell; either side triggers the combo.
+    h = _Harness()
+    h.send([
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_RCTRL, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0),
+    ])
+    assert _asserted(h.matrix, _HOME)
+    assert not _asserted(h.matrix, _CTRL)
+
+
+def test_both_ctrl_sides_held_keeps_combo_until_both_release() -> None:
+    h = _Harness()
+    h.send([
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_LCTRL, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_RCTRL, 0),
+        (_FakeSDL.SDL_KEYDOWN, _FakeSDL.SDLK_F1, 0),
+    ])
+    assert _asserted(h.matrix, _HOME)
+    h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_LCTRL, 0)])
+    assert _asserted(h.matrix, _HOME)  # RCTRL still held: combo stays active
+    h.send([(_FakeSDL.SDL_KEYUP, _FakeSDL.SDLK_RCTRL, 0)])
+    assert not _asserted(h.matrix, _HOME)

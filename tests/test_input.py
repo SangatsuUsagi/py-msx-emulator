@@ -312,14 +312,15 @@ def test_ctrl_lr_reference_counted_release() -> None:
     assert state.matrix[6] & 0x02 != 0
 
 
-def test_right_alt_maps_to_select_key() -> None:
-    # Right Alt/Option -> MSX SELECT, same cell as the RPC-injection name table.
-    assert KEY_MATRIX_INT[_K_RALT] == KEY_NAME_TO_CELL["SELECT"]
-    assert KEY_MATRIX_JP[_K_RALT] == KEY_NAME_TO_CELL["SELECT"]
+def test_right_alt_maps_to_code_kana_key() -> None:
+    # Right Alt/Option -> MSX CODE/KANA, same cell as the RPC-injection name
+    # table. Left Alt/Option keeps its existing GRAPH mapping (unchanged).
+    assert KEY_MATRIX_INT[_K_RALT] == KEY_NAME_TO_CELL["CODE"]
+    assert KEY_MATRIX_JP[_K_RALT] == KEY_NAME_TO_CELL["CODE"]
     state = InputState()
-    row, bit = KEY_NAME_TO_CELL["SELECT"]
+    row, bit = KEY_NAME_TO_CELL["CODE"]
     state.key_down(_K_RALT)
-    assert state.matrix[row] & (1 << bit) == 0  # SELECT pressed (active-low)
+    assert state.matrix[row] & (1 << bit) == 0  # CODE/KANA pressed (active-low)
     state.key_up(_K_RALT)
     assert state.matrix[row] & (1 << bit) != 0
 
