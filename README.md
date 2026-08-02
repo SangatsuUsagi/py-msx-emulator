@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1602%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1607%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -440,6 +440,9 @@ python . path/to/game.rom --machine cbios_msx2_jp
 # Double emulation speed
 python . path/to/game.rom --speed 2.0
 
+# Window scale (default 3): 2x for a small display, 4x for a large one
+python . path/to/game.rom --scale 4
+
 # Dual cartridge (slot 1 and slot 2)
 python . path/to/game1.rom --slot2 path/to/game2.rom
 
@@ -484,6 +487,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `cartridge` | _(none)_ | Path to the cartridge ROM |
 | `--machine MACHINE_ID` | _(auto)_ | Machine configuration ID (e.g. `cbios_msx2_jp`). Auto-detected from ROM database when omitted |
 | `--speed FLOAT` | `1.0` | Emulation speed multiplier |
+| `--scale N` | `3` | Integer window scale over the 256×212 base resolution (e.g. `2` for a small display, `4` for a large one) |
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
@@ -522,6 +526,7 @@ is git-ignored, so local settings stay out of version control.
 ```yaml
 machine: cbios_msx2_jp   # default machine ID (auto-detected when unset)
 speed: 1.0               # emulation speed multiplier
+scale: 3                 # integer window scale over the 256x212 base
 mapper: auto             # slot 1 mapper (see --mapper choices)
 fmpac: false             # overlay an FM-PAC in slot 2
 
@@ -542,7 +547,7 @@ joystick:
     turbo_b: x           # auto-fire Trigger B
 ```
 
-Only `machine`, `speed`, `mapper`, `fmpac`, and RPC/gamepad settings are
+Only `machine`, `speed`, `scale`, `mapper`, `fmpac`, and RPC/gamepad settings are
 configurable; the gamepad button map applies to the SDL GameController path (both
 ports share one map). See `py_emulator.example.yaml` for the full annotated list
 and valid button labels.
@@ -747,7 +752,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1602 tests spanning unit tests
+The test suite covers all major components with 1607 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -808,7 +813,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1602 tests
+├── tests/                 # Test suite — 1607 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration

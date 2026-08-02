@@ -43,10 +43,12 @@ def _run_main(argv: list[str]) -> tuple[int, str, str, Mock]:
 
 class TestBenchmarkCLI:
     def test_reports_frame_count_elapsed_and_fps(self) -> None:
-        perf_values = iter([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 10.0])
+        # start / end timestamps; the loop runs a fixed frame count, so
+        # perf_counter is read exactly twice.
+        perf_values = iter([0.0, 10.0])
         with patch.object(Machine, "run_frame", return_value=None) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
-            code, out, err, sdl_run = _run_main(["--benchmark", "10"])
+            code, out, err, sdl_run = _run_main(["--benchmark", "5"])
         assert code == 0
         assert rf.call_count == 5
         assert "frames  : 5" in out
@@ -59,13 +61,14 @@ class TestBenchmarkCLI:
             assert call.kwargs.get("skip_render", False) is False
             assert not call.args
 
-    def test_bare_flag_defaults_to_ten_seconds(self) -> None:
-        perf_values = iter([0.0, 10.0, 10.0])
-        with patch.object(Machine, "run_frame", return_value=None), \
+    def test_bare_flag_defaults_to_ten_thousand_frames(self) -> None:
+        perf_values = iter([0.0, 10.0])
+        with patch.object(Machine, "run_frame", return_value=None) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark"])
         assert code == 0
-        assert "benchmark: 10.0s (headless)" in out
+        assert rf.call_count == 10000
+        assert "benchmark: 10000 frames (headless)" in out
 
 
 class TestBenchmarkResume:

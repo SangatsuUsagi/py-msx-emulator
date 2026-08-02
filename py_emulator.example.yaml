@@ -16,6 +16,11 @@ machine: cbios_msx2_jp
 # Emulation speed multiplier (1.0 = real time). Must be positive.
 speed: 1.0
 
+# Integer window scale over the 256x212 base resolution. Must be a positive
+# integer (e.g. 2 for a small display, 4 for a large one). Ignored in headless
+# modes (--benchmark / --count-frame).
+scale: 3
+
 # Slot 1 cartridge mapper. One of: auto, Mirrored, Normal, ASCII8, ASCII16,
 # Konami, KonamiSCC, Majutsushi, ASCII8SRAM2, ASCII8SRAM8, ASCII16SRAM2,
 # ASCII16SRAM8, R-Type. `auto` detects the mapper from the ROM database.

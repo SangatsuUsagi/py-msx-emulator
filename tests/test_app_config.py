@@ -33,10 +33,12 @@ def test_empty_file_returns_all_unset(tmp_path: Path) -> None:
 
 
 def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
-    _write(tmp_path, "machine: cbios_msx1_jp\nspeed: 2.0\nmapper: KonamiSCC\nfmpac: true\n")
+    _write(tmp_path,
+           "machine: cbios_msx1_jp\nspeed: 2.0\nscale: 4\nmapper: KonamiSCC\nfmpac: true\n")
     cfg = load_app_config(tmp_path)
     assert cfg.machine == "cbios_msx1_jp"
     assert cfg.speed == 2.0
+    assert cfg.scale == 4
     assert cfg.mapper == "KonamiSCC"
     assert cfg.fmpac is True
 
@@ -82,6 +84,18 @@ def test_invalid_mapper_rejected(tmp_path: Path) -> None:
 
 def test_non_positive_speed_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "speed: 0\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_non_positive_scale_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "scale: 0\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_non_integer_scale_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "scale: 2.5\n")
     with pytest.raises(AppConfigError):
         load_app_config(tmp_path)
 

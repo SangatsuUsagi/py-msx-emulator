@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1602%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1607%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -320,6 +320,9 @@ python . path/to/game.rom --machine cbios_msx2_jp
 # 2 倍速でエミュレーション
 python . path/to/game.rom --speed 2.0
 
+# ウィンドウ拡大率（デフォルト 3）：小さいディスプレイは 2、大きいディスプレイは 4
+python . path/to/game.rom --scale 4
+
 # デュアルカートリッジ（スロット 1 + スロット 2）
 python . path/to/game1.rom --slot2 path/to/game2.rom
 
@@ -364,6 +367,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `cartridge` | _（なし）_ | カートリッジ ROM のパス |
 | `--machine MACHINE_ID` | _（自動）_ | マシン設定 ID（例：`cbios_msx2_jp`）；省略時は ROM データベースから自動判定 |
 | `--speed FLOAT` | `1.0` | エミュレーション速度の倍率 |
+| `--scale N` | `3` | 256×212 ベース解像度に対する整数の拡大率（例：小さいディスプレイなら `2`、大きいディスプレイなら `4`） |
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
@@ -402,6 +406,7 @@ cp py_emulator.example.yaml py_emulator.yaml
 ```yaml
 machine: cbios_msx2_jp   # デフォルトのマシン ID（未設定なら自動判定）
 speed: 1.0               # エミュレーション速度倍率
+scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 mapper: auto             # スロット 1 マッパー（--mapper の選択肢参照）
 fmpac: false             # スロット 2 に FM-PAC を重ねる
 
@@ -422,8 +427,8 @@ joystick:
     turbo_b: x           # Trigger B の連射
 ```
 
-設定できるのは `machine`・`speed`・`mapper`・`fmpac` と RPC / ゲームパッド設定
-のみです。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
+設定できるのは `machine`・`speed`・`scale`・`mapper`・`fmpac` と RPC / ゲームパッド
+設定のみです。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 全項目と有効なボタン名は `py_emulator.example.yaml` を参照してください。
 
 ### エミュレータ内のキー操作
@@ -617,7 +622,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1602 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1607 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -675,7 +680,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1602 テスト
+├── tests/                 # テストスイート — 1607 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定

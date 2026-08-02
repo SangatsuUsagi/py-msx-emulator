@@ -86,6 +86,27 @@ def test_builtin_speed_when_neither_set() -> None:
 
 
 # ---------------------------------------------------------------------------
+# scale
+# ---------------------------------------------------------------------------
+
+def test_config_scale_used_when_cli_omitted() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(scale=2))
+    assert run_mock.call_args.kwargs["scale"] == 2
+
+
+def test_cli_scale_overrides_config() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--scale", "4"], app_cfg=AppConfig(scale=2))
+    assert run_mock.call_args.kwargs["scale"] == 4
+
+
+def test_builtin_scale_when_neither_set() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert run_mock.call_args.kwargs["scale"] == 3
+
+
+# ---------------------------------------------------------------------------
 # mapper
 # ---------------------------------------------------------------------------
 

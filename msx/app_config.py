@@ -22,6 +22,7 @@ CONFIG_FILENAME = "py_emulator.yaml"
 # either the config file or the CLI.
 DEFAULT_SPEED = 1.0
 DEFAULT_MAPPER = "auto"
+DEFAULT_SCALE = 3
 DEFAULT_TURBO_PERIOD = 3
 
 # Accepted cartridge mapper names (mirrors the --mapper CLI choices).
@@ -56,7 +57,7 @@ _GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
     "turbo_b":   ("x", 5, True),
 }
 
-_KNOWN_TOP_KEYS = frozenset({"machine", "speed", "mapper", "fmpac", "rpc", "joystick"})
+_KNOWN_TOP_KEYS = frozenset({"machine", "speed", "scale", "mapper", "fmpac", "rpc", "joystick"})
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
 
@@ -75,6 +76,7 @@ class AppConfig:
 
     machine: str | None = None
     speed: float | None = None
+    scale: int | None = None
     mapper: str | None = None
     fmpac: bool | None = None
     rpc_enabled: bool | None = None
@@ -158,6 +160,7 @@ def load_app_config(root: Path) -> AppConfig:
     cfg = AppConfig()
     cfg.machine = _opt_str(raw, "machine")
     cfg.speed = _opt_positive_float(raw, "speed")
+    cfg.scale = _opt_positive_int(raw, "scale")
     cfg.mapper = _opt_mapper(raw)
     cfg.fmpac = _opt_bool(raw, "fmpac")
     _parse_rpc(raw.get("rpc"), cfg)
@@ -192,6 +195,17 @@ def _opt_positive_float(raw: dict[str, Any], key: str) -> float | None:
     if value <= 0:
         raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be positive")
     return float(value)
+
+
+def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
+    if key not in raw or raw[key] is None:
+        return None
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be an integer")
+    if value < 1:
+        raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be a positive integer")
+    return value
 
 
 def _opt_mapper(raw: dict[str, Any]) -> str | None:

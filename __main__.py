@@ -94,6 +94,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Write diagnostic log to FILE (requires --debug)")
     parser.add_argument("--speed", type=float, default=None,
                         help="Emulation speed multiplier (default: 1.0)")
+    parser.add_argument("--scale", type=int, default=None, metavar="N",
+                        help="Integer window scale over the 256x212 base (default: 3)")
     parser.add_argument("--mapper",
                         choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
                                  "Konami", "KonamiSCC", "Majutsushi",
@@ -281,6 +283,7 @@ def main() -> None:
     # None (see the sentinel defaults above), so it never masks a config value.
     from msx.app_config import (
         DEFAULT_MAPPER,
+        DEFAULT_SCALE,
         DEFAULT_SPEED,
         AppConfigError,
         load_app_config,
@@ -292,12 +295,16 @@ def main() -> None:
         sys.exit(1)
 
     speed_eff = _first_set(args.speed, app_cfg.speed, DEFAULT_SPEED)
+    scale_eff = _first_set(args.scale, app_cfg.scale, DEFAULT_SCALE)
     mapper_eff = _first_set(args.mapper, app_cfg.mapper, DEFAULT_MAPPER)
     fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, False)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, False)
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
+    if scale_eff < 1:
+        print("error: --scale must be a positive integer", file=sys.stderr)
         sys.exit(1)
     if fmpac_eff and args.slot2:
         print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
@@ -415,8 +422,8 @@ def main() -> None:
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
-            run(machine, speed=speed_eff, game_title=game_title, resume=args.resume,
-                frame_skip=args.frame_skip, rpc_server=rpc_server,
+            run(machine, scale=scale_eff, speed=speed_eff, game_title=game_title,
+                resume=args.resume, frame_skip=args.frame_skip, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period())
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
