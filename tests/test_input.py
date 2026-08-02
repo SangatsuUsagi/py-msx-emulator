@@ -1,11 +1,14 @@
 from msx.input import (
     _K_COMMA,
     _K_DOWN,
+    _K_F1,
     _K_LALT,
     _K_LEFT,
     _K_LEFTBRACKET,
+    _K_LSHIFT,
     _K_MINUS,
     _K_QUOTE,
+    _K_RALT,
     _K_RIGHT,
     _K_RIGHTBRACKET,
     _K_SEMICOLON,
@@ -15,6 +18,7 @@ from msx.input import (
     JOY_MAP,
     KEY_MATRIX_INT,
     KEY_MATRIX_JP,
+    KEY_NAME_TO_CELL,
     InputState,
     _K_a,
     _K_s,
@@ -306,3 +310,32 @@ def test_ctrl_lr_reference_counted_release() -> None:
     assert state.matrix[6] & 0x02 == 0   # still held by LCTRL
     state.key_up(_K_LCTRL)
     assert state.matrix[6] & 0x02 != 0
+
+
+def test_right_alt_maps_to_select_key() -> None:
+    # Right Alt/Option -> MSX SELECT, same cell as the RPC-injection name table.
+    assert KEY_MATRIX_INT[_K_RALT] == KEY_NAME_TO_CELL["SELECT"]
+    assert KEY_MATRIX_JP[_K_RALT] == KEY_NAME_TO_CELL["SELECT"]
+    state = InputState()
+    row, bit = KEY_NAME_TO_CELL["SELECT"]
+    state.key_down(_K_RALT)
+    assert state.matrix[row] & (1 << bit) == 0  # SELECT pressed (active-low)
+    state.key_up(_K_RALT)
+    assert state.matrix[row] & (1 << bit) != 0
+
+
+def test_shift_f1_simultaneous_press_asserts_both_cells() -> None:
+    # MSX BASIC reads simultaneous SHIFT+F1..F5 as F6..F10; InputState itself
+    # only needs to track both physical keys independently and correctly.
+    state = make_input()
+    shift_row, shift_bit = KEY_MATRIX[_K_LSHIFT]
+    f1_row, f1_bit = KEY_MATRIX[_K_F1]
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_F1)
+    assert state.matrix[shift_row] & (1 << shift_bit) == 0
+    assert state.matrix[f1_row] & (1 << f1_bit) == 0
+    state.key_up(_K_F1)
+    assert state.matrix[f1_row] & (1 << f1_bit) != 0     # F1 released
+    assert state.matrix[shift_row] & (1 << shift_bit) == 0  # SHIFT still held
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[shift_row] & (1 << shift_bit) != 0
