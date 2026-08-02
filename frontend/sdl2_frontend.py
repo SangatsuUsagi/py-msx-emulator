@@ -3,13 +3,13 @@ from __future__ import annotations
 import ctypes
 import sys
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
-from msx.input import KEY_NAME_TO_CELL
+from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.psg import SAMPLES_PER_FRAME
@@ -115,23 +115,95 @@ def _init_sdl(
 
 
 @dataclass
+class _ActiveCombo:
+    """A Ctrl+F-key combo currently asserting a synthetic MSX key."""
+    fkey: int
+    cell: tuple[int, int]
+
+
+@dataclass
 class _CtrlComboState:
     """Tracks the Ctrl+F1..F5 hotkey combo across independent SDL key events
     (Ctrl and the F-key arrive as separate KEYDOWN/KEYUP events, and either
     may release first; Left and Right Ctrl also share one MSX matrix cell).
 
     Plain Ctrl (no F-key held) is unaffected and keeps working as the MSX
-    CTRL key via the normal key_down/key_up path.
+    CTRL key via the normal key_down/key_up path. While a combo is active
+    (`active is not None`): a second F-key press is ignored until the active
+    one releases; the literal CTRL bit stays suppressed even if the other
+    Ctrl side is pressed mid-combo; and releasing the F-key re-asserts CTRL
+    for every Ctrl side still held.
     """
-    ctrl_syms_held: set[int] = field(default_factory=set)
-    active_fkey: int | None = None
-    active_cell: tuple[int, int] | None = None
+    lctrl_held: bool = False
+    rctrl_held: bool = False
+    active: _ActiveCombo | None = None
+
+    def release_active(self, input_state: InputState) -> None:
+        """Release the currently-asserted combo cell, if any."""
+        if self.active is not None:
+            row, bit = self.active.cell
+            input_state.set_key_state(row, bit, False)
+            self.active = None
+
+
+def _handle_ctrl_combo_keydown(
+    sdl2: Any, sym: int, ctrl_combo: _CtrlComboState,
+    ctrl_fkey_cells: dict[int, tuple[int, int]], machine: Machine,
+) -> bool:
+    """Ctrl+F1..F5 combo KEYDOWN handling. Returns True if `sym` was consumed
+    (Ctrl itself, or an F-key while at least one Ctrl side is held)."""
+    if sym == sdl2.SDLK_LCTRL:
+        ctrl_combo.lctrl_held = True
+        if ctrl_combo.active is None:
+            machine.input.key_down(sym)
+        return True
+    if sym == sdl2.SDLK_RCTRL:
+        ctrl_combo.rctrl_held = True
+        if ctrl_combo.active is None:
+            machine.input.key_down(sym)
+        return True
+    if sym in ctrl_fkey_cells and (ctrl_combo.lctrl_held or ctrl_combo.rctrl_held):
+        if ctrl_combo.active is None:
+            if ctrl_combo.lctrl_held:
+                machine.input.key_up(sdl2.SDLK_LCTRL)
+            if ctrl_combo.rctrl_held:
+                machine.input.key_up(sdl2.SDLK_RCTRL)
+            row, bit = ctrl_fkey_cells[sym]
+            machine.input.set_key_state(row, bit, True)
+            ctrl_combo.active = _ActiveCombo(sym, (row, bit))
+        # else: a second F-key pressed while a combo is already active is
+        # ignored until the active one releases.
+        return True
+    return False
+
+
+def _handle_ctrl_combo_keyup(
+    sdl2: Any, sym: int, ctrl_combo: _CtrlComboState, machine: Machine,
+) -> bool:
+    """Ctrl+F1..F5 combo KEYUP handling. Returns True if `sym` was consumed."""
+    if sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
+        if sym == sdl2.SDLK_LCTRL:
+            ctrl_combo.lctrl_held = False
+        else:
+            ctrl_combo.rctrl_held = False
+        if not (ctrl_combo.lctrl_held or ctrl_combo.rctrl_held):
+            ctrl_combo.release_active(machine.input)
+        machine.input.key_up(sym)
+        return True
+    if ctrl_combo.active is not None and sym == ctrl_combo.active.fkey:
+        ctrl_combo.release_active(machine.input)
+        if ctrl_combo.lctrl_held:
+            machine.input.key_down(sdl2.SDLK_LCTRL)
+        if ctrl_combo.rctrl_held:
+            machine.input.key_down(sdl2.SDLK_RCTRL)
+        return True
+    return False
 
 
 def _handle_events(
     sdl2: Any, event: Any, machine: Machine, window: Any, joy_manager: JoystickManager,
-    ctrl_combo: _CtrlComboState, game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    fullscreen: bool,
+    ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
 ) -> tuple[bool, bool]:
     """Drain the SDL event queue, applying input and hotkeys.
 
@@ -140,17 +212,6 @@ def _handle_events(
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
     running = True
-    # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
-    # keyboards without dedicated Home/Insert/Delete keys). Left Alt (GRAPH)
-    # and Right Alt (CODE/KANA) need no entries here: they're plain
-    # physical-key mappings in msx/input.py.
-    ctrl_fkey_cells = {
-        sdl2.SDLK_F1: KEY_NAME_TO_CELL["HOME"],
-        sdl2.SDLK_F2: KEY_NAME_TO_CELL["INS"],
-        sdl2.SDLK_F3: KEY_NAME_TO_CELL["DEL"],
-        sdl2.SDLK_F4: KEY_NAME_TO_CELL["STOP"],
-        sdl2.SDLK_F5: KEY_NAME_TO_CELL["SELECT"],
-    }
     while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
         if event.type == sdl2.SDL_QUIT:
             running = False
@@ -178,38 +239,14 @@ def _handle_events(
                   and (event.key.keysym.mod & sdl2.KMOD_CTRL)
                   and machine._debugger is not None):
                 machine._debugger.enter()
-            elif event.key.keysym.sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
-                ctrl_combo.ctrl_syms_held.add(event.key.keysym.sym)
-                machine.input.key_down(event.key.keysym.sym)
-            elif event.key.keysym.sym in ctrl_fkey_cells and ctrl_combo.ctrl_syms_held:
-                if ctrl_combo.active_fkey is None:
-                    for ctrl_sym in ctrl_combo.ctrl_syms_held:
-                        machine.input.key_up(ctrl_sym)
-                    row, bit = ctrl_fkey_cells[event.key.keysym.sym]
-                    machine.input.set_key_state(row, bit, True)
-                    ctrl_combo.active_fkey = event.key.keysym.sym
-                    ctrl_combo.active_cell = (row, bit)
-                # else: a second F-key pressed while a combo is already active
-                # is ignored until the active one releases.
+            elif _handle_ctrl_combo_keydown(
+                sdl2, event.key.keysym.sym, ctrl_combo, ctrl_fkey_cells, machine
+            ):
+                pass
             else:
                 machine.input.key_down(event.key.keysym.sym)
         elif event.type == sdl2.SDL_KEYUP:
-            if event.key.keysym.sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
-                ctrl_combo.ctrl_syms_held.discard(event.key.keysym.sym)
-                if ctrl_combo.active_cell is not None and not ctrl_combo.ctrl_syms_held:
-                    row, bit = ctrl_combo.active_cell
-                    machine.input.set_key_state(row, bit, False)
-                    ctrl_combo.active_fkey = None
-                    ctrl_combo.active_cell = None
-                machine.input.key_up(event.key.keysym.sym)
-            elif event.key.keysym.sym == ctrl_combo.active_fkey:
-                row, bit = ctrl_combo.active_cell
-                machine.input.set_key_state(row, bit, False)
-                ctrl_combo.active_fkey = None
-                ctrl_combo.active_cell = None
-                for ctrl_sym in ctrl_combo.ctrl_syms_held:
-                    machine.input.key_down(ctrl_sym)
-            else:
+            if not _handle_ctrl_combo_keyup(sdl2, event.key.keysym.sym, ctrl_combo, machine):
                 machine.input.key_up(event.key.keysym.sym)
         elif event.type in (
             sdl2.SDL_CONTROLLERDEVICEADDED,
@@ -407,6 +444,18 @@ def run(
         joy_kwargs["_turbo_period"] = turbo_period
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2, **joy_kwargs)
     ctrl_combo = _CtrlComboState()
+    # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
+    # keyboards without dedicated Home/Insert/Delete keys). Left Alt (GRAPH)
+    # and Right Alt (CODE/KANA) need no entries here: they're plain
+    # physical-key mappings in msx/input.py. Built once (not per-frame): the
+    # mapping never changes for the lifetime of this run.
+    ctrl_fkey_cells = {
+        sdl2.SDLK_F1: KEY_NAME_TO_CELL["HOME"],
+        sdl2.SDLK_F2: KEY_NAME_TO_CELL["INS"],
+        sdl2.SDLK_F3: KEY_NAME_TO_CELL["DEL"],
+        sdl2.SDLK_F4: KEY_NAME_TO_CELL["STOP"],
+        sdl2.SDLK_F5: KEY_NAME_TO_CELL["SELECT"],
+    }
 
     if resume is not None:
         try:
@@ -426,7 +475,7 @@ def run(
             try:
                 # Process events (input + hotkeys); updates running/fullscreen.
                 running, fullscreen = _handle_events(
-                    sdl2, event, machine, window, joy_manager, ctrl_combo,
+                    sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
                     game_title, rgb_buf, tex_w, tex_h, fullscreen,
                 )
 
