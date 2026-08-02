@@ -562,6 +562,12 @@ and valid button labels.
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Toggle fullscreen |
 | F1–F5 | Passed through to the MSX keyboard matrix |
+| Left Alt/Option + F1 | MSX HOME |
+| Left Alt/Option + F2 | MSX INS |
+| Left Alt/Option + F3 | MSX DEL |
+| Left Alt/Option + F4 | MSX STOP |
+| Left Alt/Option + F5 | MSX SELECT |
+| Right Alt/Option | MSX SELECT |
 
 \* `<title>` is the game title from the ROM database, or `"py-msx-emulator"` if
 the cartridge is not in the database.
