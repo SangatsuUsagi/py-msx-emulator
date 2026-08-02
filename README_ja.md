@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1607%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1621%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -441,8 +441,20 @@ joystick:
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
 | F11 | フルスクリーン切り替え |
 | F1–F5 | MSX キーボードマトリクスにそのまま渡す |
+| Ctrl + F1 | MSX HOME |
+| Ctrl + F2 | MSX INS |
+| Ctrl + F3 | MSX DEL |
+| Ctrl + F4 | MSX STOP |
+| Ctrl + F5 | MSX SELECT |
+| 右 Alt/Option | MSX CODE/KANA |
 
 \* `<title>` は ROM データベースから取得したゲームタイトルです。データベースにない場合は `"py-msx-emulator"` が使われます。
+
+**注記（macOS）:** `^F1`–`^F5`（Ctrl+F1〜F5）は macOS のシステム全体のショート
+カット（システム設定 → キーボード → キーボードショートカット → キーボード、例：
+「メニューバーにフォーカスを移動」= `^F2`）として予約されている場合がありま
+す。Ctrl+F1〜F5 がエミュレータに届かないようであれば、そちらを無効化してくだ
+さい。
 
 **キーボードによるジョイスティックエミュレーション（Joy 1）:**
 
@@ -622,7 +634,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1607 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1621 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -680,7 +692,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1607 テスト
+├── tests/                 # テストスイート — 1621 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -724,6 +736,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.2** (2026-08-02) — SDL2 フロントエンドに Ctrl+F1〜F5（MSX HOME/INS/DEL/STOP/SELECT）と右 Alt（MSX CODE/KANA）のキー割り当てを追加
 - **v2.4.1** (2026-08-02) — 任意の `py_emulator.yaml` 起動設定ファイルに対応（デフォルトのマシン/速度/マッパー/FM-PAC、ゲームパッドのボタン割り当て、連射レート）。`--benchmark` をフレーム数指定に変更
 - **v2.4.0** (2026-07-30) — FM-PAC（MSX-MUSIC）カートリッジと YM2413（OPLL）FM 音源チップを追加
 - **v2.3.6** (2026-07-23) — 描画出力を212ラインの固定高さに統一

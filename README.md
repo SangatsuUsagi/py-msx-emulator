@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1607%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1621%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -572,6 +572,11 @@ and valid button labels.
 \* `<title>` is the game title from the ROM database, or `"py-msx-emulator"` if
 the cartridge is not in the database.
 
+**Note (macOS):** `^F1`–`^F5` (Ctrl+F1..F5) may be reserved by macOS as
+system-wide shortcuts (System Settings → Keyboard → Keyboard Shortcuts →
+Keyboard, e.g. "Move focus to the menu bar" = `^F2`). If Ctrl+F1..F5 doesn't
+seem to reach the emulator, disable those shortcuts there.
+
 **Keyboard joystick emulation (Joy 1):**
 
 | Key | Action |
@@ -758,7 +763,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1607 tests spanning unit tests
+The test suite covers all major components with 1621 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -819,7 +824,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1607 tests
+├── tests/                 # Test suite — 1621 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -880,6 +885,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
 - **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file (default machine/speed/mapper/FM-PAC, gamepad button map, turbo rate); switch `--benchmark` to a frame count.
 - **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
 - **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
