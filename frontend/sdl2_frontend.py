@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -115,22 +115,22 @@ def _init_sdl(
 
 
 @dataclass
-class _AltComboState:
-    """Tracks the Left Alt+F1..F5 hotkey combo across independent SDL key
-    events (Alt and the F-key arrive as separate KEYDOWN/KEYUP events, and
-    either may release first).
+class _CtrlComboState:
+    """Tracks the Ctrl+F1..F5 hotkey combo across independent SDL key events
+    (Ctrl and the F-key arrive as separate KEYDOWN/KEYUP events, and either
+    may release first; Left and Right Ctrl also share one MSX matrix cell).
 
-    Plain Left Alt (no F-key held) is unaffected and keeps working as MSX
-    GRAPH via the normal key_down/key_up path.
+    Plain Ctrl (no F-key held) is unaffected and keeps working as the MSX
+    CTRL key via the normal key_down/key_up path.
     """
-    alt_held: bool = False
+    ctrl_syms_held: set[int] = field(default_factory=set)
     active_fkey: int | None = None
     active_cell: tuple[int, int] | None = None
 
 
 def _handle_events(
     sdl2: Any, event: Any, machine: Machine, window: Any, joy_manager: JoystickManager,
-    alt_combo: _AltComboState, game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
+    ctrl_combo: _CtrlComboState, game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
     fullscreen: bool,
 ) -> tuple[bool, bool]:
     """Drain the SDL event queue, applying input and hotkeys.
@@ -140,10 +140,11 @@ def _handle_events(
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
     running = True
-    # Left Alt+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
-    # keyboards without dedicated Home/Insert/Delete keys). Right Alt->SELECT
-    # needs no entry here: it's a plain physical-key mapping in msx/input.py.
-    alt_fkey_cells = {
+    # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
+    # keyboards without dedicated Home/Insert/Delete keys). Left Alt (GRAPH)
+    # and Right Alt (CODE/KANA) need no entries here: they're plain
+    # physical-key mappings in msx/input.py.
+    ctrl_fkey_cells = {
         sdl2.SDLK_F1: KEY_NAME_TO_CELL["HOME"],
         sdl2.SDLK_F2: KEY_NAME_TO_CELL["INS"],
         sdl2.SDLK_F3: KEY_NAME_TO_CELL["DEL"],
@@ -177,36 +178,37 @@ def _handle_events(
                   and (event.key.keysym.mod & sdl2.KMOD_CTRL)
                   and machine._debugger is not None):
                 machine._debugger.enter()
-            elif event.key.keysym.sym == sdl2.SDLK_LALT:
-                alt_combo.alt_held = True
+            elif event.key.keysym.sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
+                ctrl_combo.ctrl_syms_held.add(event.key.keysym.sym)
                 machine.input.key_down(event.key.keysym.sym)
-            elif event.key.keysym.sym in alt_fkey_cells and alt_combo.alt_held:
-                if alt_combo.active_fkey is None:
-                    machine.input.key_up(sdl2.SDLK_LALT)
-                    row, bit = alt_fkey_cells[event.key.keysym.sym]
+            elif event.key.keysym.sym in ctrl_fkey_cells and ctrl_combo.ctrl_syms_held:
+                if ctrl_combo.active_fkey is None:
+                    for ctrl_sym in ctrl_combo.ctrl_syms_held:
+                        machine.input.key_up(ctrl_sym)
+                    row, bit = ctrl_fkey_cells[event.key.keysym.sym]
                     machine.input.set_key_state(row, bit, True)
-                    alt_combo.active_fkey = event.key.keysym.sym
-                    alt_combo.active_cell = (row, bit)
+                    ctrl_combo.active_fkey = event.key.keysym.sym
+                    ctrl_combo.active_cell = (row, bit)
                 # else: a second F-key pressed while a combo is already active
                 # is ignored until the active one releases.
             else:
                 machine.input.key_down(event.key.keysym.sym)
         elif event.type == sdl2.SDL_KEYUP:
-            if event.key.keysym.sym == sdl2.SDLK_LALT:
-                if alt_combo.active_cell is not None:
-                    row, bit = alt_combo.active_cell
+            if event.key.keysym.sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
+                ctrl_combo.ctrl_syms_held.discard(event.key.keysym.sym)
+                if ctrl_combo.active_cell is not None and not ctrl_combo.ctrl_syms_held:
+                    row, bit = ctrl_combo.active_cell
                     machine.input.set_key_state(row, bit, False)
-                    alt_combo.active_fkey = None
-                    alt_combo.active_cell = None
+                    ctrl_combo.active_fkey = None
+                    ctrl_combo.active_cell = None
                 machine.input.key_up(event.key.keysym.sym)
-                alt_combo.alt_held = False
-            elif event.key.keysym.sym == alt_combo.active_fkey:
-                row, bit = alt_combo.active_cell
+            elif event.key.keysym.sym == ctrl_combo.active_fkey:
+                row, bit = ctrl_combo.active_cell
                 machine.input.set_key_state(row, bit, False)
-                alt_combo.active_fkey = None
-                alt_combo.active_cell = None
-                if alt_combo.alt_held:
-                    machine.input.key_down(sdl2.SDLK_LALT)
+                ctrl_combo.active_fkey = None
+                ctrl_combo.active_cell = None
+                for ctrl_sym in ctrl_combo.ctrl_syms_held:
+                    machine.input.key_down(ctrl_sym)
             else:
                 machine.input.key_up(event.key.keysym.sym)
         elif event.type in (
@@ -404,7 +406,7 @@ def run(
     if turbo_period is not None:
         joy_kwargs["_turbo_period"] = turbo_period
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2, **joy_kwargs)
-    alt_combo = _AltComboState()
+    ctrl_combo = _CtrlComboState()
 
     if resume is not None:
         try:
@@ -424,7 +426,7 @@ def run(
             try:
                 # Process events (input + hotkeys); updates running/fullscreen.
                 running, fullscreen = _handle_events(
-                    sdl2, event, machine, window, joy_manager, alt_combo,
+                    sdl2, event, machine, window, joy_manager, ctrl_combo,
                     game_title, rgb_buf, tex_w, tex_h, fullscreen,
                 )
 

@@ -117,14 +117,14 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     _K_LCTRL: (6, 1), _K_RCTRL: (6, 1),
     _K_LALT: (6, 2),   # left Alt/Option → MSX GRAPH
     _K_CAPSLOCK: (6, 3),
+    _K_RALT: (6, 4),   # right Alt/Option → MSX CODE/KANA
     _K_F1: (6, 5), _K_F2: (6, 6), _K_F3: (6, 7),
-    # Row 7: F4, F5, ESC, TAB, BS, RETURN, SELECT (via right Alt/Option)
+    # Row 7: F4, F5, ESC, TAB, BS, RETURN
     _K_F4: (7, 0),
     _K_F5: (7, 1),
     _K_ESCAPE: (7, 2),
     _K_TAB: (7, 3),
     _K_BACKSPACE: (7, 5),
-    _K_RALT: (7, 6),   # right Alt/Option → MSX SELECT
     _K_RETURN: (7, 7),
     # Row 8: space, editing keys, cursor keys
     _K_SPACE: (8, 0),
