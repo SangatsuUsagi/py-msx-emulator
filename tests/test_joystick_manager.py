@@ -44,7 +44,7 @@ def make_manager(is_gc: bool = True) -> tuple[JoystickManager, InputState, Magic
     return mgr, inp, sdl
 
 
-def gc_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespace:
+def gc_event(etype: int, which: int, **kwargs) -> SimpleNamespace:
     ev = SimpleNamespace(type=etype)
     ev.cdevice = SimpleNamespace(which=which)
     ev.cbutton = SimpleNamespace(which=which, **kwargs)
@@ -52,7 +52,7 @@ def gc_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespac
     return ev
 
 
-def joy_event(sdl: MagicMock, etype: int, which: int, **kwargs) -> SimpleNamespace:
+def joy_event(etype: int, which: int, **kwargs) -> SimpleNamespace:
     ev = SimpleNamespace(type=etype)
     ev.jdevice = SimpleNamespace(which=which)
     ev.jbutton = SimpleNamespace(which=which, **kwargs)
@@ -132,7 +132,7 @@ def test_hot_plug_removal_releases_pressed_bits() -> None:
     inp.joystick_button_down(0, 0)  # Joy1 Up pressed
     assert inp.joy1 & 0x01 == 0
 
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
+    ev = gc_event(sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
     mgr.handle_event(ev)
 
     assert inp.joy1 & 0x01 != 0  # released
@@ -160,7 +160,7 @@ def _open_single_gc(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 42)
 def test_gc_dpad_up_sets_joy1_up_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11)  # DPAD_UP
+    ev = gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11)  # DPAD_UP
     mgr.handle_event(ev)
     assert inp.joy1 & 0x01 == 0  # bit 0 pressed
 
@@ -168,37 +168,37 @@ def test_gc_dpad_up_sets_joy1_up_bit() -> None:
 def test_gc_dpad_up_release_clears_joy1_up_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=11))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONUP, 42, button=11))
     assert inp.joy1 & 0x01 != 0  # bit 0 released
 
 
 def test_gc_dpad_other_bits_unaffected() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=11))
     assert inp.joy1 & 0x3E == 0x3E  # bits 1-5 unaffected
 
 
 def test_gc_button_a_sets_trigger_a_bit4() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=0))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=0))
     assert inp.joy1 & (1 << 4) == 0  # bit 4 (Trigger A) pressed
 
 
 def test_gc_button_b_sets_trigger_b_bit5() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
     assert inp.joy1 & (1 << 5) == 0  # bit 5 (Trigger B) pressed
 
 
 def test_gc_button_b_release_clears_trigger_b() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=1))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONUP, 42, button=1))
     assert inp.joy1 & (1 << 5) != 0  # bit 5 released
 
 
@@ -209,7 +209,7 @@ def test_gc_button_b_release_clears_trigger_b() -> None:
 def test_axis_above_deadzone_up_sets_up_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)
+    ev = gc_event(sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000)
     mgr.handle_event(ev)
     assert inp.joy1 & 0x01 == 0  # bit 0 (up) pressed
 
@@ -217,7 +217,7 @@ def test_axis_above_deadzone_up_sets_up_bit() -> None:
 def test_axis_negative_deadzone_sets_down_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)
+    ev = gc_event(sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=-20000)
     mgr.handle_event(ev)
     assert inp.joy1 & 0x02 == 0  # bit 1 (down) pressed
 
@@ -225,16 +225,16 @@ def test_axis_negative_deadzone_sets_down_bit() -> None:
 def test_axis_within_deadzone_does_not_set_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=1000))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=1000))
     assert inp.joy1 & 0x01 != 0
 
 
 def test_axis_returns_to_deadzone_releases_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=20000))
     assert inp.joy1 & 0x01 == 0
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=0))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERAXISMOTION, 42, axis=1, value=0))
     assert inp.joy1 & 0x01 != 0
 
 
@@ -252,7 +252,7 @@ def _open_single_joy(mgr: JoystickManager, sdl: MagicMock, instance_id: int = 55
 def test_hat_up_sets_up_bit() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
+    mgr.handle_event(joy_event(sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
     assert inp.joy1 & 0x01 == 0
 
 
@@ -260,7 +260,7 @@ def test_hat_diagonal_sets_two_bits() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
     mgr.handle_event(
-        joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP)
+        joy_event(sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_LEFT | sdl.SDL_HAT_UP)
     )
     assert inp.joy1 & 0x01 == 0  # up
     assert inp.joy1 & 0x04 == 0  # left
@@ -269,23 +269,23 @@ def test_hat_diagonal_sets_two_bits() -> None:
 def test_hat_centered_releases_all_direction_bits() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
+    mgr.handle_event(joy_event(sdl.SDL_JOYHATMOTION, 55, value=sdl.SDL_HAT_UP))
     assert inp.joy1 & 0x01 == 0
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYHATMOTION, 55, value=0))
+    mgr.handle_event(joy_event(sdl.SDL_JOYHATMOTION, 55, value=0))
     assert inp.joy1 & 0x0F == 0x0F  # bits 0-3 all released
 
 
 def test_raw_joy_button0_sets_trigger_a() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=0))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONDOWN, 55, button=0))
     assert inp.joy1 & (1 << 4) == 0  # bit 4 (Trigger A) pressed
 
 
 def test_raw_joy_button1_sets_trigger_b() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=1))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONDOWN, 55, button=1))
     assert inp.joy1 & (1 << 5) == 0  # bit 5 (Trigger B) pressed
 
 
@@ -296,7 +296,7 @@ def test_raw_joy_button1_sets_trigger_b() -> None:
 def test_gc_button_x_press_adds_to_turbo_held() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
     assert (0, 5) in mgr._turbo_held  # X → Trigger B
     assert inp.joy1 & (1 << 5) != 0  # no direct bit write
 
@@ -304,9 +304,9 @@ def test_gc_button_x_press_adds_to_turbo_held() -> None:
 def test_gc_button_x_release_removes_turbo_and_releases_bit() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))
     mgr.tick()  # drives bit low
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))
     assert (0, 5) not in mgr._turbo_held
     assert inp.joy1 & (1 << 5) != 0  # bit released
 
@@ -314,9 +314,9 @@ def test_gc_button_x_release_removes_turbo_and_releases_bit() -> None:
 def test_gc_button_y_press_release_mirrors_x_for_bit5() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))
     assert (0, 4) in mgr._turbo_held  # Y → Trigger A
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=3))
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONUP, 42, button=3))
     assert (0, 4) not in mgr._turbo_held
     assert inp.joy1 & (1 << 4) != 0  # bit released
 
@@ -324,7 +324,7 @@ def test_gc_button_y_press_release_mirrors_x_for_bit5() -> None:
 def test_tick_on_off_off_cycle() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
 
     mgr.tick()  # frame 0: ON
     assert inp.joy1 & (1 << 5) == 0
@@ -351,7 +351,7 @@ def test_turbo_counter_resets_on_first_press() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
     mgr._turbo_counter = 2  # simulate mid-cycle state
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
     assert mgr._turbo_counter == 0
     mgr.tick()  # should be ON (frame 0)
     assert inp.joy1 & (1 << 5) == 0
@@ -360,10 +360,10 @@ def test_turbo_counter_resets_on_first_press() -> None:
 def test_device_disconnect_clears_turbo_state() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
     assert (0, 5) in mgr._turbo_held
 
-    ev = gc_event(sdl, sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
+    ev = gc_event(sdl.SDL_CONTROLLERDEVICEREMOVED, 42)
     mgr.handle_event(ev)
 
     assert (0, 5) not in mgr._turbo_held
@@ -373,21 +373,21 @@ def test_device_disconnect_clears_turbo_state() -> None:
 def test_raw_joy_button2_activates_trigger_a_turbo() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=2))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONDOWN, 55, button=2))
     assert (0, 4) in mgr._turbo_held
     assert inp.joy1 & (1 << 4) != 0  # no direct bit write
 
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONUP, 55, button=2))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONUP, 55, button=2))
     assert (0, 4) not in mgr._turbo_held
 
 
 def test_raw_joy_button3_activates_trigger_b_turbo() -> None:
     mgr, inp, sdl = make_manager(is_gc=False)
     _open_single_joy(mgr, sdl)
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONDOWN, 55, button=3))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONDOWN, 55, button=3))
     assert (0, 5) in mgr._turbo_held
 
-    mgr.handle_event(joy_event(sdl, sdl.SDL_JOYBUTTONUP, 55, button=3))
+    mgr.handle_event(joy_event(sdl.SDL_JOYBUTTONUP, 55, button=3))
     assert (0, 5) not in mgr._turbo_held
     assert inp.joy1 & (1 << 5) != 0  # bit released
 
@@ -395,13 +395,46 @@ def test_raw_joy_button3_activates_trigger_b_turbo() -> None:
 def test_releasing_one_turbo_does_not_affect_other() -> None:
     mgr, inp, sdl = make_manager()
     _open_single_gc(mgr, sdl)
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))  # Y → TrigA
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=3))  # Y → TrigA
     assert (0, 5) in mgr._turbo_held
     assert (0, 4) in mgr._turbo_held
 
-    mgr.handle_event(gc_event(sdl, sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))  # release X
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONUP, 42, button=2))  # release X
     assert (0, 5) not in mgr._turbo_held
     assert (0, 4) in mgr._turbo_held  # Y still active
     mgr.tick()  # Y turbo still fires
     assert inp.joy1 & (1 << 4) == 0
+
+
+# ---------------------------------------------------------------------------
+# Configurable turbo period and button map (py_emulator.yaml)
+# ---------------------------------------------------------------------------
+
+def test_tick_honours_configured_turbo_period() -> None:
+    inp = InputState()
+    sdl = make_sdl(is_gc=True)
+    mgr = JoystickManager(_input=inp, _sdl=sdl, _turbo_period=2)
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=2))  # X → TrigB
+
+    mgr.tick()  # frame 0: ON
+    assert inp.joy1 & (1 << 5) == 0
+    mgr.tick()  # frame 1: OFF
+    assert inp.joy1 & (1 << 5) != 0
+    mgr.tick()  # frame 2: ON again (period 2)
+    assert inp.joy1 & (1 << 5) == 0
+
+
+def test_configured_button_map_rebinds_trigger() -> None:
+    inp = InputState()
+    sdl = make_sdl(is_gc=True)
+    # SDL button b (index 1) drives Trigger A (bit 4) instead of the default A.
+    mgr = JoystickManager(
+        _input=inp, _sdl=sdl,
+        _gc_button_bit={1: 4, 0: 5},
+        _gc_turbo_button_bit={3: 4, 2: 5},
+    )
+    _open_single_gc(mgr, sdl)
+    mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
+    assert inp.joy1 & (1 << 4) == 0  # Trigger A pressed via button b

@@ -67,3 +67,8 @@ class FrameTimer:
     @property
     def fps_measured(self) -> float:
         return self._fps_measured
+
+    @property
+    def frame_interval(self) -> float:
+        """Target seconds per frame (1 / (fps*speed))."""
+        return self._frame_interval

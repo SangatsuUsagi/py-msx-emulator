@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from msx.app_config import AppConfig
+
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
@@ -48,6 +50,7 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
          )), \
          patch.object(Path, "exists", fake_exists), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
+         patch("msx.app_config.load_app_config", lambda root: AppConfig()), \
          patch("frontend.sdl2_frontend.run"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)

@@ -235,3 +235,6 @@ __marimo__/
 
 # Project-local MCP server registration (personal socket override)
 .mcp.json
+
+# Local startup configuration (copy from py_emulator.example.yaml)
+/py_emulator.yaml

@@ -1,0 +1,59 @@
+# py-msx-emulator startup configuration (example).
+#
+# Copy this file to `py_emulator.yaml` in the repository root to set your
+# preferred defaults. Every key is optional; omit a key to keep the built-in
+# default. Command-line arguments always override values set here.
+#
+#   precedence:  built-in default  <  py_emulator.yaml  <  CLI argument
+#
+# `py_emulator.yaml` is git-ignored, so your local settings stay out of version
+# control. If the file is absent, the emulator behaves exactly as before.
+
+# Default machine configuration ID (a YAML file under config/machines/).
+# When unset, the machine is auto-detected from the cartridge ROM database.
+machine: cbios_msx2_jp
+
+# Emulation speed multiplier (1.0 = real time). Must be positive.
+speed: 1.0
+
+# Integer window scale over the 256x212 base resolution. Must be a positive
+# integer (e.g. 2 for a small display, 4 for a large one). Ignored in headless
+# modes (--benchmark / --count-frame).
+scale: 3
+
+# Slot 1 cartridge mapper. One of: auto, Mirrored, Normal, ASCII8, ASCII16,
+# Konami, KonamiSCC, Majutsushi, ASCII8SRAM2, ASCII8SRAM8, ASCII16SRAM2,
+# ASCII16SRAM8, R-Type. `auto` detects the mapper from the ROM database.
+mapper: auto
+
+# Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2.
+# Conflicts with a slot 2 cartridge (--slot2).
+fmpac: false
+
+# Embedded Unix-socket JSON-RPC control server (interactive run mode only).
+rpc:
+  enabled: false
+  socket: /tmp/py_msx_emu.sock
+
+# Gamepad (SDL GameController) settings.
+joystick:
+  # Turbo (auto-fire) rate in Hz. Converted internally to whole 60 fps frames
+  # via round(60 / turbo_hz); exact only when the rate divides 60 (e.g. 10, 12,
+  # 15, 20, 30). Must be positive.
+  turbo_hz: 20
+
+  # Assign each MSX joystick function to an SDL GameController button label.
+  # Any function left out keeps its default (shown below). No two functions may
+  # share the same button.
+  #
+  # Valid button labels: a, b, x, y, back, guide, start, leftstick, rightstick,
+  # leftshoulder, rightshoulder, dpup, dpdown, dpleft, dpright.
+  buttons:
+    up:        dpup
+    down:      dpdown
+    left:      dpleft
+    right:     dpright
+    trigger_a: a
+    trigger_b: b
+    turbo_a:   y   # auto-fire Trigger A
+    turbo_b:   x   # auto-fire Trigger B
