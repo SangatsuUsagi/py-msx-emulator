@@ -160,6 +160,33 @@ def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper)
     assert other._scc_mode is True
 
 
+def test_restore_with_scc_mode_true_routes_reads_to_scc(mapper: KonamiSCCMapper) -> None:
+    # restore() must rebind read() to match the restored _scc_mode, not just
+    # recompute the flat mirror -- verified via behavior (an SCC-range read
+    # after restore routes to the SCC chip), not by inspecting the bound
+    # method directly.
+    mapper.write(0x9000, 0x3F)   # enable SCC mode
+    snap = mapper.snapshot()
+
+    other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
+    other.restore(snap)
+    other.scc.write(0x00, 0x55)
+    assert other.read(0x9800) == 0x55
+
+
+def test_restore_with_scc_mode_false_routes_reads_to_rom(mapper: KonamiSCCMapper) -> None:
+    # The inverse: restoring onto a mapper that was previously in SCC mode
+    # must rebind read() back to the ROM path.
+    mapper.write(0x9000, 0x3F)
+    mapper.write(0x9000, 0x02)   # disable SCC mode, window 2 -> bank 2
+    snap = mapper.snapshot()
+
+    other = KonamiSCCMapper(rom=_rom(8), scc=SCC())
+    other.write(0x9000, 0x3F)   # start `other` in SCC mode
+    other.restore(snap)
+    assert other.read(0x9800) == 2  # ROM page 2 byte, not routed to SCC
+
+
 # ---------------------------------------------------------------------------
 # Addresses outside the four windows (0x4000-0xBFFF)
 # ---------------------------------------------------------------------------
