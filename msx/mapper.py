@@ -483,6 +483,16 @@ class KonamiMapper(_BankTracing):
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch. See KonamiSCCMapper for the rationale. Window 0 is fixed
+    # to page 0 and is populated once in __post_init__ but never re-synced
+    # by write() (writes to 0x4000-0x5FFF are ignored).
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._flat = bytearray(4 * _PAGE_8K)
+        for window in range(4):
+            self._sync_window(window)
 
     def _bank_mask(self) -> int:
         # Konami4 hardware: 5-bit bank register → 32 pages (256 KB) max.
@@ -494,7 +504,22 @@ class KonamiMapper(_BankTracing):
             m <<= 1
         return m - 1
 
+    def _sync_window(self, window: int) -> None:
+        page = self._banks[window]
+        src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
+        dst = window * _PAGE_8K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_8K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
+
     def read(self, addr: int) -> int:
+        idx = addr - 0x4000
+        if 0 <= idx < 4 * _PAGE_8K:
+            return self._flat[idx]
+        return self._read_out_of_window(addr)
+
+    def _read_out_of_window(self, addr: int) -> int:
         if addr < 0x6000:
             window, base = 0, 0x4000
         elif addr < 0x8000:
@@ -521,6 +546,8 @@ class KonamiMapper(_BankTracing):
         new = value & self._bank_mask()
         old = self._banks[window]
         self._banks[window] = new
+        if new != old:
+            self._sync_window(window)
         _trace_bank(self, window, old, new, addr)
 
     def snapshot(self) -> dict[str, object]:
@@ -528,6 +555,8 @@ class KonamiMapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        for window in range(4):
+            self._sync_window(window)
 
 
 @dataclass

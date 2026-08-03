@@ -246,6 +246,23 @@ def test_konami_page_wrap_around() -> None:
     assert m.read(0x6000) == 1
 
 
+def test_konami_read_below_window_returns_open_bus() -> None:
+    # A slot scan (e.g. BIOS RAM detection) can transiently address this
+    # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+    rom = _rom_8k_pages(8)
+    m = KonamiMapper(rom)
+    assert m.read(0x0000) == 0xFF
+
+
+def test_konami_read_above_window_falls_back_to_bank_arithmetic() -> None:
+    # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for any
+    # addr >= 0xA000, so a small ROM (bank 3's page_offset out of range)
+    # resolves to open bus via the same bounds check, not a crash.
+    small_rom = _rom_8k_pages(1)
+    m = KonamiMapper(small_rom)
+    assert m.read(0xC000) == 0xFF
+
+
 # ---------------------------------------------------------------------------
 # MajutsushiMapper
 # ---------------------------------------------------------------------------
@@ -283,6 +300,15 @@ def test_majutsushi_non_dac_write_switches_bank() -> None:
     m = _maj()
     m.write(0x6000, 2)
     assert m._banks[1] == 2
+
+
+def test_majutsushi_dac_write_does_not_touch_flat_mirror() -> None:
+    # DAC writes (0x5000-0x5FFF) bypass KonamiMapper.write() entirely, so
+    # they must not resync (or otherwise disturb) the inherited flat mirror;
+    # window 0 (fixed to page 0) should still read correctly afterwards.
+    m = _maj()
+    m.write(0x5000, 0x03)
+    assert m.read(0x4000) == 0  # still page 0
 
 
 def test_majutsushi_generate_samples_silence() -> None:
