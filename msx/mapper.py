@@ -570,7 +570,28 @@ class KonamiSCCMapper(_BankTracing):
     def read(self, addr: int) -> int:
         if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
             return self.scc.read(addr - 0x9800)
-        return self._flat[addr - 0x4000]
+        idx = addr - 0x4000
+        if 0 <= idx < 4 * _PAGE_8K:
+            return self._flat[idx]
+        # Outside the four windows: a slot scan (e.g. BIOS RAM detection) can
+        # transiently map this cartridge's slot onto a page it doesn't
+        # actually occupy. Fall back to the bank/bounds-checked path instead
+        # of indexing the flat mirror out of range.
+        return self._read_out_of_window(addr)
+
+    def _read_out_of_window(self, addr: int) -> int:
+        if addr < 0x6000:
+            window, base = 0, 0x4000
+        elif addr < 0x8000:
+            window, base = 1, 0x6000
+        elif addr < 0xA000:
+            window, base = 2, 0x8000
+        else:
+            window, base = 3, 0xA000
+        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
+        if 0 <= page_offset < len(self.rom):
+            return self.rom[page_offset]
+        return 0xFF
 
     def write(self, addr: int, value: int) -> None:
         # SCC register writes take priority over bank-register writes.

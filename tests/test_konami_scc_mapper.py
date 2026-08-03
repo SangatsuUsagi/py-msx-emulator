@@ -158,3 +158,22 @@ def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper)
     other.restore(snap)
     assert other._banks == mapper._banks
     assert other._scc_mode is True
+
+
+# ---------------------------------------------------------------------------
+# Addresses outside the four windows (0x4000-0xBFFF)
+# ---------------------------------------------------------------------------
+
+def test_read_below_window_returns_open_bus(mapper: KonamiSCCMapper) -> None:
+    # A slot scan (e.g. BIOS RAM detection) can transiently address this
+    # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+    assert mapper.read(0x0000) == 0xFF
+
+
+def test_read_above_window_falls_back_to_bank_arithmetic() -> None:
+    # Above 0xBFFF (page 3): the pre-flat-mirror behavior re-used window 3's
+    # bank/base arithmetic for any addr >= 0xA000, so a small ROM (bank 3
+    # defaults to page 3, out of range for a 1-page ROM) still resolves to
+    # open bus via the same bounds check, not a crash.
+    small_mapper = KonamiSCCMapper(rom=_rom(1), scc=SCC())
+    assert small_mapper.read(0xC000) == 0xFF
