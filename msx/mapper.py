@@ -96,11 +96,35 @@ class Ascii8Mapper(_BankTracing):
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
+    # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch. See KonamiSCCMapper for the rationale (reads are hot,
+    # switches are rare).
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._flat = bytearray(4 * _PAGE_8K)
+        for window in range(4):
+            self._sync_window(window)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
 
+    def _sync_window(self, window: int) -> None:
+        page = self._banks[window]
+        src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
+        dst = window * _PAGE_8K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_8K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
+
     def read(self, addr: int) -> int:
+        idx = addr - 0x4000
+        if 0 <= idx < 4 * _PAGE_8K:
+            return self._flat[idx]
+        return self._read_out_of_window(addr)
+
+    def _read_out_of_window(self, addr: int) -> int:
         if addr < 0x6000:
             window, base = 0, 0x4000
         elif addr < 0x8000:
@@ -121,6 +145,8 @@ class Ascii8Mapper(_BankTracing):
             new = value % self._num_pages()
             old = self._banks[reg]
             self._banks[reg] = new
+            if new != old:
+                self._sync_window(reg)
             _trace_bank(self, reg, old, new, addr)
 
     def snapshot(self) -> dict[str, object]:
@@ -128,6 +154,8 @@ class Ascii8Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        for window in range(4):
+            self._sync_window(window)
 
 
 @dataclass
@@ -212,6 +240,14 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         self._c_enable_bit = self._num_pages()        # == _sram_enable_bit()
         self._c_block_mask = self._sram_block_mask()
         self._c_rom_len = len(self.rom)
+        # `_flat` (from Ascii8Mapper) is unused by this class's read()/write()
+        # for now — this class overrides both completely and still resolves
+        # SRAM/ROM per read. Initialized here only so the inherited
+        # `restore()` -> `_sync_window()` calls have somewhere to write; a
+        # follow-up change wires read() to consult it for ROM-mapped windows.
+        self._flat = bytearray(4 * _PAGE_8K)
+        for window in range(4):
+            self._sync_window(window)
 
     def _sram_enable_bit(self) -> int:
         return self._num_pages()

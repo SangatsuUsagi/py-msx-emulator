@@ -122,6 +122,23 @@ def test_ascii8_write_outside_control_range_ignored() -> None:
     assert m.read(0x4000) == 0  # still page 0
 
 
+def test_ascii8_read_below_window_returns_open_bus() -> None:
+    # A slot scan (e.g. BIOS RAM detection) can transiently address this
+    # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    assert m.read(0x0000) == 0xFF
+
+
+def test_ascii8_read_above_window_falls_back_to_bank_arithmetic() -> None:
+    # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for any
+    # addr >= 0xA000, so a small ROM (bank 3's page_offset out of range)
+    # resolves to open bus via the same bounds check, not a crash.
+    small_rom = _rom_8k_pages(1)
+    m = Ascii8Mapper(small_rom)
+    assert m.read(0xC000) == 0xFF
+
+
 # ---------------------------------------------------------------------------
 # Ascii16Mapper
 # ---------------------------------------------------------------------------
