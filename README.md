@@ -350,6 +350,14 @@ device always consumes at 44100 Hz. PyPy3 is a drop-in alternative that
 substantially improves throughput on slower hardware and is the recommended way
 to keep headroom on constrained hosts like a Raspberry Pi.
 
+### Benchmark history
+
+Avg FPS (`--benchmark`) from v0.1.0 through v2.4.1, per platform and runtime:
+
+![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
+
+![Benchmark history on Raspberry Pi 5](assets/bench-history-rpi5.png)
+
 Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel
 rendering on frames that miss the deadline while still firing the VBlank
 interrupt every frame. This improves display smoothness on hosts near but below
