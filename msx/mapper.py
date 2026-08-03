@@ -260,6 +260,13 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     _c_enable_bit: int = field(default=0, init=False, repr=False)
     _c_block_mask: int = field(default=0, init=False, repr=False)
     _c_rom_len: int = field(default=0, init=False, repr=False)
+    # Per-window flag: True while that window currently maps SRAM. Read()
+    # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
+    # to the inherited flat mirror -- no window is ever both at once, so no
+    # write-through between the two is needed.
+    _window_is_sram: list[bool] = field(
+        default_factory=lambda: [False, False, False, False], init=False, repr=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
@@ -267,11 +274,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         self._c_enable_bit = self._num_pages()        # == _sram_enable_bit()
         self._c_block_mask = self._sram_block_mask()
         self._c_rom_len = len(self.rom)
-        # `_flat` (from Ascii8Mapper) is unused by this class's read()/write()
-        # for now — this class overrides both completely and still resolves
-        # SRAM/ROM per read. Initialized here only so the inherited
-        # `restore()` -> `_sync_window()` calls have somewhere to write; a
-        # follow-up change wires read() to consult it for ROM-mapped windows.
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
@@ -292,7 +294,26 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         block = self._banks[window] & self._sram_block_mask()
         return (block * _PAGE_8K + (addr - base)) & self._SRAM_MASK
 
+    def _sync_window(self, window: int) -> None:
+        if self._is_sram_bank(window):
+            # SRAM-mapped: read() routes this window to self.sram directly,
+            # so _flat is left untouched (stale but unread) for this window.
+            self._window_is_sram[window] = True
+            return
+        self._window_is_sram[window] = False
+        super()._sync_window(window)
+
     def read(self, addr: int) -> int:
+        idx = addr - 0x4000
+        if 0 <= idx < 4 * _PAGE_8K:
+            window = idx >> 13
+            if self._window_is_sram[window]:
+                base = 0x4000 + window * _PAGE_8K
+                return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
+            return self._flat[idx]
+        return self._read_out_of_window(addr)
+
+    def _read_out_of_window(self, addr: int) -> int:
         if addr < 0x6000:
             window, base = 0, 0x4000
         elif addr < 0x8000:
@@ -301,9 +322,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             window, base = 2, 0x8000
         else:
             window, base = 3, 0xA000
-        # Hot path: SRAM/ROM geometry is cached (see __post_init__); the
-        # _is_sram_bank / _sram_offset helpers below hold the un-inlined form
-        # used by write() and the tests.
         bank = self._banks[window]
         if (self._SRAM_PAGES & (1 << (window + 2))) and (bank & self._c_enable_bit):
             offset = ((bank & self._c_block_mask) * _PAGE_8K + (addr - base)) & self._SRAM_MASK
@@ -318,6 +336,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             reg = (addr >> 11) & 0x03
             old = self._banks[reg]
             self._banks[reg] = value
+            self._sync_window(reg)
             _trace_bank(self, reg, old, value, addr)
             return
         if addr < 0x6000:
