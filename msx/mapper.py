@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
+# Flat-mirror span for every banked mapper: 4 windows * 8 KB == 2 windows *
+# 16 KB == 32768 bytes (0x4000-0xBFFF). Hoisted so read()'s hot-path bounds
+# check does a plain int compare instead of a per-call global-lookup multiply.
+_WINDOW_BYTES = 4 * _PAGE_8K
 
 # R-Type (Irem) bank register masks (openMSX RomRType).
 _RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
@@ -97,8 +101,8 @@ class Ascii8Mapper(_BankTracing):
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
-    # bank switch. See KonamiSCCMapper for the rationale (reads are hot,
-    # switches are rare).
+    # bank switch: reads are hot (millions/frame), switches are rare, so
+    # resolving the window on every read is wasted work.
     _flat: bytearray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -120,7 +124,7 @@ class Ascii8Mapper(_BankTracing):
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
-        if 0 <= idx < 4 * _PAGE_8K:
+        if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
         return self._read_out_of_window(addr)
 
@@ -173,7 +177,8 @@ class Ascii16Mapper(_BankTracing):
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
     # Flat mirror of the two banked windows (0x4000-0xBFFF), rebuilt only on
-    # bank switch. See KonamiSCCMapper for the rationale.
+    # bank switch: reads are hot (millions/frame), switches are rare, so
+    # resolving the window on every read is wasted work.
     _flat: bytearray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -195,7 +200,7 @@ class Ascii16Mapper(_BankTracing):
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
-        if 0 <= idx < 2 * _PAGE_16K:
+        if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
         return self._read_out_of_window(addr)
 
@@ -264,6 +269,9 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
     # to the inherited flat mirror -- no window is ever both at once, so no
     # write-through between the two is needed.
+    # Portability note: length is fixed at 4 for this class and never
+    # resized after construction -- a Rust/C++ port should use [bool; 4] /
+    # std::array<bool, 4> (or a bitmask) rather than a growable Vec<bool>.
     _window_is_sram: list[bool] = field(
         default_factory=lambda: [False, False, False, False], init=False, repr=False,
     )
@@ -305,8 +313,8 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
-        if 0 <= idx < 4 * _PAGE_8K:
-            window = idx >> 13
+        if 0 <= idx < _WINDOW_BYTES:
+            window = idx >> 13  # idx // _PAGE_8K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_8K
                 return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
@@ -336,7 +344,8 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             reg = (addr >> 11) & 0x03
             old = self._banks[reg]
             self._banks[reg] = value
-            self._sync_window(reg)
+            if value != old:
+                self._sync_window(reg)
             _trace_bank(self, reg, old, value, addr)
             return
         if addr < 0x6000:
@@ -389,6 +398,9 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     # only, ever). Read() routes an SRAM-mapped window straight to self.sram
     # and a ROM-mapped window to the inherited flat mirror -- no window is
     # ever both at once, so no write-through between the two is needed.
+    # Portability note: length is fixed at 2 for this class and never
+    # resized after construction -- a Rust/C++ port should use [bool; 2] /
+    # std::array<bool, 2> (or a bitmask) rather than a growable Vec<bool>.
     _window_is_sram: list[bool] = field(
         default_factory=lambda: [False, False], init=False, repr=False,
     )
@@ -414,8 +426,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
-        if 0 <= idx < 2 * _PAGE_16K:
-            window = idx >> 14
+        if 0 <= idx < _WINDOW_BYTES:
+            window = idx >> 14  # idx // _PAGE_16K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_16K
                 return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
@@ -439,7 +451,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             window = (addr >> 12) & 0x01
             old = self._banks[window]
             self._banks[window] = value
-            self._sync_window(window)
+            if value != old:
+                self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
         elif addr >= 0x8000:
             if self._is_sram_bank(1):
@@ -525,7 +538,8 @@ class KonamiMapper(_BankTracing):
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
-    # bank switch. See KonamiSCCMapper for the rationale. Window 0 is fixed
+    # bank switch: reads are hot (millions/frame), switches are rare, so
+    # resolving the window on every read is wasted work. Window 0 is fixed
     # to page 0 and is populated once in __post_init__ but never re-synced
     # by write() (writes to 0x4000-0x5FFF are ignored).
     _flat: bytearray = field(init=False, repr=False)
@@ -556,7 +570,7 @@ class KonamiMapper(_BankTracing):
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
-        if 0 <= idx < 4 * _PAGE_8K:
+        if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
         return self._read_out_of_window(addr)
 
@@ -712,7 +726,7 @@ class KonamiSCCMapper(_BankTracing):
         if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
             return self.scc.read(addr - 0x9800)
         idx = addr - 0x4000
-        if 0 <= idx < 4 * _PAGE_8K:
+        if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
         # Outside the four windows: a slot scan (e.g. BIOS RAM detection) can
         # transiently map this cartridge's slot onto a page it doesn't

@@ -190,7 +190,7 @@ def test_ascii16_read_below_window_returns_open_bus() -> None:
 
 
 def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF (page 3): re-uses window 1's bank/base arithmetic for any
+    # Above 0xBFFF: re-uses window 1's bank/base arithmetic for any
     # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
     # resolves to open bus via the same bounds check, not a crash.
     small_rom = _rom_16k_pages(1)
