@@ -544,25 +544,33 @@ class KonamiSCCMapper(_BankTracing):
     scc: "SCC"
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _scc_mode: bool = field(default=False, init=False, repr=False)
+    # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch. Reads are hot (millions/frame) and switches are rare, so
+    # trading the per-read window-resolution branch + bounds check for a
+    # per-switch 8 KB copy is a straight win.
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._flat = bytearray(4 * _PAGE_8K)
+        for window in range(4):
+            self._sync_window(window)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
 
+    def _sync_window(self, window: int) -> None:
+        page = self._banks[window]
+        src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
+        dst = window * _PAGE_8K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_8K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
+
     def read(self, addr: int) -> int:
         if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
             return self.scc.read(addr - 0x9800)
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
-        return 0xFF
+        return self._flat[addr - 0x4000]
 
     def write(self, addr: int, value: int) -> None:
         # SCC register writes take priority over bank-register writes.
@@ -573,11 +581,15 @@ class KonamiSCCMapper(_BankTracing):
             new = value % self._num_pages()
             old = self._banks[0]
             self._banks[0] = new
+            if new != old:
+                self._sync_window(0)
             _trace_bank(self, 0, old, new, addr)
         elif 0x7000 <= addr < 0x7800:
             new = value % self._num_pages()
             old = self._banks[1]
             self._banks[1] = new
+            if new != old:
+                self._sync_window(1)
             _trace_bank(self, 1, old, new, addr)
         elif 0x9000 <= addr < 0x9800:
             # Window 2 bank register: low 6 bits all set enables SCC mode
@@ -589,11 +601,15 @@ class KonamiSCCMapper(_BankTracing):
                 new = value % self._num_pages()
                 old = self._banks[2]
                 self._banks[2] = new
+                if new != old:
+                    self._sync_window(2)
                 _trace_bank(self, 2, old, new, addr)
         elif 0xB000 <= addr < 0xB800:
             new = value % self._num_pages()
             old = self._banks[3]
             self._banks[3] = new
+            if new != old:
+                self._sync_window(3)
             _trace_bank(self, 3, old, new, addr)
         # Writes outside the four register zones are ignored.
 
@@ -604,3 +620,5 @@ class KonamiSCCMapper(_BankTracing):
     def restore(self, state: dict[str, object]) -> None:
         self._banks[:] = state["banks"]  # type: ignore[call-overload]
         self._scc_mode = bool(state["scc_mode"])
+        for window in range(4):
+            self._sync_window(window)
