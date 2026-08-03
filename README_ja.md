@@ -235,20 +235,22 @@ Ctrl+C またはブレークポイント到達でアクセスできる REPL：�
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 258.87 | 約 4.3 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 414.04 | 約 6.9 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1079.28 | 約 18.0 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1251.85 | 約 20.9 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 67.17 | 約 1.1 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 104.95 | 約 1.7 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 219.29 | 約 3.7 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 279.85 | 約 4.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 274.32 | 約 4.6 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 426.45 | 約 7.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1325.83 | 約 22.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1219.03 | 約 20.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 71.61 | 約 1.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 108.23 | 約 1.8 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 297.14 | 約 5.0 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 306.94 | 約 5.1 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.1 倍です。PyPy に切り替えると同じケースが約 3.7 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.2 倍です。PyPy に切り替えると同じケースが約 5.0 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+
+PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.4.1 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.4.3 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -454,6 +456,7 @@ joystick:
 | Ctrl + F3 | MSX DEL |
 | Ctrl + F4 | MSX STOP |
 | Ctrl + F5 | MSX SELECT |
+| 左 Alt/Option | MSX GRAPH |
 | 右 Alt/Option | MSX CODE/KANA |
 
 \* `<title>` は ROM データベースから取得したゲームタイトルです。データベースにない場合は `"py-msx-emulator"` が使われます。
@@ -744,6 +747,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.3** (2026-08-03) — バンク切り替え式マッパー（KonamiSCC、ASCII8、ASCII16、Konami、およびそれらの SRAM 派生）のカートリッジ ROM 読み出しを高速化。毎読み出しごとにアクティブなウィンドウを解決する代わりに、バンク切り替え時のみ再構築するフラットミラーを使用
 - **v2.4.2** (2026-08-02) — SDL2 フロントエンドに Ctrl+F1〜F5（MSX HOME/INS/DEL/STOP/SELECT）と右 Alt（MSX CODE/KANA）のキー割り当てを追加
 - **v2.4.1** (2026-08-02) — 任意の `py_emulator.yaml` 起動設定ファイルに対応（デフォルトのマシン/速度/マッパー/FM-PAC、ゲームパッドのボタン割り当て、連射レート）。`--benchmark` をフレーム数指定に変更
 - **v2.4.0** (2026-07-30) — FM-PAC（MSX-MUSIC）カートリッジと YM2413（OPLL）FM 音源チップを追加
