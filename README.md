@@ -330,19 +330,19 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 258.87 | ~4.3× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 414.04 | ~6.9× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1079.28 | ~18.0× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1251.85 | ~20.9× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 67.17 | ~1.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 104.95 | ~1.7× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 219.29 | ~3.7× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 279.85 | ~4.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 274.32 | ~4.6× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 426.45 | ~7.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1325.83 | ~22.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1219.03 | ~20.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 71.61 | ~1.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 108.23 | ~1.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 297.14 | ~5.0× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 306.94 | ~5.1× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
-heaviest rendering/audio load among the target titles) at ~1.1×; PyPy raises the
-same case to ~3.7×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+heaviest rendering/audio load among the target titles) at ~1.2×; PyPy raises the
+same case to ~5.0×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -350,9 +350,15 @@ device always consumes at 44100 Hz. PyPy3 is a drop-in alternative that
 substantially improves throughput on slower hardware and is the recommended way
 to keep headroom on constrained hosts like a Raspberry Pi.
 
+PyPy's numbers above are more prone to run-to-run variance than CPython's —
+occasional runs land well outside the usual range for a given (platform, game)
+pair, most likely due to OS/hardware scheduling behavior (e.g. core migration
+or thermal throttling) rather than anything in the emulator itself. Treat
+PyPy figures as broadly indicative rather than exact.
+
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.4.1, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.4.3, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -893,6 +899,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers (KonamiSCC, ASCII8, ASCII16, Konami, and their SRAM variants) with a flat mirror rebuilt only on bank switch instead of resolving the active window on every read.
 - **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
 - **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file (default machine/speed/mapper/FM-PAC, gamepad button map, turbo rate); switch `--benchmark` to a frame count.
 - **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
