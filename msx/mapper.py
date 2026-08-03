@@ -389,7 +389,9 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     # only, ever). Read() routes an SRAM-mapped window straight to self.sram
     # and a ROM-mapped window to the inherited flat mirror -- no window is
     # ever both at once, so no write-through between the two is needed.
-    _window_is_sram: list[bool] = field(default_factory=lambda: [False, False], init=False, repr=False)
+    _window_is_sram: list[bool] = field(
+        default_factory=lambda: [False, False], init=False, repr=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
