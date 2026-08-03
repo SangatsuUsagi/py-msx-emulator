@@ -103,6 +103,45 @@ class TestAscii8Sram2:
         m.write(0x6000, 0x01)
         assert m._banks[0] == 0x01
 
+    def test_read_below_window_returns_open_bus(self):
+        # A slot scan (e.g. BIOS RAM detection) can transiently address this
+        # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        assert m.read(0x0000) == 0xFF
+
+    def test_read_above_window_falls_back_to_bank_arithmetic(self):
+        # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for
+        # any addr >= 0xA000, so a small ROM (bank 3's page_offset out of
+        # range) resolves to open bus via the same bounds check, not a crash.
+        small_rom = bytes(8192)  # 1 page, bank 3 defaults to page 3 (out of range)
+        m = Ascii8Sram2Mapper(rom=small_rom)
+        assert m.read(0xC000) == 0xFF
+
+    def test_window_toggles_rom_sram_rom_reads_correctly_at_each_step(self):
+        # Window 2 starts as ROM, switches to SRAM, switches back to ROM --
+        # read() must reflect the live state at every step (the flat mirror
+        # for the ROM steps, self.sram for the SRAM step), not stale data
+        # from before the last switch.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        assert m.read(0x8000) == _ROM_16K[0]  # window 2 = ROM page 0 initially
+
+        m.sram[0] = 0xAB
+        m.write(0x7000, _SRAM_BANK)  # window 2 -> SRAM
+        assert m.read(0x8000) == 0xAB
+
+        m.write(0x7000, 0x01)  # window 2 -> ROM page 1
+        assert m.read(0x8000) == _ROM_16K[8192]
+
+    def test_sram_write_then_read_through_same_window(self):
+        # A write to an SRAM-mapped window followed immediately by a read
+        # through the same still-SRAM-mapped window must see the write --
+        # confirms write() didn't start relying on the (untouched) flat
+        # mirror for this window.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)  # window 2 -> SRAM
+        m.write(0x8000 + 0x123, 0x9A)
+        assert m.read(0x8000 + 0x123) == 0x9A
+
 
 # ---------------------------------------------------------------------------
 # Ascii8Sram8Mapper
