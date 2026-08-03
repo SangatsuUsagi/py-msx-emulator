@@ -181,6 +181,23 @@ def test_ascii16_last_byte_of_window_0() -> None:
     assert m.read(0x7FFF) == 0  # end of 16 KB window is within page 2
 
 
+def test_ascii16_read_below_window_returns_open_bus() -> None:
+    # A slot scan (e.g. BIOS RAM detection) can transiently address this
+    # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    assert m.read(0x0000) == 0xFF
+
+
+def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
+    # Above 0xBFFF (page 3): re-uses window 1's bank/base arithmetic for any
+    # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
+    # resolves to open bus via the same bounds check, not a crash.
+    small_rom = _rom_16k_pages(1)
+    m = Ascii16Mapper(small_rom)
+    assert m.read(0xC000) == 0xFF
+
+
 # ---------------------------------------------------------------------------
 # KonamiMapper
 # ---------------------------------------------------------------------------

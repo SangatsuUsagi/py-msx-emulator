@@ -172,11 +172,34 @@ class Ascii16Mapper(_BankTracing):
 
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
+    # Flat mirror of the two banked windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch. See KonamiSCCMapper for the rationale.
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._flat = bytearray(2 * _PAGE_16K)
+        for window in range(2):
+            self._sync_window(window)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
 
+    def _sync_window(self, window: int) -> None:
+        page = self._banks[window]
+        src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
+        dst = window * _PAGE_16K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_16K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_16K] = b"\xff" * (_PAGE_16K - len(src))
+
     def read(self, addr: int) -> int:
+        idx = addr - 0x4000
+        if 0 <= idx < 2 * _PAGE_16K:
+            return self._flat[idx]
+        return self._read_out_of_window(addr)
+
+    def _read_out_of_window(self, addr: int) -> int:
         if addr < 0x8000:
             window, base = 0, 0x4000
         else:
@@ -193,6 +216,8 @@ class Ascii16Mapper(_BankTracing):
             new = value % self._num_pages()
             old = self._banks[window]
             self._banks[window] = new
+            if new != old:
+                self._sync_window(window)
             _trace_bank(self, window, old, new, addr)
 
     def snapshot(self) -> dict[str, object]:
@@ -200,6 +225,8 @@ class Ascii16Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        for window in range(2):
+            self._sync_window(window)
 
 
 @dataclass
@@ -343,6 +370,14 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
+        # `_flat` (from Ascii16Mapper) is unused by this class's read()/write()
+        # for now — this class overrides both completely and still resolves
+        # SRAM/ROM per read. Initialized here only so the inherited
+        # `restore()` -> `_sync_window()` calls have somewhere to write; a
+        # follow-up change wires read() to consult it for ROM-mapped windows.
+        self._flat = bytearray(2 * _PAGE_16K)
+        for window in range(2):
+            self._sync_window(window)
 
     def _is_sram_bank(self, window: int) -> bool:
         return window == 1 and self._banks[window] == self._SRAM_SELECT
