@@ -230,6 +230,45 @@ class TestAscii16Sram2:
         m.write(0x7000, 0x10)   # exactly 0x10 → SRAM
         assert m.read(0x8000) == 0xAB
 
+    def test_read_below_window_returns_open_bus(self):
+        # A slot scan (e.g. BIOS RAM detection) can transiently address this
+        # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        assert m.read(0x0000) == 0xFF
+
+    def test_read_above_window_falls_back_to_bank_arithmetic(self):
+        # Above 0xBFFF: re-uses window 1's bank/base arithmetic for any
+        # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
+        # resolves to open bus via the same bounds check, not a crash.
+        small_rom = bytes(16384)  # 1 page, bank 1 defaults to page 0 (in range)
+        m = Ascii16Sram2Mapper(rom=small_rom)
+        assert m.read(0xC000) == 0xFF
+
+    def test_window1_toggles_rom_sram_rom_reads_correctly_at_each_step(self):
+        # Window 1 starts as ROM, switches to SRAM, switches back to ROM --
+        # read() must reflect the live state at every step (the flat mirror
+        # for the ROM steps, self.sram for the SRAM step), not stale data
+        # from before the last switch.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        assert m.read(0x8000) == _ROM_32K[0]  # window 1 = ROM page 0 initially
+
+        m.sram[0] = 0x77
+        m.write(0x7000, 0x10)  # window 1 -> SRAM
+        assert m.read(0x8000) == 0x77
+
+        m.write(0x7000, 0x01)  # window 1 -> ROM page 1
+        assert m.read(0x8000) == _ROM_32K[16384]
+
+    def test_sram_write_then_read_through_same_window(self):
+        # A write to the SRAM-mapped window followed immediately by a read
+        # through the same still-SRAM-mapped window must see the write --
+        # confirms write() didn't start relying on the (untouched) flat
+        # mirror for this window.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x10)  # window 1 -> SRAM
+        m.write(0x8000 + 0x321, 0x5C)
+        assert m.read(0x8000 + 0x321) == 0x5C
+
 
 # ---------------------------------------------------------------------------
 # Ascii16Sram8Mapper
