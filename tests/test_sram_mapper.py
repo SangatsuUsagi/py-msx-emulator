@@ -10,6 +10,7 @@ from msx.mapper import (
     Ascii8Sram8Mapper,
     Ascii16Sram2Mapper,
     Ascii16Sram8Mapper,
+    KoeiSRAM32Mapper,
 )
 
 # 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
@@ -175,6 +176,59 @@ class TestAscii8Sram8:
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
         m.write(0x6000, 1)   # 1 & 2 == 0 → ROM page 1
         assert m.read(0x4000) == _ROM_16K[8192]
+
+
+# ---------------------------------------------------------------------------
+# KoeiSRAM32Mapper
+# ---------------------------------------------------------------------------
+
+class TestKoeiSRAM32:
+    def test_sram_size(self):
+        m = KoeiSRAM32Mapper(rom=_ROM_16K)
+        assert len(m.sram) == 32768
+
+    def test_sram_selectable_at_0x4000_window(self):
+        # _SRAM_PAGES = 0x34 adds window 0 (0x4000) to the standard 0x30
+        # (windows 2/3 only) set used by Ascii8Sram2Mapper/Ascii8Sram8Mapper.
+        # Note: _SRAM_BANK (=2) here does double duty -- it both sets the
+        # enable bit (bank & enable_bit, enable_bit = num_pages = 2) and,
+        # because block_mask = 3 for 32 KB SRAM, also selects SRAM block 2
+        # (bank & block_mask). That overlap is a coincidence of this 16 KB
+        # test ROM's page count, not a hardware invariant.
+        m = KoeiSRAM32Mapper(rom=_ROM_16K)
+        m.write(0x6000, _SRAM_BANK)  # window 0 bank reg, enable bit set → SRAM block 2
+        m.write(0x4100, 0xAB)
+        assert m.sram[2 * 8192 + 0x100] == 0xAB
+        assert m.read(0x4100) == 0xAB
+
+    def test_standard_windows_still_map_sram(self):
+        m = KoeiSRAM32Mapper(rom=_ROM_16K)
+        m.write(0x7800, _SRAM_BANK)  # window 3 (0xA000), part of the 0x30 base set
+        m.write(0xA050, 0x11)
+        assert m.read(0xA050) == 0x11
+
+    def test_full_32kb_addressable_via_page_select_bits(self):
+        # A larger ROM (32 pages) puts the enable bit (=32, bit 5) above the
+        # 2-bit page-select mask (block_mask=3 for 32 KB SRAM / 8 KB blocks),
+        # so all four SRAM blocks are independently selectable while enabled.
+        rom_256k = bytes(32 * 8192)
+        m = KoeiSRAM32Mapper(rom=rom_256k)
+        for block in range(4):
+            m.sram[block * 8192 + 0x10] = 0xC0 + block
+        for block in range(4):
+            m.write(0x7000, 32 | block)  # window 2 (0x8000): enable bit + block select
+            assert m.read(0x8000 + 0x10) == 0xC0 + block
+
+    def test_snapshot_restore_roundtrip(self):
+        m = KoeiSRAM32Mapper(rom=_ROM_16K)
+        m.write(0x6000, _SRAM_BANK)  # window 0 = SRAM
+        m.write(0x4100, 0x5A)
+        snap = m.snapshot()
+
+        m2 = KoeiSRAM32Mapper(rom=_ROM_16K)
+        m2.restore(snap)
+        assert m2._banks == m._banks
+        assert m2.read(0x4100) == 0x5A
 
 
 # ---------------------------------------------------------------------------

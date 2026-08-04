@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1661%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1676%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -171,8 +171,9 @@ Real-time clock at ports 0xB4–0xB5.
 ### Cartridge mappers
 
 Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC),
-ASCII8SRAM2/8, ASCII16SRAM2/8, and R-Type, auto-detected from a SHA1-based ROM
-database. Override with `--mapper`.
+ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type, a fixed-page mapper (Page2/0x4000/0x8000),
+and KoeiSRAM32, auto-detected from a SHA1-based ROM database. Override with
+`--mapper`.
 
 | Mapper | Description |
 | --- | --- |
@@ -185,6 +186,8 @@ database. Override with `--mapper`.
 | `ASCII8SRAM2`, `ASCII8SRAM8` | ASCII8 with 2 KB or 8 KB battery-backed SRAM |
 | `ASCII16SRAM2`, `ASCII16SRAM8` | ASCII16 with 2 KB or 8 KB battery-backed SRAM |
 | `RTypeMapper` | 8 KB windows; bank-0 fixed at ROM start |
+| `FixedPageMapper` | No bank switching; ROM visible only at a fixed base address (database types `Page2`, `0x4000`, `0x8000`), rest of the cartridge region reads as open bus |
+| `KoeiSRAM32Mapper` | ASCII8 with 32 KB battery-backed SRAM; extends the SRAM-selectable window set to include 0x4000 |
 
 Slot 2 uses a separate mapper controlled by `--mapper2` (auto-detected by
 default). `KonamiSCC` is not a valid mapper for slot 2; if the ROM database
@@ -525,7 +528,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--machine MACHINE_ID` | _(auto)_ | Machine configuration ID (e.g. `cbios_msx2_jp`). Auto-detected from ROM database when omitted |
 | `--speed FLOAT` | `1.0` | Emulation speed multiplier |
 | `--scale N` | `3` | Integer window scale over the 256×212 base resolution (e.g. `2` for a small display, `4` for a large one) |
-| `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type` |
+| `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
@@ -808,7 +811,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1661 tests spanning unit tests
+The test suite covers all major components with 1676 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -870,7 +873,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1661 tests
+├── tests/                 # Test suite — 1676 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -931,6 +934,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`: ROM visible only at a fixed base address, rest of the cartridge region open bus) and `KoeiSRAM32` (a new `KoeiSRAM32Mapper`: ASCII8 with 32 KB battery-backed SRAM, extending the SRAM-selectable window set to include 0x4000).
 - **v2.4.4** (2026-08-04) — Add MSX mouse emulation: `--mouse[=1|2]` attaches a host-mouse-driven mouse to a joystick port, reproducing the real pin-8-clocked nibble protocol; `py_emulator.yaml` gains `mouse.enabled`/`mouse.port`.
 - **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers (KonamiSCC, ASCII8, ASCII16, Konami, and their SRAM variants) with a flat mirror rebuilt only on bank switch instead of resolving the active window on every read.
 - **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.

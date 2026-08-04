@@ -171,11 +171,11 @@ def test_auto_unsupported_db_mapper_falls_back(
     import msx.romdb as romdb
     cart = b"\xDE\xAD"
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "Page2"}})
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "CrossBlaim"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, FlatMapper)
     stderr = capsys.readouterr().err
-    assert "Page2" in stderr
+    assert "CrossBlaim" in stderr
 
 
 def test_auto_known_konamisco_selects_scc_mapper(
@@ -205,6 +205,46 @@ def test_auto_known_konami_selects_konami_mapper(
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, KonamiMapper)
     assert m.scc is None
+
+
+@pytest.mark.parametrize(
+    ("db_mapper", "expected_base"),
+    [("Page2", 0x8000), ("0x4000", 0x4000), ("0x8000", 0x8000)],
+    ids=["Page2", "0x4000", "0x8000"],
+)
+def test_auto_known_fixed_page_types_select_fixed_page_mapper(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    db_mapper: str,
+    expected_base: int,
+) -> None:
+    import hashlib
+
+    import msx.romdb as romdb
+    from msx.mapper import FixedPageMapper
+    cart = bytes(16384)  # dummy 16 KB cartridge
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": db_mapper}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, FixedPageMapper)
+    assert m.memory._mapper.base == expected_base
+    assert "unsupported mapper type" not in capsys.readouterr().err
+
+
+def test_auto_known_koeisram32_selects_koeisram32_mapper(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import hashlib
+
+    import msx.romdb as romdb
+    from msx.mapper import KoeiSRAM32Mapper
+    cart = bytes(65536)  # dummy 64 KB cartridge
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KoeiSRAM32"}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    assert isinstance(m.memory._mapper, KoeiSRAM32Mapper)
+    assert "unsupported mapper type" not in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
