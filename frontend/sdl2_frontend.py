@@ -13,7 +13,7 @@ from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.mouse import MouseDevice
-from msx.psg import SAMPLES_PER_FRAME
+from msx.psg import SAMPLES_PER_FRAME, MouseSlot
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
 from msx.vdp._geometry import OUTPUT_H
@@ -466,8 +466,7 @@ def run(
     if mouse_port is not None:
         mouse_device = MouseDevice(_scale=scale)
         mouse_device._get_cycle = lambda: machine.cycle_count
-        machine.psg._mouse = mouse_device
-        machine.psg._mouse_port = mouse_port
+        machine.psg._mouse = MouseSlot(mouse_device, mouse_port)
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host

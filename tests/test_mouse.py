@@ -118,3 +118,13 @@ def test_add_motion_subpixel_remainder_accumulates() -> None:
     assert device._cur_x_rel == 0
     device.add_motion(1, 0)
     assert device._cur_x_rel == 1
+
+
+def test_add_motion_negative_delta_uses_floor_division() -> None:
+    # Locks in Python's flooring divmod semantics (quotient toward -inf,
+    # remainder in [0, scale)) — a naive truncating '/'/'%' port would give
+    # (-2, -1) here instead of (-3, 2), corrupting the sub-pixel carry.
+    device = MouseDevice(_scale=3)
+    device.add_motion(-7, 0)
+    assert device._cur_x_rel == -3
+    assert device._frac_x == 2
