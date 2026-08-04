@@ -85,6 +85,33 @@ class FlatMapper:
 
 
 @dataclass
+class FixedPageMapper:
+    """Non-bank-switched cartridge mapper: ROM appears only at a fixed base address;
+    every other page in the cartridge region reads as 0xFF (open bus). Reproduces
+    openMSX RomPageNN / RomPlain(mirrored=False) for the Page2 / 0x4000 / 0x8000
+    ROM database mapper types.
+    """
+
+    rom: bytes
+    base: int
+
+    def read(self, addr: int) -> int:
+        offset = addr - self.base
+        if 0 <= offset < len(self.rom):
+            return self.rom[offset]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        pass
+
+    def snapshot(self) -> dict[str, object]:
+        return {}
+
+    def restore(self, state: dict[str, object]) -> None:
+        pass
+
+
+@dataclass
 class Ascii8Mapper(_BankTracing):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
 
