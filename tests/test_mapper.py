@@ -1,6 +1,13 @@
 import struct
 
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, MajutsushiMapper
+from msx.mapper import (
+    Ascii8Mapper,
+    Ascii16Mapper,
+    FixedPageMapper,
+    FlatMapper,
+    KonamiMapper,
+    MajutsushiMapper,
+)
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -58,6 +65,52 @@ def test_flat_16kb_rom_mirrors_in_32kb_space() -> None:
     m = FlatMapper(cart)
     assert m.read(0x4000) == 0xCD
     assert m.read(0x8000) == 0xCD  # 0x8000 - 0x4000 = 16384 ≡ 0 mod 16384
+
+
+# ---------------------------------------------------------------------------
+# FixedPageMapper
+# ---------------------------------------------------------------------------
+
+def test_fixed_page_read_within_window_at_0x8000() -> None:
+    rom = bytes([0xAB] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    assert m.read(0x8000) == 0xAB
+
+
+def test_fixed_page_read_outside_window_at_0x8000_returns_ff() -> None:
+    rom = bytes([0xAB] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    assert m.read(0x4000) == 0xFF
+    assert m.read(0x6000) == 0xFF
+
+
+def test_fixed_page_read_within_window_at_0x4000() -> None:
+    rom = bytes([0xCD] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x4000)
+    assert m.read(0x4000) == 0xCD
+
+
+def test_fixed_page_read_outside_window_at_0x4000_returns_ff() -> None:
+    rom = bytes([0xCD] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x4000)
+    assert m.read(0x8000) == 0xFF
+    assert m.read(0xA000) == 0xFF
+
+
+def test_fixed_page_write_is_noop() -> None:
+    rom = bytes([0x42] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    m.write(0x8000, 0x01)
+    assert m.read(0x8000) == 0x42
+
+
+def test_fixed_page_does_not_mirror_past_rom_end() -> None:
+    # 8 KB ROM at 0x8000: 0xA000 is still inside the 0x8000-0xBFFF page but past
+    # the ROM's own span, so it must read as open bus, not wrap around.
+    rom = bytes([0xAB] + [0] * (8192 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    assert m.read(0x8000) == 0xAB
+    assert m.read(0xA000) == 0xFF
 
 
 # ---------------------------------------------------------------------------
