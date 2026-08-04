@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1661%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1676%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -114,7 +114,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 
 ### カートリッジマッパー
 
-フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type を SHA1 ベースの ROM データベースから自動検出します。`--mapper` オプションで上書き可能です。
+フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type、固定配置マッパー（Page2/0x4000/0x8000）、KoeiSRAM32 を SHA1 ベースの ROM データベースから自動検出します。`--mapper` オプションで上書き可能です。
 
 | マッパー | 説明 |
 | --- | --- |
@@ -127,6 +127,8 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | `ASCII8SRAM2`、`ASCII8SRAM8` | ASCII8 + 2 KB または 8 KB バッテリーバックアップ SRAM |
 | `ASCII16SRAM2`、`ASCII16SRAM8` | ASCII16 + 2 KB または 8 KB バッテリーバックアップ SRAM |
 | `RTypeMapper` | 8 KB ウィンドウ；バンク 0 は ROM 先頭に固定 |
+| `FixedPageMapper` | バンク切り替えなし；ROM は固定ベースアドレス（データベース上の `Page2`、`0x4000`、`0x8000`）にのみ存在し、カートリッジ領域の残りはオープンバス |
+| `KoeiSRAM32Mapper` | ASCII8 + 32 KB バッテリーバックアップ SRAM；SRAM 選択可能ウィンドウに 0x4000 を追加 |
 
 スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 では無効です。ROM データベースがスロット 2 カートリッジに対して `KonamiSCC` を返した場合、警告を stderr に表示したうえで `Konami` マッパーに自動フォールバックします。
 
@@ -395,7 +397,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--machine MACHINE_ID` | _（自動）_ | マシン設定 ID（例：`cbios_msx2_jp`）；省略時は ROM データベースから自動判定 |
 | `--speed FLOAT` | `1.0` | エミュレーション速度の倍率 |
 | `--scale N` | `3` | 256×212 ベース解像度に対する整数の拡大率（例：小さいディスプレイなら `2`、大きいディスプレイなら `4`） |
-| `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type` |
+| `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
@@ -668,7 +670,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1661 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1676 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -727,7 +729,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1661 テスト
+├── tests/                 # テストスイート — 1676 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -771,6 +773,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.5** (2026-08-04) — これまで未対応だった4種のROMデータベースマッパーに対応：`Page2`/`0x4000`/`0x8000`（新規`FixedPageMapper`：ROMは固定ベースアドレスにのみ存在し、カートリッジ領域の残りはオープンバス）と`KoeiSRAM32`（新規`KoeiSRAM32Mapper`：ASCII8 + 32 KBバッテリーバックアップSRAM、SRAM選択可能ウィンドウに0x4000を追加）
 - **v2.4.4** (2026-08-04) — MSX マウスエミュレーションを追加：`--mouse[=1|2]` でホストのマウスが駆動する MSX マウスをジョイスティックポートに接続、実機の pin-8 クロック式ニブル転送プロトコルを再現。`py_emulator.yaml` に `mouse.enabled`/`mouse.port` を追加
 - **v2.4.3** (2026-08-03) — バンク切り替え式マッパー（KonamiSCC、ASCII8、ASCII16、Konami、およびそれらの SRAM 派生）のカートリッジ ROM 読み出しを高速化。毎読み出しごとにアクティブなウィンドウを解決する代わりに、バンク切り替え時のみ再構築するフラットミラーを使用
 - **v2.4.2** (2026-08-02) — SDL2 フロントエンドに Ctrl+F1〜F5（MSX HOME/INS/DEL/STOP/SELECT）と右 Alt（MSX CODE/KANA）のキー割り当てを追加
