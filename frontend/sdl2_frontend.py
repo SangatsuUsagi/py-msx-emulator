@@ -265,7 +265,9 @@ def _handle_events(
         ):
             joy_manager.handle_event(event)
         elif mouse_device is not None and event.type == sdl2.SDL_MOUSEMOTION:
-            mouse_device.add_motion(int(event.motion.xrel), int(event.motion.yrel))
+            # Host motion is negated on both axes when converting to MSX
+            # relative counts (matches openMSX src/input/Mouse.cc).
+            mouse_device.add_motion(-int(event.motion.xrel), -int(event.motion.yrel))
         elif mouse_device is not None and event.type in (
             sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP,
         ):
