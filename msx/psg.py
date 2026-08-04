@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Callable, NamedTuple
 
 from msx.input import InputState
+from msx.mouse import MouseDevice
 
 _REG_IO_PORT_A = 14
 
@@ -30,6 +31,13 @@ class _GenState(NamedTuple):
     env_holding: bool
     clk_frac: int
 
+# Mouse attached to a joystick port (see msx/mouse.py). A NamedTuple so
+# "device" and "port" can't independently desync (unlike two separate
+# Optional-shaped fields) — maps directly to Option<MouseSlot> in Rust.
+class MouseSlot(NamedTuple):
+    device: MouseDevice
+    port: int  # 0 = Joy1, 1 = Joy2
+
 # AY-3-8910 quasi-logarithmic amplitude table (level 0–15 → 16-bit amplitude).
 # Each consecutive step is approximately √2 (≈3 dB).  Three channels at max
 # sum to 36 861; SDL2 output is clamped to [0, 32 767].
@@ -44,6 +52,7 @@ class PSG:
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
     _input: InputState | None = field(default=None, repr=False)
+    _mouse: MouseSlot | None = field(default=None, repr=False)
 
     # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
     # _get_cycle so generate_samples can place them at their in-frame sample
@@ -95,6 +104,12 @@ class PSG:
             self.regs[reg] = value
             if reg == 13:
                 self._reset_envelope()
+            elif reg == 15 and self._mouse is not None:
+                # Pin 8 (mouse nibble-select clock) for the mouse's port:
+                # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
+                # register-15 write, independent of JOY_SELECT (bit 6).
+                pin8_bit = 4 if self._mouse.port == 0 else 5
+                self._mouse.device.write_pin8((value >> pin8_bit) & 1)
 
     def read_port(self, port: int) -> int:
         if port == 0xA2:
@@ -104,6 +119,8 @@ class PSG:
                 # 15 bit 6: 0→Joy1, 1→Joy2. Bits 6-7 are not joystick lines
                 # (pulled high here).
                 joy_select = (self.regs[15] >> 6) & 1
+                if self._mouse is not None and joy_select == self._mouse.port:
+                    return (self._mouse.device.read() & 0x3F) | 0xC0
                 sel = self._input.joy1 if joy_select == 0 else self._input.joy2
                 return (sel & 0x3F) | 0xC0
             return self.regs[self.latch]

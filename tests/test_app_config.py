@@ -181,3 +181,43 @@ def test_turbo_period_30hz() -> None:
 
 def test_turbo_period_min_one() -> None:
     assert AppConfig(turbo_hz=1000.0).turbo_period() == 1
+
+
+# ---------------------------------------------------------------------------
+# Mouse
+# ---------------------------------------------------------------------------
+
+def test_nested_mouse_group_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "mouse:\n  enabled: true\n  port: 1\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.mouse_enabled is True
+    assert cfg.mouse_port == 1
+
+
+def test_unknown_mouse_key_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write(tmp_path, "mouse:\n  enabled: true\n  bogus: 1\n")
+    load_app_config(tmp_path)
+    assert "mouse.bogus" in capsys.readouterr().err
+
+
+def test_invalid_mouse_port_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "mouse:\n  port: 3\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_mouse_port_index_disabled_by_default() -> None:
+    assert AppConfig().mouse_port_index() is None
+
+
+def test_mouse_port_index_disabled_explicitly() -> None:
+    assert AppConfig(mouse_enabled=False, mouse_port=1).mouse_port_index() is None
+
+
+def test_mouse_port_index_defaults_to_joy2_when_enabled() -> None:
+    assert AppConfig(mouse_enabled=True).mouse_port_index() == 1
+
+
+def test_mouse_port_index_honors_configured_port() -> None:
+    assert AppConfig(mouse_enabled=True, mouse_port=1).mouse_port_index() == 0
+    assert AppConfig(mouse_enabled=True, mouse_port=2).mouse_port_index() == 1

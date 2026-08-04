@@ -12,7 +12,8 @@ from msx.frame_timer import FrameTimer
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.joystick import JoystickManager
 from msx.machine import Machine
-from msx.psg import SAMPLES_PER_FRAME
+from msx.mouse import MouseDevice
+from msx.psg import SAMPLES_PER_FRAME, MouseSlot
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
 from msx.vdp._geometry import OUTPUT_H
@@ -204,6 +205,7 @@ def _handle_events(
     sdl2: Any, event: Any, machine: Machine, window: Any, joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
+    mouse_device: MouseDevice | None = None,
 ) -> tuple[bool, bool]:
     """Drain the SDL event queue, applying input and hotkeys.
 
@@ -262,6 +264,19 @@ def _handle_events(
             sdl2.SDL_JOYHATMOTION,
         ):
             joy_manager.handle_event(event)
+        elif mouse_device is not None and event.type == sdl2.SDL_MOUSEMOTION:
+            # Host motion is negated on both axes when converting to MSX
+            # relative counts (matches openMSX src/input/Mouse.cc).
+            mouse_device.add_motion(-int(event.motion.xrel), -int(event.motion.yrel))
+        elif mouse_device is not None and event.type in (
+            sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP,
+        ):
+            button = int(event.button.button)
+            pressed = event.type == sdl2.SDL_MOUSEBUTTONDOWN
+            if button == sdl2.SDL_BUTTON_LEFT:
+                mouse_device.set_button(4, pressed)
+            elif button == sdl2.SDL_BUTTON_RIGHT:
+                mouse_device.set_button(5, pressed)
     return running, fullscreen
 
 
@@ -398,6 +413,7 @@ def run(
     rpc_server: "DebugServer | None" = None,
     gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
     turbo_period: int | None = None,
+    mouse_port: int | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -413,6 +429,8 @@ def run(
         gamepad_map: optional (direct, turbo) GameController button→bit maps from
             py_emulator.yaml; None uses the built-in defaults.
         turbo_period: optional turbo-fire per-frame period; None uses the default.
+        mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
+            host mouse (relative-mouse mode); None disables mouse emulation.
 
     Runtime hotkeys: ESC quit, F8 save state, F9 load state, F10 screenshot,
     F11 toggle fullscreen, Ctrl-C break into the debugger (if attached).
@@ -443,6 +461,13 @@ def run(
     if turbo_period is not None:
         joy_kwargs["_turbo_period"] = turbo_period
     joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2, **joy_kwargs)
+
+    mouse_device: MouseDevice | None = None
+    if mouse_port is not None:
+        mouse_device = MouseDevice(_scale=scale)
+        mouse_device._get_cycle = lambda: machine.cycle_count
+        machine.psg._mouse = MouseSlot(mouse_device, mouse_port)
+        sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
     # keyboards without dedicated Home/Insert/Delete keys). Left Alt (GRAPH)
@@ -476,7 +501,7 @@ def run(
                 # Process events (input + hotkeys); updates running/fullscreen.
                 running, fullscreen = _handle_events(
                     sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-                    game_title, rgb_buf, tex_w, tex_h, fullscreen,
+                    game_title, rgb_buf, tex_w, tex_h, fullscreen, mouse_device,
                 )
 
                 if not running:
@@ -548,6 +573,8 @@ def run(
 
     finally:
         joy_manager.close_all()
+        if mouse_port is not None:
+            sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_FALSE)
         if audio_dev > 0:
             sdl2.SDL_CloseAudioDevice(audio_dev)
         if texture:

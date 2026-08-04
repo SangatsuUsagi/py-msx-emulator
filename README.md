@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1621%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1661%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -223,6 +223,23 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped |
+
+### Mouse
+
+Optional MSX mouse driven by the host mouse, plugged into a joystick port in
+place of the physical/keyboard joystick on that port. Reproduces the real
+protocol: pin 8 (normally the PSG's always-high strobe output) is toggled by
+the MSX to clock through a 4-bit nibble sequence (X high, X low, Y high, Y
+low) of signed relative motion, followed by a zero-delta alternate cycle so
+MSX BIOS mouse detection recognises the device as a mouse rather than a
+trackball. Left/right buttons drive the port's trigger A/B lines.
+
+| Item | Detail |
+| --- | --- |
+| Implementation | `msx/mouse.py` (protocol state machine), `msx/psg.py` (register 14/15 wiring) |
+| Enable | `--mouse[=1\|2]` (CLI) or `mouse.enabled`/`mouse.port` in `py_emulator.yaml`; the CLI flag always overrides the config file |
+| Host input | SDL relative-mouse mode (cursor hidden and locked to the window); motion is scaled to the window's integer `--scale` factor |
+| Known limitations | The NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons), absolute positioning, and the real mouse's click-and-hold joystick-emulation mode are not implemented |
 
 ### SDL2 frontend
 
@@ -472,6 +489,12 @@ python . path/to/game.rom --mapper KonamiSCC
 # Add an FM-PAC (MSX-MUSIC) cartridge in slot 2 alongside a game in slot 1
 python . path/to/game.rom --fmpac
 
+# Attach an MSX mouse to Joy2 (default port), driven by the host mouse
+python . path/to/game.rom --mouse
+
+# Attach an MSX mouse to Joy1 instead
+python . path/to/game.rom --mouse=1
+
 # Resume from the most recent save state
 python . path/to/game.rom --resume
 
@@ -508,6 +531,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
+| `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2); overrides `py_emulator.yaml`'s `mouse` settings. Ignored in headless runs |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames; `none` disables |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
 | `--log FILE` | _(none)_ | Write diagnostic log to a file (requires `--debug`) |
@@ -559,12 +583,18 @@ joystick:
     trigger_b: b
     turbo_a: y           # auto-fire Trigger A
     turbo_b: x           # auto-fire Trigger B
+
+mouse:
+  enabled: false         # attach an MSX mouse driven by the host mouse
+  port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
 ```
 
-Only `machine`, `speed`, `scale`, `mapper`, `fmpac`, and RPC/gamepad settings are
-configurable; the gamepad button map applies to the SDL GameController path (both
-ports share one map). See `py_emulator.example.yaml` for the full annotated list
-and valid button labels.
+Only `machine`, `speed`, `scale`, `mapper`, `fmpac`, `mouse`, and RPC/gamepad
+settings are configurable; the gamepad button map applies to the SDL
+GameController path (both ports share one map), and `--mouse` on the command
+line always overrides `mouse.enabled`/`mouse.port`. See
+`py_emulator.example.yaml` for the full annotated list and valid button
+labels.
 
 ### In-emulator key bindings
 
@@ -778,7 +808,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1621 tests spanning unit tests
+The test suite covers all major components with 1661 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -827,6 +857,7 @@ py-msx-emulator/
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
 │   ├── joystick.py        # Physical joystick manager (SDL2)
+│   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── frame_timer.py     # 60 fps pacing + FPS measurement
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
@@ -839,7 +870,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1621 tests
+├── tests/                 # Test suite — 1661 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -900,6 +931,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.4** (2026-08-04) — Add MSX mouse emulation: `--mouse[=1|2]` attaches a host-mouse-driven mouse to a joystick port, reproducing the real pin-8-clocked nibble protocol; `py_emulator.yaml` gains `mouse.enabled`/`mouse.port`.
 - **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers (KonamiSCC, ASCII8, ASCII16, Konami, and their SRAM variants) with a flat mirror rebuilt only on bank switch instead of resolving the active window on every read.
 - **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
 - **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file (default machine/speed/mapper/FM-PAC, gamepad button map, turbo rate); switch `--benchmark` to a frame count.

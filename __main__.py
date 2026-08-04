@@ -119,6 +119,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Floppy disk image (*.dsk) to mount in drive B")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
                         help="Resume from a save state (default: saves/states/latest.state)")
+    parser.add_argument("--mouse", nargs="?", const="2", default=None, choices=["1", "2"],
+                        help="Plug an MSX mouse into a joystick port, driven by the host "
+                             "mouse (default port 2 if bare). Overrides py_emulator.yaml's "
+                             "mouse.enabled/mouse.port. Ignored in headless "
+                             "(--count-frame/--benchmark) runs — no SDL window/event loop.")
     parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
@@ -195,7 +200,7 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 def _print_startup_summary(
     spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
-    fmpac_overlay: Any, args: argparse.Namespace,
+    fmpac_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
@@ -208,6 +213,8 @@ def _print_startup_summary(
         print(f"fdd2    : {fdd2_path}")
     if fmpac_overlay is not None:
         print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
+    if mouse_port is not None:
+        print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
     if args.vdp_trace:
         print(f"vdp-trace: {'stdout' if args.vdp_trace_out is None else args.vdp_trace_out}")
@@ -299,6 +306,7 @@ def main() -> None:
     mapper_eff = _first_set(args.mapper, app_cfg.mapper, DEFAULT_MAPPER)
     fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, False)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, False)
+    mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
@@ -353,7 +361,9 @@ def main() -> None:
     breakpoint_addrs = _parse_breakpoints(args.break_point)
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
-    _print_startup_summary(spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, args)
+    _print_startup_summary(
+        spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, mouse_port_eff, args
+    )
 
     from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -424,7 +434,8 @@ def main() -> None:
             from frontend.sdl2_frontend import run
             run(machine, scale=scale_eff, speed=speed_eff, game_title=game_title,
                 resume=args.resume, frame_skip=args.frame_skip, rpc_server=rpc_server,
-                gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period())
+                gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
+                mouse_port=mouse_port_eff)
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
 
