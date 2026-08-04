@@ -407,6 +407,19 @@ class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
 
 
 @dataclass
+class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
+    """ASCII8 mapper + 32 KB battery-backed SRAM (openMSX RomAscii8_8, KOEI_32).
+
+    Extends the SRAM-selectable window set to include 0x4000 (mask 0x34, vs.
+    the standard ASCII8-SRAM 0x30) to match KOEI cartridges.
+    """
+
+    _SRAM_SIZE: ClassVar[int] = 32768
+    _SRAM_MASK: ClassVar[int] = 0x7FFF
+    _SRAM_PAGES: ClassVar[int] = 0x34
+
+
+@dataclass
 class Ascii16Sram2Mapper(Ascii16Mapper):
     """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
