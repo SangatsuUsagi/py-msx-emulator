@@ -57,3 +57,10 @@ joystick:
     trigger_b: b
     turbo_a:   y   # auto-fire Trigger A
     turbo_b:   x   # auto-fire Trigger B
+
+# MSX mouse, driven by the host mouse (SDL relative-mouse mode). Attaches to
+# a joystick port in place of the physical/keyboard joystick on that port.
+# `--mouse` on the command line always overrides this section.
+mouse:
+  enabled: false
+  port: 2   # 1 (Joy1) or 2 (Joy2)

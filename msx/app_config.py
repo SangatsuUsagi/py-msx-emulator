@@ -1,8 +1,9 @@
 """Optional root ``py_emulator.yaml`` startup configuration.
 
-Loads user defaults for startup options (machine, speed, mapper, FM-PAC, RPC)
-and gamepad settings (button assignment, turbo rate). Values are merged with the
-precedence built-in defaults < config file < CLI arguments; see ``__main__``.
+Loads user defaults for startup options (machine, speed, mapper, FM-PAC, RPC),
+gamepad settings (button assignment, turbo rate), and mouse settings
+(enabled, port). Values are merged with the precedence built-in defaults <
+config file < CLI arguments; see ``__main__``.
 
 When the file is absent (or unreadable), an all-unset :class:`AppConfig` is
 returned and behaviour is identical to running with no config.
@@ -24,6 +25,7 @@ DEFAULT_SPEED = 1.0
 DEFAULT_MAPPER = "auto"
 DEFAULT_SCALE = 3
 DEFAULT_TURBO_PERIOD = 3
+DEFAULT_MOUSE_PORT = 2
 
 # Accepted cartridge mapper names (mirrors the --mapper CLI choices).
 VALID_MAPPERS: tuple[str, ...] = (
@@ -57,9 +59,12 @@ _GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
     "turbo_b":   ("x", 5, True),
 }
 
-_KNOWN_TOP_KEYS = frozenset({"machine", "speed", "scale", "mapper", "fmpac", "rpc", "joystick"})
+_KNOWN_TOP_KEYS = frozenset(
+    {"machine", "speed", "scale", "mapper", "fmpac", "rpc", "joystick", "mouse"}
+)
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
+_KNOWN_MOUSE_KEYS = frozenset({"enabled", "port"})
 
 
 class AppConfigError(Exception):
@@ -83,6 +88,19 @@ class AppConfig:
     rpc_socket: str | None = None
     turbo_hz: float | None = None
     gamepad_buttons: dict[str, str] = field(default_factory=dict)
+    mouse_enabled: bool | None = None
+    mouse_port: int | None = None
+
+    def mouse_port_index(self) -> int | None:
+        """Resolve the config-file mouse setting to a 0-based joystick port.
+
+        Returns None when ``mouse.enabled`` is not true; defaults to Joy2
+        (``DEFAULT_MOUSE_PORT``) when enabled but ``mouse.port`` is unset.
+        """
+        if not self.mouse_enabled:
+            return None
+        port = self.mouse_port if self.mouse_port is not None else DEFAULT_MOUSE_PORT
+        return port - 1
 
     def turbo_period(self) -> int:
         """Return the turbo per-frame period from ``turbo_hz`` (min 1).
@@ -165,6 +183,7 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.fmpac = _opt_bool(raw, "fmpac")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
+    _parse_mouse(raw.get("mouse"), cfg)
     return cfg
 
 
@@ -266,4 +285,26 @@ def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
 def _validate_no_duplicate_buttons(cfg: AppConfig) -> None:
     """Surface duplicate-button conflicts at load time (raises AppConfigError)."""
     cfg.gamepad_maps()
+
+
+def _parse_mouse(mouse: Any, cfg: AppConfig) -> None:
+    if mouse is None:
+        return
+    if not isinstance(mouse, dict):
+        raise AppConfigError(f"{CONFIG_FILENAME}: mouse must be a mapping")
+    for key in mouse:
+        if key not in _KNOWN_MOUSE_KEYS:
+            print(f"warning: {CONFIG_FILENAME}: unknown key 'mouse.{key}' (ignored)",
+                  file=sys.stderr)
+    cfg.mouse_enabled = _opt_bool(mouse, "enabled")
+    cfg.mouse_port = _opt_mouse_port(mouse)
+
+
+def _opt_mouse_port(raw: dict[str, Any]) -> int | None:
+    if "port" not in raw or raw["port"] is None:
+        return None
+    value = raw["port"]
+    if isinstance(value, bool) or not isinstance(value, int) or value not in (1, 2):
+        raise AppConfigError(f"{CONFIG_FILENAME}: mouse.port must be 1 or 2")
+    return value
 
