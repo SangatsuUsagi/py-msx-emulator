@@ -168,3 +168,65 @@ def test_sequential_register_writes() -> None:
     for i in range(16):
         psg.write_port(0xA0, i)
         assert psg.read_port(0xA2) == i * 2
+
+
+class _FakeMouse:
+    """Test double recording write_pin8 calls; read() returns a fixed value."""
+
+    def __init__(self) -> None:
+        self.pin8_calls: list[int] = []
+        self.read_value: int = 0
+
+    def write_pin8(self, value: int) -> None:
+        self.pin8_calls.append(value)
+
+    def read(self) -> int:
+        return self.read_value
+
+
+def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
+    psg = PSG(_input=InputState())
+    mouse = _FakeMouse()
+    psg._mouse = mouse
+    psg._mouse_port = 1  # Joy2 -> bit 5
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x20)  # bit 5 = 1
+    assert mouse.pin8_calls[-1] == 1
+    psg.write_port(0xA1, 0x00)  # bit 5 = 0
+    assert mouse.pin8_calls[-1] == 0
+
+
+def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
+    psg = PSG(_input=InputState())
+    mouse = _FakeMouse()
+    psg._mouse = mouse
+    psg._mouse_port = 1  # Joy2 -> bit 5
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) = 1, bit 5 = 0
+    assert mouse.pin8_calls[-1] == 0  # derived from bit 5 only
+
+
+def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:
+    psg = PSG(_input=InputState())
+    mouse = _FakeMouse()
+    mouse.read_value = 0x05
+    psg._mouse = mouse
+    psg._mouse_port = 1  # Joy2
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x40)  # JOY_SELECT=1 (Joy2 selected)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) == (0x05 & 0x3F) | 0xC0
+
+
+def test_reg14_reads_input_state_when_other_port_selected() -> None:
+    state = InputState()
+    state.joystick_button_down(0, 0)  # Joy1 Up pressed
+    psg = PSG(_input=state)
+    mouse = _FakeMouse()
+    mouse.read_value = 0xFF  # would show up if wrongly delegated
+    psg._mouse = mouse
+    psg._mouse_port = 1  # mouse attached to Joy2
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x00)  # JOY_SELECT=0 (Joy1 selected)
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x01 == 0  # Joy1 Up bit from InputState, not mouse
