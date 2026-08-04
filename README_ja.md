@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1621%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1661%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -157,6 +157,17 @@ SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自
 | キーボード | `msx/input.py`；MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
 | 物理ジョイスティック | `msx/joystick.py`；SDL2 GameController API（優先）と生ジョイスティックのフォールバック；ホットプラグ対応 |
 | キーボードエミュレーション | WASD = Joy1 方向；Z/X または ,/. = トリガ A/B；矢印キーも対応 |
+
+### マウス
+
+ホストのマウスで駆動するオプションの MSX マウス。ジョイスティックポートに、そのポートの物理/キーボードジョイスティックの代わりとして接続します。実機のプロトコルを忠実に再現：pin 8（通常は PSG の常時 High のストローブ出力）を MSX 側がトグルすることでクロックとして使い、符号付き相対移動量を 4 ビットニブル単位（X 上位 → X 下位 → Y 上位 → Y 下位）で転送します。続けてデルタ 0 の代替サイクルを送ることで、MSX BIOS のマウス判定がこのデバイスをトラックボールではなくマウスとして認識します。左右ボタンはポートのトリガ A/B ラインを駆動します。
+
+| 項目 | 詳細 |
+| --- | --- |
+| 実装 | `msx/mouse.py`（プロトコル状態機械）、`msx/psg.py`（レジスタ 14/15 の配線） |
+| 有効化 | `--mouse[=1\|2]`（CLI）または `py_emulator.yaml` の `mouse.enabled`/`mouse.port`；CLI フラグは常に設定ファイルより優先 |
+| ホスト入力 | SDL の relative-mouse モード（カーソルは非表示になりウィンドウにロック）；移動量はウィンドウの整数 `--scale` 倍率でスケーリング |
+| 既知の制限 | NYYRIKKI/Prodatron 拡張プロトコル（高解像度、ホイール、追加ボタン）、絶対座標指定、実機マウスのクリック長押しによるジョイスティックエミュレーションモードは未実装 |
 
 ### SDL2 フロントエンド
 
@@ -348,6 +359,12 @@ python . path/to/game.rom --mapper KonamiSCC
 # スロット 1 のゲームと合わせてスロット 2 に FM-PAC（MSX-MUSIC）を追加
 python . path/to/game.rom --fmpac
 
+# ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
+python . path/to/game.rom --mouse
+
+# MSX マウスを Joy1 に接続
+python . path/to/game.rom --mouse=1
+
 # 最新のステートセーブから復帰
 python . path/to/game.rom --resume
 
@@ -384,6 +401,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
+| `--mouse [1\|2]` | _（なし）_ | MSX マウスをジョイスティックポートに接続（引数なしは Joy2）；`py_emulator.yaml` の `mouse` 設定より優先。ヘッドレス実行時は無効 |
 | `--frame-skip MODE` | `auto` | フレームスキップ：`auto` で遅延フレームの VDP 描画を省略、`none` で無効化 |
 | `--debug` | オフ | 構造化診断ログを stderr に出力 |
 | `--log FILE` | _（なし）_ | 診断ログをファイルに書き出す（`--debug` が必要） |
@@ -435,10 +453,15 @@ joystick:
     trigger_b: b
     turbo_a: y           # Trigger A の連射
     turbo_b: x           # Trigger B の連射
+
+mouse:
+  enabled: false         # ホストのマウスで駆動する MSX マウスを接続する
+  port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
 ```
 
-設定できるのは `machine`・`speed`・`scale`・`mapper`・`fmpac` と RPC / ゲームパッド
-設定のみです。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
+設定できるのは `machine`・`speed`・`scale`・`mapper`・`fmpac`・`mouse` と RPC / ゲー
+ムパッド設定です。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通
+です。コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
 全項目と有効なボタン名は `py_emulator.example.yaml` を参照してください。
 
 ### エミュレータ内のキー操作
@@ -645,7 +668,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1621 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1661 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -691,6 +714,7 @@ py-msx-emulator/
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
 │   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
+│   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── frame_timer.py     # 60 fps ペーシング + FPS 計測
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
@@ -703,7 +727,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1621 テスト
+├── tests/                 # テストスイート — 1661 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -747,6 +771,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.4** (2026-08-04) — MSX マウスエミュレーションを追加：`--mouse[=1|2]` でホストのマウスが駆動する MSX マウスをジョイスティックポートに接続、実機の pin-8 クロック式ニブル転送プロトコルを再現。`py_emulator.yaml` に `mouse.enabled`/`mouse.port` を追加
 - **v2.4.3** (2026-08-03) — バンク切り替え式マッパー（KonamiSCC、ASCII8、ASCII16、Konami、およびそれらの SRAM 派生）のカートリッジ ROM 読み出しを高速化。毎読み出しごとにアクティブなウィンドウを解決する代わりに、バンク切り替え時のみ再構築するフラットミラーを使用
 - **v2.4.2** (2026-08-02) — SDL2 フロントエンドに Ctrl+F1〜F5（MSX HOME/INS/DEL/STOP/SELECT）と右 Alt（MSX CODE/KANA）のキー割り当てを追加
 - **v2.4.1** (2026-08-02) — 任意の `py_emulator.yaml` 起動設定ファイルに対応（デフォルトのマシン/速度/マッパー/FM-PAC、ゲームパッドのボタン割り当て、連射レート）。`--benchmark` をフレーム数指定に変更
