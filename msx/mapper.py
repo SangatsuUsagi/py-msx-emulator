@@ -16,6 +16,17 @@ _PAGE_16K = 16384
 # check does a plain int compare instead of a per-call global-lookup multiply.
 _WINDOW_BYTES = 4 * _PAGE_8K
 
+# Portability note: every mapper's `addr - base` bounds check in this module
+# (e.g. FixedPageMapper.read, _read_out_of_window on the banked mappers) relies
+# on Python's arbitrary-precision int subtraction to produce a negative value
+# when `addr` falls below `base`, which the subsequent `0 <=` comparison then
+# rejects. `addr` is not pre-clamped to a mapper's own window before `read()`
+# is called (a BIOS/slot scan can probe any address in cartridge space), so
+# `addr < base` is a real, expected case. A Rust/C++ port using fixed-width
+# unsigned integers must not translate this subtraction directly -- it would
+# underflow-wrap instead of going negative. Cast to a signed intermediate
+# before subtracting, or compare `addr >= base` before computing the offset.
+
 # R-Type (Irem) bank register masks (openMSX RomRType).
 _RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
 _RTYPE_MASK_HI = 0x17
@@ -61,8 +72,22 @@ def _trace_bank(mapper: _BankTracing, window: int, old: int, new: int, addr: int
     )
 
 
+class _NoStateMapperMixin:
+    """Shared no-op write/snapshot/restore for mappers with no persisted state
+    (no bank registers, no SRAM)."""
+
+    def write(self, addr: int, value: int) -> None:
+        pass
+
+    def snapshot(self) -> dict[str, object]:
+        return {}
+
+    def restore(self, state: dict[str, object]) -> None:
+        pass
+
+
 @dataclass
-class FlatMapper:
+class FlatMapper(_NoStateMapperMixin):
     """Flat (non-bank-switching) cartridge mapper. Reproduces the original behaviour."""
 
     cartridge: bytes | None
@@ -74,18 +99,9 @@ class FlatMapper:
         offset = (addr - 0x4000) % len(self.cartridge)
         return self.cartridge[offset]
 
-    def write(self, addr: int, value: int) -> None:
-        pass
-
-    def snapshot(self) -> dict[str, object]:
-        return {}
-
-    def restore(self, state: dict[str, object]) -> None:
-        pass
-
 
 @dataclass
-class FixedPageMapper:
+class FixedPageMapper(_NoStateMapperMixin):
     """Non-bank-switched cartridge mapper: ROM appears only at a fixed base address;
     every other page in the cartridge region reads as 0xFF (open bus). Reproduces
     openMSX RomPageNN / RomPlain(mirrored=False) for the Page2 / 0x4000 / 0x8000
@@ -94,21 +110,18 @@ class FixedPageMapper:
 
     rom: bytes
     base: int
+    # Cached at construction so the hot read() path does a plain int compare
+    # instead of a per-call len() lookup (same rationale as _WINDOW_BYTES above).
+    _rom_len: int = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._rom_len = len(self.rom)
 
     def read(self, addr: int) -> int:
         offset = addr - self.base
-        if 0 <= offset < len(self.rom):
+        if 0 <= offset < self._rom_len:
             return self.rom[offset]
         return 0xFF
-
-    def write(self, addr: int, value: int) -> None:
-        pass
-
-    def snapshot(self) -> dict[str, object]:
-        return {}
-
-    def restore(self, state: dict[str, object]) -> None:
-        pass
 
 
 @dataclass

@@ -124,6 +124,8 @@ _MAPPER_BUILDERS: dict[
     "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
     "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
     "KonamiSCC":    lambda cart, rom, sram, scc: KonamiSCCMapper(rom, scc=_require_scc(scc)),
+    # "Page2" (MSX slot page 2, 0x8000-0xBFFF) and "0x8000" are distinct
+    # ROM-DB mapper names for the same fixed-window layout -- not a duplicate.
     "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),

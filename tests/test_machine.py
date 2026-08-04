@@ -210,6 +210,7 @@ def test_auto_known_konami_selects_konami_mapper(
 @pytest.mark.parametrize(
     ("db_mapper", "expected_base"),
     [("Page2", 0x8000), ("0x4000", 0x4000), ("0x8000", 0x8000)],
+    ids=["Page2", "0x4000", "0x8000"],
 )
 def test_auto_known_fixed_page_types_select_fixed_page_mapper(
     monkeypatch: pytest.MonkeyPatch,

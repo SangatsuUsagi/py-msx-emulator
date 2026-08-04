@@ -190,8 +190,11 @@ class TestKoeiSRAM32:
     def test_sram_selectable_at_0x4000_window(self):
         # _SRAM_PAGES = 0x34 adds window 0 (0x4000) to the standard 0x30
         # (windows 2/3 only) set used by Ascii8Sram2Mapper/Ascii8Sram8Mapper.
-        # For this 16 KB ROM, enable_bit = num_pages = 2, which (since
-        # block_mask = 3 for 32 KB SRAM) also selects SRAM block 2.
+        # Note: _SRAM_BANK (=2) here does double duty -- it both sets the
+        # enable bit (bank & enable_bit, enable_bit = num_pages = 2) and,
+        # because block_mask = 3 for 32 KB SRAM, also selects SRAM block 2
+        # (bank & block_mask). That overlap is a coincidence of this 16 KB
+        # test ROM's page count, not a hardware invariant.
         m = KoeiSRAM32Mapper(rom=_ROM_16K)
         m.write(0x6000, _SRAM_BANK)  # window 0 bank reg, enable bit set → SRAM block 2
         m.write(0x4100, 0xAB)
