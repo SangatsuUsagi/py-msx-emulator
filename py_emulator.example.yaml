@@ -26,9 +26,20 @@ scale: 3
 # ASCII16SRAM8, R-Type. `auto` detects the mapper from the ROM database.
 mapper: auto
 
+# Slot 2 cartridge ROM path (relative to the repository root) and its mapper.
+# Leave both unset for no slot 2 cartridge (default). Conflicts with `fmpac`.
+# mapper2: one of auto, Mirrored, Normal, ASCII8, ASCII16, Konami, Majutsushi
+# (no SCC/SRAM/DAC support in slot 2).
+# slot2: roms/slot2.rom
+# mapper2: auto
+
 # Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2.
-# Conflicts with a slot 2 cartridge (--slot2).
+# Conflicts with a slot 2 cartridge (--slot2 / slot2 above).
 fmpac: false
+
+# Frame skip mode: true = auto (adapt to frame overruns, default), false =
+# none (always render every frame; may stutter under load).
+frame_skip: true
 
 # Embedded Unix-socket JSON-RPC control server (interactive run mode only).
 rpc:
@@ -57,6 +68,22 @@ joystick:
     trigger_b: b
     turbo_a:   y   # auto-fire Trigger A
     turbo_b:   x   # auto-fire Trigger B
+
+# Joy1 keyboard emulation key overrides. Unlike the gamepad `joystick.buttons`
+# above, each built-in default here is actually TWO keys (e.g. up = w AND the
+# Up arrow); setting a function below replaces BOTH of its default keys with
+# the single key given — there is no partial/alternate-key merge. Leave a
+# function out (or the whole `buttons` mapping empty, as below) to keep its
+# built-in default(s) unchanged. No two functions may resolve to the same key.
+keyboard_joystick:
+  # Valid key names: a-z, 0-9, up, down, left, right, comma, period.
+  buttons: {}
+    # up:        i      # built-in default: w, up arrow
+    # down:      k      # built-in default: s, down arrow
+    # left:      j      # built-in default: a, left arrow
+    # right:     l      # built-in default: d, right arrow
+    # trigger_a: n      # built-in default: z, comma
+    # trigger_b: m      # built-in default: x, period
 
 # MSX mouse, driven by the host mouse (SDL relative-mouse mode). Attaches to
 # a joystick port in place of the physical/keyboard joystick on that port.
