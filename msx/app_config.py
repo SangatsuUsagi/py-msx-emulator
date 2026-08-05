@@ -32,7 +32,7 @@ VALID_MAPPERS: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
     "Konami", "KonamiSCC", "Majutsushi",
     "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-    "R-Type",
+    "R-Type", "GameMaster2",
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
