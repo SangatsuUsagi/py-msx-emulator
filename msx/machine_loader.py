@@ -32,6 +32,7 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
     FixedPageMapper,
     FlatMapper,
+    GameMaster2Mapper,
     KoeiSRAM32Mapper,
     KonamiMapper,
     KonamiSCCMapper,
@@ -57,7 +58,7 @@ from msx.vdp.vdp import VDP
 _SUPPORTED_MAPPERS = frozenset({
     "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
     "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32",
+    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
 })
 
 # Supported FDC controller chips and connection styles, selected by machine YAML.
@@ -72,6 +73,7 @@ _SRAM_SIZES: dict[str, int] = {
     "ASCII16SRAM2": 2048,
     "ASCII16SRAM8": 8192,
     "KoeiSRAM32": 32768,
+    "GameMaster2": 8192,
 }
 
 
@@ -130,6 +132,7 @@ _MAPPER_BUILDERS: dict[
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=sram),
+    "GameMaster2":  lambda cart, rom, sram, scc: GameMaster2Mapper(rom, sram=sram),
 }
 
 

@@ -27,12 +27,15 @@ DEFAULT_SCALE = 3
 DEFAULT_TURBO_PERIOD = 3
 DEFAULT_MOUSE_PORT = 2
 
-# Accepted cartridge mapper names (mirrors the --mapper CLI choices).
+# Accepted cartridge mapper names for --mapper / config `mapper:`. Must stay in
+# sync with machine_loader._SUPPORTED_MAPPERS (plus "auto"); a test asserts the
+# two agree so the lists cannot drift. app_config does not import machine_loader
+# to avoid an import cycle, hence the duplicated literal guarded by that test.
 VALID_MAPPERS: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
     "Konami", "KonamiSCC", "Majutsushi",
     "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-    "R-Type",
+    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.

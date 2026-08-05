@@ -17,7 +17,8 @@ _PAGE_16K = 16384
 _WINDOW_BYTES = 4 * _PAGE_8K
 
 # Portability note: every mapper's `addr - base` bounds check in this module
-# (e.g. FixedPageMapper.read, _read_out_of_window on the banked mappers) relies
+# (e.g. FixedPageMapper.read, GameMaster2Mapper.read, _read_out_of_window on the
+# banked mappers) relies
 # on Python's arbitrary-precision int subtraction to produce a negative value
 # when `addr` falls below `base`, which the subsequent `0 <=` comparison then
 # rejects. `addr` is not pre-clamped to a mapper's own window before `read()`
@@ -430,6 +431,167 @@ class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
     _SRAM_SIZE: ClassVar[int] = 32768
     _SRAM_MASK: ClassVar[int] = 0x7FFF
     _SRAM_PAGES: ClassVar[int] = 0x34
+
+
+@dataclass
+class GameMaster2Mapper(_BankTracing):
+    """Konami Game Master 2 mapper: 128 KB ROM + 8 KB battery-backed SRAM.
+
+    Follows openMSX RomGameMaster2.cc. Four 8 KB windows at 0x4000-0x5FFF
+    (window 0, fixed to ROM page 0, not switchable), 0x6000-0x7FFF (window 1),
+    0x8000-0x9FFF (window 2), 0xA000-0xBFFF (window 3).
+
+    Windows 1-3 switch only on a write to the *low 4 KB* of their region
+    (0x6000-0x6FFF, 0x8000-0x8FFF, 0xA000-0xAFFF); a write to the high 4 KB
+    does nothing. Each bank-register value is decoded as:
+
+        bits 0-3           ROM page (0-15) when bit 4 clear
+        bit 4 (_SRAM_BIT)  1 = SRAM, 0 = ROM
+        bit 5 (_SRAM_HALF_BIT)  which 4 KB half of the 8 KB SRAM when bit 4 set
+
+    When a window maps SRAM, both 4 KB halves of the 8 KB window read the same
+    4 KB SRAM block (mirror). Each window remembers the SRAM half captured at
+    its switch time (openMSX captures the pointer), so two windows may map
+    different halves simultaneously. SRAM is writable only through
+    0xB000-0xBFFF, and only while window 3's last write enabled SRAM
+    (`_sram_enabled`); the write uses the most recently selected half
+    (`_sram_half`).
+    """
+
+    # Bank-register bit fields and the 4 KB SRAM-half geometry, named to match
+    # the decode table in the class docstring.
+    _SRAM_BIT: ClassVar[int] = 0x10        # bit 4: 1 = SRAM, 0 = ROM
+    _SRAM_HALF_BIT: ClassVar[int] = 0x20   # bit 5: which 4 KB SRAM half
+    _ROM_PAGE_MASK: ClassVar[int] = 0x0F   # bits 0-3: ROM page selector
+    _HALF_SIZE: ClassVar[int] = 0x1000     # 4 KB SRAM half
+    _HALF_MASK: ClassVar[int] = 0x0FFF     # offset within a 4 KB half
+
+    rom: bytes
+    # Portability note: `sram` is Optional only so the loader may pass a
+    # preloaded save; __post_init__ guarantees it is a `bytearray` of exactly
+    # `_SRAM_SIZE` afterwards, which is why every access carries a
+    # `# type: ignore`. A Rust/C++ port makes SRAM non-optional (allocate a
+    # fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
+    # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
+    sram: bytearray | None = None
+    _SRAM_SIZE: ClassVar[int] = 8192
+
+    # Portability note: `_banks`, `_window_is_sram` and `_window_sram_half` are
+    # all fixed length 4 (indexed by window 0-3) and never resized -- a Rust/C++
+    # port should use `[u8; 4]` / `[bool; 4]` / `[u16; 4]` (or a bitmask for the
+    # flags) rather than a growable Vec. `_banks` is `init=True`, so a port's
+    # constructor must seed it with `[0, 1, 2, 3]`. Its stored values are raw
+    # register bytes; a port with `[u8; 4]` must mask `value & 0xFF` at the
+    # store (Python's unbounded int keeps the downstream `& _SRAM_BIT` etc.
+    # harmless without masking).
+    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _flat: bytearray = field(init=False, repr=False)
+    # Per-window flag: True while that window currently maps SRAM.
+    _window_is_sram: list[bool] = field(
+        default_factory=lambda: [False, False, False, False], init=False, repr=False,
+    )
+    # Per-window SRAM half base (0x0000 or 0x1000) captured at the window's
+    # switch; used by read() so windows switched to different halves stay
+    # independent.
+    _window_sram_half: list[int] = field(
+        default_factory=lambda: [0, 0, 0, 0], init=False, repr=False,
+    )
+    # Most recently selected SRAM half base (any window); used by the 0xB000 write.
+    _sram_half: int = field(default=0, init=False, repr=False)
+    # SRAM writability latch, updated only on window-3 (0xA000) writes.
+    _sram_enabled: bool = field(default=False, init=False, repr=False)
+    _num_pages: int = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+            self.sram = bytearray(self._SRAM_SIZE)
+        self._num_pages = max(1, len(self.rom) // _PAGE_8K)
+        self._flat = bytearray(4 * _PAGE_8K)
+        for window in range(4):
+            self._sync_window(window)
+
+    def _sync_window(self, window: int) -> None:
+        """Refresh derived state for a window from its raw register value."""
+        value = self._banks[window]
+        # `window != 0` is defensive: window 0 has no switch address and its
+        # register stays 0, so its SRAM bit is never set in practice -- the
+        # guard just makes window 0 immune to a corrupt restore payload.
+        if window != 0 and (value & self._SRAM_BIT):
+            # SRAM-mapped: read() routes this window to self.sram directly, so
+            # _flat is left untouched (stale but unread) for this window.
+            self._window_is_sram[window] = True
+            return
+        self._window_is_sram[window] = False
+        page = (value & self._ROM_PAGE_MASK) % self._num_pages
+        src = self.rom[page * _PAGE_8K:(page + 1) * _PAGE_8K]
+        dst = window * _PAGE_8K
+        self._flat[dst:dst + len(src)] = src
+        if len(src) < _PAGE_8K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src):dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
+
+    def read(self, addr: int) -> int:
+        # `idx` relies on the signed-subtraction idiom noted at the top of this
+        # module (a Rust/C++ port must guard `addr >= 0x4000` before subtracting).
+        idx = addr - 0x4000
+        if 0 <= idx < _WINDOW_BYTES:
+            window = idx >> 13  # idx // _PAGE_8K
+            if self._window_is_sram[window]:
+                offset = self._window_sram_half[window] | (addr & self._HALF_MASK)
+                return self.sram[offset]  # type: ignore[index]
+            return self._flat[idx]
+        return 0xFF  # outside 0x4000-0xBFFF: open bus
+
+    def write(self, addr: int, value: int) -> None:
+        if 0x6000 <= addr < 0xB000:
+            if addr & 0x1000:
+                # High 4 KB of a region: not a bank-switch address.
+                return
+            region = addr >> 12  # 0x6, 0x8 or 0xA
+            window = (region >> 1) - 2  # 0x6->1, 0x8->2, 0xA->3
+            if window == 3:
+                # Only window 3 (0xA000) toggles the SRAM writability latch.
+                self._sram_enabled = (value & self._SRAM_BIT) != 0
+            old = self._banks[window]
+            self._banks[window] = value
+            if value & self._SRAM_BIT:
+                self._sram_half = self._HALF_SIZE if (value & self._SRAM_HALF_BIT) else 0x0000
+                self._window_sram_half[window] = self._sram_half
+            # _sync_window derives _window_is_sram / _flat from the raw register
+            # value just stored, for both the ROM and SRAM cases.
+            self._sync_window(window)
+            _trace_bank(self, window, old, value, addr)
+        elif 0xB000 <= addr < 0xC000:
+            if self._sram_enabled:
+                offset = self._sram_half | (addr & self._HALF_MASK)
+                self.sram[offset] = value & 0xFF  # type: ignore[index]
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)  # type: ignore[arg-type]
+
+    # Portability note: snapshot/restore round-trips a heterogeneous
+    # `dict[str, object]` (list[int], int, bool, bytes) with runtime casts, like
+    # the other mappers in this module. A Rust/C++ port replaces this with a
+    # typed state struct plus explicit (de)serialization -- there is no untyped
+    # string-keyed map with runtime coercion.
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "banks": list(self._banks),
+            "sram_half": self._sram_half,
+            "window_sram_half": list(self._window_sram_half),
+            "sram_enabled": self._sram_enabled,
+            "sram": bytes(self.sram),  # type: ignore[arg-type]
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        self._sram_half = int(state["sram_half"])  # type: ignore[call-overload]
+        self._window_sram_half[:] = state["window_sram_half"]  # type: ignore[call-overload]
+        self._sram_enabled = bool(state["sram_enabled"])
+        if self.sram is not None:
+            self.sram[:] = state["sram"]  # type: ignore[call-overload]
+        for window in range(4):
+            self._sync_window(window)
 
 
 @dataclass
