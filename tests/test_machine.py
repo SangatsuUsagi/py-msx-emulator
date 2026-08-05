@@ -247,6 +247,25 @@ def test_auto_known_koeisram32_selects_koeisram32_mapper(
     assert "unsupported mapper type" not in capsys.readouterr().err
 
 
+def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import hashlib
+
+    import msx.romdb as romdb
+    from msx.mapper import GameMaster2Mapper
+    cart = bytes(128 * 1024)  # dummy 128 KB cartridge
+    sha1 = hashlib.sha1(cart).hexdigest()
+    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "GameMaster2"}})
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
+    mapper = m.memory._mapper
+    assert isinstance(mapper, GameMaster2Mapper)
+    assert mapper.sram is not None
+    assert len(mapper.sram) == 8192
+    assert "unsupported mapper type" not in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # Slot 2 cartridge wiring
 # ---------------------------------------------------------------------------
