@@ -17,6 +17,8 @@ from typing import Any
 
 import yaml
 
+from msx.input import JOY_MAP, KEY_NAME_TO_SDLKEY
+
 CONFIG_FILENAME = "py_emulator.yaml"
 
 # Built-in defaults — the single source of truth for values that are not set by
@@ -36,6 +38,12 @@ VALID_MAPPERS: tuple[str, ...] = (
     "Konami", "KonamiSCC", "Majutsushi",
     "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
     "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
+)
+
+# Accepted slot 2 cartridge mapper names for --mapper2 / config `mapper2:`.
+# Slot 2 has no SCC/SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
+VALID_MAPPERS2: tuple[str, ...] = (
+    "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
@@ -62,11 +70,20 @@ _GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
     "turbo_b":   ("x", 5, True),
 }
 
-_KNOWN_TOP_KEYS = frozenset(
-    {"machine", "speed", "scale", "mapper", "fmpac", "rpc", "joystick", "mouse"}
-)
+# MSX Joy1 function → port bit (0-5). The keyboard-side default key(s) live in
+# input.JOY_MAP; only the bit assignment is duplicated here (mirrors how
+# _GAMEPAD_FUNCTIONS pairs a function with its port bit for the gamepad side).
+_KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
+    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
+}
+
+_KNOWN_TOP_KEYS = frozenset({
+    "machine", "speed", "scale", "mapper", "fmpac", "slot2", "mapper2",
+    "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
+})
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
+_KNOWN_KEYBOARD_JOYSTICK_KEYS = frozenset({"buttons"})
 _KNOWN_MOUSE_KEYS = frozenset({"enabled", "port"})
 
 
@@ -87,10 +104,14 @@ class AppConfig:
     scale: int | None = None
     mapper: str | None = None
     fmpac: bool | None = None
+    slot2: str | None = None
+    mapper2: str | None = None
+    frame_skip: bool | None = None
     rpc_enabled: bool | None = None
     rpc_socket: str | None = None
     turbo_hz: float | None = None
     gamepad_buttons: dict[str, str] = field(default_factory=dict)
+    keyboard_joystick_buttons: dict[str, str] = field(default_factory=dict)
     mouse_enabled: bool | None = None
     mouse_port: int | None = None
 
@@ -141,6 +162,37 @@ class AppConfig:
             (turbo if is_turbo else direct)[index] = bit
         return direct, turbo
 
+    def keyboard_joy_map(self) -> dict[int, tuple[int, int]]:
+        """Resolve the Joy1 keyboard key map for ``InputState(joy_map=...)``.
+
+        Returns the built-in ``input.JOY_MAP`` unchanged when no function is
+        overridden. Otherwise, each overridden function's default key(s) are
+        dropped and replaced with its configured key.
+
+        Raises:
+            AppConfigError: If two overridden functions resolve to the same key.
+        """
+        if not self.keyboard_joystick_buttons:
+            return JOY_MAP
+        overridden_bits = {
+            _KEYBOARD_JOY_FUNCTIONS[func] for func in self.keyboard_joystick_buttons
+        }
+        result = {
+            key: (port, bit) for key, (port, bit) in JOY_MAP.items()
+            if not (port == 0 and bit in overridden_bits)
+        }
+        seen: dict[int, str] = {}
+        for func, key_name in self.keyboard_joystick_buttons.items():
+            sdlkey = KEY_NAME_TO_SDLKEY[key_name]
+            if sdlkey in seen:
+                raise AppConfigError(
+                    f"{CONFIG_FILENAME}: keyboard_joystick.buttons: {key_name!r} assigned to "
+                    f"both {seen[sdlkey]!r} and {func!r}"
+                )
+            seen[sdlkey] = func
+            result[sdlkey] = (0, _KEYBOARD_JOY_FUNCTIONS[func])
+        return result
+
 
 def load_app_config(root: Path) -> AppConfig:
     """Load ``py_emulator.yaml`` from ``root``; return an all-unset config if absent.
@@ -184,8 +236,12 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.scale = _opt_positive_int(raw, "scale")
     cfg.mapper = _opt_mapper(raw)
     cfg.fmpac = _opt_bool(raw, "fmpac")
+    cfg.slot2 = _opt_slot2(raw, root)
+    cfg.mapper2 = _opt_mapper2(raw)
+    cfg.frame_skip = _opt_bool(raw, "frame_skip")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
+    _parse_keyboard_joystick(raw.get("keyboard_joystick"), cfg)
     _parse_mouse(raw.get("mouse"), cfg)
     return cfg
 
@@ -239,6 +295,22 @@ def _opt_mapper(raw: dict[str, Any]) -> str | None:
     return value
 
 
+def _opt_mapper2(raw: dict[str, Any]) -> str | None:
+    value = _opt_str(raw, "mapper2")
+    if value is not None and value not in VALID_MAPPERS2:
+        raise AppConfigError(
+            f"{CONFIG_FILENAME}: mapper2 {value!r} is not one of {', '.join(VALID_MAPPERS2)}"
+        )
+    return value
+
+
+def _opt_slot2(raw: dict[str, Any], root: Path) -> str | None:
+    value = _opt_str(raw, "slot2")
+    if value is not None and not (root / value).exists():
+        raise AppConfigError(f"{CONFIG_FILENAME}: slot2: file not found: {value}")
+    return value
+
+
 def _parse_rpc(rpc: Any, cfg: AppConfig) -> None:
     if rpc is None:
         return
@@ -288,6 +360,38 @@ def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
 def _validate_no_duplicate_buttons(cfg: AppConfig) -> None:
     """Surface duplicate-button conflicts at load time (raises AppConfigError)."""
     cfg.gamepad_maps()
+
+
+def _parse_keyboard_joystick(keyboard_joystick: Any, cfg: AppConfig) -> None:
+    if keyboard_joystick is None:
+        return
+    if not isinstance(keyboard_joystick, dict):
+        raise AppConfigError(f"{CONFIG_FILENAME}: keyboard_joystick must be a mapping")
+    for key in keyboard_joystick:
+        if key not in _KNOWN_KEYBOARD_JOYSTICK_KEYS:
+            print(f"warning: {CONFIG_FILENAME}: unknown key 'keyboard_joystick.{key}' (ignored)",
+                  file=sys.stderr)
+    _parse_keyboard_joystick_buttons(keyboard_joystick.get("buttons"), cfg)
+
+
+def _parse_keyboard_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
+    if buttons is None:
+        return
+    if not isinstance(buttons, dict):
+        raise AppConfigError(f"{CONFIG_FILENAME}: keyboard_joystick.buttons must be a mapping")
+    for func, key_name in buttons.items():
+        if func not in _KEYBOARD_JOY_FUNCTIONS:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: keyboard_joystick.buttons: unknown function {func!r} "
+                f"(expected one of {', '.join(_KEYBOARD_JOY_FUNCTIONS)})"
+            )
+        if not isinstance(key_name, str) or key_name not in KEY_NAME_TO_SDLKEY:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: keyboard_joystick.buttons.{func}: unknown key {key_name!r} "
+                f"(expected one of {', '.join(KEY_NAME_TO_SDLKEY)})"
+            )
+        cfg.keyboard_joystick_buttons[func] = key_name
+    cfg.keyboard_joy_map()  # surfaces duplicate-key conflicts at load time
 
 
 def _parse_mouse(mouse: Any, cfg: AppConfig) -> None:

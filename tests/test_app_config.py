@@ -57,6 +57,34 @@ def test_nested_joystick_group_parsed(tmp_path: Path) -> None:
     assert cfg.gamepad_buttons == {"trigger_a": "leftshoulder"}
 
 
+def test_slot2_and_mapper2_parsed(tmp_path: Path) -> None:
+    (tmp_path / "slot2.rom").write_bytes(b"\x00")
+    _write(tmp_path, "slot2: slot2.rom\nmapper2: Konami\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.slot2 == "slot2.rom"
+    assert cfg.mapper2 == "Konami"
+
+
+def test_frame_skip_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "frame_skip: false\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.frame_skip is False
+
+
+def test_nested_keyboard_joystick_group_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "keyboard_joystick:\n  buttons:\n    trigger_a: j\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.keyboard_joystick_buttons == {"trigger_a": "j"}
+
+
+def test_unknown_keyboard_joystick_key_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(tmp_path, "keyboard_joystick:\n  bogus: 1\n")
+    load_app_config(tmp_path)
+    assert "keyboard_joystick.bogus" in capsys.readouterr().err
+
+
 def test_unknown_top_key_warns_but_continues(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -118,6 +146,42 @@ def test_unknown_button_function_rejected(tmp_path: Path) -> None:
         load_app_config(tmp_path)
 
 
+def test_invalid_mapper2_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "mapper2: NotAMapper\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_nonexistent_slot2_path_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "slot2: does/not/exist.rom\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_non_bool_frame_skip_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "frame_skip: auto\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_unknown_keyboard_key_name_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "keyboard_joystick:\n  buttons:\n    up: numpad8\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_unknown_keyboard_joystick_function_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "keyboard_joystick:\n  buttons:\n    jump: space\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_duplicate_keyboard_key_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "keyboard_joystick:\n  buttons:\n    up: j\n    down: j\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
 def test_non_mapping_top_level_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "- just\n- a\n- list\n")
     with pytest.raises(AppConfigError):
@@ -161,6 +225,40 @@ def test_turbo_override_rebinds_button() -> None:
     _direct, turbo = cfg.gamepad_maps()
     assert turbo[9] == 4  # leftshoulder index 9 → trigger A turbo bit 4
     assert 3 not in turbo  # default Y no longer turbo-a
+
+
+# ---------------------------------------------------------------------------
+# Keyboard joystick (Joy1) map resolution
+# ---------------------------------------------------------------------------
+
+def test_default_keyboard_joy_map_is_builtin_joy_map() -> None:
+    from msx.input import JOY_MAP
+    assert AppConfig().keyboard_joy_map() is JOY_MAP
+
+
+def test_keyboard_joy_map_override_replaces_default_keys() -> None:
+    from msx.input import _K_COMMA, _K_j, _K_z
+
+    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
+    resolved = cfg.keyboard_joy_map()
+    assert resolved[_K_j] == (0, 4)
+    assert _K_z not in resolved
+    assert _K_COMMA not in resolved
+
+
+def test_keyboard_joy_map_omitted_function_keeps_default() -> None:
+    from msx.input import _K_UP, _K_w
+
+    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
+    resolved = cfg.keyboard_joy_map()
+    assert resolved[_K_w] == (0, 0)
+    assert resolved[_K_UP] == (0, 0)
+
+
+def test_keyboard_joy_map_duplicate_key_rejected() -> None:
+    cfg = AppConfig(keyboard_joystick_buttons={"up": "j", "down": "j"})
+    with pytest.raises(AppConfigError):
+        cfg.keyboard_joy_map()
 
 
 # ---------------------------------------------------------------------------
