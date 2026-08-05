@@ -11,6 +11,7 @@ returned and behaviour is identical to running with no config.
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,12 +163,15 @@ class AppConfig:
             (turbo if is_turbo else direct)[index] = bit
         return direct, turbo
 
-    def keyboard_joy_map(self) -> dict[int, tuple[int, int]]:
+    def keyboard_joy_map(self) -> Mapping[int, tuple[int, int]]:
         """Resolve the Joy1 keyboard key map for ``InputState(joy_map=...)``.
 
-        Returns the built-in ``input.JOY_MAP`` unchanged when no function is
-        overridden. Otherwise, each overridden function's default key(s) are
-        dropped and replaced with its configured key.
+        Each overridden function's default key(s) are dropped and replaced
+        with its configured key.
+
+        Returns:
+            The built-in ``input.JOY_MAP`` unchanged when no function is
+            overridden, otherwise a resolved ``sdlkey -> (port, bit)`` map.
 
         Raises:
             AppConfigError: If two overridden functions resolve to the same key.
@@ -178,7 +182,7 @@ class AppConfig:
             _KEYBOARD_JOY_FUNCTIONS[func] for func in self.keyboard_joystick_buttons
         }
         result = {
-            key: (port, bit) for key, (port, bit) in JOY_MAP.items()
+            sdlkey: (port, bit) for sdlkey, (port, bit) in JOY_MAP.items()
             if not (port == 0 and bit in overridden_bits)
         }
         seen: dict[int, str] = {}
@@ -391,7 +395,12 @@ def _parse_keyboard_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
                 f"(expected one of {', '.join(KEY_NAME_TO_SDLKEY)})"
             )
         cfg.keyboard_joystick_buttons[func] = key_name
-    cfg.keyboard_joy_map()  # surfaces duplicate-key conflicts at load time
+    _validate_no_duplicate_keyboard_keys(cfg)
+
+
+def _validate_no_duplicate_keyboard_keys(cfg: AppConfig) -> None:
+    """Surface duplicate-key conflicts at load time (raises AppConfigError)."""
+    cfg.keyboard_joy_map()
 
 
 def _parse_mouse(mouse: Any, cfg: AppConfig) -> None:

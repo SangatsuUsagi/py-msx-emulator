@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -730,7 +731,7 @@ def build_machine(
     fdd1: Path | None = None,
     fdd2: Path | None = None,
     fmpac_overlay: _FmPacOverlay | None = None,
-    joy_map: dict[int, tuple[int, int]] | None = None,
+    joy_map: Mapping[int, tuple[int, int]] | None = None,
 ) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
     """Build a Machine from a resolved MachineSpec.
 
@@ -750,6 +751,7 @@ def build_machine(
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
         joy_map: Optional Joy1 keyboard key map override for InputState
             (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
+            The last parameter in the signature.
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -838,11 +840,9 @@ def build_machine(
         )
         mapper2_instance = fmpac_device
 
-    input_state = (
-        InputState(keyboard_type=spec.keyboard_type, joy_map=joy_map)
-        if joy_map is not None
-        else InputState(keyboard_type=spec.keyboard_type)
-    )
+    input_state = InputState(keyboard_type=spec.keyboard_type)
+    if joy_map is not None:
+        input_state.joy_map = joy_map
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
     if fmpac_device is not None:

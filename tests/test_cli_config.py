@@ -190,11 +190,13 @@ def test_config_slot2_used_when_cli_omitted() -> None:
     assert build_mock.call_args.kwargs["cartridge2"] is not None
 
 
-def test_cli_slot2_overrides_config() -> None:
-    # A CLI --slot2 must win, but with no config slot2 the outcome is the
-    # same cartridge2-not-None result; the precedence itself is exercised by
-    # test_config_fmpac_conflicts_with_slot2 (CLI slot2 always wins the
-    # fmpac conflict check even when config also sets fmpac).
+def test_cli_slot2_used_when_given() -> None:
+    # This only proves a CLI-only --slot2 loads a slot 2 cartridge (bytes are
+    # indistinguishable from the config case since _run_main's Path.read_bytes
+    # patch returns fixed bytes regardless of path). CLI-over-config
+    # precedence for the fmpac conflict specifically (i.e. CLI slot2 wins even
+    # when config also sets fmpac) is exercised by
+    # test_config_fmpac_conflicts_with_slot2.
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot2", "game2.rom"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["cartridge2"] is not None

@@ -17,9 +17,13 @@ _MAX_BREAKPOINTS = 4
 _T = TypeVar("_T")
 
 
-def _first_set(*candidates: _T | None) -> _T:
-    """Return the first non-None value (CLI < config file < built-in default)."""
-    return next(v for v in candidates if v is not None)
+def _first_set(*candidates: _T | None, default: _T) -> _T:
+    """Return the first non-None value (CLI < config file < built-in default).
+
+    `default` is keyword-only and required (not `_T | None`) so a call site
+    can't accidentally omit a concrete fallback and hit `StopIteration`.
+    """
+    return next((v for v in candidates if v is not None), default)
 
 
 def _parse_breakpoints(spec: str | None) -> list[int]:
@@ -299,20 +303,23 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    speed_eff = _first_set(args.speed, app_cfg.speed, DEFAULT_SPEED)
-    scale_eff = _first_set(args.scale, app_cfg.scale, DEFAULT_SCALE)
-    mapper_eff = _first_set(args.mapper, app_cfg.mapper, DEFAULT_MAPPER)
-    fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, False)
-    rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, False)
+    speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
+    scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
+    mapper_eff = _first_set(args.mapper, app_cfg.mapper, default=DEFAULT_MAPPER)
+    fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, default=False)
+    rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
-    # slot2 has no concrete built-in default (absence is the default), so it
-    # cannot use _first_set's "first non-None" contract like the options above.
-    slot2_eff = args.slot2 if args.slot2 is not None else app_cfg.slot2
-    mapper2_eff = _first_set(args.mapper2, app_cfg.mapper2, "auto")
-    frame_skip_cfg = (
-        None if app_cfg.frame_skip is None else ("auto" if app_cfg.frame_skip else "none")
-    )
-    frame_skip_eff = _first_set(args.frame_skip, frame_skip_cfg, "auto")
+    # slot2's built-in default is "no cartridge" (None), unlike the concrete
+    # defaults above — _first_set's keyword-only `default` accepts that directly.
+    slot2_eff = _first_set(args.slot2, app_cfg.slot2, default=None)
+    mapper2_eff = _first_set(args.mapper2, app_cfg.mapper2, default="auto")
+    if app_cfg.frame_skip is None:
+        frame_skip_cfg = None
+    elif app_cfg.frame_skip:
+        frame_skip_cfg = "auto"
+    else:
+        frame_skip_cfg = "none"
+    frame_skip_eff = _first_set(args.frame_skip, frame_skip_cfg, default="auto")
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)

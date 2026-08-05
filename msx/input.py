@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 # SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
 # ASCII-range keys share values between SDL2 and pygame; special keys use SDL2 SDLK_* values.
@@ -164,7 +166,13 @@ KEY_MATRIX_JP: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_JP_SYMBOLS}
 # PSG register 14 (PORT A) returns the *selected* port's six signals on bits
 # 0-5; JOY_SELECT (PSG register 15 bit 6) picks the port (0 → Joy1, 1 → Joy2).
 # Bits 6-7 are not joystick lines (PSG.read_port pulls them high).
-JOY_MAP: dict[int, tuple[int, int]] = {
+#
+# MappingProxyType: every default-constructed InputState (and every
+# AppConfig.keyboard_joy_map() call with no overrides) shares this exact
+# object rather than a copy — the proxy makes accidental in-place mutation of
+# the shared default raise immediately instead of silently corrupting it for
+# every other instance.
+JOY_MAP: Mapping[int, tuple[int, int]] = MappingProxyType({
     _K_w:      (0, 0),  # Joy1 Up
     _K_s:      (0, 1),  # Joy1 Down
     _K_a:      (0, 2),  # Joy1 Left
@@ -177,7 +185,7 @@ JOY_MAP: dict[int, tuple[int, int]] = {
     _K_DOWN:   (0, 1),  # Joy1 Down (alternate)
     _K_LEFT:   (0, 2),  # Joy1 Left (alternate)
     _K_RIGHT:  (0, 3),  # Joy1 Right (alternate)
-}
+})
 
 # Keyboard key name → SDL2 key constant, for resolving config-file key names
 # (py_emulator.yaml `keyboard_joystick.buttons`) to the codes key_down/key_up
@@ -236,7 +244,7 @@ class InputState:
     # Joy1 keyboard overlay: SDL key -> (port, bit). Defaults to the built-in
     # JOY_MAP; a config-resolved override replaces it wholesale (see
     # AppConfig.keyboard_joy_map).
-    joy_map: dict[int, tuple[int, int]] = field(default_factory=lambda: JOY_MAP)
+    joy_map: Mapping[int, tuple[int, int]] = field(default_factory=lambda: JOY_MAP)
     # Per-joystick 6-bit active-low state: bits 0-5 = up/down/left/right/trigA/trigB
     _joy1_kbd: int = field(default=0x3F, init=False, repr=False)
     _joy1_hw:  int = field(default=0x3F, init=False, repr=False)
