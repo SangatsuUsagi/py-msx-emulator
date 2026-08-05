@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1696%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1726%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -159,7 +159,7 @@ SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自
 | --- | --- |
 | キーボード | `msx/input.py`；MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
 | 物理ジョイスティック | `msx/joystick.py`；SDL2 GameController API（優先）と生ジョイスティックのフォールバック；ホットプラグ対応 |
-| キーボードエミュレーション | WASD = Joy1 方向；Z/X または ,/. = トリガ A/B；矢印キーも対応 |
+| キーボードエミュレーション | WASD = Joy1 方向；Z/X または ,/. = トリガ A/B；矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
 
 ### マウス
 
@@ -439,7 +439,10 @@ machine: cbios_msx2_jp   # デフォルトのマシン ID（未設定なら自�
 speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 mapper: auto             # スロット 1 マッパー（--mapper の選択肢参照）
+# slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
+# mapper2: auto          # スロット 2 マッパー（--mapper2 の選択肢参照）
 fmpac: false             # スロット 2 に FM-PAC を重ねる
+frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
   enabled: false
@@ -457,15 +460,26 @@ joystick:
     turbo_a: y           # Trigger A の連射
     turbo_b: x           # Trigger B の連射
 
+keyboard_joystick:
+  buttons: {}             # Joy1 のキー上書き（例：{ trigger_a: j }）
+    # up: i               # （各項目はその機能のデフォルトキーを丸ごと置き換える
+    # down: k             #  ・部分置き換えや併用は不可。使用可能なキー名の全一覧は
+    # left: j             #  py_emulator.example.yaml を参照）
+    # right: l
+    # trigger_a: n
+    # trigger_b: m
+
 mouse:
   enabled: false         # ホストのマウスで駆動する MSX マウスを接続する
   port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
 ```
 
-設定できるのは `machine`・`speed`・`scale`・`mapper`・`fmpac`・`mouse` と RPC / ゲー
-ムパッド設定です。ボタン割り当ては SDL GameController 経路に適用され、両ポート共通
-です。コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
-全項目と有効なボタン名は `py_emulator.example.yaml` を参照してください。
+設定できるのは `machine`・`speed`・`scale`・`mapper`・`slot2`・`mapper2`・`fmpac`・
+`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です。
+ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
+`keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
+コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
+全項目と有効なボタン/キー名は `py_emulator.example.yaml` を参照してください。
 
 ### エミュレータ内のキー操作
 
@@ -493,7 +507,9 @@ mouse:
 す。Ctrl+F1〜F5 がエミュレータに届かないようであれば、そちらを無効化してくだ
 さい。
 
-**キーボードによるジョイスティックエミュレーション（Joy 1）:**
+**キーボードによるジョイスティックエミュレーション（Joy 1）:** 以下は組み込みの
+デフォルトです。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons`
+で上書き可能です（[設定ファイル](#設定ファイルpy_emulatoryaml)を参照）。
 
 | キー | 動作 |
 | --- | --- |
@@ -671,7 +687,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1696 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1726 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -730,7 +746,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1696 テスト
+├── tests/                 # テストスイート — 1726 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -774,6 +790,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.7** (2026-08-05) — `py_emulator.yaml` を拡張：`slot2`/`mapper2`（スロット 2 カートリッジの初期設定）と `frame_skip`（`auto`/`none` の切り替え）の設定キーを追加。`mapper`/`speed`/`fmpac` と同じ「組み込みデフォルト < 設定ファイル < CLI」の優先順位で解決される。あわせて `keyboard_joystick.buttons` セクションを追加し、Joy1 のキーボードエミュレーション各機能（`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`）を単一キーに割り当てて、その機能の組み込みデフォルトキーを置き換えられるようにした。
 - **v2.4.6** (2026-08-05) — `GameMaster2` ROMデータベースマッパーに対応（新規`GameMaster2Mapper`：Konami 系 128 KB ROM + 8 KB バッテリーバックアップ SRAM。各バンクレジスタで ROM ページまたは 4 KB SRAM 半分（8 KB ウィンドウ内でミラー）を選択、SRAM 書き込みは 0xB000–0xBFFF）。あわせて `--mapper`/設定ファイルの `mapper:` で受け付ける名前をローダの対応セットと整合（従来 `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32` が抜けていた）
 - **v2.4.5** (2026-08-04) — これまで未対応だった4種のROMデータベースマッパーに対応：`Page2`/`0x4000`/`0x8000`（新規`FixedPageMapper`：ROMは固定ベースアドレスにのみ存在し、カートリッジ領域の残りはオープンバス）と`KoeiSRAM32`（新規`KoeiSRAM32Mapper`：ASCII8 + 32 KBバッテリーバックアップSRAM、SRAM選択可能ウィンドウに0x4000を追加）
 - **v2.4.4** (2026-08-04) — MSX マウスエミュレーションを追加：`--mouse[=1|2]` でホストのマウスが駆動する MSX マウスをジョイスティックポートに接続、実機の pin-8 クロック式ニブル転送プロトコルを再現。`py_emulator.yaml` に `mouse.enabled`/`mouse.port` を追加

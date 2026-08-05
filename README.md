@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1696%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1726%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -226,7 +226,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | --- | --- |
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
-| Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped |
+| Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
 
 ### Mouse
 
@@ -570,7 +570,10 @@ machine: cbios_msx2_jp   # default machine ID (auto-detected when unset)
 speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
 mapper: auto             # slot 1 mapper (see --mapper choices)
+# slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
+# mapper2: auto          # slot 2 mapper (see --mapper2 choices)
 fmpac: false             # overlay an FM-PAC in slot 2
+frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
   enabled: false
@@ -588,17 +591,27 @@ joystick:
     turbo_a: y           # auto-fire Trigger A
     turbo_b: x           # auto-fire Trigger B
 
+keyboard_joystick:
+  buttons: {}             # Joy1 key overrides, e.g. { trigger_a: j }
+    # up: i               # (each entry replaces that function's default
+    # down: k             #  key(s) entirely — no partial/alternate merge;
+    # left: j             #  see py_emulator.example.yaml for the full
+    # right: l            #  key-name vocabulary)
+    # trigger_a: n
+    # trigger_b: m
+
 mouse:
   enabled: false         # attach an MSX mouse driven by the host mouse
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
 ```
 
-Only `machine`, `speed`, `scale`, `mapper`, `fmpac`, `mouse`, and RPC/gamepad
-settings are configurable; the gamepad button map applies to the SDL
-GameController path (both ports share one map), and `--mouse` on the command
-line always overrides `mouse.enabled`/`mouse.port`. See
-`py_emulator.example.yaml` for the full annotated list and valid button
-labels.
+`machine`, `speed`, `scale`, `mapper`, `slot2`, `mapper2`, `fmpac`,
+`frame_skip`, `mouse`, and RPC/gamepad/keyboard-joystick settings are
+configurable; the gamepad button map applies to the SDL GameController path
+(both ports share one map), `keyboard_joystick.buttons` applies to Joy1's
+keyboard emulation only, and `--mouse` on the command line always overrides
+`mouse.enabled`/`mouse.port`. See `py_emulator.example.yaml` for the full
+annotated list and valid button/key-name labels.
 
 ### In-emulator key bindings
 
@@ -626,7 +639,9 @@ system-wide shortcuts (System Settings → Keyboard → Keyboard Shortcuts →
 Keyboard, e.g. "Move focus to the menu bar" = `^F2`). If Ctrl+F1..F5 doesn't
 seem to reach the emulator, disable those shortcuts there.
 
-**Keyboard joystick emulation (Joy 1):**
+**Keyboard joystick emulation (Joy 1):** these are the built-in defaults; each
+function's key is overridable via `keyboard_joystick.buttons` in
+`py_emulator.yaml` (see [Configuration file](#configuration-file-py_emulatoryaml)).
 
 | Key | Action |
 | --- | --- |
@@ -812,7 +827,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1696 tests spanning unit tests
+The test suite covers all major components with 1726 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -874,7 +889,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1696 tests
+├── tests/                 # Test suite — 1726 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -935,6 +950,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml`: add `slot2`/`mapper2` (slot 2 cartridge defaults) and `frame_skip` (`auto`/`none` toggle) config keys, resolved with the same built-in-default < config < CLI precedence as `mapper`/`speed`/`fmpac`; add a `keyboard_joystick.buttons` section that lets each Joy1 keyboard-emulation function (`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`) be bound to a single key, replacing that function's built-in default key(s).
 - **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (a new `GameMaster2Mapper`: Konami-style 128 KB ROM with 8 KB battery-backed SRAM, each bank register selecting a ROM page or a 4 KB SRAM half mirrored across the 8 KB window, SRAM writable at 0xB000–0xBFFF). Reconcile `--mapper`/config `mapper:` accepted names with the loader's supported set (previously missing `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32`).
 - **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`: ROM visible only at a fixed base address, rest of the cartridge region open bus) and `KoeiSRAM32` (a new `KoeiSRAM32Mapper`: ASCII8 with 32 KB battery-backed SRAM, extending the SRAM-selectable window set to include 0x4000).
 - **v2.4.4** (2026-08-04) — Add MSX mouse emulation: `--mouse[=1|2]` attaches a host-mouse-driven mouse to a joystick port, reproducing the real pin-8-clocked nibble protocol; `py_emulator.yaml` gains `mouse.enabled`/`mouse.port`.
