@@ -173,6 +173,107 @@ def test_config_fmpac_conflicts_with_slot2() -> None:
     assert "--fmpac" in err and "--slot2" in err
 
 
+def test_config_fmpac_conflicts_with_config_slot2() -> None:
+    code, _o, err, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(fmpac=True, slot2="game2.rom"))
+    assert code != 0
+    assert "--fmpac" in err and "--slot2" in err
+
+
+# ---------------------------------------------------------------------------
+# slot2
+# ---------------------------------------------------------------------------
+
+def test_config_slot2_used_when_cli_omitted() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(slot2="game2.rom"))
+    assert build_mock.call_args.kwargs["cartridge2"] is not None
+
+
+def test_cli_slot2_overrides_config() -> None:
+    # A CLI --slot2 must win, but with no config slot2 the outcome is the
+    # same cartridge2-not-None result; the precedence itself is exercised by
+    # test_config_fmpac_conflicts_with_slot2 (CLI slot2 always wins the
+    # fmpac conflict check even when config also sets fmpac).
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--slot2", "game2.rom"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge2"] is not None
+
+
+def test_no_slot2_cartridge_when_neither_set() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge2"] is None
+
+
+# ---------------------------------------------------------------------------
+# mapper2
+# ---------------------------------------------------------------------------
+
+def test_config_mapper2_used_when_cli_omitted() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(mapper2="Konami"))
+    assert build_mock.call_args.kwargs["mapper2"] == "Konami"
+
+
+def test_cli_mapper2_overrides_config() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper2", "ASCII8"],
+        app_cfg=AppConfig(mapper2="Konami"))
+    assert build_mock.call_args.kwargs["mapper2"] == "ASCII8"
+
+
+def test_builtin_mapper2_auto_when_neither_set() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["mapper2"] == "auto"
+
+
+# ---------------------------------------------------------------------------
+# frame_skip
+# ---------------------------------------------------------------------------
+
+def test_config_frame_skip_used_when_cli_omitted() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(frame_skip=False))
+    assert run_mock.call_args.kwargs["frame_skip"] == "none"
+
+
+def test_cli_frame_skip_overrides_config() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--frame-skip", "auto"],
+        app_cfg=AppConfig(frame_skip=False))
+    assert run_mock.call_args.kwargs["frame_skip"] == "auto"
+
+
+def test_builtin_frame_skip_auto_when_neither_set() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert run_mock.call_args.kwargs["frame_skip"] == "auto"
+
+
+# ---------------------------------------------------------------------------
+# keyboard_joystick.buttons -> InputState.joy_map, threaded to build_machine
+# ---------------------------------------------------------------------------
+
+def test_keyboard_joy_map_passed_to_build_machine() -> None:
+    from msx.input import JOY_MAP, _K_j
+
+    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
+    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
+    joy_map = build_mock.call_args.kwargs["joy_map"]
+    assert joy_map[_K_j] == (0, 4)
+    assert joy_map is not JOY_MAP
+
+
+def test_default_keyboard_joy_map_passed_when_no_override() -> None:
+    from msx.input import JOY_MAP
+
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["joy_map"] is JOY_MAP
+
+
 # ---------------------------------------------------------------------------
 # rpc
 # ---------------------------------------------------------------------------

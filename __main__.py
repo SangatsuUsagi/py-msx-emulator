@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, TypeVar
 
-from msx.app_config import VALID_MAPPERS
+from msx.app_config import VALID_MAPPERS, VALID_MAPPERS2
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -108,9 +108,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
                              "(conflicts with --slot2)")
     parser.add_argument("--mapper2",
-                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
-                                 "Konami", "Majutsushi"],
-                        default="auto",
+                        choices=list(VALID_MAPPERS2),
+                        default=None,
                         help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
     parser.add_argument("--fdd1", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive A")
@@ -123,7 +122,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "mouse (default port 2 if bare). Overrides py_emulator.yaml's "
                              "mouse.enabled/mouse.port. Ignored in headless "
                              "(--count-frame/--benchmark) runs — no SDL window/event loop.")
-    parser.add_argument("--frame-skip", choices=["auto", "none"], default="auto",
+    parser.add_argument("--frame-skip", choices=["auto", "none"], default=None,
                         dest="frame_skip",
                         help="Frame skip mode: auto (default) or none to disable")
     parser.add_argument("--vdp-trace", action="store_true", dest="vdp_trace",
@@ -158,7 +157,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_paths(
-    args: argparse.Namespace,
+    args: argparse.Namespace, slot2: str | None,
 ) -> tuple[Path | None, Path | None, Path | None, Path | None, bytes | None, bytes | None]:
     """Validate the cartridge/slot-2/floppy paths and read the ROM bytes.
 
@@ -166,7 +165,7 @@ def _resolve_paths(
     (cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2).
     """
     cart_path = Path(args.cartridge) if args.cartridge else None
-    slot2_path = Path(args.slot2) if args.slot2 else None
+    slot2_path = Path(slot2) if slot2 else None
     if cart_path is not None and not cart_path.exists():
         print(f"error: cartridge not found: {cart_path}", file=sys.stderr)
         sys.exit(1)
@@ -306,6 +305,14 @@ def main() -> None:
     fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, False)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
+    # slot2 has no concrete built-in default (absence is the default), so it
+    # cannot use _first_set's "first non-None" contract like the options above.
+    slot2_eff = args.slot2 if args.slot2 is not None else app_cfg.slot2
+    mapper2_eff = _first_set(args.mapper2, app_cfg.mapper2, "auto")
+    frame_skip_cfg = (
+        None if app_cfg.frame_skip is None else ("auto" if app_cfg.frame_skip else "none")
+    )
+    frame_skip_eff = _first_set(args.frame_skip, frame_skip_cfg, "auto")
 
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
@@ -313,7 +320,7 @@ def main() -> None:
     if scale_eff < 1:
         print("error: --scale must be a positive integer", file=sys.stderr)
         sys.exit(1)
-    if fmpac_eff and args.slot2:
+    if fmpac_eff and slot2_eff:
         print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
               file=sys.stderr)
         sys.exit(1)
@@ -321,7 +328,7 @@ def main() -> None:
     from msx.romdb import lookup, lookup_system, lookup_title
 
     (cart_path, slot2_path, fdd1_path, fdd2_path,
-     cartridge, cartridge2) = _resolve_paths(args)
+     cartridge, cartridge2) = _resolve_paths(args, slot2_eff)
 
     db_system = lookup_system(cartridge) if cartridge else None
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
@@ -387,12 +394,13 @@ def main() -> None:
                 cartridge=cartridge,
                 mapper=mapper_eff,
                 cartridge2=cartridge2,
-                mapper2=args.mapper2,
+                mapper2=mapper2_eff,
                 logger=logger,
                 tracer=tracer,
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
                 fmpac_overlay=fmpac_overlay,
+                joy_map=app_cfg.keyboard_joy_map(),
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -432,7 +440,7 @@ def main() -> None:
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
             run(machine, scale=scale_eff, speed=speed_eff, game_title=game_title,
-                resume=args.resume, frame_skip=args.frame_skip, rpc_server=rpc_server,
+                resume=args.resume, frame_skip=frame_skip_eff, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
                 mouse_port=mouse_port_eff)
     finally:
