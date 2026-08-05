@@ -179,6 +179,21 @@ JOY_MAP: dict[int, tuple[int, int]] = {
     _K_RIGHT:  (0, 3),  # Joy1 Right (alternate)
 }
 
+# Keyboard key name → SDL2 key constant, for resolving config-file key names
+# (py_emulator.yaml `keyboard_joystick.buttons`) to the codes key_down/key_up
+# accept. Covers the keys reachable by the built-in JOY_MAP plus digits, so a
+# config override can pick any letter, digit, arrow, comma, or period key.
+KEY_NAME_TO_SDLKEY: dict[str, int] = {
+    "a": _K_a, "b": _K_b, "c": _K_c, "d": _K_d, "e": _K_e, "f": _K_f, "g": _K_g,
+    "h": _K_h, "i": _K_i, "j": _K_j, "k": _K_k, "l": _K_l, "m": _K_m, "n": _K_n,
+    "o": _K_o, "p": _K_p, "q": _K_q, "r": _K_r, "s": _K_s, "t": _K_t, "u": _K_u,
+    "v": _K_v, "w": _K_w, "x": _K_x, "y": _K_y, "z": _K_z,
+    "0": _K_0, "1": _K_1, "2": _K_2, "3": _K_3, "4": _K_4,
+    "5": _K_5, "6": _K_6, "7": _K_7, "8": _K_8, "9": _K_9,
+    "up": _K_UP, "down": _K_DOWN, "left": _K_LEFT, "right": _K_RIGHT,
+    "comma": _K_COMMA, "period": _K_PERIOD,
+}
+
 # MSX key name → (row, bit) matrix cell, for programmatic key injection (RPC).
 # Derived directly from the MSX keyboard matrix (map.grauw.nl keymatrix); the
 # names are the layout-independent MSX key labels, so this table is shared by
@@ -218,6 +233,10 @@ class InputState:
     # Keyboard layout: "int" (International) or "jp" (Japanese/JIS). Selects
     # which key→matrix table key_down/key_up use.
     keyboard_type: str = "int"
+    # Joy1 keyboard overlay: SDL key -> (port, bit). Defaults to the built-in
+    # JOY_MAP; a config-resolved override replaces it wholesale (see
+    # AppConfig.keyboard_joy_map).
+    joy_map: dict[int, tuple[int, int]] = field(default_factory=lambda: JOY_MAP)
     # Per-joystick 6-bit active-low state: bits 0-5 = up/down/left/right/trigA/trigB
     _joy1_kbd: int = field(default=0x3F, init=False, repr=False)
     _joy1_hw:  int = field(default=0x3F, init=False, repr=False)
@@ -246,8 +265,8 @@ class InputState:
             self._held_keys.add(key)
             row, bit = self._matrix_map[key]
             self.matrix[row] &= ~(1 << bit) & 0xFF
-        if key in JOY_MAP:
-            port, bit = JOY_MAP[key]
+        if key in self.joy_map:
+            port, bit = self.joy_map[key]
             if port == 0:
                 self._joy1_kbd &= ~(1 << bit) & 0x3F
             else:
@@ -263,8 +282,8 @@ class InputState:
             still_held = any(self._matrix_map.get(k) == cell for k in self._held_keys)
             if not still_held:
                 self.matrix[row] |= (1 << bit)
-        if key in JOY_MAP:
-            port, bit = JOY_MAP[key]
+        if key in self.joy_map:
+            port, bit = self.joy_map[key]
             if port == 0:
                 self._joy1_kbd |= (1 << bit)
             else:

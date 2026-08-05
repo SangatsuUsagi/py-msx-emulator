@@ -19,11 +19,14 @@ from msx.input import (
     KEY_MATRIX_INT,
     KEY_MATRIX_JP,
     KEY_NAME_TO_CELL,
+    KEY_NAME_TO_SDLKEY,
     InputState,
     _K_a,
+    _K_j,
     _K_s,
     _K_w,
     _K_x,
+    _K_z,
 )
 
 # The tests assert the International layout; alias it locally (production no
@@ -340,3 +343,34 @@ def test_shift_f1_simultaneous_press_asserts_both_cells() -> None:
     assert state.matrix[shift_row] & (1 << shift_bit) == 0  # SHIFT still held
     state.key_up(_K_LSHIFT)
     assert state.matrix[shift_row] & (1 << shift_bit) != 0
+
+
+def test_default_joy_map_matches_built_in_joy_map() -> None:
+    state = InputState()
+    assert state.joy_map is JOY_MAP
+
+
+def test_custom_joy_map_used_instead_of_default() -> None:
+    # Custom map: only J drives Joy1 Trigger A. Z (the built-in default key)
+    # must no longer affect Joy1 at all.
+    state = InputState(joy_map={_K_j: (0, 4)})
+    state.key_down(_K_z)
+    assert state.joy1 & (1 << 4) != 0   # unaffected: Z is not in the custom map
+    state.key_down(_K_j)
+    assert state.joy1 & (1 << 4) == 0   # J drives Trigger A per the custom map
+
+
+def test_custom_joy_map_does_not_affect_keyboard_matrix() -> None:
+    # A joy_map override only changes joystick bits; the MSX keyboard matrix
+    # (Z key) is unaffected.
+    state = InputState(joy_map={_K_j: (0, 4)})
+    row, bit = KEY_MATRIX[_K_z]
+    state.key_down(_K_z)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_name_to_sdlkey_covers_joy_map_keys() -> None:
+    assert KEY_NAME_TO_SDLKEY["w"] == _K_w
+    assert KEY_NAME_TO_SDLKEY["j"] == _K_j
+    assert KEY_NAME_TO_SDLKEY["up"] == _K_UP
+    assert KEY_NAME_TO_SDLKEY["comma"] == _K_COMMA
