@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any, TypeVar
 
+from msx.app_config import VALID_MAPPERS
+
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
@@ -97,10 +99,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scale", type=int, default=None, metavar="N",
                         help="Integer window scale over the 256x212 base (default: 3)")
     parser.add_argument("--mapper",
-                        choices=["auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
-                                 "Konami", "KonamiSCC", "Majutsushi",
-                                 "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-                                 "R-Type"],
+                        choices=list(VALID_MAPPERS),
                         default=None,
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",

@@ -221,3 +221,18 @@ def test_mouse_port_index_defaults_to_joy2_when_enabled() -> None:
 def test_mouse_port_index_honors_configured_port() -> None:
     assert AppConfig(mouse_enabled=True, mouse_port=1).mouse_port_index() == 0
     assert AppConfig(mouse_enabled=True, mouse_port=2).mouse_port_index() == 1
+
+
+# ---------------------------------------------------------------------------
+# VALID_MAPPERS <-> machine_loader._SUPPORTED_MAPPERS consistency
+# ---------------------------------------------------------------------------
+
+def test_valid_mappers_match_supported_mappers() -> None:
+    # app_config.VALID_MAPPERS duplicates machine_loader._SUPPORTED_MAPPERS
+    # (plus "auto") to avoid an import cycle; guard against the two drifting.
+    from msx.app_config import VALID_MAPPERS
+    from msx.machine_loader import _MAPPER_BUILDERS, _SUPPORTED_MAPPERS
+
+    assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
+    # Every non-"auto" accepted name must actually have a builder.
+    assert set(VALID_MAPPERS) - {"auto"} <= set(_MAPPER_BUILDERS)
