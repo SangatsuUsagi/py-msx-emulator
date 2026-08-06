@@ -39,5 +39,5 @@ def test_tms9918a_reports_output_height() -> None:
     assert vdp.display_height == 192
 
     rgb, w, h = render_current_rgb24(vdp)
-    assert (w, h) == (256, OUTPUT_H)
+    assert (w, h) == (vdp.display_width, OUTPUT_H)
     assert len(rgb) == w * h * 3

@@ -39,8 +39,7 @@ def render_current_rgb24(vdp: VDP) -> tuple[bytes, int, int]:
     finally:
         if saved_fc is not None:
             vdp._frame_count = saved_fc
-    w = vdp.display_width if isinstance(vdp, V9938) else len(idx) // OUTPUT_H
-    return vdp.to_rgb24(idx), w, OUTPUT_H
+    return vdp.to_rgb24(idx), vdp.display_width, OUTPUT_H
 
 
 def scale_rgb24(
