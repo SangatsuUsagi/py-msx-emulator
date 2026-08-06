@@ -41,8 +41,6 @@ MAX_BREAKPOINTS = 4
 MAX_WATCHPOINTS = 4
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
-# Screen width fallback for `ss` when the display height is unknown (0).
-_DEFAULT_WIDTH = 256
 
 
 class Debugger:
@@ -538,7 +536,7 @@ class Debugger:
         moment, without advancing vdp._frame_count.
         """
         from msx.screenshot import render_current_rgb24
-        return render_current_rgb24(self._machine.vdp, _DEFAULT_WIDTH)
+        return render_current_rgb24(self._machine.vdp)
 
     def _cmd_screenshot(self) -> None:
         from msx.screenshot import save_screenshot
