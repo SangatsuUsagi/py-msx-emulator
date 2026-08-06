@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from msx.cpu.registers import Registers
+from msx.debugger import prompt as prompt_module
 from msx.debugger.prompt import Debugger
 from msx.mapper import FlatMapper
 from msx.ram_mapper import RamMapper
@@ -14,6 +17,14 @@ from msx.vdp.vdp import VDP
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolated_history_file(tmp_path, monkeypatch):
+    """Redirect the REPL history file so tests never touch the real user's
+    ~/.msx_dbg_history (Debugger.enter() reads/writes it whenever the real
+    stdlib `readline` module is present, e.g. on macOS/Linux CI runners)."""
+    monkeypatch.setattr(prompt_module, "_HISTORY_FILE", tmp_path / ".msx_dbg_history")
+    monkeypatch.setattr(prompt_module, "_readline_ready", False)
 
 def _make_machine(pc: int = 0x4000) -> MagicMock:
     """Build a minimal mock Machine with wired cpu.registers and vdp."""
@@ -936,3 +947,57 @@ class TestStateLoad:
         with patch("msx.state.load_state", side_effect=ValueError("machine type mismatch")):
             Debugger(m)._cmd_state_load(["saves/states/bad.state"])
         assert "ld:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# readline: line editing setup, history persistence, Tab completion
+# ---------------------------------------------------------------------------
+
+class TestReadlineIntegration:
+    def test_enter_sets_up_and_persists_history(self, capsys):
+        m = _make_machine()
+        mock_readline = MagicMock()
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.set_history_length.assert_called_once_with(prompt_module._HISTORY_LENGTH)
+        mock_readline.set_completer.assert_called_once_with(prompt_module._complete_command)
+        mock_readline.read_history_file.assert_called_once_with(prompt_module._HISTORY_FILE)
+        mock_readline.write_history_file.assert_called_once_with(prompt_module._HISTORY_FILE)
+
+    def test_enter_works_without_readline(self, capsys):
+        """Simulates stock Windows CPython, where `readline` fails to import."""
+        m = _make_machine()
+        with patch.object(prompt_module, "readline", None):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()  # must not raise
+        assert "Debugger entered" in capsys.readouterr().out
+
+    def test_missing_history_file_does_not_raise(self, capsys):
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.read_history_file.side_effect = FileNotFoundError()
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()  # must not raise
+
+
+class TestCompleteCommand:
+    def test_unambiguous_prefix_completes(self):
+        assert prompt_module._complete_command("rc", 0) == "rc"
+        assert prompt_module._complete_command("rc", 1) is None
+
+    def test_ambiguous_prefix_lists_all_matches_then_none(self):
+        expected = sorted(n for n in prompt_module._COMMAND_NAMES if n.startswith("b"))
+        matches = []
+        state = 0
+        while True:
+            match = prompt_module._complete_command("b", state)
+            if match is None:
+                break
+            matches.append(match)
+            state += 1
+        assert matches == expected
+
+    def test_no_match_returns_none(self):
+        assert prompt_module._complete_command("zz", 0) is None
