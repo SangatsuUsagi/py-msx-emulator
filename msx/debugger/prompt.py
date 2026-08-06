@@ -71,7 +71,17 @@ def _setup_readline() -> None:
         return
     readline.set_history_length(_HISTORY_LENGTH)
     readline.set_completer(_complete_command)
-    readline.parse_and_bind("tab: complete")
+    # macOS stdlib `readline` is actually libedit, which binds Tab via a
+    # different parse_and_bind syntax than GNU readline. `readline.backend`
+    # (Python 3.13+) reports it directly; older versions only expose it via
+    # the module docstring.
+    is_libedit = getattr(readline, "backend", None) == "libedit" or (
+        readline.__doc__ is not None and "libedit" in readline.__doc__
+    )
+    if is_libedit:
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
     _readline_ready = True
 
 

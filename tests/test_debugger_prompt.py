@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from msx.cpu.registers import Registers
 from msx.debugger import prompt as prompt_module
 from msx.debugger.prompt import Debugger
@@ -17,14 +15,9 @@ from msx.vdp.vdp import VDP
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _isolated_history_file(tmp_path, monkeypatch):
-    """Redirect the REPL history file so tests never touch the real user's
-    ~/.msx_dbg_history (Debugger.enter() reads/writes it whenever the real
-    stdlib `readline` module is present, e.g. on macOS/Linux CI runners)."""
-    monkeypatch.setattr(prompt_module, "_HISTORY_FILE", tmp_path / ".msx_dbg_history")
-    monkeypatch.setattr(prompt_module, "_readline_ready", False)
+# History-file isolation for Debugger.enter() (autouse) lives in
+# tests/conftest.py so it applies to every test file that exercises the
+# REPL, not just this one.
 
 def _make_machine(pc: int = 0x4000) -> MagicMock:
     """Build a minimal mock Machine with wired cpu.registers and vdp."""
@@ -980,6 +973,28 @@ class TestReadlineIntegration:
         with patch.object(prompt_module, "readline", mock_readline):
             with patch("builtins.input", side_effect=iter(["c"])):
                 Debugger(m).enter()  # must not raise
+
+    def test_gnu_readline_binds_tab_complete(self, capsys):
+        """Default readline.__doc__ (no 'libedit') -> GNU readline bind syntax."""
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.__doc__ = "Importing this module enables command line editing using GNU."
+        del mock_readline.backend  # simulate Python < 3.13, no `backend` attribute
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.parse_and_bind.assert_called_once_with("tab: complete")
+
+    def test_libedit_readline_binds_rl_complete(self, capsys):
+        """macOS stdlib readline is libedit -- needs its own bind syntax for Tab."""
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.__doc__ = "Importing this module enables command line editing using libedit."
+        del mock_readline.backend  # simulate Python < 3.13, no `backend` attribute
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.parse_and_bind.assert_called_once_with("bind ^I rl_complete")
 
 
 class TestCompleteCommand:

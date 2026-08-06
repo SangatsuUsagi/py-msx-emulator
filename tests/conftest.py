@@ -6,8 +6,19 @@ from pathlib import Path
 import pytest
 
 from msx.cpu.z80 import Z80
+from msx.debugger import prompt as debugger_prompt_module
 from msx.mapper import FlatMapper
 from msx.memory import Memory
+
+
+@pytest.fixture(autouse=True)
+def _isolated_debugger_history_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect the debug REPL's history file so tests never touch the real
+    user's ~/.msx_dbg_history. Debugger.enter() reads/writes it via readline
+    whenever the real stdlib `readline` module is present (e.g. macOS/Linux),
+    which every test that calls Debugger.enter() does."""
+    monkeypatch.setattr(debugger_prompt_module, "_HISTORY_FILE", tmp_path / ".msx_dbg_history")
+    monkeypatch.setattr(debugger_prompt_module, "_readline_ready", False)
 
 
 def _short_tmp_base() -> str | None:
