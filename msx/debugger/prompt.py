@@ -52,6 +52,11 @@ _DISASM_WINDOW = 10
 _HISTORY_FILE = Path.home() / ".msx_dbg_history"
 _HISTORY_LENGTH = 500
 
+# Loop-control commands handled inline in Debugger.enter() (see below), not
+# present in the _COMMANDS dispatch table. Listed here so Tab completion
+# covers them too.
+_INLINE_COMMANDS = ("c", "q", "g", "gf", "so", "reset")
+
 _readline_ready = False
 
 
@@ -65,8 +70,17 @@ def _setup_readline() -> None:
     if readline is None or _readline_ready:
         return
     readline.set_history_length(_HISTORY_LENGTH)
+    readline.set_completer(_complete_command)
     readline.parse_and_bind("tab: complete")
     _readline_ready = True
+
+
+def _complete_command(text: str, state: int) -> str | None:
+    """readline completer: the state-th command name starting with text."""
+    matches = [name for name in _COMMAND_NAMES if name.startswith(text)]
+    if state < len(matches):
+        return matches[state]
+    return None
 
 
 class Debugger:
@@ -997,3 +1011,7 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "fdd1": lambda d, a: d._cmd_fdd(a, 0),
     "fdd2": lambda d, a: d._cmd_fdd(a, 1),
 }
+
+# Full REPL command-name set for Tab completion (_complete_command, above):
+# every _COMMANDS key plus the inline-handled loop-control commands.
+_COMMAND_NAMES: tuple[str, ...] = tuple(sorted(set(_COMMANDS) | set(_INLINE_COMMANDS)))
