@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from msx.cpu.registers import Registers
+from msx.debugger import prompt as prompt_module
 from msx.debugger.prompt import Debugger
 from msx.mapper import FlatMapper
 from msx.ram_mapper import RamMapper
@@ -14,6 +15,9 @@ from msx.vdp.vdp import VDP
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+# History-file isolation for Debugger.enter() (autouse) lives in
+# tests/conftest.py so it applies to every test file that exercises the
+# REPL, not just this one.
 
 def _make_machine(pc: int = 0x4000) -> MagicMock:
     """Build a minimal mock Machine with wired cpu.registers and vdp."""
@@ -936,3 +940,79 @@ class TestStateLoad:
         with patch("msx.state.load_state", side_effect=ValueError("machine type mismatch")):
             Debugger(m)._cmd_state_load(["saves/states/bad.state"])
         assert "ld:" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# readline: line editing setup, history persistence, Tab completion
+# ---------------------------------------------------------------------------
+
+class TestReadlineIntegration:
+    def test_enter_sets_up_and_persists_history(self, capsys):
+        m = _make_machine()
+        mock_readline = MagicMock()
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.set_history_length.assert_called_once_with(prompt_module._HISTORY_LENGTH)
+        mock_readline.set_completer.assert_called_once_with(prompt_module._complete_command)
+        mock_readline.read_history_file.assert_called_once_with(prompt_module._HISTORY_FILE)
+        mock_readline.write_history_file.assert_called_once_with(prompt_module._HISTORY_FILE)
+
+    def test_enter_works_without_readline(self, capsys):
+        """Simulates stock Windows CPython, where `readline` fails to import."""
+        m = _make_machine()
+        with patch.object(prompt_module, "readline", None):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()  # must not raise
+        assert "Debugger entered" in capsys.readouterr().out
+
+    def test_missing_history_file_does_not_raise(self, capsys):
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.read_history_file.side_effect = FileNotFoundError()
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()  # must not raise
+
+    def test_gnu_readline_binds_tab_complete(self, capsys):
+        """Default readline.__doc__ (no 'libedit') -> GNU readline bind syntax."""
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.__doc__ = "Importing this module enables command line editing using GNU."
+        del mock_readline.backend  # simulate Python < 3.13, no `backend` attribute
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.parse_and_bind.assert_called_once_with("tab: complete")
+
+    def test_libedit_readline_binds_rl_complete(self, capsys):
+        """macOS stdlib readline is libedit -- needs its own bind syntax for Tab."""
+        m = _make_machine()
+        mock_readline = MagicMock()
+        mock_readline.__doc__ = "Importing this module enables command line editing using libedit."
+        del mock_readline.backend  # simulate Python < 3.13, no `backend` attribute
+        with patch.object(prompt_module, "readline", mock_readline):
+            with patch("builtins.input", side_effect=iter(["c"])):
+                Debugger(m).enter()
+        mock_readline.parse_and_bind.assert_called_once_with("bind ^I rl_complete")
+
+
+class TestCompleteCommand:
+    def test_unambiguous_prefix_completes(self):
+        assert prompt_module._complete_command("rc", 0) == "rc"
+        assert prompt_module._complete_command("rc", 1) is None
+
+    def test_ambiguous_prefix_lists_all_matches_then_none(self):
+        expected = sorted(n for n in prompt_module._COMMAND_NAMES if n.startswith("b"))
+        matches = []
+        state = 0
+        while True:
+            match = prompt_module._complete_command("b", state)
+            if match is None:
+                break
+            matches.append(match)
+            state += 1
+        assert matches == expected
+
+    def test_no_match_returns_none(self):
+        assert prompt_module._complete_command("zz", 0) is None

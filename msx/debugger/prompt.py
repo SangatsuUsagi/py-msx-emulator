@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import shlex
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from msx.debugger.disasm import disassemble
+
+try:
+    import readline
+except ImportError:  # stock Windows CPython has no readline module
+    readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -42,6 +48,50 @@ MAX_WATCHPOINTS = 4
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
 
+# Cross-session REPL command history (only used when `readline` is available).
+_HISTORY_FILE = Path.home() / ".msx_dbg_history"
+_HISTORY_LENGTH = 500
+
+# Loop-control commands handled inline in Debugger.enter() (see below), not
+# present in the _COMMANDS dispatch table. Listed here so Tab completion
+# covers them too.
+_INLINE_COMMANDS = ("c", "q", "g", "gf", "so", "reset")
+
+_readline_ready = False
+
+
+def _setup_readline() -> None:
+    """Enable line editing, history, and Tab completion for input().
+
+    Idempotent and a no-op when the `readline` module is unavailable
+    (e.g. stock Windows CPython without a readline backport).
+    """
+    global _readline_ready
+    if readline is None or _readline_ready:
+        return
+    readline.set_history_length(_HISTORY_LENGTH)
+    readline.set_completer(_complete_command)
+    # macOS stdlib `readline` is actually libedit, which binds Tab via a
+    # different parse_and_bind syntax than GNU readline. `readline.backend`
+    # (Python 3.13+) reports it directly; older versions only expose it via
+    # the module docstring.
+    is_libedit = getattr(readline, "backend", None) == "libedit" or (
+        readline.__doc__ is not None and "libedit" in readline.__doc__
+    )
+    if is_libedit:
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
+    _readline_ready = True
+
+
+def _complete_command(text: str, state: int) -> str | None:
+    """readline completer: the state-th command name starting with text."""
+    matches = [name for name in _COMMAND_NAMES if name.startswith(text)]
+    if state < len(matches):
+        return matches[state]
+    return None
+
 
 class Debugger:
     """Interactive debug prompt attached to a Machine instance."""
@@ -60,6 +110,25 @@ class Debugger:
         read = self._machine.cpu.read_byte
         line, _ = _format_disasm(read, pc)
         print(f"  PC={pc:04X}h  {line}")
+
+        _setup_readline()
+        if readline is not None:
+            try:
+                readline.read_history_file(_HISTORY_FILE)
+            except (FileNotFoundError, OSError):
+                pass
+
+        try:
+            self._repl_loop()
+        finally:
+            if readline is not None:
+                try:
+                    readline.write_history_file(_HISTORY_FILE)
+                except OSError:
+                    pass
+
+    def _repl_loop(self) -> None:
+        """Read/dispatch commands until 'c' resumes or 'q' exits the process."""
         while True:
             try:
                 cyc = self._machine.cycle_count
@@ -971,3 +1040,7 @@ _COMMANDS: dict[str, Callable[["Debugger", list[str]], None]] = {
     "fdd1": lambda d, a: d._cmd_fdd(a, 0),
     "fdd2": lambda d, a: d._cmd_fdd(a, 1),
 }
+
+# Full REPL command-name set for Tab completion (_complete_command, above):
+# every _COMMANDS key plus the inline-handled loop-control commands.
+_COMMAND_NAMES: tuple[str, ...] = tuple(sorted(set(_COMMANDS) | set(_INLINE_COMMANDS)))
