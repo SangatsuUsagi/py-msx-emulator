@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import shlex
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from msx.debugger.disasm import disassemble
+
+try:
+    import readline
+except ImportError:  # stock Windows CPython has no readline module
+    readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -41,6 +47,26 @@ MAX_BREAKPOINTS = 4
 MAX_WATCHPOINTS = 4
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
+
+# Cross-session REPL command history (only used when `readline` is available).
+_HISTORY_FILE = Path.home() / ".msx_dbg_history"
+_HISTORY_LENGTH = 500
+
+_readline_ready = False
+
+
+def _setup_readline() -> None:
+    """Enable line editing, history, and Tab completion for input().
+
+    Idempotent and a no-op when the `readline` module is unavailable
+    (e.g. stock Windows CPython without a readline backport).
+    """
+    global _readline_ready
+    if readline is None or _readline_ready:
+        return
+    readline.set_history_length(_HISTORY_LENGTH)
+    readline.parse_and_bind("tab: complete")
+    _readline_ready = True
 
 
 class Debugger:
