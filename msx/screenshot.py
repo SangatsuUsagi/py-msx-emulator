@@ -16,14 +16,19 @@ if TYPE_CHECKING:
     from msx.vdp.vdp import VDP
 
 
-def render_current_rgb24(vdp: VDP, default_width: int = 256) -> tuple[bytes, int, int]:
+def render_current_rgb24(vdp: VDP) -> tuple[bytes, int, int]:
     """Render the *current* VDP state to RGB24 without perturbing frame state.
 
     Picks the V9938 or TMS renderer, saves and restores `vdp._frame_count` so the
     render reflects the paused instant without advancing the frame counter, and
     returns (rgb_bytes, width, height). Shared by the debugger REPL and the RPC
     adapter so both capture the frame identically.
+
+    Both renderers always emit a constant OUTPUT_H-row frame (a native height
+    shorter than OUTPUT_H is centred with border padding — see _geometry.py),
+    so the height is always OUTPUT_H, never vdp.display_height.
     """
+    from msx.vdp._geometry import OUTPUT_H
     from msx.vdp.renderer import render_frame
     from msx.vdp.v9938 import V9938
     from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -34,9 +39,7 @@ def render_current_rgb24(vdp: VDP, default_width: int = 256) -> tuple[bytes, int
     finally:
         if saved_fc is not None:
             vdp._frame_count = saved_fc
-    h = vdp.display_height
-    w = (len(idx) // h) if h else default_width
-    return vdp.to_rgb24(idx), w, h
+    return vdp.to_rgb24(idx), vdp.display_width, OUTPUT_H
 
 
 def scale_rgb24(

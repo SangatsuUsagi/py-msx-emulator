@@ -112,6 +112,10 @@ class VDP:
     def display_height(self) -> int:
         return 192
 
+    @property
+    def display_width(self) -> int:
+        return 256
+
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""
         self._frame_count += 1
