@@ -100,6 +100,25 @@ class Debugger:
         read = self._machine.cpu.read_byte
         line, _ = _format_disasm(read, pc)
         print(f"  PC={pc:04X}h  {line}")
+
+        _setup_readline()
+        if readline is not None:
+            try:
+                readline.read_history_file(_HISTORY_FILE)
+            except (FileNotFoundError, OSError):
+                pass
+
+        try:
+            self._repl_loop()
+        finally:
+            if readline is not None:
+                try:
+                    readline.write_history_file(_HISTORY_FILE)
+                except OSError:
+                    pass
+
+    def _repl_loop(self) -> None:
+        """Read/dispatch commands until 'c' resumes or 'q' exits the process."""
         while True:
             try:
                 cyc = self._machine.cycle_count
