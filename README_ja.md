@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1737%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-1740%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -249,22 +249,22 @@ Ctrl+C またはブレークポイント到達でアクセスできる REPL：�
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 274.32 | 約 4.6 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 426.45 | 約 7.1 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1325.83 | 約 22.1 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1219.03 | 約 20.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 71.61 | 約 1.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 108.23 | 約 1.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 297.14 | 約 5.0 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 306.94 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 279.93 | 約 4.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 429.26 | 約 7.2 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1326.61 | 約 22.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1199.55 | 約 20.0 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 72.55 | 約 1.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 108.13 | 約 1.8 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 294.67 | 約 4.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 299.99 | 約 5.0 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.2 倍です。PyPy に切り替えると同じケースが約 5.0 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.2 倍です。PyPy に切り替えると同じケースが約 4.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.4.3 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.4.8 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -687,7 +687,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 1737 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 1740 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -746,7 +746,7 @@ py-msx-emulator/
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 1737 テスト
+├── tests/                 # テストスイート — 1740 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -790,6 +790,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.4.8** (2026-08-08) — V9938 のフレーム描画を、スキャンラインループ完了後から垂直帰線開始時点に変更。VBlank 割り込みは同じループの内側で発生するため、従来はゲームの VBlank ISR が書き換えた後の VRAM を描画しており、スプライトアトリビュートやネームテーブルが 1 フレーム早く反映される一方、表示レジスタはフレーム先頭のスナップショットから正しく取られていた。結果として、同一 ISR 内で VRAM と表示レジスタを同時に更新するタイトルで 1 フレーム分のティアリングが発生していた（R#18 による横方向ファインスクロールでのスプライトの 1 ドットのぶれ、8 ドット境界での 7 ドットの飛びなど）。MSX1/TMS9918A 機は影響を受けない。あわせて、アクティブ表示中の Ctrl-C がフレームを打ち切らずに VBlank 区間まで実行してしまう問題を修正し、デバッガの命令単位ループを約 9% 高速化
 - **v2.4.7** (2026-08-05) — `py_emulator.yaml` を拡張：`slot2`/`mapper2`（スロット 2 カートリッジの初期設定）と `frame_skip`（`auto`/`none` の切り替え）の設定キーを追加。`mapper`/`speed`/`fmpac` と同じ「組み込みデフォルト < 設定ファイル < CLI」の優先順位で解決される。あわせて `keyboard_joystick.buttons` セクションを追加し、Joy1 のキーボードエミュレーション各機能（`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`）を単一キーに割り当てて、その機能の組み込みデフォルトキーを置き換えられるようにした。
 - **v2.4.6** (2026-08-05) — `GameMaster2` ROMデータベースマッパーに対応（新規`GameMaster2Mapper`：Konami 系 128 KB ROM + 8 KB バッテリーバックアップ SRAM。各バンクレジスタで ROM ページまたは 4 KB SRAM 半分（8 KB ウィンドウ内でミラー）を選択、SRAM 書き込みは 0xB000–0xBFFF）。あわせて `--mapper`/設定ファイルの `mapper:` で受け付ける名前をローダの対応セットと整合（従来 `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32` が抜けていた）
 - **v2.4.5** (2026-08-04) — これまで未対応だった4種のROMデータベースマッパーに対応：`Page2`/`0x4000`/`0x8000`（新規`FixedPageMapper`：ROMは固定ベースアドレスにのみ存在し、カートリッジ領域の残りはオープンバス）と`KoeiSRAM32`（新規`KoeiSRAM32Mapper`：ASCII8 + 32 KBバッテリーバックアップSRAM、SRAM選択可能ウィンドウに0x4000を追加）

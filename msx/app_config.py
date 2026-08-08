@@ -48,7 +48,7 @@ VALID_MAPPERS2: tuple[str, ...] = (
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
-_GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {
+GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {
     "a": 0, "b": 1, "x": 2, "y": 3,
     "back": 4, "guide": 5, "start": 6,
     "leftstick": 7, "rightstick": 8,
@@ -70,6 +70,10 @@ _GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
     "turbo_a":   ("y", 4, True),
     "turbo_b":   ("x", 5, True),
 }
+
+# Public view of the joystick.buttons key set, so tools that emit or check that
+# block (scripts/list_joystick_buttons.py) cannot drift from the validator.
+GAMEPAD_FUNCTION_KEYS: tuple[str, ...] = tuple(_GAMEPAD_FUNCTIONS)
 
 # MSX Joy1 function → port bit (0-5). The keyboard-side default key(s) live in
 # input.JOY_MAP; only the bit assignment is duplicated here (mirrors how
@@ -153,7 +157,7 @@ class AppConfig:
         seen: dict[int, str] = {}
         for func, (default_label, bit, is_turbo) in _GAMEPAD_FUNCTIONS.items():
             label = self.gamepad_buttons.get(func, default_label)
-            index = _GC_BUTTON_NAME_TO_INDEX[label]
+            index = GC_BUTTON_NAME_TO_INDEX[label]
             if index in seen:
                 raise AppConfigError(
                     f"{CONFIG_FILENAME}: joystick.buttons: {label!r} assigned to both "
@@ -352,10 +356,10 @@ def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
                 f"{CONFIG_FILENAME}: joystick.buttons: unknown function {func!r} "
                 f"(expected one of {', '.join(_GAMEPAD_FUNCTIONS)})"
             )
-        if not isinstance(label, str) or label not in _GC_BUTTON_NAME_TO_INDEX:
+        if not isinstance(label, str) or label not in GC_BUTTON_NAME_TO_INDEX:
             raise AppConfigError(
                 f"{CONFIG_FILENAME}: joystick.buttons.{func}: unknown button {label!r} "
-                f"(expected one of {', '.join(_GC_BUTTON_NAME_TO_INDEX)})"
+                f"(expected one of {', '.join(GC_BUTTON_NAME_TO_INDEX)})"
             )
         cfg.gamepad_buttons[func] = label
     _validate_no_duplicate_buttons(cfg)

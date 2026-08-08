@@ -63,6 +63,9 @@ class Machine:
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME
+    # Free-running T-state clock, never reset. Portability note: at 3.58 MHz a
+    # u32 wraps in ~20 minutes, so a port needs u64 here; the per-frame totals
+    # threaded through _run_lines() are frame-relative and fit in u32.
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
@@ -79,6 +82,11 @@ class Machine:
     # the instruction we are paused on.
     _pause_requested: bool = field(default=False, init=False, repr=False)
     _resume_skip_pc: int | None = field(default=None, init=False, repr=False)
+    # Set for the rest of the current run_frame() when a scanline loop was cut
+    # short by Ctrl-C. Ctrl-C arrives as an exception rather than through
+    # _enter_break, so it does not raise _pause_requested; this frame-scoped
+    # flag is what stops run_frame() from running the remaining segments.
+    _frame_interrupted: bool = field(default=False, init=False, repr=False)
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -162,6 +170,14 @@ class Machine:
         elif self._debugger is not None:
             self._debugger.enter()
 
+    @property
+    def is_paused(self) -> bool:
+        """True while a break has requested a pause and no resume has been armed.
+
+        Public read-only view of the pause flag, so callers (RPC, tests) do not
+        reach into private state — a port would not expose the field itself."""
+        return self._pause_requested
+
     def prepare_resume(self) -> None:
         """Arm a resume: clear the pause request and skip re-breaking on the
         instruction we are paused at, so continue does not immediately retrigger
@@ -240,6 +256,20 @@ class Machine:
             return True
         return False
 
+    def _post_step_checks_armed(self) -> bool:
+        """True when any condition _post_step_break() tests is armed.
+
+        Lifted out of the per-instruction debug loop: with only breakpoints or
+        watchpoints set (the common case) none of these are armed, so the call
+        to _post_step_break() can be skipped entirely. Must be re-evaluated
+        after every _enter_break(), which can hand control to the REPL where
+        bh/bs/so arm them mid-loop."""
+        return (
+            self._break_halt_di
+            or self._sp_range is not None
+            or self._stepout_sp is not None
+        )
+
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
         # Portability note: enabling watchpoints re-swaps cpu.read_byte/
@@ -282,19 +312,51 @@ class Machine:
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
-        # Select the frame loop by mode (break conditions / hot / logger) and
-        # let it run one frame; each arm owns its own Ctrl-C handling so the
-        # logger arm's post-loop halt-DI check stays reachable.
-        vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
-        if self._break_conditions_active():
-            self._run_frame_debug(vdp9938)
-        elif self._logger is None:
-            self._run_frame_fast(vdp9938)
-        else:
-            self._run_frame_logged(vdp9938)
+        """Run one frame and return the rendered index framebuffer.
 
+        Returns a `display_width * OUTPUT_H` buffer, or an empty bytearray when
+        `skip_render` is set. Advances the VDP frame counter either way. A break
+        (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
+        is still rendered and counted, and the next call restarts at line 0.
+
+        A V9938 frame is rendered at the start of vertical blanking, not at
+        the end of the scanline loop: begin_scanline(vblank_start_line) raises
+        the VBlank IRQ, so rendering after the whole loop would show the VRAM
+        the game's VBlank ISR left behind — sprite attributes and name tables
+        one frame early, while the display registers correctly come from the
+        frame-start snapshot. Splitting the loop there renders the frame the
+        ISR has not touched yet, and lets the renderer's sprite-collision /
+        5S scan finish before the ISR reads S#0.
+        The TMS9918A has no per-scanline hook and raises its frame-end IRQ
+        from render_frame() itself, so its ISR already runs after the render.
+        """
+        self._frame_interrupted = False
+        lpf = self.lines_per_frame
+        vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
+        # The scanline loops call begin_scanline(line) *after* running that
+        # line's cycles, so the pre-render segment is the half-open range
+        # [0, vblank_start_line + 1): its last iteration is the one whose
+        # begin_scanline() raises the VBlank F flag. min() guards a
+        # lines_per_frame shorter than the display (synthetic timings).
+        vblank_split = (
+            min(vdp9938.vblank_start_line + 1, lpf) if vdp9938 is not None else lpf
+        )
+
+        total = self._run_lines(vdp9938, first_line=0, end_line=vblank_split, total=0)
         if vdp9938 is not None:
             result = render_frame_v9938(vdp9938, skip_render=skip_render)
+            # The VBlank ISR window. Skipped when the first segment stopped
+            # short — a break via the pause hook (_pause_requested) or a Ctrl-C
+            # handled by _on_frame_interrupt (_frame_interrupted) — so a paused
+            # frame does not run on past the break point.
+            if (
+                vblank_split < lpf
+                and not self._pause_requested
+                and not self._frame_interrupted
+            ):
+                self._run_lines(
+                    vdp9938, first_line=vblank_split, end_line=lpf, total=total
+                )
         else:
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.
@@ -310,7 +372,11 @@ class Machine:
     def _on_frame_interrupt(self) -> None:
         """Ctrl-C handling shared by the frame loops: notify the pause hook or
         drop into the debugger if either is present, otherwise re-raise to
-        abort the run."""
+        abort the run.
+
+        Flags the frame as cut short so run_frame() skips the segments after
+        the one that was interrupted."""
+        self._frame_interrupted = True
         if self._pause_hook is not None:
             self._pause_hook(PauseReason.USER_REQUEST, self.cpu.registers.PC)
         elif self._debugger is not None:
@@ -318,16 +384,41 @@ class Machine:
         else:
             raise
 
-    def _run_frame_debug(self, vdp9938: V9938 | None) -> None:
-        """Frame loop with active break conditions: checks breakpoints and
+    def _run_lines(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Run scanlines [first_line, end_line) with the loop arm this mode
+        needs (break conditions / hot / logger); return the running T-state
+        total, measured from the start of the frame.
+
+        Portability note: the arms take `self` and `vdp9938` — which aliases
+        `self.vdp` — at the same time, and alternate between mutating the VDP
+        and mutating the Machine. Rust rejects that double mutable borrow; a
+        port drops the parameter (dispatching on a `VdpKind` tag inside each
+        arm) or splits Machine into an owning bus struct plus debugger state so
+        the two borrows are disjoint."""
+        if self._break_conditions_active():
+            return self._run_lines_debug(vdp9938, first_line, end_line, total)
+        if self._logger is None:
+            return self._run_lines_fast(vdp9938, first_line, end_line, total)
+        return self._run_lines_logged(vdp9938, first_line, end_line, total)
+
+    def _run_lines_debug(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Scanline loop with active break conditions: checks breakpoints and
         post-step break conditions each instruction (debugger attached)."""
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
-        total = 0
+        # Two loop-invariants lifted out of the inner loop: the post-step
+        # condition test (see _post_step_checks_armed) and, as in the fast arm,
+        # cycle_count aggregation into a per-line local flushed once a scanline.
+        post_checks = self._post_step_checks_armed()
+        line_cycles = 0
         try:
-            for line in range(lpf):
+            for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
                 while total < line_end:
                     pc = cpu.registers.PC
@@ -339,28 +430,40 @@ class Machine:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
                         self._enter_break(PauseReason.BREAKPOINT)
+                        # The REPL may have armed bh/bs/so while it had control.
+                        post_checks = self._post_step_checks_armed()
                         if self._pause_requested:
-                            return
+                            self.cycle_count += line_cycles
+                            return total
                     if vdp9938 is not None:
                         cpu.int_pending = vdp9938.irq
                     n = cpu_step()
                     total += n
-                    self.cycle_count += n
+                    line_cycles += n
                     if vdp9938 is not None:
                         vdp9938.tick(n)
-                    if self._post_step_break():
+                    if post_checks and self._post_step_break():
                         self._enter_break(PauseReason.BREAKPOINT)
+                        post_checks = self._post_step_checks_armed()
                     if self._pause_requested:
                         # A watchpoint (or post-step condition) requested a pause
                         # during this instruction; stop at the boundary.
-                        return
+                        self.cycle_count += line_cycles
+                        return total
+                self.cycle_count += line_cycles
+                line_cycles = 0
                 if vdp9938 is not None:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
         except KeyboardInterrupt:
+            self.cycle_count += line_cycles
             self._on_frame_interrupt()
+        return total
 
-    def _run_frame_fast(self, vdp9938: V9938 | None) -> None:
+    def _run_lines_fast(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Hot-path scanline loop (no debugger, no logger); see `_run_lines`."""
         # Hot path (no debugger, no logger). Two frame-invariants are lifted
         # out of the inner loop: (1) the is_v9938 branch — split into a
         # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
@@ -375,10 +478,9 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
-        total = 0
         try:
             if vdp9938 is not None:
-                for line in range(lpf):
+                for line in range(first_line, end_line):
                     line_end = (line + 1) * cpf // lpf
                     line_cycles = 0
                     while total < line_end:
@@ -391,7 +493,7 @@ class Machine:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
             else:
-                for line in range(lpf):
+                for line in range(first_line, end_line):
                     line_end = (line + 1) * cpf // lpf
                     line_cycles = 0
                     while total < line_end:
@@ -401,17 +503,19 @@ class Machine:
                     self.cycle_count += line_cycles
         except KeyboardInterrupt:
             self._on_frame_interrupt()
+        return total
 
-    def _run_frame_logged(self, vdp9938: V9938 | None) -> None:
-        """Frame loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
+    def _run_lines_logged(
+        self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
+    ) -> int:
+        """Scanline loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
         assert self._logger is not None
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
-        total = 0
         try:
-            for line in range(lpf):
+            for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
                 while total < line_end:
                     pc = cpu.registers.PC
@@ -436,7 +540,11 @@ class Machine:
         except KeyboardInterrupt:
             self._on_frame_interrupt()
 
-        if cpu.halted and not cpu.iff1:
+        # Once per frame, not once per segment: only the segment that ends the
+        # frame reports a HALT-with-interrupts-off hang.
+        is_final_segment = end_line >= lpf
+        if is_final_segment and cpu.halted and not cpu.iff1:
             self._logger.on_hang_halt_di(cpu.registers.PC)
+        return total
 
 

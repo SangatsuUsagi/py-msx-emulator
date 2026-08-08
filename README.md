@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1737%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1740%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -351,19 +351,19 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 274.32 | ~4.6× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 426.45 | ~7.1× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1325.83 | ~22.1× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1219.03 | ~20.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 71.61 | ~1.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 108.23 | ~1.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 297.14 | ~5.0× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 306.94 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 279.93 | ~4.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 429.26 | ~7.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1326.61 | ~22.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1199.55 | ~20.0× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 72.55 | ~1.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 108.13 | ~1.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 294.67 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 299.99 | ~5.0× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
 heaviest rendering/audio load among the target titles) at ~1.2×; PyPy raises the
-same case to ~5.0×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+same case to ~4.9×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -379,7 +379,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.4.3, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.4.8, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -827,7 +827,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1737 tests spanning unit tests
+The test suite covers all major components with 1740 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -889,7 +889,7 @@ py-msx-emulator/
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1737 tests
+├── tests/                 # Test suite — 1740 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -950,6 +950,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.
 - **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml`: add `slot2`/`mapper2` (slot 2 cartridge defaults) and `frame_skip` (`auto`/`none` toggle) config keys, resolved with the same built-in-default < config < CLI precedence as `mapper`/`speed`/`fmpac`; add a `keyboard_joystick.buttons` section that lets each Joy1 keyboard-emulation function (`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`) be bound to a single key, replacing that function's built-in default key(s).
 - **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (a new `GameMaster2Mapper`: Konami-style 128 KB ROM with 8 KB battery-backed SRAM, each bank register selecting a ROM page or a 4 KB SRAM half mirrored across the 8 KB window, SRAM writable at 0xB000–0xBFFF). Reconcile `--mapper`/config `mapper:` accepted names with the loader's supported set (previously missing `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32`).
 - **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`: ROM visible only at a fixed base address, rest of the cartridge region open bus) and `KoeiSRAM32` (a new `KoeiSRAM32Mapper`: ASCII8 with 32 KB battery-backed SRAM, extending the SRAM-selectable window set to include 0x4000).
