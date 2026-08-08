@@ -164,8 +164,12 @@ class V9938:
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
     on_interrupt: Callable[[], None] | None = None
-    # Portability note: these Callable hooks (on_interrupt, tracer, _get_pc,
-    # _get_cycle) are stored Python closures with no direct static-typed
+    # Observation seam for scanline timing (tests, tracing): called with the
+    # raster line at the end of begin_scanline(). A field, not a monkey-patched
+    # method, so the same observation is expressible in a Rust/C++ port.
+    on_scanline: Callable[[int], None] | None = None
+    # Portability note: these Callable hooks (on_interrupt, on_scanline, tracer,
+    # _get_pc, _get_cycle) are stored Python closures with no direct static-typed
     # analogue. A Rust/C++ port models them as trait objects or feature-flagged
     # fields resolved once, not per-call function pointers.
     tracer: Tracer | None = field(default=None, repr=False)
@@ -276,6 +280,14 @@ class V9938:
         return 212 if (self.regs[9] & 0x80) else 192
 
     @property
+    def vblank_start_line(self) -> int:
+        """Raster line whose begin_scanline() raises the VBlank F flag (S#0 b7).
+
+        Single source for the vertical-blanking boundary: Machine.run_frame()
+        reads it to decide where to split the frame and render."""
+        return self.display_height
+
+    @property
     def display_width(self) -> int:
         """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
         SCREEN 7 (G6), i.e. M5 set with M4 clear. SCREEN 8 (G7, M5+M4) is 256."""
@@ -353,7 +365,7 @@ class V9938:
             self._reg_write_log.clear()
         self.display_line = line
         self._line_cycle = 0  # new scanline: restart the horizontal-retrace timer
-        dh = self.display_height
+        dh = self.vblank_start_line
         if line == dh:
             self.status |= 0x80  # VBlank F
             self._update_irq()
@@ -372,6 +384,8 @@ class V9938:
         if line == effective and (self.regs[0] & _R0_IE1):
             self._status1 |= _S1_FH
             self._update_irq()
+        if self.on_scanline is not None:
+            self.on_scanline(line)
 
     # ------------------------------------------------------------------
     # Command timer
