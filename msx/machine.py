@@ -256,6 +256,20 @@ class Machine:
             return True
         return False
 
+    def _post_step_checks_armed(self) -> bool:
+        """True when any condition _post_step_break() tests is armed.
+
+        Lifted out of the per-instruction debug loop: with only breakpoints or
+        watchpoints set (the common case) none of these are armed, so the call
+        to _post_step_break() can be skipped entirely. Must be re-evaluated
+        after every _enter_break(), which can hand control to the REPL where
+        bh/bs/so arm them mid-loop."""
+        return (
+            self._break_halt_di
+            or self._sp_range is not None
+            or self._stepout_sp is not None
+        )
+
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
         # Portability note: enabling watchpoints re-swaps cpu.read_byte/
@@ -398,6 +412,11 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        # Two loop-invariants lifted out of the inner loop: the post-step
+        # condition test (see _post_step_checks_armed) and, as in the fast arm,
+        # cycle_count aggregation into a per-line local flushed once a scanline.
+        post_checks = self._post_step_checks_armed()
+        line_cycles = 0
         try:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
@@ -411,25 +430,33 @@ class Machine:
                         if pc == self._temp_breakpoint:
                             self._temp_breakpoint = None
                         self._enter_break(PauseReason.BREAKPOINT)
+                        # The REPL may have armed bh/bs/so while it had control.
+                        post_checks = self._post_step_checks_armed()
                         if self._pause_requested:
+                            self.cycle_count += line_cycles
                             return total
                     if vdp9938 is not None:
                         cpu.int_pending = vdp9938.irq
                     n = cpu_step()
                     total += n
-                    self.cycle_count += n
+                    line_cycles += n
                     if vdp9938 is not None:
                         vdp9938.tick(n)
-                    if self._post_step_break():
+                    if post_checks and self._post_step_break():
                         self._enter_break(PauseReason.BREAKPOINT)
+                        post_checks = self._post_step_checks_armed()
                     if self._pause_requested:
                         # A watchpoint (or post-step condition) requested a pause
                         # during this instruction; stop at the boundary.
+                        self.cycle_count += line_cycles
                         return total
+                self.cycle_count += line_cycles
+                line_cycles = 0
                 if vdp9938 is not None:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
         except KeyboardInterrupt:
+            self.cycle_count += line_cycles
             self._on_frame_interrupt()
         return total
 
