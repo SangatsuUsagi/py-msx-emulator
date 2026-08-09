@@ -848,9 +848,20 @@ def _render_sprites_mode2(
     col_base = (sat_base - 0x200) & 0x1FFFF
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
+    # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
+    # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
+    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
+    # transparent and take no part in coincidence, same as sprite mode 1.
+    can0collide = bool(vdp.regs[8] & 0x20)
+
     line_count = [0] * h
     ninth_set  = False
     sprite_buf = bytearray(h * width)  # 0 = transparent
+    # Coincidence is tracked separately from sprite_buf (same split as
+    # _render_sprites above): sprite_buf holds the composited colour and the
+    # z-order winner, which a colour-0 sprite never claims, while
+    # sprite_touched records every pixel a collision-eligible sprite covered.
+    sprite_touched = bytearray(h * width)
     # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
     # visible if a higher-priority CC=0 sprite precedes it on the same line
     # (V9938 rule); leading CC=1 sprites are invisible.
@@ -935,7 +946,7 @@ def _render_sprites_mode2(
                 else:
                     cc0_seen[line] = 1
 
-                if color == 0:
+                if color == 0 and not can0collide:
                     continue  # transparent regardless of OR mode
 
                 pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
@@ -951,14 +962,18 @@ def _render_sprites_mode2(
                             continue
                         for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
                             coord = line_off + sx * screen_scale + ss
-                            if sprite_buf[coord]:
+                            if sprite_touched[coord]:
                                 if not ignore_collision:
                                     coincidence = True
-                                if or_mode:
-                                    sprite_buf[coord] |= color
                             else:
-                                sprite_buf[coord] = color
-                                drawn.append(coord)
+                                sprite_touched[coord] = 1
+                            if color:
+                                if sprite_buf[coord]:
+                                    if or_mode:
+                                        sprite_buf[coord] |= color
+                                else:
+                                    sprite_buf[coord] = color
+                                    drawn.append(coord)
                 else:
                     for bit_i, pixel in enumerate(pixels):
                         if not pixel:
@@ -969,14 +984,18 @@ def _render_sprites_mode2(
                                 continue
                             for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
                                 coord = line_off + sx * screen_scale + ss
-                                if sprite_buf[coord]:
+                                if sprite_touched[coord]:
                                     if not ignore_collision:
                                         coincidence = True
-                                    if or_mode:
-                                        sprite_buf[coord] |= color
                                 else:
-                                    sprite_buf[coord] = color
-                                    drawn.append(coord)
+                                    sprite_touched[coord] = 1
+                                if color:
+                                    if sprite_buf[coord]:
+                                        if or_mode:
+                                            sprite_buf[coord] |= color
+                                    else:
+                                        sprite_buf[coord] = color
+                                        drawn.append(coord)
 
     # Composite only the pixels a sprite actually touched (avoids scanning the
     # whole h*width buffer every frame when sprites are sparse or absent).

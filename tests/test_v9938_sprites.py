@@ -424,6 +424,90 @@ def test_sprite_mode2_ic_suppresses_coincidence() -> None:
     assert vdp.status & 0x20 == 0   # coincidence NOT flagged
 
 
+def test_sprite_mode2_colour_zero_does_not_collide_at_default_tp() -> None:
+    """TP (R#8 bit 5) defaults to 0 (colour 0 transparent): a colour-0 sprite
+    takes no part in coincidence, matching real V9938 hardware (openMSX
+    canSpriteColor0Collide() is false here)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=0)   # transparent
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4)   # overlapping, opaque
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert vdp.status & 0x20 == 0        # no coincidence at TP=0
+    assert buf[1 * 256 + 0] == 4         # lower-priority opaque sprite shows through
+
+
+def test_sprite_mode2_colour_zero_collides_when_tp_set() -> None:
+    """With TP=1 (R#8 bit 5), colour 0 is not transparent, so a colour-0
+    sprite overlapping another sprite sets the coincidence flag -- it is
+    still not painted."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[8] |= 0x20  # TP
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=0)   # transparent, but TP set
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4)   # overlapping, opaque
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert vdp.status & 0x20             # coincidence flagged
+    assert buf[1 * 256 + 0] == 4         # colour-0 sprite itself is still not painted
+
+
+def test_sprite_mode2_two_colour_zero_sprites_collide_when_tp_set() -> None:
+    """Two overlapping colour-0 sprites collide with each other when TP=1,
+    even though neither is painted."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[8] |= 0x20  # TP
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=0)
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=0)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert vdp.status & 0x20             # coincidence flagged
+    assert buf[1 * 256 + 0] == 0         # nothing painted (backdrop)
+
+
+def test_sprite_mode2_colour_zero_ic_suppresses_coincidence_when_tp_set() -> None:
+    """IC (bit 5 of the colour-table byte) still suppresses coincidence for a
+    colour-0 sprite that TP has made collision-eligible."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[8] |= 0x20  # TP
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=4)
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=0, ic=True)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert vdp.status & 0x20 == 0        # IC sprite does not flag coincidence
+
+
 def test_sprite_mode2_leading_cc_sprite_invisible() -> None:
     """A CC=1 sprite with higher priority than any CC=0 sprite is not drawn;
     the lower-priority CC=0 sprite shows through (not OR'd)."""
