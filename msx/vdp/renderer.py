@@ -25,8 +25,21 @@ _ROW_BYTES: list[list[list[bytes]]] = [
     for pat in range(256)
 ]
 
+# Precomputed sprite-pattern-byte → 8-bit-per-pixel lookup: _SPRITE_BITS[b] →
+# 8-byte 0/1 slice. Eliminates the 8-iteration per-pixel Python loop in
+# _sprite_row_pixels, same pattern as _ROW_BYTES above.
+_SPRITE_BITS: list[bytes] = [
+    bytes((b >> (7 - bit)) & 1 for bit in range(8)) for b in range(256)
+]
+
 
 def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
+    """Render one TMS9918A frame to a border-padded palette-index buffer.
+
+    Dispatches on the M1-M4 mode bits (R#1/R#0, TMS9918A datasheet naming) to
+    pick a screen-mode renderer, or just fires the VBlank interrupt via
+    `_finalize` if `skip_render` (frame skipped for a headless benchmark run).
+    """
     if skip_render:
         _finalize(vdp)
         return bytearray(0)
@@ -42,6 +55,10 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
         _finalize(vdp)
         return buf
 
+    # M1/M2 (R#1 bits 4/3), M3/M4 (R#0 bits 1/2): TMS9918A screen-mode select.
+    # M1=1: Text (SCREEN 0). M3,M4=1,1: Graphic 4 (SCREEN 5, no sprites).
+    # M3=1 alone: Graphic 2 (SCREEN 2). M2=1 alone: Multicolor (SCREEN 3).
+    # All clear: Graphic 1 (SCREEN 1).
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
     m3 = (r0 >> 1) & 1
@@ -56,21 +73,23 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
         _render_g4(vdp, buf)
     elif m3:
         _render_g2(vdp, buf)
-        if not vdp.debug_disable_sprites:
-            _render_sprites(vdp, buf)
+        _maybe_render_sprites(vdp, buf)
     elif m2:
         _render_mc(vdp, buf)
-        if not vdp.debug_disable_sprites:
-            _render_sprites(vdp, buf)
+        _maybe_render_sprites(vdp, buf)
     else:
         _render_g1(vdp, buf)
-        if not vdp.debug_disable_sprites:
-            _render_sprites(vdp, buf)
+        _maybe_render_sprites(vdp, buf)
 
     _finalize(vdp)
     # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
     return pad_to_output_height(buf, h, _W, border)
+
+
+def _maybe_render_sprites(vdp: VDP, buf: bytearray) -> None:
+    if not vdp.debug_disable_sprites:
+        _render_sprites(vdp, buf)
 
 
 def _finalize(vdp: VDP) -> None:
@@ -341,7 +360,7 @@ def _sprite_row_pixels(
     vram = vdp.vram
     if si == 0:
         b = vram[(spt_base + pat_idx * 8 + src_row) & 0x3FFF]
-        return bytes((b >> (7 - bit)) & 1 for bit in range(8))
+        return _SPRITE_BITS[b]
 
     # TMS9918A 16x16 layout: base+0=upper-left, base+1=lower-left,
     #                          base+2=upper-right, base+3=lower-right
@@ -354,6 +373,4 @@ def _sprite_row_pixels(
         left = vram[(spt_base + (base + 1) * 8 + r) & 0x3FFF]
         right = vram[(spt_base + (base + 3) * 8 + r) & 0x3FFF]
 
-    left_bits = bytes((left >> (7 - b)) & 1 for b in range(8))
-    right_bits = bytes((right >> (7 - b)) & 1 for b in range(8))
-    return left_bits + right_bits
+    return _SPRITE_BITS[left] + _SPRITE_BITS[right]
