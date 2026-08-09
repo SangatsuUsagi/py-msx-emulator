@@ -137,3 +137,31 @@ def test_read_address_wraps_at_16kb() -> None:
     set_read_addr(vdp, 0x3FFF)
     assert vdp.read_port(0x98) == 0xAA  # reads 0x3FFF
     assert vdp.read_port(0x98) == 0xBB  # wraps to 0x0000
+
+
+# --- Reset ---
+
+def test_reset_restores_registers_status_and_address_state() -> None:
+    vdp = make_vdp()
+    vdp.regs = [0xFF] * 8
+    vdp.status = 0xFF
+    vdp.addr = 0x1234
+    vdp.latch = 0x55
+    vdp.read_buf = 0x99
+
+    vdp.reset()
+
+    assert vdp.regs == [0] * 8
+    assert vdp.status == 0
+    assert vdp.addr == 0
+    assert vdp.latch is None
+    assert vdp.read_buf == 0
+
+
+def test_reset_retains_vram() -> None:
+    vdp = make_vdp()
+    vdp.vram[0x1000] = 0xAB
+
+    vdp.reset()
+
+    assert vdp.vram[0x1000] == 0xAB

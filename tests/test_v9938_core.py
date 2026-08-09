@@ -1,5 +1,5 @@
 """Tests for msx.vdp.v9938.V9938 core: VRAM, ports, registers, palette."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import _MSX2_DEFAULT_PALETTE, V9938
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -390,3 +390,43 @@ def test_r14_via_indirect_relocates_pointer() -> None:
     vdp.write_port(0x99, 0x80 | 17)     # R#17 -> point R#14
     vdp.write_port(0x9B, 5)             # indirect write R#14 = 5
     assert vdp.addr == (5 << 14)
+
+
+# ---------------------------------------------------------------------------
+# Reset
+# ---------------------------------------------------------------------------
+
+def test_reset_restores_registers_status_palette_and_address_state() -> None:
+    vdp = V9938()
+    vdp.regs = [0xFF] * 28
+    vdp.status = 0xFF
+    vdp.palette = [0x1FF] * 16
+    vdp.addr = 0x12345
+    vdp.latch = 0x55
+    vdp._pal_latch = 0x33
+    vdp.read_buf = 0x99
+    vdp.irq = True
+    vdp.display_line = 100
+    vdp.regs[9] = 0x80  # LN set, so display_height would read 212 pre-reset
+
+    vdp.reset()
+
+    assert vdp.regs == [0] * 28
+    assert vdp.status == 0
+    assert vdp.palette == list(_MSX2_DEFAULT_PALETTE)
+    assert vdp.addr == 0
+    assert vdp.latch is None
+    assert vdp._pal_latch is None
+    assert vdp.read_buf == 0
+    assert vdp.irq is False
+    assert vdp.display_line == 0
+    assert vdp.display_height == 192
+
+
+def test_reset_retains_vram() -> None:
+    vdp = V9938()
+    vdp.vram[0x10000] = 0xAB
+
+    vdp.reset()
+
+    assert vdp.vram[0x10000] == 0xAB
