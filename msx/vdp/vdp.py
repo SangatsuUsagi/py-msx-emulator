@@ -167,8 +167,9 @@ class VDP:
         """Dispatch a TMS9918A VDP port read.
 
         0x98 = VRAM data (returns the read-ahead buffer, refills it, auto-
-        increments the address); 0x99 = status register (clears VBlank + 5th-
-        sprite flags and resets the control write latch as a side effect).
+        increments the address); 0x99 = status register (clears VBlank, 5th-
+        sprite and coincidence flags, and resets the control write latch, as
+        a side effect).
         """
         if port == 0x98:
             result = self.read_buf
@@ -177,7 +178,11 @@ class VDP:
             return result
         if port == 0x99:
             result = self.status
-            self.status &= ~0xC0  # clear VBlank (bit 7) and 5th-sprite flag (bit 6)
+            # Clear VBlank (bit 7), 5th-sprite flag (bit 6) and coincidence
+            # (bit 5) together, keeping only the 5th-sprite index (bits 4:0).
+            # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg
+            # case 0, both of which clear status & 0x1F on an S#0 read.
+            self.status &= 0x1F
             self.latch = None     # reading status resets the address latch
             return result & 0xFF
         return 0xFF

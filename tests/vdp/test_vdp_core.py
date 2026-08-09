@@ -88,6 +88,20 @@ def test_status_read_clears_vblank_and_fifth_sprite_flags() -> None:
     assert not (vdp.status & 0x40)  # 5th-sprite flag cleared
 
 
+def test_status_read_clears_coincidence_flag() -> None:
+    vdp = make_vdp()
+    vdp.status = 0xFF
+    vdp.read_port(0x99)
+    assert not (vdp.status & 0x20)  # coincidence flag cleared
+
+
+def test_status_read_preserves_fifth_sprite_index() -> None:
+    vdp = make_vdp()
+    vdp.status = 0xFF
+    vdp.read_port(0x99)
+    assert (vdp.status & 0x1F) == 0x1F  # bits 4:0 (5th-sprite index) untouched
+
+
 # --- Address latch and read-ahead buffer ---
 
 def test_write_address_setup() -> None:

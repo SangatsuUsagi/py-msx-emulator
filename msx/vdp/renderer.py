@@ -248,7 +248,14 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
     line_count = [0] * _H
     fifth_set = False
+    # Two separate claim arrays: sprite_painted tracks z-order (only an
+    # opaque colour claims a pixel, so a transparent higher-priority sprite
+    # does not block a lower-priority one showing through); sprite_touched
+    # tracks coincidence (any sprite's pattern bit, painted or not — a
+    # colour-0 sprite still collides on real TMS9918A/TMS9129 hardware,
+    # openMSX VDP.hh canSpriteColor0Collide()).
     sprite_painted = bytearray(_W * _H)
+    sprite_touched = bytearray(_W * _H)
     coincidence = False
 
     for i in range(32):
@@ -287,9 +294,6 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
             line_count[line] += 1
 
-            if color == 0:
-                continue
-
             src_row = sprite_row // 2 if mag else sprite_row
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
             scale = 2 if mag else 1
@@ -303,9 +307,11 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
                     if px < 0 or px >= _W:
                         continue
                     coord = row + px
-                    if sprite_painted[coord]:
+                    if sprite_touched[coord]:
                         coincidence = True
                     else:
+                        sprite_touched[coord] = 1
+                    if color and not sprite_painted[coord]:
                         sprite_painted[coord] = 1
                         buf[coord] = color
             else:
@@ -317,9 +323,11 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
                         if px < 0 or px >= _W:
                             continue
                         coord = row + px
-                        if sprite_painted[coord]:
+                        if sprite_touched[coord]:
                             coincidence = True
                         else:
+                            sprite_touched[coord] = 1
+                        if color and not sprite_painted[coord]:
                             sprite_painted[coord] = 1
                             buf[coord] = color
 

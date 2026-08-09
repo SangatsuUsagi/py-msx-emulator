@@ -201,6 +201,24 @@ def test_coincidence_flag_set_when_sprites_overlap() -> None:
     assert vdp.status & 0x20, "coincidence flag (bit 5) must be set"
 
 
+def test_coincidence_flag_set_when_colour_zero_sprite_overlaps() -> None:
+    # On real TMS9918A/TMS9129 hardware, a colour-0 (transparent) sprite
+    # still occupies its pattern's "1" bits for coincidence purposes
+    # (openMSX VDP.hh canSpriteColor0Collide(): unconditionally true for
+    # MSX1-class VDPs). Colour 0 must not be painted, but must still collide.
+    vdp = make_sprite_vdp()
+    _sat_entry(vdp, 0, 0, 0, 0, 0x00)    # colour=0 (transparent)
+    _sat_entry(vdp, 1, 0, 0, 1, 0x0A)    # colour=10, overlapping
+    vdp.vram[_SPT + 0 * 8 + 0] = 0x80
+    vdp.vram[_SPT + 1 * 8 + 0] = 0x80
+    _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
+
+    buf = _active(vdp)
+
+    assert vdp.status & 0x20, "coincidence flag must be set even with a colour-0 sprite"
+    assert buf[1 * 256 + 0] == 10, "colour-0 sprite itself is still not painted"
+
+
 def test_no_coincidence_when_no_overlap() -> None:
     vdp = make_sprite_vdp()
     # Two sprites at different X positions
