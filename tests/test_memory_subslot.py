@@ -59,6 +59,45 @@ def test_subslot_ffff_no_intercept_when_page3_not_slot3() -> None:
     assert mem.sub_slot_reg == 0x00  # unchanged
 
 
+def test_subslot_read_ffff_no_intercept_when_page3_not_slot3() -> None:
+    # Read-side counterpart of the write test above (allium/slots.allium's
+    # ReadByte/ReadSecondarySlotRegister share the same "page3 is slot3"
+    # requires clause as WriteByte/WriteSecondarySlotRegister).
+    mem = _make_memory(slot_register=0x44)  # page3=slot1 -> cartridge (empty FlatMapper)
+    mem.sub_slot_reg = 0x5A
+    # If the intercept wrongly fired, this would read back (~0x5A)&0xFF = 0xA5.
+    # It should instead reach the empty cartridge slot and read open bus.
+    assert mem.read(0xFFFF) == 0xFF
+
+
+def test_subslot_ffff_no_intercept_when_disabled() -> None:
+    # sub_slot_enabled=False (MSX1): the 0xFFFF intercept never fires
+    # regardless of slot_register, even when page3 = slot3 -- both requires
+    # clauses on WriteSecondarySlotRegister/ReadSecondarySlotRegister must
+    # hold (allium/slots.allium). Falls through to slot 3's normal dispatch,
+    # here MSX1 flat RAM (no ram_mapper set).
+    mem = Memory(
+        rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+        slot_register=0xC0,  # page3 = slot3
+        sub_slot_enabled=False,
+    )
+    mem.write(0xFFFF, 0xBB)
+    assert mem.sub_slot_reg == 0x00           # unchanged, intercept did not fire
+    assert mem.read(0xFFFF) == 0xBB           # served by MSX1 flat RAM instead
+
+
+def test_subslot_read_ffff_no_intercept_when_disabled() -> None:
+    mem = Memory(
+        rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+        slot_register=0xC0,  # page3 = slot3
+        sub_slot_enabled=False,
+    )
+    mem.ram[0x7FFF] = 0x42  # MSX1 flat RAM offset for address 0xFFFF (32 KB RAM)
+    # If the intercept wrongly fired, this would read back a sub_slot_reg
+    # complement instead of the flat RAM byte.
+    assert mem.read(0xFFFF) == 0x42
+
+
 # ---------------------------------------------------------------------------
 # Sub-slot 0 ROM dispatch
 # ---------------------------------------------------------------------------

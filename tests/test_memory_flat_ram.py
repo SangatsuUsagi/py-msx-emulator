@@ -10,7 +10,24 @@ from msx.memory import Memory
 _ALL_SLOT3 = 0xFF  # every page -> slot 3
 
 
-def _make_flat(sub0_rom: bytes | None = None) -> Memory:
+class _StubFdc:
+    """Minimal FloppyDisk stand-in: records calls, does not model the wd2793
+    controller/register protocol (out of scope for Memory delegation tests --
+    see allium/slots.allium's external entity FloppyDisk)."""
+
+    def __init__(self) -> None:
+        self.reads: list[int] = []
+        self.writes: list[tuple[int, int]] = []
+
+    def read_mem(self, addr: int) -> int:
+        self.reads.append(addr)
+        return 0x99
+
+    def write_mem(self, addr: int, value: int) -> None:
+        self.writes.append((addr, value))
+
+
+def _make_flat(sub0_rom: bytes | None = None, fdc: object | None = None) -> Memory:
     return Memory(
         rom=bytes(32768),
         ram=bytearray(65536),
@@ -19,6 +36,7 @@ def _make_flat(sub0_rom: bytes | None = None) -> Memory:
         sub_slot_enabled=True,
         sub0_rom=sub0_rom,
         flat_ram_subslot=3,
+        fdc=fdc,  # type: ignore[arg-type]
     )
 
 
@@ -59,11 +77,43 @@ def test_sub0_page0_serves_sub_rom() -> None:
 
 
 def test_sub0_page1_open_bus_without_fdc() -> None:
-    """Sub-slot 0 page 1 (0x4000) is open bus until the FDC is wired (phase 5)."""
+    """Sub-slot 0 page 1 (0x4000) is open bus when no FDC is wired."""
     sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
     mem = _make_flat(sub0_rom=sub_rom)
     mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
     assert mem.read(0x4000) == 0xFF
+
+
+def test_sub0_page1_read_delegates_to_fdc() -> None:
+    """Bare-Memory unit-level counterpart of test_fdc_wiring.py's full-machine
+    coverage: sub-slot 0 page 1 forwards to FloppyDisk.read_mem when an FDC is
+    wired (allium/slots.allium ReadByte, the `page = 1 and memory.fdc != null`
+    branch)."""
+    fdc = _StubFdc()
+    mem = _make_flat(fdc=fdc)
+    mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
+    assert mem.read(0x4000) == 0x99
+    assert fdc.reads == [0x4000]
+
+
+def test_sub0_page1_write_delegates_to_fdc() -> None:
+    fdc = _StubFdc()
+    mem = _make_flat(fdc=fdc)
+    mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
+    mem.write(0x4000, 0x77)
+    assert fdc.writes == [(0x4000, 0x77)]
+
+
+def test_sub0_page0_not_affected_by_fdc_presence() -> None:
+    """SUB-ROM (page 0) is still served, and the FDC is not consulted there --
+    unit-level version of test_fdc_wiring.py's
+    test_disk_rom_and_registers_routed_through_memory assertion."""
+    sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
+    fdc = _StubFdc()
+    mem = _make_flat(sub0_rom=sub_rom, fdc=fdc)
+    mem.sub_slot_reg = 0x00  # page0 -> sub-slot 0
+    assert mem.read(0x0000) == 0xAA
+    assert fdc.reads == []
 
 
 def test_write_to_empty_subslot_is_ignored() -> None:
