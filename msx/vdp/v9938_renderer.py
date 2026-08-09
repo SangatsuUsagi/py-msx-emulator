@@ -667,9 +667,21 @@ def _render_sprites(
     sat_base = (vdp.regs[5] & 0x7F) << 7
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
+    # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
+    # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
+    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
+    # transparent and take no part in coincidence, same as before.
+    can0collide = bool(vdp.regs[8] & 0x20)
+
     line_count = [0] * _TILE_H
     fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
+    # Two separate claim arrays (see allium/tms9918a.allium's RenderFrame
+    # for the base-class version of this split): sprite_painted tracks
+    # z-order (only an opaque colour claims a pixel, so a transparent
+    # higher-priority sprite does not block a lower-priority one showing
+    # through); sprite_touched tracks coincidence.
     sprite_painted = bytearray(_W * _TILE_H)
+    sprite_touched = bytearray(_W * _TILE_H)
     coincidence = False
     scan_hi = min(y_end if y_end is not None else _TILE_H, _TILE_H)
 
@@ -711,7 +723,7 @@ def _render_sprites(
 
             line_count[line] += 1
 
-            if color == 0:
+            if color == 0 and not can0collide:
                 continue
 
             src_row = sprite_row // 2 if mag else sprite_row
@@ -727,9 +739,11 @@ def _render_sprites(
                     if px < 0 or px >= _W:  # clip off-screen, no wrap
                         continue
                     coord = row + px
-                    if sprite_painted[coord]:
+                    if sprite_touched[coord]:
                         coincidence = True
                     else:
+                        sprite_touched[coord] = 1
+                    if color and not sprite_painted[coord]:
                         sprite_painted[coord] = 1
                         buf[coord] = color
             else:
@@ -741,9 +755,11 @@ def _render_sprites(
                         if px < 0 or px >= _W:  # clip off-screen, no wrap
                             continue
                         coord = row + px
-                        if sprite_painted[coord]:
+                        if sprite_touched[coord]:
                             coincidence = True
                         else:
+                            sprite_touched[coord] = 1
+                        if color and not sprite_painted[coord]:
                             sprite_painted[coord] = 1
                             buf[coord] = color
 

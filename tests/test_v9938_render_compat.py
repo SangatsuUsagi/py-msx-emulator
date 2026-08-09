@@ -188,6 +188,52 @@ def test_sprite_pixel_placed_at_correct_position() -> None:
     assert buf[1 * 256 + 0] == 7
 
 
+def test_sprite_colour_zero_does_not_collide_at_default_tp() -> None:
+    """TP (R#8 bit 5) defaults to 0 (colour 0 transparent): a colour-0
+    sprite must not set the coincidence flag, matching real V9938 hardware
+    (openMSX canSpriteColor0Collide() is false here) and unchanged from
+    before this fix."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[5] = 0x0E  # SAT at 0x0700
+    vdp.regs[6] = 0x00  # SPG at 0x0000
+    sat_base = (vdp.regs[5] & 0x7F) << 7
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0, color=0)    # transparent
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=1, color=10)   # overlapping, opaque
+    vdp.vram[0x0000] = 0x80  # pattern 0, row 0
+    vdp.vram[0x0008] = 0x80  # pattern 1, row 0
+    vdp.vram[(sat_base + 2 * 4) & 0x3FFF] = 0xD0  # terminator
+
+    buf = _active(vdp)
+
+    assert not (vdp.status & 0x20), "colour 0 must not collide at TP=0"
+    assert buf[1 * 256 + 0] == 10  # colour-0 sprite itself is still not painted
+
+
+def test_sprite_colour_zero_collides_when_tp_set() -> None:
+    """With TP=1 (R#8 bit 5 set, colour 0 not transparent), a colour-0
+    sprite must still set the coincidence flag when it overlaps another
+    sprite's opaque pixels -- it is simply not painted."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[5] = 0x0E  # SAT at 0x0700
+    vdp.regs[6] = 0x00  # SPG at 0x0000
+    vdp.regs[8] |= 0x20  # TP
+    sat_base = (vdp.regs[5] & 0x7F) << 7
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0, color=0)    # transparent, but TP set
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=1, color=10)   # overlapping, opaque
+    vdp.vram[0x0000] = 0x80  # pattern 0, row 0
+    vdp.vram[0x0008] = 0x80  # pattern 1, row 0
+    vdp.vram[(sat_base + 2 * 4) & 0x3FFF] = 0xD0  # terminator
+
+    buf = _active(vdp)
+
+    assert vdp.status & 0x20, "colour 0 must collide when TP=1"
+    assert buf[1 * 256 + 0] == 10  # colour-0 sprite itself is still not painted
+
+
 def test_sprite_5th_line_flag() -> None:
     """V9938 sprite mode 1 keeps the TMS 4-per-line limit; the 5th sets S#0 bit 6."""
     vdp = V9938()
