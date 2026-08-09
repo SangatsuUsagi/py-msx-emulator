@@ -281,8 +281,11 @@ def test_sprite_mode2_no_or_mode_higher_priority_wins() -> None:
     assert buf[1 * 256 + 0] == 3  # sprite 0 colour wins
 
 
-def test_sprite_mode2_or_mode_sets_coincidence() -> None:
-    """Coincidence is flagged when two sprites overlap, even with OR mode."""
+def test_sprite_mode2_or_mode_does_not_set_coincidence() -> None:
+    """A CC=1 (OR-mode) sprite cannot collide: the Handbook (Fig. 4.68 note 1)
+    states conflicts are not detected when a CC=1 sprite overlaps the CC=0
+    sprite it combines with, and openMSX skips any sprite whose CC or IC bit is
+    set on both sides of every pair it tests."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
@@ -297,8 +300,9 @@ def test_sprite_mode2_or_mode_sets_coincidence() -> None:
     _terminate_sat(vdp, after_idx=2)
     vdp.vram[0] = 0x80
 
-    render_frame(vdp)
-    assert vdp.status & 0x20  # C (coincidence) bit set
+    buf = _active(vdp)
+    assert vdp.status & 0x20 == 0   # C (coincidence) NOT set
+    assert buf[1 * 256 + 0] == 7    # still OR-combined (3 | 4)
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +450,9 @@ def test_sprite_mode2_colour_zero_does_not_collide_at_default_tp() -> None:
 
 
 def test_sprite_mode2_colour_zero_collides_when_tp_set() -> None:
-    """With TP=1 (R#8 bit 5), colour 0 is not transparent, so a colour-0
-    sprite overlapping another sprite sets the coincidence flag -- it is
-    still not painted."""
+    """With TP=1 (R#8 bit 5), colour 0 is not transparent: a colour-0 sprite
+    collides and is painted as palette entry 0, so the higher-priority sprite 0
+    wins the pixel."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
@@ -464,7 +468,7 @@ def test_sprite_mode2_colour_zero_collides_when_tp_set() -> None:
 
     buf = _active(vdp)
     assert vdp.status & 0x20             # coincidence flagged
-    assert buf[1 * 256 + 0] == 4         # colour-0 sprite itself is still not painted
+    assert buf[1 * 256 + 0] == 0         # opaque colour 0 claims the pixel at TP=1
 
 
 def test_sprite_mode2_two_colour_zero_sprites_collide_when_tp_set() -> None:
@@ -506,6 +510,153 @@ def test_sprite_mode2_colour_zero_ic_suppresses_coincidence_when_tp_set() -> Non
 
     render_frame(vdp)
     assert vdp.status & 0x20 == 0        # IC sprite does not flag coincidence
+
+
+def test_sprite_mode2_ic_on_higher_priority_sprite_also_suppresses() -> None:
+    """IC excludes its sprite from collision detection whichever side of the
+    overlap it is on: a non-IC sprite overlapping an IC sprite must not flag C
+    either (openMSX tests IC on both sprites of every pair)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 0, 0, color=3, ic=True)   # higher priority, ignores collision
+    _write_sat_entry(vdp, 1, y=0, x=0, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4)            # lower priority, ordinary sprite
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert vdp.status & 0x20 == 0
+
+
+# ---------------------------------------------------------------------------
+# Sprite mode 2: collision coordinates (S#3-S#6)
+# ---------------------------------------------------------------------------
+
+def _read_status(vdp: V9938, reg: int) -> int:
+    vdp.regs[15] = reg
+    return vdp.read_port(0x99)
+
+
+def _collide_at(vdp: V9938, y: int, x: int, first_idx: int = 0) -> None:
+    """Place an overlapping opaque sprite pair at SAT Y/X, single pixel each."""
+    _write_sat_entry(vdp, first_idx, y=y, x=x, pat=0)
+    _write_col_entry(vdp, first_idx, 0, color=3)
+    _write_sat_entry(vdp, first_idx + 1, y=y, x=x, pat=0)
+    _write_col_entry(vdp, first_idx + 1, 0, color=4)
+
+
+def test_sprite_mode2_collision_coordinates_reported() -> None:
+    """S#3/S#4 hold the collision X and S#5/S#6 the collision Y, biased by
+    +12 dots / +8 lines as the hardware reports them (Handbook Sec. 5.3.3)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    _collide_at(vdp, y=9, x=40)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert vdp.status & 0x20                 # C set
+    assert _read_status(vdp, 3) == 40 + 12   # X low
+    assert _read_status(vdp, 4) == 0xFE      # X high bit clear, unused bits read 1
+    assert _read_status(vdp, 6) == 0xFC      # Y high bits clear, unused bits read 1
+    assert _read_status(vdp, 5) == 10 + 8    # Y low (SAT Y 9 → display line 10)
+
+
+def test_sprite_mode2_collision_x_ninth_bit() -> None:
+    """A collision past dot 243 pushes the biased X over 255, so S#4 bit 0 is set."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    _collide_at(vdp, y=0, x=250)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert _read_status(vdp, 3) == (250 + 12) & 0xFF
+    assert _read_status(vdp, 4) == 0xFF
+
+
+def test_sprite_mode2_collision_coordinates_take_earliest_line() -> None:
+    """With collisions on two lines, the coordinates describe the earliest one."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    _collide_at(vdp, y=0, x=8, first_idx=0)    # display line 1
+    _collide_at(vdp, y=4, x=0, first_idx=2)    # display line 5
+    _terminate_sat(vdp, after_idx=4)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert _read_status(vdp, 3) == 8 + 12
+    assert _read_status(vdp, 5) == 1 + 8
+
+
+def test_s5_read_resets_collision_coordinates() -> None:
+    """Reading S#5 clears the whole coordinate pair (openMSX resetCollision())."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    _collide_at(vdp, y=0, x=16)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert _read_status(vdp, 5) == 1 + 8
+    assert _read_status(vdp, 3) == 0
+    assert _read_status(vdp, 5) == 0
+
+
+def test_collision_coordinate_reads_do_not_clear_s0_flags() -> None:
+    """S#3-S#6 are separate registers: reading them must not clear S#0's
+    F/5S/C flags the way a read of S#0 does."""
+    vdp = V9938()
+    vdp.status = 0x80 | 0x40 | 0x20 | 0x03
+    for reg in (3, 4, 5, 6):
+        _read_status(vdp, reg)
+    assert vdp.status & 0xE0 == 0x80 | 0x40 | 0x20
+
+
+def test_nonexistent_status_register_reads_ff() -> None:
+    """R#15 >= 10 selects no status register; the read returns 0xFF and leaves
+    S#0's flags alone (openMSX VDP::peekStatusReg default case)."""
+    vdp = V9938()
+    vdp.status = 0x80 | 0x40 | 0x20
+    assert _read_status(vdp, 10) == 0xFF
+    assert _read_status(vdp, 15) == 0xFF
+    assert vdp.status & 0xE0 == 0x80 | 0x40 | 0x20
+
+
+def test_sprite_mode1_collision_coordinates_reported() -> None:
+    """The V9938 fills the collision coordinates in sprite mode 1 too (openMSX
+    SpriteChecker::checkSprites1: "verified: collision coords are also filled
+    in for sprite mode 1")."""
+    vdp = V9938()
+    _enable(vdp)                  # GRAPHIC1: sprite mode 1
+    vdp.regs[5] = 0x0E            # SAT at 0x0700
+    vdp.regs[6] = 0x00            # sprite patterns at 0x0000
+    sat_base = (vdp.regs[5] & 0x7F) << 7
+    for idx, color in ((0, 3), (1, 4)):
+        base = (sat_base + idx * 4) & 0x3FFF
+        vdp.vram[base]     = 0        # Y = 0 → display line 1
+        vdp.vram[base + 1] = 24       # X
+        vdp.vram[base + 2] = 0        # pattern 0
+        vdp.vram[base + 3] = color
+    vdp.vram[(sat_base + 2 * 4) & 0x3FFF] = 0xD0  # terminator
+    vdp.vram[0] = 0x80
+
+    render_frame(vdp)
+    assert vdp.status & 0x20
+    assert _read_status(vdp, 3) == 24 + 12
+    assert _read_status(vdp, 5) == 1 + 8
 
 
 def test_sprite_mode2_leading_cc_sprite_invisible() -> None:

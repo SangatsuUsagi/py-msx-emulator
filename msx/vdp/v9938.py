@@ -212,6 +212,11 @@ class V9938:
     _frame_count: int = field(default=0, init=False, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
+    # Sprite collision coordinates (S#3-S#6), already biased by +12 dots / +8
+    # lines the way the hardware reports them. Written by the sprite renderer
+    # when it flags C, cleared by a read of S#5.
+    collision_x: int = field(default=0, init=False, repr=False)
+    collision_y: int = field(default=0, init=False, repr=False)
     display_line: int = field(default=0, init=False, repr=False)
     _line_cycle: int = field(default=0, init=False, repr=False)  # T-states into current scanline
     # Precomputed interrupt-request line state. A plain attribute (not a
@@ -347,6 +352,8 @@ class V9938:
         self._status7 = 0
         self._status8 = 0
         self._status9 = 0
+        self.collision_x = 0
+        self.collision_y = 0
         self._cmd_active = False
         self._cmd_remaining = 0
         self._cmd_code = 0
@@ -552,6 +559,22 @@ class V9938:
                 return self._status8
             if self.regs[15] == 9:
                 return self._status9
+            if self.regs[15] == 3:
+                # S#3-S#6: sprite collision X/Y, as reported by the sprite
+                # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
+                # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`).
+                return self.collision_x & 0xFF
+            if self.regs[15] == 4:
+                return ((self.collision_x >> 8) & 0x01) | 0xFE
+            if self.regs[15] == 5:
+                result = self.collision_y & 0xFF
+                self.collision_x = 0  # reading S#5 resets the coordinate pair
+                self.collision_y = 0
+                return result
+            if self.regs[15] == 6:
+                return ((self.collision_y >> 8) & 0x03) | 0xFC
+            if self.regs[15] >= 10:
+                return 0xFF  # non-existent status register
             # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
             # sprite number. The renderer already stores the real overflowing
             # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's

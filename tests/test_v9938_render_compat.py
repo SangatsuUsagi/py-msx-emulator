@@ -212,9 +212,10 @@ def test_sprite_colour_zero_does_not_collide_at_default_tp() -> None:
 
 
 def test_sprite_colour_zero_collides_when_tp_set() -> None:
-    """With TP=1 (R#8 bit 5 set, colour 0 not transparent), a colour-0
-    sprite must still set the coincidence flag when it overlaps another
-    sprite's opaque pixels -- it is simply not painted."""
+    """With TP=1 (R#8 bit 5 set, colour 0 not transparent), a colour-0 sprite
+    both sets the coincidence flag and paints as palette entry 0 -- it is an
+    ordinary opaque colour, so the higher-priority sprite 0 wins the pixel
+    (openMSX SpriteConverter::drawMode1 only skips colour 0 when TP is clear)."""
     vdp = V9938()
     _enable(vdp)
     vdp.regs[5] = 0x0E  # SAT at 0x0700
@@ -231,7 +232,7 @@ def test_sprite_colour_zero_collides_when_tp_set() -> None:
     buf = _active(vdp)
 
     assert vdp.status & 0x20, "colour 0 must collide when TP=1"
-    assert buf[1 * 256 + 0] == 10  # colour-0 sprite itself is still not painted
+    assert buf[1 * 256 + 0] == 0  # higher-priority colour-0 sprite is opaque at TP=1
 
 
 def test_sprite_5th_line_flag() -> None:

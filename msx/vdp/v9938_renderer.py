@@ -20,6 +20,17 @@ if TYPE_CHECKING:
 _W = 256
 _TILE_H = 192  # TMS9918A-compatible modes always render 24 tile rows (192 px)
 
+# Sprite-mode-2 pixel-claim marker: bit 4 of the sprite compositing buffer, so a
+# displayed colour-0 pixel (only possible with TP set) is distinguishable from an
+# unclaimed pixel. Masked off with 0x0F when the buffer is composited.
+_SPRITE_CLAIM = 0x10
+# Collision-coordinate bias (S#3-S#6): the V9938 reports the collision position
+# offset by +12 dots / +8 lines, which software subtracts again (Handbook
+# Expression 4.5; openMSX SpriteChecker "x-coord should be increased by 12,
+# y-coord 8").
+_COLLISION_X_OFFSET = 12
+_COLLISION_Y_OFFSET = 8
+
 # Cache constant border-fill buffers per colour so a band prefill can slice-assign
 # a memoryview instead of rebuilding bytes([border]) * n every band/frame.
 _BORDER_CACHE: dict[int, bytes] = {}
@@ -677,12 +688,18 @@ def _render_sprites(
     fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     # Two separate claim arrays (see allium/tms9918a.allium's RenderFrame
     # for the base-class version of this split): sprite_painted tracks
-    # z-order (only an opaque colour claims a pixel, so a transparent
-    # higher-priority sprite does not block a lower-priority one showing
-    # through); sprite_touched tracks coincidence.
+    # z-order (only a pixel the VDP actually displays claims a pixel, so a
+    # transparent higher-priority sprite does not block a lower-priority one
+    # showing through); sprite_touched tracks coincidence.
     sprite_painted = bytearray(_W * _TILE_H)
     sprite_touched = bytearray(_W * _TILE_H)
     coincidence = False
+    # Collision coordinates (S#3-S#6): the earliest colliding line, and the
+    # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
+    # the first colliding line and stops there).
+    col_line = 999
+    col_x = 999
+    had_collision = bool(vdp.status & 0x20)  # an earlier band already recorded one
     scan_hi = min(y_end if y_end is not None else _TILE_H, _TILE_H)
 
     for i in range(32):
@@ -741,9 +758,14 @@ def _render_sprites(
                     coord = row + px
                     if sprite_touched[coord]:
                         coincidence = True
+                        if line < col_line or (line == col_line and px < col_x):
+                            col_line = line
+                            col_x = px
                     else:
                         sprite_touched[coord] = 1
-                    if color and not sprite_painted[coord]:
+                    # Colour 0 only reaches here when TP makes it opaque, and an
+                    # opaque colour-0 pixel is displayed as palette entry 0.
+                    if not sprite_painted[coord]:
                         sprite_painted[coord] = 1
                         buf[coord] = color
             else:
@@ -757,14 +779,20 @@ def _render_sprites(
                         coord = row + px
                         if sprite_touched[coord]:
                             coincidence = True
+                            if line < col_line or (line == col_line and px < col_x):
+                                col_line = line
+                                col_x = px
                         else:
                             sprite_touched[coord] = 1
-                        if color and not sprite_painted[coord]:
+                        if not sprite_painted[coord]:
                             sprite_painted[coord] = 1
                             buf[coord] = color
 
     if coincidence:
         vdp.status |= 0x20
+        if not had_collision:  # first collision of the frame wins (openMSX)
+            vdp.collision_x = col_x + _COLLISION_X_OFFSET
+            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 class _SpriteRun(NamedTuple):
@@ -856,11 +884,14 @@ def _render_sprites_mode2(
 
     line_count = [0] * h
     ninth_set  = False
-    sprite_buf = bytearray(h * width)  # 0 = transparent
+    # 0 = unclaimed. A displayed pixel stores colour | _SPRITE_CLAIM, so an
+    # opaque colour-0 pixel (TP=1) claims its pixel too; the claim bit is
+    # masked off when compositing.
+    sprite_buf = bytearray(h * width)
     # Coincidence is tracked separately from sprite_buf (same split as
     # _render_sprites above): sprite_buf holds the composited colour and the
-    # z-order winner, which a colour-0 sprite never claims, while
-    # sprite_touched records every pixel a collision-eligible sprite covered.
+    # z-order winner, which a CC/IC sprite claims like any other, while
+    # sprite_touched records only pixels a collision-eligible sprite covered.
     sprite_touched = bytearray(h * width)
     # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
     # visible if a higher-priority CC=0 sprite precedes it on the same line
@@ -868,6 +899,10 @@ def _render_sprites_mode2(
     cc0_seen = bytearray(h)
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
+    # Collision coordinates (S#3-S#6), as in _render_sprites above.
+    col_line = 999
+    col_x = 999
+    had_collision = bool(vdp.status & 0x20)
     scan_hi = min(y_end if y_end is not None else h, h)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for
@@ -934,8 +969,15 @@ def _render_sprites_mode2(
                 col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
                 color   = col_entry & 0x0F
                 or_mode = bool(col_entry & 0x40)  # CC: OR-combine with same-priority sprite
-                ignore_collision = bool(col_entry & 0x20)  # IC: don't flag coincidence
                 x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
+                # Collision eligibility, per sprite line: neither CC nor IC set,
+                # and a displayed colour (colour 0 only counts once TP makes it
+                # opaque). openMSX skips a sprite whose colourAttrib & 0x60 is
+                # set on both sides of every pair it tests, and the Handbook
+                # (Sec. 5.3.3) words the rule as "a conflict occurs when the
+                # display colour of a sprite is not transparent and '1' bits on
+                # the line whose CC bit is 0 overlap each other".
+                collides = (col_entry & 0x60) == 0 and (color != 0 or can0collide)
 
                 # CC=1 sprites are only visible once a higher-priority CC=0 sprite
                 # has appeared on this line; a CC=0 sprite enables them (counted even
@@ -952,6 +994,7 @@ def _render_sprites_mode2(
                 pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
                 scale  = 2 if mag else 1
                 line_off = line * width
+                claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
 
                 if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                     for bit_i, pixel in enumerate(pixels):
@@ -962,18 +1005,20 @@ def _render_sprites_mode2(
                             continue
                         for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
                             coord = line_off + sx * screen_scale + ss
-                            if sprite_touched[coord]:
-                                if not ignore_collision:
+                            if collides:
+                                if sprite_touched[coord]:
                                     coincidence = True
-                            else:
-                                sprite_touched[coord] = 1
-                            if color:
-                                if sprite_buf[coord]:
-                                    if or_mode:
-                                        sprite_buf[coord] |= color
+                                    if line < col_line or (line == col_line and sx < col_x):
+                                        col_line = line
+                                        col_x = sx
                                 else:
-                                    sprite_buf[coord] = color
-                                    drawn.append(coord)
+                                    sprite_touched[coord] = 1
+                            if sprite_buf[coord]:
+                                if or_mode:
+                                    sprite_buf[coord] |= color
+                            else:
+                                sprite_buf[coord] = claim
+                                drawn.append(coord)
                 else:
                     for bit_i, pixel in enumerate(pixels):
                         if not pixel:
@@ -984,18 +1029,20 @@ def _render_sprites_mode2(
                                 continue
                             for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
                                 coord = line_off + sx * screen_scale + ss
-                                if sprite_touched[coord]:
-                                    if not ignore_collision:
+                                if collides:
+                                    if sprite_touched[coord]:
                                         coincidence = True
-                                else:
-                                    sprite_touched[coord] = 1
-                                if color:
-                                    if sprite_buf[coord]:
-                                        if or_mode:
-                                            sprite_buf[coord] |= color
+                                        if line < col_line or (line == col_line and sx < col_x):
+                                            col_line = line
+                                            col_x = sx
                                     else:
-                                        sprite_buf[coord] = color
-                                        drawn.append(coord)
+                                        sprite_touched[coord] = 1
+                                if sprite_buf[coord]:
+                                    if or_mode:
+                                        sprite_buf[coord] |= color
+                                else:
+                                    sprite_buf[coord] = claim
+                                    drawn.append(coord)
 
     # Composite only the pixels a sprite actually touched (avoids scanning the
     # whole h*width buffer every frame when sprites are sparse or absent).
@@ -1005,10 +1052,13 @@ def _render_sprites_mode2(
             buf[coord] = _G7_SPRITE_PALETTE[sprite_buf[coord] & 0x0F]
     else:
         for coord in drawn:
-            buf[coord] = sprite_buf[coord]
+            buf[coord] = sprite_buf[coord] & 0x0F
 
     if coincidence:
         vdp.status |= 0x20
+        if not had_collision:  # first collision of the frame wins (openMSX)
+            vdp.collision_x = col_x + _COLLISION_X_OFFSET
+            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 def _sprite_row_pixels(
