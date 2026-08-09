@@ -16,14 +16,14 @@ from msx.mapper import FlatMapper
 class Memory:
     rom: bytes
     ram: bytearray
-    _mapper: "Mapper" = field(repr=False)
-    _mapper2: "Mapper" = field(default_factory=lambda: FlatMapper(None), repr=False)
+    _mapper: Mapper = field(repr=False)
+    _mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
     _logger: DebugLogger | None = field(default=None, repr=False)
     extrom: bytes | None = field(default=None, repr=False)
-    ram_mapper: "RamMapper | None" = field(default=None, repr=False)
+    ram_mapper: RamMapper | None = field(default=None, repr=False)
     # MSX slot 3 secondary slot register: bits 7:6=page3, 5:4=page2, 3:2=page1, 1:0=page0
     sub_slot_reg: int = 0x00
     sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
@@ -35,7 +35,7 @@ class Memory:
     # Memory-mapped floppy interface in slot 3 sub-slot 0 page 1 (0x4000-0x7FFF);
     # the concrete FloppyDisk base exposes read_mem(addr)/write_mem(addr, value).
     # None when the machine has no FDC.
-    fdc: "FloppyDisk | None" = field(default=None, repr=False)
+    fdc: FloppyDisk | None = field(default=None, repr=False)
     rom_name: str = ""
     sub0_rom_name: str = ""
     _rom_len: int = field(init=False, repr=False, default=0)
@@ -66,18 +66,18 @@ class Memory:
             return (~self.sub_slot_reg) & 0xFF
         page = (addr >> 14) & 0x03
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        frs = self.flat_ram_subslot
-        if frs is not None:
+        flat_sub = self.flat_ram_subslot
+        if flat_sub is not None:
             # Data-driven MSX2 slot-3 (e.g. HB-F1XD), inlined for the per-access
             # hot path: SUB ROM in sub-slot 0 page 0, memory-mapped FDC in sub-slot
-            # 0 page 1, flat 64 KB RAM (offset == address) in `frs`, else open bus.
+            # 0 page 1, flat 64 KB RAM (offset == address) in `flat_sub`, else open bus.
             if sub == 0:
                 if page == 0 and self.sub0_rom is not None:
                     return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
                 if page == 1 and self.fdc is not None:
                     return self.fdc.read_mem(addr)
                 return 0xFF
-            if sub == frs:
+            if sub == flat_sub:
                 ram = self.ram
                 return ram[addr] if addr < len(ram) else 0xFF
             return 0xFF
@@ -87,7 +87,7 @@ class Memory:
         #   2, 3: main RAM
         if sub == 0:
             if self.sub0_rom is not None:
-                if addr <= 0x3FFF:
+                if page == 0:
                     return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
                 return 0xFF  # sub0_rom present but addr out of its page-0 range
         elif sub == 1:
@@ -120,14 +120,14 @@ class Memory:
             return
         page = (addr >> 14) & 0x03
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        frs = self.flat_ram_subslot
-        if frs is not None:
+        flat_sub = self.flat_ram_subslot
+        if flat_sub is not None:
             # Data-driven MSX2 slot-3 write, inlined for the hot path (see read()).
             if sub == 0:
                 if page == 1 and self.fdc is not None:
                     self.fdc.write_mem(addr, value)
                 return  # SUB ROM (page 0) / open-bus pages ignore writes
-            if sub == frs:
+            if sub == flat_sub:
                 ram = self.ram
                 if addr < len(ram):
                     ram[addr] = value
