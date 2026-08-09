@@ -351,6 +351,23 @@ def _srl(cpu: Z80, v: int) -> int:
     return result
 
 
+# Portability: this tuple-of-closures dispatch (like the module-level
+# _DISPATCH / _ED_DISPATCH tables) is a Python idiom. A Rust/C++ port
+# expresses it as a `match` or a static function-pointer array rather than
+# indexing a tuple of function objects. Hoisted to module scope (shared by
+# _execute_cb and the DD/FD CB path) to avoid a per-call list allocation.
+_CB_ROTATE_FNS: tuple[Callable[[Z80, int], int], ...] = (
+    _rlc,
+    _rrc,
+    _rl,
+    _rr,
+    _sla,
+    _sra,
+    _sll,
+    _srl,
+)
+
+
 def _execute_cb(cpu: Z80) -> int:
     op = cpu._fetch()
     row = op >> 6
@@ -360,12 +377,7 @@ def _execute_cb(cpu: Z80) -> int:
     cycles = 8 if reg != 6 else 15
 
     if row == 0:
-        # Portability: this list-of-closures dispatch (like the module-level
-        # _DISPATCH / _ED_DISPATCH tables) is a Python idiom. A Rust/C++ port
-        # expresses it as a `match` or a static function-pointer array rather
-        # than indexing a list of function objects.
-        fn = [_rlc, _rrc, _rl, _rr, _sla, _sra, _sll, _srl][bit]
-        result = fn(cpu, v)
+        result = _CB_ROTATE_FNS[bit](cpu, v)
         _set_r(cpu, reg, result)
     elif row == 1:  # BIT
         f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
@@ -388,406 +400,432 @@ def _execute_cb(cpu: Z80) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
+def _dd_fd_ld_ixy_nn(cpu: Z80, use_iy: bool, op: int) -> int:
     r = cpu.registers
-    op = cpu._fetch()
+    nn = cpu._fetch_word()
+    if use_iy:
+        r.IY = nn
+    else:
+        r.IX = nn
+    return 14
+
+
+def _dd_fd_ld_ind_nn_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
     xy = r.IY if use_iy else r.IX
+    nn = cpu._fetch_word()
+    cpu.write_byte(nn, xy & 0xFF)
+    cpu.write_byte((nn + 1) & 0xFFFF, (xy >> 8) & 0xFF)
+    return 20
 
-    # LD rr, nn
-    if op == 0x21:
-        nn = cpu._fetch_word()
-        if use_iy:
-            r.IY = nn
-        else:
-            r.IX = nn
-        return 14
-    # LD (nn), IX/IY
-    if op == 0x22:
-        nn = cpu._fetch_word()
-        cpu.write_byte(nn, xy & 0xFF)
-        cpu.write_byte((nn + 1) & 0xFFFF, (xy >> 8) & 0xFF)
+
+def _dd_fd_ld_ixy_ind_nn(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    nn = cpu._fetch_word()
+    lo = cpu.read_byte(nn)
+    hi = cpu.read_byte((nn + 1) & 0xFFFF)
+    val = (hi << 8) | lo
+    if use_iy:
+        r.IY = val
+    else:
+        r.IX = val
+    return 20
+
+
+def _dd_fd_inc_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IY = (r.IY + 1) & 0xFFFF
+    else:
+        r.IX = (r.IX + 1) & 0xFFFF
+    return 10
+
+
+def _dd_fd_dec_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IY = (r.IY - 1) & 0xFFFF
+    else:
+        r.IX = (r.IX - 1) & 0xFFFF
+    return 10
+
+
+def _dd_fd_add_ixy_rr(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    xy = r.IY if use_iy else r.IX
+    if op == 0x09:
+        rr = r.BC
+    elif op == 0x19:
+        rr = r.DE
+    elif op == 0x29:
+        rr = xy
+    else:
+        rr = r.SP
+    result = _add16(cpu, xy, rr)
+    if use_iy:
+        r.IY = result
+    else:
+        r.IX = result
+    return 15
+
+
+def _dd_fd_push_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    cpu._push(r.IY if use_iy else r.IX)
+    return 15
+
+
+def _dd_fd_pop_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    val = cpu._pop()
+    if use_iy:
+        r.IY = val
+    else:
+        r.IX = val
+    return 14
+
+
+def _dd_fd_ex_sp_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    xy = r.IY if use_iy else r.IX
+    lo = cpu.read_byte(r.SP)
+    hi = cpu.read_byte((r.SP + 1) & 0xFFFF)
+    cpu.write_byte(r.SP, xy & 0xFF)
+    cpu.write_byte((r.SP + 1) & 0xFFFF, (xy >> 8) & 0xFF)
+    val = (hi << 8) | lo
+    if use_iy:
+        r.IY = val
+    else:
+        r.IX = val
+    return 23
+
+
+def _dd_fd_jp_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    r.PC = r.IY if use_iy else r.IX
+    return 8
+
+
+def _dd_fd_ld_sp_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    r.SP = r.IY if use_iy else r.IX
+    return 10
+
+
+def _dd_fd_ea(cpu: Z80, use_iy: bool) -> int:
+    r = cpu.registers
+    xy = r.IY if use_iy else r.IX
+    d = _signed(cpu._fetch())
+    return (xy + d) & 0xFFFF
+
+
+def _dd_fd_inc_ind_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    ea = _dd_fd_ea(cpu, use_iy)
+    v = cpu.read_byte(ea)
+    cpu.write_byte(ea, _inc8(cpu, v))
+    return 23
+
+
+def _dd_fd_dec_ind_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    ea = _dd_fd_ea(cpu, use_iy)
+    v = cpu.read_byte(ea)
+    cpu.write_byte(ea, _dec8(cpu, v))
+    return 23
+
+
+def _dd_fd_ld_ind_ixy_n(cpu: Z80, use_iy: bool, op: int) -> int:
+    ea = _dd_fd_ea(cpu, use_iy)
+    n = cpu._fetch()
+    cpu.write_byte(ea, n)
+    return 19
+
+
+def _dd_fd_ld_r_ind_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD r, (IX+d)/(IY+d) — dst register index is (op >> 3) & 7 for
+    # 0x46/4E/56/5E/66/6E/7E (never 6, since (HL) doesn't apply here).
+    ea = _dd_fd_ea(cpu, use_iy)
+    _set_r(cpu, (op >> 3) & 7, cpu.read_byte(ea))
+    return 19
+
+
+def _dd_fd_ld_ind_ixy_r(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD (IX+d)/(IY+d), r — src register index is op & 7 for
+    # 0x70/71/72/73/74/75/77 (never 6; 0x76 is HALT, not in this group).
+    ea = _dd_fd_ea(cpu, use_iy)
+    cpu.write_byte(ea, _get_r(cpu, op & 7))
+    return 19
+
+
+def _dd_fd_alu_ind_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
+    # ALU A, (IX+d)/(IY+d) — group is (op >> 3) & 7, matching the
+    # ADD/ADC/SUB/SBC/AND/XOR/OR/CP ordering used by _make_alu_r.
+    ea = _dd_fd_ea(cpu, use_iy)
+    v = cpu.read_byte(ea)
+    r = cpu.registers
+    grp = (op >> 3) & 7
+    if grp == 0:
+        r.A = _add8(cpu, r.A, v)
+    elif grp == 1:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _add8(cpu, r.A, v, c)
+    elif grp == 2:
+        r.A = _sub8(cpu, r.A, v)
+    elif grp == 3:
+        c = 1 if (r.F & F.FLAG_C) else 0
+        r.A = _sub8(cpu, r.A, v, c)
+    elif grp == 4:
+        _and8(cpu, v)
+    elif grp == 5:
+        _xor8(cpu, v)
+    elif grp == 6:
+        _or8(cpu, v)
+    else:
+        _cp8(cpu, v)
+    return 19
+
+
+def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    xy = r.IY if use_iy else r.IX
+    d = _signed(cpu._fetch())
+    cb_op = cpu._fetch()
+    ea = (xy + d) & 0xFFFF
+    v = cpu.read_byte(ea)
+    row = cb_op >> 6
+    bit = (cb_op >> 3) & 7
+    if row == 0:
+        result = _CB_ROTATE_FNS[bit](cpu, v)
+        cpu.write_byte(ea, result)
+    elif row == 1:
+        f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
+        if not (v & (1 << bit)):
+            f |= F.FLAG_Z | F.FLAG_PV
+        if (v & (1 << bit)) and bit == 7:
+            f |= F.FLAG_S
+        cpu.registers.F = f
         return 20
-    # LD IX/IY, (nn)
-    if op == 0x2A:
-        nn = cpu._fetch_word()
-        lo = cpu.read_byte(nn)
-        hi = cpu.read_byte((nn + 1) & 0xFFFF)
-        val = (hi << 8) | lo
-        if use_iy:
-            r.IY = val
-        else:
-            r.IX = val
-        return 20
-    # INC IX/IY
-    if op == 0x23:
-        if use_iy:
-            r.IY = (r.IY + 1) & 0xFFFF
-        else:
-            r.IX = (r.IX + 1) & 0xFFFF
-        return 10
-    # DEC IX/IY
-    if op == 0x2B:
-        if use_iy:
-            r.IY = (r.IY - 1) & 0xFFFF
-        else:
-            r.IX = (r.IX - 1) & 0xFFFF
-        return 10
-    # ADD IX/IY, rr
-    if op in (0x09, 0x19, 0x29, 0x39):
-        pairs = {0x09: r.BC, 0x19: r.DE, 0x29: xy, 0x39: r.SP}
-        result = _add16(cpu, xy, pairs[op])
-        if use_iy:
-            r.IY = result
-        else:
-            r.IX = result
-        return 15
-    # PUSH IX/IY
-    if op == 0xE5:
-        cpu._push(xy)
-        return 15
-    # POP IX/IY
-    if op == 0xE1:
-        val = cpu._pop()
-        if use_iy:
-            r.IY = val
-        else:
-            r.IX = val
-        return 14
-    # EX (SP), IX/IY
-    if op == 0xE3:
-        lo = cpu.read_byte(r.SP)
-        hi = cpu.read_byte((r.SP + 1) & 0xFFFF)
-        cpu.write_byte(r.SP, xy & 0xFF)
-        cpu.write_byte((r.SP + 1) & 0xFFFF, (xy >> 8) & 0xFF)
-        val = (hi << 8) | lo
-        if use_iy:
-            r.IY = val
-        else:
-            r.IX = val
-        return 23
-    # JP (IX/IY)
-    if op == 0xE9:
-        r.PC = xy
-        return 8
-    # LD SP, IX/IY
-    if op == 0xF9:
-        r.SP = xy
-        return 10
+    elif row == 2:
+        cpu.write_byte(ea, v & ~(1 << bit))
+    else:
+        cpu.write_byte(ea, v | (1 << bit))
+    return 23
 
-    # (IX/IY + d) instructions
-    if op in (
-        0x34,
-        0x35,
-        0x36,
-        0x46,
-        0x4E,
-        0x56,
-        0x5E,
-        0x66,
-        0x6E,
-        0x7E,
-        0x70,
-        0x71,
-        0x72,
-        0x73,
-        0x74,
-        0x75,
-        0x77,
-        0x86,
-        0x8E,
-        0x96,
-        0x9E,
-        0xA6,
-        0xAE,
-        0xB6,
-        0xBE,
-    ):
-        d = _signed(cpu._fetch())
-        ea = (xy + d) & 0xFFFF
-        if op == 0x34:
-            v = cpu.read_byte(ea)
-            cpu.write_byte(ea, _inc8(cpu, v))
-            return 23
-        if op == 0x35:
-            v = cpu.read_byte(ea)
-            cpu.write_byte(ea, _dec8(cpu, v))
-            return 23
-        if op == 0x36:
-            n = cpu._fetch()
-            cpu.write_byte(ea, n)
-            return 19
-        if op == 0x7E:
-            r.A = cpu.read_byte(ea)
-            return 19
-        if op == 0x46:
-            r.B = cpu.read_byte(ea)
-            return 19
-        if op == 0x4E:
-            r.C = cpu.read_byte(ea)
-            return 19
-        if op == 0x56:
-            r.D = cpu.read_byte(ea)
-            return 19
-        if op == 0x5E:
-            r.E = cpu.read_byte(ea)
-            return 19
-        if op == 0x66:
-            r.H = cpu.read_byte(ea)
-            return 19
-        if op == 0x6E:
-            r.L = cpu.read_byte(ea)
-            return 19
-        if op == 0x70:
-            cpu.write_byte(ea, r.B)
-            return 19
-        if op == 0x71:
-            cpu.write_byte(ea, r.C)
-            return 19
-        if op == 0x72:
-            cpu.write_byte(ea, r.D)
-            return 19
-        if op == 0x73:
-            cpu.write_byte(ea, r.E)
-            return 19
-        if op == 0x74:
-            cpu.write_byte(ea, r.H)
-            return 19
-        if op == 0x75:
-            cpu.write_byte(ea, r.L)
-            return 19
-        if op == 0x77:
-            cpu.write_byte(ea, r.A)
-            return 19
-        v = cpu.read_byte(ea)
-        if op == 0x86:
-            r.A = _add8(cpu, r.A, v)
-            return 19
-        if op == 0x8E:
-            c = 1 if (r.F & F.FLAG_C) else 0
-            r.A = _add8(cpu, r.A, v, c)
-            return 19
-        if op == 0x96:
-            r.A = _sub8(cpu, r.A, v)
-            return 19
-        if op == 0x9E:
-            c = 1 if (r.F & F.FLAG_C) else 0
-            r.A = _sub8(cpu, r.A, v, c)
-            return 19
-        if op == 0xA6:
-            _and8(cpu, v)
-            return 19
-        if op == 0xAE:
-            _xor8(cpu, v)
-            return 19
-        if op == 0xB6:
-            _or8(cpu, v)
-            return 19
-        if op == 0xBE:
-            _cp8(cpu, v)
-            return 19
 
-    # DD CB (bit ops on (IX+d))
-    if op == 0xCB:
-        d = _signed(cpu._fetch())
-        cb_op = cpu._fetch()
-        ea = (xy + d) & 0xFFFF
-        v = cpu.read_byte(ea)
-        row = cb_op >> 6
-        bit = (cb_op >> 3) & 7
-        if row == 0:
-            fns = [_rlc, _rrc, _rl, _rr, _sla, _sra, _sll, _srl]
-            result = fns[bit](cpu, v)
-            cpu.write_byte(ea, result)
-        elif row == 1:
-            f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
-            if not (v & (1 << bit)):
-                f |= F.FLAG_Z | F.FLAG_PV
-            if (v & (1 << bit)) and bit == 7:
-                f |= F.FLAG_S
-            cpu.registers.F = f
-            return 20
-        elif row == 2:
-            cpu.write_byte(ea, v & ~(1 << bit))
-        else:
-            cpu.write_byte(ea, v | (1 << bit))
-        return 23
+def _dd_fd_inc_ixy_h(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IYH = _inc8(cpu, r.IYH)
+    else:
+        r.IXH = _inc8(cpu, r.IXH)
+    return 8
 
-    # INC/DEC r (high/low bytes of IX/IY)
-    if op == 0x24:
-        if use_iy:
-            r.IYH = _inc8(cpu, r.IYH)
-        else:
-            r.IXH = _inc8(cpu, r.IXH)
-        return 8
-    if op == 0x25:
-        if use_iy:
-            r.IYH = _dec8(cpu, r.IYH)
-        else:
-            r.IXH = _dec8(cpu, r.IXH)
-        return 8
-    if op == 0x2C:
-        if use_iy:
-            r.IYL = _inc8(cpu, r.IYL)
-        else:
-            r.IXL = _inc8(cpu, r.IXL)
-        return 8
-    if op == 0x2D:
-        if use_iy:
-            r.IYL = _dec8(cpu, r.IYL)
-        else:
-            r.IXL = _dec8(cpu, r.IXL)
-        return 8
 
-    # Undocumented: LD IXH/IXL, n  (DD 26 / DD 2E) — 11 T-states
+def _dd_fd_dec_ixy_h(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IYH = _dec8(cpu, r.IYH)
+    else:
+        r.IXH = _dec8(cpu, r.IXH)
+    return 8
+
+
+def _dd_fd_inc_ixy_l(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IYL = _inc8(cpu, r.IYL)
+    else:
+        r.IXL = _inc8(cpu, r.IXL)
+    return 8
+
+
+def _dd_fd_dec_ixy_l(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    if use_iy:
+        r.IYL = _dec8(cpu, r.IYL)
+    else:
+        r.IXL = _dec8(cpu, r.IXL)
+    return 8
+
+
+def _dd_fd_ld_ixy_h_n(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    n = cpu._fetch()
+    if use_iy:
+        r.IYH = n
+    else:
+        r.IXH = n
+    return 11
+
+
+def _dd_fd_ld_ixy_l_n(cpu: Z80, use_iy: bool, op: int) -> int:
+    r = cpu.registers
+    n = cpu._fetch()
+    if use_iy:
+        r.IYL = n
+    else:
+        r.IXL = n
+    return 11
+
+
+def _dd_fd_ld_r_ixy_h(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD r, IXH/IYH (undocumented) — dst is (op >> 3) & 7 for 0x44/4C/54/5C/7C.
+    r = cpu.registers
     xh = r.IYH if use_iy else r.IXH
+    _set_r(cpu, (op >> 3) & 7, xh)
+    return 8
+
+
+def _dd_fd_ld_r_ixy_l(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD r, IXL/IYL (undocumented) — dst is (op >> 3) & 7 for 0x45/4D/55/5D/7D.
+    r = cpu.registers
     xl = r.IYL if use_iy else r.IXL
-    if op == 0x26:
-        n = cpu._fetch()
-        if use_iy:
-            r.IYH = n
-        else:
-            r.IXH = n
-        return 11
-    if op == 0x2E:
-        n = cpu._fetch()
-        if use_iy:
-            r.IYL = n
-        else:
-            r.IXL = n
-        return 11
+    _set_r(cpu, (op >> 3) & 7, xl)
+    return 8
 
-    # Undocumented: LD r, IXH  (DD 44/4C/54/5C/7C) — 8 T-states
-    if op in (0x44, 0x4C, 0x54, 0x5C, 0x7C):
-        if op == 0x44:
-            r.B = xh
-        elif op == 0x4C:
-            r.C = xh
-        elif op == 0x54:
-            r.D = xh
-        elif op == 0x5C:
-            r.E = xh
-        else:
-            r.A = xh
-        return 8
 
-    # Undocumented: LD r, IXL  (DD 45/4D/55/5D/7D) — 8 T-states
-    if op in (0x45, 0x4D, 0x55, 0x5D, 0x7D):
-        if op == 0x45:
-            r.B = xl
-        elif op == 0x4D:
-            r.C = xl
-        elif op == 0x55:
-            r.D = xl
-        elif op == 0x5D:
-            r.E = xl
-        else:
-            r.A = xl
-        return 8
+def _dd_fd_xy_half_src_val(cpu: Z80, use_iy: bool, op: int) -> int:
+    # Shared by "LD IXH,r" / "LD IXL,r": src is op & 7, where 4/5 mean
+    # "the other half register" (self-copy included) rather than literal H/L.
+    r = cpu.registers
+    src = op & 7
+    if src == 4:
+        return r.IYH if use_iy else r.IXH
+    if src == 5:
+        return r.IYL if use_iy else r.IXL
+    return _get_r(cpu, src)
 
-    # Undocumented: LD IXH, r  (DD 60/61/62/63/64/65/67) — 8 T-states
-    # 0x66 = LD H,(IX+d) handled above; excluded from this group
-    if op in (0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x67):
-        if op == 0x60:
-            val = r.B
-        elif op == 0x61:
-            val = r.C
-        elif op == 0x62:
-            val = r.D
-        elif op == 0x63:
-            val = r.E
-        elif op == 0x64:
-            val = xh  # self-copy
-        elif op == 0x65:
-            val = xl
-        else:
-            val = r.A
-        if use_iy:
-            r.IYH = val
-        else:
-            r.IXH = val
-        return 8
 
-    # Undocumented: LD IXL, r  (DD 68/69/6A/6B/6C/6D/6F) — 8 T-states
-    # 0x6E = LD L,(IX+d) handled above; excluded from this group
-    if op in (0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6F):
-        if op == 0x68:
-            val = r.B
-        elif op == 0x69:
-            val = r.C
-        elif op == 0x6A:
-            val = r.D
-        elif op == 0x6B:
-            val = r.E
-        elif op == 0x6C:
-            val = xh
-        elif op == 0x6D:
-            val = xl  # self-copy
-        else:
-            val = r.A
-        if use_iy:
-            r.IYL = val
-        else:
-            r.IXL = val
-        return 8
+def _dd_fd_ld_ixy_h_r(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD IXH/IYH, r (undocumented) — 0x60/61/62/63/64/65/67.
+    # 0x66 = LD H,(IX+d), handled by _dd_fd_ld_r_ind_ixy instead.
+    r = cpu.registers
+    val = _dd_fd_xy_half_src_val(cpu, use_iy, op)
+    if use_iy:
+        r.IYH = val
+    else:
+        r.IXH = val
+    return 8
 
-    # Undocumented: ADD/ADC A, IXH/IXL
-    if op == 0x84:
-        r.A = _add8(cpu, r.A, xh)
-        return 8
-    if op == 0x85:
-        r.A = _add8(cpu, r.A, xl)
-        return 8
-    if op == 0x8C:
+
+def _dd_fd_ld_ixy_l_r(cpu: Z80, use_iy: bool, op: int) -> int:
+    # LD IXL/IYL, r (undocumented) — 0x68/69/6A/6B/6C/6D/6F.
+    # 0x6E = LD L,(IX+d), handled by _dd_fd_ld_r_ind_ixy instead.
+    r = cpu.registers
+    val = _dd_fd_xy_half_src_val(cpu, use_iy, op)
+    if use_iy:
+        r.IYL = val
+    else:
+        r.IXL = val
+    return 8
+
+
+def _dd_fd_alu_ixy_half(cpu: Z80, use_iy: bool, op: int) -> int:
+    # Undocumented ADD/ADC/SUB/SBC/AND/XOR/OR/CP A, IXH/IXL/IYH/IYL.
+    # grp = (op >> 3) & 7 matches the standard ALU ordering; op & 1 == 0
+    # selects the high half, 1 selects the low half.
+    r = cpu.registers
+    if op & 1:
+        half = r.IYL if use_iy else r.IXL
+    else:
+        half = r.IYH if use_iy else r.IXH
+    grp = (op >> 3) & 7
+    if grp == 0:
+        r.A = _add8(cpu, r.A, half)
+    elif grp == 1:
         c = 1 if (r.F & F.FLAG_C) else 0
-        r.A = _add8(cpu, r.A, xh, c)
-        return 8
-    if op == 0x8D:
+        r.A = _add8(cpu, r.A, half, c)
+    elif grp == 2:
+        r.A = _sub8(cpu, r.A, half)
+    elif grp == 3:
         c = 1 if (r.F & F.FLAG_C) else 0
-        r.A = _add8(cpu, r.A, xl, c)
-        return 8
+        r.A = _sub8(cpu, r.A, half, c)
+    elif grp == 4:
+        _and8(cpu, half)
+    elif grp == 5:
+        _xor8(cpu, half)
+    elif grp == 6:
+        _or8(cpu, half)
+    else:
+        _cp8(cpu, half)
+    return 8
 
-    # Undocumented: SUB/SBC A, IXH/IXL
-    if op == 0x94:
-        r.A = _sub8(cpu, r.A, xh)
-        return 8
-    if op == 0x95:
-        r.A = _sub8(cpu, r.A, xl)
-        return 8
-    if op == 0x9C:
-        c = 1 if (r.F & F.FLAG_C) else 0
-        r.A = _sub8(cpu, r.A, xh, c)
-        return 8
-    if op == 0x9D:
-        c = 1 if (r.F & F.FLAG_C) else 0
-        r.A = _sub8(cpu, r.A, xl, c)
-        return 8
 
-    # Undocumented: AND/XOR/OR/CP IXH/IXL
-    if op == 0xA4:
-        _and8(cpu, xh)
-        return 8
-    if op == 0xA5:
-        _and8(cpu, xl)
-        return 8
-    if op == 0xAC:
-        _xor8(cpu, xh)
-        return 8
-    if op == 0xAD:
-        _xor8(cpu, xl)
-        return 8
-    if op == 0xB4:
-        _or8(cpu, xh)
-        return 8
-    if op == 0xB5:
-        _or8(cpu, xl)
-        return 8
-    if op == 0xBC:
-        _cp8(cpu, xh)
-        return 8
-    if op == 0xBD:
-        _cp8(cpu, xl)
-        return 8
+_DD_FD_DISPATCH: dict[int, Callable[[Z80, bool, int], int]] = {}
 
+
+def _build_dd_fd_dispatch() -> None:
+    d = _DD_FD_DISPATCH
+    d[0x21] = _dd_fd_ld_ixy_nn
+    d[0x22] = _dd_fd_ld_ind_nn_ixy
+    d[0x2A] = _dd_fd_ld_ixy_ind_nn
+    d[0x23] = _dd_fd_inc_ixy
+    d[0x2B] = _dd_fd_dec_ixy
+    for op in (0x09, 0x19, 0x29, 0x39):
+        d[op] = _dd_fd_add_ixy_rr
+    d[0xE5] = _dd_fd_push_ixy
+    d[0xE1] = _dd_fd_pop_ixy
+    d[0xE3] = _dd_fd_ex_sp_ixy
+    d[0xE9] = _dd_fd_jp_ixy
+    d[0xF9] = _dd_fd_ld_sp_ixy
+
+    d[0x34] = _dd_fd_inc_ind_ixy
+    d[0x35] = _dd_fd_dec_ind_ixy
+    d[0x36] = _dd_fd_ld_ind_ixy_n
+    for op in (0x46, 0x4E, 0x56, 0x5E, 0x66, 0x6E, 0x7E):
+        d[op] = _dd_fd_ld_r_ind_ixy
+    for op in (0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x77):
+        d[op] = _dd_fd_ld_ind_ixy_r
+    for op in (0x86, 0x8E, 0x96, 0x9E, 0xA6, 0xAE, 0xB6, 0xBE):
+        d[op] = _dd_fd_alu_ind_ixy
+
+    d[0xCB] = _dd_fd_cb
+
+    d[0x24] = _dd_fd_inc_ixy_h
+    d[0x25] = _dd_fd_dec_ixy_h
+    d[0x2C] = _dd_fd_inc_ixy_l
+    d[0x2D] = _dd_fd_dec_ixy_l
+
+    d[0x26] = _dd_fd_ld_ixy_h_n
+    d[0x2E] = _dd_fd_ld_ixy_l_n
+
+    for op in (0x44, 0x4C, 0x54, 0x5C, 0x7C):
+        d[op] = _dd_fd_ld_r_ixy_h
+    for op in (0x45, 0x4D, 0x55, 0x5D, 0x7D):
+        d[op] = _dd_fd_ld_r_ixy_l
+    for op in (0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x67):
+        d[op] = _dd_fd_ld_ixy_h_r
+    for op in (0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6F):
+        d[op] = _dd_fd_ld_ixy_l_r
+
+    for op in (
+        0x84,
+        0x85,
+        0x8C,
+        0x8D,
+        0x94,
+        0x95,
+        0x9C,
+        0x9D,
+        0xA4,
+        0xA5,
+        0xAC,
+        0xAD,
+        0xB4,
+        0xB5,
+        0xBC,
+        0xBD,
+    ):
+        d[op] = _dd_fd_alu_ixy_half
+
+
+_build_dd_fd_dispatch()
+
+
+def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
+    op = cpu._fetch()
+    handler = _DD_FD_DISPATCH.get(op)
+    if handler is not None:
+        return handler(cpu, use_iy, op)
     # prefix absorbed — delegate to normal dispatch (real Z80 behavior)
     return _DISPATCH[op](cpu)
 
@@ -797,229 +835,288 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _execute_ed(cpu: Z80) -> int:
+def _ed_im(cpu: Z80, op: int) -> int:
+    cpu.im = 0 if op == 0x46 else (1 if op == 0x56 else 2)
+    return 8
+
+
+def _ed_ld_i_a(cpu: Z80, op: int) -> int:
+    cpu.registers.I = cpu.registers.A
+    return 9
+
+
+def _ed_ld_r_a(cpu: Z80, op: int) -> int:
+    cpu.registers.R = cpu.registers.A
+    return 9
+
+
+def _ed_ld_a_ir(cpu: Z80, op: int) -> int:
     r = cpu.registers
-    op = cpu._fetch()
+    r.A = r.I if op == 0x57 else r.R
+    f = (r.F & F.FLAG_C) | (F.FLAG_PV if cpu.iff2 else 0)
+    if r.A == 0:
+        f |= F.FLAG_Z
+    if r.A & 0x80:
+        f |= F.FLAG_S
+    r.F = f
+    return 9
 
-    # IM 0/1/2
-    if op == 0x46:
-        cpu.im = 0
-        return 8
-    if op == 0x56:
-        cpu.im = 1
-        return 8
-    if op == 0x5E:
-        cpu.im = 2
-        return 8
 
-    # LD I, A / LD R, A
-    if op == 0x47:
-        r.I = r.A
-        return 9
-    if op == 0x4F:
-        r.R = r.A
-        return 9
+def _ed_neg(cpu: Z80, op: int) -> int:
+    cpu.registers.A = _sub8(cpu, 0, cpu.registers.A)
+    return 8
 
-    # LD A, I / LD A, R
-    if op == 0x57:
-        r.A = r.I
-        f = (r.F & F.FLAG_C) | (F.FLAG_PV if cpu.iff2 else 0)
-        if r.A == 0:
-            f |= F.FLAG_Z
-        if r.A & 0x80:
-            f |= F.FLAG_S
-        r.F = f
-        return 9
-    if op == 0x5F:
-        r.A = r.R
-        f = (r.F & F.FLAG_C) | (F.FLAG_PV if cpu.iff2 else 0)
-        if r.A == 0:
-            f |= F.FLAG_Z
-        if r.A & 0x80:
-            f |= F.FLAG_S
-        r.F = f
-        return 9
 
-    # NEG
-    if op == 0x44:
-        r.A = _sub8(cpu, 0, r.A)
-        return 8
-
+def _ed_retn_reti(cpu: Z80, op: int) -> int:
     # RETN / RETI both copy IFF2 back into IFF1 on the real Z80; they differ
     # only in the opcode byte that external interrupt controllers observe, not
     # in their effect on the CPU's interrupt flip-flops (Zilog UM0080).
-    # RETN
-    if op == 0x45:
-        cpu.iff1 = cpu.iff2
-        r.PC = cpu._pop()
-        return 14
+    cpu.iff1 = cpu.iff2
+    cpu.registers.PC = cpu._pop()
+    return 14
 
-    # RETI
-    if op == 0x4D:
-        cpu.iff1 = cpu.iff2
-        r.PC = cpu._pop()
-        return 14
 
-    # ADC HL, rr — constant-tuple membership + explicit register select (no
-    # per-call dict allocation; maps cleanly to a Rust `match`).
-    if op in (0x4A, 0x5A, 0x6A, 0x7A):
-        if op == 0x4A:
-            rr = r.BC
-        elif op == 0x5A:
-            rr = r.DE
-        elif op == 0x6A:
-            rr = r.HL
-        else:
-            rr = r.SP
-        r.HL = _adc16(cpu, r.HL, rr)
-        return 15
+def _ed_adc_hl_rr(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    if op == 0x4A:
+        rr = r.BC
+    elif op == 0x5A:
+        rr = r.DE
+    elif op == 0x6A:
+        rr = r.HL
+    else:
+        rr = r.SP
+    r.HL = _adc16(cpu, r.HL, rr)
+    return 15
 
-    # SBC HL, rr
-    if op in (0x42, 0x52, 0x62, 0x72):
-        if op == 0x42:
-            rr = r.BC
-        elif op == 0x52:
-            rr = r.DE
-        elif op == 0x62:
-            rr = r.HL
-        else:
-            rr = r.SP
-        r.HL = _sbc16(cpu, r.HL, rr)
-        return 15
 
-    # LD (nn), rr  /  LD rr, (nn)
-    if op in (0x43, 0x53, 0x63, 0x73):
-        nn = cpu._fetch_word()
-        pairs_map = {0x43: r.BC, 0x53: r.DE, 0x63: r.HL, 0x73: r.SP}
-        val = pairs_map[op]
-        cpu.write_byte(nn, val & 0xFF)
-        cpu.write_byte((nn + 1) & 0xFFFF, (val >> 8) & 0xFF)
-        return 20
-    if op in (0x4B, 0x5B, 0x6B, 0x7B):
-        nn = cpu._fetch_word()
-        lo = cpu.read_byte(nn)
-        hi = cpu.read_byte((nn + 1) & 0xFFFF)
-        val = (hi << 8) | lo
-        if op == 0x4B:
-            r.BC = val
-        elif op == 0x5B:
-            r.DE = val
-        elif op == 0x6B:
-            r.HL = val
-        else:
-            r.SP = val
-        return 20
+def _ed_sbc_hl_rr(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    if op == 0x42:
+        rr = r.BC
+    elif op == 0x52:
+        rr = r.DE
+    elif op == 0x62:
+        rr = r.HL
+    else:
+        rr = r.SP
+    r.HL = _sbc16(cpu, r.HL, rr)
+    return 15
 
-    # IN r, (C) — port address is (B << 8) | C on the bus. The destination
-    # register index is (op >> 3) & 7 for these opcodes (0x40,0x48,…,0x78).
-    if op in (0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x78):
-        v = cpu.read_port((r.B << 8) | r.C)
-        _set_r(cpu, (op >> 3) & 7, v)
-        r.F = (r.F & F.FLAG_C) | _szp(v)
-        return 12
-    # IN F, (C)  (0x70 — result discarded, flags set)
-    if op == 0x70:
-        v = cpu.read_port((r.B << 8) | r.C)
-        r.F = (r.F & F.FLAG_C) | _szp(v)
-        return 12
 
-    # OUT (C), r — port address is (B << 8) | C on the bus. Source register
-    # index is (op >> 3) & 7 for these opcodes (0x41,0x49,…,0x79).
-    if op in (0x41, 0x49, 0x51, 0x59, 0x61, 0x69, 0x79):
-        cpu.write_port((r.B << 8) | r.C, _get_r(cpu, (op >> 3) & 7))
-        return 12
-    # OUT (C), 0
-    if op == 0x71:
-        cpu.write_port((r.B << 8) | r.C, 0)
-        return 12
+def _ed_ld_ind_nn_rr(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    nn = cpu._fetch_word()
+    if op == 0x43:
+        val = r.BC
+    elif op == 0x53:
+        val = r.DE
+    elif op == 0x63:
+        val = r.HL
+    else:
+        val = r.SP
+    cpu.write_byte(nn, val & 0xFF)
+    cpu.write_byte((nn + 1) & 0xFFFF, (val >> 8) & 0xFF)
+    return 20
 
-    # RLD / RRD
-    if op == 0x6F:  # RLD
-        mem_val = cpu.read_byte(r.HL)
-        new_mem = ((mem_val << 4) | (r.A & 0x0F)) & 0xFF
-        r.A = (r.A & 0xF0) | (mem_val >> 4)
-        cpu.write_byte(r.HL, new_mem)
-        r.F = (r.F & F.FLAG_C) | _szp(r.A)
-        return 18
-    if op == 0x67:  # RRD
-        mem_val = cpu.read_byte(r.HL)
-        new_mem = ((r.A << 4) | (mem_val >> 4)) & 0xFF
-        r.A = (r.A & 0xF0) | (mem_val & 0x0F)
-        cpu.write_byte(r.HL, new_mem)
-        r.F = (r.F & F.FLAG_C) | _szp(r.A)
-        return 18
 
-    # Block transfer: LDI / LDD / LDIR / LDDR
-    if op in (0xA0, 0xA8, 0xB0, 0xB8):
-        val = cpu.read_byte(r.HL)
-        cpu.write_byte(r.DE, val)
-        inc = 1 if op in (0xA0, 0xB0) else -1
-        r.HL = (r.HL + inc) & 0xFFFF
-        r.DE = (r.DE + inc) & 0xFFFF
-        r.BC = (r.BC - 1) & 0xFFFF
-        f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N)
-        if r.BC != 0:
-            f |= F.FLAG_PV
-        r.F = f
-        if op in (0xB0, 0xB8) and r.BC != 0:
-            r.PC = (r.PC - 2) & 0xFFFF
-            return 21
-        return 16
+def _ed_ld_rr_ind_nn(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    nn = cpu._fetch_word()
+    lo = cpu.read_byte(nn)
+    hi = cpu.read_byte((nn + 1) & 0xFFFF)
+    val = (hi << 8) | lo
+    if op == 0x4B:
+        r.BC = val
+    elif op == 0x5B:
+        r.DE = val
+    elif op == 0x6B:
+        r.HL = val
+    else:
+        r.SP = val
+    return 20
 
-    # Block search: CPI / CPD / CPIR / CPDR
-    if op in (0xA1, 0xA9, 0xB1, 0xB9):
-        val = cpu.read_byte(r.HL)
-        result = r.A - val
-        inc = 1 if op in (0xA1, 0xB1) else -1
-        r.HL = (r.HL + inc) & 0xFFFF
-        r.BC = (r.BC - 1) & 0xFFFF
-        f = (r.F & F.FLAG_C) | F.FLAG_N
-        if (result & 0xFF) == 0:
-            f |= F.FLAG_Z
-        if result & 0x80:
-            f |= F.FLAG_S
-        if (r.A ^ val ^ result) & 0x10:
-            f |= F.FLAG_H
-        if r.BC != 0:
-            f |= F.FLAG_PV
-        r.F = f
-        if op in (0xB1, 0xB9) and r.BC != 0 and (result & 0xFF) != 0:
-            r.PC = (r.PC - 2) & 0xFFFF
-            return 21
-        return 16
 
-    # Block I/O: INI / IND / INIR / INDR
-    if op in (0xA2, 0xAA, 0xB2, 0xBA):
-        inc = 1 if op in (0xA2, 0xB2) else -1
-        val = cpu.read_port((r.B << 8) | r.C)
-        cpu.write_byte(r.HL, val)
-        r.HL = (r.HL + inc) & 0xFFFF
-        r.B = (r.B - 1) & 0xFF
-        # INI adds (C+1), IND adds (C-1); inc carries that sign.
-        c_adj = (r.C + inc) & 0xFF
-        _block_io_flags(cpu, val, r.B, val + c_adj)
-        if op in (0xB2, 0xBA) and r.B != 0:
-            r.PC = (r.PC - 2) & 0xFFFF
-            return 21
-        return 16
+def _ed_in_r_c(cpu: Z80, op: int) -> int:
+    # Port address is (B << 8) | C on the bus. Destination register index is
+    # (op >> 3) & 7 for these opcodes (0x40,0x48,…,0x78).
+    r = cpu.registers
+    v = cpu.read_port((r.B << 8) | r.C)
+    _set_r(cpu, (op >> 3) & 7, v)
+    r.F = (r.F & F.FLAG_C) | _szp(v)
+    return 12
 
-    # Block I/O: OUTI / OUTD / OTIR / OTDR
-    if op in (0xA3, 0xAB, 0xB3, 0xBB):
-        inc = 1 if op in (0xA3, 0xB3) else -1
-        val = cpu.read_byte(r.HL)
-        r.HL = (r.HL + inc) & 0xFFFF
-        cpu.write_port((r.B << 8) | r.C, val)
-        r.B = (r.B - 1) & 0xFF
-        # OUTI/OUTD use L after HL has been incremented/decremented.
-        _block_io_flags(cpu, val, r.B, val + r.L)
-        if op in (0xB3, 0xBB) and r.B != 0:
-            r.PC = (r.PC - 2) & 0xFFFF
-            return 21
-        return 16
 
+def _ed_in_f_c(cpu: Z80, op: int) -> int:
+    # IN F, (C) — 0x70: result discarded, flags set.
+    r = cpu.registers
+    v = cpu.read_port((r.B << 8) | r.C)
+    r.F = (r.F & F.FLAG_C) | _szp(v)
+    return 12
+
+
+def _ed_out_c_r(cpu: Z80, op: int) -> int:
+    # Port address is (B << 8) | C on the bus. Source register index is
+    # (op >> 3) & 7 for these opcodes (0x41,0x49,…,0x79).
+    r = cpu.registers
+    cpu.write_port((r.B << 8) | r.C, _get_r(cpu, (op >> 3) & 7))
+    return 12
+
+
+def _ed_out_c_0(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    cpu.write_port((r.B << 8) | r.C, 0)
+    return 12
+
+
+def _ed_rld(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    mem_val = cpu.read_byte(r.HL)
+    new_mem = ((mem_val << 4) | (r.A & 0x0F)) & 0xFF
+    r.A = (r.A & 0xF0) | (mem_val >> 4)
+    cpu.write_byte(r.HL, new_mem)
+    r.F = (r.F & F.FLAG_C) | _szp(r.A)
+    return 18
+
+
+def _ed_rrd(cpu: Z80, op: int) -> int:
+    r = cpu.registers
+    mem_val = cpu.read_byte(r.HL)
+    new_mem = ((r.A << 4) | (mem_val >> 4)) & 0xFF
+    r.A = (r.A & 0xF0) | (mem_val & 0x0F)
+    cpu.write_byte(r.HL, new_mem)
+    r.F = (r.F & F.FLAG_C) | _szp(r.A)
+    return 18
+
+
+def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
+    r = cpu.registers
+    val = cpu.read_byte(r.HL)
+    cpu.write_byte(r.DE, val)
+    inc = 1 if op in (0xA0, 0xB0) else -1
+    r.HL = (r.HL + inc) & 0xFFFF
+    r.DE = (r.DE + inc) & 0xFFFF
+    r.BC = (r.BC - 1) & 0xFFFF
+    f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N)
+    if r.BC != 0:
+        f |= F.FLAG_PV
+    r.F = f
+    if op in (0xB0, 0xB8) and r.BC != 0:
+        r.PC = (r.PC - 2) & 0xFFFF
+        return 21
+    return 16
+
+
+def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
+    r = cpu.registers
+    val = cpu.read_byte(r.HL)
+    result = r.A - val
+    inc = 1 if op in (0xA1, 0xB1) else -1
+    r.HL = (r.HL + inc) & 0xFFFF
+    r.BC = (r.BC - 1) & 0xFFFF
+    f = (r.F & F.FLAG_C) | F.FLAG_N
+    if (result & 0xFF) == 0:
+        f |= F.FLAG_Z
+    if result & 0x80:
+        f |= F.FLAG_S
+    if (r.A ^ val ^ result) & 0x10:
+        f |= F.FLAG_H
+    if r.BC != 0:
+        f |= F.FLAG_PV
+    r.F = f
+    if op in (0xB1, 0xB9) and r.BC != 0 and (result & 0xFF) != 0:
+        r.PC = (r.PC - 2) & 0xFFFF
+        return 21
+    return 16
+
+
+def _ed_block_in(cpu: Z80, op: int) -> int:  # INI / IND / INIR / INDR
+    r = cpu.registers
+    inc = 1 if op in (0xA2, 0xB2) else -1
+    val = cpu.read_port((r.B << 8) | r.C)
+    cpu.write_byte(r.HL, val)
+    r.HL = (r.HL + inc) & 0xFFFF
+    r.B = (r.B - 1) & 0xFF
+    # INI adds (C+1), IND adds (C-1); inc carries that sign.
+    c_adj = (r.C + inc) & 0xFF
+    _block_io_flags(cpu, val, r.B, val + c_adj)
+    if op in (0xB2, 0xBA) and r.B != 0:
+        r.PC = (r.PC - 2) & 0xFFFF
+        return 21
+    return 16
+
+
+def _ed_block_out(cpu: Z80, op: int) -> int:  # OUTI / OUTD / OTIR / OTDR
+    r = cpu.registers
+    inc = 1 if op in (0xA3, 0xB3) else -1
+    val = cpu.read_byte(r.HL)
+    r.HL = (r.HL + inc) & 0xFFFF
+    cpu.write_port((r.B << 8) | r.C, val)
+    r.B = (r.B - 1) & 0xFF
+    # OUTI/OUTD use L after HL has been incremented/decremented.
+    _block_io_flags(cpu, val, r.B, val + r.L)
+    if op in (0xB3, 0xBB) and r.B != 0:
+        r.PC = (r.PC - 2) & 0xFFFF
+        return 21
+    return 16
+
+
+def _ed_undefined(cpu: Z80, op: int) -> int:
     if cpu._logger is not None:
-        cpu._logger.on_undefined_opcode((r.PC - 2) & 0xFFFF, op)
+        cpu._logger.on_undefined_opcode((cpu.registers.PC - 2) & 0xFFFF, op)
     return 8
+
+
+_ED_DISPATCH: dict[int, Callable[[Z80, int], int]] = {}
+
+
+def _build_ed_dispatch() -> None:
+    d = _ED_DISPATCH
+    d[0x46] = _ed_im
+    d[0x56] = _ed_im
+    d[0x5E] = _ed_im
+    d[0x47] = _ed_ld_i_a
+    d[0x4F] = _ed_ld_r_a
+    d[0x57] = _ed_ld_a_ir
+    d[0x5F] = _ed_ld_a_ir
+    d[0x44] = _ed_neg
+    d[0x45] = _ed_retn_reti
+    d[0x4D] = _ed_retn_reti
+    for op in (0x4A, 0x5A, 0x6A, 0x7A):
+        d[op] = _ed_adc_hl_rr
+    for op in (0x42, 0x52, 0x62, 0x72):
+        d[op] = _ed_sbc_hl_rr
+    for op in (0x43, 0x53, 0x63, 0x73):
+        d[op] = _ed_ld_ind_nn_rr
+    for op in (0x4B, 0x5B, 0x6B, 0x7B):
+        d[op] = _ed_ld_rr_ind_nn
+    for op in (0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x78):
+        d[op] = _ed_in_r_c
+    d[0x70] = _ed_in_f_c
+    for op in (0x41, 0x49, 0x51, 0x59, 0x61, 0x69, 0x79):
+        d[op] = _ed_out_c_r
+    d[0x71] = _ed_out_c_0
+    d[0x6F] = _ed_rld
+    d[0x67] = _ed_rrd
+    for op in (0xA0, 0xA8, 0xB0, 0xB8):
+        d[op] = _ed_block_ld
+    for op in (0xA1, 0xA9, 0xB1, 0xB9):
+        d[op] = _ed_block_cp
+    for op in (0xA2, 0xAA, 0xB2, 0xBA):
+        d[op] = _ed_block_in
+    for op in (0xA3, 0xAB, 0xB3, 0xBB):
+        d[op] = _ed_block_out
+
+
+_build_ed_dispatch()
+
+
+def _execute_ed(cpu: Z80) -> int:
+    op = cpu._fetch()
+    handler = _ED_DISPATCH.get(op)
+    if handler is not None:
+        return handler(cpu, op)
+    return _ed_undefined(cpu, op)
 
 
 # ---------------------------------------------------------------------------
