@@ -74,10 +74,11 @@ def test_msx2_ram_mapper_write_port_updates_bank() -> None:
 
 
 def test_msx2_ram_mapper_read_port_returns_bank() -> None:
-    """Reading port 0xFD via IOBus returns the current page-1 bank register."""
+    """Reading port 0xFD via IOBus returns the current page-1 bank register,
+    with the unused high bits read back as 1 (bank 6 = 0b110 -> 0xFE)."""
     machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_EXTROM)
     machine.memory.ram_mapper.banks[1] = 6
-    assert machine.io.read_port(0xFD) == 6
+    assert machine.io.read_port(0xFD) == 0xFE
 
 
 def test_msx2_ram_mapper_all_ports_wired() -> None:
@@ -87,6 +88,18 @@ def test_msx2_ram_mapper_all_ports_wired() -> None:
         machine.io.write_port(port, page + 1)
     for page in range(4):
         assert machine.memory.ram_mapper.banks[page] == page + 1
+
+
+def test_msx2_reset_restores_ram_mapper_power_on_banks() -> None:
+    """Machine.reset() restores the RAM mapper's bank registers to power-on
+    state (all segment 0), same as it already does for the slot registers --
+    real hardware resets the mapper on every reset, not just power-on
+    (openMSX MSXMemoryMapperBase::reset()); it's the BIOS boot routine that
+    re-establishes [3, 2, 1, 0] afterwards."""
+    machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_EXTROM)
+    machine.memory.ram_mapper.banks = [3, 2, 1, 0]  # e.g. after BIOS boot
+    machine.reset()
+    assert machine.memory.ram_mapper.banks == [0, 0, 0, 0]
 
 
 # ---------------------------------------------------------------------------

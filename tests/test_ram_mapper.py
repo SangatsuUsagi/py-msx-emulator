@@ -11,13 +11,25 @@ def test_ram_size_is_128kb() -> None:
 
 
 def test_initial_bank_registers() -> None:
+    # Power-on/reset state is all banks at segment 0 (openMSX
+    # MSXMemoryMapperBase::reset()); [3, 2, 1, 0] is what the MSX2 BIOS boot
+    # routine subsequently writes, not the hardware reset value.
     rm = RamMapper()
-    assert rm.banks == [3, 2, 1, 0]
+    assert rm.banks == [0, 0, 0, 0]
 
 
 def test_initial_ram_is_zero() -> None:
     rm = RamMapper()
     assert all(b == 0 for b in rm.ram)
+
+
+def test_reset_restores_power_on_banks_keeps_ram() -> None:
+    rm = RamMapper()
+    rm.banks = [3, 2, 1, 0]  # e.g. after BIOS boot
+    rm.write(0xC000, 0x42)
+    rm.reset()
+    assert rm.banks == [0, 0, 0, 0]
+    assert rm.ram[0] == 0x42  # RAM contents retained across reset
 
 
 # ---------------------------------------------------------------------------
@@ -91,18 +103,21 @@ def test_write_port_fc_sets_page0_bank() -> None:
 
 
 def test_read_port_fe_returns_page2_bank() -> None:
+    # Unused high bits (3-7) read back as 1, not 0 (openMSX
+    # MSXMemoryMapperBase::peekIO; see allium/slots.allium
+    # ReadRamMapperBankRegister): bank 3 = 0b011 -> 0xFB, not 0x03.
     rm = RamMapper()
     rm.banks[2] = 3
-    assert rm.read_port(0xFE) == 3
+    assert rm.read_port(0xFE) == 0xFB
 
 
 def test_read_port_all_pages() -> None:
     rm = RamMapper()
     rm.banks = [1, 2, 3, 4]
-    assert rm.read_port(0xFC) == 1
-    assert rm.read_port(0xFD) == 2
-    assert rm.read_port(0xFE) == 3
-    assert rm.read_port(0xFF) == 4
+    assert rm.read_port(0xFC) == 0xF9  # 1 | 0xF8
+    assert rm.read_port(0xFD) == 0xFA  # 2 | 0xF8
+    assert rm.read_port(0xFE) == 0xFB  # 3 | 0xF8
+    assert rm.read_port(0xFF) == 0xFC  # 4 | 0xF8
 
 
 def test_write_port_masks_to_3_bits() -> None:

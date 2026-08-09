@@ -140,6 +140,8 @@ class Machine:
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.slot_register = 0x00
         self.memory.sub_slot_reg = 0x00
+        if self.memory.ram_mapper is not None:
+            self.memory.ram_mapper.reset()
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.

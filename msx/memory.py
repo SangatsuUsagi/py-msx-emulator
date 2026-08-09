@@ -44,6 +44,20 @@ class Memory:
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
+        # Slot 3's RAM strategy is exactly one of: MSX1 flat (both None),
+        # legacy MSX2 banked (ram_mapper set), or data-driven flat sub-slot
+        # (flat_ram_subslot set) — allium/slots.allium's
+        # SlotThreeStrategyIsExclusive invariant.
+        if self.ram_mapper is not None and self.flat_ram_subslot is not None:
+            raise ValueError(
+                "Memory: ram_mapper and flat_ram_subslot are mutually "
+                "exclusive slot-3 RAM strategies"
+            )
+        if self.fdc is not None and self.flat_ram_subslot is None:
+            raise ValueError(
+                "Memory: fdc requires flat_ram_subslot (only the "
+                "data-driven slot-3 layout hosts an FDC)"
+            )
 
     def _page3_is_slot3(self) -> bool:
         return self.sub_slot_enabled and ((self.slot_register >> 6) & 0x03) == 3

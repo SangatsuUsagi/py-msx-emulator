@@ -1,4 +1,6 @@
 """Tests for Memory MSX2 extensions: ext ROM and RamMapper integration."""
+import pytest
+
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
@@ -105,3 +107,36 @@ def test_msx1_flat_ram_independent_of_ram_mapper() -> None:
     """MSX1 Memory with no RamMapper — ram_mapper field is None."""
     mem = _make_mem()
     assert mem.ram_mapper is None
+
+
+# ---------------------------------------------------------------------------
+# Slot-3 RAM-strategy exclusivity (allium/slots.allium's
+# SlotThreeStrategyIsExclusive invariant on Memory), enforced by
+# Memory.__post_init__
+# ---------------------------------------------------------------------------
+
+def test_ram_mapper_and_flat_subslot_together_rejected() -> None:
+    """ram_mapper and flat_ram_subslot are mutually exclusive slot-3 RAM
+    strategies (allium/slots.allium SlotThreeStrategyIsExclusive). Before
+    this was enforced, constructing both together silently made
+    main_ram_range() report the wrong window (see
+    logs/review-python-20260809-195530.md Major finding 3) -- now it is
+    rejected at construction instead, closing the gap that
+    tests/test_machine_msx2.py's `_make_mem(**kwargs)` helper could
+    previously exploit to bypass machine_loader.py:1011's own check."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _make_mem(ram_mapper=RamMapper(), flat_ram_subslot=3, sub_slot_enabled=True)
+
+
+def test_fdc_without_flat_subslot_rejected() -> None:
+    """fdc is only meaningful under the data-driven slot-3 layout
+    (flat_ram_subslot set) -- allium/slots.allium's Memory entity docs."""
+    class _StubFdc:
+        def read_mem(self, addr: int) -> int:
+            return 0xFF
+
+        def write_mem(self, addr: int, value: int) -> None:
+            pass
+
+    with pytest.raises(ValueError, match="flat_ram_subslot"):
+        _make_mem(fdc=_StubFdc())
