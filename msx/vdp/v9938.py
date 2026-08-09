@@ -246,6 +246,11 @@ class V9938:
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
+    # Not read by V9938 itself (interrupts are signalled via the polled `irq`
+    # property instead); kept for structural compatibility with the MSX1 VDP
+    # class, since some call sites (e.g. tests/vdp/test_renderer_g4.py) pass a
+    # V9938 instance through msx/vdp/renderer.py's (MSX1) render_frame/_finalize,
+    # which does read this field.
     on_interrupt: Callable[[], None] | None = None
     # Observation seam for scanline timing (tests, tracing): called with the
     # raster line at the end of begin_scanline(). A field, not a monkey-patched
@@ -555,35 +560,7 @@ class V9938:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
         elif port == 1:
-            if self.tracer is not None:
-                pc = self._get_pc() if self._get_pc is not None else 0
-                cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
-            if self._latch is None:
-                self._latch = value
-            else:
-                low = self._latch
-                self._latch = None
-                if value & 0x80:
-                    reg = value & 0x3F
-                    if reg < _NUM_REGS:
-                        if reg == 0:
-                            self._apply_r0_write(low)
-                        self.regs[reg] = low
-                        if reg in _DISPLAY_REGS:
-                            self._reg_write_log.append(_RegChange(self.display_line, reg, low))
-                        if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
-                            self._update_irq()
-                        elif reg == 14:
-                            self._set_addr_high(low)
-                    elif 32 <= reg <= 46:
-                        self._write_command_register(reg, low)
-                else:
-                    # Combine 14-bit address from this write with R#14 high bits.
-                    self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
-                    if not (value & 0x40):  # bit6=0 → read mode: preload buffer
-                        self._read_buf = self.vram[self._addr]
-                        self._addr = (self._addr + 1) & 0x1FFFF
+            self._write_control_port(value)
         elif port == 2:
             if self._pal_latch is None:
                 self._pal_latch = value
@@ -598,34 +575,69 @@ class V9938:
                 self._reg_write_log.append(_PaletteChange(self.display_line, idx, rgb))
                 self.regs[16] = (idx + 1) & 0x0F
         else:
-            # Indirect register write: the byte goes to whichever register R#17
-            # points at. Streaming command data to R#44 is just this path with
-            # R#17 = 44 and AII set, so there is no separate data port.
-            ptr = self.regs[17] & 0x3F
-            r17_before = self.regs[17]
-            if ptr < _NUM_REGS:
-                if ptr == 0:
-                    self._apply_r0_write(value)
-                self.regs[ptr] = value
-                if ptr in _DISPLAY_REGS:
-                    self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
-                if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
-                    self._update_irq()
-                elif ptr == 14:
-                    self._set_addr_high(value)
-            elif 32 <= ptr <= 46:
-                self._write_command_register(ptr, value)
-            if self.tracer is not None:
-                pc = self._get_pc() if self._get_pc is not None else 0
-                cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=self._frame_count)
-            # Auto-increment the R#17 pointer from its value BEFORE this write.
-            # The MSX2 BIOS writes a full R#0-R#23 table via auto-increment; when
-            # the pointer reaches R#17 the table stores a value into R#17 itself,
-            # and the sequence must continue to R#18 (not restart from the value
-            # just written). The AII bit reflects the post-write R#17.
-            if not (r17_before & 0x80):  # AII (bit7) clear → auto-increment
-                self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
+            self._write_indirect_register(value)
+
+    def _write_control_port(self, value: int) -> None:
+        """Port 1: two-byte latch, register write or VRAM address setup."""
+        if self.tracer is not None:
+            pc = self._get_pc() if self._get_pc is not None else 0
+            cy = self._get_cycle() if self._get_cycle is not None else 0
+            self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
+        if self._latch is None:
+            self._latch = value
+        else:
+            low = self._latch
+            self._latch = None
+            if value & 0x80:
+                reg = value & 0x3F
+                if reg < _NUM_REGS:
+                    if reg == 0:
+                        self._apply_r0_write(low)
+                    self.regs[reg] = low
+                    if reg in _DISPLAY_REGS:
+                        self._reg_write_log.append(_RegChange(self.display_line, reg, low))
+                    if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
+                        self._update_irq()
+                    elif reg == 14:
+                        self._set_addr_high(low)
+                elif 32 <= reg <= 46:
+                    self._write_command_register(reg, low)
+            else:
+                # Combine 14-bit address from this write with R#14 high bits.
+                self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
+                if not (value & 0x40):  # bit6=0 → read mode: preload buffer
+                    self._read_buf = self.vram[self._addr]
+                    self._addr = (self._addr + 1) & 0x1FFFF
+
+    def _write_indirect_register(self, value: int) -> None:
+        """Port 3: the byte goes to whichever register R#17 points at.
+        Streaming command data to R#44 is just this path with R#17 = 44 and
+        AII set, so there is no separate data port."""
+        ptr = self.regs[17] & 0x3F
+        r17_before = self.regs[17]
+        if ptr < _NUM_REGS:
+            if ptr == 0:
+                self._apply_r0_write(value)
+            self.regs[ptr] = value
+            if ptr in _DISPLAY_REGS:
+                self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
+            if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
+                self._update_irq()
+            elif ptr == 14:
+                self._set_addr_high(value)
+        elif 32 <= ptr <= 46:
+            self._write_command_register(ptr, value)
+        if self.tracer is not None:
+            pc = self._get_pc() if self._get_pc is not None else 0
+            cy = self._get_cycle() if self._get_cycle is not None else 0
+            self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=self._frame_count)
+        # Auto-increment the R#17 pointer from its value BEFORE this write.
+        # The MSX2 BIOS writes a full R#0-R#23 table via auto-increment; when
+        # the pointer reaches R#17 the table stores a value into R#17 itself,
+        # and the sequence must continue to R#18 (not restart from the value
+        # just written). The AII bit reflects the post-write R#17.
+        if not (r17_before & 0x80):  # AII (bit7) clear → auto-increment
+            self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
 
     def read_port(self, port: int) -> int:
         """Dispatch a V9938 VDP port read.
@@ -643,80 +655,84 @@ class V9938:
             self._addr = (self._addr + 1) & 0x1FFFF
             return result
         if port == 1:
-            # Reading the status port resets the port-99 write latch (the
-            # second-byte flip-flop) on real V9938 hardware, regardless of which
-            # status register R#15 selects. Resetting it only for S#0 lets a
-            # latch desync (e.g. a write interrupted mid-sequence) persist
-            # forever, corrupting every subsequent R#nn / address write.
-            self._latch = None
-            if self.regs[15] == 2:
-                # S#2 also reports the live horizontal/vertical retrace flags,
-                # which software polls to time mid-screen register changes; bits
-                # 2,3 always read as 1.
-                s2 = self._status2 | _S2_RESERVED
-                if self._line_cycle >= _HBLANK_START:
-                    s2 |= _S2_HR
-                if not (0 <= self.display_line < self.display_height):
-                    s2 |= _S2_VR
-                return s2
-            if self.regs[15] == 7:
-                # S#7 reads back the colour register, which holds the POINT
-                # result or the dot an LMCM has staged. The read doubles as the
-                # LMCM handshake: taking the dot lets the engine fetch the next
-                # one. With no command running it clears TR instead (openMSX
-                # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor).
-                result = self.cmd_regs[12]
-                if self._cmd_active and self._cmd_code == _CMD_LMCM:
-                    self._advance_lmcm()
-                elif not self._cmd_active:
-                    self._status2 &= ~_S2_TR
-                return result
-            if self.regs[15] == 1:
-                result = self._status1
-                self._status1 &= ~_S1_FH  # reading S#1 clears FH
-                self._update_irq()
-                return result & 0xFF
-            if self.regs[15] == 8:
-                return self._status8
-            if self.regs[15] == 9:
-                # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
-                # readStatusReg case 9 → resetBD); a SRCH that finds nothing
-                # leaves the previous flag standing.
-                result = self._status9
-                self._status2 &= ~_S2_BD
-                return result
-            if self.regs[15] == 3:
-                # S#3-S#6: sprite collision X/Y, as reported by the sprite
-                # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
-                # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`).
-                return self.collision_x & 0xFF
-            if self.regs[15] == 4:
-                return ((self.collision_x >> 8) & 0x01) | 0xFE
-            if self.regs[15] == 5:
-                result = self.collision_y & 0xFF
-                self.collision_x = 0  # reading S#5 resets the coordinate pair
-                self.collision_y = 0
-                return result
-            if self.regs[15] == 6:
-                return ((self.collision_y >> 8) & 0x03) | 0xFC
-            if self.regs[15] >= 10:
-                return 0xFF  # non-existent status register
-            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
-            # sprite number. The renderer already stores the real overflowing
-            # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
-            # `(vdp.status & 0xA0) | 0x40 | (i & 0x1F)`), so preserve it here
-            # when 5S is set. When idle (no 5th/9th sprite this frame), fall
-            # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
-            # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
-            # loop counter.
-            if self.status & 0x40:
-                result = self.status & 0xFF
-            else:
-                result = (self.status & 0xE0) | 0x1F
-            self.status &= ~0xE0  # clear F, 5S and C flags together
+            return self._read_status_register()
+        return 0xFF  # ports 2 and 3 (palette / indirect register) are write-only
+
+    def _read_status_register(self) -> int:
+        """Port 1: S#n selected by R#15. Reading also resets the port-99
+        write latch (the second-byte flip-flop) on real V9938 hardware,
+        regardless of which status register R#15 selects. Resetting it only
+        for S#0 lets a latch desync (e.g. a write interrupted mid-sequence)
+        persist forever, corrupting every subsequent R#nn / address write.
+        """
+        self._latch = None
+        if self.regs[15] == 2:
+            # S#2 also reports the live horizontal/vertical retrace flags,
+            # which software polls to time mid-screen register changes; bits
+            # 2,3 always read as 1.
+            s2 = self._status2 | _S2_RESERVED
+            if self._line_cycle >= _HBLANK_START:
+                s2 |= _S2_HR
+            if not (0 <= self.display_line < self.display_height):
+                s2 |= _S2_VR
+            return s2
+        if self.regs[15] == 7:
+            # S#7 reads back the colour register, which holds the POINT
+            # result or the dot an LMCM has staged. The read doubles as the
+            # LMCM handshake: taking the dot lets the engine fetch the next
+            # one. With no command running it clears TR instead (openMSX
+            # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor).
+            result = self.cmd_regs[12]
+            if self._cmd_active and self._cmd_code == _CMD_LMCM:
+                self._advance_lmcm()
+            elif not self._cmd_active:
+                self._status2 &= ~_S2_TR
+            return result
+        if self.regs[15] == 1:
+            result = self._status1
+            self._status1 &= ~_S1_FH  # reading S#1 clears FH
             self._update_irq()
             return result & 0xFF
-        return 0xFF  # ports 2 and 3 (palette / indirect register) are write-only
+        if self.regs[15] == 8:
+            return self._status8
+        if self.regs[15] == 9:
+            # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
+            # readStatusReg case 9 → resetBD); a SRCH that finds nothing
+            # leaves the previous flag standing.
+            result = self._status9
+            self._status2 &= ~_S2_BD
+            return result
+        if self.regs[15] == 3:
+            # S#3-S#6: sprite collision X/Y, as reported by the sprite
+            # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
+            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`).
+            return self.collision_x & 0xFF
+        if self.regs[15] == 4:
+            return ((self.collision_x >> 8) & 0x01) | 0xFE
+        if self.regs[15] == 5:
+            result = self.collision_y & 0xFF
+            self.collision_x = 0  # reading S#5 resets the coordinate pair
+            self.collision_y = 0
+            return result
+        if self.regs[15] == 6:
+            return ((self.collision_y >> 8) & 0x03) | 0xFC
+        if self.regs[15] >= 10:
+            return 0xFF  # non-existent status register
+        # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
+        # sprite number. The renderer already stores the real overflowing
+        # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
+        # `(vdp.status & 0xA0) | 0x40 | (i & 0x1F)`), so preserve it here
+        # when 5S is set. When idle (no 5th/9th sprite this frame), fall
+        # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
+        # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
+        # loop counter.
+        if self.status & 0x40:
+            result = self.status & 0xFF
+        else:
+            result = (self.status & 0xE0) | 0x1F
+        self.status &= ~0xE0  # clear F, 5S and C flags together
+        self._update_irq()
+        return result & 0xFF
 
     # ------------------------------------------------------------------
     # Command engine helpers

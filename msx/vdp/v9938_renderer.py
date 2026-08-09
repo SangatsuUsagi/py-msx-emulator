@@ -49,6 +49,11 @@ _UNPACK8: tuple[bytes, ...] = tuple(
     bytes((b >> (7 - i)) & 1 for i in range(8)) for b in range(256)
 )
 
+# screen_scale is always 1 (256-wide modes) or 2 (512-wide G5/G6); precomputed
+# so the sprite-mode-2 per-pixel loop iterates a cached tuple instead of
+# constructing a fresh range(screen_scale) object on every displayed dot.
+_SS_OFFSETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1)}
+
 # GRAPHIC7 (SCREEN 8) sprites use a FIXED 16-colour palette, NOT the
 # programmable one. Source values from openMSX Renderer::GRAPHIC7_SPRITE_PALETTE
 # as 0xGRB nibbles (each channel 0-7); stored here pre-converted to the GRB332
@@ -294,7 +299,6 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
         bands.append((prev_y, display_height, list(cur_regs), list(cur_palette)))
 
     return bands
-
 
 
 @dataclass(slots=True)
@@ -837,6 +841,29 @@ def _sprite_runs(
     return runs
 
 
+def _composite_sprite_buf(
+    buf: bytearray, sprite_buf: bytearray, drawn: list[int],
+    grb_mode: bool, split_colour: bool,
+) -> None:
+    """Composite only the pixels a sprite actually touched (avoids scanning the
+    whole h*width buffer every frame when sprites are sparse or absent)."""
+    if grb_mode:
+        # SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not vdp.palette.
+        for coord in drawn:
+            buf[coord] = _G7_SPRITE_PALETTE[sprite_buf[coord] & 0x0F]
+    elif split_colour:
+        # GRAPHIC5: bits 3:2 of the colour go to the even (left) screen pixel of
+        # the dot, bits 1:0 to the odd (right) one. Splitting here rather than at
+        # store time keeps the CC OR-merge correct, since (a | b) >> 2 equals
+        # (a >> 2) | (b >> 2) and likewise for the low half.
+        for coord in drawn:
+            v = sprite_buf[coord] & 0x0F
+            buf[coord] = (v >> 2) if (coord & 1) == 0 else (v & 3)
+    else:
+        for coord in drawn:
+            buf[coord] = sprite_buf[coord] & 0x0F
+
+
 def _render_sprites_mode2(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None,
     grb_mode: bool = False, width: int = _W, split_colour: bool = False,
@@ -1002,6 +1029,7 @@ def _render_sprites_mode2(
                 scale  = 2 if mag else 1
                 line_off = line * width
                 claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
+                ss_offsets = _SS_OFFSETS[screen_scale]
 
                 if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                     for bit_i, pixel in enumerate(pixels):
@@ -1010,7 +1038,7 @@ def _render_sprites_mode2(
                         sx = x_pos + bit_i  # position in the 256-dot sprite plane
                         if sx < 0 or sx >= _W:  # clip off-screen, no wrap
                             continue
-                        for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
+                        for ss in ss_offsets:  # horizontal doubling in 512-wide modes
                             coord = line_off + sx * screen_scale + ss
                             if collides:
                                 if sprite_touched[coord]:
@@ -1034,7 +1062,7 @@ def _render_sprites_mode2(
                             sx = x_pos + bit_i * scale + s  # position in the 256-dot sprite plane
                             if sx < 0 or sx >= _W:  # clip off-screen, no wrap
                                 continue
-                            for ss in range(screen_scale):  # horizontal doubling in 512-wide modes
+                            for ss in ss_offsets:  # horizontal doubling in 512-wide modes
                                 coord = line_off + sx * screen_scale + ss
                                 if collides:
                                     if sprite_touched[coord]:
@@ -1051,23 +1079,7 @@ def _render_sprites_mode2(
                                     sprite_buf[coord] = claim
                                     drawn.append(coord)
 
-    # Composite only the pixels a sprite actually touched (avoids scanning the
-    # whole h*width buffer every frame when sprites are sparse or absent).
-    if grb_mode:
-        # SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not vdp.palette.
-        for coord in drawn:
-            buf[coord] = _G7_SPRITE_PALETTE[sprite_buf[coord] & 0x0F]
-    elif split_colour:
-        # GRAPHIC5: bits 3:2 of the colour go to the even (left) screen pixel of
-        # the dot, bits 1:0 to the odd (right) one. Splitting here rather than at
-        # store time keeps the CC OR-merge correct, since (a | b) >> 2 equals
-        # (a >> 2) | (b >> 2) and likewise for the low half.
-        for coord in drawn:
-            v = sprite_buf[coord] & 0x0F
-            buf[coord] = (v >> 2) if (coord & 1) == 0 else (v & 3)
-    else:
-        for coord in drawn:
-            buf[coord] = sprite_buf[coord] & 0x0F
+    _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 
     if coincidence:
         vdp.status |= 0x20
