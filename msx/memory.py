@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import partial
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
@@ -11,6 +10,15 @@ if TYPE_CHECKING:
     from msx.ram_mapper import RamMapper
 
 from msx.mapper import FlatMapper
+
+# Fields whose reassignment invalidates the page-routing cache (see
+# Memory.__setattr__). slot_register/sub_slot_reg drive routing directly;
+# ram_mapper/sub0_rom/fdc/flat_ram_subslot are assumed construction-time-fixed
+# by the routing decision, but a *reassignment* (not content mutation, e.g. a
+# test replacing mem.sub0_rom after construction) must still be observed.
+_CACHE_INVALIDATING_FIELDS = frozenset(
+    {"slot_register", "sub_slot_reg", "ram_mapper", "sub0_rom", "fdc", "flat_ram_subslot"}
+)
 
 
 @dataclass(slots=True)
@@ -42,19 +50,25 @@ class Memory:
     _rom_len: int = field(init=False, repr=False, default=0)
     _extrom_len: int = field(init=False, repr=False, default=0)
     # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever
-    # the key (see _cache_key()) no longer matches — slot_register/
-    # sub_slot_reg changing, or ram_mapper/sub0_rom/fdc/flat_ram_subslot
-    # being reassigned to a different object (identity, not content: RAM
-    # content changes don't affect which handler routes a page). extrom
-    # isn't in the key: _read_rom() reads self.extrom live, unconditionally
-    # correct regardless of when it's assigned.
-    _page_cache_key: tuple[int, int, int, int, int, int | None] | None = field(
-        init=False, repr=False, default=None
-    )
+    # __setattr__ observes a write to one of _CACHE_INVALIDATING_FIELDS
+    # (event-driven: a single bool check per access, no per-access
+    # recomputation of a comparison key). extrom isn't in that set:
+    # _read_rom() reads self.extrom live, unconditionally correct regardless
+    # of when it's assigned.
+    _page_cache_valid: bool = field(init=False, repr=False, default=False)
     _page_read: list[Callable[[int], int]] = field(init=False, repr=False, default_factory=list)
     _page_write: list[Callable[[int, int], None]] = field(
         init=False, repr=False, default_factory=list
     )
+    # Precomputed alongside _page_read/_page_write: whether the 0xFFFF
+    # secondary-slot-register intercept can fire under the current
+    # slot_register/sub_slot_enabled (see _rebuild_page_cache).
+    _page3_intercept_active: bool = field(init=False, repr=False, default=False)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+        if name in _CACHE_INVALIDATING_FIELDS:
+            object.__setattr__(self, "_page_cache_valid", False)
 
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
@@ -73,7 +87,7 @@ class Memory:
                 "Memory: fdc requires flat_ram_subslot (only the "
                 "data-driven slot-3 layout hosts an FDC)"
             )
-        self._rebuild_page_cache(self._cache_key())
+        self._rebuild_page_cache()
 
     # -- terminal (leaf) read/write operations -------------------------------
     # Mechanical extraction of read()/write()'s former inline branches; each
@@ -116,19 +130,6 @@ class Memory:
         off = addr - (0x10000 - len(self.ram))
         if 0 <= off < len(self.ram):
             self.ram[off] = value
-
-    def _read_intercept_or(self, addr: int, leaf: Callable[[int], int]) -> int:
-        if addr == 0xFFFF:
-            return (~self.sub_slot_reg) & 0xFF
-        return leaf(addr)
-
-    def _write_intercept_or(
-        self, addr: int, value: int, leaf: Callable[[int, int], None]
-    ) -> None:
-        if addr == 0xFFFF:
-            self.sub_slot_reg = value & 0xFF
-            return
-        leaf(addr, value)
 
     # -- page-cache resolution ------------------------------------------------
 
@@ -193,13 +194,7 @@ class Memory:
             return self._mapper.read
         if slot == 2:
             return self._mapper2.read
-        # slot 3
-        leaf = self._resolve_slot3_read_leaf(page)
-        # Secondary slot register intercept at 0xFFFF only ever applies to
-        # page 3 (0xC000-0xFFFF), and only when sub_slot_enabled (MSX2).
-        if page == 3 and self.sub_slot_enabled:
-            return partial(self._read_intercept_or, leaf=leaf)
-        return leaf
+        return self._resolve_slot3_read_leaf(page)
 
     def _resolve_page_write(self, page: int) -> Callable[[int, int], None]:
         slot = (self.slot_register >> (page * 2)) & 0x03
@@ -209,41 +204,39 @@ class Memory:
             return self._mapper.write
         if slot == 2:
             return self._mapper2.write
-        # slot 3
-        leaf = self._resolve_slot3_write_leaf(page)
-        if page == 3 and self.sub_slot_enabled:
-            return partial(self._write_intercept_or, leaf=leaf)
-        return leaf
+        return self._resolve_slot3_write_leaf(page)
 
-    def _cache_key(self) -> tuple[int, int, int, int, int, int | None]:
-        return (
-            self.slot_register,
-            self.sub_slot_reg,
-            id(self.ram_mapper),
-            id(self.sub0_rom),
-            id(self.fdc),
-            self.flat_ram_subslot,
-        )
-
-    def _rebuild_page_cache(self, key: tuple[int, int, int, int, int, int | None]) -> None:
+    def _rebuild_page_cache(self) -> None:
         self._page_read = [self._resolve_page_read(page) for page in range(4)]
         self._page_write = [self._resolve_page_write(page) for page in range(4)]
-        self._page_cache_key = key
+        # Secondary slot register intercept at 0xFFFF only ever applies to
+        # page 3 (0xC000-0xFFFF), and only when sub_slot_enabled (MSX2) and
+        # page 3's primary slot is 3. Precomputed here so read()/write() pay
+        # only a cheap bool check, not a wrapper call, on the common
+        # (non-0xFFFF) page-3 path.
+        page3_slot = (self.slot_register >> 6) & 0x03
+        self._page3_intercept_active = self.sub_slot_enabled and page3_slot == 3
+        self._page_cache_valid = True
 
     def read(self, addr: int) -> int:
         addr = addr & 0xFFFF
-        key = self._cache_key()
-        if self._page_cache_key != key:
-            self._rebuild_page_cache(key)
-        return self._page_read[addr >> 14](addr)
+        if not self._page_cache_valid:
+            self._rebuild_page_cache()
+        page = addr >> 14
+        if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
+            return (~self.sub_slot_reg) & 0xFF
+        return self._page_read[page](addr)
 
     def write(self, addr: int, value: int) -> None:
         addr = addr & 0xFFFF
         value = value & 0xFF
-        key = self._cache_key()
-        if self._page_cache_key != key:
-            self._rebuild_page_cache(key)
-        self._page_write[addr >> 14](addr, value)
+        if not self._page_cache_valid:
+            self._rebuild_page_cache()
+        page = addr >> 14
+        if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
+            self.sub_slot_reg = value & 0xFF
+            return
+        self._page_write[page](addr, value)
 
     def main_ram_range(self) -> tuple[int, int]:
         """Conventional main-RAM address window, for stack-sanity checks.
