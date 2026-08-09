@@ -552,13 +552,18 @@ class V9938:
                 return self._status8
             if self.regs[15] == 9:
                 return self._status9
-            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/last
-            # sprite number. The renderer sets 5S/C during the sprite scan; a
-            # real V9938 read of S#0 clears F, 5S and C together, so mask off
-            # 0xE0. The idle last-sprite number 31 (0x1F) is still OR-ed into the
-            # *returned* byte: returning 0 there stalls MSX2 C-BIOS cartridge
-            # boot, which feeds S#0 bits 4:0 into its cartridge-scan loop counter.
-            result = (self.status & 0xE0) | 0x1F
+            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
+            # sprite number. The renderer already stores the real overflowing
+            # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
+            # `(vdp.status & 0xA0) | 0x40 | (i & 0x1F)`), so preserve it here
+            # when 5S is set. When idle (no 5th/9th sprite this frame), fall
+            # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
+            # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
+            # loop counter.
+            if self.status & 0x40:
+                result = self.status & 0xFF
+            else:
+                result = (self.status & 0xE0) | 0x1F
             self.status &= ~0xE0  # clear F, 5S and C flags together
             self._update_irq()
             return result & 0xFF

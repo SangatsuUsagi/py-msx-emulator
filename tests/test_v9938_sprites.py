@@ -317,6 +317,25 @@ def test_s0_read_clears_5s_and_c_together() -> None:
     assert not (vdp.status & 0x20)  # C cleared
 
 
+def test_s0_read_reports_real_overflow_index_when_5s_set() -> None:
+    """When 5S/9S is set, S#0 bits 4:0 must report the actual overflowing
+    sprite's index (as the renderer stored it), not the idle placeholder
+    (0x1F) -- the read path previously discarded it unconditionally."""
+    vdp = V9938()
+    vdp.status = 0x40 | 0x07  # 5S set, overflowing sprite index 7
+    result = vdp.read_port(0x99)
+    assert result & 0x1F == 7
+
+
+def test_s0_read_falls_back_to_idle_index_when_5s_not_set() -> None:
+    """Without 5S/9S set (no overflow this frame), S#0 bits 4:0 still report
+    the idle placeholder (0x1F), matching MSX2 C-BIOS's expectation."""
+    vdp = V9938()
+    vdp.status = 0x00
+    result = vdp.read_port(0x99)
+    assert result & 0x1F == 0x1F
+
+
 def test_5s_and_c_do_not_persist_across_frames() -> None:
     """A frame that sets 5S/C, with no S#0 read, must not leak the flags into a
     later frame that has neither a 5th sprite nor a collision."""
