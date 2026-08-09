@@ -491,6 +491,7 @@ def _render_sprites_for_mode(
     if not (r1 & 0x40):  # BL clear → display blanked
         return
     m1 = (r1 >> 4) & 1
+    m3 = (r0 >> 1) & 1
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
     h = vdp.display_height
@@ -501,6 +502,7 @@ def _render_sprites_for_mode(
                                   row_vscroll=row_vscroll, row_spd=row_spd)
         else:  # G5 and G6 both render sprites onto a 512-wide buffer
             _render_sprites_mode2(vdp, buf, h, y_start, y_end, width=512,
+                                  split_colour=not m3,  # G5 only (M3 clear)
                                   row_vscroll=row_vscroll, row_spd=row_spd)
     elif m4:
         _render_sprites_mode2(vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll,
@@ -837,8 +839,8 @@ def _sprite_runs(
 
 def _render_sprites_mode2(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None,
-    grb_mode: bool = False, width: int = _W, row_vscroll: list[int] | None = None,
-    row_spd: list[bool] | None = None,
+    grb_mode: bool = False, width: int = _W, split_colour: bool = False,
+    row_vscroll: list[int] | None = None, row_spd: list[bool] | None = None,
 ) -> None:
     """Sprite mode 2 for SCREEN 4–8.
 
@@ -847,6 +849,11 @@ def _render_sprites_mode2(
     grb_mode=True (SCREEN 8): sprite palette colours are converted to GRB332 before writing.
     width: buffer line width; 512 for the wide modes (G5/G6), where the 256-dot
     sprite plane is doubled horizontally so sprites span the full screen.
+    split_colour=True (SCREEN 6 / GRAPHIC5): the plane holds 2 bits per screen dot,
+    so each sprite dot's 4-bit colour splits across its two screen pixels — bits
+    3:2 on the left, bits 1:0 on the right (openMSX SpriteConverter::drawMode2's
+    GRAPHIC5 branch; confirmed on openMSX with a solid sprite of colour code 6,
+    which renders as palette 1 / palette 2 columns, not as a palette-6 block).
 
     Sprite Y is evaluated against R#23 vertical scroll per scanline (as on real
     hardware, which re-reads R#23 each line): row_vscroll gives the per-line value
@@ -1050,6 +1057,14 @@ def _render_sprites_mode2(
         # SCREEN 8 sprites use the fixed GRAPHIC7 sprite palette, not vdp.palette.
         for coord in drawn:
             buf[coord] = _G7_SPRITE_PALETTE[sprite_buf[coord] & 0x0F]
+    elif split_colour:
+        # GRAPHIC5: bits 3:2 of the colour go to the even (left) screen pixel of
+        # the dot, bits 1:0 to the odd (right) one. Splitting here rather than at
+        # store time keeps the CC OR-merge correct, since (a | b) >> 2 equals
+        # (a >> 2) | (b >> 2) and likewise for the low half.
+        for coord in drawn:
+            v = sprite_buf[coord] & 0x0F
+            buf[coord] = (v >> 2) if (coord & 1) == 0 else (v & 3)
     else:
         for coord in drawn:
             buf[coord] = sprite_buf[coord] & 0x0F

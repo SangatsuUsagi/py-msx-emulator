@@ -816,10 +816,11 @@ def test_sprite_mode2_16x16_early_clock_off_left_edge() -> None:
 
 def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
     """In a 512-wide mode the 256-dot sprite plane is doubled: sprite dot at X
-    covers screen columns 2X and 2X+1, in a 512-stride buffer."""
+    covers screen columns 2X and 2X+1, in a 512-stride buffer. In GRAPHIC6 both
+    columns carry the full 4-bit colour (GRAPHIC5 splits it — see below)."""
     vdp = V9938()
     _enable(vdp)
-    vdp.regs[0] = 0x08  # SCREEN 6 (G5): 512 wide
+    vdp.regs[0] = 0x0A  # SCREEN 7 (G6): 512 wide, 4 bits per dot
     vdp.regs[5] = _SAT_R5
     vdp.regs[6] = 0x00
 
@@ -834,6 +835,48 @@ def test_sprite_mode2_512_mode_doubles_horizontally() -> None:
     assert buf[1 * 512 + 20] == 7
     assert buf[1 * 512 + 21] == 7
     assert buf[1 * 512 + 19] != 7
+
+
+def test_sprite_mode2_g5_splits_colour_across_the_dot_pair() -> None:
+    """GRAPHIC5 (SCREEN 6) holds 2 bits per screen dot, so a sprite dot's 4-bit
+    colour splits: bits 3:2 on the left screen pixel, bits 1:0 on the right.
+    Confirmed on openMSX -- a solid colour-6 sprite renders as palette 1 / palette
+    2 columns, never as a palette-6 block."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x08  # SCREEN 6 (G5)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=10, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, 0, 0, color=6)  # 0b0110 → left 0b01, right 0b10
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert buf[1 * 512 + 20] == 1
+    assert buf[1 * 512 + 21] == 2
+
+
+def test_sprite_mode2_g5_splits_the_or_combined_colour() -> None:
+    """The CC OR-merge happens on the 4-bit colour, so GRAPHIC5 splits the
+    combined value: 3 | 4 = 7 → left 0b01, right 0b11."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x08  # SCREEN 6 (G5)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=10, pat=0)
+    _write_col_entry(vdp, 0, 0, color=3)
+    _write_sat_entry(vdp, 1, y=0, x=10, pat=0)
+    _write_col_entry(vdp, 1, 0, color=4, or_mode=True)
+    _terminate_sat(vdp, after_idx=2)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert buf[1 * 512 + 20] == 1
+    assert buf[1 * 512 + 21] == 3
 
 
 # ---------------------------------------------------------------------------
