@@ -100,3 +100,81 @@ def test_halt_nop_loop() -> None:
     assert cpu.halted is True
     assert cycles == 4
     assert cpu.registers.PC == 1  # PC stays after HALT
+
+
+def test_nmi_wakes_cpu_from_halt() -> None:
+    cpu = make_cpu([0x76])  # HALT
+    cpu.step()
+    assert cpu.halted is True
+    cpu.nmi_pending = True
+    cpu.step()
+    assert cpu.halted is False
+    assert cpu.registers.PC == 0x0066
+
+
+def test_maskable_interrupt_wakes_cpu_from_halt() -> None:
+    cpu = make_cpu([0x76])  # HALT
+    cpu.im = 1
+    cpu.iff1 = True
+    cpu.step()  # HALT
+    assert cpu.halted is True
+    cpu.int_pending = True
+    cpu.step()
+    assert cpu.halted is False
+    assert cpu.registers.PC == 0x0038
+
+
+def test_di_clears_iff1_and_iff2() -> None:
+    cpu = make_cpu([0xF3])  # DI
+    cpu.iff1 = True
+    cpu.iff2 = True
+    cpu.step()
+    assert cpu.iff1 is False
+    assert cpu.iff2 is False
+    assert cpu.registers.PC == 1
+
+
+def test_ei_sets_iff1_iff2_and_ei_pending() -> None:
+    cpu = make_cpu([0xFB])  # EI
+    cpu.iff1 = False
+    cpu.iff2 = False
+    cpu.step()
+    assert cpu.iff1 is True
+    assert cpu.iff2 is True
+    assert cpu.ei_pending is True
+    assert cpu.registers.PC == 1
+
+
+# ===========================================================================
+# EI one-instruction interrupt-enable delay (Z80 User Manual — EI: "the
+# maskable interrupt is not accepted until after the instruction following
+# EI is executed"; see openspec/specs/z80-cpu/spec.md, "EI interrupt-enable
+# delay").
+# ===========================================================================
+
+
+def test_interrupt_after_ei_is_delayed_one_instruction() -> None:
+    cpu = make_cpu([0xFB, 0x00])  # EI; NOP
+    cpu.im = 1
+    cpu.int_pending = True
+    cpu.step()  # EI: iff1/iff2 -> True, ei_pending -> True
+    assert cpu.registers.PC == 1
+    assert cpu.int_pending is True  # not yet taken
+    cpu.step()  # NOP: interrupt gated by ei_pending, executes normally
+    assert cpu.registers.PC == 2
+    assert cpu.int_pending is True  # still not taken
+    assert cpu.ei_pending is False  # cleared once this step elapsed
+    cpu.step()  # interrupt accepted on the next boundary
+    assert cpu.registers.PC == 0x0038
+    assert cpu.int_pending is False
+
+
+def test_interrupt_not_taken_during_ei_itself() -> None:
+    cpu = make_cpu([0xFB])  # EI
+    cpu.im = 1
+    cpu.iff1 = False
+    cpu.int_pending = True
+    cpu.step()  # EI executes normally; not vectored to 0x0038
+    assert cpu.registers.PC == 1
+    assert cpu.iff1 is True
+    assert cpu.int_pending is True  # still pending, not consumed
