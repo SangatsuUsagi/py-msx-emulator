@@ -2,7 +2,8 @@
 
 128 KB VRAM, 28 control registers, 16-colour programmable palette,
 hardware command engine (full V9938 command set).
-Ports 0x98–0x9C.
+Ports 0x98–0x9B (the chip decodes two address bits, so a machine that decodes
+the block more coarsely mirrors these four).
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
     """Apply V9938 logical operation (LOG[2:0]) at pixel level.
 
     LOG codes (see tracer._LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
-    Codes 5-7 are undefined and fall through to IMP (plain source copy).
+    Codes 5-7 are undefined and perform no write at all; callers filter them
+    out before reaching here (see _vram_pixel_write).
     """
     if log_op == 0:  # IMP
         return src
@@ -33,9 +35,85 @@ def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
         return src | dst
     if log_op == 3:  # XOR
         return src ^ dst
-    if log_op == 4:  # NOT
-        return (~src) & mask
-    return src  # 5-7 undefined → IMP
+    return (~src) & mask  # 4 = NOT
+
+
+# Screen-edge clipping (openMSX VDPCmdEngine.cc clipNX_* / clipNY_*). A command
+# never runs past the left or right edge: the line ends there. With DIY set
+# (upward) it never runs past the top either. An origin already past the right
+# edge processes exactly one element per line.
+
+def _is_command_mode(r0: int) -> bool:
+    """True when R#0 selects a mode the command engine runs in.
+
+    Handbook Sec. 6.2: command actions are only defined in GRAPHIC 4-7. Every
+    other mode is openMSX's scrMode -1, where a dispatch finishes immediately
+    without touching VRAM. (The V9958 CMD bit, which enables commands in the
+    non-bitmap modes, is out of scope for the V9938.)
+    """
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    return bool(m5 or (m4 and m3))
+
+
+def _clip_nx_dot(x: int, nx: int, dix: bool, dots_per_line: int) -> int:
+    """Clip a dot-unit NX against the line edge, from a single X origin."""
+    if x >= dots_per_line:
+        return 1
+    count = nx if nx else dots_per_line
+    return min(count, x + 1) if dix else min(count, dots_per_line - x)
+
+
+def _clip_nx_dot_pair(sx: int, dx: int, nx: int, dix: bool, dots_per_line: int) -> int:
+    """Clip a dot-unit NX for a command with both a source and a destination X."""
+    if sx >= dots_per_line or dx >= dots_per_line:
+        return 1
+    count = nx if nx else dots_per_line
+    if dix:
+        return min(count, min(sx, dx) + 1)
+    return min(count, dots_per_line - max(sx, dx))
+
+
+def _clip_nx_byte(x: int, nx: int, dix: bool, ppb: int, bpl: int) -> int:
+    """Clip a byte-unit NX against the line edge, from a single X origin.
+
+    NX is truncated to whole bytes first, as the byte-unit commands address
+    VRAM a byte at a time.
+    """
+    col = x // ppb
+    if col >= bpl:
+        return 1
+    count = nx // ppb
+    if count == 0:
+        count = bpl
+    return min(count, col + 1) if dix else min(count, bpl - col)
+
+
+def _clip_nx_byte_pair(sx: int, dx: int, nx: int, dix: bool, ppb: int, bpl: int) -> int:
+    """Clip a byte-unit NX for a command with both a source and a destination X."""
+    src_col = sx // ppb
+    dst_col = dx // ppb
+    if src_col >= bpl or dst_col >= bpl:
+        return 1
+    count = nx // ppb
+    if count == 0:
+        count = bpl
+    if dix:
+        return min(count, min(src_col, dst_col) + 1)
+    return min(count, bpl - max(src_col, dst_col))
+
+
+def _clip_ny(y: int, ny: int, diy: bool) -> int:
+    """Clip NY against the top border (NY = 0 means 1024 lines)."""
+    count = ny if ny else 1024
+    return min(count, y + 1) if diy else count
+
+
+def _clip_ny_pair(sy: int, dy: int, ny: int, diy: bool) -> int:
+    """Clip NY for a command with both a source and a destination Y."""
+    count = ny if ny else 1024
+    return min(count, min(sy, dy) + 1) if diy else count
 
 
 # V9938 power-on default palette (the MSX2 standard palette), 9-bit packed as
@@ -90,6 +168,11 @@ _ARG_MAJ = 0x01  # LINE: major axis (0=X, 1=Y)
 _ARG_EQ = 0x02   # SRCH: 0=stop on equal, 1=stop on not-equal
 _ARG_DIX = 0x04  # X direction (0=right, 1=left)
 _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
+# Expansion-VRAM select. This machine has 128 KB and no expansion RAM, so a
+# source marked MXS reads as 0xFF and a destination marked MXD swallows the
+# write (openMSX: doPoint/doPset are gated on hasExtendedVRAM, false for 128 KB).
+_ARG_MXS = 0x10  # source in expansion RAM
+_ARG_MXD = 0x20  # destination in expansion RAM
 
 _CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
 # Byte-unit commands (HMMV/HMMM/YMMM) process one VRAM byte (= ppb pixels) per
@@ -188,13 +271,17 @@ class V9938:
     _cmd_code: int = field(default=0, init=False, repr=False)
     _cmd_dx: int = field(default=0, init=False, repr=False)
     _cmd_dy: int = field(default=0, init=False, repr=False)
+    _cmd_sx: int = field(default=0, init=False, repr=False)  # LMCM source origin
+    _cmd_sy: int = field(default=0, init=False, repr=False)
     _cmd_nx: int = field(default=0, init=False, repr=False)
     _cmd_ny: int = field(default=0, init=False, repr=False)
     _cmd_x: int = field(default=0, init=False, repr=False)
     _cmd_y: int = field(default=0, init=False, repr=False)
     _cmd_log: int = field(default=0, init=False, repr=False)
     _tr_delay: int = field(default=0, init=False, repr=False)  # cycles until TR re-asserts
-    _status7: int = field(default=0, init=False, repr=False)  # POINT result
+    # The POINT result and each LMCM dot land in the colour register R#44
+    # (cmd_regs[12]) as on hardware, where S#7 simply reads that register back;
+    # there is no separate S#7 latch.
     _status8: int = field(default=0, init=False, repr=False)  # SRCH result X low
     _status9: int = field(default=0, init=False, repr=False)  # SRCH result X high
     _cmd_xstep: int = field(default=1, init=False, repr=False)  # DIX direction
@@ -202,8 +289,6 @@ class V9938:
     _cmd_bpl: int = field(default=128, init=False, repr=False)  # bytes per line
     _cmd_ppb: int = field(default=2, init=False, repr=False)  # pixels per byte
     _cmd_bpp: int = field(default=4, init=False, repr=False)  # bits per pixel
-    _lmcm_buf: list[int] = field(default_factory=list, init=False, repr=False)
-    _lmcm_idx: int = field(default=0, init=False, repr=False)  # advancing LMCM read cursor
     # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
     _latch: int | None = field(default=None, init=False, repr=False)
@@ -321,9 +406,19 @@ class V9938:
         IE1 falling edge clears FH (openMSX VDP.cc:1182): a split program that
         re-enables IE1 in the vblank ISR must not see a stale FH latched while
         IE1 was off.
+
+        R#0 also selects the screen mode, and the command engine only runs in
+        the bitmap modes. Leaving them aborts the command in progress
+        (openMSX VDPCmdEngine::updateDisplayMode → commandDone).
         """
         if (self.regs[0] & _R0_IE1) and not (new_r0 & _R0_IE1):
             self._status1 &= ~_S1_FH
+        if self._cmd_active and not _is_command_mode(new_r0):
+            self._cmd_active = False
+            self._cmd_code = _CMD_ABRT
+            self._cmd_remaining = 0
+            self._tr_delay = 0
+            self._status2 &= ~_S2_CE
 
     @property
     def framebuffer_format(self) -> FramebufferFormat:
@@ -349,7 +444,6 @@ class V9938:
         self.cmd_regs = [0] * 15
         self._status1 = 0
         self._status2 = 0
-        self._status7 = 0
         self._status8 = 0
         self._status9 = 0
         self.collision_x = 0
@@ -357,6 +451,10 @@ class V9938:
         self._cmd_active = False
         self._cmd_remaining = 0
         self._cmd_code = 0
+        self._cmd_transfer = False
+        self._tr_delay = 0
+        self._cmd_x = 0
+        self._cmd_y = 0
         self._addr = 0
         self._latch = None
         self._pal_latch = None
@@ -404,8 +502,12 @@ class V9938:
         if self._cmd_remaining > 0:
             self._cmd_remaining -= cycles
             if self._cmd_remaining <= 0:
+                # Completion clears CE only: TR keeps its value until the next
+                # R#44 write / S#7 read taken with no command running
+                # (openMSX commandDone(), which never touches TR).
                 self._cmd_active = False
-                self._status2 &= ~(_S2_CE | _S2_TR)
+                self._cmd_code = _CMD_ABRT
+                self._status2 &= ~_S2_CE
         if self._tr_delay > 0:
             self._tr_delay -= cycles
             if self._tr_delay <= 0 and self._cmd_active:
@@ -415,18 +517,44 @@ class V9938:
     # Port I/O
     # ------------------------------------------------------------------
 
+    def _write_command_register(self, index: int, value: int) -> None:
+        """Write one of the command registers R#32-R#46.
+
+        R#44 (CLR) is the CPU's data path into a running HMMC/LMMC: every write
+        stages a dot, and the engine consumes it at once while a transfer is
+        active (openMSX setCmdReg case 0x0C). With no command running the same
+        write clears TR instead. R#46 (CMR) dispatches.
+        """
+        if index == 46:
+            self.cmd_regs[14] = value
+            self._dispatch_command()
+            return
+        self.cmd_regs[index - 32] = value
+        if index == 44:
+            self._cmd_transfer = True  # COL write → transfer latch
+            if self._cmd_active:
+                if self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
+                    self._cmd_data_write(value)
+            else:
+                self._status2 &= ~_S2_TR
+
     def write_port(self, port: int, value: int) -> None:
         """Dispatch a V9938 VDP port write.
 
-        0x98 = VRAM data (auto-increments the 17-bit address); 0x99 = control
-        (two-byte latch: register write or VRAM address setup); 0x9A = palette
-        data; 0x9B/0x9C = indirect register access (R#17-pointed register).
+        The V9938 decodes two address bits, so it has exactly four ports and
+        any wider decode on the machine side mirrors them (Handbook Table 4.3;
+        openMSX VDP::writeIO switches on `port & 0x03`):
+        port 0 = VRAM data (auto-increments the 17-bit address); port 1 =
+        control (two-byte latch: register write or VRAM address setup);
+        port 2 = palette data; port 3 = indirect register access
+        (R#17-pointed register).
         """
         value &= 0xFF
-        if port == 0x98:
+        port &= 0x03
+        if port == 0:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
-        elif port == 0x99:
+        elif port == 1:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
@@ -448,22 +576,15 @@ class V9938:
                             self._update_irq()
                         elif reg == 14:
                             self._set_addr_high(low)
-                    elif 32 <= reg <= 45:
-                        self.cmd_regs[reg - 32] = low
-                        if reg == 44:
-                            self._cmd_transfer = True  # COL write → transfer latch
-                            if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
-                                self._cmd_data_write(low)
-                    elif reg == 46:
-                        self.cmd_regs[14] = low
-                        self._dispatch_command()
+                    elif 32 <= reg <= 46:
+                        self._write_command_register(reg, low)
                 else:
                     # Combine 14-bit address from this write with R#14 high bits.
                     self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
                     if not (value & 0x40):  # bit6=0 → read mode: preload buffer
                         self._read_buf = self.vram[self._addr]
                         self._addr = (self._addr + 1) & 0x1FFFF
-        elif port == 0x9A:
+        elif port == 2:
             if self._pal_latch is None:
                 self._pal_latch = value
             else:
@@ -476,11 +597,10 @@ class V9938:
                 self.palette[idx] = rgb
                 self._reg_write_log.append(_PaletteChange(self.display_line, idx, rgb))
                 self.regs[16] = (idx + 1) & 0x0F
-        elif port == 0x9B:
-            # During HMMC/LMMC: port 0x9B doubles as command data port.
-            if self._cmd_active and self._cmd_code in (_CMD_HMMC, _CMD_LMMC):
-                self._cmd_data_write(value)
-                return
+        else:
+            # Indirect register write: the byte goes to whichever register R#17
+            # points at. Streaming command data to R#44 is just this path with
+            # R#17 = 44 and AII set, so there is no separate data port.
             ptr = self.regs[17] & 0x3F
             r17_before = self.regs[17]
             if ptr < _NUM_REGS:
@@ -493,13 +613,8 @@ class V9938:
                     self._update_irq()
                 elif ptr == 14:
                     self._set_addr_high(value)
-            elif 32 <= ptr <= 45:
-                self.cmd_regs[ptr - 32] = value
-                if ptr == 44:
-                    self._cmd_transfer = True  # COL write → transfer latch
-            elif ptr == 46:
-                self.cmd_regs[14] = value
-                self._dispatch_command()
+            elif 32 <= ptr <= 46:
+                self._write_command_register(ptr, value)
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0
@@ -511,22 +626,23 @@ class V9938:
             # just written). The AII bit reflects the post-write R#17.
             if not (r17_before & 0x80):  # AII (bit7) clear → auto-increment
                 self.regs[17] = (self.regs[17] & 0xC0) | ((ptr + 1) & 0x3F)
-        elif port == 0x9C:
-            self._cmd_data_write(value)
 
     def read_port(self, port: int) -> int:
         """Dispatch a V9938 VDP port read.
 
-        0x98 = VRAM data (returns the read-ahead buffer, refills it, auto-
-        increments the 17-bit address); 0x99 = status register S#n, where R#15
-        selects which S#n is returned (reading also resets the control latch).
+        Two address bits, as in write_port: port 0 = VRAM data (returns the
+        read-ahead buffer, refills it, auto-increments the 17-bit address);
+        port 1 = status register S#n, where R#15 selects which S#n is returned
+        (reading also resets the control latch). Ports 2 and 3 are write-only
+        and read as 0xFF (openMSX VDP::readIO cases 2/3).
         """
-        if port == 0x98:
+        port &= 0x03
+        if port == 0:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
             self._addr = (self._addr + 1) & 0x1FFFF
             return result
-        if port == 0x99:
+        if port == 1:
             # Reading the status port resets the port-99 write latch (the
             # second-byte flip-flop) on real V9938 hardware, regardless of which
             # status register R#15 selects. Resetting it only for S#0 lets a
@@ -544,12 +660,17 @@ class V9938:
                     s2 |= _S2_VR
                 return s2
             if self.regs[15] == 7:
-                # LMCM delivers each result byte through S#7 (handbook); fall
-                # back to the POINT result when no LMCM transfer is active.
-                if (self._cmd_active and self._cmd_code == _CMD_LMCM
-                        and self._lmcm_idx < len(self._lmcm_buf)):
-                    return self._cmd_data_read()
-                return self._status7
+                # S#7 reads back the colour register, which holds the POINT
+                # result or the dot an LMCM has staged. The read doubles as the
+                # LMCM handshake: taking the dot lets the engine fetch the next
+                # one. With no command running it clears TR instead (openMSX
+                # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor).
+                result = self.cmd_regs[12]
+                if self._cmd_active and self._cmd_code == _CMD_LMCM:
+                    self._advance_lmcm()
+                elif not self._cmd_active:
+                    self._status2 &= ~_S2_TR
+                return result
             if self.regs[15] == 1:
                 result = self._status1
                 self._status1 &= ~_S1_FH  # reading S#1 clears FH
@@ -558,7 +679,12 @@ class V9938:
             if self.regs[15] == 8:
                 return self._status8
             if self.regs[15] == 9:
-                return self._status9
+                # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
+                # readStatusReg case 9 → resetBD); a SRCH that finds nothing
+                # leaves the previous flag standing.
+                result = self._status9
+                self._status2 &= ~_S2_BD
+                return result
             if self.regs[15] == 3:
                 # S#3-S#6: sprite collision X/Y, as reported by the sprite
                 # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
@@ -590,9 +716,7 @@ class V9938:
             self.status &= ~0xE0  # clear F, 5S and C flags together
             self._update_irq()
             return result & 0xFF
-        if port == 0x9C:
-            return self._cmd_data_read()
-        return 0xFF
+        return 0xFF  # ports 2 and 3 (palette / indirect register) are write-only
 
     # ------------------------------------------------------------------
     # Command engine helpers
@@ -624,6 +748,10 @@ class V9938:
         """
         return (y * self._cmd_bpl + (x // self._cmd_ppb) % self._cmd_bpl) & 0x1FFFF
 
+    def _vram_byte_addr_col(self, col: int, y: int) -> int:
+        """Linear VRAM address of byte column `col` on row y (byte-unit commands)."""
+        return (y * self._cmd_bpl + col % self._cmd_bpl) & 0x1FFFF
+
     def _vram_pixel_read(self, x: int, y: int) -> int:
         """Return the pixel value at (x, y) for the current screen mode."""
         byte = self.vram[self._vram_byte_addr(x, y)]
@@ -634,6 +762,8 @@ class V9938:
         """Write a pixel at (x, y) applying the V9938 LOG operation."""
         mask = (1 << self._cmd_bpp) - 1
         src = color & mask
+        if (log & 0x7) > 4:  # undefined logical operation: no write (openMSX DummyOp)
+            return
         if (log & 0x8) and src == 0:  # transparent: skip zero source pixels
             return
         addr = self._vram_byte_addr(x, y)
@@ -643,13 +773,12 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
-    def _byte_cmd_cycles(self, nx_px: int, ny: int) -> int:
+    def _byte_cmd_cycles(self, byte_cols: int, ny: int) -> int:
         """CE duration for a byte-unit command (HMMV/HMMM/YMMM).
 
-        nx_px pixels span ceil(nx_px / ppb) VRAM bytes; each byte costs
-        _CYCLES_PER_BYTE T-states. Clamped to a 4 T-state minimum.
+        Each of the byte_cols × ny VRAM bytes costs _CYCLES_PER_BYTE T-states.
+        Clamped to a 4 T-state minimum.
         """
-        byte_cols = (nx_px + self._cmd_ppb - 1) // self._cmd_ppb
         return max(4, byte_cols * ny * _CYCLES_PER_BYTE)
 
     def _pixel_cmd_cycles(self, nx_px: int, ny: int) -> int:
@@ -667,192 +796,178 @@ class V9938:
         log = r46 & 0xF
 
         # Every command owns _cmd_code, not just the CPU-feed commands (HMMC/
-        # LMMC/LMCM). The data-port handlers key off _cmd_code, so a completed
+        # LMMC/LMCM). The transfer handlers key off _cmd_code, so a completed
         # synchronous command (LMMV/LMMM/HMMV/HMMM/YMMM/LINE/SRCH) must overwrite
-        # any stale HMMC/LMMC code, otherwise a later R#44/port-0x9B/0x9C write
-        # is misrouted into the CPU-feed path and corrupts the just-drawn region.
+        # any stale HMMC/LMMC code, otherwise a later R#44 write is misrouted
+        # into the transfer path and corrupts the just-drawn region.
         self._cmd_code = cmd
 
         self._cmd_bpl, self._cmd_ppb, self._cmd_bpp = self._cmd_geometry()
         px_mask = (1 << self._cmd_bpp) - 1
+        sw = self._cmd_bpl * self._cmd_ppb  # screen width in dots
 
         sx = self.cmd_regs[0] | ((self.cmd_regs[1] & 0x01) << 8)
         sy = self.cmd_regs[2] | ((self.cmd_regs[3] & 0x03) << 8)
         dx = self.cmd_regs[4] | ((self.cmd_regs[5] & 0x01) << 8)
         dy = self.cmd_regs[6] | ((self.cmd_regs[7] & 0x03) << 8)
-        nx = self.cmd_regs[8] | ((self.cmd_regs[9] & 0x01) << 8)
+        nx = self.cmd_regs[8] | ((self.cmd_regs[9] & 0x03) << 8)
         ny = self.cmd_regs[10] | ((self.cmd_regs[11] & 0x03) << 8)
         clr = self.cmd_regs[12]
         arg = self.cmd_regs[13]
-        xs = -1 if (arg & _ARG_DIX) else 1  # DIX: 1 = leftward
-        ys = -1 if (arg & _ARG_DIY) else 1  # DIY: 1 = upward
+        dix = bool(arg & _ARG_DIX)
+        diy = bool(arg & _ARG_DIY)
+        xs = -1 if dix else 1  # DIX: 1 = leftward
+        ys = -1 if diy else 1  # DIY: 1 = upward
+        src_ext = bool(arg & _ARG_MXS)  # source in (absent) expansion RAM
+        dst_ext = bool(arg & _ARG_MXD)  # destination in (absent) expansion RAM
 
         self._cmd_active = False
-        self._status2 &= ~(_S2_CE | _S2_TR)
+        self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
-        if cmd == _CMD_ABRT or cmd not in (
-            _CMD_POINT,
-            _CMD_PSET,
-            _CMD_SRCH,
-            _CMD_LINE,
-            _CMD_LMMV,
-            _CMD_LMMM,
-            _CMD_LMCM,
-            _CMD_LMMC,
-            _CMD_HMMV,
-            _CMD_HMMM,
-            _CMD_YMMM,
-            _CMD_HMMC,
-        ):
+        # Commands are only defined in the bitmap modes; anywhere else the
+        # dispatch finishes immediately without touching VRAM. Codes 1-3 are
+        # reserved and behave as STOP, as does STOP itself.
+        if cmd == _CMD_ABRT or cmd < _CMD_POINT or not _is_command_mode(self.regs[0]):
+            self._cmd_code = _CMD_ABRT
+            self._cmd_remaining = 0
+            self._tr_delay = 0
             return
 
         if cmd == _CMD_POINT:
-            self._status7 = self._vram_pixel_read(sx, sy) & px_mask
+            # The sampled dot lands in the colour register, where S#7 reads it.
+            self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
             return
 
         if cmd == _CMD_PSET:
-            self._vram_pixel_write(dx, dy, clr & px_mask, log)
+            if not dst_ext:
+                self._vram_pixel_write(dx, dy, clr & px_mask, log)
             return
 
         if cmd == _CMD_SRCH:
-            sw = self._cmd_bpl * self._cmd_ppb  # screen width in pixels
             stop_on_ne = bool(arg & _ARG_EQ)
             clr_px = clr & px_mask
             x = sx
             found = False
             while 0 <= x < sw:
-                pix = self._vram_pixel_read(x, sy)
+                pix = 0xFF if src_ext else self._vram_pixel_read(x, sy)
                 hit = (pix != clr_px) if stop_on_ne else (pix == clr_px)
                 if hit:
                     found = True
                     break
                 x += xs
             # Result X coordinate goes to S#8/S#9; S#9 upper bits read as 1.
+            # Hardware exposes the scan counter whether or not the colour was
+            # found. BD is only ever SET here: a search that runs into the
+            # border leaves it untouched, and only an S#9 read clears it.
             self._status8 = x & 0xFF
             self._status9 = 0xFE | ((x >> 8) & 0x01)
             if found:
                 self._status2 |= _S2_BD
-            else:
-                self._status2 &= ~_S2_BD
             return
 
         if cmd == _CMD_LINE:
-            maj_y = bool(arg & _ARG_MAJ)
-            clr_px = clr & px_mask
-            # NX is always the major (long) side, NY always the minor (short);
-            # MAJ only selects which screen axis the major runs along.
-            major = nx
-            minor = ny
-            err = major // 2
-            x, y = dx, dy
-            for _ in range(major + 1):
-                self._vram_pixel_write(x, y, clr_px, log)
-                err -= minor
-                if maj_y:
-                    y += ys
-                    if err < 0:
-                        x += xs
-                        err += major
-                else:
-                    x += xs
-                    if err < 0:
-                        y += ys
-                        err += major
+            self._draw_line(dx, dy, nx, ny & 0x3FF, clr & px_mask, log, arg, xs, ys, sw)
             return
 
         if cmd == _CMD_LMCM:
-            self._lmcm_buf = []
-            self._lmcm_idx = 0
-            rows = ny if ny else 1024
-            cols = nx if nx else self._cmd_bpl * self._cmd_ppb
-            ppb = self._cmd_ppb
-            for row in range(rows):
-                yy = sy + row * ys
-                col = 0
-                while col < cols:
-                    byte = 0
-                    for k in range(ppb):
-                        pix = (self._vram_pixel_read(sx + (col + k) * xs, yy)
-                               if (col + k) < cols else 0)
-                        byte = (byte << self._cmd_bpp) | (pix & px_mask)
-                    self._lmcm_buf.append(byte)
-                    col += ppb
+            self._cmd_sx = sx
+            self._cmd_sy = sy
+            self._cmd_nx = _clip_nx_dot(sx, nx, dix, sw)
+            self._cmd_ny = _clip_ny(sy, ny, diy)
+            self._cmd_x = 0
+            self._cmd_y = 0
+            self._cmd_xstep = xs
+            self._cmd_ystep = ys
             self._cmd_active = True
             self._status2 |= _S2_CE | _S2_TR
+            # The first dot is fetched at once (openMSX startLmcm sets its
+            # transfer flag); every S#7 read takes one and stages the next.
+            self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
             return
 
         if cmd == _CMD_LMMV:
-            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
-            actual_ny = ny if ny else 1024
+            actual_nx = _clip_nx_dot(dx, nx, dix, sw)
+            actual_ny = _clip_ny(dy, ny, diy)
             clr_px = clr & px_mask
-            for row in range(actual_ny):
-                yy = dy + row * ys
-                for col in range(actual_nx):
-                    self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
+            if not dst_ext:
+                for row in range(actual_ny):
+                    yy = dy + row * ys
+                    for col in range(actual_nx):
+                        self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
             self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_LMMM:
-            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
-            actual_ny = ny if ny else 1024
-            for row in range(actual_ny):
-                syy = sy + row * ys
-                dyy = dy + row * ys
-                for col in range(actual_nx):
-                    src_pix = self._vram_pixel_read(sx + col * xs, syy)
-                    self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
+            actual_nx = _clip_nx_dot_pair(sx, dx, nx, dix, sw)
+            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+            if not dst_ext:
+                for row in range(actual_ny):
+                    syy = sy + row * ys
+                    dyy = dy + row * ys
+                    for col in range(actual_nx):
+                        src_pix = (px_mask if src_ext
+                                   else self._vram_pixel_read(sx + col * xs, syy))
+                        self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
             self._cmd_active = True
             self._status2 |= _S2_CE
             self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
             return
 
         if cmd == _CMD_HMMV:
-            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
-            actual_ny = ny if ny else 1024
-            for row in range(actual_ny):
-                yy = dy + row * ys
-                for col in range(actual_nx):
-                    addr = self._vram_byte_addr(dx + col * xs, yy)
-                    self.vram[addr] = clr
+            # Byte-unit: NX is truncated to whole bytes and the engine walks
+            # byte columns, so an NX that is not a multiple of ppb covers fewer
+            # dots rather than part-writing an extra byte.
+            byte_cols = _clip_nx_byte(dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
+            actual_ny = _clip_ny(dy, ny, diy)
+            start_col = dx // self._cmd_ppb
+            if not dst_ext:
+                for row in range(actual_ny):
+                    yy = dy + row * ys
+                    for c in range(byte_cols):
+                        self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(actual_nx, actual_ny)
+            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
             return
 
         if cmd == _CMD_HMMM:
-            actual_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
-            actual_ny = ny if ny else 1024
-            for row in range(actual_ny):
-                syy = sy + row * ys
-                dyy = dy + row * ys
-                for col in range(actual_nx):
-                    src = self._vram_byte_addr(sx + col * xs, syy)
-                    dst = self._vram_byte_addr(dx + col * xs, dyy)
-                    self.vram[dst] = self.vram[src]
+            byte_cols = _clip_nx_byte_pair(sx, dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
+            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+            src_col = sx // self._cmd_ppb
+            dst_col = dx // self._cmd_ppb
+            if not dst_ext:
+                for row in range(actual_ny):
+                    syy = sy + row * ys
+                    dyy = dy + row * ys
+                    for c in range(byte_cols):
+                        src = self._vram_byte_addr_col(src_col + c * xs, syy)
+                        dst = self._vram_byte_addr_col(dst_col + c * xs, dyy)
+                        self.vram[dst] = 0xFF if src_ext else self.vram[src]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(actual_nx, actual_ny)
+            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
             return
 
         if cmd == _CMD_YMMM:
-            # Y-direction copy: vertical strip at X=DX (NX ignored, X-range runs
-            # to the screen edge per DIX); source row SY → destination row DY.
-            actual_ny = ny if ny else 1024
-            sw = self._cmd_bpl * self._cmd_ppb  # screen width in pixels
-            x_count = (dx + 1) if (arg & _ARG_DIX) else (sw - dx)
-            for row in range(actual_ny):
-                syy = sy + row * ys
-                dyy = dy + row * ys
-                for c in range(x_count):
-                    xx = dx + c * xs
-                    src = self._vram_byte_addr(xx, syy)
-                    dst = self._vram_byte_addr(xx, dyy)
-                    self.vram[dst] = self.vram[src]
+            # Y-direction copy: vertical strip at X=DX (NX ignored, the strip
+            # runs to whichever screen edge DIX points at); source row SY →
+            # destination row DY, both at the same X.
+            byte_cols = _clip_nx_byte(dx, 0, dix, self._cmd_ppb, self._cmd_bpl)
+            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+            start_col = dx // self._cmd_ppb
+            if not dst_ext:
+                for row in range(actual_ny):
+                    syy = sy + row * ys
+                    dyy = dy + row * ys
+                    for c in range(byte_cols):
+                        col = start_col + c * xs
+                        self.vram[self._vram_byte_addr_col(col, dyy)] = \
+                            self.vram[self._vram_byte_addr_col(col, syy)]
             self._cmd_active = True
             self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(x_count, actual_ny)
+            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
             return
 
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
@@ -860,8 +975,12 @@ class V9938:
         self._cmd_active = True
         self._cmd_dx = dx
         self._cmd_dy = dy
-        self._cmd_nx = nx if nx else self._cmd_bpl * self._cmd_ppb
-        self._cmd_ny = ny if ny else 1024
+        if cmd == _CMD_HMMC:
+            self._cmd_nx = _clip_nx_byte(dx, nx, dix, self._cmd_ppb,
+                                         self._cmd_bpl) * self._cmd_ppb
+        else:
+            self._cmd_nx = _clip_nx_dot(dx, nx, dix, sw)
+        self._cmd_ny = _clip_ny(dy, ny, diy)
         self._cmd_x = 0
         self._cmd_y = 0
         self._cmd_log = log
@@ -880,8 +999,54 @@ class V9938:
             self._tr_delay = 0
             self._status2 |= _S2_TR
 
+    def _draw_line(self, dx: int, dy: int, nx: int, ny: int, colour: int,
+                   log: int, arg: int, xs: int, ys: int, sw: int) -> None:
+        """Bresenham line from (dx, dy), following openMSX executeLine.
+
+        NX is always the major (long) side and NY the minor; MAJ (ARG bit 0)
+        only chooses which screen axis the major side runs along. The line
+        covers NX + 1 dots and terminates early when X crosses the line width
+        or an upward DIY walks Y above the top border.
+        """
+        maj_y = bool(arg & _ARG_MAJ)
+        dst_ext = bool(arg & _ARG_MXD)
+        err = (nx - 1) // 2 if nx else 0  # openMSX ASX
+        x = dx
+        y = dy
+        steps = 0  # openMSX ANX
+        while True:
+            if not dst_ext:
+                self._vram_pixel_write(x, y, colour, log)
+            if not maj_y:
+                # X is the major axis: the end test happens before Y advances,
+                # and the X-edge test uses an AND against the line width.
+                x += xs
+                done = steps == nx or bool(x & sw)
+                steps += 1
+                if done:
+                    return
+                if err < ny:
+                    err += nx
+                    y += ys
+                    if ys < 0 and y < 0:  # above the top border: stop
+                        return
+                err = (err - ny) & 0x3FF
+            else:
+                # Y is the major axis: Y advances before the end test.
+                y += ys
+                if ys < 0 and y < 0:
+                    return
+                if err < ny:
+                    err += nx
+                    x += xs
+                err = (err - ny) & 0x3FF
+                done = steps == nx or bool(x & sw)
+                steps += 1
+                if done:
+                    return
+
     def _cmd_data_write(self, value: int) -> None:
-        """Handle a byte arriving at port 0x9C during an active HMMC/LMMC."""
+        """Consume one CPU transfer byte (an R#44 write) for an active HMMC/LMMC."""
         if not self._cmd_active or self._cmd_code == _CMD_LMCM:
             return
         # A pending byte is being consumed → clear the transfer latch.
@@ -891,32 +1056,45 @@ class V9938:
         self._tr_delay = _CYCLES_PER_BYTE
         px = self._cmd_dx + self._cmd_x * self._cmd_xstep
         py = self._cmd_dy + self._cmd_y * self._cmd_ystep
+        dst_ext = bool(self.cmd_regs[13] & _ARG_MXD)
         if self._cmd_code == _CMD_LMMC:
             # LMMC: CPU sends one byte per pixel; color in lower bpp bits.
             mask = (1 << self._cmd_bpp) - 1
-            self._vram_pixel_write(px, py, value & mask, self._cmd_log)
+            if not dst_ext:
+                self._vram_pixel_write(px, py, value & mask, self._cmd_log)
             self._cmd_x += 1
         else:
             # HMMC: high-speed byte copy, no logical operation; one byte = ppb pixels.
-            self.vram[self._vram_byte_addr(px, py)] = value
+            if not dst_ext:
+                self.vram[self._vram_byte_addr(px, py)] = value
             self._cmd_x += self._cmd_ppb
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1
             if self._cmd_y >= self._cmd_ny:
                 self._cmd_active = False
+                self._cmd_code = _CMD_ABRT
                 self._tr_delay = 0
-                self._status2 &= ~(_S2_CE | _S2_TR)
+                self._status2 &= ~_S2_CE  # TR survives completion
 
-    def _cmd_data_read(self) -> int:
-        """Return next buffered byte for an active LMCM transfer."""
-        if (not self._cmd_active or self._cmd_code != _CMD_LMCM
-                or self._lmcm_idx >= len(self._lmcm_buf)):
-            return 0xFF
-        # Advancing index instead of pop(0): O(n) over a transfer, not O(n²).
-        byte = self._lmcm_buf[self._lmcm_idx]
-        self._lmcm_idx += 1
-        if self._lmcm_idx >= len(self._lmcm_buf):
-            self._cmd_active = False
-            self._status2 &= ~(_S2_CE | _S2_TR)
-        return byte
+    def _advance_lmcm(self) -> None:
+        """Take the staged LMCM dot and fetch the next one.
+
+        Driven by the CPU reading S#7 (or the data port): one dot per read,
+        walking the source rectangle in the DIX/DIY directions.
+        """
+        self._cmd_x += 1
+        if self._cmd_x >= self._cmd_nx:
+            self._cmd_x = 0
+            self._cmd_y += 1
+            if self._cmd_y >= self._cmd_ny:
+                self._cmd_active = False
+                self._cmd_code = _CMD_ABRT
+                self._status2 &= ~_S2_CE  # TR survives completion
+                return
+        x = self._cmd_sx + self._cmd_x * self._cmd_xstep
+        y = self._cmd_sy + self._cmd_y * self._cmd_ystep
+        if self.cmd_regs[13] & _ARG_MXS:
+            self.cmd_regs[12] = 0xFF
+        else:
+            self.cmd_regs[12] = self._vram_pixel_read(x, y) & ((1 << self._cmd_bpp) - 1)

@@ -24,6 +24,22 @@ def _write_cmd_reg(vdp: V9938, reg: int, value: int) -> None:
     vdp.write_port(0x9B, value & 0xFF)
 
 
+def _write_data(vdp: V9938, value: int) -> None:
+    """Send one CPU transfer byte the way hardware does: a write to R#44 (CLR).
+
+    Software points R#17 at R#44 with AII set and then streams bytes through
+    port 0x9B; there is no separate data port on a V9938.
+    """
+    _write_reg(vdp, 17, 0x80 | 44)
+    vdp.write_port(0x9B, value & 0xFF)
+
+
+def _read_data(vdp: V9938) -> int:
+    """Take one LMCM dot the way hardware does: a read of S#7."""
+    vdp.regs[15] = 7
+    return vdp.read_port(0x99)
+
+
 def _dispatch_cmd(vdp: V9938, cmd_code: int, log: int = 0,
                   dx: int = 0, dy: int = 0, nx: int = 1, ny: int = 1,
                   sx: int = 0, sy: int = 0, clr: int = 0, arg: int = 0) -> None:
@@ -165,12 +181,12 @@ def test_hmmc_sets_ce_and_tr_on_dispatch() -> None:
     assert vdp._cmd_active
 
 
-def test_hmmc_transfers_bytes_via_port_9c() -> None:
+def test_hmmc_transfers_bytes_via_colour_register() -> None:
     vdp = _make_vdp()
     # NX=4 pixels = 2 bytes in G4. First byte is pre-loaded in CLR (R#44) and
-    # consumed on dispatch; the second arrives via the data port.
+    # consumed on dispatch; the second arrives as another R#44 write.
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0xAB)
-    vdp.write_port(0x9C, 0xCD)
+    _write_data(vdp, 0xCD)
     assert vdp.vram[0] == 0xAB  # pixel pair (0,1) — pre-loaded CLR
     assert vdp.vram[1] == 0xCD  # pixel pair (2,3)
 
@@ -184,10 +200,11 @@ def test_hmmc_clears_ce_when_done() -> None:
     assert not vdp._cmd_active
 
 
-def test_hmmc_port_9c_write_when_inactive_ignored() -> None:
+def test_colour_register_write_when_inactive_touches_no_vram() -> None:
     vdp = _make_vdp()
-    vdp.write_port(0x9C, 0xFF)  # no active command
-    assert vdp.vram[0] == 0x00  # unchanged
+    _write_data(vdp, 0xFF)  # no active command: just latches CLR
+    assert vdp.vram[0] == 0x00
+    assert vdp.cmd_regs[12] == 0xFF
 
 
 def test_hmmc_no_preload_when_col_not_written() -> None:
@@ -204,7 +221,7 @@ def test_hmmc_no_preload_when_col_not_written() -> None:
     _write_cmd_reg(vdp, 14, 0xF0)  # R46: HMMC/IMP → dispatch
     assert vdp.vram[0] == 0xEE   # NO preload on dispatch
     assert vdp._cmd_active
-    vdp.write_port(0x9C, 0xCD)   # first CPU byte → dot 0
+    _write_data(vdp, 0xCD)       # first CPU byte → dot 0
     assert vdp.vram[0] == 0xCD   # not the stale COL
 
 
@@ -221,11 +238,11 @@ def test_hmmc_nx0_is_line_width_not_512() -> None:
     _write_cmd_reg(vdp, 13, 0)     # ARG (R#44 untouched → no preload)
     _write_cmd_reg(vdp, 14, 0xF0)  # HMMC
     for _ in range(128):           # one row = 256 px / 2 = 128 bytes
-        vdp.write_port(0x9C, 0x11)
+        _write_data(vdp, 0x11)
     assert vdp._cmd_active          # row 1 still pending (NX=256, not 512)
     assert vdp._cmd_y == 1
     for _ in range(128):
-        vdp.write_port(0x9C, 0x22)
+        _write_data(vdp, 0x22)
     assert not vdp._cmd_active      # both rows done
     assert vdp.vram[0] == 0x11 and vdp.vram[127] == 0x11
     assert vdp.vram[128] == 0x22 and vdp.vram[255] == 0x22
@@ -242,28 +259,30 @@ def test_lmmc_no_preload_when_col_not_written() -> None:
     vdp.vram[0] = 0xEE
     _write_cmd_reg(vdp, 14, 0xB0)  # R46: LMMC/IMP
     assert vdp.vram[0] == 0xEE   # no preload
-    vdp.write_port(0x9B, 0x07)   # first pixel (0,0)=7 → high nibble
+    _write_data(vdp, 0x07)       # first pixel (0,0)=7 → high nibble
     assert vdp.vram[0] & 0xF0 == 0x70
 
 
-def test_hmmc_transfers_bytes_via_port_9b() -> None:
-    # V9938: port 0x9B doubles as command data port during HMMC/LMMC.
-    # First byte pre-loaded in CLR; second via the port.
+def test_hmmc_streams_through_r17_pointed_at_the_colour_register() -> None:
+    # The standard MSX2 feed: R#17 = 44 with AII set, then OUT to port 0x9B for
+    # every byte. First byte pre-loaded in CLR; second through the port.
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0xAB)
+    _write_reg(vdp, 17, 0x80 | 44)
     vdp.write_port(0x9B, 0xCD)
     assert vdp.vram[0] == 0xAB
     assert vdp.vram[1] == 0xCD
 
 
-def test_hmmc_port_9b_does_not_write_register_when_active() -> None:
-    # Port 0x9B must NOT update cmd_regs while HMMC is active.
+def test_port_9b_still_writes_other_registers_during_a_transfer() -> None:
+    # Port 0x9B always writes the register R#17 points at, transfer or not:
+    # only R#44 feeds the engine (openMSX setCmdReg).
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1)
-    vdp.regs[17] = 0x20  # ptr → R#32
-    before = vdp.cmd_regs[0]
-    vdp.write_port(0x9B, 0xFF)  # must route to HMMC, not R#32
-    assert vdp.cmd_regs[0] == before
+    _write_reg(vdp, 17, 0x80 | 32)  # ptr → R#32
+    vdp.write_port(0x9B, 0xFF)
+    assert vdp.cmd_regs[0] == 0xFF  # the register write lands
+    assert vdp.vram[0] == 0x00      # and no dot was transferred
 
 
 def test_lmmc_transfers_bytes_via_port_9b() -> None:
@@ -274,14 +293,14 @@ def test_lmmc_transfers_bytes_via_port_9b() -> None:
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xB, log=0x0, dx=0, dy=0, nx=4, ny=2, clr=0x07)
     # (0,0)=7 came from CLR; remaining dots via the port:
-    vdp.write_port(0x9B, 0x05)  # (1,0)=5
-    vdp.write_port(0x9B, 0x03)  # (2,0)=3
-    vdp.write_port(0x9B, 0x01)  # (3,0)=1
-    vdp.write_port(0x9B, 0x04)  # (0,1)=4
-    vdp.write_port(0x9B, 0x02)  # (1,1)=2
-    vdp.write_port(0x9B, 0x06)  # (2,1)=6
+    _write_data(vdp, 0x05)  # (1,0)=5
+    _write_data(vdp, 0x03)  # (2,0)=3
+    _write_data(vdp, 0x01)  # (3,0)=1
+    _write_data(vdp, 0x04)  # (0,1)=4
+    _write_data(vdp, 0x02)  # (1,1)=2
+    _write_data(vdp, 0x06)  # (2,1)=6
     assert vdp._cmd_active        # still active before the final pixel
-    vdp.write_port(0x9B, 0x08)  # (3,1)=8 → last dot → CE=0
+    _write_data(vdp, 0x08)  # (3,1)=8 → last dot → CE=0
     assert vdp.vram[0] == 0x75   # row 0 byte 0: pixels (0,0)=7, (1,0)=5
     assert vdp.vram[1] == 0x31   # row 0 byte 1: pixels (2,0)=3, (3,0)=1
     assert vdp.vram[128] == 0x42 # row 1 byte 0: pixels (0,1)=4, (1,1)=2
@@ -297,7 +316,7 @@ def test_lmmc_timp_skips_zero_bytes() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x99  # pre-fill destination
     _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=2, ny=1)
-    vdp.write_port(0x9C, 0x00)  # transparent → skip
+    _write_data(vdp, 0x00)  # transparent → skip
     assert vdp.vram[0] == 0x99  # unchanged
 
 
@@ -307,8 +326,8 @@ def test_lmmc_timp_writes_nonzero_bytes() -> None:
     vdp = _make_vdp()
     _dispatch_cmd(vdp, cmd_code=0xB, log=0x8, dx=0, dy=0, nx=3, ny=1, clr=0x0B)
     # (0,0) color 0xB came from CLR; remaining dots via the port:
-    vdp.write_port(0x9C, 0x05)  # (1,0) color 5 → pixel written
-    vdp.write_port(0x9C, 0x0C)  # (2,0) color C → last dot → CE=0
+    _write_data(vdp, 0x05)  # (1,0) color 5 → pixel written
+    _write_data(vdp, 0x0C)  # (2,0) color C → last dot → CE=0
     # G4: byte 0 = pixels 0,1 packed; byte 1 = pixels 2,3.
     assert vdp.vram[0] == 0xB5      # pixel 0 high=B, pixel 1 low=5
     assert vdp.vram[1] & 0xF0 == 0xC0  # pixel 2 high nibble = C
@@ -472,47 +491,46 @@ def test_lmcm_sets_ce_and_tr_on_dispatch() -> None:
     assert vdp._cmd_active
 
 
-def test_lmcm_port_9c_read_returns_buffered_bytes() -> None:
+def test_lmcm_delivers_one_dot_per_read() -> None:
+    # LMCM is a *logical* (dot-unit) transfer: each S#7 read hands over one
+    # dot, not a packed byte (openMSX executeLmcm: COL = Mode::point(...)).
     vdp = _make_vdp()
     vdp.vram[0] = 0xAB  # pixel (0,0)=0xA, pixel (1,0)=0xB
     vdp.vram[1] = 0xCD  # pixel (2,0)=0xC, pixel (3,0)=0xD
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)
-    assert vdp.read_port(0x9C) == 0xAB
-    assert vdp.read_port(0x9C) == 0xCD
+    assert [_read_data(vdp) for _ in range(4)] == [0xA, 0xB, 0xC, 0xD]
 
 
-def test_lmcm_clears_ce_after_last_byte() -> None:
+def test_lmcm_clears_ce_after_last_dot() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x12
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
-    vdp.read_port(0x9C)  # read the single byte
+    _read_data(vdp)  # dot (0,0)
+    assert vdp._status2 & 0x01  # CE still set: one dot left
+    _read_data(vdp)  # dot (1,0)
     assert vdp._status2 & 0x01 == 0  # CE cleared
     assert not vdp._cmd_active
 
 
-def test_lmcm_port_9c_read_when_inactive_returns_ff() -> None:
-    vdp = _make_vdp()
-    assert vdp.read_port(0x9C) == 0xFF
-
-
-def test_lmcm_write_to_9c_ignored_during_lmcm() -> None:
+def test_colour_register_write_during_lmcm_is_not_a_transfer() -> None:
+    # LMCM moves VRAM -> CPU, so an R#44 write only latches CLR; it must not
+    # be mistaken for transfer data and write VRAM.
     vdp = _make_vdp()
     vdp.vram[0] = 0xAB
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
-    vdp.write_port(0x9C, 0xFF)  # write while LMCM active → ignored
+    _write_data(vdp, 0xFF)
     assert vdp.vram[0] == 0xAB  # unchanged
 
 
 def test_lmcm_read_via_status_register_7() -> None:
-    # Handbook path: CPU reads each LMCM byte from S#7 (R#15=7 via port 0x99).
+    # Handbook path: the CPU reads each LMCM dot from S#7 (R#15=7 via port 0x99).
     vdp = _make_vdp()
     vdp.vram[0] = 0xAB  # pixels (0,0)=0xA, (1,0)=0xB
     vdp.vram[1] = 0xCD  # pixels (2,0)=0xC, (3,0)=0xD
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)
     vdp.regs[15] = 7
-    assert vdp.read_port(0x99) == 0xAB
-    assert vdp.read_port(0x99) == 0xCD
-    assert vdp._status2 & 0x01 == 0  # CE cleared after last byte
+    assert [vdp.read_port(0x99) for _ in range(4)] == [0xA, 0xB, 0xC, 0xD]
+    assert vdp._status2 & 0x01 == 0  # CE cleared after the last dot
     assert not vdp._cmd_active
 
 
@@ -697,9 +715,10 @@ def test_completed_command_does_not_misroute_later_data_writes() -> None:
     later port-0x9B data write from being misrouted into the CPU-feed path and
     corrupting the just-drawn region (V9938 register-file fix)."""
     vdp = _make_vdp()
-    # 1) HMMC 1x1 completes on dispatch (the pre-loaded CLR is the only byte);
-    #    leaves _cmd_code = HMMC, _cmd_active = False, dest (4,5).
-    _dispatch_cmd(vdp, cmd_code=0xF, dx=4, dy=5, nx=1, ny=1, clr=0xAA)
+    # 1) A one-byte HMMC (NX = 2 dots = 1 byte in G4) completes on dispatch,
+    #    the pre-loaded CLR being the only byte; leaves _cmd_active = False and
+    #    the dest at (4,5).
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=4, dy=5, nx=2, ny=1, clr=0xAA)
     assert not vdp._cmd_active
     # 2) LMMV fills an 8x8 region with colour 0x0F and stays active (not ticked).
     _dispatch_cmd(vdp, cmd_code=0x8, dx=0, dy=0, nx=8, ny=8, clr=0x0F)

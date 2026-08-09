@@ -118,6 +118,8 @@ def test_run_frame_clears_ce_for_small_hmmv() -> None:
     vdp = machine.vdp
     assert isinstance(vdp, V9938)
 
+    # Commands only run in the bitmap modes; select GRAPHIC 4 (SCREEN 5) first.
+    vdp.regs[0] = 0x06
     # Dispatch HMMV (NX=2, NY=1 → duration = 2 × 1 × 8 = 16 T-states)
     _dispatch_cmd(vdp, cmd_code=0xC, dx=0, dy=0, nx=2, ny=1, clr=0xFF)
     assert vdp._status2 & 0x01  # CE=1 immediately after dispatch

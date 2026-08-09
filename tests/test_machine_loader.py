@@ -186,7 +186,7 @@ def _full_registry(tmp_path: Path) -> tuple[Path, dict]:
     config_dir = tmp_path / "config"
     for dev_id, ports in [
         ("psg_ay8910", "[0xA0,0xA1,0xA2]"),
-        ("vdp_v9938", "[0x98,0x99,0x9A,0x9B,0x9C]"),
+        ("vdp_v9938", "[0x98,0x99,0x9A,0x9B]"),
         ("rtc_rp5c01", "[0xB4,0xB5]"),
         ("memory_mapper_standard", "[0xFC,0xFD,0xFE,0xFF]"),
     ]:

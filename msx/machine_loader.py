@@ -152,7 +152,7 @@ def _make_mapper(
 
 # Standard MSX I/O port map (first, last), device_id -> ports. Used as the
 # fallback when a device's YAML omits an explicit port range. The V9938 VDP
-# extends the high port to 0x9C; that case is handled at its call site.
+# extends the high port to 0x9B; that case is handled at its call site.
 _DEFAULT_IO_PORTS: dict[str, tuple[int, int]] = {
     "vdp_tms9918a": (0x98, 0x99),
     "psg_ay8910": (0xA0, 0xA2),
@@ -1042,8 +1042,9 @@ def _build_msx2(
     ppi = PPI(memory=memory, _input=input_state)
 
     vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
-    # V9938 extends the VDP high port to 0x9C (palette/indirect regs); TMS9918A stops at 0x99.
-    vdp_default_ports = (0x98, 0x9C) if spec.has_v9938 else _DEFAULT_IO_PORTS["vdp_tms9918a"]
+    # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the
+    # TMS9918A stops at 0x99.
+    vdp_default_ports = (0x98, 0x9B) if spec.has_v9938 else _DEFAULT_IO_PORTS["vdp_tms9918a"]
     vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
     psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
     ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
