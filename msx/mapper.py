@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol
@@ -37,7 +37,13 @@ _RTYPE_MASK = 0x1F
 class Mapper(Protocol):
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
-    def snapshot(self) -> dict[str, object]: ...
+    # Mapping (read-only, covariant), not dict (invariant): a snapshot is
+    # only ever read to serialise, never mutated in place, and a covariant
+    # return type lets an implementer narrow to its own TypedDict schema
+    # (e.g. FmPacState in msx/fmpac.py) without breaking Protocol
+    # conformance -- dict[str, object] blocks that narrowing even in return
+    # position, since dict's mutating methods make it invariant.
+    def snapshot(self) -> Mapping[str, object]: ...
     def restore(self, state: dict[str, object]) -> None: ...
 
 
