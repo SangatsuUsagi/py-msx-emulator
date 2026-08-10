@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 if TYPE_CHECKING:
     from msx.mapper_tracer import MapperTracer
@@ -79,6 +79,10 @@ def _trace_bank(mapper: _BankTracing, window: int, old: int, new: int, addr: int
     )
 
 
+class NoStateMapperState(TypedDict):
+    """Save-state schema for _NoStateMapperMixin -- always empty."""
+
+
 class _NoStateMapperMixin:
     """Shared no-op write/snapshot/restore for mappers with no persisted state
     (no bank registers, no SRAM)."""
@@ -86,7 +90,7 @@ class _NoStateMapperMixin:
     def write(self, addr: int, value: int) -> None:
         pass
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> NoStateMapperState:
         return {}
 
     def restore(self, state: dict[str, object]) -> None:
@@ -129,6 +133,12 @@ class FixedPageMapper(_NoStateMapperMixin):
         if 0 <= offset < self._rom_len:
             return self.rom[offset]
         return 0xFF
+
+
+class Ascii8MapperState(TypedDict):
+    """Save-state schema for Ascii8Mapper.snapshot()/restore()."""
+
+    banks: list[int]
 
 
 @dataclass
@@ -200,13 +210,20 @@ class Ascii8Mapper(_BankTracing):
                 self._sync_window(reg)
             _trace_bank(self, reg, old, new, addr)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> Ascii8MapperState:
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        typed_state = cast(Ascii8MapperState, state)
+        self._banks[:] = typed_state["banks"]
         for window in range(4):
             self._sync_window(window)
+
+
+class Ascii16MapperState(TypedDict):
+    """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
+
+    banks: list[int]
 
 
 @dataclass
@@ -272,13 +289,18 @@ class Ascii16Mapper(_BankTracing):
                 self._sync_window(window)
             _trace_bank(self, window, old, new, addr)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> Ascii16MapperState:
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        typed_state = cast(Ascii16MapperState, state)
+        self._banks[:] = typed_state["banks"]
         for window in range(2):
             self._sync_window(window)
+
+
+class Ascii8Sram2MapperState(Ascii8MapperState):
+    sram: bytes
 
 
 @dataclass
@@ -407,15 +429,14 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)  # type: ignore[arg-type]
 
-    def snapshot(self) -> dict[str, object]:
-        state = super().snapshot()
-        state["sram"] = bytes(self.sram)  # type: ignore[arg-type]
-        return state
+    def snapshot(self) -> Ascii8Sram2MapperState:
+        return {**super().snapshot(), "sram": bytes(self.sram)}  # type: ignore[arg-type]
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
+        typed_state = cast(Ascii8Sram2MapperState, state)
         if self.sram is not None:
-            self.sram[:] = state["sram"]  # type: ignore[call-overload]
+            self.sram[:] = typed_state["sram"]
 
 
 @dataclass
@@ -437,6 +458,14 @@ class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
     _SRAM_SIZE: ClassVar[int] = 32768
     _SRAM_MASK: ClassVar[int] = 0x7FFF
     _SRAM_PAGES: ClassVar[int] = 0x34
+
+
+class GameMaster2MapperState(TypedDict):
+    banks: list[int]
+    sram_half: int
+    window_sram_half: list[int]
+    sram_enabled: bool
+    sram: bytes
 
 
 @dataclass
@@ -580,7 +609,7 @@ class GameMaster2Mapper(_BankTracing):
     # the other mappers in this module. A Rust/C++ port replaces this with a
     # typed state struct plus explicit (de)serialization -- there is no untyped
     # string-keyed map with runtime coercion.
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> GameMaster2MapperState:
         return {
             "banks": list(self._banks),
             "sram_half": self._sram_half,
@@ -590,14 +619,19 @@ class GameMaster2Mapper(_BankTracing):
         }
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[call-overload]
-        self._sram_half = int(state["sram_half"])  # type: ignore[call-overload]
-        self._window_sram_half[:] = state["window_sram_half"]  # type: ignore[call-overload]
-        self._sram_enabled = bool(state["sram_enabled"])
+        typed_state = cast(GameMaster2MapperState, state)
+        self._banks[:] = typed_state["banks"]
+        self._sram_half = typed_state["sram_half"]
+        self._window_sram_half[:] = typed_state["window_sram_half"]
+        self._sram_enabled = typed_state["sram_enabled"]
         if self.sram is not None:
-            self.sram[:] = state["sram"]  # type: ignore[call-overload]
+            self.sram[:] = typed_state["sram"]
         for window in range(4):
             self._sync_window(window)
+
+
+class Ascii16Sram2MapperState(Ascii16MapperState):
+    sram: bytes
 
 
 @dataclass
@@ -682,15 +716,14 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def save_sram(self, path: Path) -> None:
         path.write_bytes(self.sram)  # type: ignore[arg-type]
 
-    def snapshot(self) -> dict[str, object]:
-        state = super().snapshot()
-        state["sram"] = bytes(self.sram)  # type: ignore[arg-type]
-        return state
+    def snapshot(self) -> Ascii16Sram2MapperState:
+        return {**super().snapshot(), "sram": bytes(self.sram)}  # type: ignore[arg-type]
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
+        typed_state = cast(Ascii16Sram2MapperState, state)
         if self.sram is not None:
-            self.sram[:] = state["sram"]  # type: ignore[call-overload]
+            self.sram[:] = typed_state["sram"]
 
 
 @dataclass
@@ -699,6 +732,12 @@ class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
 
     _SRAM_SIZE: ClassVar[int] = 8192
     _SRAM_MASK: ClassVar[int] = 0x1FFF
+
+
+class RTypeMapperState(TypedDict):
+    """Save-state schema for RTypeMapper.snapshot()/restore()."""
+
+    bank: int
 
 
 @dataclass
@@ -740,11 +779,18 @@ class RTypeMapper(_BankTracing):
             self._bank = value
             _trace_bank(self, 1, old, self._bank, addr)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> RTypeMapperState:
         return {"bank": self._bank}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._bank = int(state["bank"])  # type: ignore[call-overload]
+        typed_state = cast(RTypeMapperState, state)
+        self._bank = int(typed_state["bank"])
+
+
+class KonamiMapperState(TypedDict):
+    """Save-state schema for KonamiMapper.snapshot()/restore()."""
+
+    banks: list[int]
 
 
 @dataclass
@@ -826,13 +872,18 @@ class KonamiMapper(_BankTracing):
             self._sync_window(window)
         _trace_bank(self, window, old, new, addr)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> KonamiMapperState:
         return {"banks": list(self._banks)}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[call-overload]
+        typed_state = cast(KonamiMapperState, state)
+        self._banks[:] = typed_state["banks"]
         for window in range(4):
             self._sync_window(window)
+
+
+class MajutsushiMapperState(KonamiMapperState):
+    last_dac: int
 
 
 @dataclass
@@ -886,15 +937,19 @@ class MajutsushiMapper(KonamiMapper):
         self._last_dac = value
         return out
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> MajutsushiMapperState:
         # _dac_events is transient (consumed each frame), so only last_dac persists.
-        state = super().snapshot()
-        state["last_dac"] = self._last_dac
-        return state
+        return {**super().snapshot(), "last_dac": self._last_dac}
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
-        self._last_dac = int(state["last_dac"])  # type: ignore[call-overload]
+        typed_state = cast(MajutsushiMapperState, state)
+        self._last_dac = typed_state["last_dac"]
+
+
+class KonamiSCCMapperState(TypedDict):
+    banks: list[int]
+    scc_mode: bool
 
 
 @dataclass
@@ -1010,12 +1065,13 @@ class KonamiSCCMapper(_BankTracing):
             _trace_bank(self, 3, old, new, addr)
         # Writes outside the four register zones are ignored.
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> KonamiSCCMapperState:
         # SCC chip state is snapshotted separately by the state module.
         return {"banks": list(self._banks), "scc_mode": self._scc_mode}
 
     def restore(self, state: dict[str, object]) -> None:
-        self._banks[:] = state["banks"]  # type: ignore[call-overload]
-        self._scc_mode = bool(state["scc_mode"])
+        typed_state = cast(KonamiSCCMapperState, state)
+        self._banks[:] = typed_state["banks"]
+        self._scc_mode = typed_state["scc_mode"]
         for window in range(4):
             self._sync_window(window)
