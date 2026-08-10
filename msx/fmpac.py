@@ -9,12 +9,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
-    from msx.opll import Opll
+    from msx.opll import Opll, OpllState
 
-__all__ = ["FmPac", "SRAM_SIZE"]
+__all__ = ["FmPac", "FmPacState", "SRAM_SIZE"]
+
+
+class FmPacState(TypedDict):
+    """Save-state schema for FmPac.snapshot()/FmPac.restore().
+
+    Nests the carried OPLL's own OpllState, so restoring a FmPacState fully
+    reinstates the device's persistent state (SRAM/bank/enable/magic
+    registers and the OPLL) in one call, matching the state-save-load spec's
+    "Mapper snapshot and restore API" requirement.
+    """
+
+    sram: bytes
+    bank: int
+    enable: int
+    r1ffe: int
+    r1fff: int
+    opll: OpllState
 
 _WINDOW_BASE = 0x4000
 _WINDOW_SIZE = 0x4000
@@ -161,21 +178,28 @@ class FmPac:
 
     # ------------------------------------------------------------- save-state
 
-    def snapshot(self) -> dict[str, object]:
-        """Capture device state for save-state (paired with restore)."""
+    def snapshot(self) -> FmPacState:
+        """Capture device state for save-state (paired with restore),
+        including the carried OPLL's own state.
+        """
         return {
             "sram": bytes(self.sram),
             "bank": self._bank,
             "enable": self._enable,
             "r1ffe": self._r1ffe,
             "r1fff": self._r1fff,
+            "opll": self.opll.snapshot(),
         }
 
     def restore(self, state: dict[str, object]) -> None:
-        """Restore device state produced by snapshot()."""
-        self.sram[:] = state["sram"]  # type: ignore[call-overload]
-        self._bank = int(state["bank"])  # type: ignore[call-overload]
-        self._enable = int(state["enable"])  # type: ignore[call-overload]
-        self._r1ffe = int(state["r1ffe"])  # type: ignore[call-overload]
-        self._r1fff = int(state["r1fff"])  # type: ignore[call-overload]
+        """Restore device state produced by snapshot(), including the
+        carried OPLL's own state.
+        """
+        typed_state = cast(FmPacState, state)
+        self.sram[:] = typed_state["sram"]
+        self._bank = typed_state["bank"]
+        self._enable = typed_state["enable"]
+        self._r1ffe = typed_state["r1ffe"]
+        self._r1fff = typed_state["r1fff"]
+        self.opll.restore(cast(dict[str, Any], typed_state["opll"]))
         self._check_sram_enable()

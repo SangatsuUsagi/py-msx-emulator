@@ -14,7 +14,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from msx.vdp.v9938 import V9938
 
@@ -170,24 +170,27 @@ def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> Non
 def _fmpac_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fmpac is None:
         return None
-    fm = machine.fmpac
-    state = fm.snapshot()  # sram, bank, enable, r1ffe, r1fff
-    state["opll"] = fm.opll.snapshot()
-    return state
+    # FmPac.snapshot() returns a typed FmPacState (see msx/fmpac.py) that
+    # already nests the OPLL snapshot under "opll"; cast down to the wider
+    # dict[str, object] this function has always returned.
+    return cast(dict[str, object], machine.fmpac.snapshot())
 
 
 def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) -> None:
     if machine.fmpac is None or fmpac_state is None:
         return
-    fm = machine.fmpac
-    fm.restore(fmpac_state)  # sram, bank, enable, r1ffe, r1fff; recomputes sram_enabled
-    fm.opll.restore(fmpac_state["opll"])  # type: ignore[arg-type]
+    # FmPac.restore() restores the carried OPLL's state too (from the
+    # nested "opll" field) -- see msx/fmpac.py.
+    machine.fmpac.restore(fmpac_state)
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     mapper = machine.memory._mapper
-    mapper_state = mapper.snapshot()
+    # Mapper.snapshot() returns Mapping[str, object] (see msx/mapper.py); at
+    # runtime every implementer still returns a plain dict, only read here
+    # to serialise, never mutated -- cast to match MachineSnapshot's field.
+    mapper_state = cast(dict[str, object], mapper.snapshot())
     # Common VDP address/latch state — identical field names on both VDP types.
     vdp_latch = machine.vdp.latch
     vdp_addr = machine.vdp.addr
