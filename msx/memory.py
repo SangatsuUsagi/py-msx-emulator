@@ -13,16 +13,42 @@ from msx.mapper import FlatMapper
 
 # Fields whose reassignment invalidates the page-routing cache (see
 # Memory.__setattr__). slot_register/sub_slot_reg drive routing directly;
-# ram_mapper/sub0_rom/fdc/flat_ram_subslot are assumed construction-time-fixed
-# by the routing decision, but a *reassignment* (not content mutation, e.g. a
-# test replacing mem.sub0_rom after construction) must still be observed.
+# ram_mapper/sub0_rom/fdc/flat_ram_subslot/_mapper/_mapper2 are assumed
+# construction-time-fixed by the routing decision, but a *reassignment* (not
+# content mutation, e.g. a test replacing mem.sub0_rom after construction)
+# must still be observed.
 _CACHE_INVALIDATING_FIELDS = frozenset(
-    {"slot_register", "sub_slot_reg", "ram_mapper", "sub0_rom", "fdc", "flat_ram_subslot"}
+    {
+        "slot_register",
+        "sub_slot_reg",
+        "ram_mapper",
+        "sub0_rom",
+        "fdc",
+        "flat_ram_subslot",
+        "_mapper",
+        "_mapper2",
+    }
 )
+
+# Subset of _CACHE_INVALIDATING_FIELDS that also participate in the
+# SlotThreeStrategyIsExclusive invariant (see _validate_slot3_strategy):
+# reassigning any of these must re-check the invariant, not just invalidate
+# the cache, or a reassignment could silently desync it from the routing
+# decision the cache actually makes.
+_SLOT3_STRATEGY_FIELDS = frozenset({"ram_mapper", "flat_ram_subslot", "fdc"})
 
 
 @dataclass(slots=True)
 class Memory:
+    """MSX address-space slot/sub-slot decode and read/write dispatch.
+
+    Resolves the current `slot_register`/`sub_slot_reg` into a per-page
+    (16 KB) dispatch cache (`_page_read`/`_page_write`) rather than
+    re-deriving the routing decision on every access; see
+    `openspec/changes/archive/2026-08-09-memory-dispatch-cache/design.md`
+    for the full design history, including two benchmark-driven revisions.
+    """
+
     rom: bytes
     ram: bytearray
     _mapper: Mapper = field(repr=False)
@@ -49,12 +75,24 @@ class Memory:
     sub0_rom_name: str = ""
     _rom_len: int = field(init=False, repr=False, default=0)
     _extrom_len: int = field(init=False, repr=False, default=0)
+    # RAM length and MSX1 flat-RAM base offset, precomputed like _rom_len/
+    # _extrom_len above (ram is assumed construction-time-fixed, same as rom).
+    _ram_len: int = field(init=False, repr=False, default=0)
+    _msx1_ram_base: int = field(init=False, repr=False, default=0)
     # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever
     # __setattr__ observes a write to one of _CACHE_INVALIDATING_FIELDS
     # (event-driven: a single bool check per access, no per-access
     # recomputation of a comparison key). extrom isn't in that set:
     # _read_rom() reads self.extrom live, unconditionally correct regardless
     # of when it's assigned.
+    #
+    # Port note (Rust/C++): this is a Callable dispatch table (bound methods/
+    # closures over `self`), which has no direct static-language equivalent —
+    # a literal Box<dyn Fn>/std::function port would pay heap-alloc + vtable
+    # cost on every rebuild that CPython's bound methods don't. Prefer
+    # porting _resolve_page_read_leaf/_resolve_page_write_leaf/
+    # _resolve_slot3_*_leaf directly as a match/switch over a small per-page
+    # enum tag, dispatched inline, not as a literal translation of this list.
     _page_cache_valid: bool = field(init=False, repr=False, default=False)
     _page_read: list[Callable[[int], int]] = field(init=False, repr=False, default_factory=list)
     _page_write: list[Callable[[int, int], None]] = field(
@@ -66,27 +104,57 @@ class Memory:
     _page3_intercept_active: bool = field(init=False, repr=False, default=False)
 
     def __setattr__(self, name: str, value: object) -> None:
+        """Invalidate the page-routing cache on writes to _CACHE_INVALIDATING_FIELDS.
+
+        Port note (Rust/C++): intercepting plain attribute assignment has no
+        static-language equivalent; a port needs explicit setters (e.g.
+        `set_slot_register`) that call the equivalent of `invalidate_cache()`
+        instead of relying on assignment interception. This is exercised as
+        public API well beyond this file (msx/ppi.py, msx/machine.py,
+        msx/state.py), so the setters would need to replace `mem.field = x`
+        at every one of those call sites, not just internally.
+        """
         object.__setattr__(self, name, value)
         if name in _CACHE_INVALIDATING_FIELDS:
             object.__setattr__(self, "_page_cache_valid", False)
+        if name in _SLOT3_STRATEGY_FIELDS:
+            self._validate_slot3_strategy()
 
-    def __post_init__(self) -> None:
-        self._rom_len = len(self.rom)
-        self._extrom_len = len(self.extrom) if self.extrom is not None else 0
-        # Slot 3's RAM strategy is exactly one of: MSX1 flat (both None),
-        # legacy MSX2 banked (ram_mapper set), or data-driven flat sub-slot
-        # (flat_ram_subslot set) — allium/slots.allium's
-        # SlotThreeStrategyIsExclusive invariant.
-        if self.ram_mapper is not None and self.flat_ram_subslot is not None:
+    def _validate_slot3_strategy(self) -> None:
+        """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
+        are mutually exclusive slot-3 RAM strategies, and fdc requires
+        flat_ram_subslot. Re-run whenever a _SLOT3_STRATEGY_FIELDS member is
+        assigned (not just at construction) so a post-construction
+        reassignment can't silently desync the routing cache from this
+        invariant the way a bare cache-invalidation check wouldn't catch.
+
+        Reads via getattr(..., None): __setattr__ (which calls this) also
+        fires while the dataclass-generated __init__ is still assigning
+        fields one at a time, before every _SLOT3_STRATEGY_FIELDS member
+        exists yet on this slots instance — a not-yet-assigned field reads
+        as None here (harmless: __post_init__ re-validates once everything
+        is set, which is the authoritative check for construction).
+        """
+        ram_mapper = getattr(self, "ram_mapper", None)
+        flat_ram_subslot = getattr(self, "flat_ram_subslot", None)
+        fdc = getattr(self, "fdc", None)
+        if ram_mapper is not None and flat_ram_subslot is not None:
             raise ValueError(
                 "Memory: ram_mapper and flat_ram_subslot are mutually "
                 "exclusive slot-3 RAM strategies"
             )
-        if self.fdc is not None and self.flat_ram_subslot is None:
+        if fdc is not None and flat_ram_subslot is None:
             raise ValueError(
                 "Memory: fdc requires flat_ram_subslot (only the "
                 "data-driven slot-3 layout hosts an FDC)"
             )
+
+    def __post_init__(self) -> None:
+        self._rom_len = len(self.rom)
+        self._extrom_len = len(self.extrom) if self.extrom is not None else 0
+        self._ram_len = len(self.ram)
+        self._msx1_ram_base = 0x10000 - self._ram_len
+        self._validate_slot3_strategy()
         self._rebuild_page_cache()
 
     # -- terminal (leaf) read/write operations -------------------------------
@@ -101,7 +169,7 @@ class Memory:
         return self.rom[addr] if addr < self._rom_len else 0xFF
 
     def _write_noop(self, addr: int, value: int) -> None:
-        return
+        pass
 
     def _read_open_bus(self, addr: int) -> int:
         return 0xFF
@@ -111,24 +179,22 @@ class Memory:
         return self.sub0_rom[addr] if addr < len(self.sub0_rom) else 0xFF
 
     def _read_flat_ram(self, addr: int) -> int:
-        ram = self.ram
-        return ram[addr] if addr < len(ram) else 0xFF
+        return self.ram[addr] if addr < self._ram_len else 0xFF
 
     def _write_flat_ram(self, addr: int, value: int) -> None:
-        ram = self.ram
-        if addr < len(ram):
-            ram[addr] = value
+        if addr < self._ram_len:
+            self.ram[addr] = value
 
     def _read_msx1_flat_ram(self, addr: int) -> int:
         # MSX1: flat RAM sits at the top of the address space (32 KB → base
         # 0x8000). An access to a page selected to slot 3 without a RAM mapper
         # can fall below that base (negative index); return open-bus 0xFF.
-        off = addr - (0x10000 - len(self.ram))
-        return self.ram[off] if 0 <= off < len(self.ram) else 0xFF
+        off = addr - self._msx1_ram_base
+        return self.ram[off] if 0 <= off < self._ram_len else 0xFF
 
     def _write_msx1_flat_ram(self, addr: int, value: int) -> None:
-        off = addr - (0x10000 - len(self.ram))
-        if 0 <= off < len(self.ram):
+        off = addr - self._msx1_ram_base
+        if 0 <= off < self._ram_len:
             self.ram[off] = value
 
     # -- page-cache resolution ------------------------------------------------
@@ -186,7 +252,7 @@ class Memory:
             return self.ram_mapper.write
         return self._write_msx1_flat_ram
 
-    def _resolve_page_read(self, page: int) -> Callable[[int], int]:
+    def _resolve_page_read_leaf(self, page: int) -> Callable[[int], int]:
         slot = (self.slot_register >> (page * 2)) & 0x03
         if slot == 0:
             return self._read_rom
@@ -196,7 +262,7 @@ class Memory:
             return self._mapper2.read
         return self._resolve_slot3_read_leaf(page)
 
-    def _resolve_page_write(self, page: int) -> Callable[[int, int], None]:
+    def _resolve_page_write_leaf(self, page: int) -> Callable[[int, int], None]:
         slot = (self.slot_register >> (page * 2)) & 0x03
         if slot == 0:
             return self._write_noop  # BIOS ROM is read-only
@@ -207,8 +273,8 @@ class Memory:
         return self._resolve_slot3_write_leaf(page)
 
     def _rebuild_page_cache(self) -> None:
-        self._page_read = [self._resolve_page_read(page) for page in range(4)]
-        self._page_write = [self._resolve_page_write(page) for page in range(4)]
+        self._page_read = [self._resolve_page_read_leaf(page) for page in range(4)]
+        self._page_write = [self._resolve_page_write_leaf(page) for page in range(4)]
         # Secondary slot register intercept at 0xFFFF only ever applies to
         # page 3 (0xC000-0xFFFF), and only when sub_slot_enabled (MSX2) and
         # page 3's primary slot is 3. Precomputed here so read()/write() pay
@@ -223,6 +289,8 @@ class Memory:
         if not self._page_cache_valid:
             self._rebuild_page_cache()
         page = addr >> 14
+        # 0xFFFF secondary-slot-register intercept, inlined (not wrapped) for
+        # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
             return (~self.sub_slot_reg) & 0xFF
         return self._page_read[page](addr)
@@ -233,6 +301,8 @@ class Memory:
         if not self._page_cache_valid:
             self._rebuild_page_cache()
         page = addr >> 14
+        # 0xFFFF secondary-slot-register intercept, inlined (not wrapped) for
+        # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
             self.sub_slot_reg = value & 0xFF
             return

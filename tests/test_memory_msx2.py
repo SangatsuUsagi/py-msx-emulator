@@ -140,3 +140,27 @@ def test_fdc_without_flat_subslot_rejected() -> None:
 
     with pytest.raises(ValueError, match="flat_ram_subslot"):
         _make_mem(fdc=_StubFdc())
+
+
+def test_ram_mapper_and_flat_subslot_together_rejected_post_construction() -> None:
+    """SlotThreeStrategyIsExclusive must hold not just at construction but
+    after any later reassignment of ram_mapper/flat_ram_subslot too --
+    otherwise the page-routing cache (which only invalidates on
+    reassignment, it doesn't re-derive from scratch) could silently keep
+    routing through one strategy while the other field disagrees."""
+    mem = _make_mem(flat_ram_subslot=3, sub_slot_enabled=True)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        mem.ram_mapper = RamMapper()
+
+
+def test_fdc_without_flat_subslot_rejected_post_construction() -> None:
+    class _StubFdc:
+        def read_mem(self, addr: int) -> int:
+            return 0xFF
+
+        def write_mem(self, addr: int, value: int) -> None:
+            pass
+
+    mem = _make_mem()
+    with pytest.raises(ValueError, match="flat_ram_subslot"):
+        mem.fdc = _StubFdc()
