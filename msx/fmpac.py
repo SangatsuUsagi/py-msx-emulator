@@ -57,6 +57,9 @@ class FmPac:
     # ------------------------------------------------------------- CPU memory
 
     def read(self, addr: int) -> int:
+        """Memory-mapped read within the 0x4000-0x7FFF window (bank-switched
+        ROM, or SRAM/magic registers once unlocked; see the module docstring).
+        """
         if not (_WINDOW_BASE <= addr < _WINDOW_BASE + _WINDOW_SIZE):
             return 0xFF
         off = addr - _WINDOW_BASE
@@ -75,6 +78,10 @@ class FmPac:
         return self.rom[self._bank * _BANK_SIZE + off]
 
     def write(self, addr: int, value: int) -> None:
+        """Memory-mapped write within the 0x4000-0x7FFF window: SRAM magic
+        unlock, OPLL register address/data, the enable/bank registers, or
+        SRAM data (only while unlocked).
+        """
         if not (_WINDOW_BASE <= addr < _WINDOW_BASE + _WINDOW_SIZE):
             return
         off = addr - _WINDOW_BASE
@@ -116,9 +123,13 @@ class FmPac:
     # ---------------------------------------------------------------- I/O ports
 
     def read_port(self, port: int) -> int:
+        """I/O-port read; always 0xFF (the OPLL is write-only)."""
         return 0xFF
 
     def write_port(self, port: int, value: int) -> None:
+        """I/O-port write, routed to the OPLL's address/data register by
+        port parity, but only while the enable register's I/O bit is set.
+        """
         if not (self._enable & _ENABLE_IO_OPLL):
             return
         if port & 1:
@@ -129,6 +140,9 @@ class FmPac:
     # --------------------------------------------------------------------- reset
 
     def reset(self) -> None:
+        """Power-on reset: resets the carried OPLL and clears bank/enable/
+        magic registers (SRAM is left un-paged, per the unlock check).
+        """
         self.opll.reset()
         self._bank = 0
         self._enable = 0
@@ -139,6 +153,7 @@ class FmPac:
     # ---------------------------------------------------------------------- SRAM
 
     def save_sram(self, path: Path) -> None:
+        """Write the raw 8 KB SRAM image to path (battery-save format)."""
         path.write_bytes(self.sram)
 
     # Loading a saved SRAM image is done by passing it as the `sram=`
@@ -147,6 +162,7 @@ class FmPac:
     # ------------------------------------------------------------- save-state
 
     def snapshot(self) -> dict[str, object]:
+        """Capture device state for save-state (paired with restore)."""
         return {
             "sram": bytes(self.sram),
             "bank": self._bank,
@@ -156,6 +172,7 @@ class FmPac:
         }
 
     def restore(self, state: dict[str, object]) -> None:
+        """Restore device state produced by snapshot()."""
         self.sram[:] = state["sram"]  # type: ignore[call-overload]
         self._bank = int(state["bank"])  # type: ignore[call-overload]
         self._enable = int(state["enable"])  # type: ignore[call-overload]

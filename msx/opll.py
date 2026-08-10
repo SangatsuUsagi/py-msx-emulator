@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
@@ -142,6 +142,7 @@ _AM_TABLE: tuple[int, ...] = (
     3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2,
     1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
 )
+_AM_TABLE_LEN = len(_AM_TABLE)  # hoisted out of the per-tick hot path
 
 # Envelope decay increment step table (andete's research).
 _EG_STEP_TABLES: tuple[tuple[int, ...], ...] = (
@@ -274,18 +275,31 @@ def _dump_to_patch(dump: tuple[int, ...] | bytes, off: int = 0) -> tuple[_Patch,
     return mod, car
 
 
+def _buddy_index(number: int, slot_type: int) -> int | None:
+    """The paired mod/car slot index for a normal (non-rhythm) slot, or None
+    for a rhythm single-slot-mode slot (type 3) which has no FM buddy.
+    """
+    if slot_type == 0:
+        return number + 1
+    if slot_type == 1:
+        return number - 1
+    return None
+
+
 class _Slot:
     __slots__ = (
-        "number", "type", "pg_keep", "wave_table", "pg_phase", "output",
+        "number", "type", "pg_keep", "wave_table", "ws", "pg_phase", "output",
         "eg_state", "eg_shift", "eg_rate_h", "eg_rate_l", "rks", "tll",
         "key_flag", "sus_flag", "blk_fnum", "blk", "fnum", "volume",
-        "pg_out", "eg_out", "patch", "update_requests",
+        "pg_out", "eg_out", "patch", "update_requests", "buddy_index",
     )
 
     def __init__(self, number: int) -> None:
         self.number = number
         self.type = number % 2
+        self.buddy_index = _buddy_index(number, self.type)
         self.pg_keep = 0
+        self.ws = 0  # which of _WAVE_TABLE_MAP wave_table currently points at
         self.wave_table = _WAVE_TABLE_MAP[0]
         self.pg_phase = 0
         self.output = [0, 0]
@@ -418,6 +432,15 @@ class Opll:
     def _request_update(self, slot: _Slot, flag: int) -> None:
         slot.update_requests |= flag
 
+    def _notify_user_patch_slots(self, select_slot: Callable[[int], _Slot], flag: int) -> None:
+        """Request an update for every channel currently voiced by the user
+        patch (instrument 0) -- a user-patch register write (0x00-0x07) must
+        propagate live to every slot pointing at that shared _Patch object.
+        """
+        for i in range(9):
+            if self._patch_number[i] == 0:
+                self._request_update(select_slot(i), flag)
+
     def _get_parameter_rate(self, slot: _Slot) -> int:  # emu2413: get_parameter_rate
         if (slot.type & 1) == 0 and slot.key_flag == 0:
             return 0
@@ -441,7 +464,8 @@ class Opll:
     def _commit_slot_update(self, slot: _Slot) -> None:
         req = slot.update_requests
         if req & _UPDATE_WS:
-            slot.wave_table = _WAVE_TABLE_MAP[slot.patch.WS]
+            slot.ws = slot.patch.WS
+            slot.wave_table = _WAVE_TABLE_MAP[slot.ws]
         if req & _UPDATE_TLL:
             idx = slot.blk_fnum >> 5
             if (slot.type & 1) == 0:
@@ -479,7 +503,11 @@ class Opll:
             slot.eg_state = _RELEASE
             self._request_update(slot, _UPDATE_EG)
 
-    def _update_key_status(self) -> None:
+    def _compute_key_status(self) -> int:
+        """Decode registers 0x20-0x28's key-on bits (and, in rhythm mode,
+        register 0x0E's five rhythm key bits) into an 18-bit mask, one bit
+        per slot, of which operators should currently be keyed on.
+        """
         r14 = self._reg[0x0E]
         rhythm = (r14 >> 5) & 1
         new_status = 0
@@ -497,6 +525,10 @@ class Opll:
                 new_status |= 1 << _SLOT_TOM
             if r14 & 0x02:
                 new_status |= 1 << _SLOT_CYM
+        return new_status
+
+    def _update_key_status(self) -> None:
+        new_status = self._compute_key_status()
         updated = self._slot_key_status ^ new_status
         if updated:
             for i in range(18):
@@ -557,10 +589,14 @@ class Opll:
         if self._rhythm_mode != new_mode:
             if new_mode:
                 self._slot[_SLOT_HH].type = 3
+                self._slot[_SLOT_HH].buddy_index = None
                 self._slot[_SLOT_HH].pg_keep = 1
                 self._slot[_SLOT_SD].type = 3
+                self._slot[_SLOT_SD].buddy_index = None
                 self._slot[_SLOT_TOM].type = 3
+                self._slot[_SLOT_TOM].buddy_index = None
                 self._slot[_SLOT_CYM].type = 3
+                self._slot[_SLOT_CYM].buddy_index = None
                 self._slot[_SLOT_CYM].pg_keep = 1
                 self._set_patch(6, 16)
                 self._set_patch(7, 17)
@@ -569,10 +605,14 @@ class Opll:
                 self._set_slot_volume(self._slot[_SLOT_TOM], ((self._reg[0x38] >> 4) & 15) << 2)
             else:
                 self._slot[_SLOT_HH].type = 0
+                self._slot[_SLOT_HH].buddy_index = _buddy_index(_SLOT_HH, 0)
                 self._slot[_SLOT_HH].pg_keep = 0
                 self._slot[_SLOT_SD].type = 1
+                self._slot[_SLOT_SD].buddy_index = _buddy_index(_SLOT_SD, 1)
                 self._slot[_SLOT_TOM].type = 0
+                self._slot[_SLOT_TOM].buddy_index = _buddy_index(_SLOT_TOM, 0)
                 self._slot[_SLOT_CYM].type = 1
+                self._slot[_SLOT_CYM].buddy_index = _buddy_index(_SLOT_CYM, 1)
                 self._slot[_SLOT_CYM].pg_keep = 0
                 self._set_patch(6, self._reg[0x36] >> 4)
                 self._set_patch(7, self._reg[0x37] >> 4)
@@ -594,42 +634,30 @@ class Opll:
             p.EG = (data >> 5) & 1
             p.KR = (data >> 4) & 1
             p.ML = data & 15
-            for i in range(9):
-                if self._patch_number[i] == 0:
-                    slot = self._mod(i) if reg == 0x00 else self._car(i)
-                    self._request_update(slot, _UPDATE_RKS | _UPDATE_EG)
+            select = self._mod if reg == 0x00 else self._car
+            self._notify_user_patch_slots(select, _UPDATE_RKS | _UPDATE_EG)
         elif reg == 0x02:
             p = self._patch[0]
             p.KL = (data >> 6) & 3
             p.TL = data & 63
-            for i in range(9):
-                if self._patch_number[i] == 0:
-                    self._request_update(self._mod(i), _UPDATE_TLL)
+            self._notify_user_patch_slots(self._mod, _UPDATE_TLL)
         elif reg == 0x03:
             self._patch[1].KL = (data >> 6) & 3
             self._patch[1].WS = (data >> 4) & 1
             self._patch[0].WS = (data >> 3) & 1
             self._patch[0].FB = data & 7
-            for i in range(9):
-                if self._patch_number[i] == 0:
-                    self._request_update(self._mod(i), _UPDATE_WS)
-                    self._request_update(self._car(i), _UPDATE_WS | _UPDATE_TLL)
+            self._notify_user_patch_slots(self._mod, _UPDATE_WS)
+            self._notify_user_patch_slots(self._car, _UPDATE_WS | _UPDATE_TLL)
         elif reg == 0x04 or reg == 0x05:
             p = self._patch[0] if reg == 0x04 else self._patch[1]
             p.AR = (data >> 4) & 15
             p.DR = data & 15
-            for i in range(9):
-                if self._patch_number[i] == 0:
-                    slot = self._mod(i) if reg == 0x04 else self._car(i)
-                    self._request_update(slot, _UPDATE_EG)
+            self._notify_user_patch_slots(self._mod if reg == 0x04 else self._car, _UPDATE_EG)
         elif reg == 0x06 or reg == 0x07:
             p = self._patch[0] if reg == 0x06 else self._patch[1]
             p.SL = (data >> 4) & 15
             p.RR = data & 15
-            for i in range(9):
-                if self._patch_number[i] == 0:
-                    slot = self._mod(i) if reg == 0x06 else self._car(i)
-                    self._request_update(slot, _UPDATE_EG)
+            self._notify_user_patch_slots(self._mod if reg == 0x06 else self._car, _UPDATE_EG)
         elif reg == 0x0E:
             self._update_rhythm_mode()
             self._update_key_status()
@@ -666,7 +694,7 @@ class Opll:
             # divide 2^32, so an unbounded accumulator would pick a different table
             # entry than hardware at the wrap boundary.
             self._am_phase = (self._am_phase + (64 if self._test_flag & 8 else 1)) & 0xFFFFFFFF
-        self._lfo_am = _AM_TABLE[(self._am_phase >> 6) % len(_AM_TABLE)]
+        self._lfo_am = _AM_TABLE[(self._am_phase >> 6) % _AM_TABLE_LEN]
 
     def _update_noise(self, cycle: int) -> None:
         noise = self._noise
@@ -700,6 +728,9 @@ class Opll:
         slot.pg_out = slot.pg_phase >> _DP_BASE_BITS
 
     def _lookup_attack_step(self, slot: _Slot, counter: int) -> int:
+        # rh (eg_rate_h) >= 12 clamps to the chip's fixed near-instant attack
+        # timings rather than the normal per-tick step table; rh 0/15 never
+        # attack at all. Mirrors emu2413's calc_envelope ATTACK switch.
         rh = slot.eg_rate_h
         if rh == 12:
             index = (counter & 0xC) >> 1
@@ -716,6 +747,9 @@ class Opll:
         return 4 if _EG_STEP_TABLES[slot.eg_rate_l][index & 7] else 0
 
     def _lookup_decay_step(self, slot: _Slot, counter: int) -> int:
+        # rh >= 13 clamps to the chip's fixed fast-decay timings rather than
+        # the normal per-tick step table; rh 0 never decays. Mirrors
+        # emu2413's calc_envelope DECAY/SUSTAIN/RELEASE switch.
         rh = slot.eg_rate_h
         if rh == 0:
             return 0
@@ -741,6 +775,17 @@ class Opll:
     def _calc_envelope(  # emu2413: calc_envelope
         self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int
     ) -> None:
+        mask = self._step_envelope_rate(slot, eg_counter)
+        self._transition_envelope_state(slot, buddy, eg_counter, mask)
+        if test:
+            slot.eg_out = 0
+
+    def _step_envelope_rate(self, slot: _Slot, eg_counter: int) -> int:
+        """Advance eg_out by one attack/decay step if this tick is due for
+        one (per the slot's own rate). Returns the rate mask (shared with
+        _transition_envelope_state's DAMP-completion check below), since
+        both are gated by the same eg_shift-derived tick cadence.
+        """
         mask = (1 << slot.eg_shift) - 1
         if slot.eg_state == _ATTACK:
             if 0 < slot.eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
@@ -751,7 +796,14 @@ class Opll:
             if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
                 step = slot.eg_out + self._lookup_decay_step(slot, eg_counter)
                 slot.eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
+        return mask
 
+    def _transition_envelope_state(
+        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, mask: int
+    ) -> None:
+        """Advance the Damp/Attack/Decay/Sustain/Release state machine based
+        on the eg_out level _step_envelope_rate just produced.
+        """
         st = slot.eg_state
         if st == _DAMP:
             if slot.eg_out >= _EG_MAX and (eg_counter & mask) == 0:
@@ -770,9 +822,6 @@ class Opll:
                 slot.eg_state = _SUSTAIN
                 self._request_update(slot, _UPDATE_EG)
 
-        if test:
-            slot.eg_out = 0
-
     def _update_slots(self) -> None:
         self._eg_counter += 1
         eg_counter = self._eg_counter
@@ -780,12 +829,7 @@ class Opll:
         slots = self._slot
         for i in range(18):
             slot = slots[i]
-            if slot.type == 0:
-                buddy: _Slot | None = slots[i + 1]
-            elif slot.type == 1:
-                buddy = slots[i - 1]
-            else:
-                buddy = None
+            buddy: _Slot | None = slots[slot.buddy_index] if slot.buddy_index is not None else None
             if slot.update_requests:
                 self._commit_slot_update(slot)
             self._calc_envelope(slot, buddy, eg_counter, test & 1)
@@ -794,7 +838,10 @@ class Opll:
     def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
         # emu2413: to_linear + lookup_exp_table, folded together — this runs once
         # per operator per chip tick (the hottest site), so min() and the exp
-        # lookup are inlined rather than kept as separate calls.
+        # lookup are inlined rather than kept as separate calls. h = the
+        # log-sin wave-table value at the current phase; i = the combined
+        # log-domain exponent index (h plus envelope/tll/am attenuation,
+        # scaled) fed into the exp table lookup below.
         if slot.eg_out > _EG_MAX:
             return 0
         s = slot.eg_out + slot.tll + am
@@ -826,11 +873,18 @@ class Opll:
         return slot.output[0]
 
     def _calc_slot_tom(self) -> int:
-        slot = self._mod(8)
+        # Tom-tom behaves like an ordinary FM operator (its own phase, no
+        # noise involvement) -- emu2413: calc_slot_tom. Direct slot index,
+        # matching _update_output's own hot-path inlining convention.
+        slot = self._slot[_SLOT_TOM]
         return self._to_linear(slot.wave_table[slot.pg_out], slot, 0)
 
     def _calc_slot_snare(self) -> int:
-        slot = self._car(7)
+        # Fixed rhythm-mode phase taps (emu2413: calc_slot_snare) -- 0x0/
+        # 0x100/0x200/0x300 select between the sine table's four quadrants,
+        # chosen by the slot's own phase bit and the shared noise bit; not
+        # independently meaningful constants beyond that table index.
+        slot = self._slot[_SLOT_SD]
         if (slot.pg_out >> (_PG_BITS - 2)) & 1:
             phase = 0x300 if (self._noise & 1) else 0x200
         else:
@@ -838,12 +892,17 @@ class Opll:
         return self._to_linear(slot.wave_table[phase], slot, 0)
 
     def _calc_slot_cym(self) -> int:
-        slot = self._car(8)
+        # Fixed rhythm-mode phase taps (emu2413: calc_slot_cym), chosen by
+        # the shared short-noise signal -- see _update_short_noise.
+        slot = self._slot[_SLOT_CYM]
         phase = 0x300 if self._short_noise else 0x100
         return self._to_linear(slot.wave_table[phase], slot, 0)
 
     def _calc_slot_hat(self) -> int:
-        slot = self._mod(7)
+        # Fixed rhythm-mode phase taps (emu2413: calc_slot_hat), chosen by
+        # the shared short-noise signal and the shared noise bit -- see
+        # _update_short_noise.
+        slot = self._slot[_SLOT_HH]
         if self._short_noise:
             phase = 0x2D0 if (self._noise & 1) else 0x234
         else:
@@ -886,11 +945,7 @@ class Opll:
         self._update_noise(2)
 
     def _mix(self) -> int:
-        total = 0
-        out = self._ch_out
-        for i in range(14):
-            total += out[i]
-        return total
+        return sum(self._ch_out)
 
     # ------------------------------------------------------- sample generation
 
@@ -1021,12 +1076,13 @@ def _slot_fields(s: _Slot) -> dict[str, Any]:
         "volume": s.volume, "pg_out": s.pg_out, "eg_out": s.eg_out,
         "update_requests": s.update_requests,
         "output": list(s.output),
-        "ws": 1 if s.wave_table is _HALFSIN_TABLE else 0,
+        "ws": s.ws,
     }
 
 
 def _restore_slot_fields(s: _Slot, d: dict[str, Any]) -> None:
     s.type = int(d["type"])
+    s.buddy_index = _buddy_index(s.number, s.type)
     s.pg_keep = int(d["pg_keep"])
     s.pg_phase = int(d["pg_phase"])
     s.eg_state = int(d["eg_state"])
@@ -1045,4 +1101,5 @@ def _restore_slot_fields(s: _Slot, d: dict[str, Any]) -> None:
     s.eg_out = int(d["eg_out"])
     s.update_requests = int(d["update_requests"])
     s.output = [int(x) for x in d["output"]]
-    s.wave_table = _WAVE_TABLE_MAP[int(d["ws"])]
+    s.ws = int(d["ws"])
+    s.wave_table = _WAVE_TABLE_MAP[s.ws]
