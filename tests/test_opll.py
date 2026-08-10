@@ -12,9 +12,16 @@ from array import array
 import pytest
 
 from msx.opll import (
+    _CLOCK,
+    _DAMPER_RATE,
     _DEFAULT_INST,
+    _EG_MAX,
+    _EG_MUTE,
     _EXP_TABLE,
     _FULLSIN_TABLE,
+    _PERC_RELEASE_RATE,
+    _RELEASE,
+    _SUS_RELEASE_RATE,
     SAMPLE_RATE,
     Opll,
     note_frequency,
@@ -248,3 +255,213 @@ def test_clarinet_pitch_is_accurate() -> None:
             best, best_lag = s, lag
     measured = sr / best_lag
     assert measured == pytest.approx(note_frequency(fnum, block), rel=0.03)
+
+
+# ---------------------------------------------------------------------------
+# allium/ym2413-core.allium: WriteAddress / WriteData -- the two-step latch
+# protocol itself, the register-mirror fold, and the >=0x40 no-op. The tests
+# above all drive registers via write_reg (a latch-bypassing convenience --
+# see the spec's Excludes); these confirm the latch path itself, which
+# write_reg never exercises.
+# ---------------------------------------------------------------------------
+
+def test_write_addr_then_write_data_matches_write_reg() -> None:
+    via_latch = Opll()
+    via_latch.write_addr(0x30)
+    via_latch.write_data(0x1F)
+
+    via_write_reg = Opll()
+    via_write_reg.write_reg(0x30, 0x1F)
+
+    assert via_latch.read_reg(0x30) == via_write_reg.read_reg(0x30) == 0x1F
+
+
+@pytest.mark.parametrize(
+    ("mirror_register", "canonical_register"),
+    [(0x19, 0x10), (0x1F, 0x16), (0x29, 0x20), (0x2F, 0x26), (0x39, 0x30), (0x3F, 0x36)],
+)
+def test_mirror_register_folds_to_canonical_register(
+    mirror_register: int, canonical_register: int
+) -> None:
+    o = Opll()
+    o.write_addr(mirror_register)
+    o.write_data(0x55)
+    assert o.read_reg(canonical_register) == 0x55
+    assert o.read_reg(mirror_register) == 0  # the mirror address itself is never stored to
+
+
+def test_register_at_or_above_0x40_write_is_ignored() -> None:
+    o = Opll()
+    o.write_addr(0x40)
+    o.write_data(0xFF)
+    # Every real register must be untouched -- spot-check a representative
+    # spread rather than all 64.
+    for reg in (0x00, 0x0E, 0x10, 0x20, 0x30):
+        assert o.read_reg(reg) == 0
+
+
+def test_set_test_mode_stores_raw_bits() -> None:
+    o = Opll()
+    o.write_reg(0x0F, 0xFF)
+    assert o._test_flag == 0xFF
+    assert o.read_reg(0x0F) == 0xFF
+
+
+def test_register_writes_only_affect_their_own_target() -> None:
+    o = Opll()
+    o.write_reg(0x10, 0x55)  # channel 0's F-number low byte
+    assert o.read_reg(0x11) == 0  # channel 1's is untouched
+    o.write_reg(0x0F, 0x01)  # test-mode register
+    assert (o.read_reg(0x0E) & 0x20) == 0  # rhythm-enable bit untouched
+
+
+# ---------------------------------------------------------------------------
+# allium/ym2413-core.allium config: fixed rate/level constants used by the
+# envelope generator (damper_rate, sustain_release_rate,
+# percussive_key_off_rate, envelope_mute_level) and the chip clock.
+# ---------------------------------------------------------------------------
+
+def test_register_write_masks_out_of_range_value_to_eight_bits() -> None:
+    # allium/ym2413-core.allium invariants ChannelFieldsBounded /
+    # UserTonePatchFieldsBounded: every decoded field derives from a byte
+    # nibble/bit extraction, so it can never leave its declared range
+    # regardless of what's written -- mirrors allium/psg.allium's own
+    # register-masking regression test.
+    o = Opll()
+    o.write_reg(0x30, 0x1FF)  # out-of-range int; write_reg masks with & 0xFF
+    assert o.read_reg(0x30) == 0xFF
+    o.write_reg(0x02, 0x1FF)
+    assert o.read_reg(0x02) == 0xFF
+
+
+def test_envelope_and_clock_constants_match_spec() -> None:
+    assert _CLOCK == 3_579_545
+    assert _EG_MUTE == 127
+    assert _EG_MAX == 123
+    assert _DAMPER_RATE == 12
+    assert _SUS_RELEASE_RATE == 5
+    assert _PERC_RELEASE_RATE == 7
+
+
+# ---------------------------------------------------------------------------
+# allium/ym2413-core.allium ProgramUserTonePatch: register 0x03's waveform
+# select and modulator feedback, which the existing user-tone test above
+# leaves at their all-zero defaults and never differentiates.
+# ---------------------------------------------------------------------------
+
+def _program_basic_user_tone(o: Opll, *, waveform_bits: int = 0x00, feedback: int = 0) -> None:
+    o.write_reg(0x00, 0x21)  # mod: multi=1, EG-TYP=sustained (holds, easy to compare)
+    o.write_reg(0x01, 0x21)  # car: same
+    o.write_reg(0x02, 0x00)  # mod TL = 0 (loudest modulation)
+    o.write_reg(0x03, waveform_bits | feedback)
+    o.write_reg(0x04, 0xF8)  # AR=15, DR=8
+    o.write_reg(0x05, 0xF8)
+    o.write_reg(0x06, 0x40)  # SL=4, RR=0
+    o.write_reg(0x07, 0x40)
+    o.write_reg(0x30, 0x00)  # instrument=0 (user), vol=0
+    o.write_reg(0x10, 0x50)
+    o.write_reg(0x20, 0x16)  # block=3, KON=1
+
+
+def test_user_tone_waveform_select_changes_output() -> None:
+    full_sine = Opll()
+    _program_basic_user_tone(full_sine, waveform_bits=0x00)  # WS=0 for both operators
+    half_sine = Opll()
+    _program_basic_user_tone(half_sine, waveform_bits=0x18)  # WS=1 for both operators (bits 3-4)
+
+    buf_full = bytearray()
+    buf_half = bytearray()
+    for _ in range(6):
+        buf_full += full_sine.generate_samples(735)
+        buf_half += half_sine.generate_samples(735)
+
+    assert bytes(buf_full) != bytes(buf_half)
+
+
+def test_user_tone_feedback_changes_output() -> None:
+    no_feedback = Opll()
+    _program_basic_user_tone(no_feedback, feedback=0)
+    max_feedback = Opll()
+    _program_basic_user_tone(max_feedback, feedback=7)
+
+    buf_none = bytearray()
+    buf_max = bytearray()
+    for _ in range(6):
+        buf_none += no_feedback.generate_samples(735)
+        buf_max += max_feedback.generate_samples(735)
+
+    assert bytes(buf_none) != bytes(buf_max)
+
+
+# ---------------------------------------------------------------------------
+# allium/ym2413-core.allium: sustained_tone vs. percussive envelope shape
+# (ProgramUserTonePatch's EG-TYP), the channel sustain ("damper") option
+# slowing Release (SetPitchBlockKeyOnSustain), and the modulator's envelope
+# freezing rather than releasing on key-off (KeyOff).
+# ---------------------------------------------------------------------------
+
+def _carrier_eg_out_after(*, sustained_tone: bool, frames: int) -> int:
+    o = Opll()
+    eg_bit = 0x20 if sustained_tone else 0x00
+    o.write_reg(0x00, 0x01 | eg_bit)
+    o.write_reg(0x01, 0x01 | eg_bit)
+    o.write_reg(0x02, 0x00)
+    o.write_reg(0x03, 0x00)
+    o.write_reg(0x04, 0xF8)  # AR=15 (instant attack), DR=8 (reaches SL quickly)
+    o.write_reg(0x05, 0xF8)
+    o.write_reg(0x06, 0x20)  # SL=2 (reached quickly), RR=0
+    o.write_reg(0x07, 0x28)  # SL=2, RR=8 (moderate, only matters while percussive)
+    o.write_reg(0x30, 0x00)
+    o.write_reg(0x10, 0x50)
+    o.write_reg(0x20, 0x16)
+    for _ in range(frames):
+        o.generate_samples(735)
+    return o._slot[1].eg_out  # carrier's envelope level -- higher means quieter
+
+
+def test_sustained_tone_holds_while_percussive_keeps_decaying() -> None:
+    early_sustained = _carrier_eg_out_after(sustained_tone=True, frames=3)
+    late_sustained = _carrier_eg_out_after(sustained_tone=True, frames=50)
+    early_percussive = _carrier_eg_out_after(sustained_tone=False, frames=3)
+    late_percussive = _carrier_eg_out_after(sustained_tone=False, frames=50)
+
+    # Sustained tone: Decay hands off to Sustain, which holds -- the level
+    # barely moves between an early and a much later checkpoint.
+    assert abs(late_sustained - early_sustained) <= 3
+    # Percussive: Sustain keeps decaying at release_rate for as long as the
+    # key is held -- the level (quieter = higher) keeps climbing.
+    assert late_percussive > early_percussive + 5
+
+
+def test_channel_sustain_option_slows_release() -> None:
+    def frames_to_silence(sustain_bit: bool) -> int:
+        o = Opll()
+        o.write_reg(0x30, 0x10)  # violin (instrument 1), vol 0
+        o.write_reg(0x10, 0x50)
+        sustain_mask = 0x20 if sustain_bit else 0x00
+        o.write_reg(0x20, 0x16 | sustain_mask)  # block=3, KON=1
+        for _ in range(10):
+            o.generate_samples(735)
+        o.write_reg(0x20, 0x06 | sustain_mask)  # KON cleared, sustain option preserved
+        for frames in range(1, 200):
+            buf = o.generate_samples(735)
+            if _max_abs(buf) == 0:
+                return frames
+        return 200
+
+    without_sustain = frames_to_silence(False)
+    with_sustain = frames_to_silence(True)
+    assert with_sustain > without_sustain
+
+
+def test_modulator_envelope_does_not_release_on_key_off() -> None:
+    o = Opll()
+    _key_on(o, 0)
+    for _ in range(10):
+        o.generate_samples(735)
+    _key_off(o, 0)
+    o.generate_samples(735)
+    # Channel 0: modulator is slot 0, carrier is slot 1 (mod(ch)=slot[ch*2],
+    # car(ch)=slot[ch*2+1]).
+    assert o._slot[1].eg_state == _RELEASE  # carrier releases on key-off
+    assert o._slot[0].eg_state != _RELEASE  # modulator's envelope simply freezes

@@ -90,6 +90,33 @@ def test_magic_registers_readback_when_enabled(fmpac: FmPac) -> None:
     assert fmpac.read(0x5FFF) == 0x69
 
 
+def test_write_protect_disables_already_enabled_sram() -> None:
+    # allium/fmpac-cartridge.allium WriteEnableRegister: setting the
+    # write-protect bit clears both magic registers immediately, even if
+    # SRAM was already unlocked -- not merely blocking future unlocks.
+    fmpac = FmPac(rom=_bank_rom(), opll=Opll())
+    fmpac.write(0x5FFE, 0x4D)
+    fmpac.write(0x5FFF, 0x69)
+    fmpac.write(0x4000, 0xAB)
+    assert fmpac.read(0x4000) == 0xAB  # SRAM active
+
+    fmpac.write(0x7FF6, 0x10)  # write-protect bit
+    assert fmpac.read(0x5FFE) == 0  # magic registers cleared
+    assert fmpac.read(0x5FFF) == 0
+    assert fmpac.read(0x4000) == 0  # SRAM un-paged -> ROM bank 0 again
+
+
+def test_magic_register_write_masks_out_of_range_value(fmpac: FmPac) -> None:
+    # allium/fmpac-cartridge.allium invariant MagicRegistersAreEightBit.
+    # 0x14D is out-of-range but masks (& 0xFF) to exactly 0x4D, the correct
+    # unlock byte -- SRAM unlocking proves the stored value was masked, not
+    # kept as the literal 0x14D (which would never match the unlock check).
+    fmpac.write(0x5FFE, 0x14D)
+    fmpac.write(0x5FFF, 0x69)
+    fmpac.write(0x4000, 0xAB)
+    assert fmpac.read(0x4000) == 0xAB
+
+
 # ---------------------------------------------------------------------------
 # Enable register
 # ---------------------------------------------------------------------------
@@ -137,6 +164,14 @@ def test_io_read_returns_ff(fmpac: FmPac) -> None:
     assert fmpac.read_port(0x7D) == 0xFF
 
 
+def test_io_read_returns_ff_even_when_enabled(fmpac: FmPac) -> None:
+    # allium/fmpac-cartridge.allium ReadIoPort: always 0xFF, not gated on
+    # io_enabled -- unlike writes (see test_io_write_gated_by_enable_bit).
+    fmpac.write(0x7FF6, 0x01)
+    assert fmpac.read_port(0x7C) == 0xFF
+    assert fmpac.read_port(0x7D) == 0xFF
+
+
 # ---------------------------------------------------------------------------
 # Window bounds
 # ---------------------------------------------------------------------------
@@ -151,6 +186,51 @@ def test_out_of_window_write_ignored(fmpac: FmPac) -> None:
     assert fmpac.read(0x8000) == 0xFF
 
 
+def test_write_to_sram_region_ignored_while_sram_disabled(fmpac: FmPac) -> None:
+    # allium/fmpac-cartridge.allium WriteWindow: a write below
+    # magic_low_offset only reaches SRAM while sram_enabled; otherwise
+    # dropped -- the underlying ROM is never writable through this window.
+    before = fmpac.read(0x4000)
+    fmpac.write(0x4000, 0x12)
+    assert fmpac.read(0x4000) == before
+
+
+# ---------------------------------------------------------------------------
+# In-window register isolation and SRAM-enabled masking of the upper region
+# ---------------------------------------------------------------------------
+
+def test_window_writes_only_affect_their_own_target(fmpac: FmPac) -> None:
+    fmpac.write(0x7FF7, 0x01)  # bank register
+    assert fmpac.read(0x7FF6) == 0  # enable register untouched
+    fmpac.write(0x5FFE, 0x4D)  # magic_low only -- magic_high still 0
+    assert fmpac.read(0x4000) == 1  # SRAM not unlocked by half a magic pair; still ROM bank 1
+
+
+def test_sram_enabled_masks_region_above_magic_registers() -> None:
+    # allium/fmpac-cartridge.allium ReadWindow: while sram_enabled, offsets
+    # above magic_high_offset (short of the enable/bank registers) read
+    # 0xFF -- the ROM is hidden entirely, not just the visible SRAM bytes.
+    fmpac = FmPac(rom=_bank_rom(), opll=Opll())
+    fmpac.write(0x5FFE, 0x4D)
+    fmpac.write(0x5FFF, 0x69)
+    assert fmpac.read(0x7000) == 0xFF
+    assert fmpac.read(0x7FFF) == 0xFF
+
+
+def test_sram_enabled_still_exposes_enable_and_bank_registers() -> None:
+    # allium/fmpac-cartridge.allium ReadWindow @guidance: 0x7FF6/0x7FF7 are
+    # checked before the SRAM/ROM dispatch, so they read their own stored
+    # value even while sram_enabled -- confirmed independently in
+    # openMSX's MSXFmPac::readMem.
+    fmpac = FmPac(rom=_bank_rom(), opll=Opll())
+    fmpac.write(0x7FF7, 0x02)  # bank = 2
+    fmpac.write(0x7FF6, 0x01)  # io_enabled = true
+    fmpac.write(0x5FFE, 0x4D)
+    fmpac.write(0x5FFF, 0x69)  # SRAM now enabled
+    assert fmpac.read(0x7FF6) == 0x01
+    assert fmpac.read(0x7FF7) == 0x02
+
+
 # ---------------------------------------------------------------------------
 # Reset
 # ---------------------------------------------------------------------------
@@ -162,6 +242,23 @@ def test_reset_clears_state(fmpac: FmPac) -> None:
     fmpac.reset()
     assert fmpac.read(0x7FF7) == 0
     assert fmpac.read(0x4000) == 0  # SRAM disabled again -> ROM bank 0
+
+
+def test_reset_clears_enable_register(fmpac: FmPac) -> None:
+    # allium/fmpac-cartridge.allium Reset: io_enabled/write_protected both
+    # reset to false -- not exercised by test_reset_clears_state above.
+    fmpac.write(0x7FF6, 0x11)  # io_enabled + write_protected both set
+    fmpac.reset()
+    assert fmpac.read(0x7FF6) == 0
+
+
+def test_reset_also_resets_opll(fmpac: FmPac) -> None:
+    # allium/fmpac-cartridge.allium Reset: ensures ym2413/Reset(opll: fmpac.opll)
+    fmpac.write(0x7FF4, 0x10)
+    fmpac.write(0x7FF5, 0x99)
+    assert fmpac.opll.read_reg(0x10) == 0x99
+    fmpac.reset()
+    assert fmpac.opll.read_reg(0x10) == 0
 
 
 # ---------------------------------------------------------------------------
