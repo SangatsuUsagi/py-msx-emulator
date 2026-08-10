@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Callable, NamedTuple
 
 from msx.input import InputState
@@ -31,12 +32,23 @@ class _GenState(NamedTuple):
     env_holding: bool
     clk_frac: int
 
+# Which joystick port a mouse (or, in read_port's joystick composition, an
+# InputState read) targets. IntEnum, not a bare int: its two values are used
+# directly as the register 15 bit 6 (JOY_SELECT) value throughout this file,
+# so IntEnum keeps that "== 0 / == 1" comparison code unchanged while still
+# giving MouseSlot.port a named, exhaustive type instead of an unconstrained
+# int -- maps directly to a Rust/C++ two-variant enum.
+class JoystickPort(IntEnum):
+    JOY1 = 0
+    JOY2 = 1
+
+
 # Mouse attached to a joystick port (see msx/mouse.py). A NamedTuple so
 # "device" and "port" can't independently desync (unlike two separate
 # Optional-shaped fields) — maps directly to Option<MouseSlot> in Rust.
 class MouseSlot(NamedTuple):
     device: MouseDevice
-    port: int  # 0 = Joy1, 1 = Joy2
+    port: JoystickPort
 
 # AY-3-8910 quasi-logarithmic amplitude table (level 0–15 → 16-bit amplitude).
 # Each consecutive step is approximately √2 (≈3 dB).  Three channels at max
@@ -108,7 +120,7 @@ class PSG:
                 # Pin 8 (mouse nibble-select clock) for the mouse's port:
                 # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
                 # register-15 write, independent of JOY_SELECT (bit 6).
-                pin8_bit = 4 if self._mouse.port == 0 else 5
+                pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
                 self._mouse.device.write_pin8((value >> pin8_bit) & 1)
 
     def read_port(self, port: int) -> int:
@@ -118,10 +130,10 @@ class PSG:
                 # bits 0-5 (dir 0-3, triggers 4-5). JOY_SELECT is PSG register
                 # 15 bit 6: 0→Joy1, 1→Joy2. Bits 6-7 are not joystick lines
                 # (pulled high here).
-                joy_select = (self.regs[15] >> 6) & 1
+                joy_select = JoystickPort((self.regs[15] >> 6) & 1)
                 if self._mouse is not None and joy_select == self._mouse.port:
                     return (self._mouse.device.read() & 0x3F) | 0xC0
-                sel = self._input.joy1 if joy_select == 0 else self._input.joy2
+                sel = self._input.joy1 if joy_select == JoystickPort.JOY1 else self._input.joy2
                 return (sel & 0x3F) | 0xC0
             return self.regs[self.latch]
         return 0xFF
@@ -144,6 +156,7 @@ class PSG:
         self._env_holding = False
         self._clk_frac = 0
         self._events = []
+        self._regs_base = []
         self._gen_base = None
 
     # --------------------------------------------------------- envelope reset
@@ -153,10 +166,17 @@ class PSG:
 
     # _env_output_level, _step_noise, _step_envelope, and _mix_channel below are
     # the readable per-generator reference implementations. The hot path (_render)
-    # inlines the identical logic for speed; these are kept as the executable spec
-    # and are exercised directly by the fine-grained unit tests. Keep them in sync
-    # with _render (or delete both the method and its test if a generator is ever
-    # dropped) — they are intentionally not called from production code.
+    # inlines the same generator logic for speed; these are kept as the executable
+    # spec and are exercised directly by the fine-grained unit tests. Keep them in
+    # sync with _render (or delete both the method and its test if a generator is
+    # ever dropped) — they are intentionally not called from production code.
+    # (_mix_channel specifically models only the point-sampled digital AND-gate
+    # result; _render's mixer additionally applies amplitude/envelope weighting
+    # and duty-cycle integration on top of that same AND-gate result — see
+    # "Tone integration" below. No reference method exists for tone's duty-cycle
+    # integration itself: unlike a single/multi-tick counter step, it only has
+    # meaning over an output sample's whole tick span, so it doesn't fit this
+    # per-generator reference-method shape.)
     def _env_output_level(self) -> int:
         """Current 4-bit envelope level (0-15) from the step/attack model."""
         return (self._env_step ^ self._env_attack) >> 1
@@ -244,6 +264,12 @@ class PSG:
         and written back after the loop. generate_samples() calls this once per
         constant-register segment (once for the whole buffer when there are no
         mid-frame writes). Behaviour matches the _step_* methods kept above.
+
+        Intentional exception to AGENTS.md's "keep functions short" convention:
+        this is the emulator's per-sample audio hot path, and the local-variable
+        hoisting above is the reason for the length -- see the comment above
+        _env_output_level for the readable, unhoisted equivalents this must stay
+        in sync with.
         """
         regs = self.regs
 
@@ -277,7 +303,7 @@ class PSG:
         lfsr = self._lfsr
         env_cnt = self._env_cnt
         env_step = self._env_step
-        env_attack = self._env_attack
+        env_attack = self._env_attack  # 0x00/0x1F XOR mask, see self._env_attack
         env_alternate = self._env_alternate
         env_hold_flag = self._env_hold_flag
         env_holding = self._env_holding
@@ -359,6 +385,8 @@ class PSG:
                                 env_holding = True
                                 env_step = 0
                                 break
+                            # (env_step & 0x20) is the underflow bit -- see
+                            # _step_envelope's Rust/C++ signed-type caveat above.
                             if env_alternate and (env_step & 0x20):
                                 env_attack ^= 0x1F
                             env_step &= 0x1F
@@ -460,9 +488,12 @@ class PSG:
     def _snapshot_gen(self) -> _GenState:
         """Capture generator state to rewind to for sub-frame replay."""
         return _GenState(
-            self._tone_cnt[:], self._tone_out[:], self._noise_cnt, self._lfsr,
-            self._env_cnt, self._env_step, self._env_attack, self._env_alternate,
-            self._env_hold_flag, self._env_holding, self._clk_frac,
+            tone_cnt=self._tone_cnt[:], tone_out=self._tone_out[:],
+            noise_cnt=self._noise_cnt, lfsr=self._lfsr,
+            env_cnt=self._env_cnt, env_step=self._env_step,
+            env_attack=self._env_attack, env_alternate=self._env_alternate,
+            env_hold_flag=self._env_hold_flag, env_holding=self._env_holding,
+            clk_frac=self._clk_frac,
         )
 
     def _restore_gen(self, snapshot: _GenState) -> None:

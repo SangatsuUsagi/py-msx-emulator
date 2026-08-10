@@ -1,5 +1,5 @@
 from msx.input import InputState
-from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, MouseSlot
+from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
 
 
 def test_registers_init_zero() -> None:
@@ -187,7 +187,7 @@ class _FakeMouse:
 def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
     psg = PSG(_input=InputState())
     mouse = _FakeMouse()
-    psg._mouse = MouseSlot(mouse, 1)  # Joy2 -> bit 5
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x20)  # bit 5 = 1
     assert mouse.pin8_calls[-1] == 1
@@ -198,7 +198,7 @@ def test_reg15_write_forwards_pin8_bit_for_mouse_port() -> None:
 def test_reg15_other_port_pin8_bit_does_not_affect_mouse() -> None:
     psg = PSG(_input=InputState())
     mouse = _FakeMouse()
-    psg._mouse = MouseSlot(mouse, 1)  # Joy2 -> bit 5
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # bit 5
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x10)  # bit 4 (Joy1 pin 8) = 1, bit 5 = 0
     assert mouse.pin8_calls[-1] == 0  # derived from bit 5 only
@@ -208,7 +208,7 @@ def test_reg14_delegates_to_mouse_when_its_port_is_selected() -> None:
     psg = PSG(_input=InputState())
     mouse = _FakeMouse()
     mouse.read_value = 0x05
-    psg._mouse = MouseSlot(mouse, 1)  # Joy2
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x40)  # JOY_SELECT=1 (Joy2 selected)
     psg.write_port(0xA0, 14)
@@ -221,7 +221,7 @@ def test_reg14_reads_input_state_when_other_port_selected() -> None:
     psg = PSG(_input=state)
     mouse = _FakeMouse()
     mouse.read_value = 0xFF  # would show up if wrongly delegated
-    psg._mouse = MouseSlot(mouse, 1)  # mouse attached to Joy2
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)  # mouse attached to Joy2
     psg.write_port(0xA0, 15)
     psg.write_port(0xA1, 0x00)  # JOY_SELECT=0 (Joy1 selected)
     psg.write_port(0xA0, 14)

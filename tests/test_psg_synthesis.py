@@ -88,6 +88,24 @@ def test_tone_channel_b_independent() -> None:
     assert psg_a.generate_samples(50) == psg_ab.generate_samples(50)
 
 
+def test_channel_a_and_c_produce_identical_output_for_identical_settings() -> None:
+    """_render's per-channel blocks are hand-unrolled (channel 0/1/2 written out
+    separately, not looped) -- this guards against a copy/paste slip between
+    the three copies by checking channel A and channel C, driven with the same
+    period/volume, produce byte-identical PCM."""
+    psg_a = PSG()
+    _set_tone_period(psg_a, 0, 173)
+    psg_a.regs[7] = 0x3E   # tone A enabled, noise A disabled, B/C disabled
+    psg_a.regs[8] = 0x0B   # channel A volume
+
+    psg_c = PSG()
+    _set_tone_period(psg_c, 2, 173)
+    psg_c.regs[7] = 0x3B   # tone C enabled, noise C disabled, A/B disabled
+    psg_c.regs[10] = 0x0B  # channel C volume
+
+    assert psg_a.generate_samples(200) == psg_c.generate_samples(200)
+
+
 def test_tone_state_advances_across_calls() -> None:
     """Synthesiser state persists between generate_samples calls."""
     psg = PSG()
