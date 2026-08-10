@@ -34,11 +34,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict, cast
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
-__all__ = ["Opll", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
+__all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
 
 _CLOCK = 3_579_545  # Hz — full MSX CPU clock; the chip runs at clk / 72.
 
@@ -326,6 +326,70 @@ _UPDATE_TLL = 2
 _UPDATE_RKS = 4
 _UPDATE_EG = 8
 _UPDATE_ALL = 255
+
+
+class _PatchState(TypedDict):
+    """Save-state schema for one _patch_fields()/_set_patch_fields() pair."""
+
+    AM: int
+    PM: int
+    EG: int
+    KR: int
+    ML: int
+    KL: int
+    TL: int
+    FB: int
+    WS: int
+    AR: int
+    DR: int
+    SL: int
+    RR: int
+
+
+class _SlotState(TypedDict):
+    """Save-state schema for one _slot_fields()/_restore_slot_fields() pair."""
+
+    type: int
+    pg_keep: int
+    pg_phase: int
+    eg_state: int
+    eg_shift: int
+    eg_rate_h: int
+    eg_rate_l: int
+    rks: int
+    tll: int
+    key_flag: int
+    sus_flag: int
+    blk_fnum: int
+    blk: int
+    fnum: int
+    volume: int
+    pg_out: int
+    eg_out: int
+    update_requests: int
+    output: list[int]
+    ws: int
+
+
+class OpllState(TypedDict):
+    """Save-state schema for Opll.snapshot()/Opll.restore()."""
+
+    reg: bytes
+    patch_number: list[int]
+    user_patch: list[_PatchState]  # length 2: [mod, car]
+    slots: list[_SlotState]  # length 18
+    adr: int
+    pm_phase: int
+    am_phase: int
+    lfo_am: int
+    noise: int
+    short_noise: int
+    test_flag: int
+    rhythm_mode: int
+    slot_key_status: int
+    eg_counter: int
+    ch_out: list[int]
+    out_time: float
 
 
 @dataclass
@@ -983,7 +1047,7 @@ class Opll:
 
     # --------------------------------------------------------- save / restore
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> OpllState:
         """Capture full chip state for save-state (paired with restore)."""
         return {
             "reg": bytes(self._reg),
@@ -1006,32 +1070,33 @@ class Opll:
 
     def restore(self, state: dict[str, Any]) -> None:
         """Restore chip state produced by snapshot()."""
-        self._reg = bytearray(state["reg"])
-        self._patch_number = [int(x) for x in state["patch_number"]]
+        typed_state = cast(OpllState, state)
+        self._reg = bytearray(typed_state["reg"])
+        self._patch_number = [int(x) for x in typed_state["patch_number"]]
         # Rebuild the fixed preset bank, then the user tone from its saved fields.
         for i in range(19):
             mod, car = _dump_to_patch(_DEFAULT_INST[i])
             self._patch[i * 2 + 0] = mod
             self._patch[i * 2 + 1] = car
-        _set_patch_fields(self._patch[0], state["user_patch"][0])
-        _set_patch_fields(self._patch[1], state["user_patch"][1])
+        _set_patch_fields(self._patch[0], typed_state["user_patch"][0])
+        _set_patch_fields(self._patch[1], typed_state["user_patch"][1])
         for ch in range(9):
             self._mod(ch).patch = self._patch[self._patch_number[ch] * 2 + 0]
             self._car(ch).patch = self._patch[self._patch_number[ch] * 2 + 1]
-        for i, sf in enumerate(state["slots"]):
+        for i, sf in enumerate(typed_state["slots"]):
             _restore_slot_fields(self._slot[i], sf)
-        self._adr = int(state["adr"])
-        self._pm_phase = int(state["pm_phase"])
-        self._am_phase = int(state["am_phase"])
-        self._lfo_am = int(state["lfo_am"])
-        self._noise = int(state["noise"])
-        self._short_noise = int(state["short_noise"])
-        self._test_flag = int(state["test_flag"])
-        self._rhythm_mode = int(state["rhythm_mode"])
-        self._slot_key_status = int(state["slot_key_status"])
-        self._eg_counter = int(state["eg_counter"])
-        self._ch_out = [int(x) for x in state["ch_out"]]
-        self._out_time = float(state["out_time"])
+        self._adr = int(typed_state["adr"])
+        self._pm_phase = int(typed_state["pm_phase"])
+        self._am_phase = int(typed_state["am_phase"])
+        self._lfo_am = int(typed_state["lfo_am"])
+        self._noise = int(typed_state["noise"])
+        self._short_noise = int(typed_state["short_noise"])
+        self._test_flag = int(typed_state["test_flag"])
+        self._rhythm_mode = int(typed_state["rhythm_mode"])
+        self._slot_key_status = int(typed_state["slot_key_status"])
+        self._eg_counter = int(typed_state["eg_counter"])
+        self._ch_out = [int(x) for x in typed_state["ch_out"]]
+        self._out_time = float(typed_state["out_time"])
 
 
 # Output gain from the chip's raw mix (each channel roughly ±4000 pre-mix,
@@ -1044,14 +1109,14 @@ _OUTPUT_GAIN = 3
 # OPLL_PATCH / OPLL_SLOT structs and ports directly to a serde/JSON struct.
 
 
-def _patch_fields(p: _Patch) -> dict[str, int]:
+def _patch_fields(p: _Patch) -> _PatchState:
     return {
         "AM": p.AM, "PM": p.PM, "EG": p.EG, "KR": p.KR, "ML": p.ML, "KL": p.KL,
         "TL": p.TL, "FB": p.FB, "WS": p.WS, "AR": p.AR, "DR": p.DR, "SL": p.SL, "RR": p.RR,
     }
 
 
-def _set_patch_fields(p: _Patch, d: dict[str, Any]) -> None:
+def _set_patch_fields(p: _Patch, d: _PatchState) -> None:
     p.AM = int(d["AM"])
     p.PM = int(d["PM"])
     p.EG = int(d["EG"])
@@ -1067,7 +1132,7 @@ def _set_patch_fields(p: _Patch, d: dict[str, Any]) -> None:
     p.RR = int(d["RR"])
 
 
-def _slot_fields(s: _Slot) -> dict[str, Any]:
+def _slot_fields(s: _Slot) -> _SlotState:
     return {
         "type": s.type, "pg_keep": s.pg_keep, "pg_phase": s.pg_phase,
         "eg_state": s.eg_state, "eg_shift": s.eg_shift, "eg_rate_h": s.eg_rate_h,
@@ -1080,7 +1145,7 @@ def _slot_fields(s: _Slot) -> dict[str, Any]:
     }
 
 
-def _restore_slot_fields(s: _Slot, d: dict[str, Any]) -> None:
+def _restore_slot_fields(s: _Slot, d: _SlotState) -> None:
     s.type = int(d["type"])
     s.buddy_index = _buddy_index(s.number, s.type)
     s.pg_keep = int(d["pg_keep"])
