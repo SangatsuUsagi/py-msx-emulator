@@ -193,7 +193,10 @@ def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) ->
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     mapper = machine.memory._mapper
-    mapper_state = mapper.snapshot()
+    # Mapper.snapshot() returns Mapping[str, object] (see msx/mapper.py); at
+    # runtime every implementer still returns a plain dict, only read here
+    # to serialise, never mutated -- cast to match MachineSnapshot's field.
+    mapper_state = cast(dict[str, object], mapper.snapshot())
     # Common VDP address/latch state — identical field names on both VDP types.
     vdp_latch = machine.vdp.latch
     vdp_addr = machine.vdp.addr
