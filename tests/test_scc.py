@@ -240,3 +240,31 @@ def test_deformation_access_does_not_corrupt_state() -> None:
     assert scc._freq[0] == before_freq
     assert scc._vol[0] == before_vol
     assert scc._enable == before_enable
+
+
+# ---------------------------------------------------------------------------
+# State save/restore (openspec typed-save-state-schemas Phase 2)
+# ---------------------------------------------------------------------------
+
+def test_snapshot_and_restore_round_trip() -> None:
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    scc.write(0x00, 0x11)  # wave bank 0, byte 0
+    scc.write(0x8F, 0x1F)  # enable all 5 channels
+    scc.generate_samples(500)  # advance phase/clk_frac state
+
+    snapshot = scc.snapshot()
+
+    scc.generate_samples(500)  # mutate further so restore is meaningfully exercised
+    assert scc.snapshot() != snapshot
+
+    scc.restore(snapshot)
+    assert scc.snapshot() == snapshot
+
+
+def test_snapshot_on_silent_scc_round_trips() -> None:
+    # Default (all-zero) state must round-trip too, not just an actively
+    # sounding one.
+    scc = SCC()
+    snapshot = scc.snapshot()
+    scc.restore(snapshot)
+    assert scc.snapshot() == snapshot

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, TypedDict, cast
 
 from msx.input import InputState
 from msx.mouse import MouseDevice
@@ -57,6 +57,27 @@ _VOL_TABLE: tuple[int, ...] = (
     0,    85,   121,   171,   241,   336,   473,   692,
     1023, 1447, 2072,  2900,  4111,  5800,  8296, 12287,
 )
+
+
+class PsgSynthState(TypedDict):
+    """Save-state schema for PSG.snapshot_synth()/PSG.restore_synth().
+
+    Covers only the internal tone/noise/envelope generator state; the
+    register file (regs/latch) is captured directly as plain
+    MachineSnapshot fields (psg_regs/psg_latch) and is out of scope here.
+    """
+
+    _tone_cnt: list[int]
+    _tone_out: list[int]
+    _noise_cnt: int
+    _lfsr: int
+    _env_cnt: int
+    _env_step: int
+    _env_attack: int
+    _env_alternate: bool
+    _env_hold_flag: bool
+    _env_holding: bool
+    _clk_frac: int
 
 
 @dataclass
@@ -158,6 +179,43 @@ class PSG:
         self._events = []
         self._regs_base = []
         self._gen_base = None
+
+    # ------------------------------------------------------------ save-state
+
+    def snapshot_synth(self) -> PsgSynthState:
+        """Capture internal tone/noise/envelope generator state for
+        save-state (paired with restore_synth). The register file
+        (regs/latch) is captured separately -- see the module-level
+        PsgSynthState docstring.
+        """
+        return {
+            "_tone_cnt": list(self._tone_cnt),
+            "_tone_out": list(self._tone_out),
+            "_noise_cnt": self._noise_cnt,
+            "_lfsr": self._lfsr,
+            "_env_cnt": self._env_cnt,
+            "_env_step": self._env_step,
+            "_env_attack": self._env_attack,
+            "_env_alternate": self._env_alternate,
+            "_env_hold_flag": self._env_hold_flag,
+            "_env_holding": self._env_holding,
+            "_clk_frac": self._clk_frac,
+        }
+
+    def restore_synth(self, state: dict[str, Any]) -> None:
+        """Restore internal generator state produced by snapshot_synth()."""
+        typed_state = cast(PsgSynthState, state)
+        self._tone_cnt = list(typed_state["_tone_cnt"])
+        self._tone_out = list(typed_state["_tone_out"])
+        self._noise_cnt = int(typed_state["_noise_cnt"])
+        self._lfsr = int(typed_state["_lfsr"])
+        self._env_cnt = int(typed_state["_env_cnt"])
+        self._env_step = int(typed_state["_env_step"])
+        self._env_attack = int(typed_state["_env_attack"])
+        self._env_alternate = bool(typed_state["_env_alternate"])
+        self._env_hold_flag = bool(typed_state["_env_hold_flag"])
+        self._env_holding = bool(typed_state["_env_holding"])
+        self._clk_frac = int(typed_state["_clk_frac"])
 
     # --------------------------------------------------------- envelope reset
 

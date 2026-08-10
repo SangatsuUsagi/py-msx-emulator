@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, TypedDict, cast
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
 SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
 
-__all__ = ["SCC", "SCC_CLOCK", "SAMPLES_PER_FRAME"]
+__all__ = ["SCC", "SCC_CLOCK", "SAMPLES_PER_FRAME", "SccState"]
+
+
+class SccState(TypedDict):
+    """Save-state schema for SCC.snapshot()/SCC.restore().
+
+    Covers all of SCC's persistent state (waveform banks, frequency/volume/
+    enable registers, and synthesis phase state) -- unlike PSG, SCC has no
+    separate register-file/synth split, so one method pair covers it all.
+    """
+
+    _waves: list[list[int]]
+    _freq: list[int]
+    _vol: list[int]
+    _enable: int
+    _phase_cnt: list[int]
+    _phase_idx: list[int]
+    _clk_frac: int
 
 
 @dataclass
@@ -89,6 +107,31 @@ class SCC:
         self._phase_cnt = [0] * 5
         self._phase_idx = [0] * 5
         self._clk_frac = 0
+
+    # ------------------------------------------------------------ save-state
+
+    def snapshot(self) -> SccState:
+        """Capture full chip state for save-state (paired with restore)."""
+        return {
+            "_waves": [list(w) for w in self._waves],
+            "_freq": list(self._freq),
+            "_vol": list(self._vol),
+            "_enable": self._enable,
+            "_phase_cnt": list(self._phase_cnt),
+            "_phase_idx": list(self._phase_idx),
+            "_clk_frac": self._clk_frac,
+        }
+
+    def restore(self, state: dict[str, Any]) -> None:
+        """Restore chip state produced by snapshot()."""
+        typed_state = cast(SccState, state)
+        self._waves = [list(w) for w in typed_state["_waves"]]
+        self._freq = list(typed_state["_freq"])
+        self._vol = list(typed_state["_vol"])
+        self._enable = int(typed_state["_enable"])
+        self._phase_cnt = list(typed_state["_phase_cnt"])
+        self._phase_idx = list(typed_state["_phase_idx"])
+        self._clk_frac = int(typed_state["_clk_frac"])
 
     # -------------------------------------------------------- sample generation
 

@@ -107,64 +107,16 @@ def _restore_cpu_regs(machine: "Machine", regs: dict[str, int]) -> None:
     r.HL_ = regs["HL_"]
 
 
-def _psg_synth_to_dict(machine: "Machine") -> dict[str, object]:
-    p = machine.psg
-    return {
-        "_tone_cnt": list(p._tone_cnt),
-        "_tone_out": list(p._tone_out),
-        "_noise_cnt": p._noise_cnt,
-        "_lfsr": p._lfsr,
-        "_env_cnt": p._env_cnt,
-        "_env_step": p._env_step,
-        "_env_attack": p._env_attack,
-        "_env_alternate": p._env_alternate,
-        "_env_hold_flag": p._env_hold_flag,
-        "_env_holding": p._env_holding,
-        "_clk_frac": p._clk_frac,
-    }
-
-
-def _restore_psg_synth(machine: "Machine", synth: dict[str, object]) -> None:
-    p = machine.psg
-    p._tone_cnt = list(synth["_tone_cnt"])  # type: ignore[call-overload]
-    p._tone_out = list(synth["_tone_out"])  # type: ignore[call-overload]
-    p._noise_cnt = int(synth["_noise_cnt"])  # type: ignore[call-overload]
-    p._lfsr = int(synth["_lfsr"])  # type: ignore[call-overload]
-    p._env_cnt = int(synth["_env_cnt"])  # type: ignore[call-overload]
-    p._env_step = int(synth["_env_step"])  # type: ignore[call-overload]
-    p._env_attack = int(synth["_env_attack"])  # type: ignore[call-overload]
-    p._env_alternate = bool(synth["_env_alternate"])
-    p._env_hold_flag = bool(synth["_env_hold_flag"])
-    p._env_holding = bool(synth["_env_holding"])
-    p._clk_frac = int(synth["_clk_frac"])  # type: ignore[call-overload]
-
-
 def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.scc is None:
         return None
-    s = machine.scc
-    return {
-        "_waves": [list(w) for w in s._waves],
-        "_freq": list(s._freq),
-        "_vol": list(s._vol),
-        "_enable": s._enable,
-        "_phase_cnt": list(s._phase_cnt),
-        "_phase_idx": list(s._phase_idx),
-        "_clk_frac": s._clk_frac,
-    }
+    return cast(dict[str, object], machine.scc.snapshot())
 
 
 def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> None:
     if machine.scc is None or scc_state is None:
         return
-    s = machine.scc
-    s._waves = [list(w) for w in scc_state["_waves"]]  # type: ignore[attr-defined]
-    s._freq = list(scc_state["_freq"])  # type: ignore[call-overload]
-    s._vol = list(scc_state["_vol"])  # type: ignore[call-overload]
-    s._enable = int(scc_state["_enable"])  # type: ignore[call-overload]
-    s._phase_cnt = list(scc_state["_phase_cnt"])  # type: ignore[call-overload]
-    s._phase_idx = list(scc_state["_phase_idx"])  # type: ignore[call-overload]
-    s._clk_frac = int(scc_state["_clk_frac"])  # type: ignore[call-overload]
+    machine.scc.restore(scc_state)
 
 
 def _fmpac_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -236,7 +188,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_frame_count=machine.vdp._frame_count,
         psg_regs=list(machine.psg.regs),
         psg_latch=machine.psg.latch,
-        psg_synth=_psg_synth_to_dict(machine),
+        psg_synth=cast(dict[str, object], machine.psg.snapshot_synth()),
         scc_state=_scc_to_dict(machine),
         vdp_palette=vdp_palette,
         ram_mapper_ram=ram_mapper_ram,
@@ -307,7 +259,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
-    _restore_psg_synth(machine, snap.psg_synth)
+    machine.psg.restore_synth(snap.psg_synth)
     _restore_scc(machine, snap.scc_state)
     _restore_fmpac(machine, snap.fmpac_state)
 

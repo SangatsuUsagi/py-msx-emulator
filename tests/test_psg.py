@@ -289,3 +289,47 @@ def test_register_write_masks_out_of_range_value_to_eight_bits() -> None:
     psg.write_port(0xA0, 8)
     psg.write_port(0xA1, 0x1FF)  # out-of-range int; write_port masks with & 0xFF
     assert psg.regs[8] == 0xFF
+
+
+# ---------------------------------------------------------------------------
+# Synth-state save/restore (openspec typed-save-state-schemas Phase 2)
+# ---------------------------------------------------------------------------
+
+def _program_tone_noise_envelope(psg: PSG) -> None:
+    psg.write_port(0xA0, 0)
+    psg.write_port(0xA1, 0x50)  # channel A tone period low
+    psg.write_port(0xA0, 1)
+    psg.write_port(0xA1, 0x01)  # channel A tone period high
+    psg.write_port(0xA0, 6)
+    psg.write_port(0xA1, 0x0F)  # noise period
+    psg.write_port(0xA0, 7)
+    psg.write_port(0xA1, 0x38)  # mixer: tone+noise enabled on channel A
+    psg.write_port(0xA0, 8)
+    psg.write_port(0xA1, 0x1F)  # channel A: envelope-controlled volume
+    psg.write_port(0xA0, 11)
+    psg.write_port(0xA1, 0x20)  # envelope period low
+    psg.write_port(0xA0, 13)
+    psg.write_port(0xA1, 0x0E)  # envelope shape (continuing ramp)
+
+
+def test_snapshot_synth_and_restore_synth_round_trip() -> None:
+    psg = PSG()
+    _program_tone_noise_envelope(psg)
+    psg.generate_samples(500)  # advance tone/noise/envelope counters
+
+    snapshot = psg.snapshot_synth()
+
+    psg.generate_samples(500)  # mutate further so restore is meaningfully exercised
+    assert psg.snapshot_synth() != snapshot
+
+    psg.restore_synth(snapshot)
+    assert psg.snapshot_synth() == snapshot
+
+
+def test_snapshot_synth_on_silent_psg_round_trips() -> None:
+    # Default (all-zero) synth state must round-trip too, not just an
+    # actively-generating one.
+    psg = PSG()
+    snapshot = psg.snapshot_synth()
+    psg.restore_synth(snapshot)
+    assert psg.snapshot_synth() == snapshot
