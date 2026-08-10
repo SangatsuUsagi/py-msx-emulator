@@ -14,7 +14,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from msx.vdp.v9938 import V9938
 
@@ -73,6 +73,46 @@ class MachineSnapshot:
     cmd_remaining: int | None = None
     # FM-PAC + OPLL (None when no FM-PAC is present)
     fmpac_state: dict[str, object] | None = None
+
+
+class _MachineSnapshotFields(TypedDict):
+    """Mirrors MachineSnapshot's field set, for typing `MachineSnapshot(**fields)`
+    in load_state() -- `fields` there is JSON-decoded (loosely typed by
+    `_from_jsonable`'s `object` return), and `asdict(snap)` always serializes
+    every field (defaults included), so a loaded file always has all keys."""
+
+    format_version: int
+    machine_type: str
+    cpu_regs: dict[str, int]
+    cpu_halted: bool
+    cpu_iff1: bool
+    cpu_iff2: bool
+    cpu_int_pending: bool
+    cpu_nmi_pending: bool
+    cpu_im: int
+    ram: bytearray
+    slot_register: int
+    mapper_class: str
+    mapper_state: dict[str, object]
+    vdp_vram: bytearray
+    vdp_regs: list[int]
+    vdp_status: int
+    vdp_latch: int | None
+    vdp_addr: int
+    vdp_read_buf: int
+    vdp_frame_count: int
+    psg_regs: list[int]
+    psg_latch: int
+    psg_synth: dict[str, object]
+    scc_state: dict[str, object] | None
+    vdp_palette: list[int] | None
+    ram_mapper_ram: bytearray | None
+    ram_mapper_banks: list[int] | None
+    sub_slot_reg: int | None
+    cmd_regs: list[int] | None
+    status2: int | None
+    cmd_remaining: int | None
+    fmpac_state: dict[str, object] | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -247,7 +287,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
             rm.ram[:] = snap.ram_mapper_ram
-            rm.banks[:] = snap.ram_mapper_banks  # type: ignore[assignment]
+            if snap.ram_mapper_banks is not None:
+                rm.banks[:] = snap.ram_mapper_banks
         if snap.sub_slot_reg is not None:
             machine.memory.sub_slot_reg = snap.sub_slot_reg
         if snap.cmd_regs is not None:
@@ -392,6 +433,7 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
         )
-    snap = MachineSnapshot(**fields)  # type: ignore[arg-type]
+    typed_fields = cast(_MachineSnapshotFields, fields)
+    snap = MachineSnapshot(**typed_fields)
     _restore_snapshot(machine, snap)
     print(f"state loaded: {resolved}")
