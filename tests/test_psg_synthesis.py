@@ -287,6 +287,54 @@ def test_mixer_tone_and_noise_and() -> None:
     assert psg._mix_channel(0) == 0  # tone 1 AND noise 0 = 0
 
 
+def test_mixer_channel_b_tone_only_returns_tone_bit() -> None:
+    # Same as test_mixer_tone_only_returns_tone_bit but channel B (mixer bits
+    # 1/4), closing derived.tone_enabled_b/noise_enabled_b's own coverage --
+    # channel A's variant does not exercise channel B's bit positions.
+    psg = PSG()
+    psg.regs[7] = 0x3D  # tone B enabled (bit1=0), noise B disabled (bit4=1)
+    psg._tone_out[1] = 1
+    assert psg._mix_channel(1) == 1
+    psg._tone_out[1] = 0
+    assert psg._mix_channel(1) == 0
+
+
+def test_mixer_channel_b_tone_and_noise_and() -> None:
+    psg = PSG()
+    psg.regs[7] = 0x2D  # tone B and noise B both enabled (bits 1 and 4 clear)
+    psg._tone_out[1] = 0
+    psg._lfsr = 0x10001  # bit 0 = 1 (shared noise generator)
+    assert psg._mix_channel(1) == 0  # tone 0 AND noise 1 = 0
+    psg._tone_out[1] = 1
+    assert psg._mix_channel(1) == 1  # tone 1 AND noise 1 = 1
+    psg._lfsr = 0x10000  # bit 0 = 0
+    assert psg._mix_channel(1) == 0  # tone 1 AND noise 0 = 0
+
+
+def test_mixer_channel_c_tone_only_returns_tone_bit() -> None:
+    # Channel C (mixer bits 2/5) -- test_mixer_both_disabled_returns_1 is the
+    # only existing channel-C coverage, and only for the degenerate
+    # both-disabled case.
+    psg = PSG()
+    psg.regs[7] = 0x3B  # tone C enabled (bit2=0), noise C disabled (bit5=1)
+    psg._tone_out[2] = 1
+    assert psg._mix_channel(2) == 1
+    psg._tone_out[2] = 0
+    assert psg._mix_channel(2) == 0
+
+
+def test_mixer_channel_c_tone_and_noise_and() -> None:
+    psg = PSG()
+    psg.regs[7] = 0x1B  # tone C and noise C both enabled (bits 2 and 5 clear)
+    psg._tone_out[2] = 0
+    psg._lfsr = 0x10001  # bit 0 = 1 (shared noise generator)
+    assert psg._mix_channel(2) == 0  # tone 0 AND noise 1 = 0
+    psg._tone_out[2] = 1
+    assert psg._mix_channel(2) == 1  # tone 1 AND noise 1 = 1
+    psg._lfsr = 0x10000  # bit 0 = 0
+    assert psg._mix_channel(2) == 0  # tone 1 AND noise 0 = 0
+
+
 # ---------------------------------------------------------------------------
 # Envelope flag in volume register
 # ---------------------------------------------------------------------------

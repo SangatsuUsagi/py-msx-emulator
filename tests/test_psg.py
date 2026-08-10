@@ -1,5 +1,5 @@
 from msx.input import InputState
-from msx.psg import PSG, MouseSlot
+from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, MouseSlot
 
 
 def test_registers_init_zero() -> None:
@@ -226,3 +226,66 @@ def test_reg14_reads_input_state_when_other_port_selected() -> None:
     psg.write_port(0xA1, 0x00)  # JOY_SELECT=0 (Joy1 selected)
     psg.write_port(0xA0, 14)
     assert psg.read_port(0xA2) & 0x01 == 0  # Joy1 Up bit from InputState, not mouse
+
+
+# ---------------------------------------------------------------------------
+# Reset (allium/psg.allium rule Reset)
+# ---------------------------------------------------------------------------
+
+def test_reset_restores_register_defaults() -> None:
+    psg = PSG()
+    for i in range(16):
+        psg.write_port(0xA0, i)
+        psg.write_port(0xA1, 0xAB)
+    psg.reset()
+    assert psg.regs == [0] * 16
+    assert psg.latch == 0
+
+
+def test_reset_clears_pending_events() -> None:
+    psg = PSG()
+    psg._get_cycle = lambda: 5
+    psg.write_port(0xA0, 8)
+    psg.write_port(0xA1, 0x0F)
+    assert psg._events
+    psg.reset()
+    assert psg._events == []
+
+
+# ---------------------------------------------------------------------------
+# Unaddressed ports (allium/psg.allium rule ReadUnaddressedPort)
+# ---------------------------------------------------------------------------
+
+def test_unmapped_data_write_port_read_returns_ff() -> None:
+    """Port 0xA1 (data write) is write-only; a read returns open bus, same as
+    0xA0 (test_unmapped_read_returns_ff already covers the address-latch port)."""
+    psg = PSG()
+    assert psg.read_port(0xA1) == 0xFF
+
+
+# ---------------------------------------------------------------------------
+# Hardware constants (allium/psg.allium config block)
+# ---------------------------------------------------------------------------
+
+def test_psg_clock_constant() -> None:
+    assert PSG_CLOCK == 223722
+
+
+def test_sample_rate_constant() -> None:
+    assert SAMPLE_RATE == 44100
+
+
+def test_max_events_constant() -> None:
+    from msx.psg import _MAX_EVENTS
+    assert _MAX_EVENTS == 4096
+
+
+# ---------------------------------------------------------------------------
+# Register-value masking (allium/psg.allium invariant RegistersAreEightBit)
+# ---------------------------------------------------------------------------
+
+def test_register_write_masks_out_of_range_value_to_eight_bits() -> None:
+    psg = PSG()
+    psg.write_port(0xA0, 8)
+    psg.write_port(0xA1, 0x1FF)  # out-of-range int; write_port masks with & 0xFF
+    assert psg.regs[8] == 0xFF
