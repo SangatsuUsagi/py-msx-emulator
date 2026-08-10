@@ -128,3 +128,15 @@ class TestRTypeTrace:
     def test_initial_bank_is_0(self):
         m = RTypeMapper(rom=_ROM_4P)
         assert m._bank == 0
+
+
+class TestRTypeSnapshotRestore:
+    def test_snapshot_restore_roundtrips_bank(self):
+        m = RTypeMapper(rom=_ROM_4P)
+        m.write(0x4000, 2)
+        snap = m.snapshot()
+
+        m2 = RTypeMapper(rom=_ROM_4P)
+        m2.restore(snap)
+        assert m2._bank == 2
+        assert m2.read(0x8000) == 0xCC

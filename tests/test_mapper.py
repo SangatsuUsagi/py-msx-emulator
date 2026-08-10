@@ -67,6 +67,15 @@ def test_flat_16kb_rom_mirrors_in_32kb_space() -> None:
     assert m.read(0x8000) == 0xCD  # 0x8000 - 0x4000 = 16384 ≡ 0 mod 16384
 
 
+def test_flat_snapshot_restore_is_empty_and_noop() -> None:
+    cart = bytes([0xAB] + [0] * 32767)
+    m = FlatMapper(cart)
+    snap = m.snapshot()
+    assert snap == {}
+    m.restore(snap)
+    assert m.read(0x4000) == 0xAB
+
+
 # ---------------------------------------------------------------------------
 # FixedPageMapper
 # ---------------------------------------------------------------------------
@@ -192,6 +201,20 @@ def test_ascii8_read_above_window_falls_back_to_bank_arithmetic() -> None:
     assert m.read(0xC000) == 0xFF
 
 
+def test_ascii8_snapshot_restore_roundtrips_banks() -> None:
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    m.write(0x6000, 3)
+    m.write(0x7800, 7)
+    snap = m.snapshot()
+
+    m2 = Ascii8Mapper(rom)
+    m2.restore(snap)
+    assert m2._banks == m._banks
+    assert m2.read(0x4000) == 3
+    assert m2.read(0xA000) == 7
+
+
 # ---------------------------------------------------------------------------
 # Ascii16Mapper
 # ---------------------------------------------------------------------------
@@ -249,6 +272,20 @@ def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
     small_rom = _rom_16k_pages(1)
     m = Ascii16Mapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_ascii16_snapshot_restore_roundtrips_banks() -> None:
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    m.write(0x6000, 2)
+    m.write(0x7000, 3)
+    snap = m.snapshot()
+
+    m2 = Ascii16Mapper(rom)
+    m2.restore(snap)
+    assert m2._banks == m._banks
+    assert m2.read(0x4000) == 2
+    assert m2.read(0x8000) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +351,20 @@ def test_konami_read_above_window_falls_back_to_bank_arithmetic() -> None:
     small_rom = _rom_8k_pages(1)
     m = KonamiMapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_konami_snapshot_restore_roundtrips_banks() -> None:
+    rom = _rom_8k_pages(8)
+    m = KonamiMapper(rom)
+    m.write(0x6000, 4)
+    m.write(0xA000, 7)
+    snap = m.snapshot()
+
+    m2 = KonamiMapper(rom)
+    m2.restore(snap)
+    assert m2._banks == m._banks
+    assert m2.read(0x6000) == 4
+    assert m2.read(0xA000) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +475,16 @@ def test_majutsushi_generate_samples_mid_frame_write() -> None:
     assert struct.unpack_from("<h", buf, 0)[0] == 0
     # sample 2: threshold = 2*100//4 = 50 → value applies
     assert struct.unpack_from("<h", buf, 4)[0] == (0xFF - 0x80) * 256
+
+
+def test_majutsushi_snapshot_restore_roundtrips_banks_and_last_dac() -> None:
+    m = _maj()
+    m.write(0x6000, 2)     # inherited KonamiMapper bank switch
+    m.write(0x5000, 0xC0)  # DAC write
+    m.generate_samples(4, 0, 100)  # consumes _dac_events, sets _last_dac
+    snap = m.snapshot()
+
+    m2 = MajutsushiMapper(_rom_8k_pages(4))
+    m2.restore(snap)
+    assert m2._banks == m._banks
+    assert m2._last_dac == 0xC0
