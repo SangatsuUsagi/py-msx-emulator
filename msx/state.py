@@ -14,7 +14,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from msx.vdp.v9938 import V9938
 
@@ -171,7 +171,13 @@ def _fmpac_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fmpac is None:
         return None
     fm = machine.fmpac
-    state = fm.snapshot()  # sram, bank, enable, r1ffe, r1fff
+    # fm.snapshot() now returns a typed FmPacState (see msx/fmpac.py) that
+    # already nests the OPLL snapshot under "opll"; cast down to the wider
+    # dict[str, object] this function has always returned. The explicit
+    # state["opll"] = ... reassignment below is redundant with that nested
+    # field as of this change, but is left as-is pending the openspec
+    # typed-save-state-schemas change's later state.py cleanup phase.
+    state = cast(dict[str, object], fm.snapshot())
     state["opll"] = fm.opll.snapshot()
     return state
 
