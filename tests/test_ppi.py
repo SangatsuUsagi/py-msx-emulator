@@ -100,3 +100,68 @@ def test_port_ab_mode_word_clears_port_c() -> None:
     ppi.write_port(0xAA, 0x43)   # CAPS LED (bit 6) + row 3 on Port C
     ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word → clears Port C
     assert ppi.read_port(0xAA) == 0x00
+
+
+# --- allium/ppi.allium: rows 9-10 are real matrix rows (numeric keypad), not
+# out-of-range like rows 11-15 (see "Rows 9-10" open question) -----------------
+
+def test_port_aa_row9_reads_matrix_row9() -> None:
+    state = InputState()
+    state.matrix[9] = 0xAA
+    ppi = make_ppi(input_state=state)
+    ppi.write_port(0xAA, 0x09)  # row 9
+    assert ppi.read_port(0xA9) == 0xAA
+
+
+def test_port_aa_row10_reads_matrix_row10() -> None:
+    state = InputState()
+    state.matrix[10] = 0x55
+    ppi = make_ppi(input_state=state)
+    ppi.write_port(0xAA, 0x0A)  # row 10
+    assert ppi.read_port(0xA9) == 0x55
+
+
+def test_port_aa_row11_out_of_range_returns_ff() -> None:
+    # Boundary complement to test_port_aa_row_out_of_range_returns_ff (row 15):
+    # row 11 is the first row past the real 0-10 matrix.
+    state = InputState()
+    ppi = make_ppi(input_state=state)
+    ppi.write_port(0xAA, 0x0B)  # row 11
+    assert ppi.read_port(0xA9) == 0xFF
+
+
+# --- allium/ppi.allium: PPI.cassette_motor_on / cassette_out_level /
+# key_click_level derived values -- only Port C bit 6 (CAPS LED) had coverage
+# before; bits 4, 5 and 7 are the other three control lines Port C carries ----
+
+def test_port_c_bit4_cassette_motor_reflected() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x10)  # bit 4 set (0 = motor relay closed/on)
+    assert ppi.read_port(0xAA) & 0x10
+
+
+def test_port_c_bit5_cassette_out_reflected() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x20)  # bit 5 set (software-toggled MIC output level)
+    assert ppi.read_port(0xAA) & 0x20
+
+
+def test_port_c_bit7_key_click_reflected() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x80)  # bit 7 set (software-toggled 1-bit audio output)
+    assert ppi.read_port(0xAA) & 0x80
+
+
+# --- allium/ppi.allium: invariant PortCIsEightBit -- write_port masks every
+# value to 8 bits before storing, regardless of port ---------------------------
+
+def test_write_port_c_masks_value_above_8_bits() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAA, 0x143)  # 0x143 & 0xFF == 0x43
+    assert ppi.read_port(0xAA) == 0x43
+
+
+def test_write_control_port_masks_before_decoding() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAB, 0x10D)  # 0x10D & 0xFF == 0x0D -> bit-set, index 6, value 1
+    assert ppi.read_port(0xAA) & (1 << 6)

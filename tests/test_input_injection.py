@@ -76,3 +76,23 @@ def test_named_key_injection_via_set_key_state() -> None:
     row, bit = KEY_NAME_TO_CELL["RETURN"]
     st.set_key_state(row, bit, True)
     assert st.matrix[7] & (1 << 7) == 0
+
+
+# --- allium/ppi.allium: rows 9-10 are the numeric keypad -- no host key binds
+# to them (see the "Rows 9 and 10" open question), so SetKeyState is the only
+# way to assert/release those matrix cells.
+
+def test_set_key_state_numeric_keypad_row9() -> None:
+    st = InputState()
+    st.set_key_state(9, 0, True)
+    assert st.matrix[9] & (1 << 0) == 0
+    st.set_key_state(9, 0, False)
+    assert st.matrix[9] == 0xFF
+
+
+def test_set_key_state_numeric_keypad_row10() -> None:
+    st = InputState()
+    st.set_key_state(10, 7, True)
+    assert st.matrix[10] & (1 << 7) == 0
+    st.set_key_state(10, 7, False)
+    assert st.matrix[10] == 0xFF

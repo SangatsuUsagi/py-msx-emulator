@@ -23,6 +23,7 @@ from msx.input import (
     InputState,
     _K_a,
     _K_j,
+    _K_k,
     _K_s,
     _K_w,
     _K_x,
@@ -100,6 +101,26 @@ def test_key_up_space_restores_matrix_bit() -> None:
     state.key_down(_K_SPACE)
     state.key_up(_K_SPACE)
     assert state.matrix[row] & (1 << bit) != 0
+
+
+# --- allium/ppi.allium: AssertMatrixCell's row dispatch (row_0..row_10) --
+# rows 3 and 4 (letters C-J, K-R) had no key ever exercised against the
+# matrix bit directly before (only via joystick assertions on the same key).
+
+def test_key_down_row3_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_j]
+    assert (row, bit) == (3, 7)
+    state.key_down(_K_j)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_down_row4_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_k]
+    assert (row, bit) == (4, 0)
+    state.key_down(_K_k)
+    assert state.matrix[row] & (1 << bit) == 0
 
 
 def test_key_down_clears_joystick_bit() -> None:
