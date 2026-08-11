@@ -7,6 +7,21 @@ from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
 SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
+NUM_CHANNELS: int = 5
+WAVE_BANKS: int = 4
+WAVE_LEN: int = 32          # bytes per waveform bank, and steps per playback cycle
+
+# Channel index -> waveform bank index: channels 0-2 are independent,
+# channels 3 and 4 (4 and 5 in 1-based chip terms) share bank 3.
+_CH_TO_BANK: tuple[int, ...] = (0, 1, 2, 3, 3)
+
+# Portability note: _waves (WAVE_BANKS banks of WAVE_LEN bytes) and
+# _freq/_vol/_phase_cnt/_phase_idx (NUM_CHANNELS entries each) are
+# fixed-length for the object's whole lifetime -- constructed once and only
+# ever indexed, never resized or appended to. A Rust/C++ port should use
+# fixed-size arrays ([[u8; 32]; 4], [u16; 5], etc.) rather than Vec/
+# Vec<Vec<_>>, the same convention msx/mapper.py's _window_is_sram note
+# documents for its own fixed-4 field.
 
 __all__ = ["SCC", "SCC_CLOCK", "SAMPLES_PER_FRAME", "SccState"]
 
@@ -32,17 +47,22 @@ class SccState(TypedDict):
 class SCC:
     # 4 waveform banks: channels 1-3 independent, channel 4+5 share bank 3.
     _waves: list[list[int]] = field(
-        default_factory=lambda: [[0] * 32 for _ in range(4)], init=False, repr=False
+        default_factory=lambda: [[0] * WAVE_LEN for _ in range(WAVE_BANKS)],
+        init=False, repr=False
     )
     # Frequency registers: 12-bit per channel (0–4095).
-    _freq: list[int] = field(default_factory=lambda: [0] * 5, init=False, repr=False)
+    _freq: list[int] = field(default_factory=lambda: [0] * NUM_CHANNELS, init=False, repr=False)
     # Volume registers: 4-bit per channel (0–15).
-    _vol: list[int] = field(default_factory=lambda: [0] * 5, init=False, repr=False)
+    _vol: list[int] = field(default_factory=lambda: [0] * NUM_CHANNELS, init=False, repr=False)
     # Channel enable: bit N = channel N+1 (bits 0–4).
     _enable: int = field(default=0, init=False, repr=False)
     # Synthesis state.
-    _phase_cnt: list[int] = field(default_factory=lambda: [0] * 5, init=False, repr=False)
-    _phase_idx: list[int] = field(default_factory=lambda: [0] * 5, init=False, repr=False)
+    _phase_cnt: list[int] = field(
+        default_factory=lambda: [0] * NUM_CHANNELS, init=False, repr=False
+    )
+    _phase_idx: list[int] = field(
+        default_factory=lambda: [0] * NUM_CHANNELS, init=False, repr=False
+    )
     _clk_frac: int = field(default=0, init=False, repr=False)
 
     # ------------------------------------------------------------------ I/O
@@ -95,12 +115,12 @@ class SCC:
 
     def reset(self) -> None:
         """Restore power-on register and synthesis state (matches field defaults)."""
-        self._waves = [[0] * 32 for _ in range(4)]
-        self._freq = [0] * 5
-        self._vol = [0] * 5
+        self._waves = [[0] * WAVE_LEN for _ in range(WAVE_BANKS)]
+        self._freq = [0] * NUM_CHANNELS
+        self._vol = [0] * NUM_CHANNELS
         self._enable = 0
-        self._phase_cnt = [0] * 5
-        self._phase_idx = [0] * 5
+        self._phase_cnt = [0] * NUM_CHANNELS
+        self._phase_idx = [0] * NUM_CHANNELS
         self._clk_frac = 0
 
     # ------------------------------------------------------------ save-state
@@ -120,7 +140,12 @@ class SCC:
     def restore(self, state: dict[str, Any]) -> None:
         """Restore chip state produced by snapshot()."""
         typed_state = cast(SccState, state)
-        self._waves = [list(w) for w in typed_state["_waves"]]
+        waves = [list(w) for w in typed_state["_waves"]]
+        if len(waves) != WAVE_BANKS or any(len(bank) != WAVE_LEN for bank in waves):
+            raise ValueError(
+                f"SccState._waves must be {WAVE_BANKS} banks of {WAVE_LEN} bytes each"
+            )
+        self._waves = waves
         self._freq = list(typed_state["_freq"])
         self._vol = list(typed_state["_vol"])
         self._enable = int(typed_state["_enable"])
@@ -147,10 +172,11 @@ class SCC:
         waves = self._waves
         enable = self._enable
         # --- per-channel buffer-constant precompute ---
-        period = [max(1, freq[ch] + 1) for ch in range(5)]
-        volsc = [vol[ch] * SCC_SCALE for ch in range(5)]
-        en = [(enable >> ch) & 1 for ch in range(5)]
-        wave = [waves[ch if ch < 3 else 3] for ch in range(5)]  # ch 4/5 share bank 3
+        period = [max(1, freq[ch] + 1) for ch in range(NUM_CHANNELS)]
+        volsc = [vol[ch] * SCC_SCALE for ch in range(NUM_CHANNELS)]
+        en = [(enable >> ch) & 1 for ch in range(NUM_CHANNELS)]
+        wave = [waves[_CH_TO_BANK[ch]] for ch in range(NUM_CHANNELS)]  # ch 4/5 share bank 3
+        wave_mask = WAVE_LEN - 1  # hoisted out of the hot loop below
         # --- bind phase state to locals (lists mutated in place; scalar clk written back) ---
         pc = self._phase_cnt
         pi = self._phase_idx
@@ -162,9 +188,9 @@ class SCC:
             clk %= SAMPLE_RATE
 
             sample = 0
-            for ch in range(5):
+            for ch in range(NUM_CHANNELS):
                 steps, pc[ch] = divmod(pc[ch] + ticks, period[ch])
-                idx = (pi[ch] + steps) & 31  # 32-entry wave, & 31 == % 32
+                idx = (pi[ch] + steps) & wave_mask  # wraps within one waveform
                 pi[ch] = idx
                 if en[ch]:
                     raw = wave[ch][idx]
