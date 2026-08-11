@@ -12,7 +12,7 @@ from msx.frame_timer import FrameTimer
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.joystick import JoystickManager
 from msx.machine import Machine
-from msx.mouse import MouseDevice
+from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.psg import SAMPLES_PER_FRAME, JoystickPort, MouseSlot
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
@@ -274,9 +274,9 @@ def _handle_events(
             button = int(event.button.button)
             pressed = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             if button == sdl2.SDL_BUTTON_LEFT:
-                mouse_device.set_button(4, pressed)
+                mouse_device.set_button(TRIGGER_A_BIT, pressed)
             elif button == sdl2.SDL_BUTTON_RIGHT:
-                mouse_device.set_button(5, pressed)
+                mouse_device.set_button(TRIGGER_B_BIT, pressed)
     return running, fullscreen
 
 

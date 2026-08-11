@@ -17,8 +17,11 @@ PHASE_XLOW2 = 5
 PHASE_YHIGH2 = 6
 PHASE_YLOW2 = 7
 # Plain int constants, not an Enum: _advance_phase's generic (phase + 1) % 8
-# fallthrough relies on phase supporting arithmetic. A Rust port promoting
-# this to an enum would need an explicit 8-arm match instead.
+# fallthrough relies on phase supporting arithmetic, and read()'s
+# `self._phase & 3` grouping relies on the same numeric encoding to pick the
+# X/Y-high/low nibble regardless of main vs. alternate cycle. A Rust port
+# promoting this to an enum would need an explicit 8-arm match for the
+# former and an explicit group()/nibble-selector method for the latter.
 
 # Pin-8-idle timeout: if the host stops toggling pin 8 for longer than this,
 # the phase resyncs to PHASE_YLOW2 so the next toggle starts a fresh scan
@@ -29,6 +32,12 @@ _MOUSE_TIMEOUT_CYCLES = 5_369
 # Symmetric clamp range for the latched delta byte; +/-128 would break the
 # two's-complement byte's sign symmetry.
 _MAX_ABS_DELTA = 127
+
+# Bit indices for set_button() below: 1 << TRIGGER_A_BIT == _STATUS_TRIGGER_A,
+# 1 << TRIGGER_B_BIT == _STATUS_TRIGGER_B. Public so callers (the frontend's
+# mouse-button handling) can name them instead of hardcoding 4/5.
+TRIGGER_A_BIT = 4  # left button
+TRIGGER_B_BIT = 5  # right button
 
 _STATUS_TRIGGER_A = 0x10  # left button
 _STATUS_TRIGGER_B = 0x20  # right button
@@ -134,6 +143,11 @@ class MouseDevice:
         self._cur_y_rel += dy
 
     def set_button(self, bit: int, pressed: bool) -> None:
+        """Set the left (TRIGGER_A_BIT) or right (TRIGGER_B_BIT) button state.
+
+        Live status, not latched: reflected on the next read() regardless of
+        scan phase (see the module docstring).
+        """
         if pressed:
             self._status &= ~(1 << bit) & 0xFF
         else:

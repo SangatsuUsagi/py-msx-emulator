@@ -53,6 +53,15 @@ _JOY_TURBO_BUTTON_BIT = {2: _BIT_TRIGGER_A, 3: _BIT_TRIGGER_B}
 
 @dataclass
 class JoystickManager:
+    """Owns up to two host joystick/gamepad slots (ports 0 and 1) and drives
+    their signal lines into InputState.
+
+    Devices are claimed via SDL's GameController API when supported, else
+    the raw Joystick API. Each port's six lines (see module-level _BIT_*)
+    are asserted/released directly by held buttons/axes/hat, or driven by
+    the turbo autofire duty cycle (see tick()) for turbo-bound buttons.
+    """
+
     _input: InputState
     _sdl: Any = field(default=None, repr=False)
 
@@ -98,29 +107,34 @@ class JoystickManager:
         return None
 
     def open_device(self, device_index: int) -> None:
+        """Claim a free port (0 then 1) for a newly connected SDL device.
+
+        Prefers the GameController API when the device supports it, else
+        the raw Joystick API. No-ops if both ports are already claimed, or
+        if SDL fails to open the device.
+        """
         port = self._free_port()
         if port is None:
             return
         sdl = self._sdl
-        if sdl.SDL_IsGameController(device_index):
+        is_gc = bool(sdl.SDL_IsGameController(device_index))
+        if is_gc:
             handle = sdl.SDL_GameControllerOpen(device_index)
             if not handle:
                 return
             joy = sdl.SDL_GameControllerGetJoystick(handle)
             instance_id = sdl.SDL_JoystickInstanceID(joy)
-            self._slots[port] = handle
-            self._is_gc[port] = True
-            self._instance_ids[port] = instance_id
         else:
             handle = sdl.SDL_JoystickOpen(device_index)
             if not handle:
                 return
             instance_id = sdl.SDL_JoystickInstanceID(handle)
-            self._slots[port] = handle
-            self._is_gc[port] = False
-            self._instance_ids[port] = instance_id
+        self._slots[port] = handle
+        self._is_gc[port] = is_gc
+        self._instance_ids[port] = instance_id
 
     def close_device(self, instance_id: int) -> None:
+        """Release the port claimed by the given SDL instance ID, if any."""
         port = self._port_for_instance(instance_id)
         if port is None:
             return
@@ -145,50 +159,60 @@ class JoystickManager:
             self._input.joystick_button_up(port, b)
 
     def handle_event(self, event: Any) -> None:
+        """Dispatch one SDL2 event: device hotplug, or a button/axis/hat
+        change on an already-claimed device. Ignores any other event type.
+        """
         sdl = self._sdl
-        t = event.type
-        if t == sdl.SDL_CONTROLLERDEVICEADDED:
+        event_type = event.type
+        if event_type == sdl.SDL_CONTROLLERDEVICEADDED:
             self.open_device(event.cdevice.which)
-        elif t == sdl.SDL_CONTROLLERDEVICEREMOVED:
+        elif event_type == sdl.SDL_CONTROLLERDEVICEREMOVED:
             self.close_device(event.cdevice.which)
-        elif t == sdl.SDL_JOYDEVICEADDED:
+        elif event_type == sdl.SDL_JOYDEVICEADDED:
             # Only open as raw joystick if it is NOT a GameController (GC path handles its own add)
             if not sdl.SDL_IsGameController(event.jdevice.which):
                 self.open_device(event.jdevice.which)
-        elif t == sdl.SDL_JOYDEVICEREMOVED:
+        elif event_type == sdl.SDL_JOYDEVICEREMOVED:
             self.close_device(event.jdevice.which)
-        elif t in (sdl.SDL_CONTROLLERBUTTONDOWN, sdl.SDL_CONTROLLERBUTTONUP):
+        elif event_type in (sdl.SDL_CONTROLLERBUTTONDOWN, sdl.SDL_CONTROLLERBUTTONUP):
             self._handle_gc_button(event)
-        elif t == sdl.SDL_CONTROLLERAXISMOTION:
+        elif event_type == sdl.SDL_CONTROLLERAXISMOTION:
             self._handle_gc_axis(event)
-        elif t in (sdl.SDL_JOYBUTTONDOWN, sdl.SDL_JOYBUTTONUP):
+        elif event_type in (sdl.SDL_JOYBUTTONDOWN, sdl.SDL_JOYBUTTONUP):
             self._handle_joy_button(event)
-        elif t == sdl.SDL_JOYAXISMOTION:
+        elif event_type == sdl.SDL_JOYAXISMOTION:
             self._handle_joy_axis(event)
-        elif t == sdl.SDL_JOYHATMOTION:
+        elif event_type == sdl.SDL_JOYHATMOTION:
             self._handle_joy_hat(event)
+
+    def _set_button(self, port: int, bit: int, is_down: bool) -> None:
+        """Directly assert/release a plain (non-turbo) button line."""
+        if is_down:
+            self._input.joystick_button_down(port, bit)
+        else:
+            self._input.joystick_button_up(port, bit)
+
+    def _set_turbo(self, port: int, bit: int, is_down: bool) -> None:
+        """Add/remove a turbo binding on press/release; see tick()."""
+        if is_down:
+            if not self._turbo_held:
+                self._turbo_counter = 0
+            self._turbo_held.add((port, bit))
+        else:
+            self._turbo_held.discard((port, bit))
+            self._input.joystick_button_up(port, bit)
 
     def _handle_gc_button(self, event: Any) -> None:
         sdl = self._sdl
         port = self._port_for_instance(event.cbutton.which)
         if port is None:
             return
+        is_down = event.type == sdl.SDL_CONTROLLERBUTTONDOWN
         button = int(event.cbutton.button)
         if button in self._gc_button_bit:
-            bit = self._gc_button_bit[button]
-            if event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
-                self._input.joystick_button_down(port, bit)
-            else:
-                self._input.joystick_button_up(port, bit)
+            self._set_button(port, self._gc_button_bit[button], is_down)
         elif button in self._gc_turbo_button_bit:
-            bit = self._gc_turbo_button_bit[button]
-            if event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
-                if not self._turbo_held:
-                    self._turbo_counter = 0
-                self._turbo_held.add((port, bit))
-            else:
-                self._turbo_held.discard((port, bit))
-                self._input.joystick_button_up(port, bit)
+            self._set_turbo(port, self._gc_turbo_button_bit[button], is_down)
 
     def _apply_axis(self, port: int, axis: int, value: int) -> None:
         """Apply one analog-stick axis reading to the port's direction bits."""
@@ -216,22 +240,12 @@ class JoystickManager:
         port = self._port_for_instance(event.jbutton.which)
         if port is None:
             return
+        is_down = event.type == sdl.SDL_JOYBUTTONDOWN
         btn = int(event.jbutton.button)
         if btn in _JOY_BUTTON_BIT:
-            bit = _JOY_BUTTON_BIT[btn]
-            if event.type == sdl.SDL_JOYBUTTONDOWN:
-                self._input.joystick_button_down(port, bit)
-            else:
-                self._input.joystick_button_up(port, bit)
+            self._set_button(port, _JOY_BUTTON_BIT[btn], is_down)
         elif btn in _JOY_TURBO_BUTTON_BIT:
-            bit = _JOY_TURBO_BUTTON_BIT[btn]
-            if event.type == sdl.SDL_JOYBUTTONDOWN:
-                if not self._turbo_held:
-                    self._turbo_counter = 0
-                self._turbo_held.add((port, bit))
-            else:
-                self._turbo_held.discard((port, bit))
-                self._input.joystick_button_up(port, bit)
+            self._set_turbo(port, _JOY_TURBO_BUTTON_BIT[btn], is_down)
 
     def _handle_joy_axis(self, event: Any) -> None:
         port = self._port_for_instance(event.jaxis.which)
