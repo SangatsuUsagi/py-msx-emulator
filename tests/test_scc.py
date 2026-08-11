@@ -79,10 +79,13 @@ def test_frequency_all_five_channels() -> None:
 # Register map — volume and enable
 # ---------------------------------------------------------------------------
 
-def test_volume_write_read_back() -> None:
+def test_volume_write_is_effective_but_reads_back_ff() -> None:
+    # Real hardware: 0x80-0x9F is write-only, so the write still lands in
+    # state (proven via generate_samples elsewhere) but a read is always 0xFF.
     scc = SCC()
     scc.write(0x8A, 0x0F)
-    assert scc.read(0x8A) == 0x0F
+    assert scc.read(0x8A) == 0xFF
+    assert scc._vol[0] == 0x0F
 
 
 def test_volume_nibble_masked() -> None:
@@ -91,10 +94,11 @@ def test_volume_nibble_masked() -> None:
     assert scc._vol[0] == 0x0F
 
 
-def test_enable_register_write_read() -> None:
+def test_enable_register_write_reads_back_ff() -> None:
     scc = SCC()
     scc.write(0x8F, 0x1F)
-    assert scc.read(0x8F) == 0x1F
+    assert scc.read(0x8F) == 0xFF
+    assert scc._enable == 0x1F
 
 
 def test_enable_five_bits_masked() -> None:
@@ -110,12 +114,63 @@ def test_undefined_read_returns_0xff() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Frequency/volume/enable block mirrored at 0x90-0x9F (real hardware decodes
+# only the low 4 bits of 0x80-0x9F; msx/scc.py previously dropped writes here)
+# ---------------------------------------------------------------------------
+
+def test_frequency_write_via_mirror() -> None:
+    scc = SCC()
+    scc.write(0x90, 0xFE)  # mirrors 0x80: channel 1 freq low
+    scc.write(0x91, 0x01)  # mirrors 0x81: channel 1 freq high nibble
+    assert scc._freq[0] == 0x01FE
+
+
+def test_volume_write_via_mirror() -> None:
+    scc = SCC()
+    scc.write(0x9A, 0x0F)  # mirrors 0x8A: channel 1 volume
+    assert scc._vol[0] == 0x0F
+
+
+def test_enable_write_via_mirror() -> None:
+    scc = SCC()
+    scc.write(0x9F, 0x1F)  # mirrors 0x8F: channel enable
+    assert scc._enable == 0x1F
+
+
+def test_mirror_reads_return_ff() -> None:
+    scc = SCC()
+    scc.write(0x9A, 0x0F)
+    assert scc.read(0x9A) == 0xFF
+
+
+# ---------------------------------------------------------------------------
 # Power-on state
 # ---------------------------------------------------------------------------
 
 def test_waveform_initialises_to_zero() -> None:
     scc = SCC()
     assert all(scc.read(i) == 0 for i in range(0x80))
+
+
+# ---------------------------------------------------------------------------
+# Reset (allium/scc.allium: rule Reset — not previously exercised via an
+# explicit scc.reset() call, only via fresh-construction defaults)
+# ---------------------------------------------------------------------------
+
+def test_reset_restores_power_on_state() -> None:
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    scc.reset()
+    assert all(scc.read(i) == 0 for i in range(0x80))  # waveform back to zero
+    assert scc._freq == [0, 0, 0, 0, 0]
+    assert scc._vol == [0, 0, 0, 0, 0]
+    assert scc._enable == 0
+
+
+def test_reset_silences_output() -> None:
+    scc = _make_scc_tone(freq=253, vol=15, ch=0)
+    scc.reset()
+    buf = scc.generate_samples(100)
+    assert all(b == 0 for b in buf)
 
 
 def test_silence_at_power_on() -> None:

@@ -137,16 +137,40 @@ def test_rom_read_when_scc_mode_false(mapper: KonamiSCCMapper) -> None:
     assert mapper.read(0x9800) == 2
 
 
+def test_scc_write_not_routed_when_scc_mode_false(mapper: KonamiSCCMapper) -> None:
+    # Write-side twin of test_rom_read_when_scc_mode_false: with SCC mode
+    # off, a write into 0x9800-0x9FFF must not reach the chip either.
+    assert mapper._scc_mode is False
+    mapper.write(0x9800, 0x7F)
+    assert mapper.scc._waves[0][0] == 0  # SCC waveform bank 0 untouched
+
+
+def test_scc_read_forward_only_applies_within_9800_9fff(mapper: KonamiSCCMapper) -> None:
+    # SCC mode on, but the address is window 2's body (below 0x9800): must
+    # still resolve via ROM, not the chip.
+    mapper.write(0x9000, 0x3F)
+    assert mapper._scc_mode is True
+    assert mapper.read(0x8000) == 2  # ROM page 2 byte, not the SCC
+
+
+def test_scc_write_forward_only_applies_within_9800_9fff(mapper: KonamiSCCMapper) -> None:
+    mapper.write(0x9000, 0x3F)
+    mapper.write(0x8000, 0x7F)  # window 2 body, below the SCC zone
+    assert mapper.scc._waves[0][0] == 0  # SCC waveform bank 0 untouched
+
+
 def test_scc_volume_register_routed(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x9000, 0x3F)
     mapper.write(0x9800 + 0x8A, 0x0F)   # channel 1 volume
-    assert mapper.scc.read(0x8A) == 0x0F
+    # 0x80-0x9F is write-only on real hardware (see msx/scc.py), so the
+    # write is checked via internal state rather than a read-back.
+    assert mapper.scc._vol[0] == 0x0F
 
 
 def test_scc_enable_register_routed(mapper: KonamiSCCMapper) -> None:
     mapper.write(0x9000, 0x3F)
     mapper.write(0x9800 + 0x8F, 0x1F)
-    assert mapper.scc.read(0x8F) == 0x1F
+    assert mapper.scc._enable == 0x1F
 
 
 def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper) -> None:

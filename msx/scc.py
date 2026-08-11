@@ -55,20 +55,12 @@ class SCC:
             bank = addr >> 5        # 0–3
             byte = addr & 0x1F      # 0–31
             return self._waves[bank][byte] & 0xFF
-        if addr <= 0x89:
-            # Frequency registers: pairs (low, high) for channels 1–5.
-            ch = (addr - 0x80) >> 1
-            if (addr & 1) == 0:
-                return self._freq[ch] & 0xFF
-            else:
-                return (self._freq[ch] >> 8) & 0x0F
-        if addr <= 0x8E:
-            return self._vol[addr - 0x8A] & 0x0F
-        if addr == 0x8F:
-            return self._enable & 0x1F
-        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) read
-        # back as 0xFF. Reading the deformation range is a harmless no-op here;
-        # rotation / frequency-mode emulation is intentionally omitted.
+        # Offsets 0x80-0xFF (frequency/volume/enable block at 0x80-0x9F,
+        # mirrored twice; the deformation register at 0xE0-0xFF; and the
+        # no-function gap between) are all write-only on real hardware and
+        # read back as 0xFF. Reading the deformation range is a harmless
+        # no-op here; rotation / frequency-mode emulation is intentionally
+        # omitted.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -80,21 +72,24 @@ class SCC:
             byte = addr & 0x1F
             self._waves[bank][byte] = value
             return
-        if addr <= 0x89:
-            ch = (addr - 0x80) >> 1
-            if (addr & 1) == 0:
-                self._freq[ch] = (self._freq[ch] & 0xF00) | value
+        if addr < 0xA0:
+            # Frequency/volume/enable block, mirrored at 0x80-0x8F and
+            # 0x90-0x9F: only the low 4 bits of the offset are decoded.
+            reg = addr & 0x0F
+            if reg <= 0x09:
+                ch = reg >> 1
+                if (reg & 1) == 0:
+                    self._freq[ch] = (self._freq[ch] & 0xF00) | value
+                else:
+                    self._freq[ch] = (self._freq[ch] & 0x0FF) | ((value & 0x0F) << 8)
+            elif reg <= 0x0E:
+                self._vol[reg - 0x0A] = value & 0x0F
             else:
-                self._freq[ch] = (self._freq[ch] & 0x0FF) | ((value & 0x0F) << 8)
+                self._enable = value & 0x1F
             return
-        if addr <= 0x8E:
-            self._vol[addr - 0x8A] = value & 0x0F
-            return
-        if addr == 0x8F:
-            self._enable = value & 0x1F
-            return
-        # Offsets 0x90-0xFF (incl. the deformation register at 0xE0-0xFF) are a
-        # safe no-op: they do not alter waveform/frequency/volume/enable state.
+        # Offsets 0xA0-0xFF (incl. the deformation register at 0xE0-0xFF) are
+        # a safe no-op: they do not alter waveform/frequency/volume/enable
+        # state.
 
     # --------------------------------------------------------------- reset
 
