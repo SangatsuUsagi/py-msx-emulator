@@ -1,4 +1,5 @@
 from msx.input import InputState
+from msx.mouse import MouseDevice
 from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
 
 
@@ -226,6 +227,41 @@ def test_reg14_reads_input_state_when_other_port_selected() -> None:
     psg.write_port(0xA1, 0x00)  # JOY_SELECT=0 (Joy1 selected)
     psg.write_port(0xA0, 14)
     assert psg.read_port(0xA2) & 0x01 == 0  # Joy1 Up bit from InputState, not mouse
+
+
+# ---------------------------------------------------------------------------
+# End-to-end with a real MouseDevice (allium/js_mouse.allium: MousePin8Written
+# and ReadPortAWithMouseSelected are this file's hook into a real device --
+# the tests above only exercise the forwarding with a _FakeMouse stub)
+# ---------------------------------------------------------------------------
+
+def test_real_mouse_device_reports_motion_through_psg_ports() -> None:
+    mouse = MouseDevice(_scale=1)
+    mouse.add_motion(5, -1)
+    psg = PSG(_input=InputState())
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
+
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x60)  # JOY_SELECT=1 (Joy2), pin8(Joy2, bit5)=1: YLOW2->XHIGH1
+    psg.write_port(0xA0, 14)
+    high = (5 >> 4) & 0x0F
+    assert psg.read_port(0xA2) & 0x0F == high
+
+    psg.write_port(0xA0, 15)
+    psg.write_port(0xA1, 0x40)  # pin8=0: XHIGH1->XLOW1
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x0F == 5 & 0x0F
+
+
+def test_real_mouse_device_button_state_via_psg_port() -> None:
+    mouse = MouseDevice(_scale=1)
+    mouse.set_button(4, True)  # left button (Trigger A, 0x10) pressed
+    psg = PSG(_input=InputState())
+    psg._mouse = MouseSlot(mouse, JoystickPort.JOY1)
+
+    psg.write_port(0xA0, 14)
+    assert psg.read_port(0xA2) & 0x10 == 0  # bit 4 (Trigger A/left) low
+    assert psg.read_port(0xA2) & 0x20 != 0  # bit 5 (Trigger B/right) still released
 
 
 # ---------------------------------------------------------------------------

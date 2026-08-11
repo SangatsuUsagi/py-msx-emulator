@@ -120,6 +120,52 @@ def test_add_motion_subpixel_remainder_accumulates() -> None:
     assert device._cur_x_rel == 1
 
 
+def test_noop_write_does_not_trigger_resync() -> None:
+    # write_pin8's same-value early return happens before the timeout check,
+    # so a repeated value after a long gap must not resync (allium/js_mouse.
+    # allium: MousePin8Resync rule-failure -- the no-op guard short-circuits
+    # before the resync requires clause is even evaluated).
+    cycle = [0]
+    device = MouseDevice(_scale=1)
+    device._get_cycle = lambda: cycle[0]
+    device.write_pin8(1)  # YLOW2 -> XHIGH1
+    assert device._phase == PHASE_XHIGH1
+    cycle[0] = 100_000  # far beyond the timeout
+    device.write_pin8(1)  # same value as last write -- no-op, no resync check
+    assert device._phase == PHASE_XHIGH1
+
+
+def test_resync_from_every_phase_lands_on_ylow2() -> None:
+    # Completes transition-edge coverage: test_timeout_resync_before_processing_new_value
+    # only exercises the resync edge starting from XLOW1. Every other phase
+    # resyncs to YLOW2 the same way -- and since the resync forces phase to
+    # YLOW2 *before* this same write's edge is evaluated, a rising edge
+    # (value=1) immediately completes YLOW2's own edge too, landing one step
+    # further at XHIGH1 in the same call; a falling edge (value=0) does not.
+    from msx.mouse import PHASE_XLOW2, PHASE_YHIGH2
+
+    cases = [
+        (PHASE_XHIGH1, (1,), PHASE_YLOW2),                        # last write=1 -> next=0
+        (PHASE_YHIGH1, (1, 0, 1), PHASE_YLOW2),                   # last write=1 -> next=0
+        (PHASE_YLOW1, (1, 0, 1, 0), PHASE_XHIGH1),                # last write=0 -> next=1
+        (PHASE_XHIGH2, (1, 0, 1, 0, 1), PHASE_YLOW2),             # last write=1 -> next=0
+        (PHASE_XLOW2, (1, 0, 1, 0, 1, 0), PHASE_XHIGH1),          # last write=0 -> next=1
+        (PHASE_YHIGH2, (1, 0, 1, 0, 1, 0, 1), PHASE_YLOW2),       # last write=1 -> next=0
+    ]
+    for start_phase, pin8_values, expected_after_resync in cases:
+        cycle = [0]
+        device = MouseDevice(_scale=1)
+        device._get_cycle = lambda: cycle[0]
+        for v in pin8_values:
+            device.write_pin8(v)
+        assert device._phase == start_phase
+
+        cycle[0] = 100_000  # exceed the timeout
+        next_value = 1 - pin8_values[-1]
+        device.write_pin8(next_value)
+        assert device._phase == expected_after_resync
+
+
 def test_add_motion_negative_delta_uses_floor_division() -> None:
     # Locks in Python's flooring divmod semantics (quotient toward -inf,
     # remainder in [0, scale)) — a naive truncating '/'/'%' port would give
