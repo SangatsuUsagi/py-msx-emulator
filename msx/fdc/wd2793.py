@@ -40,6 +40,11 @@ SECTOR_SIZE: int = 512
 TRACK_BYTES: int = 6250
 
 
+def _is_type1(command: int) -> bool:
+    """Type I (positioning) or FORCE INTERRUPT -- both read STATUS the same way."""
+    return (command & 0x80) == 0 or (command & 0xF0) == 0xD0
+
+
 @dataclass
 class WD2793:
     """WD2793 controller bound to a single selected drive.
@@ -48,6 +53,16 @@ class WD2793:
     ``drive.side`` on side-select before issuing transfer commands.
     """
 
+    # Portability note: this is a live alias into whatever list the connection-
+    # style layer (e.g. FloppyDisk.drives) owns, reassigned on every drive-select
+    # write and read again inside several command handlers below. Fine under
+    # Python's GC/reference semantics, but a Rust/C++ port cannot have this struct
+    # both own nothing and hold a persistent &mut into an element a sibling
+    # struct owns — resolve by threading a selected-drive index/parameter through
+    # instead of storing a reference here. Deliberately not restructured now:
+    # no C++/Rust port exists yet (see AGENTS.md's "pure Python" tech-stack
+    # note), and the fix touches this class's entire public API plus every
+    # caller. See logs/review-python-20260814-210824.md for the full analysis.
     drive: DiskDrive | None = None
     command_reg: int = 0
     track_reg: int = 0
@@ -62,6 +77,9 @@ class WD2793:
     _step_dir: int = 1
 
     def reset(self) -> None:
+        # Mirrors the dataclass field defaults above (drive is intentionally
+        # excluded: reset() does not disconnect the selected drive). Keep the
+        # two in sync if a field is added.
         self.command_reg = 0
         self.track_reg = 0
         self.sector_reg = 1
@@ -127,8 +145,7 @@ class WD2793:
     def get_status(self) -> int:
         self._intrq = False  # reading STATUS clears INTRQ
         status = self.status_reg
-        is_type1 = (self.command_reg & 0x80) == 0 or (self.command_reg & 0xF0) == 0xD0
-        if not is_type1:
+        if not _is_type1(self.command_reg):
             if self._drq:
                 status |= S_DRQ
             else:
@@ -159,6 +176,13 @@ class WD2793:
 
     # -- Command implementations ------------------------------------------
 
+    def _step_track(self, direction: int) -> None:
+        """Move track_reg one step: +1 wraps at 256 ("in"), -1 floors at 0 ("out")."""
+        if direction > 0:
+            self.track_reg = (self.track_reg + 1) & 0xFF
+        else:
+            self.track_reg = max(0, self.track_reg - 1)
+
     def _type1(self, value: int) -> None:
         high = value & 0xF0
         if high == 0x00:            # RESTORE
@@ -167,12 +191,12 @@ class WD2793:
             self.track_reg = self.data_reg & 0xFF
         elif high in (0x40, 0x50):  # STEP-IN
             self._step_dir = 1
-            self.track_reg = (self.track_reg + 1) & 0xFF
+            self._step_track(self._step_dir)
         elif high in (0x60, 0x70):  # STEP-OUT
             self._step_dir = -1
-            self.track_reg = max(0, self.track_reg - 1)
-        else:                       # STEP (0x20/0x30): repeat last direction
-            self.track_reg = max(0, (self.track_reg + self._step_dir) & 0xFF)
+            self._step_track(self._step_dir)
+        else:                        # STEP (0x20/0x30): repeat last direction
+            self._step_track(self._step_dir)
         if self.drive is not None:
             self.drive.track = self.track_reg
         status = 0
@@ -214,6 +238,10 @@ class WD2793:
             self.status_reg = WRITE_PROTECTED
             self._end_command()
             return
+        if self.drive.read_sector(self.track_reg, self.drive.side, self.sector_reg) is None:
+            self.status_reg = RECORD_NOT_FOUND
+            self._end_command()
+            return
         self._buffer = bytearray()
         self._index = 0
         self._mode = Mode.WRITE
@@ -242,6 +270,11 @@ class WD2793:
             self._end_command()
             return
         # 6-byte ID field: track, side, sector, N (2 = 512 bytes), CRC hi, CRC lo.
+        # Functional-model simplification: this model has no real per-sector ID
+        # field to read, so it always reports sector 1 (rather than searching the
+        # mounted image for "whichever sector is next") -- the DISK ROM does not
+        # depend on the reported value here, only on sector_reg's post-command
+        # "gets track" quirk below.
         self._buffer = bytearray(
             [self.track_reg & 0xFF, self.drive.side & 1, 1, 2, 0, 0]
         )

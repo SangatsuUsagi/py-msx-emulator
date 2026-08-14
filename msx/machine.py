@@ -137,6 +137,8 @@ class Machine:
         if self.fmpac is not None:
             self.fmpac.reset()
         self.vdp.reset()
+        if self.fdc is not None:
+            self.fdc.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.slot_register = 0x00
         self.memory.sub_slot_reg = 0x00

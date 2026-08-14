@@ -15,9 +15,33 @@ from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.wd2793 import WD2793
 
+# Sony/Philips register window offsets (addr & 0x3FFF), shared by
+# SonyPhilipsInterface.read_mem/write_mem/reset and by _read_reg/_write_reg so
+# the two decode tables can't drift apart from each other or from the class
+# docstring below.
+REG_STATUS_CMD: int = 0x3FF8      # STATUS (read) / COMMAND (write)
+REG_TRACK: int = 0x3FF9
+REG_SECTOR: int = 0x3FFA
+REG_DATA: int = 0x3FFB
+REG_SIDE: int = 0x3FFC
+REG_DRIVE: int = 0x3FFD           # drive select (bits 1:0) / motor (bit 7)
+REG_UNCONNECTED: int = 0x3FFE     # not wired to anything; reads open bus
+REG_CONTROL_STATUS: int = 0x3FFF  # active-low INTRQ (bit 6) / DRQ (bit 7)
+
 
 class FloppyDisk:
-    """Base connection-style device wiring a controller + drives + DISK ROM."""
+    """Base connection-style device wiring a controller + drives + DISK ROM.
+
+    Portability note: this base class both owns concrete state (controller,
+    drives, disk_rom) and declares read_mem/write_mem/reset as
+    NotImplementedError for subclasses to fill in -- the project's usual
+    interface convention (no abc.ABC anywhere in msx/), but a Rust trait or
+    C++ abstract base can't carry required fields the way this carries them.
+    SonyPhilipsInterface is the only connection style this codebase has, so
+    splitting this into owned state (has-a) + a dispatch trait/vtable (is-a)
+    is deferred until a second connection style actually exists -- see
+    logs/review-python-20260814-210824.md.
+    """
 
     def __init__(
         self,
@@ -50,7 +74,11 @@ class FloppyDisk:
             target.image.flush()
         target.mount(image)
         target.disk_changed = True
-        self.controller.abort()
+        # Only abort a transfer on the drive actually connected to the
+        # controller -- swapping a *different* drive's disk on a multi-drive
+        # machine must not disturb an in-progress transfer on the selected one.
+        if self.controller.drive is target:
+            self.controller.abort()
 
     def flush(self) -> None:
         """Flush every mounted image's pending writes back to its file."""
@@ -62,6 +90,9 @@ class FloppyDisk:
         raise NotImplementedError
 
     def write_mem(self, addr: int, value: int) -> None:
+        raise NotImplementedError
+
+    def reset(self) -> None:
         raise NotImplementedError
 
 
@@ -83,9 +114,19 @@ class SonyPhilipsInterface(FloppyDisk):
         self.side_reg = 0
         self.drive_reg = 0
 
+    def reset(self) -> None:
+        """Power-on/Z80-reset: WD2793 core, side select, and drive/motor
+        select -- mirrors openMSX's PhilipsFDC::reset() (WD2793BasedFDC::reset()
+        plus writing 0 to both 0x3FFC and 0x3FFD). Reuses write_mem() so side 0
+        reaches every drive and drive A is reselected regardless of drive count.
+        """
+        self.controller.reset()
+        self.write_mem(REG_SIDE, 0x00)
+        self.write_mem(REG_DRIVE, 0x00)
+
     def read_mem(self, addr: int) -> int:
         reg = addr & 0x3FFF
-        if 0x3FF8 <= reg <= 0x3FFF:
+        if REG_STATUS_CMD <= reg <= REG_CONTROL_STATUS:
             return self._read_reg(reg)
         if self.disk_rom is not None and reg < len(self.disk_rom):
             return self.disk_rom[reg]
@@ -93,22 +134,22 @@ class SonyPhilipsInterface(FloppyDisk):
 
     def write_mem(self, addr: int, value: int) -> None:
         reg = addr & 0x3FFF
-        if 0x3FF8 <= reg <= 0x3FFF:
+        if REG_STATUS_CMD <= reg <= REG_CONTROL_STATUS:
             self._write_reg(reg, value & 0xFF)
         # DISK ROM (non-register addresses in the window) is read-only.
 
     def _read_reg(self, reg: int) -> int:
-        if reg == 0x3FF8:
+        if reg == REG_STATUS_CMD:
             return self.controller.get_status()
-        if reg == 0x3FF9:
+        if reg == REG_TRACK:
             return self.controller.get_track()
-        if reg == 0x3FFA:
+        if reg == REG_SECTOR:
             return self.controller.get_sector()
-        if reg == 0x3FFB:
+        if reg == REG_DATA:
             return self.controller.get_data()
-        if reg == 0x3FFC:
+        if reg == REG_SIDE:
             return self.side_reg & 0xFF
-        if reg == 0x3FFD:
+        if reg == REG_DRIVE:
             # bit 2 = 0 iff the disk changed since the last status read. The read
             # is consuming (openMSX PhilipsFDC / diskChanged): it reports the
             # change once, then reverts to "not changed" so the DISK ROM re-reads
@@ -120,9 +161,9 @@ class SonyPhilipsInterface(FloppyDisk):
             else:
                 res |= 0x04  # not changed
             return res
-        if reg == 0x3FFE:
+        if reg == REG_UNCONNECTED:
             return 0xFF  # not connected
-        # 0x3FFF: drive control lines, active low (bit 6 = !INTRQ, bit 7 = !DRQ).
+        # REG_CONTROL_STATUS: active low (bit 6 = !INTRQ, bit 7 = !DRQ).
         value = 0xFF
         if self.controller.get_irq():
             value &= ~0x40
@@ -131,20 +172,20 @@ class SonyPhilipsInterface(FloppyDisk):
         return value
 
     def _write_reg(self, reg: int, value: int) -> None:
-        if reg == 0x3FF8:
+        if reg == REG_STATUS_CMD:
             self.controller.set_command(value)
-        elif reg == 0x3FF9:
+        elif reg == REG_TRACK:
             self.controller.set_track(value)
-        elif reg == 0x3FFA:
+        elif reg == REG_SECTOR:
             self.controller.set_sector(value)
-        elif reg == 0x3FFB:
+        elif reg == REG_DATA:
             self.controller.set_data(value)
-        elif reg == 0x3FFC:
+        elif reg == REG_SIDE:
             # bit 0 = side select
             self.side_reg = value
             for drive in self.drives:
                 drive.side = value & 1
-        elif reg == 0x3FFD:
+        elif reg == REG_DRIVE:
             # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none); bit 7 -> motor.
             self.drive_reg = value
             sel = value & 0x03
@@ -158,4 +199,4 @@ class SonyPhilipsInterface(FloppyDisk):
                 self.controller.drive = self.drives[idx]
             else:
                 self.controller.drive = None
-        # 0x3FFE / 0x3FFF: no writable control bits.
+        # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.

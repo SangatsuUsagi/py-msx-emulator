@@ -11,6 +11,7 @@ from __future__ import annotations
 from msx.fdc.disk_image import (
     FALLBACK_SECTORS_PER_TRACK,
     FALLBACK_SIDES,
+    SECTOR_SIZE,
     DskDiskImage,
 )
 
@@ -80,7 +81,7 @@ class DiskDrive:
         if self.image is None or self.image.write_protected:
             return False
         spt, _ = self._geometry()
-        blank = bytes([fill & 0xFF]) * 512
+        blank = bytes([fill & 0xFF]) * SECTOR_SIZE
         for sector in range(1, spt + 1):
             lsn = self.lsn(track, side, sector)
             if 0 <= lsn < self.image.num_sectors:

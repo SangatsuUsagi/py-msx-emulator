@@ -338,3 +338,30 @@ def test_reset_full_power_on_state() -> None:
     assert m.memory.sub_slot_reg == 0x00
     assert m.vdp.status == 0
     assert all(r == 0 for r in m.vdp.regs)
+
+
+def test_reset_resets_attached_fdc() -> None:
+    from msx.fdc.disk_drive import DiskDrive
+    from msx.fdc.interface import SonyPhilipsInterface
+    from msx.fdc.wd2793 import WD2793
+
+    m = _make_machine()
+    controller = WD2793()
+    drive_a, drive_b = DiskDrive(), DiskDrive()
+    m.fdc = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    m.fdc.write_mem(0x7FFC, 0x01)  # side 1
+    m.fdc.write_mem(0x7FFD, 0x01)  # select drive B
+    assert controller.drive is drive_b
+
+    m.reset()
+
+    assert controller.drive is drive_a  # drive A reselected
+    assert drive_a.side == 0 and drive_b.side == 0  # side cleared on every drive
+    assert m.fdc.side_reg == 0
+    assert m.fdc.drive_reg == 0
+
+
+def test_reset_with_no_fdc_attached_does_not_crash() -> None:
+    m = _make_machine()
+    assert m.fdc is None
+    m.reset()  # must not raise

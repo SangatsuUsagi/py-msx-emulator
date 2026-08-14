@@ -104,6 +104,15 @@ def test_record_not_found_for_missing_sector(tmp_path: Path) -> None:
     assert wd.get_drq() is False
 
 
+def test_record_not_found_for_missing_sector_on_write(tmp_path: Path) -> None:
+    wd, _, _ = _ctrl(tmp_path)
+    wd.set_track(79)
+    wd.set_sector(99)  # no such sector on a 9-sector track
+    wd.set_command(0xA0)  # WRITE SECTOR
+    assert wd.get_status() & RECORD_NOT_FOUND
+    assert wd.get_drq() is False
+
+
 def test_write_protect_rejects_write_sector(tmp_path: Path) -> None:
     wd, _, _ = _ctrl(tmp_path, write_protected=True)
     wd.set_command(0xA0)

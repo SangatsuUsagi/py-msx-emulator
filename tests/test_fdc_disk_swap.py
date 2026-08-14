@@ -58,6 +58,41 @@ def test_swap_aborts_in_progress_transfer(tmp_path: Path) -> None:
     assert iface.controller._mode is Mode.IDLE
 
 
+def test_swap_on_non_selected_drive_does_not_abort_selected_drives_transfer(
+    tmp_path: Path,
+) -> None:
+    controller = WD2793()
+    drive_a, drive_b = DiskDrive(), DiskDrive()
+    iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    iface.mount(DskDiskImage(_blank(tmp_path / "a.dsk", first_byte=0x11)), 0)
+    iface.mount(DskDiskImage(_blank(tmp_path / "b.dsk")), 1)
+    assert controller.drive is drive_a  # power-on default
+
+    iface.write_mem(0x7FF8, 0x80)  # start READ SECTOR on drive A -> BUSY
+    assert iface.controller.get_status() & BUSY
+
+    iface.swap(1, DskDiskImage(_blank(tmp_path / "c.dsk")))  # swap drive B, not A
+
+    assert iface.controller.get_status() & BUSY  # drive A's transfer untouched
+    assert iface.controller._mode is not Mode.IDLE
+
+
+def test_swap_on_selected_drive_still_aborts(tmp_path: Path) -> None:
+    controller = WD2793()
+    drive_a, drive_b = DiskDrive(), DiskDrive()
+    iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    iface.mount(DskDiskImage(_blank(tmp_path / "a.dsk", first_byte=0x11)), 0)
+    assert controller.drive is drive_a
+
+    iface.write_mem(0x7FF8, 0x80)  # start READ SECTOR on the selected drive
+    assert iface.controller.get_status() & BUSY
+
+    iface.swap(0, DskDiskImage(_blank(tmp_path / "b.dsk")))  # swap the selected drive
+
+    assert not (iface.controller.get_status() & BUSY)
+    assert iface.controller._mode is Mode.IDLE
+
+
 def test_swap_sets_disk_change(tmp_path: Path) -> None:
     iface = _iface()
     iface.mount(DskDiskImage(_blank(tmp_path / "a.dsk")), 0)
