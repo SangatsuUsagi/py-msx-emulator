@@ -1,4 +1,7 @@
 from msx.input import (
+    _K_AT,
+    _K_CARET,
+    _K_COLON,
     _K_COMMA,
     _K_DOWN,
     _K_F1,
@@ -14,6 +17,7 @@ from msx.input import (
     _K_SEMICOLON,
     _K_SLASH,
     _K_SPACE,
+    _K_UNDERSCORE,
     _K_UP,
     JOY_MAP,
     KEY_MATRIX_INT,
@@ -296,6 +300,25 @@ def test_jp_apostrophe_unmapped_is_noop() -> None:
     kjp = InputState(keyboard_type="jp")
     kjp.key_down(_K_QUOTE)  # no JIS cell → must not raise, matrix unchanged
     assert all(row == 0xFF for row in kjp.matrix)
+
+
+def test_jp_at_caret_colon_underscore_cells() -> None:
+    assert KEY_MATRIX_JP[_K_AT] == (1, 5)          # @
+    assert KEY_MATRIX_JP[_K_CARET] == (1, 3)       # ^
+    assert KEY_MATRIX_JP[_K_COLON] == (2, 0)       # :
+    assert KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)  # _
+    assert _K_AT not in KEY_MATRIX_INT
+    assert _K_CARET not in KEY_MATRIX_INT
+    assert _K_COLON not in KEY_MATRIX_INT
+    assert _K_UNDERSCORE not in KEY_MATRIX_INT
+
+
+def test_jp_at_maps_on_keypress() -> None:
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(_K_AT)
+    assert kjp.matrix[1] & (1 << 5) == 0
+    kjp.key_up(_K_AT)
+    assert kjp.matrix[1] & (1 << 5) != 0
 
 
 def test_left_alt_maps_to_graph_key() -> None:

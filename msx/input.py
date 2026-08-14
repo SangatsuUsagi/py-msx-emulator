@@ -27,11 +27,15 @@ _K_6 = 54
 _K_7 = 55
 _K_8 = 56
 _K_9 = 57
+_K_COLON = 58
 _K_SEMICOLON = 59
 _K_EQUALS = 61
+_K_AT = 64
 _K_LEFTBRACKET = 91
 _K_BACKSLASH = 92
 _K_RIGHTBRACKET = 93
+_K_CARET = 94
+_K_UNDERSCORE = 95
 _K_BACKQUOTE = 96
 _K_a = 97
 _K_b = 98
@@ -140,7 +144,11 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
 }
 
 # International layout: '=' [ ] ' ` occupy row-1/row-2 cells; apostrophe is a
-# dedicated key (JIS has none — there it is Shift+7).
+# dedicated key (JIS has none — there it is Shift+7). Row 2 bit 5 (the
+# International DEAD/£/accent-composer key, per allium/ppi.allium's Open
+# Questions) is left unmapped: it has no single corresponding ASCII
+# character on any host layout, unlike every other cell here, so there is
+# no SDL keycode to bind it to.
 _INT_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_EQUALS: (1, 3),        # =
     _K_LEFTBRACKET: (1, 5),   # [
@@ -150,10 +158,18 @@ _INT_SYMBOLS: dict[int, tuple[int, int]] = {
 }
 
 # Japanese (JIS) layout: '[' and ']' sit at different cells; '=', "'" and '`'
-# have no direct JIS key and are left unmapped.
+# have no direct JIS key and are left unmapped (JIS "=" is Shift+"-", JIS
+# apostrophe is Shift+7, both already reachable through _COMMON_MATRIX
+# without a dedicated cell here). '@', '^', ':' and '_' are real ASCII
+# characters, so unlike the International DEAD cell above they map onto
+# ordinary SDL keycodes regardless of host layout.
 _JP_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_LEFTBRACKET: (1, 6),   # [
     _K_RIGHTBRACKET: (2, 1),  # ]
+    _K_AT: (1, 5),            # @
+    _K_CARET: (1, 3),         # ^
+    _K_COLON: (2, 0),         # :
+    _K_UNDERSCORE: (2, 5),    # _
 }
 
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}
