@@ -5,28 +5,35 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-1740%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2018%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
 ---
 
-The goal is to run specific titles accurately on their target hardware
-generation:
+This emulator has only been verified against the following hardware and
+software owned by the author.
+
+**Hardware:**
+
+- [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
+- [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004)
+
+**Software:**
 
 - **MSX1:**
-  [Salamander (沙羅曼蛇) by KONAMI](<https://en.wikipedia.org/wiki/Salamander_(video_game)>)
-  ·
-  [Nemesis 2 (グラディウス2) by KONAMI](<https://en.wikipedia.org/wiki/Nemesis_2_(MSX)>)
-  ·
-  [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://en.wikipedia.org/wiki/Penguin_Adventure)
+  - [Salamander (沙羅曼蛇) by KONAMI](<https://en.wikipedia.org/wiki/Salamander_(video_game)>)
+  - [Nemesis 2 (グラディウス2) by KONAMI](<https://en.wikipedia.org/wiki/Nemesis_2_(MSX)>)
+  - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://en.wikipedia.org/wiki/Penguin_Adventure)
 - **MSX2:**
-  [Legacy of the Wizard (ドラゴンスレイヤーIV ドラスレファミリー) by Falcom](https://en.wikipedia.org/wiki/Legacy_of_the_Wizard)
-  · [Romancia (ロマンシア) by Falcom](https://en.wikipedia.org/wiki/Romancia)
+  - [Legacy of the Wizard (ドラゴンスレイヤーIV ドラスレファミリー) by Falcom](https://en.wikipedia.org/wiki/Legacy_of_the_Wizard)
+  - [Romancia (ロマンシア) by Falcom](https://en.wikipedia.org/wiki/Romancia)
+- **MSX2 (floppy disk):**
+  - [Dragon Slayer: The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://en.wikipedia.org/wiki/Dragon_Slayer:_The_Legend_of_Heroes)
 
-It has only been tested against physical ROM dumps owned by the author, so other
-MSX1 or MSX2 ROMs are not guaranteed to work. Bug reports for other titles are
-welcome, but support is best-effort.
+It has only been tested against physical ROM/disk dumps owned by the author, so
+other MSX1 or MSX2 titles are not guaranteed to work. Bug reports for other
+titles are welcome, but support is best-effort.
 
 Every hardware component is pure Python and is defined by a machine-readable
 specification (under `openspec/specs/`) before it is implemented; those specs
@@ -51,9 +58,14 @@ MSX **M1 wait state** (+1 T-state per opcode fetch, matching real MSX / openMSX;
 default 0 keeps the core a pure Zilog Z80).
 
 - Implementation: `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py`
-- Known limitations: OTIR/INIR and similar block I/O instructions are not
-  cycle-exact across page boundaries; the R register increments only on opcode
-  fetch.
+- Known limitations:
+  - OTIR/INIR and similar block I/O instructions are not cycle-exact across
+    page boundaries.
+  - The R register increments on every fetched byte (opcode and operand
+    alike), not only on M1 opcode-fetch cycles as on real hardware.
+  - The undocumented flag bits Y (bit 5) and X (bit 3) are not reproduced
+    except by the block I/O flag routine, so `PUSH AF`/`POP AF`/`EX AF,AF'`
+    do not round-trip them.
 
 ### VDP — TMS9918A (MSX1)
 
@@ -62,8 +74,12 @@ Graphic 2, Multicolor), sprite rendering with size/magnification, 5th-sprite and
 coincidence flags, and the VBlank interrupt.
 
 - Implementation: `msx/vdp/vdp.py`, `msx/vdp/renderer.py`
-- Known limitations: mid-frame register-change timing and undocumented
-  sprite-overflow behaviour are not emulated.
+- Known limitations:
+  - Mid-frame register-change timing and undocumented sprite-overflow
+    behaviour are not emulated.
+  - During frame skip, sprite 5th-sprite/coincidence status is not updated
+    on a skipped frame, so a ROM polling collision during turbo mode sees
+    stale (last-rendered-frame) status.
 
 ### VDP — Yamaha V9938 (MSX2)
 
@@ -74,9 +90,21 @@ SRCH), the horizontal line interrupt (R#19/R#23, IE1), and a banded renderer for
 mid-frame register and palette changes.
 
 - Implementation: `msx/vdp/v9938.py`, `msx/vdp/v9938_renderer.py`
-- Known limitations: command timing is approximate, not cycle-accurate;
-  beam-raced blits and double-buffered VRAM updates within a single frame are not
-  reproduced faithfully.
+- Known limitations:
+  - Command timing is approximate, not cycle-accurate; beam-raced blits and
+    double-buffered VRAM updates within a single frame are not reproduced
+    faithfully.
+  - GRAPHIC 6/7 planar VRAM interleave (the real chip splits these modes
+    across two VRAM ICs by even/odd byte) is not modelled — a linear
+    addressing model is used instead, which diverges only when VRAM content
+    written in a planar mode is read back after switching to a non-planar
+    mode without an intervening clear.
+  - TEXT2 (SCREEN 0 WIDTH 80) blink colour/rate (R#12/R#13) and interlaced
+    mode / automatic alternate screen-page display (R#9 bit 3 / R#13 rate)
+    are not implemented.
+  - During frame skip, sprite 5th-sprite/coincidence status is not updated
+    on a skipped frame, so a ROM polling collision during turbo mode sees
+    stale (last-rendered-frame) status.
 
 ### PSG — AY-3-8910
 
@@ -99,6 +127,12 @@ the PSG.
 - Implementation: `msx/scc.py`
 - Activation: the KonamiSCC mapper activates the SCC when 0x3F is written to
   0x9000; registers appear at 0x9800.
+- Known limitations:
+  - The deform/test register (frequency-multiply calibration bits, counter
+    reset, and hardware waveform auto-rotation) is not implemented.
+  - Only the original Konami SCC (051649, MegaROM cartridge) is emulated —
+    SCC+/SCC-I (052539) and the RAM-based Sound Cartridge (Snatcher/SD
+    Snatcher) are not implemented.
 
 ### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
 
@@ -117,7 +151,7 @@ alongside PSG/SCC.
 | I/O ports | `0x7C`/`0x7D`, gated by the enable register's bit 0 |
 | SRAM persistence | `saves/sram/fmpac.sram`, loaded on start and saved on exit |
 | OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
-| Known limitations | Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the analog-style low-pass cleans up the residual imaging. Only the YM2413 instrument set is included (no VRC7 / YMF281 banks); no channel masking / stereo pan |
+| Known limitations | <ul><li>Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the analog-style low-pass cleans up the residual imaging.</li><li>Only the YM2413 instrument set is included (no VRC7 / YMF281 banks).</li><li>No channel masking / stereo pan.</li></ul> |
 
 ### Audio output filter
 
@@ -204,6 +238,14 @@ via `--fdd1`. Supports Disk BASIC boot, `CALL FORMAT`, and file read/write with
 write-back on exit; disks can be swapped at runtime from the debugger REPL
 (`fdd1`/`fdd2`).
 
+- Known limitations:
+  - No timing model — command execution is instantaneous (no seek/step
+    rate, no revolution-based ID search, no head-load/verify-after-seek
+    delay).
+  - READ TRACK is a bare stub.
+  - WRITE TRACK discards stream content and formats by byte count only,
+    without real gap-byte/address-mark interpretation.
+
 ### ROM database
 
 SHA1 title lookup for automatic game-title detection and mapper selection.
@@ -227,6 +269,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
+| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>The host Esc key always quits the emulator and cannot reach MSX ESC (matrix row 7, column 2).</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
 
 ### Mouse
 
@@ -243,7 +286,7 @@ trackball. Left/right buttons drive the port's trigger A/B lines.
 | Implementation | `msx/mouse.py` (protocol state machine), `msx/psg.py` (register 14/15 wiring) |
 | Enable | `--mouse[=1\|2]` (CLI) or `mouse.enabled`/`mouse.port` in `py_emulator.yaml`; the CLI flag always overrides the config file |
 | Host input | SDL relative-mouse mode (cursor hidden and locked to the window); motion is scaled to the window's integer `--scale` factor |
-| Known limitations | The NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons), absolute positioning, and the real mouse's click-and-hold joystick-emulation mode are not implemented |
+| Known limitations | <ul><li>The NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons) is not implemented.</li><li>Absolute positioning is not implemented.</li><li>The real mouse's click-and-hold joystick-emulation mode is not implemented.</li></ul> |
 
 ### SDL2 frontend
 
@@ -256,6 +299,9 @@ toggle, screenshot, state save/load, and automatic frame skip (VDP pixel render
 suppressed on late frames; the VBlank interrupt still fires every frame).
 
 - Implementation: `frontend/sdl2_frontend.py`
+- Known limitations: when no audio device is open (e.g. headless /
+  `--benchmark` runs), PSG/SCC/OPLL never receive a synthesis tick, so their
+  internal envelope/LFO state does not advance during that time.
 
 ### State save/load
 
@@ -288,6 +334,11 @@ Every hardware component in this emulator is defined by a machine-readable
 specification written before any code is produced. This project was implemented
 using [Claude Code](https://claude.ai/code) and
 [OpenSpec](https://openspec.dev/).
+
+Since v2.5.0, [Allium](https://juxt.github.io/allium/) is used alongside
+OpenSpec as a second, behaviour-focused specification layer (`allium/*.allium`)
+to verify that each component's implementation stays aligned with its
+specification.
 
 ### How it works
 
@@ -351,19 +402,19 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 279.93 | ~4.7× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 429.26 | ~7.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1326.61 | ~22.1× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1199.55 | ~20.0× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 72.55 | ~1.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 108.13 | ~1.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 294.67 | ~4.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 299.99 | ~5.0× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 306.31 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 453.91 | ~7.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1211.24 | ~20.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1184.13 | ~19.7× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 78.64 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 114.76 | ~1.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 288.19 | ~4.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 323.65 | ~5.4× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
-heaviest rendering/audio load among the target titles) at ~1.2×; PyPy raises the
-same case to ~4.9×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+heaviest rendering/audio load among the target titles) at ~1.3×; PyPy raises the
+same case to ~4.8×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -379,7 +430,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.4.8, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.5.0, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -827,7 +878,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 1740 tests spanning unit tests
+The test suite covers all major components with 2018 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -887,9 +938,10 @@ py-msx-emulator/
 ├── roms/
 │   └── cbios/             # C-BIOS ROM files (not in version control)
 ├── saves/                 # Save states and screenshots (created at runtime)
+├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 1740 tests
+├── tests/                 # Test suite — 2018 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -950,6 +1002,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.
 - **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.
 - **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml`: add `slot2`/`mapper2` (slot 2 cartridge defaults) and `frame_skip` (`auto`/`none` toggle) config keys, resolved with the same built-in-default < config < CLI precedence as `mapper`/`speed`/`fmpac`; add a `keyboard_joystick.buttons` section that lets each Joy1 keyboard-emulation function (`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`) be bound to a single key, replacing that function's built-in default key(s).
 - **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (a new `GameMaster2Mapper`: Konami-style 128 KB ROM with 8 KB battery-backed SRAM, each bank register selecting a ROM page or a 4 KB SRAM half mirrored across the 8 KB window, SRAM writable at 0xB000–0xBFFF). Reconcile `--mapper`/config `mapper:` accepted names with the loader's supported set (previously missing `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32`).
