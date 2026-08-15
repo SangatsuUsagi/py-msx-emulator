@@ -12,7 +12,8 @@ from msx.input import InputState
 from msx.io import IOBus
 from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
-from msx.psg import PSG
+from msx.mouse import MouseDevice
+from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
@@ -161,6 +162,29 @@ class Machine:
         note in msx/rpc_server.py.
         """
         self._pause_hook = hook
+
+    def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None:
+        """Attach an MSX mouse to the given joystick port for this machine's PSG.
+
+        Delegates to `PSG.attach_mouse` rather than setting `self.psg._mouse`
+        directly, so callers outside this package (e.g. the SDL2 frontend)
+        never reach into `PSG`'s internals.
+        """
+        self.psg.attach_mouse(device, port)
+
+    def enter_debugger_if_attached(self) -> bool:
+        """Break into the attached interactive debugger REPL, if one is attached.
+
+        Public accessor for `_debugger`, for callers outside this module (e.g.
+        the SDL2 frontend's own Ctrl-C/debugger hotkey) that need to enter the
+        debugger directly rather than going through `_enter_break`'s pause-hook
+        routing. Returns True if a debugger was attached and entered, False
+        otherwise.
+        """
+        if self._debugger is not None:
+            self._debugger.enter()
+            return True
+        return False
 
     def _enter_break(self, reason: PauseReason) -> None:
         """Dispatch a break event: notify the pause hook if one is installed,
