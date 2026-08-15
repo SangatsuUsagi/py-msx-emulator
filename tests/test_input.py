@@ -418,3 +418,30 @@ def test_key_name_to_sdlkey_covers_joy_map_keys() -> None:
     assert KEY_NAME_TO_SDLKEY["j"] == _K_j
     assert KEY_NAME_TO_SDLKEY["up"] == _K_UP
     assert KEY_NAME_TO_SDLKEY["comma"] == _K_COMMA
+
+
+# --- allium/frontend.allium: KeyRepeatIsUnhandled ---------------------------
+# No repeat-suppression logic exists anywhere in this codebase; a repeated
+# KEYDOWN for an already-held key must be a harmless no-op (idempotent Set
+# add + matrix bit already cleared), not an error or a state change.
+
+def test_repeated_key_down_without_release_is_idempotent() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_a]
+    state.key_down(_K_a)
+    before = list(state.matrix)
+    state.key_down(_K_a)  # simulated SDL2 key-repeat KEYDOWN
+    state.key_down(_K_a)
+    assert state.matrix == before
+    assert state.matrix[row] & (1 << bit) == 0  # still pressed
+    state.key_up(_K_a)
+    assert state.matrix[row] & (1 << bit) != 0  # a single key_up fully releases it
+
+
+def test_repeated_key_down_joystick_overlay_is_idempotent() -> None:
+    state = make_input()
+    state.key_down(_K_w)
+    before_joy1 = state.joy1
+    state.key_down(_K_w)
+    state.key_down(_K_w)
+    assert state.joy1 == before_joy1

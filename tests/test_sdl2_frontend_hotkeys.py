@@ -243,3 +243,82 @@ def test_second_ctrl_side_during_active_combo_does_not_reassert_ctrl() -> None:
     h.keydown(_FakeSDL.SDLK_RCTRL)
     assert _asserted(h.matrix, _HOME)
     assert not _asserted(h.matrix, _CTRL)
+
+
+# --- allium/frontend.allium: PlainKeyPressed (reserved-hotkey precedence) --
+# config.reserved_hotkey_keys claims ESC/F8/F9/F10/F11 for non-MSX app
+# commands before PlainKeyPressed's matrix routing ever sees them. ESC is
+# the one reserved key with its own MSX matrix cell (row 7, col 2), so it is
+# the one case where "never reaches the matrix" is directly observable.
+
+_ESC_CELL = KEY_MATRIX_INT[_FakeSDL.SDLK_ESCAPE]
+
+
+def test_escape_is_reserved_and_never_reaches_the_matrix() -> None:
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_ESCAPE)
+    assert not _asserted(h.matrix, _ESC_CELL)
+
+
+def test_releasing_fkey_with_no_active_combo_is_plain_release() -> None:
+    # CtrlComboFKeyReleased requires combo.active != null; F1 released with
+    # no Ctrl ever held must go through PlainKeyReleased instead.
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_F1)
+    assert _asserted(h.matrix, _F1_CELL)
+    h.keyup(_FakeSDL.SDLK_F1)
+    assert not _asserted(h.matrix, _F1_CELL)
+    assert h.ctrl_combo.active is None
+
+
+def test_releasing_unrelated_key_during_active_combo_is_plain_release() -> None:
+    # CtrlComboFKeyReleased requires sdl_keycode = combo.active.fkey; releasing
+    # some other already-held key mid-combo must not touch the combo at all.
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_LALT)          # GRAPH, unrelated to the combo
+    h.keydown(_FakeSDL.SDLK_LCTRL)
+    h.keydown(_FakeSDL.SDLK_F1)
+    assert _asserted(h.matrix, _HOME)
+    h.keyup(_FakeSDL.SDLK_LALT)
+    assert not _asserted(h.matrix, _GRAPH)  # plain release went through normally
+    assert _asserted(h.matrix, _HOME)       # combo untouched
+    assert h.ctrl_combo.active is not None
+    assert h.ctrl_combo.active.fkey == _FakeSDL.SDLK_F1
+
+
+def test_ctrl_plus_non_fkey_goes_through_plain_path_not_combo() -> None:
+    # allium/frontend.allium's CtrlComboFKeyPressed only claims F1-F5
+    # (ctrl_combo_cell returns null for anything else); Ctrl+A must behave
+    # as an ordinary Ctrl-held plain keypress, not a swallowed/combo event.
+    c_cell = KEY_MATRIX_INT[_FakeSDL.SDLK_c]
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_LCTRL)
+    h.keydown(_FakeSDL.SDLK_c)
+    assert _asserted(h.matrix, c_cell)            # 'c' reached the matrix normally
+    assert _asserted(h.matrix, _CTRL)             # literal CTRL stays asserted
+    assert h.ctrl_combo.active is None
+
+
+def test_reserved_hotkey_keycodes_match_real_sdl2_constants() -> None:
+    # Pins allium/frontend.allium's config.reserved_hotkey_keys literal
+    # values against the real pysdl2 library, not just this file's fake
+    # (whose own SDLK_F8..F11 sentinels are deliberately unrelated integers
+    # -- see _FakeSDL's docstring). Also guards against the reserved set
+    # drifting out of sync with the real SDL2 F8-F11 keycodes (SDL_SCANCODE_
+    # F8..F11 = 65..68, so SDLK = 0x40000000 | scancode = 1073741889..92).
+    import sdl2
+
+    assert {
+        sdl2.SDLK_ESCAPE, sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10, sdl2.SDLK_F11,
+    } == {27, 1073741889, 1073741890, 1073741891, 1073741892}
+
+
+def test_ctrl_keycodes_match_real_sdl2_constants() -> None:
+    # Pins allium/frontend.allium's config.lctrl_keycode/rctrl_keycode
+    # against both the real pysdl2 library and msx.input's own constants.
+    import sdl2
+
+    from msx.input import _K_LCTRL, _K_RCTRL
+
+    assert sdl2.SDLK_LCTRL == _K_LCTRL == 1073742048
+    assert sdl2.SDLK_RCTRL == _K_RCTRL == 1073742052

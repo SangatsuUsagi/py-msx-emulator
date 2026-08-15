@@ -3,7 +3,7 @@
 import math
 import struct
 
-from msx.audio_filter import BiquadLowPass
+from msx.audio_filter import _BUTTERWORTH_Q, _DEFAULT_CUTOFF_HZ, BiquadLowPass
 from msx.psg import SAMPLE_RATE
 
 
@@ -16,6 +16,13 @@ def _sine(freq: float, n: int, amp: int = 30000) -> bytes:
 
 def _peak(buf: bytes) -> int:
     return max(abs(v) for v in struct.unpack("<%dh" % (len(buf) // 2), buf))
+
+
+# --- allium/frontend.allium: config.mixer_filter_cutoff_hz -----------------
+
+def test_default_cutoff_and_q_match_declared_config() -> None:
+    assert _DEFAULT_CUTOFF_HZ == 8000.0
+    assert abs(_BUTTERWORTH_Q - (1.0 / math.sqrt(2))) < 1e-15
 
 
 def test_default_coefficients_finite_and_unity_dc_gain() -> None:
