@@ -75,28 +75,26 @@ def test_button_bits_independent_of_phase() -> None:
 def test_timeout_resync_before_processing_new_value() -> None:
     cycle = [0]
     device = MouseDevice(_scale=1)
-    device._get_cycle = lambda: cycle[0]
-    device.write_pin8(1)  # YLOW2 -> XHIGH1
-    device.write_pin8(0)  # XHIGH1 -> XLOW1
+    device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
+    device.write_pin8(0, cycle[0])  # XHIGH1 -> XLOW1
     assert device._phase == PHASE_XLOW1
     cycle[0] = 100_000  # far beyond the ~5369-cycle timeout
     # Without resync this would advance XLOW1 -> YHIGH1; with resync the
     # phase first resets to YLOW2, then this same rising edge advances it
     # to XHIGH1 instead.
-    device.write_pin8(1)
+    device.write_pin8(1, cycle[0])
     assert device._phase == PHASE_XHIGH1
 
 
 def test_normal_inter_nibble_timing_does_not_resync() -> None:
     cycle = [0]
     device = MouseDevice(_scale=1)
-    device._get_cycle = lambda: cycle[0]
-    device.write_pin8(1)  # YLOW2 -> XHIGH1
+    device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     cycle[0] = 100
-    device.write_pin8(0)  # XHIGH1 -> XLOW1 (well within timeout)
+    device.write_pin8(0, cycle[0])  # XHIGH1 -> XLOW1 (well within timeout)
     assert device._phase == PHASE_XLOW1
     cycle[0] = 200
-    device.write_pin8(1)  # XLOW1 -> YHIGH1
+    device.write_pin8(1, cycle[0])  # XLOW1 -> YHIGH1
     assert device._phase == PHASE_YHIGH1
 
 
@@ -127,11 +125,10 @@ def test_noop_write_does_not_trigger_resync() -> None:
     # before the resync requires clause is even evaluated).
     cycle = [0]
     device = MouseDevice(_scale=1)
-    device._get_cycle = lambda: cycle[0]
-    device.write_pin8(1)  # YLOW2 -> XHIGH1
+    device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     assert device._phase == PHASE_XHIGH1
     cycle[0] = 100_000  # far beyond the timeout
-    device.write_pin8(1)  # same value as last write -- no-op, no resync check
+    device.write_pin8(1, cycle[0])  # same value as last write -- no-op, no resync check
     assert device._phase == PHASE_XHIGH1
 
 
@@ -155,14 +152,13 @@ def test_resync_from_every_phase_lands_on_ylow2() -> None:
     for start_phase, pin8_values, expected_after_resync in cases:
         cycle = [0]
         device = MouseDevice(_scale=1)
-        device._get_cycle = lambda: cycle[0]
         for v in pin8_values:
-            device.write_pin8(v)
+            device.write_pin8(v, cycle[0])
         assert device._phase == start_phase
 
         cycle[0] = 100_000  # exceed the timeout
         next_value = 1 - pin8_values[-1]
-        device.write_pin8(next_value)
+        device.write_pin8(next_value, cycle[0])
         assert device._phase == expected_after_resync
 
 

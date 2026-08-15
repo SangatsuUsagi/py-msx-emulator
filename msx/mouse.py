@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
 
 # 8-phase scan cycle: a main cycle reporting the real relative X/Y delta,
 # immediately followed by an alternate cycle forced to zero delta. MSX BIOS
@@ -56,13 +55,6 @@ class MouseDevice:
     """
 
     _scale: int = 1
-    # Portability note: _get_cycle is a closure assigned at wiring time
-    # (frontend/sdl2_frontend.py sets `lambda: machine.cycle_count`), capturing
-    # the Machine that owns this device — a reference cycle Rust/C++ cannot
-    # express as a plain Fn field. A port should thread the cycle count through
-    # write_pin8's caller (PSG's I/O dispatch) or hold a clock handle resolved
-    # once at construction, mirroring the same note on PSG/VDP's _get_cycle.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
 
     _phase: int = field(default=PHASE_YLOW2, init=False)
     _x_rel: int = field(default=0, init=False)
@@ -90,12 +82,11 @@ class MouseDevice:
             nibble = self._y_rel & 0x0F
         return nibble | self._status
 
-    def write_pin8(self, value: int) -> None:
+    def write_pin8(self, value: int, cycle: int = 0) -> None:
         value &= 1
         if value == self._last_pin8:
             return
         self._last_pin8 = value
-        cycle = self._get_cycle() if self._get_cycle is not None else 0
         if cycle - self._last_cycle > _MOUSE_TIMEOUT_CYCLES:
             self._phase = PHASE_YLOW2
         self._last_cycle = cycle

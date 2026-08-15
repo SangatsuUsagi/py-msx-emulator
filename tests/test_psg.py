@@ -178,7 +178,7 @@ class _FakeMouse:
         self.pin8_calls: list[int] = []
         self.read_value: int = 0
 
-    def write_pin8(self, value: int) -> None:
+    def write_pin8(self, value: int, cycle: int) -> None:
         self.pin8_calls.append(value)
 
     def read(self) -> int:

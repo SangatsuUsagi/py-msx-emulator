@@ -119,6 +119,14 @@ class PSG:
     _env_holding: bool = field(default=False, init=False, repr=False)
     _clk_frac: int = field(default=0, init=False, repr=False)
 
+    def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None:
+        """Attach an MSX mouse to the given joystick port.
+
+        The sole writer of `_mouse`: nothing outside this class sets it
+        directly (see `Machine.attach_mouse`, which delegates here).
+        """
+        self._mouse = MouseSlot(device, port)
+
     # ------------------------------------------------------------------ ports
 
     def write_port(self, port: int, value: int) -> None:
@@ -142,7 +150,13 @@ class PSG:
                 # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
                 # register-15 write, independent of JOY_SELECT (bit 6).
                 pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                self._mouse.device.write_pin8((value >> pin8_bit) & 1)
+                # Independent call to _get_cycle(), not a reuse of the `cyc`
+                # computed above: that one is skipped once the per-frame
+                # event buffer (_MAX_EVENTS) is full, so it isn't reliably in
+                # scope here. _get_cycle() is a pure read, so calling it
+                # twice per write_port invocation is correct and cheap.
+                cycle = self._get_cycle() if self._get_cycle is not None else 0
+                self._mouse.device.write_pin8((value >> pin8_bit) & 1, cycle)
 
     def read_port(self, port: int) -> int:
         if port == 0xA2:
