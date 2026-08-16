@@ -70,6 +70,26 @@ def test_plus_mode_scc_window_at_0xb800() -> None:
     assert cart.scc.read(0x10) == 0x7F
 
 
+def test_compatible_mode_scc_window_read_forwards_to_chip() -> None:
+    # allium/scci-cartridge.allium: rule-success.ForwardReadFromScc (Compatible
+    # window) -- writing directly to the carried chip must be visible through
+    # the cartridge's own read(), not just via scc.read() directly.
+    cart = _cart()
+    cart.write(0x9000, 0x3F)  # window 2 enable mask
+    cart.scc.write(0x10, 0x7F)  # waveform byte, set directly on the chip
+    assert cart.read(0x9810) == 0x7F
+
+
+def test_plus_mode_scc_window_read_forwards_to_chip() -> None:
+    # allium/scci-cartridge.allium: rule-success.ForwardReadFromScc (Plus
+    # window).
+    cart = _cart()
+    cart.write(0xBFFE, 0x20)  # Plus mode
+    cart.write(0xB000, 0x80)  # window 3 enable bit
+    cart.scc.write(0x10, 0x7F)
+    assert cart.read(0xB810) == 0x7F
+
+
 def test_ram_write_region_overrides_bank_register_zone() -> None:
     cart = _cart()
     cart.write(0xBFFE, 0x01)  # window 0 is a RAM-write region
@@ -77,6 +97,42 @@ def test_ram_write_region_overrides_bank_register_zone() -> None:
     assert cart._banks[0] == 0  # bank unchanged, no switch occurred
     cart.write(0xBFFE, 0x00)
     assert cart.read(0x5000) == 0x50  # the write landed in RAM instead
+
+
+def test_ram_write_region_intercepts_writes_to_an_active_scc_window() -> None:
+    # allium/scci-cartridge.allium: rule-failure.ForwardWriteToScc via the
+    # ram_segment guard -- distinct from the bank-register-zone case covered
+    # by test_ram_write_region_overrides_bank_register_zone. Window 3's
+    # ram_segment can only become true via the global bit 0x10 (no individual
+    # bit exists for it -- see test_window3_never_ram_write_via_its_own_bit),
+    # so this is the only way to reach "SCC+ window enable condition is true
+    # AND the same window is simultaneously a RAM-write region" -- a real
+    # cross-cutting interaction called out in the spec's own @guidance.
+    cart = _cart()
+    cart.write(0xB000, 0x80)  # window 3 bank register -> SCC+ enable bit set
+    cart.write(0xBFFE, 0x30)  # Plus mode (0x20) + all-windows RAM-write (0x10)
+    cart.write(0xB810, 0x7F)  # would be a waveform byte if forwarded to the chip
+    assert cart.scc.read(0x10) == 0x00  # write did NOT reach the chip
+    # cart.read() would itself forward to the still-active SCC+ window (reads
+    # are never ram_segment-gated -- see ForwardReadFromScc), so disable the
+    # window (mode register back to 0) before reading to inspect the RAM cell
+    # the write actually landed in.
+    cart.write(0xBFFE, 0x00)
+    assert cart.read(0xB810) == 0x7F  # the write landed in RAM instead
+
+
+def test_window1_ram_write_bit_independent_of_window0_and_2() -> None:
+    # allium/scci-cartridge.allium: config-default.ram_bit_1, previously only
+    # exercised jointly with other bits (all_windows) or not at all in
+    # isolation -- window 0's bit (ram_bit_0) has its own dedicated test
+    # (test_ram_write_region_overrides_bank_register_zone); this is window 1's.
+    cart = _cart()
+    cart.write(0xBFFE, 0x02)  # window 1 RAM-write bit only
+    assert cart._is_ram_segment == [False, True, False, False]
+    cart.write(0x7000, 0x50)  # would be a bank-register write otherwise
+    assert cart._banks[1] == 1  # bank unchanged, no switch occurred
+    cart.write(0xBFFE, 0x00)
+    assert cart.read(0x7000) == 0x50  # the write landed in RAM instead
 
 
 def test_window2_ram_write_bit_requires_plus_mode() -> None:

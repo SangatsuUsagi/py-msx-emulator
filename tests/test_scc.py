@@ -452,6 +452,29 @@ def test_052539_compatible_mode_deform_range_still_ff() -> None:
     assert scc.read(0xFF) == 0xFF
 
 
+def test_register_writes_do_not_cross_contaminate() -> None:
+    # allium/scc.allium: rule_failure for WriteWaveformByte/WriteFrequency
+    # Register/WriteVolumeRegister/WriteChannelEnableRegister -- writing to
+    # one register's offset must leave every other register type untouched
+    # (each rule's guard must genuinely gate on its own offset range).
+    scc = SCC()
+    scc.write(0x10, 0x7F)   # waveform (bank 0, byte 0x10)
+    scc.write(0x80, 0xFE)   # frequency channel 1 low byte
+    scc.write(0x8A, 0x0F)   # volume channel 1
+    scc.write(0x8F, 0x1F)   # channel enable
+
+    assert scc._waves[0][0x10] == 0x7F
+    assert scc._freq[0] == 0xFE
+    assert scc._vol[0] == 0x0F
+    assert scc._enable == 0x1F
+
+    # Each write above must not have leaked into the other three registers.
+    assert scc._waves[0][0x10] != 0  # sanity: still holds its own write
+    assert all(b == 0 for i, b in enumerate(scc._waves[0]) if i != 0x10)
+    assert scc._freq[1:] == [0, 0, 0, 0]
+    assert scc._vol[1:] == [0, 0, 0, 0]
+
+
 def test_052539_plus_mode_unaffected_by_is_052539() -> None:
     # In Plus mode, bank 4 (channel 5) is already independently readable at
     # its own Plus-mode offset (0x80-0x9F) regardless of is_052539 -- this
