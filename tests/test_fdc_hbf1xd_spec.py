@@ -76,8 +76,12 @@ Gaps this file fills:
     and is only ever called with 1)
   - WriteSideRegister's "every drive gets the side, not just the selected
     one" as-built behaviour -- the single-drive tests above cannot
-    distinguish this from "only the selected drive gets it"; this is the
-    behaviour flagged in the spec's second Open Question
+    distinguish this from "only the selected drive gets it"
+  - WriteSideRegister vs. openMSX's DriveMultiplexer under a drive switch
+    with no further side write -- select a side, switch drives, check the
+    newly-selected drive's side without rewriting it; this is the exact
+    scenario the spec's WriteSideRegister open question flagged as
+    inferred-but-untested. It holds: closes that open question.
   - invariant.FloppyDiskHasAtLeastOneDrive, invariant.RegisterBytesAreBytes
     -- no property-based tests exist for either
   - config-default.* -- msx/fdc/interface.py has no exported named
@@ -272,6 +276,25 @@ def test_side_register_write_updates_every_drive_not_just_selected() -> None:
     iface.write_mem(_SIDE, 0x01)   # side select while B is connected
     assert drive_b.side == 1
     assert drive_a.side == 1       # as-built: A got it too, though it isn't selected
+
+
+def test_side_selected_before_switching_drives_still_applies_to_new_drive() -> None:
+    """Closes allium/fdc-hbf1xd.allium's WriteSideRegister open question: this
+    codebase's flat "every drive gets the side" model is believed equivalent to
+    openMSX's DriveMultiplexer (which stores the side once and re-applies it
+    lazily to whichever drive selectDrive() next connects) for how Disk BASIC
+    actually drives this interface -- selecting a side, then switching drives
+    without a further side write, and checking the newly-selected drive's side
+    is exactly the case the two models could diverge on. They don't: side 1
+    reaches drive B here even though B was never the connected drive when the
+    side write happened."""
+    controller = WD2793()
+    drive_a, drive_b = DiskDrive(), DiskDrive()
+    iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))
+    iface.write_mem(_SIDE, 0x01)    # side select while A (default) is connected
+    iface.write_mem(_DRIVE, 0x01)   # switch to drive B, no further side write
+    assert controller.drive is drive_b
+    assert drive_b.side == 1
 
 
 # ---------------------------------------------------------------------------
