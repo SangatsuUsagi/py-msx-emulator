@@ -50,12 +50,16 @@ class MouseSlot(NamedTuple):
     device: MouseDevice
     port: JoystickPort
 
-# AY-3-8910 quasi-logarithmic amplitude table (level 0–15 → 16-bit amplitude).
-# Each consecutive step is approximately √2 (≈3 dB).  Three channels at max
-# sum to 36 861; SDL2 output is clamped to [0, 32 767].
+# AY-3-8910 measured-silicon amplitude table (level 0–15 → 16-bit amplitude),
+# derived from references/ayumi's AY_dac_table (an oscilloscope-measured DAC
+# curve), rescaled from its [0, 1] range to this table's [0, 12287] headroom.
+# Not a geometric (constant-dB-step) curve -- notably levels 7 and 8 sit much
+# closer together than their neighbours, a real irregularity in the AY-3-8910
+# DAC that references/emu2149's independently-measured table agrees on.
+# Three channels at max sum to 36 861; SDL2 output is clamped to [0, 32 767].
 _VOL_TABLE: tuple[int, ...] = (
-    0,    85,   121,   171,   241,   336,   473,   692,
-    1023, 1447, 2072,  2900,  4111,  5800,  8296, 12287,
+    0,    123,  178,   259,   377,   560,   793,   1319,
+    1555, 2519, 3590,  4581,  6052,  7806,  9898,  12287,
 )
 
 

@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2018%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2022%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -40,6 +40,26 @@ specification (under `openspec/specs/`) before it is implemented; those specs
 drive the test suite. Component wiring is explicit — done by hand in
 `build_machine()`, with no reflection or dependency-injection magic. The only
 platform-specific dependency is pysdl2, for the display and audio frontend.
+
+---
+
+## Contents
+
+- [Emulated hardware](#emulated-hardware)
+- [Spec-driven architecture](#spec-driven-architecture)
+- [Requirements](#requirements)
+- [Performance](#performance)
+- [BIOS setup](#bios-setup)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Remote control (Socket RPC & MCP)](#remote-control-socket-rpc--mcp)
+- [Machine configuration](#machine-configuration)
+- [Running tests](#running-tests)
+- [Project layout](#project-layout)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+- [History](#history)
 
 ---
 
@@ -109,8 +129,9 @@ mid-frame register and palette changes.
 ### PSG — AY-3-8910
 
 16 registers, 3 tone channels, a noise channel, an envelope generator with 8
-waveform shapes, a quasi-logarithmic amplitude table, and 44100 Hz PCM output at
-735 samples/frame. **Sub-frame software-PCM** reproduction cycle-timestamps
+waveform shapes, a measured-silicon amplitude table (derived from ayumi's
+oscilloscope-measured AY-3-8910 DAC curve, rather than an idealised geometric
+one), and 44100 Hz PCM output at 735 samples/frame. **Sub-frame software-PCM** reproduction cycle-timestamps
 volume-register writes and replays them at their in-frame sample positions; the
 tone generator is integrated over each output sample, so an ultrasonic period-0
 PCM carrier is band-limited to its duty average instead of aliasing to a
@@ -269,7 +290,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
-| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>The host Esc key always quits the emulator and cannot reach MSX ESC (matrix row 7, column 2).</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
+| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
 
 ### Mouse
 
@@ -668,12 +689,12 @@ annotated list and valid button/key-name labels.
 
 | Key | Action |
 | --- | --- |
-| Esc | Quit |
+| Ctrl + Q | Quit |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Toggle fullscreen |
-| F1–F5 | Passed through to the MSX keyboard matrix |
+| Esc, F1–F5 | Passed through to the MSX keyboard matrix |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |
@@ -736,7 +757,7 @@ The RPC methods cover debugger pause/step/continue, breakpoints and watchpoints,
 memory and VRAM read/write, disassembly, VDP registers, keyboard/joystick
 injection, screenshot capture, save-state, and disk swap. The wire protocol and
 full method reference are documented in
-[`extras/msx_emulator_rpc_spec.md`](extras/msx_emulator_rpc_spec.md).
+[`docs/msx_emulator_rpc_spec.md`](docs/msx_emulator_rpc_spec.md).
 
 Quick manual test with the bundled client:
 
@@ -878,7 +899,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2018 tests spanning unit tests
+The test suite covers all major components with 2022 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -941,7 +962,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2018 tests
+├── tests/                 # Test suite — 2022 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1002,6 +1023,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.1** (2026-08-16) — Close most of the outstanding Allium open questions from v2.5.0's distillation pass, fixing two along the way: a PPI (i8255) mode-set control word no longer clears Port C's latch, and reading port 0xAB now returns the last mode-set word instead of floating at 0xFF (both now match openMSX's shared I8255 core). Rebind quit to Ctrl+Q; the host Esc key now reaches MSX ESC (row 7, column 2) instead of being reserved. Switch the PSG amplitude table from an idealised geometric curve to a measured-silicon one (ayumi's oscilloscope-measured AY-3-8910 DAC data) — an audible change, low/mid volume levels sit noticeably louder. Also: `docs/msx_emulator_rpc_spec.md`, `pyproject.toml`, and `requirements-dev.txt` are now included in the public GitHub mirror (previously private-only).
 - **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.
 - **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.
 - **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml`: add `slot2`/`mapper2` (slot 2 cartridge defaults) and `frame_skip` (`auto`/`none` toggle) config keys, resolved with the same built-in-default < config < CLI precedence as `mapper`/`speed`/`fmpac`; add a `keyboard_joystick.buttons` section that lets each Joy1 keyboard-emulation function (`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`) be bound to a single key, replacing that function's built-in default key(s).
