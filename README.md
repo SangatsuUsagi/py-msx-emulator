@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2022%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2081%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -166,6 +166,11 @@ chip's Compatible or Plus mode, and per-window RAM-write control. Targets
 FDD (floppy-disk) MSX2 titles that plug this cartridge in purely for its
 audio; a cartridge ROM argument together with `--scc-plus` is a startup
 error.
+
+> **Note**: the author does not own a real SCC-I (SCC+) cartridge or
+> compatible software, so this implementation is based on publicly
+> available technical documentation (including the openMSX source code)
+> and has not been verified against real hardware.
 
 | Item | Detail |
 | --- | --- |
@@ -925,7 +930,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2076 tests spanning unit tests
+The test suite covers all major components with 2081 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -988,7 +993,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2076 tests
+├── tests/                 # Test suite — 2081 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1049,7 +1054,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
-- **v2.6.0** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus` (and the matching `py_emulator.yaml` `scc_plus` key): a bare sound cartridge connected unconditionally in primary slot 1, for FDD (floppy-disk) MSX2 titles that use it purely for audio (a cartridge ROM argument together with `--scc-plus` is a startup error). Extends `msx/scc.py`'s SCC chip with a Plus mode (5 independent waveform banks, relocated frequency/volume/enable block) alongside the existing Compatible mode, and a chip-identity flag (`is_052539`) so a real Konami 051649 (`KonamiSCCMapper`) and the SCC-I cartridge's 052539 correctly differ in one Compatible-mode read case (channel 5's waveform readable at 0xA0-0xBF on a 052539 only); adds `msx/mapper.py:SCCICart` (128 KB bank-switched RAM, blank at power-on, mode register selecting Compatible vs. Plus SCC window and per-window RAM-write behaviour).
+- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus` (and the matching `py_emulator.yaml` `scc_plus` key): a bare sound cartridge connected unconditionally in primary slot 1, for FDD (floppy-disk) MSX2 titles that use it purely for audio (a cartridge ROM argument together with `--scc-plus` is a startup error). Extends `msx/scc.py`'s SCC chip with a Plus mode (5 independent waveform banks, relocated frequency/volume/enable block) alongside the existing Compatible mode, and a chip-identity flag (`is_052539`) so a real Konami 051649 (`KonamiSCCMapper`) and the SCC-I cartridge's 052539 correctly differ in one Compatible-mode read case (channel 5's waveform readable at 0xA0-0xBF on a 052539 only); adds `msx/mapper.py:SCCICart` (128 KB bank-switched RAM, blank at power-on, mode register selecting Compatible vs. Plus SCC window and per-window RAM-write behaviour).
 - **v2.5.1** (2026-08-16) — Close most of the outstanding Allium open questions from v2.5.0's distillation pass, fixing two along the way: a PPI (i8255) mode-set control word no longer clears Port C's latch, and reading port 0xAB now returns the last mode-set word instead of floating at 0xFF (both now match openMSX's shared I8255 core). Rebind quit to Ctrl+Q; the host Esc key now reaches MSX ESC (row 7, column 2) instead of being reserved. Switch the PSG amplitude table from an idealised geometric curve to a measured-silicon one (ayumi's oscilloscope-measured AY-3-8910 DAC data) — an audible change, low/mid volume levels sit noticeably louder. Also: `docs/msx_emulator_rpc_spec.md`, `pyproject.toml`, and `requirements-dev.txt` are now included in the public GitHub mirror (previously private-only).
 - **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.
 - **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.
