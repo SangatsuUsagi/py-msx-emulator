@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2022%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2082%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -141,19 +141,48 @@ full/zero chop.
 
 ### SCC — Konami SCC (Sound Creative Chip)
 
-5-channel wavetable synthesiser with 4 waveform banks (32 samples each), 12-bit
-frequency and 4-bit volume per channel, mixed into the audio output alongside
-the PSG.
+5-channel wavetable synthesiser, mixed into the audio output alongside the
+PSG. Two modes:
+
+- **Compatible mode** (default): 4 waveform banks (32 samples each; channel 5
+  mirrors channel 4), 12-bit frequency and 4-bit volume per channel. The
+  KonamiSCC mapper activates it when 0x3F is written to 0x9000; registers
+  appear at 0x9800.
+- **Plus mode**: 5 *independent* waveform banks, frequency/volume/enable
+  relocated to a different register offset. Used by the SCC-I cartridge (see
+  below), selected via `SCC.set_mode()`.
 
 - Implementation: `msx/scc.py`
-- Activation: the KonamiSCC mapper activates the SCC when 0x3F is written to
-  0x9000; registers appear at 0x9800.
 - Known limitations:
   - The deform/test register (frequency-multiply calibration bits, counter
     reset, and hardware waveform auto-rotation) is not implemented.
-  - Only the original Konami SCC (051649, MegaROM cartridge) is emulated —
-    SCC+/SCC-I (052539) and the RAM-based Sound Cartridge (Snatcher/SD
-    Snatcher) are not implemented.
+
+### SCC-I cartridge ("SCC+")
+
+A bare sound cartridge (no game ROM) enabled with `--scc-plus`, connected
+unconditionally in primary slot 1: 64 KB of physical bank-switched RAM
+addressed as if 128 KB (blank — no ROM/data file is ever loaded), with bank
+register bit 3 ignored so block N mirrors block N+8 — reproducing a
+documented real-hardware modification (["connect the two 64 KB
+banks"](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)) that lets
+one physical SCC-I cartridge work with either of the two factory
+RAM-population variants, each of which this project's two target titles
+expects — a mode register selecting the carried SCC chip's Compatible or
+Plus mode, and per-window RAM-write control. Targets FDD (floppy-disk) MSX2
+titles that plug this cartridge in purely for its audio; a cartridge ROM
+argument together with `--scc-plus` is a startup error.
+
+> **Note**: the author does not own a real SCC-I (SCC+) cartridge or
+> compatible software, so this implementation is based on publicly
+> available technical documentation (including the openMSX source code)
+> and has not been verified against real hardware.
+
+| Item | Detail |
+| --- | --- |
+| Implementation | `msx/mapper.py:SCCICart` |
+| Activation | `--scc-plus` connects the cartridge in primary slot 1 (conflicts with a cartridge ROM argument and with `--mapper`) |
+| Memory map | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`; mode register at `0xBFFE`/`0xBFFF` |
+| SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), depending on the mode register |
 
 ### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
 
@@ -565,6 +594,10 @@ python . path/to/game.rom --mapper KonamiSCC
 # Add an FM-PAC (MSX-MUSIC) cartridge in slot 2 alongside a game in slot 1
 python . path/to/game.rom --fmpac
 
+# Connect an SCC-I (SCC+) cartridge in slot 1 (no cartridge ROM argument);
+# boot from floppy instead
+python . --scc-plus --fdd1 path/to/disk.dsk
+
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
@@ -604,6 +637,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
+| `--fmpac` | off | Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 (conflicts with `--slot2`) |
+| `--scc-plus` | off | Connect an SCC-I (SCC+) cartridge in slot 1 (conflicts with a cartridge ROM argument and with `--mapper`) |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
@@ -645,6 +680,7 @@ mapper: auto             # slot 1 mapper (see --mapper choices)
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
 # mapper2: auto          # slot 2 mapper (see --mapper2 choices)
 fmpac: false             # overlay an FM-PAC in slot 2
+scc_plus: false          # connect an SCC-I (SCC+) cartridge in slot 1
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -677,7 +713,7 @@ mouse:
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
 ```
 
-`machine`, `speed`, `scale`, `mapper`, `slot2`, `mapper2`, `fmpac`,
+`machine`, `speed`, `scale`, `mapper`, `slot2`, `mapper2`, `fmpac`, `scc_plus`,
 `frame_skip`, `mouse`, and RPC/gamepad/keyboard-joystick settings are
 configurable; the gamepad button map applies to the SDL GameController path
 (both ports share one map), `keyboard_joystick.buttons` applies to Joy1's
@@ -899,7 +935,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2022 tests spanning unit tests
+The test suite covers all major components with 2082 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -962,7 +998,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2022 tests
+├── tests/                 # Test suite — 2082 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1023,6 +1059,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus` (and the matching `py_emulator.yaml` `scc_plus` key): a bare sound cartridge connected unconditionally in primary slot 1, for FDD (floppy-disk) MSX2 titles that use it purely for audio (a cartridge ROM argument together with `--scc-plus` is a startup error). Extends `msx/scc.py`'s SCC chip with a Plus mode (5 independent waveform banks, relocated frequency/volume/enable block) alongside the existing Compatible mode, and a chip-identity flag (`is_052539`) so a real Konami 051649 (`KonamiSCCMapper`) and the SCC-I cartridge's 052539 correctly differ in one Compatible-mode read case (channel 5's waveform readable at 0xA0-0xBF on a 052539 only); adds `msx/mapper.py:SCCICart` (64 KB of physical bank-switched RAM addressed as if 128 KB, with bank register bit 3 ignored so block N mirrors block N+8 — reproducing a real, documented cartridge modification that makes one implementation compatible with both target titles' expected RAM-population variant; blank at power-on, mode register selecting Compatible vs. Plus SCC window and per-window RAM-write behaviour).
 - **v2.5.1** (2026-08-16) — Close most of the outstanding Allium open questions from v2.5.0's distillation pass, fixing two along the way: a PPI (i8255) mode-set control word no longer clears Port C's latch, and reading port 0xAB now returns the last mode-set word instead of floating at 0xFF (both now match openMSX's shared I8255 core). Rebind quit to Ctrl+Q; the host Esc key now reaches MSX ESC (row 7, column 2) instead of being reserved. Switch the PSG amplitude table from an idealised geometric curve to a measured-silicon one (ayumi's oscilloscope-measured AY-3-8910 DAC data) — an audible change, low/mid volume levels sit noticeably louder. Also: `docs/msx_emulator_rpc_spec.md`, `pyproject.toml`, and `requirements-dev.txt` are now included in the public GitHub mirror (previously private-only).
 - **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.
 - **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.

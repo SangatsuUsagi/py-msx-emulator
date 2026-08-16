@@ -1075,3 +1075,168 @@ class KonamiSCCMapper(_BankTracing):
         self._scc_mode = typed_state["scc_mode"]
         for window in range(4):
             self._sync_window(window)
+
+
+_SCCI_RAM_BLOCKS = 8
+# Real SCC-I cartridges (Konami 052539) have a 128 KB (16 x 8 KB block)
+# address space but only 64 KB of physical RAM: bit 3 of a bank register's
+# selected block is not connected to a real memory chip on either factory
+# cartridge variant -- one variant has real RAM at blocks 0-7 and reads
+# 0xFF at 8-15, the other the reverse (see references/docs/Konami's Sound
+# Cartridge (SCC+) for the MSX.md, "Hardware Properties"/"Programming"
+# sections). Rather than modelling that per-variant asymmetry (which would
+# need a way to pick a variant this project has no CLI surface for), this
+# mask reproduces the "connect the two 64 KB banks so they mirror" hardware
+# modification the same reference documents as making a single physical
+# cartridge fully compatible with either variant's software: block N and
+# block N+8 always alias the same 8 KB, so no software-visible "which
+# variant" asymmetry (including the unpopulated-half open-bus behaviour
+# some cartridge-detection code may rely on) can trip either title up.
+_SCCI_BANK_MASK = 0x07
+_SCCI_RAM_SIZE = _SCCI_RAM_BLOCKS * _PAGE_8K  # 64 KB
+_SCCI_SCC_WINDOW_LEN = 0x800  # 0x9800-0x9FFF or 0xB800-0xBFFF
+
+
+class SCCICartState(TypedDict):
+    ram: bytes
+    banks: list[int]
+    mode_register: int
+
+
+@dataclass
+class SCCICart(_BankTracing):
+    """SCC-I cartridge (community/openMSX docs: "SCC+"): 64 KB of physical
+    bank-switched RAM, addressed as if it were 128 KB (block N mirrors
+    block N+8 -- see `_SCCI_BANK_MASK`) in four 8 KB windows at
+    0x4000-0xBFFF -- no ROM is ever loaded, RAM starts blank -- plus an
+    `SCC` chip reachable at 0x9800-0x9FFF (classic/Compatible mode) or
+    0xB800-0xBFFF (Plus mode), selected by a mode register at 0xBFFE/
+    0xBFFF. Ground truth: openMSX `MSXSCCPlusCart`.
+
+    Same four bank-register zones as `KonamiSCCMapper` (0x5000-0x57FF,
+    0x7000-0x77FF, 0x9000-0x97FF, 0xB000-0xB7FF), but each window's register
+    is masked to 3 bits (8 always-valid, mirrored RAM blocks, no "unmapped"
+    case) and a RAM-write-region bit (from the mode register) can turn a
+    whole window into a plain RAM window, overriding both the bank-register
+    zone and the SCC register window for that window -- see write().
+    """
+
+    scc: "SCC"
+    ram: bytearray = field(
+        default_factory=lambda: bytearray(_SCCI_RAM_SIZE), init=False, repr=False
+    )
+    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _mode_register: int = field(default=0, init=False, repr=False)
+    # Portability note: fixed-length (4), one flag per window, allocated once
+    # at construction and never resized -- a Rust/C++ port should use
+    # [bool; 4]/std::array<bool, 4>, the same convention the other bank-
+    # switching mappers' own _window_is_sram fields document (e.g.
+    # Ascii8Mapper, GameMaster2Mapper, RTypeMapper in this file).
+    _is_ram_segment: list[bool] = field(
+        default_factory=lambda: [False, False, False, False], init=False, repr=False
+    )
+    # Cached `(bank & _SCCI_BANK_MASK) * _PAGE_8K` per window -- recomputed
+    # only on bank switch (_sync_window_base), not on every read/write, the
+    # same hot-path trade-off KonamiSCCMapper's own _flat mirror documents
+    # ("reads are hot (millions/frame) and switches are rare").
+    _window_base: list[int] = field(
+        default_factory=lambda: [0, 0, 0, 0], init=False, repr=False
+    )
+    # None when the SCC register window is inactive; otherwise the window's
+    # base address (0x9800 classic, 0xB800 Plus).
+    _scc_window_base: int | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        for window in range(4):
+            self._sync_window_base(window)
+        self._set_mode_register(0)
+
+    def _sync_window_base(self, window: int) -> None:
+        self._window_base[window] = (self._banks[window] & _SCCI_BANK_MASK) * _PAGE_8K
+
+    def read(self, addr: int) -> int:
+        base = self._scc_window_base
+        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+            return self.scc.read(addr - base)
+        if 0x4000 <= addr < 0xC000:
+            window = (addr >> 13) - 2
+            return self.ram[self._window_base[window] + (addr & 0x1FFF)]
+        return 0xFF
+
+    def write(self, addr: int, value: int) -> None:
+        if addr < 0x4000 or addr >= 0xC000:
+            return
+        # Mode register is mapped at both 0xBFFE and 0xBFFF -- OR-ing in bit
+        # 0 collapses either address to 0xBFFF, so one comparison covers both.
+        if (addr | 0x0001) == 0xBFFF:
+            self._set_mode_register(value)
+            return
+        window = (addr >> 13) - 2
+        if self._is_ram_segment[window]:
+            # A RAM-write region takes priority over both the bank-register
+            # zone and the SCC register window for this window (matches
+            # openMSX MSXSCCPlusCart::writeMem's check order).
+            self.ram[self._window_base[window] + (addr & 0x1FFF)] = value
+            return
+        if (addr & 0x1800) == 0x1000:
+            old = self._banks[window]
+            new = value & 0xFF
+            self._banks[window] = new
+            self._sync_window_base(window)
+            self._sync_scc_window()
+            _trace_bank(self, window, old, new, addr)
+            return
+        base = self._scc_window_base
+        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+            self.scc.write(addr - base, value)
+        # Writes outside all of the above zones are ignored.
+
+    def _set_mode_register(self, value: int) -> None:
+        self._mode_register = value & 0xFF
+        self.scc.set_mode(bool(self._mode_register & 0x20))
+        if self._mode_register & 0x10:
+            self._is_ram_segment[:] = [True, True, True, True]
+        else:
+            self._is_ram_segment[0] = bool(self._mode_register & 0x01)
+            self._is_ram_segment[1] = bool(self._mode_register & 0x02)
+            # Window 2's RAM-write bit additionally requires Plus mode.
+            self._is_ram_segment[2] = (self._mode_register & 0x24) == 0x24
+            self._is_ram_segment[3] = False
+        self._sync_scc_window()
+
+    def _sync_scc_window(self) -> None:
+        """Recompute which SCC register window, if any, is currently active.
+
+        Plus mode: window 3's bank register bit 7 gates the SCC+ window at
+        0xB800. Compatible mode: window 2's low 6 bits all set (same
+        enable code as KonamiSCCMapper) gates the classic window at 0x9800.
+        """
+        if (self._mode_register & 0x20) and (self._banks[3] & 0x80):
+            self._scc_window_base = 0xB800
+        elif not (self._mode_register & 0x20) and ((self._banks[2] & 0x3F) == 0x3F):
+            self._scc_window_base = 0x9800
+        else:
+            self._scc_window_base = None
+
+    def snapshot(self) -> SCCICartState:
+        # SCC chip state is snapshotted separately by the state module.
+        return {
+            "ram": bytes(self.ram),
+            "banks": list(self._banks),
+            "mode_register": self._mode_register,
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        typed_state = cast(SCCICartState, state)
+        ram = typed_state["ram"]
+        banks = typed_state["banks"]
+        if len(ram) != _SCCI_RAM_SIZE or len(banks) != 4:
+            raise ValueError(
+                f"SCCICartState.ram must be {_SCCI_RAM_SIZE} bytes and "
+                f"banks must have 4 entries"
+            )
+        self.ram[:] = ram
+        self._banks[:] = banks
+        for window in range(4):
+            self._sync_window_base(window)
+        self._set_mode_register(typed_state["mode_register"])

@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2022%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2082%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -95,13 +95,27 @@
 
 ### SCC — Konami SCC（Sound Creative Chip）
 
-5 チャンネルウェーブテーブルシンセサイザ（4 波形バンク、各 32 サンプル）、チャンネルごとの 12 ビット周波数・4 ビットボリューム、PSG と混合してオーディオ出力。
+5 チャンネルウェーブテーブルシンセサイザで、PSG と混合してオーディオ出力。2 つのモードに対応：
+
+- **Compatible モード**（デフォルト）：4 波形バンク（各 32 サンプル；チャンネル 5 はチャンネル 4 をミラー）、チャンネルごとの 12 ビット周波数・4 ビットボリューム。KonamiSCC マッパーが 0x9000 への 0x3F 書き込みを検出した際に SCC を有効化；レジスタは 0x9800 に現れる。
+- **Plus モード**：5 チャンネル分の**独立した**波形バンク、周波数/ボリューム/イネーブルは別オフセットに再配置。後述の SCC-I カートリッジが使用（`SCC.set_mode()` で選択）。
 
 - 実装：`msx/scc.py`
-- 有効化：KonamiSCC マッパーが 0x9000 への 0x3F 書き込みを検出した際に SCC を有効化；レジスタは 0x9800 に現れる。
 - 既知の制限：
   - デフォーム/テストレジスタ（周波数逓倍キャリブレーションビット、カウンタリセット、ハードウェアによる波形自動ローテーション）は未実装。
-  - 純正 Konami SCC（051649、MegaROM カートリッジ）のみをエミュレートしており、SCC+/SCC-I（052539）および RAM ベースの Sound Cartridge（スナッチャー/SD スナッチャー）は未実装。
+
+### SCC-I カートリッジ（「SCC+」）
+
+`--scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 1 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したもので、これにより本プロジェクトが対象とする2タイトルそれぞれが前提とする工場出荷時RAM配置バリアントのどちらとも、1つの実装で互換になります。キャリアする SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。カートリッジ ROM 引数と `--scc-plus` を同時指定すると起動時エラーになります。
+
+> **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料（openMSX のソースコードを含む）に基づく実装であり、実機での動作確認は行っていません。
+
+| 項目 | 詳細 |
+| --- | --- |
+| 実装 | `msx/mapper.py:SCCICart` |
+| 有効化 | `--scc-plus` でプライマリスロット 1 に接続（カートリッジ ROM 引数や `--mapper` との併用不可） |
+| メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
+| SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
 ### FM-PAC — MSX-MUSIC カートリッジ（YM2413/OPLL）
 
@@ -417,6 +431,10 @@ python . path/to/game.rom --mapper KonamiSCC
 # スロット 1 のゲームと合わせてスロット 2 に FM-PAC（MSX-MUSIC）を追加
 python . path/to/game.rom --fmpac
 
+# スロット 1 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
+# フロッピーから起動
+python . --scc-plus --fdd1 path/to/disk.dsk
+
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
 
@@ -456,6 +474,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
+| `--fmpac` | オフ | プライマリスロット 2 に FM-PAC（MSX-MUSIC + 8 KB SRAM）カートリッジをオーバーレイ（`--slot2` と併用不可） |
+| `--scc-plus` | オフ | プライマリスロット 1 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数や `--mapper` と併用不可） |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -497,6 +517,7 @@ mapper: auto             # スロット 1 マッパー（--mapper の選択肢�
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper2: auto          # スロット 2 マッパー（--mapper2 の選択肢参照）
 fmpac: false             # スロット 2 に FM-PAC を重ねる
+scc_plus: false          # スロット 1 に SCC-I（SCC+）カートリッジを接続
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -530,7 +551,7 @@ mouse:
 ```
 
 設定できるのは `machine`・`speed`・`scale`・`mapper`・`slot2`・`mapper2`・`fmpac`・
-`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です。
+`scc_plus`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
 コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
@@ -742,7 +763,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2022 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2082 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -802,7 +823,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2022 テスト
+├── tests/                 # テストスイート — 2082 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -846,6 +867,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.2** (2026-08-16) — `--scc-plus`（および対応する `py_emulator.yaml` の `scc_plus` キー）で SCC-I（「SCC+」）カートリッジ対応を追加：プライマリスロット 1 に無条件で接続される、ゲーム ROM を持たない裸のサウンドカートリッジで、オーディオ目的のみでこれを挿すフロッピー（FDD）ベースの MSX2 タイトル向け（カートリッジ ROM 引数と `--scc-plus` の同時指定は起動時エラー）。`msx/scc.py` の SCC チップに既存の Compatible モードと並ぶ Plus モード（5 チャンネル独立の波形バンク、周波数/ボリューム/イネーブルブロックの再配置）を追加。あわせてチップ識別フラグ（`is_052539`）を追加し、実機の Konami 051649（`KonamiSCCMapper`）と SCC-I カートリッジの 052539 が Compatible モードの読み取りで 1 箇所だけ正しく差異化されるようにした（チャンネル 5 の波形が 0xA0-0xBF で読めるのは 052539 のみ）。`msx/mapper.py:SCCICart`（物理 64 KB を 128 KB として見せかけるバンク切り替え RAM。バンクレジスタ bit 3 を無視してブロック N とブロック N+8 をミラーし、実機の「2つの64KBバンクを接続する」改造を再現、対象2タイトルそれぞれが期待する工場出荷時RAM配置バリアントの両方と互換にする。起動時は空、Compatible/Plus の SCC ウィンドウとウィンドウ単位の RAM 書き込みを選択するモードレジスタ）を新規追加。
 - **v2.5.1** (2026-08-16) — v2.5.0 の蒸留パスで残っていた Allium の Open Question を大半クローズ。過程で PPI（i8255）の不具合を2件修正：mode-set コントロールワードで Port C のラッチをクリアしなくなり、ポート 0xAB の読み取りが 0xFF 固定ではなく直前の mode-set ワードを返すようになった（いずれも openMSX の共有 I8255 コアに準拠）。終了キーを Ctrl+Q に変更、ホストの Esc キーは予約解除され MSX の ESC（行7・列2）に到達するようになった。PSG の振幅テーブルを理想化された対数カーブから実測ベース（ayumi のオシロスコープ実測 AY-3-8910 DAC データ）に変更 — 音が変わる、低〜中音量域が明確に大きくなる。あわせて `docs/msx_emulator_rpc_spec.md`・`pyproject.toml`・`requirements-dev.txt` を公開 GitHub ミラーに含めるようにした（従来は非公開）。
 - **v2.5.0** (2026-08-15) — OpenSpec と並ぶ、振る舞い中心の第2の仕様レイヤーとして Allium（`allium/*.allium`）を導入。Z80 CPU、TMS9918A、V9938（コアおよびコマンドエンジン）、メモリ/スロットデコーダ、PSG、SCC、FM-PAC/YM2413、PPI/キーボードマトリクス、ジョイスティック/マウスポートプロトコル、WD2793 FDC（コアおよび HB-F1XD）、SDL2 フロントエンドという主要コンポーネントすべてに対して仕様を蒸留し、既存テストスイートに残っていたテスト義務の漏れを解消した。実機に照らして仕様を蒸留する過程で、いくつかの精度バグを発見・修正：V9938 のスプライトコリジョン（TP 依存の色 0 判定、S#3–S#6 ステータスビット、GRAPHIC5 でのドットペア間の色分割）、V9938 コマンドエンジンの実機準拠、メモリのスロット 3 排他制御の強化、WD2793/HB-F1XD の FDC バグ。あわせて、すべてのステートフルコンポーネント（OPLL、FM-PAC、PSG、SCC、および全 10 種のカートリッジマッパー）に TypedDict によるステートセーブスキーマを追加。性能面ではページ単位のメモリディスパッチキャッシュと DD/FD/ED オペコードのルックアップテーブルディスパッチを追加。JIS 配列の `@`/`^`/`:`/`_` キー割り当ても追加した。
 - **v2.4.8** (2026-08-08) — V9938 のフレーム描画を、スキャンラインループ完了後から垂直帰線開始時点に変更。VBlank 割り込みは同じループの内側で発生するため、従来はゲームの VBlank ISR が書き換えた後の VRAM を描画しており、スプライトアトリビュートやネームテーブルが 1 フレーム早く反映される一方、表示レジスタはフレーム先頭のスナップショットから正しく取られていた。結果として、同一 ISR 内で VRAM と表示レジスタを同時に更新するタイトルで 1 フレーム分のティアリングが発生していた（R#18 による横方向ファインスクロールでのスプライトの 1 ドットのぶれ、8 ドット境界での 7 ドットの飛びなど）。MSX1/TMS9918A 機は影響を受けない。あわせて、アクティブ表示中の Ctrl-C がフレームを打ち切らずに VBlank 区間まで実行してしまう問題を修正し、デバッガの命令単位ループを約 9% 高速化

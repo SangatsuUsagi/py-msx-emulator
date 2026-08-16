@@ -84,7 +84,7 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
 
 _KNOWN_TOP_KEYS = frozenset({
     "machine", "speed", "scale", "mapper", "fmpac", "slot2", "mapper2",
-    "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
+    "frame_skip", "scc_plus", "rpc", "joystick", "keyboard_joystick", "mouse",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
@@ -112,6 +112,7 @@ class AppConfig:
     slot2: str | None = None
     mapper2: str | None = None
     frame_skip: bool | None = None
+    scc_plus: bool | None = None
     rpc_enabled: bool | None = None
     rpc_socket: str | None = None
     turbo_hz: float | None = None
@@ -247,6 +248,7 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.slot2 = _opt_slot2(raw, root)
     cfg.mapper2 = _opt_mapper2(raw)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
+    cfg.scc_plus = _opt_bool(raw, "scc_plus")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
     _parse_keyboard_joystick(raw.get("keyboard_joystick"), cfg)

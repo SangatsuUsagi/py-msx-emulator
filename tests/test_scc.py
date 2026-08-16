@@ -323,3 +323,164 @@ def test_snapshot_on_silent_scc_round_trips() -> None:
     snapshot = scc.snapshot()
     scc.restore(snapshot)
     assert scc.snapshot() == snapshot
+
+
+# ---------------------------------------------------------------------------
+# SCC Plus mode (openspec add-scc-i-cartridge)
+# ---------------------------------------------------------------------------
+
+def test_default_mode_is_compatible() -> None:
+    scc = SCC()
+    assert scc._plus_mode is False
+
+
+def test_set_mode_true_switches_to_plus_decode() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    assert scc._plus_mode is True
+
+
+def test_mode_switch_preserves_register_contents() -> None:
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    before_wave = list(scc._waves[0])
+    before_freq = scc._freq[0]
+    before_vol = scc._vol[0]
+    before_enable = scc._enable
+    scc.set_mode(True)
+    assert scc._waves[0] == before_wave
+    assert scc._freq[0] == before_freq
+    assert scc._vol[0] == before_vol
+    assert scc._enable == before_enable
+
+
+def test_plus_mode_channel5_independently_writable() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0x60, 0x11)  # channel 4 waveform byte 0
+    scc.write(0x80, 0x22)  # channel 5 waveform byte 0
+    assert scc.read(0x60) == 0x11
+    assert scc.read(0x80) == 0x22  # did not inherit channel 4's value
+
+
+def test_plus_mode_waveform_extends_to_0x9f() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0x90, 0x33)  # channel 5 waveform byte 16
+    assert scc.read(0x90) == 0x33
+
+
+def test_plus_mode_freq_vol_enable_relocated_to_0xa0() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0xAF, 0x1F)  # channel enable, at the Plus-mode offset
+    assert scc._enable == 0x1F
+    assert scc.read(0xAF) == 0xFF  # write-only, same as Compatible mode
+
+
+def test_plus_mode_deformation_register_at_0xc0() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    assert scc.read(0xC0) == 0xFF
+    scc.write(0xC8, 0xAB)  # safe no-op
+    assert scc._enable == 0
+
+
+def test_compatible_mode_unaffected_by_plus_mode_existing() -> None:
+    # Default mode (set_mode never called) keeps the original Compatible
+    # behavior: channel 5 mirrors whatever is written to channel 4's bank.
+    scc = SCC()
+    scc.write(0x60, 0x55)
+    assert scc.read(0x60) == 0x55
+
+
+def test_konami_scc_mapper_scc_defaults_to_compatible_mode() -> None:
+    # KonamiSCCMapper never calls set_mode(); this asserts that guarantee at
+    # the SCC level so a future change to that mapper is caught here too.
+    scc = SCC()
+    assert scc._plus_mode is False
+
+
+# ---------------------------------------------------------------------------
+# 051649 vs 052539 chip identity (openspec add-scc-i-cartridge follow-up):
+# only a 052539 in Compatible mode exposes channel 5's waveform readably at
+# 0xA0-0xBF; a real 051649 (openMSX Mode::Real) never does.
+# ---------------------------------------------------------------------------
+
+def test_default_chip_identity_is_051649() -> None:
+    scc = SCC()
+    assert scc.is_052539 is False
+
+
+def test_051649_compatible_mode_reads_ff_above_wave_banks() -> None:
+    scc = SCC()  # is_052539=False: KonamiSCCMapper's real 051649
+    scc.write(0x60, 0x7F)  # channel 4 waveform byte 0 (mirrors into bank 4)
+    assert scc.read(0xA0) == 0xFF
+    assert scc.read(0xBF) == 0xFF
+
+
+def test_052539_compatible_mode_exposes_channel5_waveform_readable() -> None:
+    scc = SCC(is_052539=True)  # SCCICart's chip
+    scc.write(0x60, 0x7F)  # channel 4 waveform byte 0, mirrors into bank 4
+    assert scc.read(0xA0) == 0x7F  # channel 5's bank, readable here only for a 052539
+    assert scc.read(0x60) == 0x7F  # channel 4's own offset is unaffected
+
+
+def test_052539_compatible_mode_channel5_readback_tracks_every_byte() -> None:
+    scc = SCC(is_052539=True)
+    for i in range(32):
+        scc.write(0x60 + i, i)
+    for i in range(32):
+        assert scc.read(0xA0 + i) == i
+
+
+def test_052539_compatible_mode_freq_vol_block_still_ff() -> None:
+    # 0x80-0x9F stays write-only even for a 052539 -- the wave5 readback
+    # range is 0xA0-0xBF only; 0x80-0x9F must not leak waveform_bank_4.
+    scc = SCC(is_052539=True)
+    scc.write(0x60, 0x7F)  # populate bank 4 (mirrored from channel 4)
+    scc.write(0x8A, 0x0F)  # channel 1 volume, in the freq/vol block
+    for addr in range(0x80, 0xA0):
+        assert scc.read(addr) == 0xFF
+
+
+def test_052539_compatible_mode_deform_range_still_ff() -> None:
+    # 0xC0-0xFF is outside the wave5-readback range (0xA0-0xBF only) even
+    # for a 052539 in Compatible mode -- the deform register and "no
+    # function" gap there are unaffected by is_052539.
+    scc = SCC(is_052539=True)
+    assert scc.read(0xC0) == 0xFF
+    assert scc.read(0xFF) == 0xFF
+
+
+def test_register_writes_do_not_cross_contaminate() -> None:
+    # allium/scc.allium: rule_failure for WriteWaveformByte/WriteFrequency
+    # Register/WriteVolumeRegister/WriteChannelEnableRegister -- writing to
+    # one register's offset must leave every other register type untouched
+    # (each rule's guard must genuinely gate on its own offset range).
+    scc = SCC()
+    scc.write(0x10, 0x7F)   # waveform (bank 0, byte 0x10)
+    scc.write(0x80, 0xFE)   # frequency channel 1 low byte
+    scc.write(0x8A, 0x0F)   # volume channel 1
+    scc.write(0x8F, 0x1F)   # channel enable
+
+    assert scc._waves[0][0x10] == 0x7F
+    assert scc._freq[0] == 0xFE
+    assert scc._vol[0] == 0x0F
+    assert scc._enable == 0x1F
+
+    # Each write above must not have leaked into the other three registers.
+    assert scc._waves[0][0x10] != 0  # sanity: still holds its own write
+    assert all(b == 0 for i, b in enumerate(scc._waves[0]) if i != 0x10)
+    assert scc._freq[1:] == [0, 0, 0, 0]
+    assert scc._vol[1:] == [0, 0, 0, 0]
+
+
+def test_052539_plus_mode_unaffected_by_is_052539() -> None:
+    # In Plus mode, bank 4 (channel 5) is already independently readable at
+    # its own Plus-mode offset (0x80-0x9F) regardless of is_052539 -- this
+    # flag only changes Compatible-mode read decode.
+    scc = SCC(is_052539=True)
+    scc.set_mode(True)
+    scc.write(0x80, 0x11)
+    assert scc.read(0x80) == 0x11
+    assert scc.read(0xA0) == 0xFF  # Plus mode's freq/vol block, unaffected
