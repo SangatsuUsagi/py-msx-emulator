@@ -279,15 +279,9 @@ def test_side_register_write_updates_every_drive_not_just_selected() -> None:
 
 
 def test_side_selected_before_switching_drives_still_applies_to_new_drive() -> None:
-    """Closes allium/fdc-hbf1xd.allium's WriteSideRegister open question: this
-    codebase's flat "every drive gets the side" model is believed equivalent to
-    openMSX's DriveMultiplexer (which stores the side once and re-applies it
-    lazily to whichever drive selectDrive() next connects) for how Disk BASIC
-    actually drives this interface -- selecting a side, then switching drives
-    without a further side write, and checking the newly-selected drive's side
-    is exactly the case the two models could diverge on. They don't: side 1
-    reaches drive B here even though B was never the connected drive when the
-    side write happened."""
+    """Closes allium/fdc-hbf1xd.allium's WriteSideRegister open question
+    (see module docstring): side selected while drive A is connected must
+    still land on drive B after switching, with no further side write."""
     controller = WD2793()
     drive_a, drive_b = DiskDrive(), DiskDrive()
     iface = SonyPhilipsInterface(controller, [drive_a, drive_b], disk_rom=bytes(16384))

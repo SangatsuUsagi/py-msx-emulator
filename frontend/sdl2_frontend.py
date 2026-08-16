@@ -323,6 +323,9 @@ def _handle_hotkey_keydown(
     (row 7, column 2) and reaches it through the plain key_down fallback,
     like any other ordinary key.
     """
+    # Portability note: `mod & sdl2.KMOD_CTRL` relies on Python/C++ implicit
+    # int-to-bool truthiness; a Rust port must spell this `(mod & KMOD_CTRL) != 0`.
+    # Same pattern below at the Ctrl-C debugger-break check.
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False, fullscreen
     if sym == sdl2.SDLK_F11:
