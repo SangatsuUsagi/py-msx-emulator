@@ -74,9 +74,25 @@ def test_keyboard_read_returns_ff_no_input() -> None:
     assert ppi.read_port(0xA9) == 0xFF
 
 
-def test_port_ab_read_returns_ff() -> None:
+def test_port_ab_read_returns_reset_default_before_any_write() -> None:
+    # 0x9B: Intel 8255 post-reset control word (mode 0, ports A/B/C all
+    # input), matching openMSX's I8255::reset before MSX firmware's
+    # start-up OUT &HAB,&H82.
     ppi = make_ppi()
-    assert ppi.read_port(0xAB) == 0xFF
+    assert ppi.read_port(0xAB) == 0x9B
+
+
+def test_port_ab_read_returns_last_mode_set_word() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word
+    assert ppi.read_port(0xAB) == 0x82
+
+
+def test_port_ab_bit_set_reset_does_not_change_control_readback() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAB, 0x82)   # mode-set word
+    ppi.write_port(0xAB, 0x0D)   # bit set/reset command, bit7=0
+    assert ppi.read_port(0xAB) == 0x82
 
 
 def test_port_ab_bit_set_sets_single_port_c_bit() -> None:
@@ -92,14 +108,14 @@ def test_port_ab_bit_reset_clears_single_port_c_bit() -> None:
     assert not (ppi.read_port(0xAA) & (1 << 6))
 
 
-def test_port_ab_mode_word_clears_port_c() -> None:
-    # Corrected behaviour (Phase 2): a real 8255 mode-set control word (bit 7 = 1)
-    # resets the output ports to 0, so Port C — including the keyboard row select
-    # — is cleared. (Previously the row was left untouched.)
+def test_port_ab_mode_word_leaves_port_c_unchanged() -> None:
+    # Real 8255 datasheets disagree on whether a mode-set control word
+    # (bit 7 = 1) resets output latches; this follows openMSX's I8255 core
+    # (shared across its MSX/SC-3000/SVI machines), which leaves them alone.
     ppi = make_ppi()
     ppi.write_port(0xAA, 0x43)   # CAPS LED (bit 6) + row 3 on Port C
-    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word → clears Port C
-    assert ppi.read_port(0xAA) == 0x00
+    ppi.write_port(0xAB, 0x82)   # bit7=1 mode-set word → latch unchanged
+    assert ppi.read_port(0xAA) == 0x43
 
 
 # --- allium/ppi.allium: rows 9-10 are real matrix rows (numeric keypad), not
