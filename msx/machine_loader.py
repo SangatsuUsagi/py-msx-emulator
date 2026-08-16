@@ -789,7 +789,9 @@ def build_machine(
         # SCC-I cartridge unconditionally occupies slot 1; normal cartridge/
         # mapper resolution (and the SRAM path, which SCC-I has none of) is
         # skipped entirely. The caller ensures `cartridge is None` here.
-        scc = SCC()
+        # is_052539=True: the SCC-I cartridge carries a genuine Konami-052539
+        # chip, not a 051649 (see SCC.is_052539's docstring).
+        scc = SCC(is_052539=True)
         mapper_instance = SCCICart(scc=scc)
     else:
         resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)

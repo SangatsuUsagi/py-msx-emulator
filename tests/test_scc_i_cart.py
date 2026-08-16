@@ -4,7 +4,7 @@ from msx.scc import SCC
 
 
 def _cart() -> SCCICart:
-    return SCCICart(scc=SCC())
+    return SCCICart(scc=SCC(is_052539=True))
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def test_snapshot_restore_round_trip() -> None:
 
     snap = cart.snapshot()
 
-    fresh = SCCICart(scc=SCC())
+    fresh = SCCICart(scc=SCC(is_052539=True))
     fresh.restore(snap)
 
     assert bytes(fresh.ram) == bytes(cart.ram)
@@ -181,7 +181,7 @@ def test_snapshot_restore_round_trip() -> None:
 def test_snapshot_on_blank_cart_round_trips() -> None:
     cart = _cart()
     snap = cart.snapshot()
-    fresh = SCCICart(scc=SCC())
+    fresh = SCCICart(scc=SCC(is_052539=True))
     fresh.restore(snap)
     assert bytes(fresh.ram) == bytes(cart.ram)
     assert fresh._banks == cart._banks

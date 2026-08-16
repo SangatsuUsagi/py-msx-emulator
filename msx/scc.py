@@ -69,6 +69,19 @@ class SCC:
     # cartridge mapper (e.g. SCCICart) re-derives it from its own saved mode
     # register on restore(), same as reset() re-derives it below.
     _plus_mode: bool = field(default=False, init=False, repr=False)
+    # Chip identity, fixed for the instance's whole lifetime (never toggled by
+    # set_mode() or reset() — unlike real hardware, this codebase has no
+    # separate chip class per variant, so this flag stands in for "which
+    # physical chip is this"). False (default): a real Konami 051649 — the
+    # only chip KonamiSCCMapper ever carries — whose Compatible-mode register
+    # map has nothing readable above the waveform banks. True: a Konami/SCC-I
+    # 052539 (the SCC-I cartridge's chip, see msx/mapper.py:SCCICart) — whose
+    # Compatible-mode register map additionally exposes channel 5's waveform
+    # bank as readable at 0xA0-0xBF, since the 052539 genuinely stores it
+    # separately even while presenting the 051649-compatible layout (openMSX
+    # SCC::Mode::Compatible vs Mode::Real). No effect in Plus mode, and no
+    # effect on writes in either mode.
+    is_052539: bool = field(default=False, repr=False)
 
     # ------------------------------------------------------------------ I/O
 
@@ -88,6 +101,13 @@ class SCC:
             bank = addr >> 5
             byte = addr & 0x1F
             return self._waves[bank][byte] & 0xFF
+        if self.is_052539 and not self._plus_mode and 0xA0 <= addr < 0xC0:
+            # 052539 Compatible-mode quirk: channel 5's waveform bank is
+            # separately readable here even though it is only writable via
+            # channel 4's mirrored write (see write()) — real 051649 hardware
+            # has no such storage and reads 0xFF through this whole range
+            # instead (openMSX SCC::peekMem, Mode::Compatible vs Mode::Real).
+            return self._waves[4][addr & 0x1F] & 0xFF
         # The frequency/volume/enable block, the deformation register, and any
         # no-function gap are all write-only on real hardware and read back as
         # 0xFF. Reading the deformation range is a harmless no-op here;

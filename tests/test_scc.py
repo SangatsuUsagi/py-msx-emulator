@@ -398,3 +398,66 @@ def test_konami_scc_mapper_scc_defaults_to_compatible_mode() -> None:
     # the SCC level so a future change to that mapper is caught here too.
     scc = SCC()
     assert scc._plus_mode is False
+
+
+# ---------------------------------------------------------------------------
+# 051649 vs 052539 chip identity (openspec add-scc-i-cartridge follow-up):
+# only a 052539 in Compatible mode exposes channel 5's waveform readably at
+# 0xA0-0xBF; a real 051649 (openMSX Mode::Real) never does.
+# ---------------------------------------------------------------------------
+
+def test_default_chip_identity_is_051649() -> None:
+    scc = SCC()
+    assert scc.is_052539 is False
+
+
+def test_051649_compatible_mode_reads_ff_above_wave_banks() -> None:
+    scc = SCC()  # is_052539=False: KonamiSCCMapper's real 051649
+    scc.write(0x60, 0x7F)  # channel 4 waveform byte 0 (mirrors into bank 4)
+    assert scc.read(0xA0) == 0xFF
+    assert scc.read(0xBF) == 0xFF
+
+
+def test_052539_compatible_mode_exposes_channel5_waveform_readable() -> None:
+    scc = SCC(is_052539=True)  # SCCICart's chip
+    scc.write(0x60, 0x7F)  # channel 4 waveform byte 0, mirrors into bank 4
+    assert scc.read(0xA0) == 0x7F  # channel 5's bank, readable here only for a 052539
+    assert scc.read(0x60) == 0x7F  # channel 4's own offset is unaffected
+
+
+def test_052539_compatible_mode_channel5_readback_tracks_every_byte() -> None:
+    scc = SCC(is_052539=True)
+    for i in range(32):
+        scc.write(0x60 + i, i)
+    for i in range(32):
+        assert scc.read(0xA0 + i) == i
+
+
+def test_052539_compatible_mode_freq_vol_block_still_ff() -> None:
+    # 0x80-0x9F stays write-only even for a 052539 -- the wave5 readback
+    # range is 0xA0-0xBF only; 0x80-0x9F must not leak waveform_bank_4.
+    scc = SCC(is_052539=True)
+    scc.write(0x60, 0x7F)  # populate bank 4 (mirrored from channel 4)
+    scc.write(0x8A, 0x0F)  # channel 1 volume, in the freq/vol block
+    for addr in range(0x80, 0xA0):
+        assert scc.read(addr) == 0xFF
+
+
+def test_052539_compatible_mode_deform_range_still_ff() -> None:
+    # 0xC0-0xFF is outside the wave5-readback range (0xA0-0xBF only) even
+    # for a 052539 in Compatible mode -- the deform register and "no
+    # function" gap there are unaffected by is_052539.
+    scc = SCC(is_052539=True)
+    assert scc.read(0xC0) == 0xFF
+    assert scc.read(0xFF) == 0xFF
+
+
+def test_052539_plus_mode_unaffected_by_is_052539() -> None:
+    # In Plus mode, bank 4 (channel 5) is already independently readable at
+    # its own Plus-mode offset (0x80-0x9F) regardless of is_052539 -- this
+    # flag only changes Compatible-mode read decode.
+    scc = SCC(is_052539=True)
+    scc.set_mode(True)
+    scc.write(0x80, 0x11)
+    assert scc.read(0x80) == 0x11
+    assert scc.read(0xA0) == 0xFF  # Plus mode's freq/vol block, unaffected
