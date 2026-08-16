@@ -191,7 +191,7 @@ SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自
 | キーボード | `msx/input.py`；MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
 | 物理ジョイスティック | `msx/joystick.py`；SDL2 GameController API（優先）と生ジョイスティックのフォールバック；ホットプラグ対応 |
 | キーボードエミュレーション | WASD = Joy1 方向；Z/X または ,/. = トリガ A/B；矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
-| 既知の制限 | <ul><li>MSX のテンキー（マトリクス行 9-10）はホストキーに割り当てられていない。</li><li>ダイオードなしマトリクス特有のキーゴースト現象は再現されない。</li><li>ホストの Esc キーは常にエミュレータを終了させ、MSX の ESC（マトリクス行7・列2）には到達できない。</li><li>ジョイスティック Type A / Type B（ピン7の第2トリガ）判別は未実装で、すべてのポートが Type B として動作する。</li></ul> |
+| 既知の制限 | <ul><li>MSX のテンキー（マトリクス行 9-10）はホストキーに割り当てられていない。</li><li>ダイオードなしマトリクス特有のキーゴースト現象は再現されない。</li><li>ジョイスティック Type A / Type B（ピン7の第2トリガ）判別は未実装で、すべてのポートが Type B として動作する。</li></ul> |
 
 ### マウス
 
@@ -520,12 +520,12 @@ mouse:
 
 | キー | 動作 |
 | --- | --- |
-| Esc | 終了 |
+| Ctrl + Q | 終了 |
 | F8 | ステートセーブ（`saves/states/<title>_YYYYMMDD_HHMMSS.state` に保存）* |
 | F9 | 最新のステートセーブを読み込む |
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
 | F11 | フルスクリーン切り替え |
-| F1–F5 | MSX キーボードマトリクスにそのまま渡す |
+| Esc, F1–F5 | MSX キーボードマトリクスにそのまま渡す |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |

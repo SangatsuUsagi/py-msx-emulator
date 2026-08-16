@@ -269,7 +269,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
-| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>The host Esc key always quits the emulator and cannot reach MSX ESC (matrix row 7, column 2).</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
+| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
 
 ### Mouse
 
@@ -668,12 +668,12 @@ annotated list and valid button/key-name labels.
 
 | Key | Action |
 | --- | --- |
-| Esc | Quit |
+| Ctrl + Q | Quit |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Toggle fullscreen |
-| F1–F5 | Passed through to the MSX keyboard matrix |
+| Esc, F1–F5 | Passed through to the MSX keyboard matrix |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |

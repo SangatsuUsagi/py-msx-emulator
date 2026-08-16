@@ -211,12 +211,12 @@ class _EventApi(Protocol):
     SDL_KEYUP: int
     SDLK_LCTRL: int
     SDLK_RCTRL: int
-    SDLK_ESCAPE: int
     SDLK_F8: int
     SDLK_F9: int
     SDLK_F10: int
     SDLK_F11: int
     SDLK_c: int
+    SDLK_q: int
     KMOD_CTRL: int
     SDL_WINDOW_FULLSCREEN_DESKTOP: int
     SDL_MOUSEMOTION: int
@@ -310,7 +310,7 @@ def _handle_hotkey_keydown(
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
     running: bool, fullscreen: bool,
 ) -> tuple[bool, bool, bool]:
-    """Application meta-hotkey KEYDOWN handling: ESC quit, F11 fullscreen,
+    """Application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F11 fullscreen,
     F8 save state, F9 load state, F10 screenshot, Ctrl-C debugger break.
 
     None of these produce an MSX matrix-key effect -- they are frontend
@@ -318,8 +318,12 @@ def _handle_hotkey_keydown(
     combo and the plain key_down fallback (mirrors `_handle_ctrl_combo_keydown`'s
     consumed/not-consumed shape). `running`/`fullscreen` are returned unchanged
     unless this key actually changes them. Returns (consumed, running, fullscreen).
+
+    ESC is deliberately not claimed here: it has its own MSX matrix cell
+    (row 7, column 2) and reaches it through the plain key_down fallback,
+    like any other ordinary key.
     """
-    if sym == sdl2.SDLK_ESCAPE:
+    if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False, fullscreen
     if sym == sdl2.SDLK_F11:
         fullscreen = not fullscreen
@@ -738,9 +742,10 @@ def run(
         mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
             host mouse (relative-mouse mode); None disables mouse emulation.
 
-    Runtime hotkeys: ESC quit, F8 save state, F9 load state, F10 screenshot,
+    Runtime hotkeys: Ctrl-Q quit, F8 save state, F9 load state, F10 screenshot,
     F11 toggle fullscreen, Ctrl-C break into the debugger (if attached),
     Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (see `_CtrlComboState`).
+    ESC now reaches the MSX matrix (row 7, column 2) like any other key.
     """
     try:
         import sdl2

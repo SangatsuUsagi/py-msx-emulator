@@ -50,6 +50,7 @@ class _FakeSDL:
     SDLK_F10 = -10
     SDLK_F11 = -11
     SDLK_c = ord("c")
+    SDLK_q = ord("q")
     SDLK_LCTRL = 1073742048
     SDLK_RCTRL = 1073742052
     SDLK_LALT = 1073742050
@@ -98,10 +99,11 @@ class _Harness:
         self.machine = _FakeMachine()
         self.ctrl_combo = _CtrlComboState()
         self._event = _Event()
+        self.running = True
 
     def send(self, script: list[tuple[int, int, int]]) -> None:
         sdl = _FakeSDL(script, self._event)
-        _handle_events(
+        self.running, _ = _handle_events(
             sdl, self._event, self.machine, None, None, self.ctrl_combo,
             _CTRL_FKEY_CELLS, "", b"", 0, 0, False,
         )
@@ -246,18 +248,27 @@ def test_second_ctrl_side_during_active_combo_does_not_reassert_ctrl() -> None:
 
 
 # --- allium/frontend.allium: PlainKeyPressed (reserved-hotkey precedence) --
-# config.reserved_hotkey_keys claims ESC/F8/F9/F10/F11 for non-MSX app
-# commands before PlainKeyPressed's matrix routing ever sees them. ESC is
-# the one reserved key with its own MSX matrix cell (row 7, col 2), so it is
-# the one case where "never reaches the matrix" is directly observable.
+# config.reserved_hotkey_keys claims F8/F9/F10/F11 for non-MSX app commands
+# before PlainKeyPressed's matrix routing ever sees them. ESC is not in that
+# set -- it is an ordinary MSX key (row 7, col 2) -- and quit is bound to
+# Ctrl-Q instead (modifier-gated, same treatment as Ctrl-C).
 
 _ESC_CELL = KEY_MATRIX_INT[_FakeSDL.SDLK_ESCAPE]
 
 
-def test_escape_is_reserved_and_never_reaches_the_matrix() -> None:
+def test_escape_reaches_the_matrix_and_does_not_quit() -> None:
     h = _Harness()
     h.keydown(_FakeSDL.SDLK_ESCAPE)
-    assert not _asserted(h.matrix, _ESC_CELL)
+    assert _asserted(h.matrix, _ESC_CELL)
+    assert h.running is True
+
+
+def test_ctrl_q_quits_without_touching_the_matrix() -> None:
+    q_cell = KEY_MATRIX_INT[_FakeSDL.SDLK_q]
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_q, _FakeSDL.KMOD_CTRL)
+    assert h.running is False
+    assert not _asserted(h.matrix, q_cell)
 
 
 def test_releasing_fkey_with_no_active_combo_is_plain_release() -> None:
@@ -306,11 +317,14 @@ def test_reserved_hotkey_keycodes_match_real_sdl2_constants() -> None:
     # -- see _FakeSDL's docstring). Also guards against the reserved set
     # drifting out of sync with the real SDL2 F8-F11 keycodes (SDL_SCANCODE_
     # F8..F11 = 65..68, so SDLK = 0x40000000 | scancode = 1073741889..92).
+    # ESC/Ctrl-Q are deliberately excluded: ESC has its own MSX matrix cell
+    # and is not reserved, and Ctrl-Q is modifier-gated rather than a bare
+    # keycode (see reserved_hotkey_keys's own comment).
     import sdl2
 
     assert {
-        sdl2.SDLK_ESCAPE, sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10, sdl2.SDLK_F11,
-    } == {27, 1073741889, 1073741890, 1073741891, 1073741892}
+        sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10, sdl2.SDLK_F11,
+    } == {1073741889, 1073741890, 1073741891, 1073741892}
 
 
 def test_ctrl_keycodes_match_real_sdl2_constants() -> None:
