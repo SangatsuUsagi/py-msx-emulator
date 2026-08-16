@@ -72,15 +72,10 @@ class SCC:
     # Chip identity, fixed for the instance's whole lifetime (never toggled by
     # set_mode() or reset() — unlike real hardware, this codebase has no
     # separate chip class per variant, so this flag stands in for "which
-    # physical chip is this"). False (default): a real Konami 051649 — the
-    # only chip KonamiSCCMapper ever carries — whose Compatible-mode register
-    # map has nothing readable above the waveform banks. True: a Konami/SCC-I
-    # 052539 (the SCC-I cartridge's chip, see msx/mapper.py:SCCICart) — whose
-    # Compatible-mode register map additionally exposes channel 5's waveform
-    # bank as readable at 0xA0-0xBF, since the 052539 genuinely stores it
-    # separately even while presenting the 051649-compatible layout (openMSX
-    # SCC::Mode::Compatible vs Mode::Real). No effect in Plus mode, and no
-    # effect on writes in either mode.
+    # physical chip is this"). False (default): a real Konami 051649 —
+    # the only chip KonamiSCCMapper ever carries. True: a Konami/SCC-I
+    # 052539 (msx/mapper.py:SCCICart's chip). See read() for the one
+    # Compatible-mode behaviour this changes.
     is_052539: bool = field(default=False, repr=False)
 
     # ------------------------------------------------------------------ I/O
