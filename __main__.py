@@ -111,6 +111,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fmpac", action="store_const", const=True, default=None,
                         help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
                              "(conflicts with --slot2)")
+    parser.add_argument("--scc-plus", action="store_const", const=True, default=None,
+                        dest="scc_plus",
+                        help="Connect an SCC-I (SCC+) cartridge in slot 1 (conflicts with "
+                             "a cartridge ROM argument and with --mapper)")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
@@ -203,6 +207,7 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 def _print_startup_summary(
     spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
     fmpac_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
+    scc_plus: bool = False,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
@@ -215,6 +220,8 @@ def _print_startup_summary(
         print(f"fdd2    : {fdd2_path}")
     if fmpac_overlay is not None:
         print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
+    if scc_plus:
+        print("scc-plus: SCC-I cartridge connected in slot 1")
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -307,6 +314,7 @@ def main() -> None:
     scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
     mapper_eff = _first_set(args.mapper, app_cfg.mapper, default=DEFAULT_MAPPER)
     fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, default=False)
+    scc_plus_eff = _first_set(args.scc_plus, app_cfg.scc_plus, default=False)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
     # slot2's built-in default is "no cartridge" (None), unlike the concrete
@@ -330,6 +338,14 @@ def main() -> None:
     if fmpac_eff and slot2_eff:
         print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
               file=sys.stderr)
+        sys.exit(1)
+    if scc_plus_eff and args.cartridge:
+        print("error: --scc-plus and a cartridge ROM argument are mutually "
+              "exclusive (SCC-I occupies slot 1)", file=sys.stderr)
+        sys.exit(1)
+    if scc_plus_eff and (args.mapper is not None or app_cfg.mapper is not None):
+        print("error: --scc-plus and --mapper are mutually exclusive "
+              "(SCC-I forces slot 1 to the SCC-I cartridge)", file=sys.stderr)
         sys.exit(1)
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -375,7 +391,8 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, mouse_port_eff, args
+        spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, mouse_port_eff, args,
+        scc_plus=scc_plus_eff,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -408,6 +425,7 @@ def main() -> None:
                 fdd2=fdd2_path,
                 fmpac_overlay=fmpac_overlay,
                 joy_map=app_cfg.keyboard_joy_map(),
+                scc_plus=scc_plus_eff,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)

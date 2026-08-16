@@ -8,12 +8,8 @@ from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
 NUM_CHANNELS: int = 5
-WAVE_BANKS: int = 4
+WAVE_BANKS: int = 5
 WAVE_LEN: int = 32          # bytes per waveform bank, and steps per playback cycle
-
-# Channel index -> waveform bank index: channels 0-2 are independent,
-# channels 3 and 4 (4 and 5 in 1-based chip terms) share bank 3.
-_CH_TO_BANK: tuple[int, ...] = (0, 1, 2, 3, 3)
 
 # Portability note: _waves (WAVE_BANKS banks of WAVE_LEN bytes) and
 # _freq/_vol/_phase_cnt/_phase_idx (NUM_CHANNELS entries each) are
@@ -45,7 +41,10 @@ class SccState(TypedDict):
 
 @dataclass
 class SCC:
-    # 4 waveform banks: channels 1-3 independent, channel 4+5 share bank 3.
+    # 5 waveform banks, one per channel. In Compatible mode (the default) a
+    # write to bank 3 (channel 4) is mirrored into bank 4 as well, since
+    # channel 5 has no independent waveform of its own on real Compatible-mode
+    # hardware; Plus mode writes bank 4 directly, no mirroring. See write().
     _waves: list[list[int]] = field(
         default_factory=lambda: [[0] * WAVE_LEN for _ in range(WAVE_BANKS)],
         init=False, repr=False
@@ -64,37 +63,57 @@ class SCC:
         default_factory=lambda: [0] * NUM_CHANNELS, init=False, repr=False
     )
     _clk_frac: int = field(default=0, init=False, repr=False)
+    # Compatible mode (default): wave region 0x00-0x7F (banks 0-3), freq/vol/
+    # enable at 0x80-0x9F. Plus mode: wave region 0x00-0x9F (banks 0-4, all
+    # independent), freq/vol/enable at 0xA0-0xBF. Not part of SccState — a
+    # cartridge mapper (e.g. SCCICart) re-derives it from its own saved mode
+    # register on restore(), same as reset() re-derives it below.
+    _plus_mode: bool = field(default=False, init=False, repr=False)
 
     # ------------------------------------------------------------------ I/O
 
+    def set_mode(self, plus: bool) -> None:
+        """Select Plus mode (5 independent waveform banks) or Compatible mode
+        (channel 5 mirrors channel 4's bank). Does not alter register
+        contents, only how read()/write() decode the address offset."""
+        self._plus_mode = plus
+
     def read(self, addr: int) -> int:
-        """Return the register byte at the given offset from 0x9800."""
+        """Return the register byte at the given offset from 0x9800
+        (Compatible mode) or 0xB800 (Plus mode)."""
         addr = addr & 0xFF
-        if addr < 0x80:
-            # Waveform banks: 4 × 32 bytes at offsets 0x00, 0x20, 0x40, 0x60.
-            bank = addr >> 5        # 0–3
-            byte = addr & 0x1F      # 0–31
+        wave_limit = 0xA0 if self._plus_mode else 0x80
+        if addr < wave_limit:
+            # Waveform banks: 32 bytes each, one bank per channel.
+            bank = addr >> 5
+            byte = addr & 0x1F
             return self._waves[bank][byte] & 0xFF
-        # Offsets 0x80-0xFF (frequency/volume/enable block at 0x80-0x9F,
-        # mirrored twice; the deformation register at 0xE0-0xFF; and the
-        # no-function gap between) are all write-only on real hardware and
-        # read back as 0xFF. Reading the deformation range is a harmless
-        # no-op here; rotation / frequency-mode emulation is intentionally
-        # omitted.
+        # The frequency/volume/enable block, the deformation register, and any
+        # no-function gap are all write-only on real hardware and read back as
+        # 0xFF. Reading the deformation range is a harmless no-op here;
+        # rotation / frequency-mode emulation is intentionally omitted.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
-        """Write value to the register at the given offset from 0x9800."""
+        """Write value to the register at the given offset from 0x9800
+        (Compatible mode) or 0xB800 (Plus mode)."""
         addr = addr & 0xFF
         value = value & 0xFF
-        if addr < 0x80:
+        wave_limit = 0xA0 if self._plus_mode else 0x80
+        if addr < wave_limit:
             bank = addr >> 5
             byte = addr & 0x1F
             self._waves[bank][byte] = value
+            if not self._plus_mode and bank == 3:
+                # Compatible mode only: channel 5 has no independent waveform
+                # of its own, so it mirrors whatever channel 4 was just
+                # written (openMSX SCC::writeWave).
+                self._waves[4][byte] = value
             return
-        if addr < 0xA0:
-            # Frequency/volume/enable block, mirrored at 0x80-0x8F and
-            # 0x90-0x9F: only the low 4 bits of the offset are decoded.
+        freq_vol_limit = 0xC0 if self._plus_mode else 0xA0
+        if addr < freq_vol_limit:
+            # Frequency/volume/enable block, mirrored twice within its 32-byte
+            # span: only the low 4 bits of the offset are decoded.
             reg = addr & 0x0F
             if reg <= 0x09:
                 ch = reg >> 1
@@ -107,14 +126,16 @@ class SCC:
             else:
                 self._enable = value & 0x1F
             return
-        # Offsets 0xA0-0xFF (incl. the deformation register at 0xE0-0xFF) are
-        # a safe no-op: they do not alter waveform/frequency/volume/enable
-        # state.
+        # The deformation register and any no-function gap are a safe no-op:
+        # they do not alter waveform/frequency/volume/enable state.
 
     # --------------------------------------------------------------- reset
 
     def reset(self) -> None:
-        """Restore power-on register and synthesis state (matches field defaults)."""
+        """Restore power-on register and synthesis state (matches field
+        defaults). Also forces Compatible mode, matching openMSX SCC::reset()
+        (a cartridge mapper re-selects Plus mode afterward if its own mode
+        register calls for it)."""
         self._waves = [[0] * WAVE_LEN for _ in range(WAVE_BANKS)]
         self._freq = [0] * NUM_CHANNELS
         self._vol = [0] * NUM_CHANNELS
@@ -122,6 +143,7 @@ class SCC:
         self._phase_cnt = [0] * NUM_CHANNELS
         self._phase_idx = [0] * NUM_CHANNELS
         self._clk_frac = 0
+        self._plus_mode = False
 
     # ------------------------------------------------------------ save-state
 
@@ -175,7 +197,10 @@ class SCC:
         period = [max(1, freq[ch] + 1) for ch in range(NUM_CHANNELS)]
         volsc = [vol[ch] * SCC_SCALE for ch in range(NUM_CHANNELS)]
         en = [(enable >> ch) & 1 for ch in range(NUM_CHANNELS)]
-        wave = [waves[_CH_TO_BANK[ch]] for ch in range(NUM_CHANNELS)]  # ch 4/5 share bank 3
+        # One bank per channel (bank == channel index): in Compatible mode
+        # bank 4 already mirrors bank 3's content via write()'s mirroring, so
+        # no mode branch is needed here.
+        wave = [waves[ch] for ch in range(NUM_CHANNELS)]
         wave_mask = WAVE_LEN - 1  # hoisted out of the hot loop below
         # --- bind phase state to locals (lists mutated in place; scalar clk written back) ---
         pc = self._phase_cnt

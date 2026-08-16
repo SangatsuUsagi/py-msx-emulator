@@ -43,6 +43,12 @@ def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
     assert cfg.fmpac is True
 
 
+def test_scc_plus_key_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "scc_plus: true\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.scc_plus is True
+
+
 def test_nested_rpc_group_parsed(tmp_path: Path) -> None:
     _write(tmp_path, "rpc:\n  enabled: true\n  socket: /tmp/alt.sock\n")
     cfg = load_app_config(tmp_path)

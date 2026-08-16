@@ -40,6 +40,7 @@ from msx.mapper import (
     MajutsushiMapper,
     Mapper,
     RTypeMapper,
+    SCCICart,
 )
 from msx.memory import Memory
 from msx.opll import Opll
@@ -732,6 +733,7 @@ def build_machine(
     fdd2: Path | None = None,
     fmpac_overlay: _FmPacOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
+    scc_plus: bool = False,
 ) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
     """Build a Machine from a resolved MachineSpec.
 
@@ -751,7 +753,10 @@ def build_machine(
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
         joy_map: Optional Joy1 keyboard key map override for InputState
             (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
-            The last parameter in the signature.
+        scc_plus: When True, slot 1 is unconditionally an SCC-I cartridge
+            (SCCICart) instead of the normal cartridge/mapper resolution --
+            `cartridge`/`mapper` are ignored. The caller (CLI layer) is
+            responsible for ensuring `cartridge is None` in this mode.
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -777,8 +782,39 @@ def build_machine(
         logo_bytes = None
 
     # --- Cartridge mapper resolution ---
-    resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
-    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
+    sram_save_path: Path | None = None
+    scc: SCC | None
+    mapper_instance: Mapper
+    if scc_plus:
+        # SCC-I cartridge unconditionally occupies slot 1; normal cartridge/
+        # mapper resolution (and the SRAM path, which SCC-I has none of) is
+        # skipped entirely. The caller ensures `cartridge is None` here.
+        scc = SCC()
+        mapper_instance = SCCICart(scc=scc)
+    else:
+        resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
+        scc = SCC() if resolved == "KonamiSCC" else None
+
+        # SRAM: load existing save file if mapper supports it
+        sram_data: bytearray | None = None
+        if resolved in _SRAM_SIZES and cartridge is not None:
+            # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not
+            # None here, so cart_sha1 is set).
+            assert cart_sha1 is not None
+            sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
+            expected_size = _SRAM_SIZES[resolved]
+            if sram_save_path.exists():
+                raw = sram_save_path.read_bytes()
+                if len(raw) == expected_size:
+                    sram_data = bytearray(raw)
+                else:
+                    print(
+                        f"warning: SRAM file {sram_save_path} has wrong size "
+                        f"({len(raw)} != {expected_size}), starting fresh",
+                        file=sys.stderr,
+                    )
+
+        mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
 
     resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
     if resolved2 == "KonamiSCC":
@@ -787,28 +823,6 @@ def build_machine(
             file=sys.stderr,
         )
         resolved2 = "Konami"
-
-    # SRAM: load existing save file if mapper supports it
-    sram_save_path: Path | None = None
-    sram_data: bytearray | None = None
-    if resolved in _SRAM_SIZES and cartridge is not None:
-        # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not None
-        # here, so cart_sha1 is set).
-        assert cart_sha1 is not None
-        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
-        expected_size = _SRAM_SIZES[resolved]
-        if sram_save_path.exists():
-            raw = sram_save_path.read_bytes()
-            if len(raw) == expected_size:
-                sram_data = bytearray(raw)
-            else:
-                print(
-                    f"warning: SRAM file {sram_save_path} has wrong size "
-                    f"({len(raw)} != {expected_size}), starting fresh",
-                    file=sys.stderr,
-                )
-
-    mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
     mapper2_instance = _make_mapper(resolved2, cartridge2)
     dac: MajutsushiMapper | None = (
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None

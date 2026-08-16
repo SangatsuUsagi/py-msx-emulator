@@ -323,3 +323,78 @@ def test_snapshot_on_silent_scc_round_trips() -> None:
     snapshot = scc.snapshot()
     scc.restore(snapshot)
     assert scc.snapshot() == snapshot
+
+
+# ---------------------------------------------------------------------------
+# SCC Plus mode (openspec add-scc-i-cartridge)
+# ---------------------------------------------------------------------------
+
+def test_default_mode_is_compatible() -> None:
+    scc = SCC()
+    assert scc._plus_mode is False
+
+
+def test_set_mode_true_switches_to_plus_decode() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    assert scc._plus_mode is True
+
+
+def test_mode_switch_preserves_register_contents() -> None:
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    before_wave = list(scc._waves[0])
+    before_freq = scc._freq[0]
+    before_vol = scc._vol[0]
+    before_enable = scc._enable
+    scc.set_mode(True)
+    assert scc._waves[0] == before_wave
+    assert scc._freq[0] == before_freq
+    assert scc._vol[0] == before_vol
+    assert scc._enable == before_enable
+
+
+def test_plus_mode_channel5_independently_writable() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0x60, 0x11)  # channel 4 waveform byte 0
+    scc.write(0x80, 0x22)  # channel 5 waveform byte 0
+    assert scc.read(0x60) == 0x11
+    assert scc.read(0x80) == 0x22  # did not inherit channel 4's value
+
+
+def test_plus_mode_waveform_extends_to_0x9f() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0x90, 0x33)  # channel 5 waveform byte 16
+    assert scc.read(0x90) == 0x33
+
+
+def test_plus_mode_freq_vol_enable_relocated_to_0xa0() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    scc.write(0xAF, 0x1F)  # channel enable, at the Plus-mode offset
+    assert scc._enable == 0x1F
+    assert scc.read(0xAF) == 0xFF  # write-only, same as Compatible mode
+
+
+def test_plus_mode_deformation_register_at_0xc0() -> None:
+    scc = SCC()
+    scc.set_mode(True)
+    assert scc.read(0xC0) == 0xFF
+    scc.write(0xC8, 0xAB)  # safe no-op
+    assert scc._enable == 0
+
+
+def test_compatible_mode_unaffected_by_plus_mode_existing() -> None:
+    # Default mode (set_mode never called) keeps the original Compatible
+    # behavior: channel 5 mirrors whatever is written to channel 4's bank.
+    scc = SCC()
+    scc.write(0x60, 0x55)
+    assert scc.read(0x60) == 0x55
+
+
+def test_konami_scc_mapper_scc_defaults_to_compatible_mode() -> None:
+    # KonamiSCCMapper never calls set_mode(); this asserts that guarantee at
+    # the SCC level so a future change to that mapper is caught here too.
+    scc = SCC()
+    assert scc._plus_mode is False

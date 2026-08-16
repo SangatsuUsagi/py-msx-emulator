@@ -37,6 +37,11 @@ mapper: auto
 # Conflicts with a slot 2 cartridge (--slot2 / slot2 above).
 fmpac: false
 
+# Connect an SCC-I (SCC+) cartridge in slot 1 (128 KB bank-switched RAM,
+# blank -- no ROM/data file is ever loaded -- plus the SCC sound chip).
+# Conflicts with a cartridge ROM argument and with `mapper` above.
+scc_plus: false
+
 # Frame skip mode: true = auto (adapt to frame overruns, default), false =
 # none (always render every frame; may stutter under load).
 frame_skip: true
