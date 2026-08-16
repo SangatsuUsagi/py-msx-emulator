@@ -1077,9 +1077,23 @@ class KonamiSCCMapper(_BankTracing):
             self._sync_window(window)
 
 
-_SCCI_RAM_BLOCKS = 16
-_SCCI_BANK_MASK = 0x0F
-_SCCI_RAM_SIZE = _SCCI_RAM_BLOCKS * _PAGE_8K  # 128 KB
+_SCCI_RAM_BLOCKS = 8
+# Real SCC-I cartridges (Konami 052539) have a 128 KB (16 x 8 KB block)
+# address space but only 64 KB of physical RAM: bit 3 of a bank register's
+# selected block is not connected to a real memory chip on either factory
+# cartridge variant -- one variant has real RAM at blocks 0-7 and reads
+# 0xFF at 8-15, the other the reverse (see references/docs/Konami's Sound
+# Cartridge (SCC+) for the MSX.md, "Hardware Properties"/"Programming"
+# sections). Rather than modelling that per-variant asymmetry (which would
+# need a way to pick a variant this project has no CLI surface for), this
+# mask reproduces the "connect the two 64 KB banks so they mirror" hardware
+# modification the same reference documents as making a single physical
+# cartridge fully compatible with either variant's software: block N and
+# block N+8 always alias the same 8 KB, so no software-visible "which
+# variant" asymmetry (including the unpopulated-half open-bus behaviour
+# some cartridge-detection code may rely on) can trip either title up.
+_SCCI_BANK_MASK = 0x07
+_SCCI_RAM_SIZE = _SCCI_RAM_BLOCKS * _PAGE_8K  # 64 KB
 _SCCI_SCC_WINDOW_LEN = 0x800  # 0x9800-0x9FFF or 0xB800-0xBFFF
 
 
@@ -1091,18 +1105,20 @@ class SCCICartState(TypedDict):
 
 @dataclass
 class SCCICart(_BankTracing):
-    """SCC-I cartridge (community/openMSX docs: "SCC+"): 128 KB bank-switched
-    RAM in four 8 KB windows at 0x4000-0xBFFF -- no ROM is ever loaded, RAM
-    starts blank -- plus an `SCC` chip reachable at 0x9800-0x9FFF (classic/
-    Compatible mode) or 0xB800-0xBFFF (Plus mode), selected by a mode
-    register at 0xBFFE/0xBFFF. Ground truth: openMSX `MSXSCCPlusCart`.
+    """SCC-I cartridge (community/openMSX docs: "SCC+"): 64 KB of physical
+    bank-switched RAM, addressed as if it were 128 KB (block N mirrors
+    block N+8 -- see `_SCCI_BANK_MASK`) in four 8 KB windows at
+    0x4000-0xBFFF -- no ROM is ever loaded, RAM starts blank -- plus an
+    `SCC` chip reachable at 0x9800-0x9FFF (classic/Compatible mode) or
+    0xB800-0xBFFF (Plus mode), selected by a mode register at 0xBFFE/
+    0xBFFF. Ground truth: openMSX `MSXSCCPlusCart`.
 
     Same four bank-register zones as `KonamiSCCMapper` (0x5000-0x57FF,
     0x7000-0x77FF, 0x9000-0x97FF, 0xB000-0xB7FF), but each window's register
-    is masked to 4 bits (16 always-valid RAM blocks, no "unmapped" case) and
-    a RAM-write-region bit (from the mode register) can turn a whole window
-    into a plain RAM window, overriding both the bank-register zone and the
-    SCC register window for that window -- see write().
+    is masked to 3 bits (8 always-valid, mirrored RAM blocks, no "unmapped"
+    case) and a RAM-write-region bit (from the mode register) can turn a
+    whole window into a plain RAM window, overriding both the bank-register
+    zone and the SCC register window for that window -- see write().
     """
 
     scc: "SCC"

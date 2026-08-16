@@ -16,10 +16,13 @@ def test_ram_blank_at_construction() -> None:
     assert all(cart.read(addr) == 0x00 for addr in range(0x4000, 0xC000, 0x400))
 
 
-def test_bank_register_value_masked_to_4_bits() -> None:
+def test_bank_register_value_masked_to_3_bits() -> None:
+    # Real SCC-I cartridges have 128 KB of *addressable* blocks but only
+    # 64 KB of physical RAM, mirrored across the top bit -- see
+    # test_bank_n_and_n_plus_8_alias_the_same_ram below.
     cart = _cart()
     cart.write(0x5000, 0xFF)
-    assert cart._banks[0] & 0x0F == 0x0F
+    assert cart._banks[0] & 0x07 == 0x07
     assert cart._banks[0] == 0xFF  # raw register value is stored as-is
 
 
@@ -28,13 +31,31 @@ def test_bank_switch_changes_visible_window_content() -> None:
     # Point window 0 at block 5, temporarily make it a RAM-write region to
     # write data into that block, then point window 1 at the same block and
     # confirm it sees the same content -- proving the bank register (not the
-    # window) selects which of the 16 blocks is visible.
+    # window) selects which of the 8 physical blocks is visible.
     cart.write(0x5000, 5)  # window 0 bank register -> block 5
     cart.write(0xBFFE, 0x01)  # window 0 becomes a RAM-write region
     cart.write(0x4010, 0xAB)  # writes into block 5, offset 0x10
     cart.write(0xBFFE, 0x00)  # back to ordinary bank-register mode
     cart.write(0x7000, 5)  # window 1 bank register -> block 5 too
     assert cart.read(0x6010) == 0xAB
+
+
+def test_bank_n_and_n_plus_8_alias_the_same_ram() -> None:
+    # Real SCC-I cartridges (Konami 052539) have only 64 KB of physical RAM
+    # in a 128 KB (16-block) address space -- one factory cartridge variant
+    # has real RAM at blocks 0-7 and reads 0xFF at 8-15, the other the
+    # reverse (see references/docs/Konami's Sound Cartridge (SCC+) for the
+    # MSX.md). This project reproduces the "connect the two 64 KB banks
+    # so they mirror" hardware modification that reference documents as
+    # making a single physical cartridge work with either variant's
+    # software: block N and block N+8 always alias the same physical block.
+    cart = _cart()
+    cart.write(0x5000, 3)  # window 0 -> block 3
+    cart.write(0xBFFE, 0x01)  # window 0 becomes a RAM-write region
+    cart.write(0x4010, 0xCD)  # writes into block 3, offset 0x10
+    cart.write(0xBFFE, 0x00)
+    cart.write(0x7000, 11)  # window 1 -> block 11 (3 + 8)
+    assert cart.read(0x6010) == 0xCD  # same physical block as block 3
 
 
 # ---------------------------------------------------------------------------
