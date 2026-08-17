@@ -10,8 +10,8 @@ from unittest.mock import patch
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
-def _run_main(argv: list[str]) -> tuple[int, str, str]:
-    """Run __main__.main() in MSX2 mode with patched filesystem.
+def _run_main(argv: list[str], machine: str = "cbios_msx2") -> tuple[int, str, str]:
+    """Run __main__.main() with patched filesystem.
 
     Returns (exit_code, stdout, stderr).
     """
@@ -24,7 +24,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_bytes(self: Path) -> bytes:
         return b"\x00" * 32768
 
-    with patch.object(sys, "argv", [".", "--machine", "cbios_msx2", *argv]), \
+    with patch.object(sys, "argv", [".", "--machine", machine, *argv]), \
          patch("builtins.print", side_effect=lambda *a, **kw: (
              stdout_buf.write(" ".join(str(x) for x in a) + "\n")
              if kw.get("file") is None else
@@ -78,3 +78,13 @@ class TestBreakPointCLI:
         code, _out, err = _run_main(["--break-point", "C000,ZZZZ"])
         assert code != 0
         assert "invalid" in err.lower()
+
+    def test_breakpoint_on_msx1_machine(self) -> None:
+        code, out, err = _run_main(["--break-point", "C000"], machine="cbios_msx1")
+        assert code == 0
+        assert "C000h" in out
+
+    def test_watchpoint_on_msx1_machine(self) -> None:
+        code, out, err = _run_main(["--watch-point", "C000,w"], machine="cbios_msx1")
+        assert code == 0
+        assert "C000h" in out

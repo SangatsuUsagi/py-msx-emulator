@@ -25,13 +25,14 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 ### 起動時にブレークポイント・ウォッチポイントを設定する
 
 SDL ウィンドウが開く前に CLI フラグでブレークポイントやウォッチポイントを設定できます。
+どちらも MSX1 / MSX2 いずれのマシンでも動作します。
 
 ```bash
 # 実行ブレークポイント — 最大 4 個、カンマ区切りの 16 進アドレス（0x プレフィックスなし）
 python . path/to/game.rom --machine cbios_msx2_jp --break-point C000,D000
 
 # ウォッチポイント — addr[,r|w|rw] ペアをカンマ区切りで指定；デフォルトモードは rw
-python . path/to/game.rom --machine cbios_msx2_jp --watch-point ca4a,w,fedc,rw
+python . path/to/game.rom --machine cbios_msx1_jp --watch-point ca4a,w,fedc,rw
 ```
 
 有効なブレークポイントとウォッチポイントは起動時に stderr に出力されます。

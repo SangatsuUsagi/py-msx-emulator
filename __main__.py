@@ -439,13 +439,12 @@ def main() -> None:
         from msx.debugger.prompt import Debugger
         machine._debugger = Debugger(machine)
 
-        if spec.generation == "msx2":
-            if breakpoint_addrs:
-                machine.set_breakpoints(breakpoint_addrs)
-                print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
-            if watchpoint_entries:
-                machine.set_watchpoints(watchpoint_entries)
-                print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
+        if breakpoint_addrs:
+            machine.set_breakpoints(breakpoint_addrs)
+            print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
+        if watchpoint_entries:
+            machine.set_watchpoints(watchpoint_entries)
+            print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
 
         if args.mapper_trace:
             from msx.mapper_tracer import attach_to_machine

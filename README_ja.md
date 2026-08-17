@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2082%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2084%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -489,8 +489,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace-out FILE` | stdout | マッパートレースを FILE に書き出す |
 | `--count-frame N` | _（なし）_ | N フレームをヘッドレスで実行して終了（SDL ウィンドウなし） |
 | `--benchmark [FRAMES]` | _（なし）_ | FRAMES フレーム（デフォルト：10000）ヘッドレス・無制限速度で実行し、平均 FPS を表示。`--resume` と組み合わせると保存済みシーンからベンチマークできる。`--count-frame` とは併用不可 |
-| `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個、MSX2 専用） |
-| `--watch-point ADDRS` | _（なし）_ | ウォッチポイントアドレス（最大 4 個、MSX2 専用）；各アドレスの後に `,r`（読み取り）、`,w`（書き込み）、または `,rw`（両方）を付加できる（省略時は `rw`）。例：`C000,rw,D000,r` |
+| `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個） |
+| `--watch-point ADDRS` | _（なし）_ | ウォッチポイントアドレス（最大 4 個）；各アドレスの後に `,r`（読み取り）、`,w`（書き込み）、または `,rw`（両方）を付加できる（省略時は `rw`）。例：`C000,rw,D000,r` |
 | `--rpc` | オフ | 組み込みの Unix ソケット JSON-RPC 制御サーバを有効化（対話実行モード）。[リモート制御](#リモート制御socket-rpc--mcp)を参照 |
 | `--rpc-socket PATH` | `/tmp/py_msx_emu.sock` | `--rpc` 用の Unix ソケットパス（`--rpc` なしでは無効） |
 
@@ -763,7 +763,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2082 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2084 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -823,7 +823,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2082 テスト
+├── tests/                 # テストスイート — 2084 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
