@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2082%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2084%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -652,8 +652,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
 | `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
-| `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 (MSX2 only) |
-| `--watch-point ADDRS` | _(none)_ | Watchpoint addresses, max 4 (MSX2 only); append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r` |
+| `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
+| `--watch-point ADDRS` | _(none)_ | Watchpoint addresses, max 4; append `,r`, `,w`, or `,rw` after each address to restrict to read, write, or both (default: `rw`). Example: `C000,rw,D000,r` |
 | `--rpc` | off | Enable the embedded Unix-socket JSON-RPC control server (interactive run mode). See [Remote control](#remote-control-socket-rpc--mcp) |
 | `--rpc-socket PATH` | `/tmp/py_msx_emu.sock` | Unix socket path for `--rpc` (no effect without `--rpc`) |
 
@@ -935,7 +935,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2082 tests spanning unit tests
+The test suite covers all major components with 2084 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -998,7 +998,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2082 tests
+├── tests/                 # Test suite — 2084 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1059,6 +1059,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI startup flags being silently ignored on MSX1 machines. `Machine.set_breakpoints`/`set_watchpoints` operate purely on the CPU and memory bus with no V9938/MSX2 dependency, and the interactive debugger's `ba`/`br`/`bl`/`wa`/`wd`/`wl` REPL commands already worked on MSX1 — only the CLI startup path was gated to `generation == "msx2"`, an artifact of when the interactive debugger itself was MSX2-only.
 - **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus` (and the matching `py_emulator.yaml` `scc_plus` key): a bare sound cartridge connected unconditionally in primary slot 1, for FDD (floppy-disk) MSX2 titles that use it purely for audio (a cartridge ROM argument together with `--scc-plus` is a startup error). Extends `msx/scc.py`'s SCC chip with a Plus mode (5 independent waveform banks, relocated frequency/volume/enable block) alongside the existing Compatible mode, and a chip-identity flag (`is_052539`) so a real Konami 051649 (`KonamiSCCMapper`) and the SCC-I cartridge's 052539 correctly differ in one Compatible-mode read case (channel 5's waveform readable at 0xA0-0xBF on a 052539 only); adds `msx/mapper.py:SCCICart` (64 KB of physical bank-switched RAM addressed as if 128 KB, with bank register bit 3 ignored so block N mirrors block N+8 — reproducing a real, documented cartridge modification that makes one implementation compatible with both target titles' expected RAM-population variant; blank at power-on, mode register selecting Compatible vs. Plus SCC window and per-window RAM-write behaviour).
 - **v2.5.1** (2026-08-16) — Close most of the outstanding Allium open questions from v2.5.0's distillation pass, fixing two along the way: a PPI (i8255) mode-set control word no longer clears Port C's latch, and reading port 0xAB now returns the last mode-set word instead of floating at 0xFF (both now match openMSX's shared I8255 core). Rebind quit to Ctrl+Q; the host Esc key now reaches MSX ESC (row 7, column 2) instead of being reserved. Switch the PSG amplitude table from an idealised geometric curve to a measured-silicon one (ayumi's oscilloscope-measured AY-3-8910 DAC data) — an audible change, low/mid volume levels sit noticeably louder. Also: `docs/msx_emulator_rpc_spec.md`, `pyproject.toml`, and `requirements-dev.txt` are now included in the public GitHub mirror (previously private-only).
 - **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.

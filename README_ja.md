@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2082%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2084%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -489,8 +489,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace-out FILE` | stdout | マッパートレースを FILE に書き出す |
 | `--count-frame N` | _（なし）_ | N フレームをヘッドレスで実行して終了（SDL ウィンドウなし） |
 | `--benchmark [FRAMES]` | _（なし）_ | FRAMES フレーム（デフォルト：10000）ヘッドレス・無制限速度で実行し、平均 FPS を表示。`--resume` と組み合わせると保存済みシーンからベンチマークできる。`--count-frame` とは併用不可 |
-| `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個、MSX2 専用） |
-| `--watch-point ADDRS` | _（なし）_ | ウォッチポイントアドレス（最大 4 個、MSX2 専用）；各アドレスの後に `,r`（読み取り）、`,w`（書き込み）、または `,rw`（両方）を付加できる（省略時は `rw`）。例：`C000,rw,D000,r` |
+| `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個） |
+| `--watch-point ADDRS` | _（なし）_ | ウォッチポイントアドレス（最大 4 個）；各アドレスの後に `,r`（読み取り）、`,w`（書き込み）、または `,rw`（両方）を付加できる（省略時は `rw`）。例：`C000,rw,D000,r` |
 | `--rpc` | オフ | 組み込みの Unix ソケット JSON-RPC 制御サーバを有効化（対話実行モード）。[リモート制御](#リモート制御socket-rpc--mcp)を参照 |
 | `--rpc-socket PATH` | `/tmp/py_msx_emu.sock` | `--rpc` 用の Unix ソケットパス（`--rpc` なしでは無効） |
 
@@ -763,7 +763,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2082 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2084 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -823,7 +823,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2082 テスト
+├── tests/                 # テストスイート — 2084 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -867,6 +867,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.3** (2026-08-17) — MSX1 機で `--break-point`/`--watch-point` CLI 起動オプションが無視されていた不具合を修正。`Machine.set_breakpoints`/`set_watchpoints` は CPU とメモリバスのみを操作し V9938/MSX2 依存は無く、インタラクティブデバッガの `ba`/`br`/`bl`/`wa`/`wd`/`wl` REPL コマンドは元々 MSX1 でも動作していた — CLI 起動時のパスだけ `generation == "msx2"` でゲートされていた（インタラクティブデバッガ自体が MSX2 専用だった頃の名残）。
 - **v2.5.2** (2026-08-16) — `--scc-plus`（および対応する `py_emulator.yaml` の `scc_plus` キー）で SCC-I（「SCC+」）カートリッジ対応を追加：プライマリスロット 1 に無条件で接続される、ゲーム ROM を持たない裸のサウンドカートリッジで、オーディオ目的のみでこれを挿すフロッピー（FDD）ベースの MSX2 タイトル向け（カートリッジ ROM 引数と `--scc-plus` の同時指定は起動時エラー）。`msx/scc.py` の SCC チップに既存の Compatible モードと並ぶ Plus モード（5 チャンネル独立の波形バンク、周波数/ボリューム/イネーブルブロックの再配置）を追加。あわせてチップ識別フラグ（`is_052539`）を追加し、実機の Konami 051649（`KonamiSCCMapper`）と SCC-I カートリッジの 052539 が Compatible モードの読み取りで 1 箇所だけ正しく差異化されるようにした（チャンネル 5 の波形が 0xA0-0xBF で読めるのは 052539 のみ）。`msx/mapper.py:SCCICart`（物理 64 KB を 128 KB として見せかけるバンク切り替え RAM。バンクレジスタ bit 3 を無視してブロック N とブロック N+8 をミラーし、実機の「2つの64KBバンクを接続する」改造を再現、対象2タイトルそれぞれが期待する工場出荷時RAM配置バリアントの両方と互換にする。起動時は空、Compatible/Plus の SCC ウィンドウとウィンドウ単位の RAM 書き込みを選択するモードレジスタ）を新規追加。
 - **v2.5.1** (2026-08-16) — v2.5.0 の蒸留パスで残っていた Allium の Open Question を大半クローズ。過程で PPI（i8255）の不具合を2件修正：mode-set コントロールワードで Port C のラッチをクリアしなくなり、ポート 0xAB の読み取りが 0xFF 固定ではなく直前の mode-set ワードを返すようになった（いずれも openMSX の共有 I8255 コアに準拠）。終了キーを Ctrl+Q に変更、ホストの Esc キーは予約解除され MSX の ESC（行7・列2）に到達するようになった。PSG の振幅テーブルを理想化された対数カーブから実測ベース（ayumi のオシロスコープ実測 AY-3-8910 DAC データ）に変更 — 音が変わる、低〜中音量域が明確に大きくなる。あわせて `docs/msx_emulator_rpc_spec.md`・`pyproject.toml`・`requirements-dev.txt` を公開 GitHub ミラーに含めるようにした（従来は非公開）。
 - **v2.5.0** (2026-08-15) — OpenSpec と並ぶ、振る舞い中心の第2の仕様レイヤーとして Allium（`allium/*.allium`）を導入。Z80 CPU、TMS9918A、V9938（コアおよびコマンドエンジン）、メモリ/スロットデコーダ、PSG、SCC、FM-PAC/YM2413、PPI/キーボードマトリクス、ジョイスティック/マウスポートプロトコル、WD2793 FDC（コアおよび HB-F1XD）、SDL2 フロントエンドという主要コンポーネントすべてに対して仕様を蒸留し、既存テストスイートに残っていたテスト義務の漏れを解消した。実機に照らして仕様を蒸留する過程で、いくつかの精度バグを発見・修正：V9938 のスプライトコリジョン（TP 依存の色 0 判定、S#3–S#6 ステータスビット、GRAPHIC5 でのドットペア間の色分割）、V9938 コマンドエンジンの実機準拠、メモリのスロット 3 排他制御の強化、WD2793/HB-F1XD の FDC バグ。あわせて、すべてのステートフルコンポーネント（OPLL、FM-PAC、PSG、SCC、および全 10 種のカートリッジマッパー）に TypedDict によるステートセーブスキーマを追加。性能面ではページ単位のメモリディスパッチキャッシュと DD/FD/ED オペコードのルックアップテーブルディスパッチを追加。JIS 配列の `@`/`^`/`:`/`_` キー割り当ても追加した。

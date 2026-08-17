@@ -33,14 +33,15 @@ immediately (`sys.exit(0)`) — it does not cancel input or return to the prompt
 
 ### Breakpoints and watchpoints at launch
 
-Set breakpoints or watchpoints before the SDL window opens using CLI flags:
+Set breakpoints or watchpoints before the SDL window opens using CLI flags.
+Both work on any machine, MSX1 or MSX2:
 
 ```bash
 # Execution breakpoints — up to 4, comma-separated hex addresses (no 0x prefix)
 python . path/to/game.rom --machine cbios_msx2_jp --break-point C000,D000
 
 # Watchpoints — addr[,r|w|rw] pairs, comma-separated; default mode is rw
-python . path/to/game.rom --machine cbios_msx2_jp --watch-point ca4a,w,fedc,rw
+python . path/to/game.rom --machine cbios_msx1_jp --watch-point ca4a,w,fedc,rw
 ```
 
 Active breakpoints and watchpoints are reported to stderr on startup.
