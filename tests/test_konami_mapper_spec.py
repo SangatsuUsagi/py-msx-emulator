@@ -1,30 +1,24 @@
-"""KonamiCartridge / KonamiSccCartridge obligations from allium/konami-mapper.allium.
+"""KonamiCartridge / KonamiSccCartridge / MajutsushiCartridge obligations
+from allium/konami-mapper.allium.
 
-Scope: only the rule facets that Step 2's ground-truth cross-check
-(msx-wiki / bifi / references/openmsx) confirmed as Verdict: match. This
-file does NOT test anything tied to the four `open question` entries in
-allium/konami-mapper.allium (and allium/scc.allium's matching fifth one) --
-those record confirmed spec/code-vs-hardware divergences still awaiting a
-code decision, and a test asserting on them would lock in behaviour that
-may change:
-  - KonamiBankSelect's / KonamiSccBankSelect's / KonamiSccWindow2BankSelect's
-    page-select arithmetic (power-of-two mask vs modulo vs openMSX's actual
-    two-tier direct-then-mask algorithm) for a ROM whose page count is not a
-    power of two, or for a written value only meaningful under one specific
-    interpretation of that arithmetic.
-  - KonamiReadByte's / KonamiSccReadByte's open-bus fallback for any address
-    outside 0x4000-0xBFFF (openMSX/real hardware mirrors windows 0/1 and 2/3
-    there instead; msx/mapper.py does not implement the mirror).
-  - KonamiSccWindow2BankSelect's assumption that writing the SCC-enable code
-    (0x3F) leaves window 2's bank register untouched (openMSX's writeMem
-    does not gate the page-select check on this being a non-enable value).
-
-MajutsushiCartridge (MajutsushiBankSelect, MajutsushiReadByte,
-MajutsushiWindowZeroIsFixed, MajutsushiBanksAreOnePerWindow) is excluded
-for a different reason: Step 2's cross-check batches were scoped by entity
-name ("contains Konami, not Scc" / "contains KonamiScc") and Majutsushi
-matched neither filter, so it was never assigned a Verdict at all -- not
-confirmed match, not an open question. Excluded here pending its own pass.
+History: this file originally covered only Step 2's ground-truth-confirmed
+match facets for KonamiCartridge and KonamiSccCartridge, deliberately
+excluding what were then four open `open question` entries (page-select
+arithmetic, read mirroring, SCC-enable/bank-select exclusivity) and all of
+MajutsushiCartridge (out of that pass's entity-name-filtered scope). All
+four open questions were since resolved -- openMSX's actual behaviour was
+adopted, msx/mapper.py was updated to match, and the once-excluded facets
+are exercised directly in tests/test_mapper.py and
+tests/test_konami_scc_mapper.py now (see those files' own coverage, e.g.
+test_konami_bank_select_out_of_range_value_masks_then_opens_bus and
+test_konami_read_below_window_mirrors_windows_0_and_1). MajutsushiCartridge
+was also confirmed identical to KonamiCartridge for bank-select and reads:
+openMSX's RomMajutsushi subclasses RomKonami and overrides only reset(),
+writeMem() (the DAC intercept) and getWriteCacheLine() -- no readMem/
+peekMem override, and RomKonami's own bankSwitch() is not virtual -- so
+there is nothing left for a "separate pass" to check. msx/mapper.py's
+MajutsushiMapper mirrors this: it only overrides write(), inheriting
+KonamiMapper's read() and bank-select arithmetic unchanged.
 
 Rule-by-rule coverage map (built by reading tests/test_mapper.py's Konami
 section and tests/test_konami_scc_mapper.py in full before writing
@@ -76,20 +70,25 @@ Gaps this file fills:
     byte is distinct.
   - KonamiReadByte / KonamiSccReadByte: open bus for a bank register that
     points past the actual (short) ROM's content, while still resolving to
-    a legitimate window (0x4000-0xBFFF) -- distinct from the mirror-related
-    open question, which is only about addresses *outside* that range.
+    a legitimate window (0x4000-0xBFFF) -- distinct from what was then the
+    mirror-related open question (addresses *outside* that range).
     Untested anywhere: the existing "short ROM" tests
-    (test_konami_read_above_window_falls_back_to_bank_arithmetic and its
-    KonamiSCC twin) exercise addresses above 0xBFFF, i.e. the open-question
-    territory, not this.
+    (test_konami_read_above_window_mirrors_windows_2_and_3 and its
+    KonamiSCC twin) exercise addresses above 0xBFFF, a different case.
   - KonamiSccBankSelect / KonamiSccWindow2BankSelect: no existing test
     writes to the *far end* of a 2 KB register zone (only the base address
     is exercised); the @guidance's "2 KB zone, not just the base" claim is
     otherwise only proven for the *non*-register remainder of a window.
+  - MajutsushiBankSelect / MajutsushiReadByte / MajutsushiWindowZeroIsFixed:
+    the confirmed-identical-to-Konami facts above have no test of their
+    own -- tests/test_mapper.py's Majutsushi section covers the DAC
+    intercept and inherited bank switching but nothing about the mirror or
+    the far-end-of-window register zone, mirroring the gaps this file
+    already fills for KonamiCartridge.
 """
 from __future__ import annotations
 
-from msx.mapper import KonamiMapper, KonamiSCCMapper
+from msx.mapper import KonamiMapper, KonamiSCCMapper, MajutsushiMapper
 from msx.scc import SCC
 
 _PAGE = 8192
@@ -233,3 +232,48 @@ def test_konami_scc_read_open_bus_when_bank_exceeds_short_rom() -> None:
     # have, so the window resolves to open bus without any write at all.
     m = KonamiSCCMapper(rom=_rom_8k_pages(2), scc=SCC())
     assert m.read(0xA000) == 0xFF
+
+
+# ---------------------------------------------------------------------------
+# MajutsushiBankSelect / MajutsushiReadByte -- confirmed identical to
+# KonamiCartridge (openMSX's RomMajutsushi overrides nothing but writeMem's
+# DAC intercept); same three facets as the KonamiBankSelect/KonamiReadByte
+# section above, for the inherited behaviour.
+# ---------------------------------------------------------------------------
+
+def test_majutsushi_switch_window1_at_non_base_offset() -> None:
+    m = MajutsushiMapper(_rom_8k_pages(8))
+    m.write(0x7500, 4)  # anywhere in 0x6000-0x7FFF, not just 0x6000
+    assert m.read(0x6000) == 4
+
+
+def test_majutsushi_window0_ignored_across_its_full_range() -> None:
+    m = MajutsushiMapper(_rom_8k_pages(8))
+    m.write(0x5FFF, 5)  # last address of window 0's range, not just 0x4000
+    # (0x5FFF is below 0x6000, so it is not diverted to the DAC either)
+    assert m.read(0x4000) == 0  # still page 0
+
+
+def test_majutsushi_bank_select_out_of_range_value_opens_bus() -> None:
+    # Same fixed 5-bit mask as KonamiBankSelect (inherited write()): 9 is
+    # not less than this ROM's 8 pages, masked with 31 stays 9, still not
+    # less than 8, so it resolves to open bus rather than aliasing.
+    m = MajutsushiMapper(_rom_8k_pages(8))
+    m.write(0x6000, 9)
+    assert m.read(0x6000) == 0xFF
+
+
+def test_majutsushi_read_below_window_mirrors_windows_0_and_1() -> None:
+    # Real hardware mirrors windows 0/1 into 0x0000-0x3FFF here, the same
+    # direction as plain KonamiCartridge (RomMajutsushi has no readMem
+    # override, so this is literally RomKonami's own read path).
+    m = MajutsushiMapper(_rom_8k_pages(8))
+    assert m.read(0x0000) == m.read(0x4000)  # window 0's first byte, mirrored
+    assert m.read(0x3FFF) == m.read(0x7FFF)  # window 1's last byte, mirrored
+
+
+def test_majutsushi_read_open_bus_when_bank_exceeds_short_rom() -> None:
+    # A 2-page ROM: window 2's power-on bank is 2, which this ROM does not
+    # have, so the window resolves to open bus without any write at all.
+    m = MajutsushiMapper(_rom_8k_pages(2))
+    assert m.read(0x8000) == 0xFF

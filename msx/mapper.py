@@ -845,24 +845,6 @@ class KonamiMapper(_BankTracing):
             return self._flat[addr]
         return self._flat[addr - 0x8000]
 
-    def _read_out_of_window(self, addr: int) -> int:
-        # Retained for MajutsushiMapper.read(), which has not been
-        # cross-checked against ground truth and keeps this mapper's
-        # original clamp-to-nearest-window behaviour (no mirror) until it
-        # has been. KonamiMapper's own read() no longer calls this.
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
-        return 0xFF
-
     def write(self, addr: int, value: int) -> None:
         if 0x6000 <= addr < 0x8000:
             window = 1
@@ -904,13 +886,15 @@ class MajutsushiMapperState(KonamiMapperState):
 class MajutsushiMapper(KonamiMapper):
     """Konami mapper + DAC for Hai no Majutsushi.
 
-    Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM).
-    Bank switching (write()) is otherwise identical to KonamiMapper. Reads
-    outside 0x4000-0xBFFF deliberately are NOT: this class overrides
-    read() to keep KonamiMapper's original clamp-to-nearest-window
-    behaviour rather than inheriting its mirror, since this mapper has not
-    been cross-checked against ground truth (see allium/konami-mapper.
-    allium's Note on read mirroring).
+    Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM);
+    all other behaviour -- bank switching (write()) and reads, mirror
+    included -- is inherited from KonamiMapper unchanged. This matches
+    openMSX's RomMajutsushi exactly: it subclasses RomKonami and overrides
+    only reset(), writeMem() (the same DAC intercept) and
+    getWriteCacheLine() -- no readMem/peekMem override, and RomKonami's
+    own bankSwitch() is not virtual, so nothing about bank selection or
+    the read-side mirror can differ between the two classes on real
+    hardware either.
 
     DAC writes are timestamped via _get_cycle callback so generate_samples()
     can reproduce sub-frame timing (same role as openMSX's BlipBuffer delta).
@@ -918,15 +902,6 @@ class MajutsushiMapper(KonamiMapper):
 
     _last_dac: int = field(default=0x80, init=False, repr=False)
     _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
-
-    def read(self, addr: int) -> int:
-        # Not cross-checked against ground truth yet (a separate, pending
-        # pass), so this deliberately does NOT inherit KonamiMapper's
-        # mirror -- reproduces the pre-mirror KonamiMapper.read() exactly.
-        idx = addr - 0x4000
-        if 0 <= idx < _WINDOW_BYTES:
-            return self._flat[idx]
-        return self._read_out_of_window(addr)
 
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
