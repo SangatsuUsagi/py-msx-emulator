@@ -319,7 +319,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
-| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
+| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li><li>On macOS with a JIS keyboard, SDL2 can misdetect the host layout as US right after launch. If symbol keys behave oddly on a JIS machine (e.g. `cbios_msx2_jp`), switching the input source away and back once (⌘+Space) usually fixes it — this is an SDL2/macOS quirk outside this project's control.</li></ul> |
 
 ### Mouse
 

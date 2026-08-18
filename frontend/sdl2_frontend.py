@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
 from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
-from msx.input import KEY_NAME_TO_CELL, InputState
+from msx.input import KEY_NAME_TO_CELL, SDLK_JIS_YEN, InputState
 from msx.joystick import JoystickManager
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
@@ -237,6 +237,10 @@ class _EventApi(Protocol):
     SDL_JOYBUTTONUP: int
     SDL_JOYAXISMOTION: int
     SDL_JOYHATMOTION: int
+    # JIS ¥-key detection (see `_resolve_key_sym`): the scancode macOS/SDL2
+    # report for that key -- its keysym.sym is unreliable, so this is the
+    # only stable signal.
+    SDL_SCANCODE_INTERNATIONAL3: int
 
     def SDL_GetError(self) -> bytes: ...
     def SDL_PollEvent(self, event: object) -> int: ...
@@ -364,6 +368,23 @@ _JOYSTICK_EVENT_TYPES_ATTRS = (
 )
 
 
+def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
+    """Return the key identifier `_handle_events` should use for this keysym.
+
+    On macOS, SDL2 reports the JIS ¥ key with a consistent scancode
+    (SDL_SCANCODE_INTERNATIONAL3) but an inconsistent keysym.sym --
+    observed as both SDLK_UNKNOWN (0, host layout misdetected as US) and the
+    Unicode YEN SIGN codepoint 165 (U+00A5, host layout correctly resolved).
+    Neither matches KEY_MATRIX_JP's key, so `sym` can't identify this key
+    reliably; only the scancode can. This substitutes the stable
+    SDLK_JIS_YEN sentinel (see msx/input.py) whenever that scancode is seen,
+    regardless of `sym`; every other key passes through unchanged.
+    """
+    if keysym.scancode == sdl2.SDL_SCANCODE_INTERNATIONAL3:
+        return SDLK_JIS_YEN
+    return keysym.sym
+
+
 def _handle_events(
     sdl2: _EventApi, event: _EventLike, machine: Machine, window: object,
     joy_manager: JoystickManager,
@@ -386,7 +407,7 @@ def _handle_events(
         if event.type == sdl2.SDL_QUIT:
             running = False
         elif event.type == sdl2.SDL_KEYDOWN:
-            sym = event.key.keysym.sym
+            sym = _resolve_key_sym(sdl2, event.key.keysym)
             consumed, running, fullscreen = _handle_hotkey_keydown(
                 sdl2, sym, event.key.keysym.mod, machine, window,
                 game_title, rgb_buf, tex_w, tex_h, running, fullscreen,
@@ -396,8 +417,9 @@ def _handle_events(
             ):
                 machine.input.key_down(sym)
         elif event.type == sdl2.SDL_KEYUP:
-            if not _handle_ctrl_combo_keyup(sdl2, event.key.keysym.sym, ctrl_combo, machine):
-                machine.input.key_up(event.key.keysym.sym)
+            sym = _resolve_key_sym(sdl2, event.key.keysym)
+            if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, machine):
+                machine.input.key_up(sym)
         elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
             joy_manager.handle_event(event)
         elif mouse_device is not None and event.type == sdl2.SDL_MOUSEMOTION:
@@ -574,6 +596,7 @@ def _update_skip_counter(skip_counter: int, elapsed: float, frame_interval: floa
 class _KeysymLike(Protocol):
     sym: int
     mod: int
+    scancode: int
 
 
 class _KeyEventLike(Protocol):

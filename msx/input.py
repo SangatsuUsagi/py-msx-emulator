@@ -83,6 +83,18 @@ _K_LALT     = 1073742050   # SDL_SCANCODE_LALT = 226
 _K_RCTRL    = 1073742052   # SDL_SCANCODE_RCTRL = 228
 _K_RSHIFT   = 1073742053   # SDL_SCANCODE_RSHIFT = 229
 _K_RALT     = 1073742054   # SDL_SCANCODE_RALT = 230
+_K_YEN      = 1073741961   # SDL_SCANCODE_INTERNATIONAL3 = 137 (JIS ¥ key, distinct
+                           # from backslash — a dedicated key/scancode on real JIS
+                           # hardware, not an alternate character on the backslash key)
+
+# Public sentinel for the JIS ¥ key. On macOS, SDL2 reports this key with a
+# consistent scancode (SDL_SCANCODE_INTERNATIONAL3) but an inconsistent
+# keysym.sym -- observed as both SDLK_UNKNOWN (0, host layout misdetected as
+# US) and the Unicode YEN SIGN codepoint (165, U+00A5, host layout correctly
+# resolved). A frontend cannot rely on keysym.sym to identify this key;
+# it must detect the scancode itself and pass this constant to key_down/
+# key_up instead of the raw (unreliable) sym.
+SDLK_JIS_YEN: int = _K_YEN
 
 # MSX keyboard matrix: maps an SDL2 key constant to a (row, bit) cell.
 # Active-low: a cleared bit = key pressed.
@@ -101,7 +113,7 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     _K_8: (1, 0),
     _K_9: (1, 1),
     _K_MINUS: (1, 2),       # -
-    _K_BACKSLASH: (1, 4),   # \ (int) / ¥ (jp) — same cell, same 0x5C code
+    _K_BACKSLASH: (1, 4),   # \ (International layout backslash key)
     _K_SEMICOLON: (1, 7),   # ;
     # Row 2: common symbols + A, B
     _K_COMMA: (2, 2),       # ,
@@ -163,6 +175,11 @@ _INT_SYMBOLS: dict[int, tuple[int, int]] = {
 # without a dedicated cell here). '@', '^', ':' and '_' are real ASCII
 # characters, so unlike the International DEAD cell above they map onto
 # ordinary SDL keycodes regardless of host layout.
+#
+# The ¥ key is different: on real JIS hardware it is a dedicated key with its
+# own scancode (SDL_SCANCODE_INTERNATIONAL3), not an alternate character on
+# the backslash key, so it needs its own entry (_K_YEN) rather than sharing
+# _K_BACKSLASH with the International layout.
 _JP_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_LEFTBRACKET: (1, 6),   # [
     _K_RIGHTBRACKET: (2, 1),  # ]
@@ -170,6 +187,7 @@ _JP_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_CARET: (1, 3),         # ^
     _K_COLON: (2, 0),         # :
     _K_UNDERSCORE: (2, 5),    # _
+    _K_YEN: (1, 4),           # ¥ (same MSX matrix cell as International \)
 }
 
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}
