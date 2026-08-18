@@ -1,5 +1,7 @@
 import struct
 
+import pytest
+
 from msx.mapper import (
     Ascii8Mapper,
     Ascii16Mapper,
@@ -383,6 +385,23 @@ def test_konami_snapshot_restore_roundtrips_banks() -> None:
     assert m2._banks == m._banks
     assert m2.read(0x6000) == 4
     assert m2.read(0xA000) == 7
+
+
+def test_konami_restore_rejects_negative_bank() -> None:
+    # A negative bank register would make _sync_window slice self.rom with
+    # a negative start, which Python resolves by wrapping from the end of
+    # the ROM instead of raising -- silently wrong content rather than a
+    # clear failure. restore() must reject this instead of trusting the
+    # save-state file (matching SCCICart.restore()'s existing precedent).
+    m = KonamiMapper(_rom_8k_pages(8))
+    with pytest.raises(ValueError):
+        m.restore({"banks": [0, 1, 2, -1]})
+
+
+def test_konami_restore_rejects_wrong_bank_count() -> None:
+    m = KonamiMapper(_rom_8k_pages(8))
+    with pytest.raises(ValueError):
+        m.restore({"banks": [0, 1, 2]})
 
 
 # ---------------------------------------------------------------------------

@@ -819,8 +819,25 @@ class KonamiMapper(_BankTracing):
     def _bank_mask(self) -> int:
         # Konami4 hardware: 5-bit bank register, fixed regardless of the
         # ROM's actual page count (openMSX RomKonami::setBlockMask(31)).
-        # Not a cap on the page count itself -- see write().
+        # Not a cap on the page count itself -- see _select_page.
         return 31
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // _PAGE_8K)
+
+    def _select_page(self, value: int) -> int:
+        # openMSX RomBlocks::setRom's two-tier resolution: a raw value
+        # already below the ROM's real (uncapped) page count selects that
+        # page directly; only a value at or above it is folded through the
+        # fixed 5-bit mask, and even then _sync_window's own bounds check
+        # resolves it to open bus if it is still out of range. Same shape
+        # as KonamiSCCMapper._select_page -- the mask differs (fixed here,
+        # derived from the ROM's own page count there), not the two-tier
+        # structure.
+        pages = self._num_pages()
+        if value < pages:
+            return value
+        return value & self._bank_mask()
 
     def _sync_window(self, window: int) -> None:
         page = self._banks[window]
@@ -837,10 +854,9 @@ class KonamiMapper(_BankTracing):
             return self._flat[idx]
         # Outside the four windows: real hardware mirrors windows 0/1 into
         # 0x0000-0x3FFF and windows 2/3 into 0xC000-0xFFFF (openMSX
-        # RomKonami::bankSwitch). Both ranges land inside _flat directly at
-        # a fixed +/-0x4000 shift once addr is mapped back to 0x4000-0xBFFF
-        # (idx = addr for the low mirror, idx = addr - 0x8000 for the high
-        # one), so no separate bank/bounds arithmetic is needed here.
+        # RomKonami::bankSwitch). Both ranges land inside _flat directly,
+        # with no separate bank/bounds arithmetic needed: idx = addr for
+        # the low mirror (no shift), idx = addr - 0x8000 for the high one.
         if addr < 0x4000:
             return self._flat[addr]
         return self._flat[addr - 0x8000]
@@ -855,13 +871,7 @@ class KonamiMapper(_BankTracing):
         else:
             # Writes to 0x4000–0x5FFF are ignored; window 0 is fixed to page 0.
             return
-        # openMSX RomBlocks::setRom's two-tier resolution: a raw value
-        # already below the ROM's real (uncapped) page count selects that
-        # page directly; only a value at or above it is folded through the
-        # fixed 5-bit mask, and even then _sync_window's own bounds check
-        # resolves it to open bus if it is still out of range.
-        pages = max(1, len(self.rom) // _PAGE_8K)
-        new = value if value < pages else (value & self._bank_mask())
+        new = self._select_page(value)
         old = self._banks[window]
         self._banks[window] = new
         if new != old:
@@ -873,7 +883,10 @@ class KonamiMapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(KonamiMapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("KonamiMapperState.banks must have 4 non-negative entries")
+        self._banks[:] = banks
         for window in range(4):
             self._sync_window(window)
 
@@ -1030,10 +1043,10 @@ class KonamiSCCMapper(_BankTracing):
         # Outside the four windows: real hardware mirrors windows 0/1 into
         # 0xC000-0xFFFF and windows 2/3 into 0x0000-0x3FFF (openMSX
         # RomKonamiSCC::bankSwitch) -- the opposite direction from plain
-        # KonamiMapper. Both ranges land inside _flat directly at a fixed
-        # +/-0x8000 shift once addr is mapped back to 0x4000-0xBFFF (idx =
-        # addr + 0x4000 for the low mirror, idx = addr - 0xC000 for the
-        # high one). The mirror is checked here (i.e. only once the SCC
+        # KonamiMapper. Both ranges land inside _flat directly, with no
+        # separate bank/bounds arithmetic needed: idx = addr + 0x4000 for
+        # the low mirror, idx = addr - 0xC000 for the high one. The
+        # mirror is checked here (i.e. only once the SCC
         # zone check above has already missed) because it is pure ROM and
         # never SCC-routed, whatever scc_mode holds -- openMSX's own
         # SCC-visibility check only ever tests the raw address against
@@ -1042,25 +1055,23 @@ class KonamiSCCMapper(_BankTracing):
             return self._flat[addr + 0x4000]
         return self._flat[addr - 0xC000]
 
+    def _switch_bank(self, window: int, value: int, addr: int) -> None:
+        new = self._select_page(value)
+        old = self._banks[window]
+        self._banks[window] = new
+        if new != old:
+            self._sync_window(window)
+        _trace_bank(self, window, old, new, addr)
+
     def write(self, addr: int, value: int) -> None:
         # SCC register writes take priority over bank-register writes.
         if self._scc_mode and 0x9800 <= addr <= 0x9FFF:
             self.scc.write(addr - 0x9800, value)
             return
         if 0x5000 <= addr < 0x5800:
-            new = self._select_page(value)
-            old = self._banks[0]
-            self._banks[0] = new
-            if new != old:
-                self._sync_window(0)
-            _trace_bank(self, 0, old, new, addr)
+            self._switch_bank(0, value, addr)
         elif 0x7000 <= addr < 0x7800:
-            new = self._select_page(value)
-            old = self._banks[1]
-            self._banks[1] = new
-            if new != old:
-                self._sync_window(1)
-            _trace_bank(self, 1, old, new, addr)
+            self._switch_bank(1, value, addr)
         elif 0x9000 <= addr < 0x9800:
             # Window 2 bank register: low 6 bits all set enables SCC mode
             # (upper 2 bits are don't-care); any other value disables it.
@@ -1070,19 +1081,9 @@ class KonamiSCCMapper(_BankTracing):
             # write, which also updates window 2's bank register on real
             # hardware (it does not leave it untouched).
             self._scc_mode = (value & 0x3F) == 0x3F
-            new = self._select_page(value)
-            old = self._banks[2]
-            self._banks[2] = new
-            if new != old:
-                self._sync_window(2)
-            _trace_bank(self, 2, old, new, addr)
+            self._switch_bank(2, value, addr)
         elif 0xB000 <= addr < 0xB800:
-            new = self._select_page(value)
-            old = self._banks[3]
-            self._banks[3] = new
-            if new != old:
-                self._sync_window(3)
-            _trace_bank(self, 3, old, new, addr)
+            self._switch_bank(3, value, addr)
         # Writes outside the four register zones are ignored.
 
     def snapshot(self) -> KonamiSCCMapperState:
@@ -1091,7 +1092,10 @@ class KonamiSCCMapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(KonamiSCCMapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("KonamiSCCMapperState.banks must have 4 non-negative entries")
+        self._banks[:] = banks
         self._scc_mode = typed_state["scc_mode"]
         for window in range(4):
             self._sync_window(window)

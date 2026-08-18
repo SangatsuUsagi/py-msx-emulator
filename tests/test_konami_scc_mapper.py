@@ -58,8 +58,14 @@ def test_bank_switch_window3(mapper: KonamiSCCMapper) -> None:
     assert mapper.read(0xA000) == 6
 
 
-def test_bank_page_wrap(mapper: KonamiSCCMapper) -> None:
-    mapper.write(0x7000, 9)  # 9 % 8 = 1
+def test_bank_select_masks_to_a_page_on_this_power_of_two_rom(mapper: KonamiSCCMapper) -> None:
+    # Page select is two-tier (see _select_page), not modulo: 9 is not less
+    # than this fixture's 8 pages, so it is masked with (8 - 1) = 7,
+    # giving 9 & 7 == 1. Indistinguishable from modulo here only because 8
+    # is a power of two -- see test_konami_mapper_spec.py::
+    # test_konami_scc_bank_select_uses_bit_and_not_modulo for a page count
+    # where the two diverge.
+    mapper.write(0x7000, 9)
     assert mapper.read(0x6000) == 1
 
 
@@ -186,6 +192,14 @@ def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper)
     other.restore(snap)
     assert other._banks == mapper._banks
     assert other._scc_mode is True
+
+
+def test_restore_rejects_negative_bank(mapper: KonamiSCCMapper) -> None:
+    # Mirrors KonamiMapper's restore() validation: a negative bank would
+    # make _sync_window slice self.rom with a negative start, which Python
+    # wraps from the end of the ROM rather than raising.
+    with pytest.raises(ValueError):
+        mapper.restore({"banks": [0, 1, 2, -1], "scc_mode": False})
 
 
 def test_restore_with_scc_mode_true_routes_reads_to_scc(mapper: KonamiSCCMapper) -> None:
