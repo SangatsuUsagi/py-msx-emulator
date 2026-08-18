@@ -150,7 +150,11 @@ def test_scc_read_forward_only_applies_within_9800_9fff(mapper: KonamiSCCMapper)
     # still resolve via ROM, not the chip.
     mapper.write(0x9000, 0x3F)
     assert mapper._scc_mode is True
-    assert mapper.read(0x8000) == 2  # ROM page 2 byte, not the SCC
+    # The same write also updates window 2's bank register (openMSX's
+    # page-selection check is not gated on the enable code): 0x3F is not
+    # less than this fixture's 8 pages, so it is masked with (8 - 1) = 7,
+    # landing on page 7 rather than leaving the power-on page 2 in place.
+    assert mapper.read(0x8000) == 7  # ROM page 7 byte, not the SCC
 
 
 def test_scc_write_forward_only_applies_within_9800_9fff(mapper: KonamiSCCMapper) -> None:
@@ -214,16 +218,20 @@ def test_restore_with_scc_mode_false_routes_reads_to_rom(mapper: KonamiSCCMapper
 # Addresses outside the four windows (0x4000-0xBFFF)
 # ---------------------------------------------------------------------------
 
-def test_read_below_window_returns_open_bus(mapper: KonamiSCCMapper) -> None:
+def test_read_below_window_mirrors_windows_2_and_3(mapper: KonamiSCCMapper) -> None:
     # A slot scan (e.g. BIOS RAM detection) can transiently address this
     # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
-    assert mapper.read(0x0000) == 0xFF
+    # Real hardware mirrors windows 2/3 there -- the opposite direction
+    # from plain KonamiMapper (openMSX RomKonamiSCC::bankSwitch) -- rather
+    # than reading open bus.
+    assert mapper.read(0x0000) == mapper.read(0x8000)  # window 2's first byte, mirrored
+    assert mapper.read(0x3FFF) == mapper.read(0xBFFF)  # window 3's last byte, mirrored
 
 
-def test_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF (page 3): the pre-flat-mirror behavior re-used window 3's
-    # bank/base arithmetic for any addr >= 0xA000, so a small ROM (bank 3
-    # defaults to page 3, out of range for a 1-page ROM) still resolves to
-    # open bus via the same bounds check, not a crash.
+def test_read_above_window_mirrors_windows_0_and_1() -> None:
+    # 0xC000-0xFFFF mirrors windows 0/1 for KonamiSCCMapper. Window 0's
+    # power-on bank is 0, which a 1-page ROM does have, so this resolves
+    # to real ROM content -- unlike plain KonamiMapper's mirror, which
+    # would land on window 2 (out of range for a 1-page ROM).
     small_mapper = KonamiSCCMapper(rom=_rom(1), scc=SCC())
-    assert small_mapper.read(0xC000) == 0xFF
+    assert small_mapper.read(0xC000) == small_mapper.read(0x4000)
