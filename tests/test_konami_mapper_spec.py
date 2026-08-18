@@ -85,6 +85,31 @@ Gaps this file fills:
     intercept and inherited bank switching but nothing about the mirror or
     the far-end-of-window register zone, mirroring the gaps this file
     already fills for KonamiCartridge.
+
+Gaps this session fills (the four resolved open questions' own edge
+cases -- none of the tests above happen to exercise a value or page count
+where the old and new algorithms disagree):
+  - KonamiBankSelect / MajutsushiBankSelect: no existing test used a
+    written value large enough (>= 32) for the fixed 5-bit mask to
+    actually change the outcome -- every prior test's value was already
+    below the mask width, so masking was a no-op. Added a case where
+    masking reduces the value to a *different, valid* page (not the raw
+    value, not open bus).
+  - KonamiSccBankSelect: no existing test used a non-power-of-two page
+    count, the only case where `pages - 1` differs from a true modulo.
+    Added one proving the actual result (bit_and) against what modulo
+    would have given, on a 5-page ROM.
+  - KonamiSccWindow2BankSelect: the enable-code write's bank-register
+    update was only exercised indirectly (via a read whose primary
+    purpose is testing something else); added a test naming the
+    obligation directly.
+  - KonamiSccReadByte: no existing test set scc_mode before probing a
+    mirrored address, so the claim that the mirror is pure ROM and never
+    SCC-routed -- regardless of scc_mode -- was entirely untested,
+    including the strongest case (a mirrored address whose
+    effective_address lands exactly on the SCC zone's first byte).
+  - MajutsushiReadByte: only the below-window mirror direction had a
+    test; added the above-window (0xC000-0xFFFF) counterpart.
 """
 from __future__ import annotations
 
@@ -159,10 +184,21 @@ def test_konami_read_offset_within_window_is_correct() -> None:
 def test_konami_read_open_bus_when_bank_exceeds_short_rom() -> None:
     # A 2-page ROM: window 2's power-on bank is 2, which this ROM does not
     # have, so the window resolves to open bus without any write at all --
-    # unlike the open-question mirror cases, this address (0x8000) is
-    # squarely inside a legitimate window.
+    # unlike the mirror cases above, this address (0x8000) is squarely
+    # inside a legitimate window, not a mirrored range.
     m = KonamiMapper(_rom_8k_pages(2))
     assert m.read(0x8000) == 0xFF
+
+
+def test_konami_bank_select_masks_down_to_a_different_valid_page() -> None:
+    # Formerly Open Question 1 (now a Note): the fixed 5-bit mask (31) only
+    # changes the outcome once the written value exceeds it. On a 5-page
+    # ROM, writing 36 is not less than 5 pages, so it is masked: 36 & 31 ==
+    # 4, which *is* less than 5 -- a real, different page, not the raw
+    # value and not open bus.
+    m = KonamiMapper(_rom_8k_pages(5))
+    m.write(0x6000, 36)
+    assert m.read(0x6000) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -201,15 +237,36 @@ def test_konami_scc_switching_one_window_leaves_others_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
-# KonamiSccWindow2BankSelect -- register zone is the window's low 2 KB
-# (non-enable-code branch only; the enable-code branch is the open
-# question and is deliberately not tested here)
+# KonamiSccWindow2BankSelect -- register zone is the window's low 2 KB,
+# non-enable-code branch
 # ---------------------------------------------------------------------------
 
 def test_konami_scc_switch_window2_at_zone_far_end() -> None:
     m = _konami_scc()
     m.write(0x97FF, 6)  # last address of window 2's 2 KB zone; 6 != 0x3F low 6 bits
     assert m.read(0x8000) == 6
+
+
+def test_konami_scc_enable_code_write_also_updates_window2_bank() -> None:
+    # Formerly Open Question 3 (now a Note): openMSX's page-selection check
+    # is not gated on the write being the enable code, so 0x3F both enables
+    # SCC mode and updates window 2's bank register in the same write --
+    # the register is not left as it was.
+    m = _konami_scc()
+    m.write(0x9000, 0x3F)
+    assert m._scc_mode is True
+    assert m._banks[2] == 7  # 0x3F (63) is not < 8 pages; 63 & (8 - 1) == 7
+
+
+def test_konami_scc_bank_select_uses_bit_and_not_modulo() -> None:
+    # Formerly Open Question 2 (now a Note): the mask is (pages - 1) via
+    # bitwise AND, not a true modulo -- the two only coincide when pages is
+    # a power of two. On a 5-page ROM, writing 6 is not less than 5 pages,
+    # so it is masked: 6 & (5 - 1) == 6 & 4 == 4, selecting page 4. A true
+    # modulo would give 6 % 5 == 1 instead -- a different, real page.
+    m = _konami_scc(num_pages=5)
+    m.write(0x7000, 6)  # window 1's register
+    assert m.read(0x6000) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +289,20 @@ def test_konami_scc_read_open_bus_when_bank_exceeds_short_rom() -> None:
     # have, so the window resolves to open bus without any write at all.
     m = KonamiSCCMapper(rom=_rom_8k_pages(2), scc=SCC())
     assert m.read(0xA000) == 0xFF
+
+
+def test_konami_scc_mirror_is_never_scc_routed_even_when_scc_mode_on() -> None:
+    # Formerly Open Question 3's territory (now a Note): the SCC-forward
+    # guard tests the *raw* trigger address, never the mirrored one. 0x1800
+    # mirrors to effective_address 0x9800 -- the very first byte of the
+    # SCC's own register zone -- yet the raw address is nowhere near
+    # 0x9800-0x9FFF, so this must resolve as a plain ROM mirror read,
+    # never routed to the chip, however scc_mode is set.
+    rom = _rom_8k_pages_distinct(8)
+    m = KonamiSCCMapper(rom=rom, scc=SCC())
+    m.write(0x9000, 0x3F)  # enables SCC mode; also sets window 2's bank to 7
+    assert m._scc_mode is True
+    assert m.read(0x1800) == rom[7 * _PAGE + 0x1800]
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +334,15 @@ def test_majutsushi_bank_select_out_of_range_value_opens_bus() -> None:
     assert m.read(0x6000) == 0xFF
 
 
+def test_majutsushi_bank_select_masks_down_to_a_different_valid_page() -> None:
+    # Same fixed 5-bit mask as KonamiBankSelect: on a 5-page ROM, writing
+    # 36 is not less than 5 pages, so it is masked (36 & 31 == 4), landing
+    # on a real, different page rather than open bus.
+    m = MajutsushiMapper(_rom_8k_pages(5))
+    m.write(0x6000, 36)
+    assert m.read(0x6000) == 4
+
+
 def test_majutsushi_read_below_window_mirrors_windows_0_and_1() -> None:
     # Real hardware mirrors windows 0/1 into 0x0000-0x3FFF here, the same
     # direction as plain KonamiCartridge (RomMajutsushi has no readMem
@@ -270,6 +350,15 @@ def test_majutsushi_read_below_window_mirrors_windows_0_and_1() -> None:
     m = MajutsushiMapper(_rom_8k_pages(8))
     assert m.read(0x0000) == m.read(0x4000)  # window 0's first byte, mirrored
     assert m.read(0x3FFF) == m.read(0x7FFF)  # window 1's last byte, mirrored
+
+
+def test_majutsushi_read_above_window_mirrors_windows_2_and_3() -> None:
+    # And the other direction, 0xC000-0xFFFF mirroring windows 2/3 -- the
+    # counterpart to the below-window test above, exercising the other
+    # branch of KonamiMapper's inherited mirror.
+    m = MajutsushiMapper(_rom_8k_pages(8))
+    assert m.read(0xC000) == m.read(0x8000)  # window 2's first byte, mirrored
+    assert m.read(0xFFFF) == m.read(0xBFFF)  # window 3's last byte, mirrored
 
 
 def test_majutsushi_read_open_bus_when_bank_exceeds_short_rom() -> None:
