@@ -815,27 +815,44 @@ class RTypeMapper(_BankTracing):
 
     rom: bytes
     _bank: int = field(default=0, repr=False)
+    # Fixed window's resolved ROM page (see __post_init__). ROM size never
+    # changes post-construction, so the two-tier resolution the class
+    # docstring describes runs once here rather than on every read.
+    _fixed_block: int = field(init=False, repr=False)
+    # Flat mirror of the two 16 KB windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch: reads are hot (millions/frame), switches are rare, so
+    # resolving the window on every read is wasted work -- same rationale as
+    # every other bank-switching mapper in this module.
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        pages = self._num_pages()
+        # Two-tier resolution (see class docstring): direct index if in
+        # range, else masked with pages - 1.
+        if _RTYPE_FIXED_BLOCK < pages:
+            self._fixed_block = _RTYPE_FIXED_BLOCK
+        else:
+            self._fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
+        self._flat = bytearray(2 * _PAGE_16K)
+        self._sync_window(0)
+        self._sync_window(1)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
 
+    def _sync_window(self, window: int) -> None:
+        page = self._fixed_block if window == 0 else self._bank
+        src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
+        dst = window * _PAGE_16K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_16K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_16K] = b"\xff" * (_PAGE_16K - len(src))
+
     def read(self, addr: int) -> int:
-        if 0x4000 <= addr < 0x8000:
-            pages = self._num_pages()
-            # Two-tier resolution (see class docstring): direct index if in
-            # range, else masked with pages - 1.
-            if _RTYPE_FIXED_BLOCK < pages:
-                fixed_block = _RTYPE_FIXED_BLOCK
-            else:
-                fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
-            fixed = fixed_block * _PAGE_16K + (addr - 0x4000)
-            if 0 <= fixed < len(self.rom):
-                return self.rom[fixed]
-            return 0xFF
-        if 0x8000 <= addr < 0xC000:
-            offset = self._bank * _PAGE_16K + (addr - 0x8000)
-            if 0 <= offset < len(self.rom):
-                return self.rom[offset]
+        idx = addr - 0x4000
+        if 0 <= idx < 2 * _PAGE_16K:
+            return self._flat[idx]
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -846,6 +863,8 @@ class RTypeMapper(_BankTracing):
                 value = value & _RTYPE_MASK
             old = self._bank
             self._bank = value
+            if value != old:
+                self._sync_window(1)
             _trace_bank(self, 1, old, self._bank, addr)
 
     def snapshot(self) -> RTypeMapperState:
@@ -854,6 +873,7 @@ class RTypeMapper(_BankTracing):
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(RTypeMapperState, state)
         self._bank = int(typed_state["bank"])
+        self._sync_window(1)
 
 
 class KonamiMapperState(TypedDict):
