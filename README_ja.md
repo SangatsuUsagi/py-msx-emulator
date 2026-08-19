@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2134%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2136%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -225,7 +225,7 @@ SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自
 | キーボード | `msx/input.py`；MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
 | 物理ジョイスティック | `msx/joystick.py`；SDL2 GameController API（優先）と生ジョイスティックのフォールバック；ホットプラグ対応 |
 | キーボードエミュレーション | WASD = Joy1 方向；Z/X または ,/. = トリガ A/B；矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
-| 既知の制限 | <ul><li>MSX のテンキー（マトリクス行 9-10）はホストキーに割り当てられていない。</li><li>ダイオードなしマトリクス特有のキーゴースト現象は再現されない。</li><li>ジョイスティック Type A / Type B（ピン7の第2トリガ）判別は未実装で、すべてのポートが Type B として動作する。</li></ul> |
+| 既知の制限 | <ul><li>MSX のテンキー（マトリクス行 9-10）はホストキーに割り当てられていない。</li><li>ダイオードなしマトリクス特有のキーゴースト現象は再現されない。</li><li>ジョイスティック Type A / Type B（ピン7の第2トリガ）判別は未実装で、すべてのポートが Type B として動作する。</li><li>macOS + JIS キーボードでは、起動直後は SDL2 がキーボードレイアウトを英語配列として誤認識することがある。`cbios_msx2_jp` 等の JIS マシンで記号キーの入力がおかしい場合は、⌘+Space で入力ソースを一度切り替えてから戻すと直ることが多い（SDL2/macOS 側の既知の挙動で、本ツールのコード側では制御できない）。</li></ul> |
 
 ### マウス
 
@@ -763,7 +763,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2134 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2136 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -823,7 +823,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2134 テスト
+├── tests/                 # テストスイート — 2136 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -867,6 +867,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.6** (2026-08-19) — macOS で JIS ¥ キーが MSX キーボードマトリクスに届かない不具合を修正。SDL2 はこのキーを一貫した scancode で報告するが keysym は不安定なため、`key_down`/`key_up` は scancode のみから解決するよう変更。
 - **v2.5.5** (2026-08-19) — `Ascii16Sram2Mapper` の書き込み側 open bus リーク（0xC000 以降への書き込みが、ウィンドウが SRAM 選択中に SRAM を壊しうる不具合）を修正。`RTypeMapper` にもフラット読み取りミラーを追加し、毎読み取りでウィンドウを解決していた最後のマッパークラスを解消。
 - **v2.5.4** (2026-08-19) — openMSX 実機ソースとの照合で見つけた Konami 系マッパー（`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`）の不具合 3 件を修正：ROM ウィンドウ外アドレスのミラーリング、バンク選択のページ演算、SCC 有効化書き込みでバンクレジスタが更新されない点。このマッパーファミリー向けの新しい Allium 仕様を追加し、無関係なテスト分離バグ（`test_cli_scc_plus.py`）も修正。
 - **v2.5.3** (2026-08-17) — MSX1 機で `--break-point`/`--watch-point` CLI 起動オプションが無視されていた不具合を修正。インタラクティブデバッガ自体のコマンドは元々動作しており、CLI 起動パスだけが MSX2 限定になっていた。

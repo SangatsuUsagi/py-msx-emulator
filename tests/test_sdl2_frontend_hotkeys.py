@@ -12,7 +12,9 @@ from msx.input import KEY_MATRIX_INT, KEY_NAME_TO_CELL, InputState
 
 
 class _Keysym(ctypes.Structure):
-    _fields_ = [("sym", ctypes.c_int), ("mod", ctypes.c_uint16)]
+    _fields_ = [
+        ("sym", ctypes.c_int), ("mod", ctypes.c_uint16), ("scancode", ctypes.c_int),
+    ]
 
 
 class _KeyEvent(ctypes.Structure):
@@ -56,18 +58,23 @@ class _FakeSDL:
     SDLK_LALT = 1073742050
     SDLK_RALT = 1073742054
     KMOD_CTRL = 0x0040
+    # JIS ¥-key scancode (see `_resolve_key_sym` in frontend/sdl2_frontend.py):
+    # the real SDL2 value, not an arbitrary sentinel like SDLK_F8..F11 above,
+    # since a dedicated test pins it against the real pysdl2 library.
+    SDL_SCANCODE_INTERNATIONAL3 = 137
 
-    def __init__(self, script: list[tuple[int, int, int]], event: _Event) -> None:
+    def __init__(self, script: list[tuple[int, int, int, int]], event: _Event) -> None:
         self._script = list(script)
         self._event = event
 
     def SDL_PollEvent(self, _event_ptr: object) -> int:
         if not self._script:
             return 0
-        ev_type, sym, mod = self._script.pop(0)
+        ev_type, sym, mod, scancode = self._script.pop(0)
         self._event.type = ev_type
         self._event.key.keysym.sym = sym
         self._event.key.keysym.mod = mod
+        self._event.key.keysym.scancode = scancode
         return 1
 
 
@@ -101,18 +108,18 @@ class _Harness:
         self._event = _Event()
         self.running = True
 
-    def send(self, script: list[tuple[int, int, int]]) -> None:
+    def send(self, script: list[tuple[int, int, int, int]]) -> None:
         sdl = _FakeSDL(script, self._event)
         self.running, _ = _handle_events(
             sdl, self._event, self.machine, None, None, self.ctrl_combo,
             _CTRL_FKEY_CELLS, "", b"", 0, 0, False,
         )
 
-    def keydown(self, sym: int, mod: int = 0) -> None:
-        self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod)])
+    def keydown(self, sym: int, mod: int = 0, scancode: int = 0) -> None:
+        self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod, scancode)])
 
-    def keyup(self, sym: int, mod: int = 0) -> None:
-        self.send([(_FakeSDL.SDL_KEYUP, sym, mod)])
+    def keyup(self, sym: int, mod: int = 0, scancode: int = 0) -> None:
+        self.send([(_FakeSDL.SDL_KEYUP, sym, mod, scancode)])
 
     @property
     def matrix(self) -> list[int]:
@@ -336,3 +343,32 @@ def test_ctrl_keycodes_match_real_sdl2_constants() -> None:
 
     assert sdl2.SDLK_LCTRL == _K_LCTRL == 1073742048
     assert sdl2.SDLK_RCTRL == _K_RCTRL == 1073742052
+
+
+def test_jis_yen_scancode_matches_real_sdl2_constant() -> None:
+    # On macOS, SDL2 reports the JIS ¥ key with scancode
+    # SDL_SCANCODE_INTERNATIONAL3, but keysym.sym varies with host layout
+    # detection state -- observed as both SDLK_UNKNOWN (0) and the Unicode
+    # YEN SIGN codepoint (165, U+00A5) on the same physical key across runs.
+    # Only the scancode is reliable. Pins it against the real pysdl2 library
+    # so `_FakeSDL.SDL_SCANCODE_INTERNATIONAL3` above can't silently drift.
+    import sdl2
+
+    assert sdl2.SDL_SCANCODE_INTERNATIONAL3 == _FakeSDL.SDL_SCANCODE_INTERNATIONAL3 == 137
+
+
+def test_jis_yen_key_reaches_matrix_via_scancode_fallback() -> None:
+    # `_handle_events` must key off scancode alone to identify the ¥ key and
+    # reach MSX matrix cell (1, 4) (the same cell International \ uses) --
+    # regardless of whatever `sym` the host layout happened to produce.
+    from msx.input import KEY_MATRIX_JP, SDLK_JIS_YEN
+
+    yen_cell = KEY_MATRIX_JP[SDLK_JIS_YEN]
+    for observed_sym in (0, 165):  # SDLK_UNKNOWN, and Unicode YEN SIGN (U+00A5)
+        h = _Harness()
+        h.machine.input.keyboard_type = "jp"
+        h.machine.input._matrix_map = KEY_MATRIX_JP
+        h.keydown(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
+        assert _asserted(h.matrix, yen_cell)
+        h.keyup(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
+        assert not _asserted(h.matrix, yen_cell)

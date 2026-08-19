@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2134%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2136%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -319,7 +319,7 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
-| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li></ul> |
+| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li><li>On macOS with a JIS keyboard, SDL2 can misdetect the host layout as US right after launch. If symbol keys behave oddly on a JIS machine (e.g. `cbios_msx2_jp`), switching the input source away and back once (⌘+Space) usually fixes it — this is an SDL2/macOS quirk outside this project's control.</li></ul> |
 
 ### Mouse
 
@@ -935,7 +935,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2134 tests spanning unit tests
+The test suite covers all major components with 2136 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -998,7 +998,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2134 tests
+├── tests/                 # Test suite — 2136 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1059,6 +1059,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
 - **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.
 - **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
 - **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI flags being silently ignored on MSX1 machines; the interactive debugger's own commands already worked there, only the CLI startup path was gated to MSX2.
