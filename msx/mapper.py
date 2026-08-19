@@ -159,6 +159,14 @@ class Ascii8Mapper(_BankTracing):
     and openMSX, which reset all segment registers to 0). Same rationale as
     Ascii16Mapper: a cartridge INIT may rely on the upper windows mirroring
     bank 0 before it switches banks itself.
+
+    No mirroring outside 0x4000-0xBFFF: unlike the Konami-family mappers,
+    real ASCII8 cartridges do not mirror their windows into 0x0000-0x3FFF or
+    0xC000-0xFFFF (openMSX RomAscii8kB.cc reset() wires those pages
+    permanently to unmapped/open bus; openMSX/openMSX issue #1213, opened as
+    an ASCII8 mirroring report, was investigated and closed against that
+    claim -- real ASCII8 hardware's /SLTSL wiring returns nothing outside
+    its own windows, unlike the 32 KB-ROM-specific /CS12 mirror).
     """
 
     rom: bytes
@@ -189,20 +197,8 @@ class Ascii8Mapper(_BankTracing):
         idx = addr - 0x4000
         if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
-        return self._read_out_of_window(addr)
-
-    def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the four windows: open bus, not a mirror (see the
+        # class docstring's "No mirroring" note).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -323,6 +319,10 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     KOEI and Wizardry variants (different enable bit / SRAM windows) are out of
     scope here and are not covered by this generic mapper.
+
+    No mirroring outside 0x4000-0xBFFF: same as Ascii8Mapper (see that
+    class's own docstring note); ROM or SRAM content outside the four
+    windows is open bus, not mirrored.
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -335,11 +335,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # a fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
     # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
     sram: bytearray | None = None
-    # Constant SRAM/ROM geometry, cached for the hot read() path — these depend
-    # only on len(rom) and the class-constant _SRAM_SIZE, fixed after construction.
-    _c_enable_bit: int = field(default=0, init=False, repr=False)
-    _c_block_mask: int = field(default=0, init=False, repr=False)
-    _c_rom_len: int = field(default=0, init=False, repr=False)
     # Per-window flag: True while that window currently maps SRAM. Read()
     # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
     # to the inherited flat mirror -- no window is ever both at once, so no
@@ -354,9 +349,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
-        self._c_enable_bit = self._num_pages()        # == _sram_enable_bit()
-        self._c_block_mask = self._sram_block_mask()
-        self._c_rom_len = len(self.rom)
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
@@ -394,24 +386,8 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
                 base = 0x4000 + window * _PAGE_8K
                 return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
             return self._flat[idx]
-        return self._read_out_of_window(addr)
-
-    def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        bank = self._banks[window]
-        if (self._SRAM_PAGES & (1 << (window + 2))) and (bank & self._c_enable_bit):
-            offset = ((bank & self._c_block_mask) * _PAGE_8K + (addr - base)) & self._SRAM_MASK
-            return self.sram[offset]  # type: ignore[index]
-        page_offset = bank * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < self._c_rom_len:
-            return self.rom[page_offset]
+        # Outside the four windows: open bus, not a mirror (see the
+        # class docstring's "No mirroring" note).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:

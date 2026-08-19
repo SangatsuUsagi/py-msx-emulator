@@ -110,13 +110,22 @@ class TestAscii8Sram2:
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         assert m.read(0x0000) == 0xFF
 
-    def test_read_above_window_falls_back_to_bank_arithmetic(self):
-        # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for
-        # any addr >= 0xA000, so a small ROM (bank 3's page_offset out of
-        # range) resolves to open bus via the same bounds check, not a crash.
-        small_rom = bytes(8192)  # 1 page, bank 3 defaults to page 3 (out of range)
+    def test_read_above_window_returns_open_bus(self):
+        small_rom = bytes(8192)  # 1 page
         m = Ascii8Sram2Mapper(rom=small_rom)
         assert m.read(0xC000) == 0xFF
+
+    def test_read_outside_window_is_open_bus_regardless_of_bank_or_sram_state(self):
+        # Real ASCII8 hardware does not mirror outside 0x4000-0xBFFF (openMSX
+        # issue #1213). Pick bank/SRAM state that would have produced a real
+        # byte under the old window/base-extrapolation formula, to prove the
+        # fix is unconditional.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x6000, 0x01)  # window 0 bank register -> ROM page 1
+        assert m.read(0x3000) == 0xFF  # old formula would have returned a real ROM byte
+        m.write(0x7800, _SRAM_BANK)  # window 3 -> SRAM
+        m.sram[0] = 0xAB
+        assert m.read(0xC800) == 0xFF  # old formula would have leaked into SRAM
 
     def test_window_toggles_rom_sram_rom_reads_correctly_at_each_step(self):
         # Window 2 starts as ROM, switches to SRAM, switches back to ROM --

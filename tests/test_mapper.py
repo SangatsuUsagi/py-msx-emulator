@@ -194,13 +194,23 @@ def test_ascii8_read_below_window_returns_open_bus() -> None:
     assert m.read(0x0000) == 0xFF
 
 
-def test_ascii8_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for any
-    # addr >= 0xA000, so a small ROM (bank 3's page_offset out of range)
-    # resolves to open bus via the same bounds check, not a crash.
+def test_ascii8_read_above_window_returns_open_bus() -> None:
     small_rom = _rom_8k_pages(1)
     m = Ascii8Mapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_ascii8_read_outside_window_is_open_bus_regardless_of_bank_state() -> None:
+    # Real ASCII8 hardware does not mirror outside 0x4000-0xBFFF (openMSX
+    # issue #1213). Pick a bank value that would have produced a real ROM
+    # byte under the old window/base-extrapolation formula, to prove the
+    # fix is unconditional, not coincidental with a zero bank.
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    m.write(0x6000, 2)  # window 0 bank register -> page 2
+    assert m.read(0x3000) == 0xFF  # old formula would have returned a real ROM byte
+    m.write(0x7800, 5)  # window 3 bank register -> page 5
+    assert m.read(0xD000) == 0xFF  # old formula would have returned a real ROM byte
 
 
 def test_ascii8_snapshot_restore_roundtrips_banks() -> None:
