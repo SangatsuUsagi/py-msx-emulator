@@ -272,11 +272,23 @@ class TestAscii16Sram2:
         m.write(0x7000, 0x01)  # not 0x10 → ROM page 1
         assert m.read(0x8000) == _ROM_32K[16384]
 
-    def test_window0_never_sram(self):
-        # Window 0 cannot be SRAM regardless of bank value
+    def test_window0_reads_rom_for_a_non_0x10_bank_value(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
-        m.write(0x6000, _SRAM_BANK)  # high bank for window 0 — still ROM
-        m.write(0x4100, 0xBB)        # write to window 0 body — not SRAM
+        m.write(0x6000, 1)  # not exactly 0x10 -> ROM page 1, not SRAM
+        assert m.read(0x4100) == _ROM_32K[16384 + 0x100]
+
+    def test_window0_sram_is_readable_when_bank_is_exactly_0x10(self):
+        # openMSX RomAscii16_2.cc: either window's own bank register can
+        # select SRAM; window 0's SRAM is read-only (see the next test).
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.sram[0x100] = 0x77
+        m.write(0x6000, 0x10)  # window 0 bank register -> SRAM
+        assert m.read(0x4100) == 0x77
+
+    def test_window0_sram_is_not_writable(self):
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x6000, 0x10)  # window 0 -> SRAM (read-only)
+        m.write(0x4100, 0xBB)  # write to window 0 body -- no write path at all
         assert m.sram[0x100] == 0x00
 
     def test_window1_rom_read_when_below_num_pages(self):

@@ -625,11 +625,17 @@ class Ascii16Sram2MapperState(Ascii16MapperState):
 class Ascii16Sram2Mapper(Ascii16Mapper):
     """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
-    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped. SRAM is selected for
-    window 1 when its bank register value equals exactly 0x10 (strict equality;
-    any other value selects a ROM page). Writes to the register zone (see
+    Either window can be SRAM-mapped: a window's SRAM is selected when its
+    own bank register value equals exactly 0x10 (strict equality; any other
+    value selects a ROM page). Writes to the register zone (see
     Ascii16Mapper's own docstring for the exact 0x6000–0x67FF/0x7000–0x77FF
     ranges) always update bank registers (raw value).
+
+    SRAM is writable only through window 1's body (0x8000–0xBFFF); window 0
+    (0x4000–0x7FFF) has no write path to SRAM (or to ROM -- it is never a
+    bank-select target either) at all, so a window-0 SRAM selection is
+    effectively read-only (openMSX RomAscii16_2.cc's own header comment:
+    "SRAM in page 1 => read-only, SRAM in page 2 => read-write").
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -637,10 +643,11 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     _SRAM_SELECT: ClassVar[int] = 0x10
 
     sram: bytearray | None = None
-    # Per-window flag: True while that window currently maps SRAM (window 1
-    # only, ever). Read() routes an SRAM-mapped window straight to self.sram
-    # and a ROM-mapped window to the inherited flat mirror -- no window is
-    # ever both at once, so no write-through between the two is needed.
+    # Per-window flag: True while that window currently maps SRAM (either
+    # window, independently). Read() routes an SRAM-mapped window straight
+    # to self.sram and a ROM-mapped window to the inherited flat mirror --
+    # no window is ever both at once, so no write-through between the two
+    # is needed.
     # Portability note: length is fixed at 2 for this class and never
     # resized after construction -- a Rust/C++ port should use [bool; 2] /
     # std::array<bool, 2> (or a bitmask) rather than a growable Vec<bool>.
@@ -656,7 +663,12 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             self._sync_window(window)
 
     def _is_sram_bank(self, window: int) -> bool:
-        return window == 1 and self._banks[window] == self._SRAM_SELECT
+        # Either window may independently hold the SRAM-select code
+        # (openMSX RomAscii16_2.cc readMem/writeMem check both regions'
+        # bank registers the same way). Only window 1's *body* is ever
+        # writable (see write()), which is what makes a window-0 SRAM
+        # selection read-only in practice, not a restriction here.
+        return self._banks[window] == self._SRAM_SELECT
 
     def _sync_window(self, window: int) -> None:
         if self._is_sram_bank(window):
@@ -698,6 +710,10 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
                 self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
         elif addr >= 0x8000:
+            # Window 1's body only -- window 0 has no write path to SRAM at
+            # all (see the class docstring), so this stays hardcoded to
+            # window 1 even though _is_sram_bank() itself now checks either
+            # window.
             if self._is_sram_bank(1):
                 self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
 
