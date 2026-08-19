@@ -57,6 +57,18 @@ class TestBankSwitching:
         m.write(0x6000, 0x05)  # 5 % 4 == 1
         assert m.read(0x6010) == rom[1 * _PAGE + 0x10]
 
+    def test_write_entirely_outside_register_zones_has_no_effect(self):
+        # allium/konami-mapper.allium GameMaster2BankSelect: its requires
+        # clause accepts only the low 4 KB of windows 1-3's own regions.
+        # An address in neither that range nor the 0xB000-0xBFFF SRAM-write
+        # zone (e.g. window 0's own body, or above 0xC000) falls through
+        # msx/mapper.py's write() entirely -- no bank register is touched.
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        m.write(0x4500, 0x05)  # window 0's own body -- no register there at all
+        m.write(0xC000, 0x05)  # above the cartridge's own address range
+        assert m.read(0x4010) == _rom_byte(0, 0x10)  # window 0 still page 0
+        assert m.read(0x6010) == _rom_byte(1, 0x10)  # window 1 still page 1 (untouched)
+
 
 class TestSramRouting:
     def test_sram_4k_mirror_across_window(self):
@@ -93,6 +105,19 @@ class TestSramRouting:
         m.write(0xA000, 0x02)  # window 3 selects ROM -> sram_enabled False
         m.write(0xB100, 0x77)
         assert m.sram[0x100] == 0x00  # write ignored
+
+    def test_sram_write_outside_0xb000_zone_has_no_effect_even_when_enabled(self):
+        # allium/konami-mapper.allium GameMaster2WriteSram: its own requires
+        # clause bounds address to 0xB000-0xBFFF specifically (the *high*
+        # 4 KB of window 3's own region, the opposite half from
+        # GameMaster2BankSelect's own trigger zone for that same window).
+        # A write elsewhere must not reach SRAM even while sram_enabled is
+        # true.
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        m.write(0xA000, 0x10)  # window 3 SRAM enabled -> sram_enabled True
+        m.write(0x5000, 0x11)  # nowhere near any register or SRAM zone
+        m.write(0xA500, 0x22)  # window 3's own low-4KB (BankSelect's zone, not WriteSram's)
+        assert m.sram == bytearray(8192)
 
     def test_bank4_enable_uses_selected_half_for_write(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
@@ -133,6 +158,17 @@ class TestSnapshotRestore:
         m.sram[0x100] = 0xFF
         m.restore(snap)
         assert m.read(0x8100) == 0x3C
+
+
+class TestInvariants:
+    def test_banks_list_has_four_entries(self):
+        # allium/konami-mapper.allium invariant GameMaster2BanksAreOnePerWindow.
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        assert len(m._banks) == 4
+        m.write(0x6000, 0x07)
+        m.write(0x8000, 0x10)
+        m.write(0xA000, 0x0F)
+        assert len(m._banks) == 4
 
 
 class TestSramConstruction:
