@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from msx.mapper import MapperKind
 from msx.vdp.v9938 import V9938
 
 if TYPE_CHECKING:
@@ -69,22 +70,18 @@ class MachineSnapshot:
     # Memory
     ram: bytearray
     slot_register: int
-    # PORT-NOTE: `mapper_class` is the mapper's Python class name used as the
-    #   persisted discriminant (so renaming a mapper class silently
-    #   invalidates old saves), and mapper_state below is the same untyped
-    #   `dict[str, object]` + cast() shape documented on the `Mapper` Protocol
-    #   in msx/mapper.py (see that file's PORT-NOTE on
-    #   GameMaster2Mapper.snapshot()).
-    # Rust equivalent: a stable `MapperKind` enum tag (not the class name) +
-    #   field-by-field (de)serialization into typed per-device snapshot
-    #   structs (serde), decided once when the save format is versioned for
-    #   the port.
-    # C++ equivalent: same -- a stable enum tag + typed per-device structs,
-    #   (de)serialized explicitly rather than through a string-keyed map.
-    # Kept as-is here because: port target/shape not decided yet, and this is
-    #   the same large-scope save-state redesign tracked in msx/mapper.py --
-    #   not a mechanical refactor to do here in isolation.
-    mapper_class: str
+    # `mapper_kind` is the persisted mapper-identity discriminant -- a closed
+    # MapperKind enum (msx/mapper.py), not the mapper's Python class name, so
+    # a class rename does not change save-state compatibility (see
+    # openspec/changes/mapper-state-tagged-union). `mapper_state` itself is
+    # still the untyped `dict[str, object]` + cast() shape documented on the
+    # `Mapper` Protocol in msx/mapper.py (see that file's PORT-NOTE on
+    # GameMaster2Mapper.snapshot()) -- restore() failures on a malformed
+    # mapper_state are caught and re-raised as StateLoadError (see
+    # _restore_producer below), but the dict's shape itself is not validated
+    # ahead of that call. Replacing dict[str, object] with a per-kind typed
+    # variant is a separate, larger redesign, deliberately out of scope here.
+    mapper_kind: MapperKind
     mapper_state: dict[str, object]
     # VDP
     vdp_vram: bytearray
@@ -129,7 +126,7 @@ class _MachineSnapshotFields(TypedDict):
     cpu_im: int
     ram: bytearray
     slot_register: int
-    mapper_class: str
+    mapper_kind: MapperKind
     mapper_state: dict[str, object]
     vdp_vram: bytearray
     vdp_regs: list[int]
@@ -254,7 +251,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cpu_im=machine.cpu.im,
         ram=bytearray(machine.memory.ram),
         slot_register=machine.memory.slot_register,
-        mapper_class=type(mapper).__name__,
+        mapper_kind=mapper.kind,
         mapper_state=mapper_state,
         vdp_vram=bytearray(machine.vdp.vram),
         vdp_regs=list(machine.vdp.regs),
@@ -292,10 +289,10 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"saved {snap.machine_type!r}"
         )
     mapper = machine.memory._mapper
-    if type(mapper).__name__ != snap.mapper_class:
+    if mapper.kind != snap.mapper_kind:
         raise ValueError(
-            f"mapper mismatch: running {type(mapper).__name__!r}, "
-            f"saved {snap.mapper_class!r}"
+            f"mapper mismatch: running {mapper.kind.value!r}, "
+            f"saved {snap.mapper_kind.value!r}"
         )
 
     _restore_cpu_regs(machine, snap.cpu_regs)
@@ -472,6 +469,12 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
         )
+    # JSON round-trips mapper_kind as a plain str (MapperKind's own str-Enum
+    # values serialize directly, see save_state); convert it back to a
+    # MapperKind member here so _restore_snapshot's identity check and any
+    # later `.value` access see a real enum member, not a bare string.
+    if isinstance(fields, dict) and "mapper_kind" in fields:
+        fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
     typed_fields = cast(_MachineSnapshotFields, fields)
     snap = MachineSnapshot(**typed_fields)
     _restore_snapshot(machine, snap)
