@@ -737,15 +737,21 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
             window = 0 if addr < 0x7000 else 1
             old = self._banks[window]
+            # Stored raw (unmasked); harmless under Python's unbounded int, but a
+            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
+            # (see GameMaster2Mapper's own portability note on this same idiom).
             self._banks[window] = value
             if value != old:
                 self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
-        elif addr >= 0x8000:
+        elif 0x8000 <= addr < 0xC000:
             # Window 1's body only -- window 0 has no write path to SRAM at
             # all (see the class docstring), so this stays hardcoded to
             # window 1 even though _is_sram_bank() itself now checks either
-            # window.
+            # window. Upper-bounded at 0xC000 for the same reason as
+            # Ascii8Sram2Mapper.write()'s range guard: outside the two
+            # windows is open bus, not a mirror, so a write there reaches
+            # no real chip and must not fall through into SRAM.
             if self._is_sram_bank(1):
                 self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
 

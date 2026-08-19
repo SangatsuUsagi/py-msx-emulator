@@ -404,6 +404,19 @@ class TestAscii16Sram2:
         m.write(0x7000, 1)
         assert len(m._banks) == 2
 
+    def test_write_outside_cartridge_window_does_not_write_sram(self):
+        # Real ASCII16 hardware does not mirror outside 0x4000-0xBFFF, same
+        # ground truth as the already-fixed Ascii8Sram2Mapper leak. A write
+        # at or above 0xC000 must not reach SRAM, even while window 1 is
+        # SRAM-mapped -- the window-1/0x8000-base arithmetic used to have no
+        # upper bound (a real bug: 0xD000 resolved to window 1's own SRAM
+        # block via `(addr - 0x8000) & _SRAM_MASK`), same shape as the
+        # already-fixed Ascii8Sram2Mapper write-side leak.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x10)  # window 1 -> SRAM
+        m.write(0xD000, 0x22)
+        assert m.sram == bytearray(2048)
+
 
 # ---------------------------------------------------------------------------
 # Ascii16Sram8Mapper
