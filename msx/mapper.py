@@ -217,7 +217,10 @@ class Ascii8Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(Ascii8MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("Ascii8MapperState.banks must have 4 non-negative entries")
+        self._banks[:] = banks
         for window in range(4):
             self._sync_window(window)
 
@@ -301,7 +304,10 @@ class Ascii16Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(Ascii16MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 2 or any(b < 0 for b in banks):
+            raise ValueError("Ascii16MapperState.banks must have 2 non-negative entries")
+        self._banks[:] = banks
         for window in range(2):
             self._sync_window(window)
 
@@ -401,6 +407,9 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         if 0x6000 <= addr <= 0x7FFF:
             reg = (addr >> 11) & 0x03
             old = self._banks[reg]
+            # Stored raw (unmasked); harmless under Python's unbounded int, but a
+            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
+            # (see GameMaster2Mapper's own portability note on this same idiom).
             self._banks[reg] = value
             if value != old:
                 self._sync_window(reg)
@@ -429,8 +438,11 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
         typed_state = cast(Ascii8Sram2MapperState, state)
+        sram = typed_state["sram"]
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"Ascii8Sram2MapperState.sram must have {self._SRAM_SIZE} entries")
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
 
 
 @dataclass
@@ -576,8 +588,12 @@ class GameMaster2Mapper(_BankTracing):
             if addr & 0x1000:
                 # High 4 KB of a region: not a bank-switch address.
                 return
-            region = addr >> 12  # 0x6, 0x8 or 0xA
-            window = (region >> 1) - 2  # 0x6->1, 0x8->2, 0xA->3
+            if addr < 0x8000:
+                window = 1
+            elif addr < 0xA000:
+                window = 2
+            else:
+                window = 3
             if window == 3:
                 # Only window 3 (0xA000) toggles the SRAM writability latch.
                 self._sram_enabled = (value & self._SRAM_BIT) != 0
@@ -614,12 +630,21 @@ class GameMaster2Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(GameMaster2MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        window_sram_half = typed_state["window_sram_half"]
+        sram = typed_state["sram"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("GameMaster2MapperState.banks must have 4 non-negative entries")
+        if len(window_sram_half) != 4:
+            raise ValueError("GameMaster2MapperState.window_sram_half must have 4 entries")
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"GameMaster2MapperState.sram must have {self._SRAM_SIZE} entries")
+        self._banks[:] = banks
         self._sram_half = typed_state["sram_half"]
-        self._window_sram_half[:] = typed_state["window_sram_half"]
+        self._window_sram_half[:] = window_sram_half
         self._sram_enabled = typed_state["sram_enabled"]
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
         for window in range(4):
             self._sync_window(window)
 
@@ -733,8 +758,11 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
         typed_state = cast(Ascii16Sram2MapperState, state)
+        sram = typed_state["sram"]
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"Ascii16Sram2MapperState.sram must have {self._SRAM_SIZE} entries")
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
 
 
 @dataclass
@@ -788,6 +816,8 @@ class RTypeMapper(_BankTracing):
     def read(self, addr: int) -> int:
         if 0x4000 <= addr < 0x8000:
             pages = self._num_pages()
+            # Two-tier resolution (see class docstring): direct index if in
+            # range, else masked with pages - 1.
             if _RTYPE_FIXED_BLOCK < pages:
                 fixed_block = _RTYPE_FIXED_BLOCK
             else:
@@ -1188,7 +1218,7 @@ class SCCICart(_BankTracing):
     # at construction and never resized -- a Rust/C++ port should use
     # [bool; 4]/std::array<bool, 4>, the same convention the other bank-
     # switching mappers' own _window_is_sram fields document (e.g.
-    # Ascii8Mapper, GameMaster2Mapper, RTypeMapper in this file).
+    # Ascii8Sram2Mapper, GameMaster2Mapper, Ascii16Sram2Mapper in this file).
     _is_ram_segment: list[bool] = field(
         default_factory=lambda: [False, False, False, False], init=False, repr=False
     )

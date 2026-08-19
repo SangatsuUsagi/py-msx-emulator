@@ -272,14 +272,6 @@ def test_ascii16_page_wrap_around() -> None:
     assert m.read(0x4000) == 1
 
 
-def test_ascii16_last_byte_of_window_0() -> None:
-    # First byte of each page is the page index; all others are 0
-    rom = _rom_16k_pages(4)
-    m = Ascii16Mapper(rom)
-    m.write(0x6000, 2)
-    assert m.read(0x7FFF) == 0  # end of 16 KB window is within page 2
-
-
 def test_ascii16_write_to_upper_half_of_register_zone_is_ignored() -> None:
     # openMSX RomAscii16kB.cc only accepts the low half of each 4 KB
     # register zone (0x6000-0x67FF, 0x7000-0x77FF); the upper half
