@@ -269,6 +269,18 @@ def test_ascii16_last_byte_of_window_0() -> None:
     assert m.read(0x7FFF) == 0  # end of 16 KB window is within page 2
 
 
+def test_ascii16_write_to_upper_half_of_register_zone_is_ignored() -> None:
+    # openMSX RomAscii16kB.cc only accepts the low half of each 4 KB
+    # register zone (0x6000-0x67FF, 0x7000-0x77FF); the upper half
+    # (0x6800-0x6FFF, 0x7800-0x7FFF) does not switch any bank.
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    m.write(0x6800, 2)  # upper half of window 0's zone -- must be ignored
+    assert m.read(0x4000) == 0  # still page 0
+    m.write(0x7800, 3)  # upper half of window 1's zone -- must be ignored
+    assert m.read(0x8000) == 0  # still page 0
+
+
 def test_ascii16_read_below_window_returns_open_bus() -> None:
     # A slot scan (e.g. BIOS RAM detection) can transiently address this
     # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).

@@ -293,6 +293,16 @@ class TestAscii16Sram2:
         m.write(0x7000, 0x10)   # exactly 0x10 → SRAM
         assert m.read(0x8000) == 0xAB
 
+    def test_write_to_upper_half_of_register_zone_is_ignored(self):
+        # openMSX RomAscii16kB.cc only accepts the low half of each 4 KB
+        # register zone (0x6000-0x67FF, 0x7000-0x77FF); the upper half
+        # (0x6800-0x6FFF, 0x7800-0x7FFF) does not switch any bank.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x6800, 1)  # upper half of window 0's zone -- must be ignored
+        assert m.read(0x4000) == _ROM_32K[0]  # still page 0
+        m.write(0x7800, 1)  # upper half of window 1's zone -- must be ignored
+        assert m.read(0x8000) == _ROM_32K[0]  # still page 0
+
     def test_read_below_window_returns_open_bus(self):
         # A slot scan (e.g. BIOS RAM detection) can transiently address this
         # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).

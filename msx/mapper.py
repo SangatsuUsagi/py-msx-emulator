@@ -232,7 +232,13 @@ class Ascii16MapperState(TypedDict):
 class Ascii16Mapper(_BankTracing):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
-    Control registers at 0x6000–0x6FFF (window 0) and 0x7000–0x7FFF (window 1).
+    Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
+    -- the low half of each 4 KB zone only (openMSX RomAscii16kB.cc:32:
+    `(0x6000 <= address) && (address < 0x7800) && !(address & 0x0800)`;
+    confirmed against references/docs/"MegaROM Mappers - MSX Wiki.md" and
+    "Megabit ROM Cartridges.md", both of which give the same narrower
+    range). The high half of each zone (0x6800–0x6FFF, 0x7800–0x7FFF) does
+    not switch any bank.
 
     Power-on state: both windows select bank 0 (matches real ASCII16 hardware
     and openMSX, which reset all segment registers to 0). Some games rely on the
@@ -281,9 +287,8 @@ class Ascii16Mapper(_BankTracing):
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
-        if 0x6000 <= addr <= 0x7FFF:
-            # Bit 12 selects window 0 (0x6xxx) or window 1 (0x7xxx)
-            window = (addr >> 12) & 0x01
+        if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
+            window = 0 if addr < 0x7000 else 1
             new = value % self._num_pages()
             old = self._banks[window]
             self._banks[window] = new
@@ -622,8 +627,9 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
 
     Only window 1 (0x8000–0xBFFF) can be SRAM-mapped. SRAM is selected for
     window 1 when its bank register value equals exactly 0x10 (strict equality;
-    any other value selects a ROM page). Writes to 0x6000–0x7FFF always update
-    bank registers (raw value).
+    any other value selects a ROM page). Writes to the register zone (see
+    Ascii16Mapper's own docstring for the exact 0x6000–0x67FF/0x7000–0x77FF
+    ranges) always update bank registers (raw value).
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -684,8 +690,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
-        if 0x6000 <= addr <= 0x7FFF:
-            window = (addr >> 12) & 0x01
+        if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
+            window = 0 if addr < 0x7000 else 1
             old = self._banks[window]
             self._banks[window] = value
             if value != old:
