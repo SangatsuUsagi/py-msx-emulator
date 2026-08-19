@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
@@ -23,6 +24,34 @@ if TYPE_CHECKING:
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
 CURRENT_FORMAT_VERSION: int = 5
+
+
+class StateLoadError(ValueError):
+    """A save-state producer's restore() (or restore_synth()) failed on
+    malformed data.
+
+    Distinct from the plain ValueErrors _restore_snapshot raises directly
+    for format/machine-type/mapper-kind mismatches (those already have
+    clear top-level messages); this specifically wraps whatever a
+    producer's own restore() raises when handed a malformed dict, so a
+    corrupted or hand-edited .state file always fails with one predictable,
+    catchable error naming which producer broke. The original exception is
+    chained via __cause__, so a developer debugging the failure still sees
+    the original traceback and exception type.
+    """
+
+    def __init__(self, producer: str, cause: Exception) -> None:
+        super().__init__(f"failed to restore {producer} state: {cause}")
+        self.producer = producer
+
+
+def _restore_producer(producer: str, fn: Callable[[], None]) -> None:
+    """Run one producer's restore call, wrapping a malformed-data failure
+    as StateLoadError(producer, ...) instead of letting it propagate raw."""
+    try:
+        fn()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise StateLoadError(producer, exc) from exc
 
 
 @dataclass
@@ -279,7 +308,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.memory.ram[:] = snap.ram
     machine.memory.slot_register = snap.slot_register
-    mapper.restore(snap.mapper_state)
+    _restore_producer(
+        f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
+    )
 
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
@@ -308,9 +339,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
-    machine.psg.restore_synth(snap.psg_synth)
-    _restore_scc(machine, snap.scc_state)
-    _restore_fmpac(machine, snap.fmpac_state)
+    _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
+    _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
+    _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
 
 
 # --- symlink helper -----------------------------------------------------------

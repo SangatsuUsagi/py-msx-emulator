@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
+from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
 from tests.factories import make_machine
 
 _ROM = b"\x00" * 0x8000
@@ -135,3 +135,50 @@ def test_legacy_pickle_state_rejected(machine, saves_dir):
         _pickle.dump({"format_version": 4}, f)
     with pytest.raises(ValueError, match="legacy pickle"):
         load_state(machine, bad)
+
+
+# --- StateLoadError -------------------------------------------------------------
+
+def test_malformed_mapper_state_raises_state_load_error(saves_dir):
+    import json
+
+    # ASCII8's restore() indexes "banks" directly (KeyError if absent), unlike
+    # the flat-cartridge default mapper whose restore() is a no-op.
+    machine = make_machine(rom=_ROM, cartridge=b"\x00" * 0x10000, mapper="ASCII8")
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["mapper_state"]["banks"]
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+    assert "mapper" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, KeyError)
+
+
+def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
+    import json
+
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["psg_synth"]["_tone_cnt"]
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+    assert "psg" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, KeyError)
+
+
+def test_well_formed_state_does_not_raise_state_load_error(machine, saves_dir):
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+    load_state(machine)  # must not raise StateLoadError (or anything else)
