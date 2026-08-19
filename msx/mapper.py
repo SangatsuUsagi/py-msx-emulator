@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
@@ -47,7 +48,41 @@ _RTYPE_MASK = 0x1F
 _RTYPE_FIXED_BLOCK = 0x17
 
 
+class MapperKind(str, Enum):
+    """Closed, port-friendly identifier for each concrete Mapper implementer.
+
+    Persisted in save-state (see msx/state.py's MachineSnapshot.mapper_kind)
+    in place of the mapper's Python class name, so a class rename during a
+    future refactor does not silently change save-state compatibility.
+    Values are stable identifiers, deliberately decoupled from the class
+    names -- do not rename an existing member's value once released.
+    """
+
+    FLAT = "flat"
+    FIXED_PAGE = "fixed_page"
+    ASCII8 = "ascii8"
+    ASCII16 = "ascii16"
+    ASCII8_SRAM2 = "ascii8_sram2"
+    ASCII8_SRAM8 = "ascii8_sram8"
+    KOEI_SRAM32 = "koei_sram32"
+    GAME_MASTER2 = "game_master2"
+    ASCII16_SRAM2 = "ascii16_sram2"
+    ASCII16_SRAM8 = "ascii16_sram8"
+    R_TYPE = "r_type"
+    KONAMI = "konami"
+    MAJUTSUSHI = "majutsushi"
+    KONAMI_SCC = "konami_scc"
+    SCC_I_CART = "scc_i_cart"
+    # FmPac (msx/fmpac.py) structurally satisfies Mapper (it's assignable to
+    # Memory._mapper2, see machine_loader.py), so it needs a kind too, even
+    # though msx/state.py's mapper_kind identity check only ever applies to
+    # the slot-1 cartridge mapper (machine.memory._mapper) -- FmPac's own
+    # state is captured separately via MachineSnapshot.fmpac_state.
+    FMPAC = "fmpac"
+
+
 class Mapper(Protocol):
+    kind: ClassVar[MapperKind]
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
     # Mapping (read-only, covariant), not dict (invariant): a snapshot is
@@ -114,6 +149,7 @@ class _NoStateMapperMixin:
 class FlatMapper(_NoStateMapperMixin):
     """Flat (non-bank-switching) cartridge mapper. Reproduces the original behaviour."""
 
+    kind: ClassVar[MapperKind] = MapperKind.FLAT
     cartridge: bytes | None
 
     def read(self, addr: int) -> int:
@@ -132,6 +168,7 @@ class FixedPageMapper(_NoStateMapperMixin):
     ROM database mapper types.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.FIXED_PAGE
     rom: bytes
     base: int
     # Cached at construction so the hot read() path does a plain int compare
@@ -176,6 +213,7 @@ class Ascii8Mapper(_BankTracing):
     its own windows, unlike the 32 KB-ROM-specific /CS12 mirror).
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII8
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
@@ -256,6 +294,7 @@ class Ascii16Mapper(_BankTracing):
     `JP 8031h` into bank-0 code visible through the second window.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII16
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
     # Flat mirror of the two banked windows (0x4000-0xBFFF), rebuilt only on
@@ -345,6 +384,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     is silently dropped, even while a window is SRAM-mapped.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
@@ -459,6 +499,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
     """ASCII8 mapper + 8 KB battery-backed SRAM."""
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM8
     _SRAM_SIZE: ClassVar[int] = 8192
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
@@ -471,6 +512,7 @@ class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
     the standard ASCII8-SRAM 0x30) to match KOEI cartridges.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.KOEI_SRAM32
     _SRAM_SIZE: ClassVar[int] = 32768
     _SRAM_MASK: ClassVar[int] = 0x7FFF
     _SRAM_PAGES: ClassVar[int] = 0x34
@@ -509,6 +551,7 @@ class GameMaster2Mapper(_BankTracing):
     (`_sram_half`).
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.GAME_MASTER2
     # Bank-register bit fields and the 4 KB SRAM-half geometry, named to match
     # the decode table in the class docstring.
     _SRAM_BIT: ClassVar[int] = 0x10        # bit 4: 1 = SRAM, 0 = ROM
@@ -699,6 +742,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     "SRAM in page 1 => read-only, SRAM in page 2 => read-write").
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
@@ -811,6 +855,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
 class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
     """ASCII16 mapper + 8 KB battery-backed SRAM."""
 
+    kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM8
     _SRAM_SIZE: ClassVar[int] = 8192
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
@@ -849,6 +894,7 @@ class RTypeMapper(_BankTracing):
     hardware.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.R_TYPE
     rom: bytes
     _bank: int = field(default=0, repr=False)
     # Fixed window's resolved ROM page (see __post_init__). ROM size never
@@ -927,6 +973,7 @@ class KonamiMapper(_BankTracing):
     within the window itself (0x6000–0x7FFF, 0x8000–0x9FFF, 0xA000–0xBFFF).
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.KONAMI
     rom: bytes
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
@@ -1038,6 +1085,7 @@ class MajutsushiMapper(KonamiMapper):
     can reproduce sub-frame timing (same role as openMSX's BlipBuffer delta).
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.MAJUTSUSHI
     _last_dac: int = field(default=0x80, init=False, repr=False)
     _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
 
@@ -1119,6 +1167,7 @@ class KonamiSCCMapper(_BankTracing):
     BIOS RAM test hitting 0xBF00) as bank switches.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.KONAMI_SCC
     rom: bytes
     scc: "SCC"
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
@@ -1270,6 +1319,7 @@ class SCCICart(_BankTracing):
     zone and the SCC register window for that window -- see write().
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.SCC_I_CART
     scc: "SCC"
     ram: bytearray = field(
         default_factory=lambda: bytearray(_SCCI_RAM_SIZE), init=False, repr=False
