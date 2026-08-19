@@ -129,6 +129,27 @@ def test_load_state_wrong_version_raises(machine, saves_dir):
         load_state(machine)
 
 
+def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_dir):
+    """A version-5 save (mapper_class: str, no mapper_kind) must be rejected
+    by the format_version check, not fail with a confusing missing-key error
+    from MachineSnapshot construction."""
+    import json
+
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["format_version"] = CURRENT_FORMAT_VERSION - 1
+    del data["mapper_kind"]
+    data["mapper_class"] = "FlatMapper"
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)
+
+
 def test_legacy_pickle_state_rejected(machine, saves_dir):
     import pickle as _pickle
     saves_dir.mkdir(parents=True, exist_ok=True)

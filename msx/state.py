@@ -24,7 +24,10 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
-CURRENT_FORMAT_VERSION: int = 5
+# Version 6: mapper_class: str (Python class name) replaced with
+#   mapper_kind: MapperKind (closed enum, decoupled from class names) --
+#   see openspec/changes/mapper-state-tagged-union. No other field changed.
+CURRENT_FORMAT_VERSION: int = 6
 
 
 class StateLoadError(ValueError):
