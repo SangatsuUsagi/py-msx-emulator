@@ -32,6 +32,12 @@ _WINDOW_BYTES = 4 * _PAGE_8K
 _RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
 _RTYPE_MASK_HI = 0x17
 _RTYPE_MASK = 0x1F
+# Fixed window's ROM block (openMSX RomRType.cc reset(): setRom(1, 0x17)).
+# Hardcoded, not derived from ROM size: real R-Type cartridges wire two
+# physical ROM chips with asymmetric addressing (see RTypeMapper's own
+# docstring), and 0x17 is one of two content-identical "last page" blocks
+# (0x0F and 0x17) regardless of which physical dump size is loaded.
+_RTYPE_FIXED_BLOCK = 0x17
 
 
 class Mapper(Protocol):
@@ -153,6 +159,14 @@ class Ascii8Mapper(_BankTracing):
     and openMSX, which reset all segment registers to 0). Same rationale as
     Ascii16Mapper: a cartridge INIT may rely on the upper windows mirroring
     bank 0 before it switches banks itself.
+
+    No mirroring outside 0x4000-0xBFFF: unlike the Konami-family mappers,
+    real ASCII8 cartridges do not mirror their windows into 0x0000-0x3FFF or
+    0xC000-0xFFFF (openMSX RomAscii8kB.cc reset() wires those pages
+    permanently to unmapped/open bus; openMSX/openMSX issue #1213, opened as
+    an ASCII8 mirroring report, was investigated and closed against that
+    claim -- real ASCII8 hardware's /SLTSL wiring returns nothing outside
+    its own windows, unlike the 32 KB-ROM-specific /CS12 mirror).
     """
 
     rom: bytes
@@ -183,20 +197,8 @@ class Ascii8Mapper(_BankTracing):
         idx = addr - 0x4000
         if 0 <= idx < _WINDOW_BYTES:
             return self._flat[idx]
-        return self._read_out_of_window(addr)
-
-    def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        page_offset = self._banks[window] * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the four windows: open bus, not a mirror (see the
+        # class docstring's "No mirroring" note).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -215,7 +217,10 @@ class Ascii8Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(Ascii8MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("Ascii8MapperState.banks must have 4 non-negative entries")
+        self._banks[:] = banks
         for window in range(4):
             self._sync_window(window)
 
@@ -230,7 +235,13 @@ class Ascii16MapperState(TypedDict):
 class Ascii16Mapper(_BankTracing):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
-    Control registers at 0x6000–0x6FFF (window 0) and 0x7000–0x7FFF (window 1).
+    Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
+    -- the low half of each 4 KB zone only (openMSX RomAscii16kB.cc:32:
+    `(0x6000 <= address) && (address < 0x7800) && !(address & 0x0800)`;
+    confirmed against references/docs/"MegaROM Mappers - MSX Wiki.md" and
+    "Megabit ROM Cartridges.md", both of which give the same narrower
+    range). The high half of each zone (0x6800–0x6FFF, 0x7800–0x7FFF) does
+    not switch any bank.
 
     Power-on state: both windows select bank 0 (matches real ASCII16 hardware
     and openMSX, which reset all segment registers to 0). Some games rely on the
@@ -279,9 +290,8 @@ class Ascii16Mapper(_BankTracing):
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
-        if 0x6000 <= addr <= 0x7FFF:
-            # Bit 12 selects window 0 (0x6xxx) or window 1 (0x7xxx)
-            window = (addr >> 12) & 0x01
+        if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
+            window = 0 if addr < 0x7000 else 1
             new = value % self._num_pages()
             old = self._banks[window]
             self._banks[window] = new
@@ -294,7 +304,10 @@ class Ascii16Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(Ascii16MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        if len(banks) != 2 or any(b < 0 for b in banks):
+            raise ValueError("Ascii16MapperState.banks must have 2 non-negative entries")
+        self._banks[:] = banks
         for window in range(2):
             self._sync_window(window)
 
@@ -317,6 +330,12 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     KOEI and Wizardry variants (different enable bit / SRAM windows) are out of
     scope here and are not covered by this generic mapper.
+
+    No mirroring outside 0x4000-0xBFFF: same as Ascii8Mapper (see that
+    class's own docstring note); ROM or SRAM content outside the four
+    windows is open bus, not mirrored, for both reads and writes -- a
+    write outside 0x4000-0xBFFF reaches no real chip on real hardware and
+    is silently dropped, even while a window is SRAM-mapped.
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -329,11 +348,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # a fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
     # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
     sram: bytearray | None = None
-    # Constant SRAM/ROM geometry, cached for the hot read() path — these depend
-    # only on len(rom) and the class-constant _SRAM_SIZE, fixed after construction.
-    _c_enable_bit: int = field(default=0, init=False, repr=False)
-    _c_block_mask: int = field(default=0, init=False, repr=False)
-    _c_rom_len: int = field(default=0, init=False, repr=False)
     # Per-window flag: True while that window currently maps SRAM. Read()
     # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
     # to the inherited flat mirror -- no window is ever both at once, so no
@@ -348,9 +362,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def __post_init__(self) -> None:
         if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
-        self._c_enable_bit = self._num_pages()        # == _sram_enable_bit()
-        self._c_block_mask = self._sram_block_mask()
-        self._c_rom_len = len(self.rom)
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
@@ -388,34 +399,26 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
                 base = 0x4000 + window * _PAGE_8K
                 return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
             return self._flat[idx]
-        return self._read_out_of_window(addr)
-
-    def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x6000:
-            window, base = 0, 0x4000
-        elif addr < 0x8000:
-            window, base = 1, 0x6000
-        elif addr < 0xA000:
-            window, base = 2, 0x8000
-        else:
-            window, base = 3, 0xA000
-        bank = self._banks[window]
-        if (self._SRAM_PAGES & (1 << (window + 2))) and (bank & self._c_enable_bit):
-            offset = ((bank & self._c_block_mask) * _PAGE_8K + (addr - base)) & self._SRAM_MASK
-            return self.sram[offset]  # type: ignore[index]
-        page_offset = bank * _PAGE_8K + (addr - base)
-        if 0 <= page_offset < self._c_rom_len:
-            return self.rom[page_offset]
+        # Outside the four windows: open bus, not a mirror (see the
+        # class docstring's "No mirroring" note).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
         if 0x6000 <= addr <= 0x7FFF:
             reg = (addr >> 11) & 0x03
             old = self._banks[reg]
+            # Stored raw (unmasked); harmless under Python's unbounded int, but a
+            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
+            # (see GameMaster2Mapper's own portability note on this same idiom).
             self._banks[reg] = value
             if value != old:
                 self._sync_window(reg)
             _trace_bank(self, reg, old, value, addr)
+            return
+        if not (0x4000 <= addr < 0xC000):
+            # Outside the four windows: open bus, not a mirror -- same fix
+            # as the read side (see the class docstring's "No mirroring"
+            # note); a write here reaches no real chip on real hardware.
             return
         if addr < 0x6000:
             window, base = 0, 0x4000
@@ -435,8 +438,11 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
         typed_state = cast(Ascii8Sram2MapperState, state)
+        sram = typed_state["sram"]
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"Ascii8Sram2MapperState.sram must have {self._SRAM_SIZE} entries")
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
 
 
 @dataclass
@@ -582,8 +588,12 @@ class GameMaster2Mapper(_BankTracing):
             if addr & 0x1000:
                 # High 4 KB of a region: not a bank-switch address.
                 return
-            region = addr >> 12  # 0x6, 0x8 or 0xA
-            window = (region >> 1) - 2  # 0x6->1, 0x8->2, 0xA->3
+            if addr < 0x8000:
+                window = 1
+            elif addr < 0xA000:
+                window = 2
+            else:
+                window = 3
             if window == 3:
                 # Only window 3 (0xA000) toggles the SRAM writability latch.
                 self._sram_enabled = (value & self._SRAM_BIT) != 0
@@ -620,12 +630,21 @@ class GameMaster2Mapper(_BankTracing):
 
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(GameMaster2MapperState, state)
-        self._banks[:] = typed_state["banks"]
+        banks = typed_state["banks"]
+        window_sram_half = typed_state["window_sram_half"]
+        sram = typed_state["sram"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("GameMaster2MapperState.banks must have 4 non-negative entries")
+        if len(window_sram_half) != 4:
+            raise ValueError("GameMaster2MapperState.window_sram_half must have 4 entries")
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"GameMaster2MapperState.sram must have {self._SRAM_SIZE} entries")
+        self._banks[:] = banks
         self._sram_half = typed_state["sram_half"]
-        self._window_sram_half[:] = typed_state["window_sram_half"]
+        self._window_sram_half[:] = window_sram_half
         self._sram_enabled = typed_state["sram_enabled"]
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
         for window in range(4):
             self._sync_window(window)
 
@@ -638,10 +657,17 @@ class Ascii16Sram2MapperState(Ascii16MapperState):
 class Ascii16Sram2Mapper(Ascii16Mapper):
     """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
-    Only window 1 (0x8000–0xBFFF) can be SRAM-mapped. SRAM is selected for
-    window 1 when its bank register value equals exactly 0x10 (strict equality;
-    any other value selects a ROM page). Writes to 0x6000–0x7FFF always update
-    bank registers (raw value).
+    Either window can be SRAM-mapped: a window's SRAM is selected when its
+    own bank register value equals exactly 0x10 (strict equality; any other
+    value selects a ROM page). Writes to the register zone (see
+    Ascii16Mapper's own docstring for the exact 0x6000–0x67FF/0x7000–0x77FF
+    ranges) always update bank registers (raw value).
+
+    SRAM is writable only through window 1's body (0x8000–0xBFFF); window 0
+    (0x4000–0x7FFF) has no write path to SRAM (or to ROM -- it is never a
+    bank-select target either) at all, so a window-0 SRAM selection is
+    effectively read-only (openMSX RomAscii16_2.cc's own header comment:
+    "SRAM in page 1 => read-only, SRAM in page 2 => read-write").
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -649,10 +675,11 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     _SRAM_SELECT: ClassVar[int] = 0x10
 
     sram: bytearray | None = None
-    # Per-window flag: True while that window currently maps SRAM (window 1
-    # only, ever). Read() routes an SRAM-mapped window straight to self.sram
-    # and a ROM-mapped window to the inherited flat mirror -- no window is
-    # ever both at once, so no write-through between the two is needed.
+    # Per-window flag: True while that window currently maps SRAM (either
+    # window, independently). Read() routes an SRAM-mapped window straight
+    # to self.sram and a ROM-mapped window to the inherited flat mirror --
+    # no window is ever both at once, so no write-through between the two
+    # is needed.
     # Portability note: length is fixed at 2 for this class and never
     # resized after construction -- a Rust/C++ port should use [bool; 2] /
     # std::array<bool, 2> (or a bitmask) rather than a growable Vec<bool>.
@@ -668,7 +695,12 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             self._sync_window(window)
 
     def _is_sram_bank(self, window: int) -> bool:
-        return window == 1 and self._banks[window] == self._SRAM_SELECT
+        # Either window may independently hold the SRAM-select code
+        # (openMSX RomAscii16_2.cc readMem/writeMem check both regions'
+        # bank registers the same way). Only window 1's *body* is ever
+        # writable (see write()), which is what makes a window-0 SRAM
+        # selection read-only in practice, not a restriction here.
+        return self._banks[window] == self._SRAM_SELECT
 
     def _sync_window(self, window: int) -> None:
         if self._is_sram_bank(window):
@@ -702,14 +734,24 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
-        if 0x6000 <= addr <= 0x7FFF:
-            window = (addr >> 12) & 0x01
+        if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
+            window = 0 if addr < 0x7000 else 1
             old = self._banks[window]
+            # Stored raw (unmasked); harmless under Python's unbounded int, but a
+            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
+            # (see GameMaster2Mapper's own portability note on this same idiom).
             self._banks[window] = value
             if value != old:
                 self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
-        elif addr >= 0x8000:
+        elif 0x8000 <= addr < 0xC000:
+            # Window 1's body only -- window 0 has no write path to SRAM at
+            # all (see the class docstring), so this stays hardcoded to
+            # window 1 even though _is_sram_bank() itself now checks either
+            # window. Upper-bounded at 0xC000 for the same reason as
+            # Ascii8Sram2Mapper.write()'s range guard: outside the two
+            # windows is open bus, not a mirror, so a write there reaches
+            # no real chip and must not fall through into SRAM.
             if self._is_sram_bank(1):
                 self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
 
@@ -722,8 +764,11 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
         typed_state = cast(Ascii16Sram2MapperState, state)
+        sram = typed_state["sram"]
+        if len(sram) != self._SRAM_SIZE:
+            raise ValueError(f"Ascii16Sram2MapperState.sram must have {self._SRAM_SIZE} entries")
         if self.sram is not None:
-            self.sram[:] = typed_state["sram"]
+            self.sram[:] = sram
 
 
 @dataclass
@@ -742,31 +787,72 @@ class RTypeMapperState(TypedDict):
 
 @dataclass
 class RTypeMapper(_BankTracing):
-    """R-Type (Irem) mapper: 16 KB fixed at 0x4000 (last page), 16 KB switchable at 0x8000.
+    """R-Type (Irem) mapper: 16 KB fixed at 0x4000, 16 KB switchable at 0x8000.
 
-    The last 16 KB of ROM is always mapped at 0x4000–0x7FFF.
+    The fixed window at 0x4000–0x7FFF always shows ROM block
+    _RTYPE_FIXED_BLOCK (0x17) -- a hardcoded block, not the ROM's size-
+    derived last page (openMSX RomRType.cc reset(): setRom(1, 0x17); the
+    real cartridge wires two physical ROM chips, and 0x17 is one of two
+    content-identical "last page" blocks the hardware always shows here,
+    per references/docs/"R-Type and Mega Flash ROM _ MSX Resource
+    Center.md": "Bank 1: Fixed at 0Fh or 17h").
     The switchable window at 0x8000–0xBFFF starts at page 0.
     Bank register: write anywhere to 0x4000–0x7FFF.
     Bank mask: value & _RTYPE_MASK_HI when bit 4 set, else value & _RTYPE_MASK
     (openMSX RomRType).
+
+    Note on generality: this mirrors openMSX RomBlocks::setRom's own
+    two-tier block resolution (direct index if below the ROM's page count,
+    else masked with page_count - 1, open bus if still out of range) for
+    _RTYPE_FIXED_BLOCK specifically. This has only been verified against
+    the one 384 KB (24-page) canonical R-Type dump the primary reference
+    and openMSX both describe, where 0x17 is directly selectable (23 < 24
+    pages). Behaviour on any other ROM size (untested by this codebase --
+    see tests/test_rtype_mapper.py's own 4-page fixture, which only
+    exercises the masked-fallback branch) is unconfirmed against real
+    hardware.
     """
 
     rom: bytes
     _bank: int = field(default=0, repr=False)
+    # Fixed window's resolved ROM page (see __post_init__). ROM size never
+    # changes post-construction, so the two-tier resolution the class
+    # docstring describes runs once here rather than on every read.
+    _fixed_block: int = field(init=False, repr=False)
+    # Flat mirror of the two 16 KB windows (0x4000-0xBFFF), rebuilt only on
+    # bank switch: reads are hot (millions/frame), switches are rare, so
+    # resolving the window on every read is wasted work -- same rationale as
+    # every other bank-switching mapper in this module.
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        pages = self._num_pages()
+        # Two-tier resolution (see class docstring): direct index if in
+        # range, else masked with pages - 1.
+        if _RTYPE_FIXED_BLOCK < pages:
+            self._fixed_block = _RTYPE_FIXED_BLOCK
+        else:
+            self._fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
+        self._flat = bytearray(2 * _PAGE_16K)
+        self._sync_window(0)
+        self._sync_window(1)
 
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
 
+    def _sync_window(self, window: int) -> None:
+        page = self._fixed_block if window == 0 else self._bank
+        src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
+        dst = window * _PAGE_16K
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < _PAGE_16K:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + _PAGE_16K] = b"\xff" * (_PAGE_16K - len(src))
+
     def read(self, addr: int) -> int:
-        if 0x4000 <= addr < 0x8000:
-            fixed = (self._num_pages() - 1) * _PAGE_16K + (addr - 0x4000)
-            if 0 <= fixed < len(self.rom):
-                return self.rom[fixed]
-            return 0xFF
-        if 0x8000 <= addr < 0xC000:
-            offset = self._bank * _PAGE_16K + (addr - 0x8000)
-            if 0 <= offset < len(self.rom):
-                return self.rom[offset]
+        idx = addr - 0x4000
+        if 0 <= idx < 2 * _PAGE_16K:
+            return self._flat[idx]
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -777,6 +863,8 @@ class RTypeMapper(_BankTracing):
                 value = value & _RTYPE_MASK
             old = self._bank
             self._bank = value
+            if value != old:
+                self._sync_window(1)
             _trace_bank(self, 1, old, self._bank, addr)
 
     def snapshot(self) -> RTypeMapperState:
@@ -785,6 +873,7 @@ class RTypeMapper(_BankTracing):
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(RTypeMapperState, state)
         self._bank = int(typed_state["bank"])
+        self._sync_window(1)
 
 
 class KonamiMapperState(TypedDict):
@@ -1155,7 +1244,7 @@ class SCCICart(_BankTracing):
     # at construction and never resized -- a Rust/C++ port should use
     # [bool; 4]/std::array<bool, 4>, the same convention the other bank-
     # switching mappers' own _window_is_sram fields document (e.g.
-    # Ascii8Mapper, GameMaster2Mapper, RTypeMapper in this file).
+    # Ascii8Sram2Mapper, GameMaster2Mapper, Ascii16Sram2Mapper in this file).
     _is_ram_segment: list[bool] = field(
         default_factory=lambda: [False, False, False, False], init=False, repr=False
     )

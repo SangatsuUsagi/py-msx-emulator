@@ -194,13 +194,34 @@ def test_ascii8_read_below_window_returns_open_bus() -> None:
     assert m.read(0x0000) == 0xFF
 
 
-def test_ascii8_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for any
-    # addr >= 0xA000, so a small ROM (bank 3's page_offset out of range)
-    # resolves to open bus via the same bounds check, not a crash.
+def test_ascii8_read_above_window_returns_open_bus() -> None:
     small_rom = _rom_8k_pages(1)
     m = Ascii8Mapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_ascii8_read_outside_window_is_open_bus_regardless_of_bank_state() -> None:
+    # Real ASCII8 hardware does not mirror outside 0x4000-0xBFFF (openMSX
+    # issue #1213). Pick a bank value that would have produced a real ROM
+    # byte under the old window/base-extrapolation formula, to prove the
+    # fix is unconditional, not coincidental with a zero bank.
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    m.write(0x6000, 2)  # window 0 bank register -> page 2
+    assert m.read(0x3000) == 0xFF  # old formula would have returned a real ROM byte
+    m.write(0x7800, 5)  # window 3 bank register -> page 5
+    assert m.read(0xD000) == 0xFF  # old formula would have returned a real ROM byte
+
+
+def test_ascii8_banks_list_has_four_entries() -> None:
+    # allium/ascii_mappers.allium invariant Ascii8BanksCountIsFour: one
+    # bank register per window, for the entity's whole lifetime.
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    assert len(m._banks) == 4
+    m.write(0x6000, 3)
+    m.write(0x7800, 7)
+    assert len(m._banks) == 4
 
 
 def test_ascii8_snapshot_restore_roundtrips_banks() -> None:
@@ -251,12 +272,16 @@ def test_ascii16_page_wrap_around() -> None:
     assert m.read(0x4000) == 1
 
 
-def test_ascii16_last_byte_of_window_0() -> None:
-    # First byte of each page is the page index; all others are 0
+def test_ascii16_write_to_upper_half_of_register_zone_is_ignored() -> None:
+    # openMSX RomAscii16kB.cc only accepts the low half of each 4 KB
+    # register zone (0x6000-0x67FF, 0x7000-0x77FF); the upper half
+    # (0x6800-0x6FFF, 0x7800-0x7FFF) does not switch any bank.
     rom = _rom_16k_pages(4)
     m = Ascii16Mapper(rom)
-    m.write(0x6000, 2)
-    assert m.read(0x7FFF) == 0  # end of 16 KB window is within page 2
+    m.write(0x6800, 2)  # upper half of window 0's zone -- must be ignored
+    assert m.read(0x4000) == 0  # still page 0
+    m.write(0x7800, 3)  # upper half of window 1's zone -- must be ignored
+    assert m.read(0x8000) == 0  # still page 0
 
 
 def test_ascii16_read_below_window_returns_open_bus() -> None:
@@ -274,6 +299,17 @@ def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
     small_rom = _rom_16k_pages(1)
     m = Ascii16Mapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_ascii16_banks_list_has_two_entries() -> None:
+    # allium/ascii_mappers.allium invariant Ascii16BanksCountIsTwo: one
+    # bank register per window, for the entity's whole lifetime.
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    assert len(m._banks) == 2
+    m.write(0x6000, 2)
+    m.write(0x7000, 3)
+    assert len(m._banks) == 2
 
 
 def test_ascii16_snapshot_restore_roundtrips_banks() -> None:
