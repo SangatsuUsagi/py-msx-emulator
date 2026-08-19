@@ -29,6 +29,13 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_bytes(self: Path) -> bytes:
         return b"\x00" * 32768
 
+    def fake_read_text(self: Path, encoding: str | None = None) -> str:
+        # Isolate from the developer's own (git-ignored) py_emulator.yaml,
+        # the only real caller of Path.read_text in this codebase
+        # (msx/app_config.py's load_app_config) -- an empty string parses
+        # to an all-unset AppConfig, the same as a genuinely absent file.
+        return ""
+
     with patch.object(sys, "argv", [".", *argv]), \
          patch("builtins.print", side_effect=lambda *a, **kw: (
              stdout_buf.write(" ".join(str(x) for x in a) + "\n")
@@ -37,6 +44,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
          )), \
          patch.object(Path, "exists", lambda self: True), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
+         patch.object(Path, "read_text", fake_read_text), \
          patch("frontend.sdl2_frontend.run"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main_scc_plus", _MAIN_PATH)

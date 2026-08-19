@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2084%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2113%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -935,7 +935,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2084 tests spanning unit tests
+The test suite covers all major components with 2113 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -998,7 +998,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2084 tests
+├── tests/                 # Test suite — 2113 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1059,18 +1059,19 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
-- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI startup flags being silently ignored on MSX1 machines. `Machine.set_breakpoints`/`set_watchpoints` operate purely on the CPU and memory bus with no V9938/MSX2 dependency, and the interactive debugger's `ba`/`br`/`bl`/`wa`/`wd`/`wl` REPL commands already worked on MSX1 — only the CLI startup path was gated to `generation == "msx2"`, an artifact of when the interactive debugger itself was MSX2-only.
-- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus` (and the matching `py_emulator.yaml` `scc_plus` key): a bare sound cartridge connected unconditionally in primary slot 1, for FDD (floppy-disk) MSX2 titles that use it purely for audio (a cartridge ROM argument together with `--scc-plus` is a startup error). Extends `msx/scc.py`'s SCC chip with a Plus mode (5 independent waveform banks, relocated frequency/volume/enable block) alongside the existing Compatible mode, and a chip-identity flag (`is_052539`) so a real Konami 051649 (`KonamiSCCMapper`) and the SCC-I cartridge's 052539 correctly differ in one Compatible-mode read case (channel 5's waveform readable at 0xA0-0xBF on a 052539 only); adds `msx/mapper.py:SCCICart` (64 KB of physical bank-switched RAM addressed as if 128 KB, with bank register bit 3 ignored so block N mirrors block N+8 — reproducing a real, documented cartridge modification that makes one implementation compatible with both target titles' expected RAM-population variant; blank at power-on, mode register selecting Compatible vs. Plus SCC window and per-window RAM-write behaviour).
-- **v2.5.1** (2026-08-16) — Close most of the outstanding Allium open questions from v2.5.0's distillation pass, fixing two along the way: a PPI (i8255) mode-set control word no longer clears Port C's latch, and reading port 0xAB now returns the last mode-set word instead of floating at 0xFF (both now match openMSX's shared I8255 core). Rebind quit to Ctrl+Q; the host Esc key now reaches MSX ESC (row 7, column 2) instead of being reserved. Switch the PSG amplitude table from an idealised geometric curve to a measured-silicon one (ayumi's oscilloscope-measured AY-3-8910 DAC data) — an audible change, low/mid volume levels sit noticeably louder. Also: `docs/msx_emulator_rpc_spec.md`, `pyproject.toml`, and `requirements-dev.txt` are now included in the public GitHub mirror (previously private-only).
-- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused specification layer (`allium/*.allium`) alongside OpenSpec, and distill one for every major component — Z80 CPU, TMS9918A, V9938 (core and command engine), the memory/slot decoder, PSG, SCC, FM-PAC/YM2413, PPI/keyboard matrix, joystick/mouse port protocol, WD2793 FDC (core and HB-F1XD), and the SDL2 frontend — each pass closing test-obligation gaps the existing suite had missed. Distilling the specs against the real hardware surfaced and fixed several accuracy bugs along the way: V9938 sprite collision (TP-dependent colour-0 eligibility, S#3–S#6 status bits, GRAPHIC5 colour split across the dot pair), V9938 command-engine conformance, memory slot-3 exclusivity enforcement, and WD2793/HB-F1XD FDC bugs. Also add TypedDict save-state schemas across every stateful component (OPLL, FM-PAC, PSG, SCC, and all 10 cartridge mappers); a per-page memory dispatch cache and DD/FD/ED opcode lookup-table dispatch for performance; and JIS `@`/`^`/`:`/`_` keyboard bindings.
-- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the whole scanline loop. The VBlank IRQ is raised from within that loop, so the renderer previously read VRAM the game's VBlank ISR had already rewritten — sprite attributes and name tables appeared one frame early while display registers came from the correct frame-start snapshot. The visible result was a one-frame tear on titles that update VRAM and a display register in the same ISR (e.g. one-dot sprite jitter, and a seven-dot jump on 8-dot boundaries, with R#18 fine horizontal scrolling). MSX1/TMS9918A machines are unaffected. Also fix Ctrl-C during the active display falling through into the VBlank segment instead of ending the frame, and speed up the debugger's per-instruction loop by ~9%.
-- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml`: add `slot2`/`mapper2` (slot 2 cartridge defaults) and `frame_skip` (`auto`/`none` toggle) config keys, resolved with the same built-in-default < config < CLI precedence as `mapper`/`speed`/`fmpac`; add a `keyboard_joystick.buttons` section that lets each Joy1 keyboard-emulation function (`up`/`down`/`left`/`right`/`trigger_a`/`trigger_b`) be bound to a single key, replacing that function's built-in default key(s).
-- **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (a new `GameMaster2Mapper`: Konami-style 128 KB ROM with 8 KB battery-backed SRAM, each bank register selecting a ROM page or a 4 KB SRAM half mirrored across the 8 KB window, SRAM writable at 0xB000–0xBFFF). Reconcile `--mapper`/config `mapper:` accepted names with the loader's supported set (previously missing `Page2`/`0x4000`/`0x8000`/`KoeiSRAM32`).
-- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`: ROM visible only at a fixed base address, rest of the cartridge region open bus) and `KoeiSRAM32` (a new `KoeiSRAM32Mapper`: ASCII8 with 32 KB battery-backed SRAM, extending the SRAM-selectable window set to include 0x4000).
-- **v2.4.4** (2026-08-04) — Add MSX mouse emulation: `--mouse[=1|2]` attaches a host-mouse-driven mouse to a joystick port, reproducing the real pin-8-clocked nibble protocol; `py_emulator.yaml` gains `mouse.enabled`/`mouse.port`.
-- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers (KonamiSCC, ASCII8, ASCII16, Konami, and their SRAM variants) with a flat mirror rebuilt only on bank switch instead of resolving the active window on every read.
+- **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
+- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI flags being silently ignored on MSX1 machines; the interactive debugger's own commands already worked there, only the CLI startup path was gated to MSX2.
+- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus`: a bare sound cartridge in slot 1 with 64 KB bank-switched RAM and a Plus-mode SCC chip, for floppy-disk MSX2 titles that use it purely for audio.
+- **v2.5.1** (2026-08-16) — Close most outstanding Allium open questions from v2.5.0, fixing two PPI (i8255) bugs and rebinding quit to Ctrl+Q along the way. Switch the PSG amplitude table to measured-silicon data — an audible change.
+- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused spec layer and distill one for every major component, fixing several accuracy bugs (V9938 sprite collision, FDC) found along the way. Also add save-state schemas, a memory dispatch cache, and JIS keyboard bindings.
+- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the scanline loop, fixing a one-frame tear on titles that update VRAM and a display register in the same VBlank ISR. Also speeds up the debugger's per-instruction loop by ~9%.
+- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml` with `slot2`/`mapper2` and `frame_skip` config keys, and a `keyboard_joystick.buttons` section for rebinding Joy1's keyboard-emulation keys.
+- **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (128 KB ROM + 8 KB battery-backed SRAM); reconcile `--mapper` accepted names with the loader's supported set.
+- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`) and `KoeiSRAM32`.
+- **v2.4.4** (2026-08-04) — Add MSX mouse emulation (`--mouse[=1|2]`), reproducing the real pin-8-clocked nibble protocol via the host mouse.
+- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers with a flat mirror rebuilt only on bank switch, instead of resolving the active window on every read.
 - **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
-- **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file (default machine/speed/mapper/FM-PAC, gamepad button map, turbo rate); switch `--benchmark` to a frame count.
+- **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file; switch `--benchmark` to a frame count.
 - **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
 - **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
 - **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.

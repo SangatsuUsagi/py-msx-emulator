@@ -1,5 +1,7 @@
 import struct
 
+import pytest
+
 from msx.mapper import (
     Ascii8Mapper,
     Ascii16Mapper,
@@ -329,25 +331,43 @@ def test_konami_switch_window_3() -> None:
     assert m.read(0xA000) == 7
 
 
-def test_konami_page_wrap_around() -> None:
+def test_konami_bank_select_is_direct_when_value_is_in_range() -> None:
+    # openMSX's two-tier resolution: a raw value already below the ROM's
+    # real page count selects that page directly, unmasked.
     rom = _rom_8k_pages(8)
     m = KonamiMapper(rom)
-    m.write(0x6000, 9)  # 9 % 8 == 1
-    assert m.read(0x6000) == 1
+    m.write(0x6000, 7)
+    assert m.read(0x6000) == 7
 
 
-def test_konami_read_below_window_returns_open_bus() -> None:
+def test_konami_bank_select_out_of_range_value_masks_then_opens_bus() -> None:
+    # The bank register's mask is a fixed 5 bits (31), independent of the
+    # ROM's actual page count -- unlike a modulo wrap, it does not fold an
+    # out-of-range value back onto a real page. 9 is not less than this
+    # ROM's 8 pages, so it is masked with 31 (9 & 31 == 9, unchanged), and
+    # 9 is still not less than 8, so it resolves to open bus rather than
+    # aliasing to page 1 (9 % 8).
+    rom = _rom_8k_pages(8)
+    m = KonamiMapper(rom)
+    m.write(0x6000, 9)
+    assert m.read(0x6000) == 0xFF
+
+
+def test_konami_read_below_window_mirrors_windows_0_and_1() -> None:
     # A slot scan (e.g. BIOS RAM detection) can transiently address this
     # mapper's slot on a page it doesn't occupy (page 0, below 0x4000).
+    # Real hardware mirrors windows 0/1 there rather than reading open bus
+    # (openMSX RomKonami::bankSwitch).
     rom = _rom_8k_pages(8)
     m = KonamiMapper(rom)
-    assert m.read(0x0000) == 0xFF
+    assert m.read(0x0000) == m.read(0x4000)  # window 0's first byte, mirrored
+    assert m.read(0x3FFF) == m.read(0x7FFF)  # window 1's last byte, mirrored
 
 
-def test_konami_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF (page 3): re-uses window 3's bank/base arithmetic for any
-    # addr >= 0xA000, so a small ROM (bank 3's page_offset out of range)
-    # resolves to open bus via the same bounds check, not a crash.
+def test_konami_read_above_window_mirrors_windows_2_and_3() -> None:
+    # 0xC000-0xFFFF mirrors windows 2/3 (openMSX RomKonami::bankSwitch).
+    # Window 2's power-on bank is 2, out of range for a 1-page ROM, so this
+    # also happens to resolve to open bus -- via the mirror, not a crash.
     small_rom = _rom_8k_pages(1)
     m = KonamiMapper(small_rom)
     assert m.read(0xC000) == 0xFF
@@ -365,6 +385,23 @@ def test_konami_snapshot_restore_roundtrips_banks() -> None:
     assert m2._banks == m._banks
     assert m2.read(0x6000) == 4
     assert m2.read(0xA000) == 7
+
+
+def test_konami_restore_rejects_negative_bank() -> None:
+    # A negative bank register would make _sync_window slice self.rom with
+    # a negative start, which Python resolves by wrapping from the end of
+    # the ROM instead of raising -- silently wrong content rather than a
+    # clear failure. restore() must reject this instead of trusting the
+    # save-state file (matching SCCICart.restore()'s existing precedent).
+    m = KonamiMapper(_rom_8k_pages(8))
+    with pytest.raises(ValueError):
+        m.restore({"banks": [0, 1, 2, -1]})
+
+
+def test_konami_restore_rejects_wrong_bank_count() -> None:
+    m = KonamiMapper(_rom_8k_pages(8))
+    with pytest.raises(ValueError):
+        m.restore({"banks": [0, 1, 2]})
 
 
 # ---------------------------------------------------------------------------
