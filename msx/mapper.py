@@ -327,7 +327,9 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
 
     No mirroring outside 0x4000-0xBFFF: same as Ascii8Mapper (see that
     class's own docstring note); ROM or SRAM content outside the four
-    windows is open bus, not mirrored.
+    windows is open bus, not mirrored, for both reads and writes -- a
+    write outside 0x4000-0xBFFF reaches no real chip on real hardware and
+    is silently dropped, even while a window is SRAM-mapped.
     """
 
     _SRAM_SIZE: ClassVar[int] = 2048
@@ -403,6 +405,11 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             if value != old:
                 self._sync_window(reg)
             _trace_bank(self, reg, old, value, addr)
+            return
+        if not (0x4000 <= addr < 0xC000):
+            # Outside the four windows: open bus, not a mirror -- same fix
+            # as the read side (see the class docstring's "No mirroring"
+            # note); a write here reaches no real chip on real hardware.
             return
         if addr < 0x6000:
             window, base = 0, 0x4000

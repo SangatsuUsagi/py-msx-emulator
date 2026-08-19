@@ -213,6 +213,17 @@ def test_ascii8_read_outside_window_is_open_bus_regardless_of_bank_state() -> No
     assert m.read(0xD000) == 0xFF  # old formula would have returned a real ROM byte
 
 
+def test_ascii8_banks_list_has_four_entries() -> None:
+    # allium/ascii_mappers.allium invariant Ascii8BanksCountIsFour: one
+    # bank register per window, for the entity's whole lifetime.
+    rom = _rom_8k_pages(8)
+    m = Ascii8Mapper(rom)
+    assert len(m._banks) == 4
+    m.write(0x6000, 3)
+    m.write(0x7800, 7)
+    assert len(m._banks) == 4
+
+
 def test_ascii8_snapshot_restore_roundtrips_banks() -> None:
     rom = _rom_8k_pages(8)
     m = Ascii8Mapper(rom)
@@ -296,6 +307,17 @@ def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
     small_rom = _rom_16k_pages(1)
     m = Ascii16Mapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_ascii16_banks_list_has_two_entries() -> None:
+    # allium/ascii_mappers.allium invariant Ascii16BanksCountIsTwo: one
+    # bank register per window, for the entity's whole lifetime.
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    assert len(m._banks) == 2
+    m.write(0x6000, 2)
+    m.write(0x7000, 3)
+    assert len(m._banks) == 2
 
 
 def test_ascii16_snapshot_restore_roundtrips_banks() -> None:

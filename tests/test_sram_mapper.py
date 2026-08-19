@@ -152,6 +152,37 @@ class TestAscii8Sram2:
         m.write(0x8000 + 0x123, 0x9A)
         assert m.read(0x8000 + 0x123) == 0x9A
 
+    def test_write_outside_register_zone_does_not_change_bank(self):
+        # allium/ascii_mappers.allium Ascii8SramBankSelect: the register
+        # zone requires clause is 0x6000-0x7FFF; a write outside it (e.g.
+        # window 0's own body) must not update any bank register.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        original_banks = list(m._banks)
+        m.write(0x4000, 5)
+        assert m._banks == original_banks
+
+    def test_write_outside_cartridge_window_does_not_write_sram(self):
+        # Real ASCII8 hardware does not mirror outside 0x4000-0xBFFF
+        # (openMSX issue #1213, same ground truth as the read-side fix).
+        # A write below or above that range must not reach SRAM, even
+        # while a window is SRAM-mapped -- the window/base arithmetic used
+        # to be extrapolated for out-of-range addresses (a real bug: e.g.
+        # 0xD000 resolved to window 3's own SRAM block), same shape as the
+        # already-fixed read-side leak.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x7800, _SRAM_BANK)  # window 3 -> SRAM
+        m.write(0x0000, 0x11)
+        m.write(0xD000, 0x22)
+        assert m.sram == bytearray(2048)
+
+    def test_banks_list_has_four_entries(self):
+        # allium/ascii_mappers.allium invariant Ascii8SramBanksCountIsFour.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        assert len(m._banks) == 4
+        m.write(0x6000, 1)
+        m.write(0x7800, _SRAM_BANK)
+        assert len(m._banks) == 4
+
 
 # ---------------------------------------------------------------------------
 # Ascii8Sram8Mapper
@@ -354,6 +385,25 @@ class TestAscii16Sram2:
         m.write(0x8000 + 0x321, 0x5C)
         assert m.read(0x8000 + 0x321) == 0x5C
 
+    def test_write_to_window1_body_when_not_sram_selected_does_not_write_sram(self):
+        # allium/ascii_mappers.allium Ascii16SramWriteSram: the second
+        # requires clause (bank_at(banks, 1) = ascii16_sram_select_code)
+        # must fail cleanly -- a write to window 1's body while its bank
+        # register selects a ROM page (not exactly 0x10) must not touch
+        # SRAM at all.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.write(0x7000, 0x01)  # window 1 -> ROM page 1, not SRAM
+        m.write(0x8100, 0x33)
+        assert m.sram == bytearray(2048)
+
+    def test_banks_list_has_two_entries(self):
+        # allium/ascii_mappers.allium invariant Ascii16SramBanksCountIsTwo.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        assert len(m._banks) == 2
+        m.write(0x6000, 0x10)
+        m.write(0x7000, 1)
+        assert len(m._banks) == 2
+
 
 # ---------------------------------------------------------------------------
 # Ascii16Sram8Mapper
@@ -516,3 +566,23 @@ class TestSnapshotRestore:
         m.write(0x8000, 0x22)         # mutate after snapshot
         m.restore(snap)
         assert m.read(0x8000) == 0x11
+
+
+# ---------------------------------------------------------------------------
+# allium/ascii_mappers.allium invariant Ascii8SramWindow1NeverSramCapable
+# ---------------------------------------------------------------------------
+
+class TestAscii8SramWindow1NeverCapable:
+    # Window 1 (0x6000-0x7FFF) is always the register-decode zone; the
+    # region bit for window 1 is 1 << (1 + 2) = 0x08. None of the three
+    # concrete _SRAM_PAGES masks may ever set it.
+    _WINDOW1_BIT = 0x08
+
+    def test_ascii8sram2_pages_mask_excludes_window1(self):
+        assert Ascii8Sram2Mapper._SRAM_PAGES & self._WINDOW1_BIT == 0
+
+    def test_ascii8sram8_pages_mask_excludes_window1(self):
+        assert Ascii8Sram8Mapper._SRAM_PAGES & self._WINDOW1_BIT == 0
+
+    def test_koei_sram32_pages_mask_excludes_window1(self):
+        assert KoeiSRAM32Mapper._SRAM_PAGES & self._WINDOW1_BIT == 0
