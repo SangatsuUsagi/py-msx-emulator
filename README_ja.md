@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2113%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2134%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -763,7 +763,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2113 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2134 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -823,7 +823,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2113 テスト
+├── tests/                 # テストスイート — 2134 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -867,6 +867,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.5** (2026-08-19) — `Ascii16Sram2Mapper` の書き込み側 open bus リーク（0xC000 以降への書き込みが、ウィンドウが SRAM 選択中に SRAM を壊しうる不具合）を修正。`RTypeMapper` にもフラット読み取りミラーを追加し、毎読み取りでウィンドウを解決していた最後のマッパークラスを解消。
 - **v2.5.4** (2026-08-19) — openMSX 実機ソースとの照合で見つけた Konami 系マッパー（`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`）の不具合 3 件を修正：ROM ウィンドウ外アドレスのミラーリング、バンク選択のページ演算、SCC 有効化書き込みでバンクレジスタが更新されない点。このマッパーファミリー向けの新しい Allium 仕様を追加し、無関係なテスト分離バグ（`test_cli_scc_plus.py`）も修正。
 - **v2.5.3** (2026-08-17) — MSX1 機で `--break-point`/`--watch-point` CLI 起動オプションが無視されていた不具合を修正。インタラクティブデバッガ自体のコマンドは元々動作しており、CLI 起動パスだけが MSX2 限定になっていた。
 - **v2.5.2** (2026-08-16) — `--scc-plus` で SCC-I（「SCC+」）カートリッジ対応を追加：スロット 1 に接続される、64 KB バンク切り替え RAM と Plus モード SCC を持つ裸のサウンドカートリッジ。オーディオ目的のみでこれを使うフロッピー版 MSX2 タイトル向け。
