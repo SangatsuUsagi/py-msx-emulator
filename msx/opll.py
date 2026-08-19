@@ -198,6 +198,20 @@ def _build_rks_table() -> list[list[int]]:
     return result
 
 
+# PORT-NOTE: _TLL_TABLE is a triple-nested list ([[[int]*4]*64]*128), built
+#   once at import time via a triple loop and indexed
+#   _TLL_TABLE[(block<<4)|fnum][tl][kl] in the hot envelope-update path
+#   (_update_slots below). _RKS_TABLE is a double-nested list, same shape.
+# Rust equivalent: a flat [i32; 128*64*4] (or [[[i32;4];64];128]) built via
+#   once_cell/lazy_static or const-eval, indexed by the same
+#   (block<<4|fnum)*64*4 + tl*4 + kl computation.
+# C++ equivalent: static const std::array<...> computed once via a
+#   constructor function, or constexpr if the formula is made
+#   constexpr-friendly.
+# Kept as-is here because: unverified perf impact, needs benchmarking before
+#   refactor -- whether flattening helps or hurts current Python performance
+#   (fewer list-of-list indirections vs. one extra multiply/add per lookup)
+#   isn't obvious without measurement.
 _TLL_TABLE = _build_tll_table()
 _RKS_TABLE = _build_rks_table()
 
@@ -401,6 +415,16 @@ class Opll:
     restore() for save-state. All other members mirror the emu2413 internals.
     """
 
+    # PORT-NOTE: _reg/_slot/_patch/_patch_number/_ch_out (below) are all
+    #   fixed-count for the instance's whole lifetime -- allocated once here
+    #   and only ever indexed, driven every tick by _update_output/
+    #   _update_slots (the hot per-sample synthesis path).
+    # Rust equivalent: [u8; 0x40], [Slot; 18], [Patch; 38], [i32; 9], [i32; 14].
+    # C++ equivalent: std::array<uint8_t,0x40>, std::array<Slot,18>,
+    #   std::array<Patch,38>, std::array<int32_t,9>, std::array<int32_t,14>.
+    # Kept as-is here because: fixed-length lists here cost nothing extra
+    #   over a hypothetical fixed-array wrapper in Python, and this is the
+    #   same convention msx/scc.py's fixed-length-field note documents.
     _reg: bytearray = field(default_factory=lambda: bytearray(0x40), init=False, repr=False)
     _slot: list[_Slot] = field(
         default_factory=lambda: [_Slot(i) for i in range(18)], init=False, repr=False
@@ -1046,6 +1070,21 @@ class Opll:
         return out
 
     # --------------------------------------------------------- save / restore
+    # PORT-LIBRARY-NOTE: snapshot()/restore() emit/consume each field
+    #   explicitly via a TypedDict (OpllState, below), rather than by
+    #   getattr/setattr reflection -- the same explicit-field pattern used by
+    #   PSG.snapshot_synth()/restore_synth(), SCC.snapshot()/restore(), and
+    #   FmPac.snapshot()/restore(). The dict maps 1:1 onto the emu2413
+    #   OPLL_PATCH / OPLL_SLOT structs this file is a port of.
+    # Rust crate candidates: serde + serde_json (or bincode) deriving
+    #   Serialize/Deserialize directly on the equivalent OpllState/_Patch/
+    #   _Slot structs -- the explicit field lists here already give the
+    #   struct shape for free.
+    # C++ library candidates: nlohmann::json (or hand-written struct
+    #   (de)serialize functions mirroring snapshot()/restore() as written).
+    # Not adopted now because: Python's stdlib dict/TypedDict already gives
+    #   the save-state format for free; no serialization dependency needed
+    #   in the Python codebase today.
 
     def snapshot(self) -> OpllState:
         """Capture full chip state for save-state (paired with restore)."""
@@ -1104,9 +1143,9 @@ class Opll:
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
 
-# Save-state helpers emit/consume each field explicitly (rather than by
-# getattr/setattr reflection), so the snapshot dict maps 1:1 onto the emu2413
-# OPLL_PATCH / OPLL_SLOT structs and ports directly to a serde/JSON struct.
+# Save-state field helpers for OPLL.snapshot()/restore() -- see the
+# PORT-LIBRARY-NOTE on OPLL.snapshot() for the explicit-field-vs-reflection
+# rationale.
 
 
 def _patch_fields(p: _Patch) -> _PatchState:

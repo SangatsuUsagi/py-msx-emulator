@@ -2,6 +2,23 @@
 
 Two-pass loading: device registry first, then machine spec resolution.
 Raises MachineLoadError with specific file and field names on any validation failure.
+
+PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
+  hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
+  et al.) is the largest source of `Any` in this codebase (same pattern, at
+  smaller scale, in msx/app_config.py and msx/romdb.py).
+Rust crate candidates: serde + serde_yaml (or saphyr) deserializing directly
+  into the equivalent MachineSpec/AppConfig structs, replacing this hand-
+  written validation layer with derive-macro-generated checks -- would need
+  custom Deserialize impls to reproduce the exact error messages and
+  _KNOWN_*_KEYS unknown-key warnings this file emits.
+C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
+  validation (closest to today's Python shape), or a schema-validated
+  approach via nlohmann/json-style patterns if the config format were
+  migrated to JSON at port time.
+Not adopted now because: this is inherent to dynamically-typed YAML, not a
+  code-quality gap in the current Python; no new dependency needed for the
+  Python codebase today (PyYAML already covers this).
 """
 from __future__ import annotations
 
@@ -16,6 +33,7 @@ import yaml
 
 if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDisk
+    from msx.machine import Machine
 
 import msx.romdb as romdb
 from msx.cpu.z80 import Z80
@@ -109,6 +127,13 @@ def _require_scc(scc: SCC | None) -> SCC:
     return scc
 
 
+def _sram_or_empty(sram: bytearray | None) -> bytearray:
+    """Adapt an Optional preloaded save to the SRAM mappers' non-Optional
+    `sram` field -- an empty buffer is the "no preload" sentinel each
+    mapper's __post_init__ already replaces with a correctly-sized one."""
+    return sram if sram is not None else bytearray()
+
+
 # mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
 # scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
 # with None normalised to b"". FlatMapper keeps the None-able cartridge (it
@@ -119,11 +144,15 @@ _MAPPER_BUILDERS: dict[
     "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
     "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
     "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
-    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
-    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
+    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=_sram_or_empty(sram)),
+    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=_sram_or_empty(sram)),
     "ASCII16":      lambda cart, rom, sram, scc: Ascii16Mapper(rom),
-    "ASCII16SRAM2": lambda cart, rom, sram, scc: Ascii16Sram2Mapper(rom, sram=sram),
-    "ASCII16SRAM8": lambda cart, rom, sram, scc: Ascii16Sram8Mapper(rom, sram=sram),
+    "ASCII16SRAM2": lambda cart, rom, sram, scc: Ascii16Sram2Mapper(
+        rom, sram=_sram_or_empty(sram)
+    ),
+    "ASCII16SRAM8": lambda cart, rom, sram, scc: Ascii16Sram8Mapper(
+        rom, sram=_sram_or_empty(sram)
+    ),
     "Konami":       lambda cart, rom, sram, scc: KonamiMapper(rom),
     "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
     "R-Type":       lambda cart, rom, sram, scc: RTypeMapper(rom),
@@ -133,8 +162,8 @@ _MAPPER_BUILDERS: dict[
     "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
-    "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=sram),
-    "GameMaster2":  lambda cart, rom, sram, scc: GameMaster2Mapper(rom, sram=sram),
+    "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=_sram_or_empty(sram)),
+    "GameMaster2":  lambda cart, rom, sram, scc: GameMaster2Mapper(rom, sram=_sram_or_empty(sram)),
 }
 
 
@@ -734,7 +763,7 @@ def build_machine(
     fmpac_overlay: _FmPacOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
     scc_plus: bool = False,
-) -> "Machine":  # type: ignore[name-defined]  # noqa: F821
+) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
     Args:
@@ -927,8 +956,8 @@ def _build_msx1(
     psg: PSG,
     io: IOBus,
     logger: DebugLogger | None,
-    machine_cls: Any,
-) -> Any:
+    machine_cls: "type[Machine]",
+) -> "Machine":
     memory = Memory(
         rom=main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
@@ -1010,10 +1039,10 @@ def _build_msx2(
     io: IOBus,
     logger: DebugLogger | None,
     tracer: Tracer | None,
-    machine_cls: Any,
+    machine_cls: "type[Machine]",
     disk_rom_override: bytes | None = None,
     fdd_images: list[Path | None] | None = None,
-) -> Any:
+) -> "Machine":
     if extrom_override is not None:
         sub_bytes: bytes | None = extrom_override
     elif spec.sub_rom_entry is not None:

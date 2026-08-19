@@ -177,6 +177,10 @@ class FmPac:
     # constructor argument; __post_init__ blanks a wrong-size image.
 
     # ------------------------------------------------------------- save-state
+    # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
+    #   canonical note on this explicit-TypedDict-field save-state boundary
+    #   pattern (shared by PSG/SCC/OPLL/FmPac) and its Rust serde /
+    #   C++ nlohmann::json crate candidates.
 
     def snapshot(self) -> FmPacState:
         """Capture device state for save-state (paired with restore),

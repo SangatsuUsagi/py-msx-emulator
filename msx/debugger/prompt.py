@@ -572,7 +572,21 @@ class Debugger:
         print("VDP trace disabled")
 
     def _mapper_targets(self) -> list[object]:
-        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
+        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing.
+
+        PORT-NOTE: reaches into Memory's private `_mapper`/`_mapper2` via
+          getattr/hasattr, same pattern as _sl_content/_rom_mapper_bank_info
+          below.
+        Rust equivalent: an explicit `SlotDebugInfo`/`MapperDebug` trait that
+          `Memory` and each `Mapper` implementation expose a method for,
+          instead of reflection over private fields.
+        C++ equivalent: same -- a small debug-inspection interface `Memory`
+          and each mapper implements, not private-member reflection.
+        Kept as-is here because: port target/shape not decided yet, and this
+          spans msx/memory.py, msx/mapper.py, and this file -- large-scope
+          item, tracked for a separate OpenSpec proposal rather than a
+          mechanical refactor here.
+        """
         mem = self._machine.memory
         result = []
         for attr in ("_mapper", "_mapper2"):

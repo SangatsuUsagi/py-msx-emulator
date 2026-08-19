@@ -96,12 +96,22 @@ class PSG:
     # positions (reproduces software PCM). _regs_base / _gen_base snapshot the
     # register + generator state at the frame's first write, for replay rewind.
     #
-    # Portability note: _get_cycle is a closure assigned at wiring time
-    # (machine_loader sets `lambda: machine.cycle_count`), capturing the Machine
-    # that owns this PSG — a reference cycle Rust/C++ cannot express as a plain
-    # Fn field. A port should thread the cycle count through write_port (via the
-    # IOBus write dispatch) or hold a clock handle resolved once at construction,
-    # mirroring the bus-hook notes on Z80/VDP/mapper.
+    # PORT-NOTE: _get_cycle is a closure assigned at wiring time
+    #   (machine_loader sets `lambda: machine.cycle_count`), capturing the
+    #   Machine that owns this PSG.
+    # Rust equivalent: a reference cycle like this can't be expressed as a
+    #   plain Fn field owning its captured struct; thread the cycle count
+    #   through write_port explicitly instead (see msx/io.py's matching
+    #   _get_pc note — both closures share the same call sites).
+    # C++ equivalent: same — pass the cycle count as an explicit parameter
+    #   rather than a captured back-reference, avoiding an ownership cycle
+    #   between PSG and its owning Machine.
+    # Kept as-is here because: port target/shape not decided yet — replacing
+    #   this with an explicit cycle: int parameter on write_port ripples
+    #   through msx/io.py's IOBus dispatch and every machine_loader.py device
+    #   registration site (6 device types x 2 directions), and whether that
+    #   costs more than the current closure call needs benchmarking before
+    #   committing to a shape; see msx/io.py:_get_pc for the paired item.
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     # Recorded writes as (cycle, reg, value); a port would use a small struct.
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
@@ -110,6 +120,16 @@ class PSG:
     _gen_base: _GenState | None = field(default=None, init=False, repr=False)
 
     # --- synthesiser state (not part of __init__) ---
+    #
+    # PORT-NOTE: _tone_cnt/_tone_out are 3-element list[int] fields, fixed
+    #   size for the instance's whole lifetime, indexed in the per-sample hot
+    #   loop (_render, below).
+    # Rust equivalent: [i32; 3] fields, not Vec<i32>.
+    # C++ equivalent: std::array<int32_t, 3>.
+    # Kept as-is here because: Python has no cheap fixed-size numeric array
+    #   type outside NumPy (which this project doesn't depend on), and a
+    #   3-element list's overhead is immaterial next to the per-sample work
+    #   _render already does.
     _tone_cnt: list[int] = field(default_factory=lambda: [1, 1, 1], init=False, repr=False)
     _tone_out: list[int] = field(default_factory=lambda: [0, 0, 0], init=False, repr=False)
     _noise_cnt: int = field(default=1, init=False, repr=False)
@@ -199,6 +219,10 @@ class PSG:
         self._gen_base = None
 
     # ------------------------------------------------------------ save-state
+    # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
+    #   canonical note on this explicit-TypedDict-field save-state boundary
+    #   pattern (shared by PSG/SCC/OPLL/FmPac) and its Rust serde /
+    #   C++ nlohmann::json crate candidates.
 
     def snapshot_synth(self) -> PsgSynthState:
         """Capture internal tone/noise/envelope generator state for
@@ -308,10 +332,19 @@ class PSG:
                     break
                 # Repeating shape: reload counter; alternate reverses the ramp
                 # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
-                # Portability note: _env_step went negative here (Python ints are
-                # arbitrary precision, so -1 & 0x20 == 0x20). Rust/C++ unsigned
-                # types underflow instead — a port must use a signed type (i32)
-                # or an explicit wrap so bit 5 still flags the -1 boundary.
+                #
+                # PORT-NOTE: _env_step went negative here (Python ints are
+                #   arbitrary precision, so -1 & 0x20 == 0x20).
+                # Rust equivalent: an unsigned type wraps instead of going
+                #   negative; use a signed i32 for _env_step, or an explicit
+                #   wrapping_sub + bit-5 check, so bit 5 still flags the -1
+                #   boundary.
+                # C++ equivalent: same — use a signed int32_t, since unsigned
+                #   underflow wraps to a large positive value instead.
+                # Kept as-is here because: semantic necessity, not
+                #   performance — Python's arbitrary-precision two's-complement
+                #   masking already gives the signed-underflow behavior a port
+                #   must introduce explicitly via a signed type.
                 if self._env_alternate and (self._env_step & 0x20):
                     self._env_attack ^= 0x1F
                 self._env_step &= 0x1F
@@ -462,7 +495,7 @@ class PSG:
                                 env_step = 0
                                 break
                             # (env_step & 0x20) is the underflow bit -- see
-                            # _step_envelope's Rust/C++ signed-type caveat above.
+                            # _step_envelope's PORT-NOTE (signed-type caveat) above.
                             if env_alternate and (env_step & 0x20):
                                 env_attack ^= 0x1F
                             env_step &= 0x1F
@@ -495,9 +528,18 @@ class PSG:
                 elif hi2:
                     sample += amp * hi2 // ticks
 
-            # sample is a non-negative i32 here (3 channels × 12287 max = 36861
-            # pre-clamp); amp * hiN // ticks is floor division on non-negative
-            # operands, matching truncating integer division in a Rust/C++ port.
+            # PORT-NOTE: sample is a non-negative i32 here (3 channels x 12287
+            #   max = 36861 pre-clamp); amp * hiN // ticks is Python floor
+            #   division.
+            # Rust equivalent: integer `/` on non-negative i32 operands already
+            #   truncates toward zero, which matches floor division here since
+            #   both operands are non-negative — a direct `amp * hiN / ticks`.
+            # C++ equivalent: same — `/` on non-negative ints truncates toward
+            #   zero, matching this floor division.
+            # Kept as-is here because: semantic necessity, not performance —
+            #   noted so a port doesn't need to double-check whether `//` here
+            #   requires special-casing; on these non-negative operands, plain
+            #   truncating division already matches.
             if sample > 32767:
                 sample = 32767
 

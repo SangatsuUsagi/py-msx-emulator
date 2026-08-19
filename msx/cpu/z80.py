@@ -10,12 +10,21 @@ if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
 
 
-# The opcode dispatch table is bound once at import time. opcodes_main
-# references Z80 only for type checking (guarded by TYPE_CHECKING), so this
-# top-level import does not create a runtime import cycle. Binding _DISPATCH
-# directly collapses the old two-stage call (_execute → execute → _DISPATCH)
-# into a single indexed call on the hot fetch path. It is populated in place by
-# opcodes_main._build_dispatch() at import, so this reference stays valid.
+# PORT-NOTE: this module-level binding aliases opcodes_main._DISPATCH so the
+#   hot fetch path does a single indexed call instead of the two-stage
+#   _execute -> execute -> _DISPATCH lookup a naive translation would produce.
+#   opcodes_main references Z80 only for type checking (TYPE_CHECKING-guarded),
+#   so this top-level import does not create a runtime import cycle; the list
+#   is populated in place by opcodes_main._build_dispatch() at import, so this
+#   reference stays valid for the module's lifetime.
+# Rust equivalent: no separate alias needed — call the dispatch function/table
+#   directly from the fetch loop; module-level `static`/`const` tables are
+#   already directly nameable without an indirection layer.
+# C++ equivalent: same — reference the dispatch table directly, or hold a
+#   pointer/reference to it as a member if ownership needs to be explicit.
+# Kept as-is here because: avoids one extra Python attribute lookup per
+#   instruction fetch; this indirection exists only to work around Python's
+#   two-hop module-attribute-then-call cost, which Rust/C++ don't have.
 _DISPATCH: list[Callable[[Z80], int]] = _opcodes_main._DISPATCH
 
 
@@ -29,10 +38,18 @@ def _noop_write(_port: int, _value: int) -> None:
 
 @dataclass(slots=True)
 class Z80:
-    # Portability note: these bus hooks are stored Python closures (bound methods
-    # assigned at wiring time by Machine.__post_init__). Rust/C++ has no runtime
-    # method swap; a port expresses the bus as a trait object / feature-flagged
-    # field resolved once, so the per-access dispatch stays branch-free.
+    # PORT-NOTE: these bus hooks are stored as Python closures (bound methods
+    #   assigned at wiring time by Machine.__post_init__).
+    # Rust equivalent: a trait object (`Box<dyn Bus>`) or a feature-flagged
+    #   field resolved once at construction, not a runtime method swap.
+    # C++ equivalent: a virtual `Bus` interface pointer, or a `std::function`
+    #   assigned once at construction — Rust/C++ have no equivalent of
+    #   reassigning an instance's bound method at runtime.
+    # Kept as-is here because: read on every memory/port access (the hottest
+    #   accessor pattern after opcode dispatch itself); CPython's bound-method
+    #   call here is already close to the cheapest indirection Python offers,
+    #   and resolving it once at construction (as Machine.__post_init__ does)
+    #   keeps the per-access cost to a single call with no branch.
     read_byte: Callable[[int], int]
     write_byte: Callable[[int, int], None]
     read_port: Callable[[int], int] = field(default=_noop_read)

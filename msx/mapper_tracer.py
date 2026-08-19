@@ -69,12 +69,21 @@ def attach_to_machine(
     does. Returns the tracer, or None when no bank-switching ROM mapper is
     present (flat mapper or empty slot), so callers can report the inert case.
     """
-    # Portability note: this attaches by reflection — `getattr`/`hasattr` probing
-    # for `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
-    # runtime. Rust/C++ has no such monkey-patching; a port matches on a
-    # `SupportsTracing` trait/interface (the `_BankTracing` base already gives
-    # every mapper the hook fields statically) and injects a typed accessor
-    # object, not lambdas.
+    # PORT-NOTE: this attaches by reflection — `getattr`/`hasattr` probing for
+    #   `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
+    #   runtime (the `_BankTracing` base already gives every mapper the hook
+    #   fields statically, so this reflection is only for the optional-attach
+    #   dance, not because the fields' shape is unknown).
+    # Rust equivalent: a `SupportsTracing` trait implemented by every mapper
+    #   (matching `_BankTracing`'s hook fields), with a typed accessor object
+    #   injected via a setter method, not closures assigned by attribute name.
+    # C++ equivalent: same — a `SupportsTracing` interface/mixin every mapper
+    #   implements, with a typed accessor object passed to an explicit
+    #   `attach_tracer()` method, not runtime attribute injection.
+    # Kept as-is here because: port target/shape not decided yet — called
+    #   once per debugger-session attach (not a hot path), and Rust/C++ have
+    #   no equivalent of Python's runtime getattr/hasattr probing, so this
+    #   needs a real interface at port time, not a mechanical translation.
     mem = machine.memory
     targets = []
     for attr in ("_mapper", "_mapper2"):

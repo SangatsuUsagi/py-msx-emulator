@@ -14,6 +14,15 @@ _H = 192
 # Precomputed tile-row lookup: _ROW_BYTES[pat][fg][bg] → 8-byte slice.
 # Eliminates the 8-iteration per-pixel Python loop in G1/G2 renderers.
 # Memory cost: 256 × 16 × 16 × 8 bytes ≈ 512 KB, built once at import time.
+#
+# PORT-NOTE: three-level nested list of bytes objects, each level a separate
+#   heap-allocated PyObject with its own indirection/refcount. Same shape as
+#   msx/vdp/v9938_renderer.py's _ROW_BYTES/_TEXT6_BYTES (MSX2 renderer) — see
+#   that file's PORT-NOTE for the full Rust/C++ sketch (flatten to a single
+#   const array indexed by pat*256 + fg*16 + bg).
+# Kept as-is here because: eliminates the 8-iteration per-pixel Python loop
+#   in the G1/G2 renderers; Python has no cheaper way to express a flat
+#   compile-time-computed array of this size than nested lists.
 _ROW_BYTES: list[list[list[bytes]]] = [
     [
         [
@@ -27,7 +36,9 @@ _ROW_BYTES: list[list[list[bytes]]] = [
 
 # Precomputed sprite-pattern-byte → 8-bit-per-pixel lookup: _SPRITE_BITS[b] →
 # 8-byte 0/1 slice. Eliminates the 8-iteration per-pixel Python loop in
-# _sprite_row_pixels, same pattern as _ROW_BYTES above.
+# _sprite_row_pixels, same pattern as _ROW_BYTES above (single-level list of
+# bytes here, so the nested-list PORT-NOTE on _ROW_BYTES doesn't apply — this
+# one is already a flat array, directly portable as a const [[u8;8]; 256]).
 _SPRITE_BITS: list[bytes] = [
     bytes((b >> (7 - bit)) & 1 for bit in range(8)) for b in range(256)
 ]

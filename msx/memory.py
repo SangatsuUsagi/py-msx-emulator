@@ -86,13 +86,21 @@ class Memory:
     # _read_rom() reads self.extrom live, unconditionally correct regardless
     # of when it's assigned.
     #
-    # Port note (Rust/C++): this is a Callable dispatch table (bound methods/
-    # closures over `self`), which has no direct static-language equivalent —
-    # a literal Box<dyn Fn>/std::function port would pay heap-alloc + vtable
-    # cost on every rebuild that CPython's bound methods don't. Prefer
-    # porting _resolve_page_read_leaf/_resolve_page_write_leaf/
-    # _resolve_slot3_*_leaf directly as a match/switch over a small per-page
-    # enum tag, dispatched inline, not as a literal translation of this list.
+    # PORT-NOTE: _page_read/_page_write are a Callable dispatch table (bound
+    #   methods/closures over `self`), rebuilt on cache invalidation and
+    #   indexed on every memory access.
+    # Rust equivalent: not a literal Box<dyn Fn>/Vec<Box<dyn Fn>> translation
+    #   (that would pay heap-alloc + vtable cost on every rebuild that
+    #   CPython's bound methods don't) — port
+    #   _resolve_page_read_leaf/_resolve_page_write_leaf/_resolve_slot3_*_leaf
+    #   directly as a match/switch over a small per-page enum tag, dispatched
+    #   inline instead.
+    # C++ equivalent: same — a switch over a per-page enum tag rather than a
+    #   std::function table, to avoid the equivalent allocation/vtable cost.
+    # Kept as-is here because: rebuild is rare (only on
+    #   _CACHE_INVALIDATING_FIELDS writes) and read/write is hot (every CPU
+    #   memory access); CPython's bound-method list-index is already close to
+    #   the cheapest per-access dispatch Python offers.
     _page_cache_valid: bool = field(init=False, repr=False, default=False)
     _page_read: list[Callable[[int], int]] = field(init=False, repr=False, default_factory=list)
     _page_write: list[Callable[[int, int], None]] = field(
@@ -106,13 +114,22 @@ class Memory:
     def __setattr__(self, name: str, value: object) -> None:
         """Invalidate the page-routing cache on writes to _CACHE_INVALIDATING_FIELDS.
 
-        Port note (Rust/C++): intercepting plain attribute assignment has no
-        static-language equivalent; a port needs explicit setters (e.g.
-        `set_slot_register`) that call the equivalent of `invalidate_cache()`
-        instead of relying on assignment interception. This is exercised as
-        public API well beyond this file (msx/ppi.py, msx/machine.py,
-        msx/state.py), so the setters would need to replace `mem.field = x`
-        at every one of those call sites, not just internally.
+        PORT-NOTE: intercepting plain attribute assignment has no static-
+          language equivalent.
+        Rust equivalent: explicit setters (e.g. `set_slot_register`) that call
+          the equivalent of `invalidate_cache()` directly, instead of relying
+          on assignment interception -- Rust has no operator-overload hook for
+          plain field assignment on a struct.
+        C++ equivalent: same -- explicit setter methods, since C++ has no
+          portable equivalent of intercepting `obj.field = value` on a plain
+          struct either (short of wrapping every field in a property-like
+          accessor class, which this design avoids).
+        Kept as-is here because: port target/shape not decided yet, and this
+          is exercised as public API well beyond this file (msx/ppi.py,
+          msx/machine.py, msx/state.py all do `mem.field = value`) -- the
+          setters would need to replace every one of those call sites, not
+          just this file, so it's tracked as a separate large-scope item
+          rather than a mechanical refactor here.
         """
         object.__setattr__(self, name, value)
         if name in _CACHE_INVALIDATING_FIELDS:

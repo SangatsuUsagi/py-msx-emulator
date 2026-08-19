@@ -15,12 +15,17 @@ PHASE_XHIGH2 = 4
 PHASE_XLOW2 = 5
 PHASE_YHIGH2 = 6
 PHASE_YLOW2 = 7
-# Plain int constants, not an Enum: _advance_phase's generic (phase + 1) % 8
-# fallthrough relies on phase supporting arithmetic, and read()'s
-# `self._phase & 3` grouping relies on the same numeric encoding to pick the
-# X/Y-high/low nibble regardless of main vs. alternate cycle. A Rust port
-# promoting this to an enum would need an explicit 8-arm match for the
-# former and an explicit group()/nibble-selector method for the latter.
+# PORT-NOTE: phase is a plain int (0-7), not an enum, because
+#   _advance_phase's (phase + 1) % 8 wraparound and read()'s `phase & 3`
+#   nibble-group selection rely on it supporting arithmetic directly.
+# Rust equivalent: keep phase: u8 with wrapping arithmetic, or an enum with
+#   explicit next()/group() methods if enum-safety is wanted instead (an
+#   8-arm match for the wraparound, an explicit nibble-selector for the
+#   grouping).
+# C++ equivalent: keep as uint8_t, or an enum class with the same helpers.
+# Kept as-is here because: semantic necessity, not performance -- the
+#   arithmetic (mod-8 advance, &3 grouping) is simpler and cheaper to
+#   express directly than via an enum abstraction.
 
 # Pin-8-idle timeout: if the host stops toggling pin 8 for longer than this,
 # the phase resyncs to PHASE_YLOW2 so the next toggle starts a fresh scan
@@ -122,12 +127,18 @@ class MouseDevice:
         self._y_rel = 0
 
     def add_motion(self, dx_px: int, dy_px: int) -> None:
-        # divmod() floors: the quotient rounds toward -inf and the remainder
-        # keeps the sign of _scale (always in [0, _scale)), regardless of
-        # dx_px/dy_px's sign. A Rust/C++ port must use floored division here
-        # explicitly (e.g. Rust's div_euclid/rem_euclid) — plain '/'/'%'
-        # truncate toward zero and would corrupt the sub-pixel carry for
-        # negative motion.
+        # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
+        #   the remainder keeps the sign of _scale (always in [0, _scale)),
+        #   regardless of dx_px/dy_px's sign.
+        # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
+        #   truncate toward zero).
+        # C++ equivalent: std::div with an explicit floor adjustment, or a
+        #   hand-written floor-division helper -- plain '/'/'%' also truncate
+        #   toward zero in C++.
+        # Kept as-is here because: semantic necessity, not performance -- the
+        #   sub-pixel carry (_frac_x/_frac_y) must stay in [0, _scale)
+        #   regardless of motion sign; truncating division would flip its
+        #   sign for negative motion and corrupt the carry.
         dx, self._frac_x = divmod(dx_px + self._frac_x, self._scale)
         dy, self._frac_y = divmod(dy_px + self._frac_y, self._scale)
         self._cur_x_rel += dx

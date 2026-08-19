@@ -5,14 +5,20 @@ from dataclasses import dataclass
 class Registers:
     """Z80 register file.
 
-    Width contract (load-bearing for a Rust/C++ port): every field is a bare
-    Python ``int`` here, but each has a fixed hardware width and is expected to
-    be kept already-masked to that width by whoever writes it —
-      - 8-bit (u8): A, F, I, R, and the shadow A_/F_.
-      - 16-bit (u16): BC, DE, HL, IX, IY, SP, PC, and the shadow BC_/DE_/HL_.
-    Callers mask on write (``& 0xFF`` / ``& 0xFFFF``); readers assume the value
-    is already in range. A port picks u8/u16 per field, at which point the
-    width is enforced by the type (and arithmetic must use wrapping semantics).
+    PORT-NOTE: every field is a bare Python ``int`` here, but each has a fixed
+      hardware width and is expected to be kept already-masked to that width
+      by whoever writes it — 8-bit (u8): A, F, I, R, and the shadow A_/F_;
+      16-bit (u16): BC, DE, HL, IX, IY, SP, PC, and the shadow BC_/DE_/HL_.
+      Callers mask on write (``& 0xFF`` / ``& 0xFFFF``); readers assume the
+      value is already in range.
+    Rust equivalent: u8/u16 per field, enforced by the type; arithmetic must
+      use wrapping (`wrapping_add`/`wrapping_sub`) or explicit `& 0xFF`/
+      `& 0xFFFF` masking to reproduce the same masked-on-write contract.
+    C++ equivalent: uint8_t/uint16_t per field; same wrapping/masking care,
+      since plain arithmetic on these promotes to `int` in C++.
+    Kept as-is here because: semantic necessity, not performance — Python has
+      no fixed-width int type, so this contract must be documented and
+      enforced by convention until the port picks concrete field widths.
     """
 
     # 8-bit primary fields — direct access, no property overhead
@@ -72,10 +78,19 @@ class Registers:
         self.F_ = v & 0xFF
 
     # 8-bit halves of BC/DE/HL — properties for register-indexed instructions.
-    # Portability note: these @property getter/setter pairs have no direct
-    # analogue in Rust/C++ and add descriptor-call overhead. A port stores the
-    # 8-bit halves as plain u8 fields (or derives them with inline getter/setter
-    # methods) rather than as computed properties over the 16-bit pair.
+    # PORT-NOTE: these @property getter/setter pairs hide non-trivial
+    #   computation (a shift + mask) behind what looks like plain field
+    #   access, and Python descriptor calls add per-access overhead with no
+    #   Rust/C++ analogue.
+    # Rust equivalent: plain u8 fields (B, C, D, E, H, L) alongside BC/DE/HL,
+    #   or inline `fn b(&self) -> u8` / `fn set_b(&mut self, v: u8)` methods —
+    #   not a `Deref`/property-style computed accessor.
+    # C++ equivalent: plain uint8_t fields, or inline getter/setter methods —
+    #   not an operator-overload-based computed accessor.
+    # Kept as-is here because: read on nearly every instruction via
+    #   register-indexed opcodes (LD r,r' etc.); reads/writes the single BC/DE/
+    #   HL field CPython already stores, avoiding duplicate storage and a
+    #   sync step between an 8-bit half and its owning 16-bit pair.
     @property
     def B(self) -> int:
         return (self.BC >> 8) & 0xFF

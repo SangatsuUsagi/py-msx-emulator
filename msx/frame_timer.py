@@ -43,7 +43,18 @@ class FrameTimer:
         remaining = self._next_deadline - time.perf_counter()
         if remaining > _SPIN_THRESHOLD:
             time.sleep(remaining - _SPIN_THRESHOLD)
-        # Spin for the final stretch (Rust port: use std::hint::spin_loop() here)
+        # PORT-NOTE: busy-spins the final stretch with a bare `pass` loop.
+        # Rust equivalent: same busy loop, but call std::hint::spin_loop()
+        #   inside it to hint the CPU (reduces power use on some hardware,
+        #   doesn't change timing behavior).
+        # C++ equivalent: same busy loop; std::this_thread::yield() is NOT
+        #   equivalent (it can yield the whole remaining slice) -- a spin
+        #   hint intrinsic (e.g. _mm_pause() on x86) is the closer match.
+        # Kept as-is here because: sleeping for the whole remaining time is
+        #   too coarse-grained for frame-accurate timing (OS scheduler
+        #   granularity would overshoot the deadline); busy-spinning the
+        #   final _SPIN_THRESHOLD stretch is the standard technique for
+        #   sub-millisecond deadline accuracy.
         while time.perf_counter() < self._next_deadline:
             pass
 

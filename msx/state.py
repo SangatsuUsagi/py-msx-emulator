@@ -40,13 +40,21 @@ class MachineSnapshot:
     # Memory
     ram: bytearray
     slot_register: int
-    # Portability note: `mapper_class` is the mapper's Python class name used as
-    # the persisted discriminant (so renaming a mapper class silently
-    # invalidates old saves), and the per-device state below is an untyped
-    # `dict[str, object]` populated from private synth/mapper fields. A Rust/C++
-    # port replaces both with a stable `MapperKind` enum tag + field-by-field
-    # (de)serialization into typed per-device snapshot structs (serde), decided
-    # once when the save format is versioned for the port.
+    # PORT-NOTE: `mapper_class` is the mapper's Python class name used as the
+    #   persisted discriminant (so renaming a mapper class silently
+    #   invalidates old saves), and mapper_state below is the same untyped
+    #   `dict[str, object]` + cast() shape documented on the `Mapper` Protocol
+    #   in msx/mapper.py (see that file's PORT-NOTE on
+    #   GameMaster2Mapper.snapshot()).
+    # Rust equivalent: a stable `MapperKind` enum tag (not the class name) +
+    #   field-by-field (de)serialization into typed per-device snapshot
+    #   structs (serde), decided once when the save format is versioned for
+    #   the port.
+    # C++ equivalent: same -- a stable enum tag + typed per-device structs,
+    #   (de)serialized explicitly rather than through a string-keyed map.
+    # Kept as-is here because: port target/shape not decided yet, and this is
+    #   the same large-scope save-state redesign tracked in msx/mapper.py --
+    #   not a mechanical refactor to do here in isolation.
     mapper_class: str
     mapper_state: dict[str, object]
     # VDP

@@ -16,17 +16,24 @@ _PAGE_16K = 16384
 # check does a plain int compare instead of a per-call global-lookup multiply.
 _WINDOW_BYTES = 4 * _PAGE_8K
 
-# Portability note: every mapper's `addr - base` bounds check in this module
-# (e.g. FixedPageMapper.read, GameMaster2Mapper.read, _read_out_of_window on the
-# banked mappers) relies
-# on Python's arbitrary-precision int subtraction to produce a negative value
-# when `addr` falls below `base`, which the subsequent `0 <=` comparison then
-# rejects. `addr` is not pre-clamped to a mapper's own window before `read()`
-# is called (a BIOS/slot scan can probe any address in cartridge space), so
-# `addr < base` is a real, expected case. A Rust/C++ port using fixed-width
-# unsigned integers must not translate this subtraction directly -- it would
-# underflow-wrap instead of going negative. Cast to a signed intermediate
-# before subtracting, or compare `addr >= base` before computing the offset.
+# PORT-NOTE: every mapper's `addr - base` bounds check in this module (e.g.
+#   FixedPageMapper.read, GameMaster2Mapper.read, _read_out_of_window on the
+#   banked mappers) relies on Python's arbitrary-precision int subtraction to
+#   produce a negative value when `addr` falls below `base`, which the
+#   subsequent `0 <=` comparison then rejects. `addr` is not pre-clamped to a
+#   mapper's own window before `read()` is called (a BIOS/slot scan can probe
+#   any address in cartridge space), so `addr < base` is a real, expected
+#   case. Also applies to every per-site repeat of this pattern in this file
+#   (GameMaster2Mapper.read, and the other banked mappers' equivalent bounds
+#   checks) -- one note, not repeated per class.
+# Rust equivalent: cast to a signed intermediate (i32) before subtracting, or
+#   compare `addr >= base` before computing the offset -- fixed-width
+#   unsigned subtraction underflow-wraps instead of going negative.
+# C++ equivalent: same -- subtract into a signed intermediate, or compare
+#   before subtracting; unsigned underflow wraps in C++ too.
+# Kept as-is here because: semantic necessity, not performance -- Python's
+#   arbitrary-precision int already gives the signed-subtraction behavior a
+#   port must introduce explicitly.
 
 # R-Type (Irem) bank register masks (openMSX RomRType).
 _RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
@@ -343,24 +350,28 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
 
-    # Portability note: `sram` is Optional and every access is guarded / masked
-    # with a `# type: ignore`. A Rust/C++ port makes SRAM non-optional (allocate
-    # a fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
-    # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
-    sram: bytearray | None = None
+    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
+    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
+    # default_factory below); __post_init__ normalizes either case to exactly
+    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
+    sram: bytearray = field(default_factory=bytearray)
     # Per-window flag: True while that window currently maps SRAM. Read()
     # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
     # to the inherited flat mirror -- no window is ever both at once, so no
     # write-through between the two is needed.
-    # Portability note: length is fixed at 4 for this class and never
-    # resized after construction -- a Rust/C++ port should use [bool; 4] /
-    # std::array<bool, 4> (or a bitmask) rather than a growable Vec<bool>.
+    #
+    # PORT-NOTE: length is fixed at 4 for this class and never resized after
+    #   construction.
+    # Rust equivalent: [bool; 4] (or a bitmask), not a growable Vec<bool>.
+    # C++ equivalent: std::array<bool, 4>, not a growable vector.
+    # Kept as-is here because: a fixed-length list costs nothing extra over
+    #   a hypothetical fixed-array wrapper in Python.
     _window_is_sram: list[bool] = field(
         default_factory=lambda: [False, False, False, False], init=False, repr=False,
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+        if len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
@@ -397,7 +408,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
             window = idx >> 13  # idx // _PAGE_8K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_8K
-                return self.sram[self._sram_offset(window, addr, base)]  # type: ignore[index]
+                return self.sram[self._sram_offset(window, addr, base)]
             return self._flat[idx]
         # Outside the four windows: open bus, not a mirror (see the
         # class docstring's "No mirroring" note).
@@ -407,9 +418,8 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         if 0x6000 <= addr <= 0x7FFF:
             reg = (addr >> 11) & 0x03
             old = self._banks[reg]
-            # Stored raw (unmasked); harmless under Python's unbounded int, but a
-            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
-            # (see GameMaster2Mapper's own portability note on this same idiom).
+            # Stored raw (unmasked) -- see GameMaster2Mapper's _banks PORT-NOTE
+            # above for the shared explanation of this idiom.
             self._banks[reg] = value
             if value != old:
                 self._sync_window(reg)
@@ -427,13 +437,13 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         else:
             window, base = 3, 0xA000
         if self._is_sram_bank(window):
-            self.sram[self._sram_offset(window, addr, base)] = value & 0xFF  # type: ignore[index]
+            self.sram[self._sram_offset(window, addr, base)] = value & 0xFF
 
     def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)  # type: ignore[arg-type]
+        path.write_bytes(self.sram)
 
     def snapshot(self) -> Ascii8Sram2MapperState:
-        return {**super().snapshot(), "sram": bytes(self.sram)}  # type: ignore[arg-type]
+        return {**super().snapshot(), "sram": bytes(self.sram)}
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
@@ -508,23 +518,31 @@ class GameMaster2Mapper(_BankTracing):
     _HALF_MASK: ClassVar[int] = 0x0FFF     # offset within a 4 KB half
 
     rom: bytes
-    # Portability note: `sram` is Optional only so the loader may pass a
-    # preloaded save; __post_init__ guarantees it is a `bytearray` of exactly
-    # `_SRAM_SIZE` afterwards, which is why every access carries a
-    # `# type: ignore`. A Rust/C++ port makes SRAM non-optional (allocate a
-    # fixed `[u8; _SRAM_SIZE]` in the constructor/factory) so the read/write
-    # paths need no None-check and the type is `&[u8]`, not `Option<&[u8]>`.
-    sram: bytearray | None = None
+    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
+    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
+    # default_factory below); __post_init__ normalizes either case to exactly
+    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
+    sram: bytearray = field(default_factory=bytearray)
     _SRAM_SIZE: ClassVar[int] = 8192
 
-    # Portability note: `_banks`, `_window_is_sram` and `_window_sram_half` are
-    # all fixed length 4 (indexed by window 0-3) and never resized -- a Rust/C++
-    # port should use `[u8; 4]` / `[bool; 4]` / `[u16; 4]` (or a bitmask for the
-    # flags) rather than a growable Vec. `_banks` is `init=True`, so a port's
-    # constructor must seed it with `[0, 1, 2, 3]`. Its stored values are raw
-    # register bytes; a port with `[u8; 4]` must mask `value & 0xFF` at the
-    # store (Python's unbounded int keeps the downstream `& _SRAM_BIT` etc.
-    # harmless without masking).
+    # PORT-NOTE: `_banks`, `_window_is_sram` and `_window_sram_half` are all
+    #   fixed length 4 (indexed by window 0-3) and never resized. `_banks`
+    #   stores raw register bytes (unmasked) -- harmless under Python's
+    #   arbitrary-precision int, since downstream `& _SRAM_BIT` etc. checks
+    #   stay correct without masking. Also applies to the other banked
+    #   mappers' equivalent `_banks[reg] = value` sites in this file (their
+    #   own comments point back here rather than repeating this note).
+    # Rust equivalent: `[u8; 4]` / `[bool; 4]` / `[u16; 4]` (or a bitmask for
+    #   the flags) rather than a growable Vec; `_banks` is `init=True`, so a
+    #   port's constructor must seed it with `[0, 1, 2, 3]`; mask
+    #   `value & 0xFF` at the store since `[u8; 4]` can't hold an unmasked
+    #   value the way Python's int can.
+    # C++ equivalent: `std::array<uint8_t,4>` / `std::array<bool,4>` /
+    #   `std::array<uint16_t,4>`; same masking requirement at the store.
+    # Kept as-is here because: fixed-length lists here cost nothing extra
+    #   over a hypothetical fixed-array wrapper in Python, and the unmasked
+    #   raw-byte storage is harmless under Python's int semantics -- both are
+    #   semantic-necessity notes for the port, not performance work needed now.
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _flat: bytearray = field(init=False, repr=False)
     # Per-window flag: True while that window currently maps SRAM.
@@ -544,7 +562,7 @@ class GameMaster2Mapper(_BankTracing):
     _num_pages: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+        if len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
         self._num_pages = max(1, len(self.rom) // _PAGE_8K)
         self._flat = bytearray(4 * _PAGE_8K)
@@ -579,7 +597,7 @@ class GameMaster2Mapper(_BankTracing):
             window = idx >> 13  # idx // _PAGE_8K
             if self._window_is_sram[window]:
                 offset = self._window_sram_half[window] | (addr & self._HALF_MASK)
-                return self.sram[offset]  # type: ignore[index]
+                return self.sram[offset]
             return self._flat[idx]
         return 0xFF  # outside 0x4000-0xBFFF: open bus
 
@@ -609,23 +627,34 @@ class GameMaster2Mapper(_BankTracing):
         elif 0xB000 <= addr < 0xC000:
             if self._sram_enabled:
                 offset = self._sram_half | (addr & self._HALF_MASK)
-                self.sram[offset] = value & 0xFF  # type: ignore[index]
+                self.sram[offset] = value & 0xFF
 
     def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)  # type: ignore[arg-type]
+        path.write_bytes(self.sram)
 
-    # Portability note: snapshot/restore round-trips a heterogeneous
-    # `dict[str, object]` (list[int], int, bool, bytes) with runtime casts, like
-    # the other mappers in this module. A Rust/C++ port replaces this with a
-    # typed state struct plus explicit (de)serialization -- there is no untyped
-    # string-keyed map with runtime coercion.
+    # PORT-NOTE: snapshot/restore round-trips a heterogeneous `dict[str,
+    #   object]` (list[int], int, bool, bytes) with runtime casts, like every
+    #   other mapper's snapshot()/restore() in this module (see the `Mapper`
+    #   Protocol above) and msx/state.py/msx/machine_loader.py's consumption
+    #   of it. No runtime validation on restore -- a malformed dict fails via
+    #   a bare KeyError/TypeError deep inside restore(), not a clean error.
+    # Rust equivalent: a tagged-union `MapperState` enum with an explicit
+    #   `kind` discriminant, matched exhaustively at load (e.g.
+    #   `enum MapperState { Ascii8 {...}, GameMaster2 {...}, ... }`), instead
+    #   of an untyped string-keyed map with runtime coercion.
+    # C++ equivalent: a `std::variant<Ascii8State, GameMaster2State, ...>`
+    #   with an explicit tag, matched via std::visit at load.
+    # Kept as-is here because: port target/shape not decided yet, and this
+    #   redesign spans ~13 mapper classes plus msx/state.py and
+    #   msx/machine_loader.py -- large-scope item, tracked for a separate
+    #   OpenSpec proposal rather than a mechanical refactor here.
     def snapshot(self) -> GameMaster2MapperState:
         return {
             "banks": list(self._banks),
             "sram_half": self._sram_half,
             "window_sram_half": list(self._window_sram_half),
             "sram_enabled": self._sram_enabled,
-            "sram": bytes(self.sram),  # type: ignore[arg-type]
+            "sram": bytes(self.sram),
         }
 
     def restore(self, state: dict[str, object]) -> None:
@@ -674,21 +703,29 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
 
-    sram: bytearray | None = None
+    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
+    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
+    # default_factory below); __post_init__ normalizes either case to exactly
+    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
+    sram: bytearray = field(default_factory=bytearray)
     # Per-window flag: True while that window currently maps SRAM (either
     # window, independently). Read() routes an SRAM-mapped window straight
     # to self.sram and a ROM-mapped window to the inherited flat mirror --
     # no window is ever both at once, so no write-through between the two
     # is needed.
-    # Portability note: length is fixed at 2 for this class and never
-    # resized after construction -- a Rust/C++ port should use [bool; 2] /
-    # std::array<bool, 2> (or a bitmask) rather than a growable Vec<bool>.
+    #
+    # PORT-NOTE: length is fixed at 2 for this class and never resized after
+    #   construction.
+    # Rust equivalent: [bool; 2] (or a bitmask), not a growable Vec<bool>.
+    # C++ equivalent: std::array<bool, 2>, not a growable vector.
+    # Kept as-is here because: a fixed-length list costs nothing extra over
+    #   a hypothetical fixed-array wrapper in Python.
     _window_is_sram: list[bool] = field(
         default_factory=lambda: [False, False], init=False, repr=False,
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sram, bytearray) or len(self.sram) != self._SRAM_SIZE:
+        if len(self.sram) != self._SRAM_SIZE:
             self.sram = bytearray(self._SRAM_SIZE)
         self._flat = bytearray(2 * _PAGE_16K)
         for window in range(2):
@@ -717,7 +754,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             window = idx >> 14  # idx // _PAGE_16K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_16K
-                return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+                return self.sram[(addr - base) & self._SRAM_MASK]
             return self._flat[idx]
         return self._read_out_of_window(addr)
 
@@ -727,7 +764,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         else:
             window, base = 1, 0x8000
         if self._is_sram_bank(window):
-            return self.sram[(addr - base) & self._SRAM_MASK]  # type: ignore[index]
+            return self.sram[(addr - base) & self._SRAM_MASK]
         page_offset = self._banks[window] * _PAGE_16K + (addr - base)
         if 0 <= page_offset < len(self.rom):
             return self.rom[page_offset]
@@ -737,9 +774,8 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
             window = 0 if addr < 0x7000 else 1
             old = self._banks[window]
-            # Stored raw (unmasked); harmless under Python's unbounded int, but a
-            # Rust/C++ port storing into a fixed-width register must `& 0xFF` here
-            # (see GameMaster2Mapper's own portability note on this same idiom).
+            # Stored raw (unmasked) -- see GameMaster2Mapper's _banks PORT-NOTE
+            # above for the shared explanation of this idiom.
             self._banks[window] = value
             if value != old:
                 self._sync_window(window)
@@ -753,13 +789,13 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             # windows is open bus, not a mirror, so a write there reaches
             # no real chip and must not fall through into SRAM.
             if self._is_sram_bank(1):
-                self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF  # type: ignore[index]
+                self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF
 
     def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)  # type: ignore[arg-type]
+        path.write_bytes(self.sram)
 
     def snapshot(self) -> Ascii16Sram2MapperState:
-        return {**super().snapshot(), "sram": bytes(self.sram)}  # type: ignore[arg-type]
+        return {**super().snapshot(), "sram": bytes(self.sram)}
 
     def restore(self, state: dict[str, object]) -> None:
         super().restore(state)
@@ -1240,11 +1276,14 @@ class SCCICart(_BankTracing):
     )
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _mode_register: int = field(default=0, init=False, repr=False)
-    # Portability note: fixed-length (4), one flag per window, allocated once
-    # at construction and never resized -- a Rust/C++ port should use
-    # [bool; 4]/std::array<bool, 4>, the same convention the other bank-
-    # switching mappers' own _window_is_sram fields document (e.g.
-    # Ascii8Sram2Mapper, GameMaster2Mapper, Ascii16Sram2Mapper in this file).
+    # PORT-NOTE: fixed-length (4), one flag per window, allocated once at
+    #   construction and never resized -- same convention as the other
+    #   bank-switching mappers' _window_is_sram fields in this file (e.g.
+    #   Ascii8Sram2Mapper, GameMaster2Mapper, Ascii16Sram2Mapper).
+    # Rust equivalent: [bool; 4] (or a bitmask), not a growable Vec<bool>.
+    # C++ equivalent: std::array<bool, 4>, not a growable vector.
+    # Kept as-is here because: a fixed-length list costs nothing extra over
+    #   a hypothetical fixed-array wrapper in Python.
     _is_ram_segment: list[bool] = field(
         default_factory=lambda: [False, False, False, False], init=False, repr=False
     )

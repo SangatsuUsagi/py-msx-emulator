@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
 from msx.input import KEY_NAME_TO_CELL, SDLK_JIS_YEN, InputState
-from msx.joystick import JoystickManager
+from msx.joystick import (
+    _DEFAULT_GC_BUTTON_BIT,
+    _DEFAULT_GC_TURBO_BUTTON_BIT,
+    TURBO_PERIOD,
+    JoystickManager,
+)
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.psg import SAMPLES_PER_FRAME, JoystickPort
@@ -327,9 +332,16 @@ def _handle_hotkey_keydown(
     (row 7, column 2) and reaches it through the plain key_down fallback,
     like any other ordinary key.
     """
-    # Portability note: `mod & sdl2.KMOD_CTRL` relies on Python/C++ implicit
-    # int-to-bool truthiness; a Rust port must spell this `(mod & KMOD_CTRL) != 0`.
-    # Same pattern below at the Ctrl-C debugger-break check.
+    # PORT-NOTE: `mod & sdl2.KMOD_CTRL` relies on Python's implicit
+    #   int-to-bool truthiness (0 is falsy, any nonzero bit pattern truthy).
+    #   Same pattern below at the Ctrl-C debugger-break check.
+    # Rust equivalent: spell this explicitly as `(mod & KMOD_CTRL) != 0` --
+    #   Rust has no implicit int-to-bool conversion.
+    # C++ equivalent: `mod & KMOD_CTRL` already works via C++'s implicit
+    #   int-to-bool conversion in a boolean context, same as Python here.
+    # Kept as-is here because: semantic necessity, not performance -- this is
+    #   a translation contract for Rust specifically (C++ doesn't need the
+    #   explicit `!= 0`), not a Python optimization to preserve.
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False, fullscreen
     if sym == sdl2.SDLK_F11:
@@ -360,6 +372,18 @@ def _handle_hotkey_keydown(
 # `sdl2` is only ever imported lazily (see run()), so these can't be resolved
 # into a real tuple of constants at module load time. `_handle_events` below
 # resolves this once per call (not once per polled event) via getattr.
+# PORT-NOTE: held as attribute name strings, resolved via getattr(sdl2, name)
+#   once per _handle_events() call -- purely a Python workaround for `sdl2`
+#   being an optionally, lazily imported module (see run()) whose constants
+#   don't exist at module-import time.
+# Rust equivalent: none needed -- the `sdl2` crate is a statically-linked,
+#   always-present dependency, so a port just references the real constant
+#   names (e.g. sdl2::event::Event::ControllerDeviceAdded) directly.
+# C++ equivalent: same -- SDL2 headers are always available at compile time
+#   in a C++ port, so this name-string indirection has no reason to exist.
+# Kept as-is here because: this whole indirection layer is a Python-only
+#   workaround for the optional-dependency import pattern; it disappears
+#   entirely at port time rather than needing a translated equivalent.
 _JOYSTICK_EVENT_TYPES_ATTRS = (
     "SDL_CONTROLLERDEVICEADDED", "SDL_CONTROLLERDEVICEREMOVED",
     "SDL_JOYDEVICEADDED", "SDL_JOYDEVICEREMOVED",
@@ -800,12 +824,17 @@ def run(
     # across frames (it starts from the clean state __init__ already zeroes).
     audio_filter = BiquadLowPass()
 
-    joy_kwargs: dict[str, Any] = {}
-    if gamepad_map is not None:
-        joy_kwargs["_gc_button_bit"], joy_kwargs["_gc_turbo_button_bit"] = gamepad_map
-    if turbo_period is not None:
-        joy_kwargs["_turbo_period"] = turbo_period
-    joy_manager = JoystickManager(_input=machine.input, _sdl=sdl2, **joy_kwargs)
+    gc_button_bit, gc_turbo_button_bit = (
+        gamepad_map if gamepad_map is not None
+        else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
+    )
+    joy_manager = JoystickManager(
+        _input=machine.input,
+        _sdl=sdl2,
+        _gc_button_bit=dict(gc_button_bit),
+        _gc_turbo_button_bit=dict(gc_turbo_button_bit),
+        _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
+    )
 
     mouse_device: MouseDevice | None = None
     if mouse_port is not None:

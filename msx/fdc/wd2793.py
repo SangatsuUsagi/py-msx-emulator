@@ -53,16 +53,21 @@ class WD2793:
     ``drive.side`` on side-select before issuing transfer commands.
     """
 
-    # Portability note: this is a live alias into whatever list the connection-
-    # style layer (e.g. FloppyDisk.drives) owns, reassigned on every drive-select
-    # write and read again inside several command handlers below. Fine under
-    # Python's GC/reference semantics, but a Rust/C++ port cannot have this struct
-    # both own nothing and hold a persistent &mut into an element a sibling
-    # struct owns — resolve by threading a selected-drive index/parameter through
-    # instead of storing a reference here. Deliberately not restructured now:
-    # no C++/Rust port exists yet (see AGENTS.md's "pure Python" tech-stack
-    # note), and the fix touches this class's entire public API plus every
-    # caller. See logs/review-python-20260814-210824.md for the full analysis.
+    # PORT-NOTE: this is a live alias into whatever list the connection-style
+    #   layer (e.g. FloppyDisk.drives) owns, reassigned on every drive-select
+    #   write and read again inside several command handlers below. Fine under
+    #   Python's GC/reference semantics.
+    # Rust equivalent: this struct can't both own nothing and hold a
+    #   persistent &mut into an element a sibling struct owns -- resolve by
+    #   threading a selected-drive index/parameter through instead of storing
+    #   a reference here.
+    # C++ equivalent: a raw/shared pointer alias works, but is worth avoiding
+    #   for the same lifetime-safety reason -- prefer a selected-drive index
+    #   passed explicitly, same as the Rust shape.
+    # Kept as-is here because: port target/shape not decided yet -- no
+    #   C++/Rust port exists yet (see AGENTS.md's "pure Python" tech-stack
+    #   note), and the fix touches this class's entire public API plus every
+    #   caller. See logs/review-python-20260814-210824.md for the full analysis.
     drive: DiskDrive | None = None
     command_reg: int = 0
     track_reg: int = 0

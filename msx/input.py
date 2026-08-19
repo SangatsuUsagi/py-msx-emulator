@@ -105,6 +105,19 @@ SDLK_JIS_YEN: int = _K_YEN
 # cells live in _COMMON_MATRIX and the layout-specific symbols are overlaid from
 # _INT_SYMBOLS / _JP_SYMBOLS. InputState selects one via keyboard_type.
 # (openMSX unicodemap.int / unicodemap.jp_jis; map.grauw.nl keymatrix.)
+#
+# PORT-LIBRARY-NOTE: _COMMON_MATRIX/_INT_SYMBOLS/_JP_SYMBOLS/KEY_MATRIX_INT/
+#   KEY_MATRIX_JP/JOY_MAP/KEY_NAME_TO_SDLKEY/KEY_NAME_TO_CELL (this file) are
+#   sizable dict literals used as static, immutable lookup tables, built once
+#   at import via MappingProxyType.
+# Rust crate candidates: phf (compile-time perfect-hash maps) for the same
+#   "immutable static lookup table" shape with zero runtime construction cost.
+# C++ library candidates: none needed -- a constexpr array + linear/binary
+#   search, or a std::unordered_map initialized once at static-init, covers
+#   this without an external dependency.
+# Not adopted now because: these tables are small enough that Python's plain
+#   dict is already fine performance-wise; noted for the port, not a gap in
+#   the current implementation.
 _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     # Row 0: digits 0-7
     _K_0: (0, 0), _K_1: (0, 1), _K_2: (0, 2), _K_3: (0, 3),
