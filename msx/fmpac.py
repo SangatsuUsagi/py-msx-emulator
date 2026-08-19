@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+
+from msx.mapper import MapperKind
 
 if TYPE_CHECKING:
     from msx.opll import Opll, OpllState
@@ -58,6 +60,7 @@ _ENABLE_MASK = 0x11
 class FmPac:
     """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
 
+    kind: ClassVar[MapperKind] = MapperKind.FMPAC
     rom: bytes
     opll: "Opll"
     sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE))
