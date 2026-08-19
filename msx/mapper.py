@@ -32,6 +32,12 @@ _WINDOW_BYTES = 4 * _PAGE_8K
 _RTYPE_HI_BIT = 0x10   # when set, only the low 3 bits of the mask apply
 _RTYPE_MASK_HI = 0x17
 _RTYPE_MASK = 0x1F
+# Fixed window's ROM block (openMSX RomRType.cc reset(): setRom(1, 0x17)).
+# Hardcoded, not derived from ROM size: real R-Type cartridges wire two
+# physical ROM chips with asymmetric addressing (see RTypeMapper's own
+# docstring), and 0x17 is one of two content-identical "last page" blocks
+# (0x0F and 0x17) regardless of which physical dump size is loaded.
+_RTYPE_FIXED_BLOCK = 0x17
 
 
 class Mapper(Protocol):
@@ -742,13 +748,30 @@ class RTypeMapperState(TypedDict):
 
 @dataclass
 class RTypeMapper(_BankTracing):
-    """R-Type (Irem) mapper: 16 KB fixed at 0x4000 (last page), 16 KB switchable at 0x8000.
+    """R-Type (Irem) mapper: 16 KB fixed at 0x4000, 16 KB switchable at 0x8000.
 
-    The last 16 KB of ROM is always mapped at 0x4000–0x7FFF.
+    The fixed window at 0x4000–0x7FFF always shows ROM block
+    _RTYPE_FIXED_BLOCK (0x17) -- a hardcoded block, not the ROM's size-
+    derived last page (openMSX RomRType.cc reset(): setRom(1, 0x17); the
+    real cartridge wires two physical ROM chips, and 0x17 is one of two
+    content-identical "last page" blocks the hardware always shows here,
+    per references/docs/"R-Type and Mega Flash ROM _ MSX Resource
+    Center.md": "Bank 1: Fixed at 0Fh or 17h").
     The switchable window at 0x8000–0xBFFF starts at page 0.
     Bank register: write anywhere to 0x4000–0x7FFF.
     Bank mask: value & _RTYPE_MASK_HI when bit 4 set, else value & _RTYPE_MASK
     (openMSX RomRType).
+
+    Note on generality: this mirrors openMSX RomBlocks::setRom's own
+    two-tier block resolution (direct index if below the ROM's page count,
+    else masked with page_count - 1, open bus if still out of range) for
+    _RTYPE_FIXED_BLOCK specifically. This has only been verified against
+    the one 384 KB (24-page) canonical R-Type dump the primary reference
+    and openMSX both describe, where 0x17 is directly selectable (23 < 24
+    pages). Behaviour on any other ROM size (untested by this codebase --
+    see tests/test_rtype_mapper.py's own 4-page fixture, which only
+    exercises the masked-fallback branch) is unconfirmed against real
+    hardware.
     """
 
     rom: bytes
@@ -759,7 +782,12 @@ class RTypeMapper(_BankTracing):
 
     def read(self, addr: int) -> int:
         if 0x4000 <= addr < 0x8000:
-            fixed = (self._num_pages() - 1) * _PAGE_16K + (addr - 0x4000)
+            pages = self._num_pages()
+            if _RTYPE_FIXED_BLOCK < pages:
+                fixed_block = _RTYPE_FIXED_BLOCK
+            else:
+                fixed_block = _RTYPE_FIXED_BLOCK & (pages - 1)
+            fixed = fixed_block * _PAGE_16K + (addr - 0x4000)
             if 0 <= fixed < len(self.rom):
                 return self.rom[fixed]
             return 0xFF

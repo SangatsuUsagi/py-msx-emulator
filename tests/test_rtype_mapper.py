@@ -1,7 +1,10 @@
 """Tests for RTypeMapper (Irem's ASCII16 MegaROM variant mapper).
 
 Layout (per openMSX RomRType.cc):
-  0x4000-0x7FFF: Fixed to LAST 16 KB of ROM (page N-1)
+  0x4000-0x7FFF: Fixed to ROM block 0x17 (hardcoded, RomRType.cc reset():
+    setRom(1, 0x17)) resolved through the same direct-or-masked selection
+    as RomBlocks::setRom -- block 0x17 directly if the ROM has more than
+    0x17 (23) pages, else masked with (page_count - 1)
   0x8000-0xBFFF: Switchable 16 KB, initial page 0
   Bank register: write anywhere to 0x4000-0x7FFF
   Bank mask: value & 0x17 if bit 4 set, else value & 0x1F
@@ -20,7 +23,10 @@ _ROM_4P = _PAGE0 + _PAGE1 + _PAGE2 + _PAGE3  # 64 KB, 4 pages
 
 class TestRTypeFixed:
     def test_fixed_window_reads_last_page(self):
-        # 4-page ROM → fixed = page 3 (0xDD)
+        # 4-page ROM: 0x17 (23) >= 4 pages, so masked with (4-1)=3:
+        # 23 & 3 = 3 -> page 3 (0xDD). Coincides with the old "last page"
+        # formula for this particular page count, but via the masked
+        # fallback branch, not direct selection.
         m = RTypeMapper(rom=_ROM_4P)
         assert m.read(0x4000) == 0xDD
 
@@ -40,6 +46,25 @@ class TestRTypeFixed:
     def test_above_0xbfff_returns_0xff(self):
         m = RTypeMapper(rom=_ROM_4P)
         assert m.read(0xC000) == 0xFF
+
+    def test_fixed_window_direct_selects_block_0x17_for_large_rom(self):
+        # 25-page (400 KB) ROM: 0x17 (23) < 25 pages, so block 23 is
+        # selected directly (the un-tested-until-now branch -- pages > 23).
+        pages = [bytes([i]) * 16384 for i in range(25)]
+        rom = b"".join(pages)
+        m = RTypeMapper(rom=rom)
+        assert m.read(0x4000) == 23
+
+    def test_fixed_window_masked_result_differs_from_old_last_page_formula(self):
+        # 16-page (256 KB) ROM: 0x17 (23) >= 16 pages, masked with
+        # (16-1)=15: 23 & 15 = 7 -> page 7. The old `pages - 1` formula
+        # would have given page 15 instead -- confirms this is a real
+        # behaviour change, not just a rename, for ROM sizes where the two
+        # formulas disagree.
+        pages = [bytes([i]) * 16384 for i in range(16)]
+        rom = b"".join(pages)
+        m = RTypeMapper(rom=rom)
+        assert m.read(0x4000) == 7
 
 
 class TestRTypeSwitchable:
