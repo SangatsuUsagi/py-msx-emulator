@@ -93,6 +93,36 @@ class Mapper(Protocol):
     # position, since dict's mutating methods make it invariant.
     def snapshot(self) -> Mapping[str, object]: ...
     def restore(self, state: dict[str, object]) -> None: ...
+    def debug_bank_info(self, page: int) -> str | None: ...
+
+
+def _format_bank_info(banks: list[int], page: int) -> str | None:
+    """Describe the ROM mapper bank(s) visible at a CPU page (1=0x4000, 2=0x8000).
+
+    Returns a display string with the selected bank index and the resolved ROM
+    byte offset for each mapper window covering the page, or None when the page
+    is outside this mapper's windows. Shared by every concrete Mapper whose
+    debug_bank_info() has real _banks to report on.
+    """
+    if len(banks) == 2:
+        # ASCII16: two 16 KB windows — page 1 -> window 0, page 2 -> window 1.
+        win = page - 1
+        if win not in (0, 1):
+            return None
+        b = banks[win]
+        start = b * 0x4000
+        return f"bank {b} @{start:05X}-{start + 0x3FFF:05X}"
+    if len(banks) == 4:
+        # ASCII8 / Konami: four 8 KB windows — page 1 -> windows 0,1; page 2 -> 2,3.
+        if page == 1:
+            wins = (0, 1)
+        elif page == 2:
+            wins = (2, 3)
+        else:
+            return None
+        parts = [f"w{w}=b{banks[w]}@{banks[w] * 0x2000:05X}" for w in wins]
+        return "  ".join(parts)
+    return None
 
 
 @dataclass
@@ -109,6 +139,12 @@ class BankTracingMapper:
     _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+
+    def debug_bank_info(self, page: int) -> str | None:
+        """Default for BankTracingMapper subclasses with no _banks list (e.g.
+        RTypeMapper, which has a single _bank: int) -- overridden by the
+        subclasses that do have one."""
+        return None
 
 
 def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
@@ -143,6 +179,9 @@ class _NoStateMapperMixin:
 
     def restore(self, state: dict[str, object]) -> None:
         pass
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return None
 
 
 @dataclass
@@ -269,6 +308,9 @@ class Ascii8Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
 
 class Ascii16MapperState(TypedDict):
     """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
@@ -356,6 +398,9 @@ class Ascii16Mapper(BankTracingMapper):
         self._banks[:] = banks
         for window in range(2):
             self._sync_window(window)
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
 
 
 class Ascii8Sram2MapperState(Ascii8MapperState):
@@ -720,6 +765,9 @@ class GameMaster2Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
 
 class Ascii16Sram2MapperState(Ascii16MapperState):
     sram: bytes
@@ -1062,6 +1110,9 @@ class KonamiMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
 
 class MajutsushiMapperState(KonamiMapperState):
     last_dac: int
@@ -1274,6 +1325,9 @@ class KonamiSCCMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
 
 _SCCI_RAM_BLOCKS = 8
 # Real SCC-I cartridges (Konami 052539) have a 128 KB (16 x 8 KB block)
@@ -1442,3 +1496,6 @@ class SCCICart(BankTracingMapper):
         for window in range(4):
             self._sync_window_base(window)
         self._set_mode_register(typed_state["mode_register"])
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)

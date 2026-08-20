@@ -210,3 +210,6 @@ class FmPac:
         self._r1fff = typed_state["r1fff"]
         self.opll.restore(cast(dict[str, Any], typed_state["opll"]))
         self._check_sram_enable()
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return None
