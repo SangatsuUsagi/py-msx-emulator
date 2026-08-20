@@ -307,7 +307,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.im = snap.cpu_im
 
     machine.memory.ram[:] = snap.ram
-    machine.memory.slot_register = snap.slot_register
+    machine.memory.set_slot_register(snap.slot_register)
     _restore_producer(
         f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
     )
@@ -329,7 +329,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             if snap.ram_mapper_banks is not None:
                 rm.banks[:] = snap.ram_mapper_banks
         if snap.sub_slot_reg is not None:
-            machine.memory.sub_slot_reg = snap.sub_slot_reg
+            machine.memory.set_sub_slot_reg(snap.sub_slot_reg)
         if snap.cmd_regs is not None:
             vdp9938.cmd_regs[:] = snap.cmd_regs
         if snap.status2 is not None:
