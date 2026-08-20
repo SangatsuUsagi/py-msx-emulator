@@ -33,7 +33,14 @@ A Rust/C++ port keeps the same layering as separate crates/targets:
 Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_json
 (C++: nlohmann/json); daemon thread -> std::thread; queue bridge -> mpsc channel
 (C++: queue + mutex + condition_variable); per-call reply Event -> oneshot channel
-/ Condvar; dispatch table -> HashMap<String, fn>. The ``tools/`` MCP server and
+/ Condvar; dispatch table -> HashMap<String, fn>. Each handler's untyped
+``params: dict[str, Any]`` (hand-validated via ``_require_int``/``_parse_addr``/
+``_parse_hex_bytes``) maps to a `serde_json::Value` decoded into one typed
+request/response struct per RPC method, dispatched via a tagged enum on the
+``method`` field -- the Python side stays duck-typed at this boundary because
+the wire payload's shape genuinely isn't known until parsed, matching every
+other JSON-boundary module in this codebase (see ``machine_loader.py``'s
+equivalent note for its YAML config boundary). The ``tools/`` MCP server and
 CLI client are separate processes that speak only the newline-JSON wire protocol,
 so they are language-agnostic and stay as-is under any core port.
 """

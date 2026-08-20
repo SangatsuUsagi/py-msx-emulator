@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypedDict, cast
+from typing import Callable, TypedDict, cast
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
@@ -1109,7 +1109,7 @@ class Opll:
             "out_time": self._out_time,
         }
 
-    def restore(self, state: dict[str, Any]) -> None:
+    def restore(self, state: dict[str, object]) -> None:
         """Restore chip state produced by snapshot()."""
         typed_state = cast(OpllState, state)
         self._reg = bytearray(typed_state["reg"])

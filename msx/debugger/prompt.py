@@ -133,7 +133,7 @@ class Debugger:
         while True:
             try:
                 cyc = self._machine.cycle_count
-                frm = getattr(self._machine.vdp, "_frame_count", 0)
+                frm = self._machine.vdp._frame_count
                 line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
@@ -383,7 +383,7 @@ class Debugger:
         except ValueError:
             print("gf: invalid frame number (decimal expected)")
             return False
-        current = getattr(self._machine.vdp, "_frame_count", 0)
+        current = self._machine.vdp._frame_count
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
             return False

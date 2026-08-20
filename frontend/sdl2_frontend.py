@@ -832,6 +832,10 @@ def run(
     # across frames (it starts from the clean state __init__ already zeroes).
     audio_filter = BiquadLowPass()
 
+    # Falls back to the same default tables JoystickManager's own dataclass
+    # fields would use, resolved here (not left to the field defaults)
+    # because an explicit gamepad_map always needs `dict(...)`-copying into
+    # the constructor kwargs below either way.
     gc_button_bit, gc_turbo_button_bit = (
         gamepad_map if gamepad_map is not None
         else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)

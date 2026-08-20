@@ -109,6 +109,15 @@ class JoystickManager:
     )
     _turbo_period: int = TURBO_PERIOD
 
+    # PORT-NOTE: `_slots` holds opaque SDL device/controller handles
+    #   (SDL_GameControllerOpen/SDL_JoystickOpen's return value), untyped
+    #   since pysdl2 ships no stubs for them -- same reason as `event: Any`
+    #   below.
+    # Rust equivalent: an actual typed handle (e.g. `sdl2::GameController`/
+    #   `sdl2::Joystick`) held directly, not an opaque reference.
+    # C++ equivalent: same -- a typed `SDL_GameController*`/`SDL_Joystick*`.
+    # Kept as-is here because: pysdl2 has no stubs for these handle types, so
+    #   there's nothing narrower to type them as on the Python side.
     _slots: list[Any] = field(default_factory=lambda: [None, None], init=False, repr=False)
     _is_gc: list[bool] = field(default_factory=lambda: [False, False], init=False, repr=False)
     _instance_ids: list[int] = field(default_factory=lambda: [-1, -1], init=False, repr=False)

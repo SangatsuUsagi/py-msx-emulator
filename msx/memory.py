@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from msx.mapper import Mapper
     from msx.ram_mapper import RamMapper
 
-from msx.mapper import FlatMapper
+from msx.mapper import FlatMapper, mapper_kind_display_name
 
 
 @dataclass(slots=True)
@@ -109,12 +109,15 @@ class Memory:
                 "data-driven slot-3 layout hosts an FDC)"
             )
 
-    # Explicit setters for the 8 fields that affect page routing. Callers
-    # outside this class must use these, not direct assignment -- this class
-    # has no __setattr__ hook (removed by the memory-explicit-setters
-    # OpenSpec change) to catch a stray `mem.field = value` the way it used
-    # to, so a direct assignment here silently leaves the routing cache
-    # stale instead of raising or invalidating anything. A regression test
+    # Explicit setters for the fields that affect page routing and are
+    # reassigned after construction (_mapper/_mapper2/flat_ram_subslot are
+    # only ever set once, as Memory(...) constructor kwargs, so they have no
+    # setter here). Callers outside this class must use these, not direct
+    # assignment -- this class has no __setattr__ hook (removed by the
+    # memory-explicit-setters OpenSpec change) to catch a stray
+    # `mem.field = value` the way it used to, so a direct assignment here
+    # silently leaves the routing cache stale instead of raising or
+    # invalidating anything. A regression test
     # (tests/test_memory_setter_discipline.py) statically scans for this
     # mistake.
 
@@ -129,6 +132,8 @@ class Memory:
     def set_ram_mapper(self, value: "RamMapper | None") -> None:
         self.ram_mapper = value
         self._page_cache_valid = False
+        # ram_mapper participates in the slot-3 RAM strategy exclusivity
+        # check -- see _validate_slot3_strategy.
         self._validate_slot3_strategy()
 
     def set_sub0_rom(self, value: bytes | None) -> None:
@@ -138,20 +143,8 @@ class Memory:
     def set_fdc(self, value: "FloppyDisk | None") -> None:
         self.fdc = value
         self._page_cache_valid = False
+        # fdc requires flat_ram_subslot -- see _validate_slot3_strategy.
         self._validate_slot3_strategy()
-
-    def set_flat_ram_subslot(self, value: int | None) -> None:
-        self.flat_ram_subslot = value
-        self._page_cache_valid = False
-        self._validate_slot3_strategy()
-
-    def set_mapper(self, value: "Mapper") -> None:
-        self._mapper = value
-        self._page_cache_valid = False
-
-    def set_mapper2(self, value: "Mapper") -> None:
-        self._mapper2 = value
-        self._page_cache_valid = False
 
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
@@ -343,8 +336,7 @@ class Memory:
             mapper = self._mapper if primary == 1 else self._mapper2
             if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
                 return "Cartridge (empty)"
-            cls = type(mapper).__name__.replace("Mapper", "")
-            return f"Cartridge {cls}"
+            return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
         if primary == 3:
             if secondary == 0:
                 name = self.sub0_rom_name or "ROM"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
 from msx.input import InputState
 from msx.mouse import MouseDevice
@@ -103,21 +103,14 @@ class PSG:
     # PORT-NOTE: _machine is a direct reference to the owning Machine,
     #   resolved once at wiring time (machine_loader sets `psg._machine =
     #   machine`, after Machine is fully constructed).
-    # Rust equivalent: a `Rc<RefCell<Machine>>` (or, if this back-reference
-    #   proves awkward at port time, a narrower shared cycle counter --
-    #   e.g. `Rc<Cell<u64>>` -- PSG holds instead of the whole Machine;
-    #   evaluated and rejected for the Python side specifically because it
-    #   required Machine's own hot per-scanline cycle_count increment to go
-    #   through an extra indirection, measured as a net loss overall).
+    # Rust equivalent: a `Rc<RefCell<Machine>>`, or a narrower shared cycle
+    #   counter if the back-reference proves awkward at port time.
     # C++ equivalent: a raw or shared pointer to the owning Machine, or the
     #   same narrower-counter alternative.
     # Kept as a direct reference (not a closure) because: measured ~2x
-    #   faster per read than the closure this replaced (a two-hop attribute
-    #   read vs. a bound-closure call), and Machine.cycle_count itself stays
-    #   a plain flat field with no added indirection in Machine's own hot
-    #   scanline loop. See openspec/changes/archive/*-psg-cycle-source-
-    #   refactor/design.md for the full benchmark and the rejected
-    #   shared-Clock-object alternative.
+    #   faster per read than the closure this replaced. Full benchmark and
+    #   the rejected shared-Clock-object alternative in
+    #   openspec/changes/archive/*-psg-cycle-source-refactor/design.md.
     _machine: "Machine | None" = field(default=None, repr=False)
     # Recorded writes as (cycle, reg, value); a port would use a small struct.
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
@@ -251,7 +244,7 @@ class PSG:
             "_clk_frac": self._clk_frac,
         }
 
-    def restore_synth(self, state: dict[str, Any]) -> None:
+    def restore_synth(self, state: dict[str, object]) -> None:
         """Restore internal generator state produced by snapshot_synth()."""
         typed_state = cast(PsgSynthState, state)
         self._tone_cnt = list(typed_state["_tone_cnt"])

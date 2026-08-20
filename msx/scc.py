@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
@@ -183,7 +183,7 @@ class SCC:
             "_clk_frac": self._clk_frac,
         }
 
-    def restore(self, state: dict[str, Any]) -> None:
+    def restore(self, state: dict[str, object]) -> None:
         """Restore chip state produced by snapshot()."""
         typed_state = cast(SccState, state)
         waves = [list(w) for w in typed_state["_waves"]]

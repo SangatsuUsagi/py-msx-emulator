@@ -81,6 +81,38 @@ class MapperKind(str, Enum):
     FMPAC = "fmpac"
 
 
+# Debugger-facing display name per kind (msx/memory.py's debug_slot_content
+# "Cartridge <name>" line) -- an explicit table instead of deriving the name
+# from type(mapper).__name__ at display time, so the debugger doesn't depend
+# on Python class-name reflection. Values match each concrete class's prior
+# `type(mapper).__name__.replace("Mapper", "")` output exactly (unchanged
+# debugger output); update this table, not the class names, if it needs to
+# diverge in the future.
+_KIND_DISPLAY_NAME: dict[MapperKind, str] = {
+    MapperKind.FLAT: "Flat",
+    MapperKind.FIXED_PAGE: "FixedPage",
+    MapperKind.ASCII8: "Ascii8",
+    MapperKind.ASCII16: "Ascii16",
+    MapperKind.ASCII8_SRAM2: "Ascii8Sram2",
+    MapperKind.ASCII8_SRAM8: "Ascii8Sram8",
+    MapperKind.KOEI_SRAM32: "KoeiSRAM32",
+    MapperKind.GAME_MASTER2: "GameMaster2",
+    MapperKind.ASCII16_SRAM2: "Ascii16Sram2",
+    MapperKind.ASCII16_SRAM8: "Ascii16Sram8",
+    MapperKind.R_TYPE: "RType",
+    MapperKind.KONAMI: "Konami",
+    MapperKind.MAJUTSUSHI: "Majutsushi",
+    MapperKind.KONAMI_SCC: "KonamiSCC",
+    MapperKind.SCC_I_CART: "SCCICart",
+    MapperKind.FMPAC: "FmPac",
+}
+
+
+def mapper_kind_display_name(kind: MapperKind) -> str:
+    """Human-readable name for a MapperKind, for debugger display strings."""
+    return _KIND_DISPLAY_NAME[kind]
+
+
 class Mapper(Protocol):
     kind: ClassVar[MapperKind]
     def read(self, addr: int) -> int: ...

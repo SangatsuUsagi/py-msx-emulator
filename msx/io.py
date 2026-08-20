@@ -53,20 +53,13 @@ class IOBus:
     #   at construction, not a per-call closure capturing the owner.
     # C++ equivalent: same -- a std::function member or virtual interface
     #   pointer, assigned once at construction.
-    # Kept as-is here because: read()/write() only call _get_pc() inside
-    #   `if self._logger is not None:` -- in normal (non-debug) operation
-    #   this closure is never invoked at all, so it already costs nothing on
-    #   the hot path (dispatched on every CPU IN/OUT instruction). Converting
-    #   to an explicit parameter would require every one of the ~6 registered
-    #   device handlers' read_port/write_port signatures (wired uniformly in
-    #   msx/machine_loader.py) to accept it, and the CPU's IN/OUT dispatch to
-    #   compute and pass it on every access whether or not any handler uses
-    #   it -- a guaranteed regression on the always-hot path to speed up a
-    #   path that costs zero today. Confirmed by investigation, not deferred
-    #   pending benchmarking (see openspec/changes/archive/
-    #   *-psg-cycle-source-refactor/design.md Decision 1 for the full
-    #   reasoning, including why msx/psg.py's PSG._get_cycle -- read
-    #   unconditionally, not logger-gated -- reached a different conclusion).
+    # Kept as-is here because: only called inside `if self._logger is not
+    #   None:`, so it costs nothing on the always-hot IN/OUT dispatch path in
+    #   normal operation -- confirmed by investigation, not deferred pending
+    #   benchmarking. Full reasoning (including why msx/psg.py's
+    #   PSG._get_cycle -- read unconditionally, not logger-gated -- reached a
+    #   different conclusion) in openspec/changes/archive/
+    #   *-psg-cycle-source-refactor/design.md, Decision 1.
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
 
     def register_read(self, start: int, end: int, handler: Callable[[int], int]) -> None:

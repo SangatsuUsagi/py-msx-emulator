@@ -43,13 +43,19 @@ class FloppyDisk:
     C++ equivalent: same split -- an owned-state struct/class plus a small
       abstract base (or concept) purely for read_mem/write_mem/reset, not one
       class carrying both.
-    Kept as-is here because: port target/shape not decided yet, and
-      SonyPhilipsInterface is the only connection style this codebase has --
-      splitting into has-a state + is-a dispatch is deferred until a second
-      connection style actually exists to validate the split against. See
+    Kept as-is here because: port target/shape not decided yet. The split's
+      external ergonomics (has-a state accessed via `.drives`/`.swap()`/
+      `.mount()`, is-a dispatch via `.read_mem`/`.write_mem`/`.reset`) are
+      already exercised by today's single implementation, so that much is
+      answerable now -- what's actually blocked is validating the dispatch
+      trait's method *signatures* (read_mem/write_mem/reset's exact shape),
+      which needs a second, structurally different connection style to
+      confirm against. SonyPhilipsInterface alone can't tell us that. See
       logs/review-python-20260814-210824.md.
     TODO: revisit this split when a TC8566AF-based connection style is added
-      (second concrete FloppyDisk implementation).
+      (second concrete FloppyDisk implementation) -- that's the missing
+      signature-validation case, not a decision that can be made from
+      SonyPhilipsInterface alone.
     """
 
     def __init__(
