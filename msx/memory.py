@@ -361,7 +361,7 @@ class Memory:
         # 0xFFFF secondary-slot-register intercept, inlined (not wrapped) for
         # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
-            self.sub_slot_reg = value & 0xFF
+            self.set_sub_slot_reg(value & 0xFF)
             return
         self._page_write[page](addr, value)
 
