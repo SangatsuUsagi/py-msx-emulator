@@ -166,6 +166,46 @@ class Memory:
                 "data-driven slot-3 layout hosts an FDC)"
             )
 
+    # Explicit setters for the fields __setattr__ above currently intercepts.
+    # Callers outside this class should use these, not direct assignment --
+    # see openspec/changes/memory-explicit-setters (__setattr__ is removed
+    # once every call site is migrated to call these instead).
+
+    def set_slot_register(self, value: int) -> None:
+        self.slot_register = value
+        self._page_cache_valid = False
+
+    def set_sub_slot_reg(self, value: int) -> None:
+        self.sub_slot_reg = value
+        self._page_cache_valid = False
+
+    def set_ram_mapper(self, value: "RamMapper | None") -> None:
+        self.ram_mapper = value
+        self._page_cache_valid = False
+        self._validate_slot3_strategy()
+
+    def set_sub0_rom(self, value: bytes | None) -> None:
+        self.sub0_rom = value
+        self._page_cache_valid = False
+
+    def set_fdc(self, value: "FloppyDisk | None") -> None:
+        self.fdc = value
+        self._page_cache_valid = False
+        self._validate_slot3_strategy()
+
+    def set_flat_ram_subslot(self, value: int | None) -> None:
+        self.flat_ram_subslot = value
+        self._page_cache_valid = False
+        self._validate_slot3_strategy()
+
+    def set_mapper(self, value: "Mapper") -> None:
+        self._mapper = value
+        self._page_cache_valid = False
+
+    def set_mapper2(self, value: "Mapper") -> None:
+        self._mapper2 = value
+        self._page_cache_valid = False
+
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
