@@ -55,8 +55,8 @@ def test_flat_ram_read_write_through_machine_memory() -> None:
         disk_rom_override=bytes(16384),
     )
     mem = machine.memory
-    mem.slot_register = 0xFF   # all pages -> slot 3
-    mem.sub_slot_reg = 0xC0    # page 3 -> sub-slot 3 (flat RAM)
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0xC0)  # page 3 -> sub-slot 3 (flat RAM)
     mem.write(0xC000, 0x3C)
     assert mem.read(0xC000) == 0x3C
 

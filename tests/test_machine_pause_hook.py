@@ -23,7 +23,7 @@ class _RecordingDebugger:
 
 def _build(rom: bytes):
     m = make_machine(rom=rom)
-    m.memory.slot_register = 0xD4  # map RAM at page 3 so the stack works
+    m.memory.set_slot_register(0xD4)  # map RAM at page 3 so the stack works
     return m
 
 

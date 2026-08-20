@@ -32,7 +32,7 @@ def _load(name: str, filename: str):
 @pytest.fixture
 def live(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))
-    machine.memory.slot_register = 0xD4
+    machine.memory.set_slot_register(0xD4)
     sock = str(sock_dir / "mcp.sock")
     srv = DebugServer(machine, sock_path=sock)
     machine.set_pause_hook(srv.on_pause)

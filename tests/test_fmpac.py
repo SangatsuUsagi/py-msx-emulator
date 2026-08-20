@@ -340,7 +340,7 @@ def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
     machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
     mem = machine.memory
-    mem.slot_register = 0x08  # page 1 (0x4000-0x7FFF) -> slot 2
+    mem.set_slot_register(0x08)  # page 1 (0x4000-0x7FFF) -> slot 2
     assert mem.read(0x4000) == 0  # FM-PAC ROM bank 0 marker byte
 
 
@@ -348,7 +348,7 @@ def test_machine_io_ports_gated_by_enable(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
     machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
     mem = machine.memory
-    mem.slot_register = 0x08
+    mem.set_slot_register(0x08)
     assert machine.fmpac is not None
 
     machine.io.write_port(0x7C, 0x10)

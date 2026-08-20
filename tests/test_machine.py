@@ -283,7 +283,7 @@ def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
 def test_make_machine_no_cartridge2_slot2_open_bus() -> None:
     m = make_machine(rom=_NOP_ROM)
     # page 1 → slot 2: slot_register bits 3:2 = 0b10 → 0x08
-    m.memory.slot_register = 0x08
+    m.memory.set_slot_register(0x08)
     assert m.memory.read(0x4000) == 0xFF
 
 
@@ -291,7 +291,7 @@ def test_make_machine_cartridge2_wired_to_slot2() -> None:
     cart2 = b"\xBB" + b"\x00" * 32767
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Mirrored")
     # page 1 → slot 2
-    m.memory.slot_register = 0x08
+    m.memory.set_slot_register(0x08)
     assert m.memory.read(0x4000) == 0xBB
 
 
@@ -337,8 +337,8 @@ def test_reset_full_power_on_state() -> None:
     m = _make_machine()
     m.psg.regs[7] = 0xAB
     m.psg.latch = 5
-    m.memory.slot_register = 0xFF
-    m.memory.sub_slot_reg = 0xFF
+    m.memory.set_slot_register(0xFF)
+    m.memory.set_sub_slot_reg(0xFF)
     m.vdp.status = 0xFF
     m.vdp.regs[1] = 0x60
     m.reset()
