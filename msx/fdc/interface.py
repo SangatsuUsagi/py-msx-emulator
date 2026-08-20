@@ -48,6 +48,8 @@ class FloppyDisk:
       splitting into has-a state + is-a dispatch is deferred until a second
       connection style actually exists to validate the split against. See
       logs/review-python-20260814-210824.md.
+    TODO: revisit this split when a TC8566AF-based connection style is added
+      (second concrete FloppyDisk implementation).
     """
 
     def __init__(
