@@ -12,17 +12,50 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from msx.mapper import MapperKind
 from msx.vdp.v9938 import V9938
 
 if TYPE_CHECKING:
     from msx.machine import Machine
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
-CURRENT_FORMAT_VERSION: int = 5
+# Version 6: mapper_class: str (Python class name) replaced with
+#   mapper_kind: MapperKind (closed enum, decoupled from class names) --
+#   see openspec/changes/mapper-state-tagged-union. No other field changed.
+CURRENT_FORMAT_VERSION: int = 6
+
+
+class StateLoadError(ValueError):
+    """A save-state producer's restore() (or restore_synth()) failed on
+    malformed data.
+
+    Distinct from the plain ValueErrors _restore_snapshot raises directly
+    for format/machine-type/mapper-kind mismatches (those already have
+    clear top-level messages); this specifically wraps whatever a
+    producer's own restore() raises when handed a malformed dict, so a
+    corrupted or hand-edited .state file always fails with one predictable,
+    catchable error naming which producer broke. The original exception is
+    chained via __cause__, so a developer debugging the failure still sees
+    the original traceback and exception type.
+    """
+
+    def __init__(self, producer: str, cause: Exception) -> None:
+        super().__init__(f"failed to restore {producer} state: {cause}")
+        self.producer = producer
+
+
+def _restore_producer(producer: str, fn: Callable[[], None]) -> None:
+    """Run one producer's restore call, wrapping a malformed-data failure
+    as StateLoadError(producer, ...) instead of letting it propagate raw."""
+    try:
+        fn()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise StateLoadError(producer, exc) from exc
 
 
 @dataclass
@@ -40,14 +73,18 @@ class MachineSnapshot:
     # Memory
     ram: bytearray
     slot_register: int
-    # Portability note: `mapper_class` is the mapper's Python class name used as
-    # the persisted discriminant (so renaming a mapper class silently
-    # invalidates old saves), and the per-device state below is an untyped
-    # `dict[str, object]` populated from private synth/mapper fields. A Rust/C++
-    # port replaces both with a stable `MapperKind` enum tag + field-by-field
-    # (de)serialization into typed per-device snapshot structs (serde), decided
-    # once when the save format is versioned for the port.
-    mapper_class: str
+    # `mapper_kind` is the persisted mapper-identity discriminant -- a closed
+    # MapperKind enum (msx/mapper.py), not the mapper's Python class name, so
+    # a class rename does not change save-state compatibility (see
+    # openspec/changes/mapper-state-tagged-union). `mapper_state` itself is
+    # still the untyped `dict[str, object]` + cast() shape documented on the
+    # `Mapper` Protocol in msx/mapper.py (see that file's PORT-NOTE on
+    # GameMaster2Mapper.snapshot()) -- restore() failures on a malformed
+    # mapper_state are caught and re-raised as StateLoadError (see
+    # _restore_producer below), but the dict's shape itself is not validated
+    # ahead of that call. Replacing dict[str, object] with a per-kind typed
+    # variant is a separate, larger redesign, deliberately out of scope here.
+    mapper_kind: MapperKind
     mapper_state: dict[str, object]
     # VDP
     vdp_vram: bytearray
@@ -92,7 +129,7 @@ class _MachineSnapshotFields(TypedDict):
     cpu_im: int
     ram: bytearray
     slot_register: int
-    mapper_class: str
+    mapper_kind: MapperKind
     mapper_state: dict[str, object]
     vdp_vram: bytearray
     vdp_regs: list[int]
@@ -217,7 +254,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cpu_im=machine.cpu.im,
         ram=bytearray(machine.memory.ram),
         slot_register=machine.memory.slot_register,
-        mapper_class=type(mapper).__name__,
+        mapper_kind=mapper.kind,
         mapper_state=mapper_state,
         vdp_vram=bytearray(machine.vdp.vram),
         vdp_regs=list(machine.vdp.regs),
@@ -255,10 +292,10 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"saved {snap.machine_type!r}"
         )
     mapper = machine.memory._mapper
-    if type(mapper).__name__ != snap.mapper_class:
+    if mapper.kind != snap.mapper_kind:
         raise ValueError(
-            f"mapper mismatch: running {type(mapper).__name__!r}, "
-            f"saved {snap.mapper_class!r}"
+            f"mapper mismatch: running {mapper.kind.value!r}, "
+            f"saved {snap.mapper_kind.value!r}"
         )
 
     _restore_cpu_regs(machine, snap.cpu_regs)
@@ -270,8 +307,10 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.im = snap.cpu_im
 
     machine.memory.ram[:] = snap.ram
-    machine.memory.slot_register = snap.slot_register
-    mapper.restore(snap.mapper_state)
+    machine.memory.set_slot_register(snap.slot_register)
+    _restore_producer(
+        f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
+    )
 
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
@@ -290,7 +329,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             if snap.ram_mapper_banks is not None:
                 rm.banks[:] = snap.ram_mapper_banks
         if snap.sub_slot_reg is not None:
-            machine.memory.sub_slot_reg = snap.sub_slot_reg
+            machine.memory.set_sub_slot_reg(snap.sub_slot_reg)
         if snap.cmd_regs is not None:
             vdp9938.cmd_regs[:] = snap.cmd_regs
         if snap.status2 is not None:
@@ -300,9 +339,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
-    machine.psg.restore_synth(snap.psg_synth)
-    _restore_scc(machine, snap.scc_state)
-    _restore_fmpac(machine, snap.fmpac_state)
+    _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
+    _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
+    _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
 
 
 # --- symlink helper -----------------------------------------------------------
@@ -433,6 +472,12 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
         )
+    # JSON round-trips mapper_kind as a plain str (MapperKind's own str-Enum
+    # values serialize directly, see save_state); convert it back to a
+    # MapperKind member here so _restore_snapshot's identity check and any
+    # later `.value` access see a real enum member, not a bare string.
+    if isinstance(fields, dict) and "mapper_kind" in fields:
+        fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
     typed_fields = cast(_MachineSnapshotFields, fields)
     snap = MachineSnapshot(**typed_fields)
     _restore_snapshot(machine, snap)

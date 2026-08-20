@@ -9,33 +9,7 @@ if TYPE_CHECKING:
     from msx.mapper import Mapper
     from msx.ram_mapper import RamMapper
 
-from msx.mapper import FlatMapper
-
-# Fields whose reassignment invalidates the page-routing cache (see
-# Memory.__setattr__). slot_register/sub_slot_reg drive routing directly;
-# ram_mapper/sub0_rom/fdc/flat_ram_subslot/_mapper/_mapper2 are assumed
-# construction-time-fixed by the routing decision, but a *reassignment* (not
-# content mutation, e.g. a test replacing mem.sub0_rom after construction)
-# must still be observed.
-_CACHE_INVALIDATING_FIELDS = frozenset(
-    {
-        "slot_register",
-        "sub_slot_reg",
-        "ram_mapper",
-        "sub0_rom",
-        "fdc",
-        "flat_ram_subslot",
-        "_mapper",
-        "_mapper2",
-    }
-)
-
-# Subset of _CACHE_INVALIDATING_FIELDS that also participate in the
-# SlotThreeStrategyIsExclusive invariant (see _validate_slot3_strategy):
-# reassigning any of these must re-check the invariant, not just invalidate
-# the cache, or a reassignment could silently desync it from the routing
-# decision the cache actually makes.
-_SLOT3_STRATEGY_FIELDS = frozenset({"ram_mapper", "flat_ram_subslot", "fdc"})
+from msx.mapper import FlatMapper, mapper_kind_display_name
 
 
 @dataclass(slots=True)
@@ -79,20 +53,28 @@ class Memory:
     # _extrom_len above (ram is assumed construction-time-fixed, same as rom).
     _ram_len: int = field(init=False, repr=False, default=0)
     _msx1_ram_base: int = field(init=False, repr=False, default=0)
-    # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever
-    # __setattr__ observes a write to one of _CACHE_INVALIDATING_FIELDS
-    # (event-driven: a single bool check per access, no per-access
-    # recomputation of a comparison key). extrom isn't in that set:
-    # _read_rom() reads self.extrom live, unconditionally correct regardless
-    # of when it's assigned.
+    # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever one
+    # of the 8 set_*() methods below invalidates it (event-driven: a single
+    # bool check per access, no per-access recomputation of a comparison
+    # key). extrom has no setter and needs none: _read_rom() reads
+    # self.extrom live, unconditionally correct regardless of when it's
+    # assigned.
     #
-    # Port note (Rust/C++): this is a Callable dispatch table (bound methods/
-    # closures over `self`), which has no direct static-language equivalent —
-    # a literal Box<dyn Fn>/std::function port would pay heap-alloc + vtable
-    # cost on every rebuild that CPython's bound methods don't. Prefer
-    # porting _resolve_page_read_leaf/_resolve_page_write_leaf/
-    # _resolve_slot3_*_leaf directly as a match/switch over a small per-page
-    # enum tag, dispatched inline, not as a literal translation of this list.
+    # PORT-NOTE: _page_read/_page_write are a Callable dispatch table (bound
+    #   methods/closures over `self`), rebuilt on cache invalidation and
+    #   indexed on every memory access.
+    # Rust equivalent: not a literal Box<dyn Fn>/Vec<Box<dyn Fn>> translation
+    #   (that would pay heap-alloc + vtable cost on every rebuild that
+    #   CPython's bound methods don't) — port
+    #   _resolve_page_read_leaf/_resolve_page_write_leaf/_resolve_slot3_*_leaf
+    #   directly as a match/switch over a small per-page enum tag, dispatched
+    #   inline instead.
+    # C++ equivalent: same — a switch over a per-page enum tag rather than a
+    #   std::function table, to avoid the equivalent allocation/vtable cost.
+    # Kept as-is here because: rebuild is rare (only on a setter-triggered
+    #   invalidation) and read/write is hot (every CPU memory access);
+    #   CPython's bound-method list-index is already close to the cheapest
+    #   per-access dispatch Python offers.
     _page_cache_valid: bool = field(init=False, repr=False, default=False)
     _page_read: list[Callable[[int], int]] = field(init=False, repr=False, default_factory=list)
     _page_write: list[Callable[[int, int], None]] = field(
@@ -103,41 +85,20 @@ class Memory:
     # slot_register/sub_slot_enabled (see _rebuild_page_cache).
     _page3_intercept_active: bool = field(init=False, repr=False, default=False)
 
-    def __setattr__(self, name: str, value: object) -> None:
-        """Invalidate the page-routing cache on writes to _CACHE_INVALIDATING_FIELDS.
-
-        Port note (Rust/C++): intercepting plain attribute assignment has no
-        static-language equivalent; a port needs explicit setters (e.g.
-        `set_slot_register`) that call the equivalent of `invalidate_cache()`
-        instead of relying on assignment interception. This is exercised as
-        public API well beyond this file (msx/ppi.py, msx/machine.py,
-        msx/state.py), so the setters would need to replace `mem.field = x`
-        at every one of those call sites, not just internally.
-        """
-        object.__setattr__(self, name, value)
-        if name in _CACHE_INVALIDATING_FIELDS:
-            object.__setattr__(self, "_page_cache_valid", False)
-        if name in _SLOT3_STRATEGY_FIELDS:
-            self._validate_slot3_strategy()
-
     def _validate_slot3_strategy(self) -> None:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
         are mutually exclusive slot-3 RAM strategies, and fdc requires
-        flat_ram_subslot. Re-run whenever a _SLOT3_STRATEGY_FIELDS member is
-        assigned (not just at construction) so a post-construction
-        reassignment can't silently desync the routing cache from this
-        invariant the way a bare cache-invalidation check wouldn't catch.
-
-        Reads via getattr(..., None): __setattr__ (which calls this) also
-        fires while the dataclass-generated __init__ is still assigning
-        fields one at a time, before every _SLOT3_STRATEGY_FIELDS member
-        exists yet on this slots instance — a not-yet-assigned field reads
-        as None here (harmless: __post_init__ re-validates once everything
-        is set, which is the authoritative check for construction).
+        flat_ram_subslot. Called from __post_init__ (once, at the end of
+        construction) and from set_ram_mapper/set_fdc (so a post-construction
+        reassignment of either can't silently desync the routing cache from
+        this invariant -- flat_ram_subslot itself is construction-time-fixed,
+        with no setter, so it can't cause the same desync) -- every caller
+        runs after the dataclass __init__ has finished, so all three fields
+        always exist by the time this runs.
         """
-        ram_mapper = getattr(self, "ram_mapper", None)
-        flat_ram_subslot = getattr(self, "flat_ram_subslot", None)
-        fdc = getattr(self, "fdc", None)
+        ram_mapper = self.ram_mapper
+        flat_ram_subslot = self.flat_ram_subslot
+        fdc = self.fdc
         if ram_mapper is not None and flat_ram_subslot is not None:
             raise ValueError(
                 "Memory: ram_mapper and flat_ram_subslot are mutually "
@@ -148,6 +109,43 @@ class Memory:
                 "Memory: fdc requires flat_ram_subslot (only the "
                 "data-driven slot-3 layout hosts an FDC)"
             )
+
+    # Explicit setters for the fields that affect page routing and are
+    # reassigned after construction (_mapper/_mapper2/flat_ram_subslot are
+    # only ever set once, as Memory(...) constructor kwargs, so they have no
+    # setter here). Callers outside this class must use these, not direct
+    # assignment -- this class has no __setattr__ hook (removed by the
+    # memory-explicit-setters OpenSpec change) to catch a stray
+    # `mem.field = value` the way it used to, so a direct assignment here
+    # silently leaves the routing cache stale instead of raising or
+    # invalidating anything. A regression test
+    # (tests/test_memory_setter_discipline.py) statically scans for this
+    # mistake.
+
+    def set_slot_register(self, value: int) -> None:
+        self.slot_register = value
+        self._page_cache_valid = False
+
+    def set_sub_slot_reg(self, value: int) -> None:
+        self.sub_slot_reg = value
+        self._page_cache_valid = False
+
+    def set_ram_mapper(self, value: "RamMapper | None") -> None:
+        self.ram_mapper = value
+        self._page_cache_valid = False
+        # ram_mapper participates in the slot-3 RAM strategy exclusivity
+        # check -- see _validate_slot3_strategy.
+        self._validate_slot3_strategy()
+
+    def set_sub0_rom(self, value: bytes | None) -> None:
+        self.sub0_rom = value
+        self._page_cache_valid = False
+
+    def set_fdc(self, value: "FloppyDisk | None") -> None:
+        self.fdc = value
+        self._page_cache_valid = False
+        # fdc requires flat_ram_subslot -- see _validate_slot3_strategy.
+        self._validate_slot3_strategy()
 
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
@@ -304,7 +302,7 @@ class Memory:
         # 0xFFFF secondary-slot-register intercept, inlined (not wrapped) for
         # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_active:
-            self.sub_slot_reg = value & 0xFF
+            self.set_sub_slot_reg(value & 0xFF)
             return
         self._page_write[page](addr, value)
 
@@ -319,3 +317,68 @@ class Memory:
             return (0x0000, 0xFFFF)
         low = max(0, 0x10000 - len(self.ram))
         return (low, 0xFFFF)
+
+    # ------------------------------------------------------------- debug REPL
+    #
+    # The three methods below back the debugger's `sl`/`st` slot-inspector
+    # commands (msx/debugger/prompt.py). They exist so that debugger code
+    # never needs to reflect on Memory's private fields (_mapper/_mapper2)
+    # from outside this class -- see openspec/changes/archive/
+    # *-debugger-slot-mapper-interface.
+
+    def debug_slot_content(
+        self, primary: int, secondary: int | None, page: int | None
+    ) -> str:
+        """Human-readable description of what a slot/sub-slot contains."""
+        if primary == 0:
+            name = self.rom_name or "ROM"
+            return f"ROM {name}" if name != "ROM" else "ROM"
+        if primary in (1, 2):
+            mapper = self._mapper if primary == 1 else self._mapper2
+            if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
+                return "Cartridge (empty)"
+            return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
+        if primary == 3:
+            if secondary == 0:
+                name = self.sub0_rom_name or "ROM"
+                return f"ROM {name}" if name != "ROM" else "ROM"
+            if secondary == 1:
+                return "empty"
+            if secondary in (2, 3):
+                if self.ram_mapper is not None:
+                    return "RAM (mapper:standard)"
+                return "RAM"
+            return "empty"
+        return "empty"
+
+    def debug_slot_bank(
+        self, primary: int, secondary: int | None, page: int | None
+    ) -> str:
+        """Bank-register display string for the `sl` active-slot view."""
+        if primary == 3 and secondary in (2, 3) and page is not None:
+            rm = self.ram_mapper
+            if rm is not None:
+                return f"seg={rm.banks[page]}"
+        if primary in (1, 2) and page is not None:
+            mapper = self._mapper if primary == 1 else self._mapper2
+            info = mapper.debug_bank_info(page)
+            if info is not None:
+                return info
+        return "-"
+
+    def debug_slot_size_kb(self, primary: int, secondary: int | None) -> str:
+        """Size string (e.g. "32KB") for the `st` tree view, or "" for none."""
+        if primary == 0:
+            n = len(self.rom)
+            return f"{n // 1024}KB" if n else ""
+        if primary == 3 and secondary == 0:
+            sub = self.sub0_rom
+            n = len(sub) if sub is not None else 0
+            return f"{n // 1024}KB" if n else ""
+        if primary == 3 and secondary in (2, 3):
+            rm = self.ram_mapper
+            if rm is not None:
+                return "128KB"
+            n = len(self.ram)
+            return f"{n // 1024}KB" if n else ""
+        return ""

@@ -51,21 +51,23 @@ def _szp(v: int) -> int:
     return f
 
 
-# ---------------------------------------------------------------------------
-# Arithmetic helpers — integer-width / overflow porting contract
-#
-# These rely on Python's arbitrary-precision int and MUST be widened when
-# porting to Rust/C++ (fixed-width, wrapping/panicking) integers:
-#   - Addition (_add8/_add16/_adc16): `result` is intentionally the UN-masked
-#     sum, so it can exceed the operand width (u8 -> up to 0x1FE, u16 -> up to
-#     0x1FFFF). Carry is `result > 0xFF`/`0xFFFF` and half-carry reads bit 4/12
-#     of `result`. A port must compute in a WIDER accumulator (u8->u16,
-#     u16->u32), test carry, then mask; it must NOT add in the result width.
-#   - Subtraction (_sub8/_dec8/_sbc16, and NEG via _sub8(cpu, 0, A), plus the
-#     CPI/CPD block search): `result` can be NEGATIVE. Borrow is `result < 0`
-#     and the low byte relies on Python two's-complement masking of a negative
-#     int (`-1 & 0xFF == 0xFF`). A port must compute in a SIGNED wider type
-#     (i16/i32), test `< 0` for borrow, then cast the low bits.
+# PORT-NOTE: _add8/_add16/_adc16/_sub8/_dec8/_sbc16 (and NEG, and the CPI/CPD
+#   block search) rely on Python's arbitrary-precision int as an implicit wide
+#   accumulator. Addition's `result` is intentionally UN-masked so it can
+#   exceed the operand width (u8 -> up to 0x1FE, u16 -> up to 0x1FFFF); carry
+#   is `result > 0xFF`/`0xFFFF` and half-carry reads bit 4/12 of `result`.
+#   Subtraction's `result` can go NEGATIVE; borrow is `result < 0` and the low
+#   byte relies on Python's two's-complement masking of a negative int
+#   (`-1 & 0xFF == 0xFF`).
+# Rust equivalent: compute in an explicitly WIDER accumulator (u8->u16,
+#   u16->u32 for add; i16/i32 SIGNED for subtract), test overflow/`< 0`, then
+#   mask the low bits — do not add/subtract in the result width.
+# C++ equivalent: same widening, using int16_t/int32_t (or uint16_t/uint32_t
+#   for the unsigned add case) as the intermediate type.
+# Kept as-is here because: semantic necessity, not performance — Python's
+#   arbitrary-precision int already behaves like the wider accumulator a port
+#   must introduce explicitly; this is a translation contract, not a Python
+#   optimization.
 # ---------------------------------------------------------------------------
 
 
@@ -351,11 +353,16 @@ def _srl(cpu: Z80, v: int) -> int:
     return result
 
 
-# Portability: this tuple-of-closures dispatch (like the module-level
-# _DISPATCH / _ED_DISPATCH tables) is a Python idiom. A Rust/C++ port
-# expresses it as a `match` or a static function-pointer array rather than
-# indexing a tuple of function objects. Hoisted to module scope (shared by
-# _execute_cb and the DD/FD CB path) to avoid a per-call list allocation.
+# PORT-NOTE: tuple-of-closures dispatch (like the module-level _DISPATCH /
+#   _ED_DISPATCH tables), hoisted to module scope so _execute_cb and the DD/FD
+#   CB path share one instance instead of allocating a fresh tuple per call.
+# Rust equivalent: `match` on the CB sub-opcode's top 3 bits, or a static
+#   `[fn(&mut Z80, u8) -> u8; 8]` function-pointer array.
+# C++ equivalent: `switch` on the same 3 bits, or a static array of function
+#   pointers / `std::array<R(*)(Z80&, uint8_t), 8>`.
+# Kept as-is here because: avoids a per-call tuple allocation in the CB-prefix
+#   opcode path (executed once per rotate/shift instruction), and CPython
+#   resolves the tuple index and calls the bound function in one step.
 _CB_ROTATE_FNS: tuple[Callable[[Z80, int], int], ...] = (
     _rlc,
     _rrc,
@@ -1525,10 +1532,16 @@ def _op_daa(cpu: Z80) -> int:
 
 def _op_cpl(cpu: Z80) -> int:
     r = cpu.registers
-    # Portability: Python's `~` is infinite-width two's complement
-    # (~x == -(x + 1)), so `(~r.A) & 0xFF` is correct only because of the mask.
-    # Same pattern in the CB RES handler (`v & ~(1 << bit)`). A fixed-width port
-    # applies `!` directly on a u8 with no mask needed.
+    # PORT-NOTE: Python's `~` is infinite-width two's complement
+    #   (~x == -(x + 1)), so `(~r.A) & 0xFF` is correct only because of the
+    #   mask. Same pattern in the CB RES handler (`v & ~(1 << bit)`).
+    # Rust equivalent: `!r.a` on a `u8` — bitwise NOT is already width-bound,
+    #   no mask needed.
+    # C++ equivalent: `~a` on a `uint8_t` — same, no mask needed (beware
+    #   integer promotion to `int` if `a` isn't already `uint8_t`-typed).
+    # Kept as-is here because: semantic necessity, not performance — Python
+    #   has no fixed-width bitwise NOT, so the mask is required here but
+    #   disappears entirely in a fixed-width port.
     r.A = (~r.A) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV | F.FLAG_C)) | F.FLAG_H | F.FLAG_N
     return 4
@@ -1699,6 +1712,21 @@ def _op_prefix_ed(cpu: Z80) -> int:
 
 # ---------------------------------------------------------------------------
 # Dispatch table
+#
+# PORT-NOTE: _DISPATCH (main opcodes), _ED_DISPATCH, and _DD_FD_DISPATCH below
+#   are dict/list-of-bound-method tables built once at import by
+#   _build_dispatch/_build_ed_dispatch/_build_dd_fd_dispatch, then indexed on
+#   every single Z80 instruction fetch — the hottest path in the emulator.
+# Rust equivalent: a `match` on the opcode byte, or a static
+#   `[fn(&mut Z80) -> u8; 256]` function-pointer array built at compile time —
+#   decide between the two based on codegen/inlining behavior at port time.
+# C++ equivalent: `switch` on the opcode byte, or a static function-pointer /
+#   `std::array<int(*)(Z80&), 256>` table — same decision point as Rust.
+# Kept as-is here because: a literal translation to a per-call abstraction
+#   layer (e.g. a Callable-wrapping dispatcher object) would add Python
+#   function-call overhead on every one of the ~3.5M emulated instructions/sec
+#   this path executes; CPython's list-index + bound-method-call is already
+#   close to the fastest shape available in pure Python.
 # ---------------------------------------------------------------------------
 
 _DISPATCH: list[Callable[[Z80], int]] = [_op_illegal] * 256

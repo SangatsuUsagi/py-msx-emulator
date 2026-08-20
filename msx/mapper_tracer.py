@@ -14,6 +14,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import IO, TYPE_CHECKING
 
+from msx.mapper import BankTracingMapper
+
 if TYPE_CHECKING:
     from msx.machine import Machine
 
@@ -69,18 +71,24 @@ def attach_to_machine(
     does. Returns the tracer, or None when no bank-switching ROM mapper is
     present (flat mapper or empty slot), so callers can report the inert case.
     """
-    # Portability note: this attaches by reflection — `getattr`/`hasattr` probing
-    # for `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
-    # runtime. Rust/C++ has no such monkey-patching; a port matches on a
-    # `SupportsTracing` trait/interface (the `_BankTracing` base already gives
-    # every mapper the hook fields statically) and injects a typed accessor
-    # object, not lambdas.
+    # PORT-NOTE: bank-trace-capable mappers are identified via `isinstance(mp,
+    #   BankTracingMapper)` (matching `Debugger._mapper_targets()`'s same
+    #   check), but the hook fields themselves (`_get_pc`/`_get_cycle`/
+    #   `_get_frame`) are still injected as closures assigned by attribute
+    #   name, since `BankTracingMapper` declares them as plain fields.
+    # Rust equivalent: a `SupportsTracing` trait implemented by every mapper
+    #   (matching `BankTracingMapper`'s hook fields), with a typed accessor
+    #   object injected via a setter method, not closures assigned by
+    #   attribute name.
+    # C++ equivalent: same — a `SupportsTracing` interface/mixin every mapper
+    #   implements, with a typed accessor object passed to an explicit
+    #   `attach_tracer()` method, not runtime attribute injection.
+    # Kept as-is here because: port target/shape not decided yet — called
+    #   once per debugger-session attach (not a hot path), and the closure
+    #   injection needs a real typed-accessor interface at port time, not a
+    #   mechanical translation.
     mem = machine.memory
-    targets = []
-    for attr in ("_mapper", "_mapper2"):
-        mp = getattr(mem, attr, None)
-        if mp is not None and hasattr(mp, "_tracer"):
-            targets.append(mp)
+    targets = [mp for mp in (mem._mapper, mem._mapper2) if isinstance(mp, BankTracingMapper)]
     if not targets:
         return None
     tracer = MapperTracer(enabled=True, output=output or sys.stdout)

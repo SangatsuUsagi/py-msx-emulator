@@ -32,15 +32,30 @@ REG_CONTROL_STATUS: int = 0x3FFF  # active-low INTRQ (bit 6) / DRQ (bit 7)
 class FloppyDisk:
     """Base connection-style device wiring a controller + drives + DISK ROM.
 
-    Portability note: this base class both owns concrete state (controller,
-    drives, disk_rom) and declares read_mem/write_mem/reset as
-    NotImplementedError for subclasses to fill in -- the project's usual
-    interface convention (no abc.ABC anywhere in msx/), but a Rust trait or
-    C++ abstract base can't carry required fields the way this carries them.
-    SonyPhilipsInterface is the only connection style this codebase has, so
-    splitting this into owned state (has-a) + a dispatch trait/vtable (is-a)
-    is deferred until a second connection style actually exists -- see
-    logs/review-python-20260814-210824.md.
+    PORT-NOTE: this base class both owns concrete state (controller, drives,
+      disk_rom) and declares read_mem/write_mem/reset as NotImplementedError
+      for subclasses to fill in -- the project's usual interface convention
+      (no abc.ABC anywhere in msx/).
+    Rust equivalent: a trait can't carry required fields the way this class
+      carries them -- split into an owned-state struct (has-a: controller,
+      drives, disk_rom) plus a `FloppyInterface` trait for the dispatch
+      methods (is-a), composed rather than inherited.
+    C++ equivalent: same split -- an owned-state struct/class plus a small
+      abstract base (or concept) purely for read_mem/write_mem/reset, not one
+      class carrying both.
+    Kept as-is here because: port target/shape not decided yet. The split's
+      external ergonomics (has-a state accessed via `.drives`/`.swap()`/
+      `.mount()`, is-a dispatch via `.read_mem`/`.write_mem`/`.reset`) are
+      already exercised by today's single implementation, so that much is
+      answerable now -- what's actually blocked is validating the dispatch
+      trait's method *signatures* (read_mem/write_mem/reset's exact shape),
+      which needs a second, structurally different connection style to
+      confirm against. SonyPhilipsInterface alone can't tell us that. See
+      logs/review-python-20260814-210824.md.
+    TODO: revisit this split when a TC8566AF-based connection style is added
+      (second concrete FloppyDisk implementation) -- that's the missing
+      signature-validation case, not a decision that can be made from
+      SonyPhilipsInterface alone.
     """
 
     def __init__(

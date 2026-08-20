@@ -4,8 +4,10 @@ from __future__ import annotations
 import pytest
 from PIL import Image
 
-from msx.state import CURRENT_FORMAT_VERSION, load_state, save_state
+from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
 from tests.factories import make_machine
+
+_CART_64K = b"\x00" * 0x10000
 
 _ROM = b"\x00" * 0x8000
 
@@ -127,6 +129,27 @@ def test_load_state_wrong_version_raises(machine, saves_dir):
         load_state(machine)
 
 
+def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_dir):
+    """A version-5 save (mapper_class: str, no mapper_kind) must be rejected
+    by the format_version check, not fail with a confusing missing-key error
+    from MachineSnapshot construction."""
+    import json
+
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["format_version"] = CURRENT_FORMAT_VERSION - 1
+    del data["mapper_kind"]
+    data["mapper_class"] = "FlatMapper"
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)
+
+
 def test_legacy_pickle_state_rejected(machine, saves_dir):
     import pickle as _pickle
     saves_dir.mkdir(parents=True, exist_ok=True)
@@ -135,3 +158,77 @@ def test_legacy_pickle_state_rejected(machine, saves_dir):
         _pickle.dump({"format_version": 4}, f)
     with pytest.raises(ValueError, match="legacy pickle"):
         load_state(machine, bad)
+
+
+# --- StateLoadError -------------------------------------------------------------
+
+def test_malformed_mapper_state_raises_state_load_error(saves_dir):
+    import json
+
+    # ASCII8's restore() indexes "banks" directly (KeyError if absent), unlike
+    # the flat-cartridge default mapper whose restore() is a no-op.
+    machine = make_machine(rom=_ROM, cartridge=b"\x00" * 0x10000, mapper="ASCII8")
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["mapper_state"]["banks"]
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+    assert "mapper" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, KeyError)
+
+
+def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
+    import json
+
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["psg_synth"]["_tone_cnt"]
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+    assert "psg" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, KeyError)
+
+
+def test_well_formed_state_does_not_raise_state_load_error(machine, saves_dir):
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+    load_state(machine)  # must not raise StateLoadError (or anything else)
+
+
+# --- mapper_kind ------------------------------------------------------------
+
+def test_snapshot_persists_mapper_kind_value_not_class_name(saves_dir):
+    import json
+
+    machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="KonamiSCC")
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["mapper_kind"] == "konami_scc"
+    assert data["mapper_kind"] != "KonamiSCCMapper"
+
+
+def test_mapper_kind_mismatch_raises_value_error(saves_dir):
+    saved_machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="Konami")
+    rgb = bytearray(256 * 192 * 3)
+    save_state(saved_machine, rgb, "test")
+
+    running_machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="ASCII8")
+    with pytest.raises(ValueError, match="mapper mismatch") as exc_info:
+        load_state(running_machine)
+    assert "ascii8" in str(exc_info.value)
+    assert "konami" in str(exc_info.value)

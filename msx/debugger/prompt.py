@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from msx.debugger.disasm import disassemble
+from msx.mapper import BankTracingMapper
 
 try:
     import readline
@@ -132,7 +133,7 @@ class Debugger:
         while True:
             try:
                 cyc = self._machine.cycle_count
-                frm = getattr(self._machine.vdp, "_frame_count", 0)
+                frm = self._machine.vdp._frame_count
                 line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
@@ -382,7 +383,7 @@ class Debugger:
         except ValueError:
             print("gf: invalid frame number (decimal expected)")
             return False
-        current = getattr(self._machine.vdp, "_frame_count", 0)
+        current = self._machine.vdp._frame_count
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
             return False
@@ -571,13 +572,12 @@ class Debugger:
         vdp.tracer.enabled = False
         print("VDP trace disabled")
 
-    def _mapper_targets(self) -> list[object]:
+    def _mapper_targets(self) -> list[BankTracingMapper]:
         """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
         mem = self._machine.memory
-        result = []
-        for attr in ("_mapper", "_mapper2"):
-            mp = getattr(mem, attr, None)
-            if mp is not None and hasattr(mp, "_tracer"):
+        result: list[BankTracingMapper] = []
+        for mp in (mem._mapper, mem._mapper2):
+            if isinstance(mp, BankTracingMapper):
                 result.append(mp)
         return result
 
@@ -591,7 +591,7 @@ class Debugger:
     def _cmd_mapper_trace_disable(self) -> None:
         disabled = False
         for mp in self._mapper_targets():
-            tracer = mp._tracer  # type: ignore[attr-defined]
+            tracer = mp._tracer
             if tracer is not None and tracer.enabled:
                 tracer.enabled = False
                 disabled = True
@@ -675,8 +675,8 @@ class Debugger:
             else:
                 sec = None
                 sec_str = "-"
-            content = _sl_content(mem, prim, sec, page)
-            bank = _sl_bank(mem, prim, sec, page)
+            content = mem.debug_slot_content(prim, sec, page)
+            bank = mem.debug_slot_bank(prim, sec, page)
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
@@ -692,15 +692,15 @@ class Debugger:
                     parts.append(f"P{pg}->3-{s}")
                 print(f"    page-map: {'  '.join(parts)}")
                 for sec in range(4):
-                    content = _sl_content(mem, prim, sec, None)
-                    size = _sl_size(mem, prim, sec)
+                    content = mem.debug_slot_content(prim, sec, None)
+                    size = mem.debug_slot_size_kb(prim, sec)
                     suffix = f"  {size}" if size else ""
                     print(f"    3-{sec}  {content}{suffix}")
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
-                content = _sl_content(mem, prim, None, None)
-                size = _sl_size(mem, prim, None)
+                content = mem.debug_slot_content(prim, None, None)
+                size = mem.debug_slot_size_kb(prim, None)
                 suffix = f"  {size}" if size else ""
                 print(f"  Primary {prim}{role_str}  {content}{suffix}")
 
@@ -909,99 +909,6 @@ def _print_vdp_tms(vdp: object) -> None:
     )
 
     print(f"  Status : S#0={s0:02X}")
-
-
-# ---------------------------------------------------------------------------
-# Slot inspector helpers
-# ---------------------------------------------------------------------------
-
-def _sl_content(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
-    from msx.mapper import FlatMapper
-    if primary == 0:
-        name = getattr(mem, "rom_name", "") or "ROM"
-        return f"ROM {name}" if name != "ROM" else "ROM"
-    if primary in (1, 2):
-        mapper = mem._mapper if primary == 1 else mem._mapper2  # type: ignore[attr-defined]
-        if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
-            return "Cartridge (empty)"
-        cls = type(mapper).__name__.replace("Mapper", "")
-        return f"Cartridge {cls}"
-    if primary == 3:
-        if secondary == 0:
-            name = getattr(mem, "sub0_rom_name", "") or "ROM"
-            return f"ROM {name}" if name != "ROM" else "ROM"
-        if secondary == 1:
-            return "empty"
-        if secondary in (2, 3):
-            if getattr(mem, "ram_mapper", None) is not None:
-                return "RAM (mapper:standard)"
-            return "RAM"
-        return "empty"
-    return "empty"
-
-
-def _rom_mapper_bank_info(mapper: object, page: int) -> str | None:
-    """Describe the ROM mapper bank(s) visible at a CPU page (1=0x4000, 2=0x8000).
-
-    Returns a display string with the selected bank index and the resolved ROM
-    byte offset for each mapper window covering the page, or None when the mapper
-    has no switchable banks (e.g. FlatMapper) or the page is outside its windows.
-    """
-    banks = getattr(mapper, "_banks", None)
-    if banks is None:
-        return None
-    if len(banks) == 2:
-        # ASCII16: two 16 KB windows — page 1 -> window 0, page 2 -> window 1.
-        win = page - 1
-        if win not in (0, 1):
-            return None
-        b = banks[win]
-        start = b * 0x4000
-        return f"bank {b} @{start:05X}-{start + 0x3FFF:05X}"
-    if len(banks) == 4:
-        # ASCII8 / Konami: four 8 KB windows — page 1 -> windows 0,1; page 2 -> 2,3.
-        if page == 1:
-            wins = (0, 1)
-        elif page == 2:
-            wins = (2, 3)
-        else:
-            return None
-        parts = [f"w{w}=b{banks[w]}@{banks[w] * 0x2000:05X}" for w in wins]
-        return "  ".join(parts)
-    return None
-
-
-def _sl_bank(mem: object, primary: int, secondary: int | None, page: int | None) -> str:
-    if primary == 3 and secondary in (2, 3) and page is not None:
-        rm = getattr(mem, "ram_mapper", None)
-        if rm is not None:
-            return f"seg={rm.banks[page]}"
-    if primary in (1, 2) and page is not None:
-        mapper = (
-            getattr(mem, "_mapper", None) if primary == 1
-            else getattr(mem, "_mapper2", None)
-        )
-        info = _rom_mapper_bank_info(mapper, page) if mapper is not None else None
-        if info is not None:
-            return info
-    return "-"
-
-
-def _sl_size(mem: object, primary: int, secondary: int | None) -> str:
-    if primary == 0:
-        n = len(getattr(mem, "rom", b""))
-        return f"{n // 1024}KB" if n else ""
-    if primary == 3 and secondary == 0:
-        sub = getattr(mem, "sub0_rom", None)
-        n = len(sub) if sub is not None else 0
-        return f"{n // 1024}KB" if n else ""
-    if primary == 3 and secondary in (2, 3):
-        rm = getattr(mem, "ram_mapper", None)
-        if rm is not None:
-            return "128KB"
-        n = len(getattr(mem, "ram", b""))
-        return f"{n // 1024}KB" if n else ""
-    return ""
 
 
 # REPL command dispatch table (see Debugger.enter). Loop-control commands

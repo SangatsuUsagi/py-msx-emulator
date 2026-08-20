@@ -33,7 +33,14 @@ A Rust/C++ port keeps the same layering as separate crates/targets:
 Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_json
 (C++: nlohmann/json); daemon thread -> std::thread; queue bridge -> mpsc channel
 (C++: queue + mutex + condition_variable); per-call reply Event -> oneshot channel
-/ Condvar; dispatch table -> HashMap<String, fn>. The ``tools/`` MCP server and
+/ Condvar; dispatch table -> HashMap<String, fn>. Each handler's untyped
+``params: dict[str, Any]`` (hand-validated via ``_require_int``/``_parse_addr``/
+``_parse_hex_bytes``) maps to a `serde_json::Value` decoded into one typed
+request/response struct per RPC method, dispatched via a tagged enum on the
+``method`` field -- the Python side stays duck-typed at this boundary because
+the wire payload's shape genuinely isn't known until parsed, matching every
+other JSON-boundary module in this codebase (see ``machine_loader.py``'s
+equivalent note for its YAML config boundary). The ``tools/`` MCP server and
 CLI client are separate processes that speak only the newline-JSON wire protocol,
 so they are language-agnostic and stay as-is under any core port.
 """
@@ -109,10 +116,19 @@ class PauseState:
     frame loop). :meth:`DebugServer.on_pause` is where the two meet: the machine
     sets ``_pause_requested`` and calls the hook, which sets ``paused`` here.
 
-    Threading / portability: these plain fields are written by the emulator
-    thread (``on_pause``, handlers via ``drain``) and by the socket thread
-    (``cpu.continue_sync``), and read by the frontend loop — safe here only
-    because of the GIL. A Rust/C++ port must guard this with a mutex/atomics.
+    PORT-NOTE: these plain fields are written by the emulator thread
+      (``on_pause``, handlers via ``drain``) and by the socket thread
+      (``cpu.continue_sync``), and read by the frontend loop -- safe here
+      only because of the GIL.
+    Rust equivalent: guard with a Mutex, or use AtomicBool/an atomic enum for
+      `paused`/`reason` -- Rust has no GIL to fall back on for cross-thread
+      plain-field access.
+    C++ equivalent: same -- std::mutex or std::atomic<bool> plus a
+      separately-synchronized `reason`, since C++ has no GIL either.
+    Kept as-is here because: this file is an adapter-only layer (not the
+      core emulator), so the cross-thread cost here is negligible either
+      way; noted for the port since Python's GIL is doing implicit work a
+      port must make explicit.
     """
 
     def __init__(self) -> None:
@@ -377,13 +393,23 @@ class DebugServer:
     def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
         """Resume and block (on the socket thread) until the next pause event.
 
-        Portability seam: this runs on the socket thread yet calls into the core
-        (``Machine.prepare_resume`` and reading ``cpu.registers.PC``). It is safe
-        here only because of the GIL and because the machine is quiescent by the
-        time the pause event fires (the debug loop has returned). A Rust/C++ port
-        cannot take ``&mut Machine`` from two threads; it must route continue as a
-        command handled on the emulator thread, keeping the pause hook as the only
-        callback out of the core.
+        PORT-NOTE: this runs on the socket thread yet calls into the core
+          (``Machine.prepare_resume`` and reading ``cpu.registers.PC``). It is
+          safe here only because of the GIL and because the machine is
+          quiescent by the time the pause event fires (the debug loop has
+          returned).
+        Rust equivalent: can't take `&mut Machine` from two threads -- route
+          continue as a command handled on the emulator thread instead,
+          keeping the pause hook as the only callback out of the core (e.g.
+          via a channel/queue the emulator thread polls).
+        C++ equivalent: same -- route continue through a thread-safe
+          command queue handled on the emulator thread, rather than calling
+          into Machine directly from the socket thread.
+        Kept as-is here because: this file is an adapter-only layer; the
+          GIL-reliant cross-thread call is safe under CPython's actual
+          threading model as written, and Rust/C++ have no GIL to rely on so
+          this needs a real command-queue redesign at port time, not a
+          direct translation.
         """
         req_id = req.get("id")
         params = req.get("params") or {}

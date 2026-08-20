@@ -45,6 +45,17 @@ def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> by
     Each of the three 256-byte tables maps a source byte to one output channel;
     the strided slice assignment interleaves them. Three C-level translate calls
     replace a per-pixel Python loop (~5-8x faster per frame).
+
+    PORT-NOTE: relies on CPython's C-implemented bytes.translate() to do a
+      256-entry-LUT pass per channel; there's no Rust/C++ std equivalent.
+    Rust equivalent: precompute the same [u8;256] tables and either loop with
+      iter().map() (LLVM auto-vectorizes this reasonably well), or use an
+      explicit SIMD gather (std::simd, or the wide crate) if profiling shows
+      it's needed.
+    C++ equivalent: std::transform with the LUT, or an explicit loop —
+      MSVC/GCC/Clang all auto-vectorize a LUT transform reasonably.
+    Kept as-is here because: this is the dominant cost of to_rgb24(), called
+      once per frame per pixel plane.
     """
     rtab, gtab, btab = channels
     out = bytearray(len(src) * 3)
@@ -83,11 +94,16 @@ _TMS_CHANNELS: tuple[bytes, bytes, bytes] = _channel_tables_indexed(
 class VDP:
     """TMS9918A VDP for MSX1: 16 KB VRAM, 8 registers.
 
-    Integer-width contract (for a Rust/C++ port; consistent with the CPU
-    Registers width contract): ``vram`` bytes and ``regs`` / ``status`` entries
-    are u8; the VRAM address (``addr``) is 14-bit (kept masked ``& 0x3FFF``).
-    Sprite X positions can go negative before clipping (``x_byte -= 32``) and
-    must be typed signed (i16) in a port.
+    PORT-NOTE: ``vram`` bytes and ``regs`` / ``status`` entries are u8; the
+      VRAM address (``addr``) is 14-bit (kept masked ``& 0x3FFF``). Sprite X
+      positions can go negative before clipping (``x_byte -= 32``).
+    Rust equivalent: u8 fields, addr as u16 masked to 14 bits, sprite X as i16.
+    C++ equivalent: uint8_t fields, addr as uint16_t masked to 14 bits, sprite
+      X as int16_t.
+    Kept as-is here because: semantic necessity, not performance — consistent
+      with the CPU Registers width contract (msx/cpu/registers.py); a port
+      must type each field per this contract since Python's plain int hides
+      the fixed hardware width.
     """
 
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
@@ -99,10 +115,16 @@ class VDP:
     on_interrupt: Callable[[], None] | None = None
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    # Portability note: these Callable hooks (on_interrupt above, plus the
-    # tracer / _get_pc / _get_cycle below) are stored Python closures with no
-    # direct static-typed analogue. A Rust/C++ port models them as trait objects
-    # or feature-flagged fields resolved once, not per-call function pointers.
+    # PORT-NOTE: these Callable hooks (on_interrupt above, plus the tracer /
+    #   _get_pc / _get_cycle below) are stored as Python closures assigned at
+    #   wiring time.
+    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
+    #   resolved once at construction, not per-call function pointers.
+    # C++ equivalent: std::function members or a virtual interface pointer,
+    #   assigned once at construction.
+    # Kept as-is here because: resolved once at wiring time and called at
+    #   most once per interrupt/frame, not per VRAM access; the closure
+    #   indirection costs nothing measurable here.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)

@@ -34,7 +34,7 @@ def test_subslot_write_ffff_stores_value() -> None:
 
 def test_subslot_read_ffff_returns_complement() -> None:
     mem = _make_memory(slot_register=0xC0)
-    mem.sub_slot_reg = 0x5A
+    mem.set_sub_slot_reg(0x5A)
     assert mem.read(0xFFFF) == 0xA5  # ~0x5A & 0xFF
 
 
@@ -53,7 +53,7 @@ def test_subslot_write_ffff_does_not_go_to_ram_mapper() -> None:
 def test_subslot_ffff_no_intercept_when_page3_not_slot3() -> None:
     # page3 = slot1 (bits 7:6 = 0b01)
     mem = _make_memory(slot_register=0x44)  # page3=slot1, page2=slot1, page1=slot1, page0=slot0
-    mem.sub_slot_reg = 0x00
+    mem.set_sub_slot_reg(0x00)
     # Writing 0xFFFF goes to mapper (slot1), not the sub-slot register
     mem.write(0xFFFF, 0xBB)
     assert mem.sub_slot_reg == 0x00  # unchanged
@@ -64,7 +64,7 @@ def test_subslot_read_ffff_no_intercept_when_page3_not_slot3() -> None:
     # ReadByte/ReadSecondarySlotRegister share the same "page3 is slot3"
     # requires clause as WriteByte/WriteSecondarySlotRegister).
     mem = _make_memory(slot_register=0x44)  # page3=slot1 -> cartridge (empty FlatMapper)
-    mem.sub_slot_reg = 0x5A
+    mem.set_sub_slot_reg(0x5A)
     # If the intercept wrongly fired, this would read back (~0x5A)&0xFF = 0xA5.
     # It should instead reach the empty cartridge slot and read open bus.
     assert mem.read(0xFFFF) == 0xFF
@@ -106,9 +106,9 @@ def test_subslot0_read_from_sub0_rom() -> None:
     sub_rom = bytes([0x41, 0x42, 0x43] + [0xFF] * (0x4000 - 3))  # 16 KB
     mem = _make_memory(slot_register=0xC0)  # page3=slot3; but we need page0=slot3
     # Set page0=slot3: slot_register bits 1:0 = 11
-    mem.slot_register = 0xC3  # page3=slot3, page0=slot3
-    mem.sub0_rom = sub_rom
-    mem.sub_slot_reg = 0x00  # page0 → sub-slot 0
+    mem.set_slot_register(0xC3)  # page3=slot3, page0=slot3
+    mem.set_sub0_rom(sub_rom)
+    mem.set_sub_slot_reg(0x00)  # page0 → sub-slot 0
 
     assert mem.read(0x0000) == 0x41
     assert mem.read(0x0001) == 0x42
@@ -118,8 +118,8 @@ def test_subslot0_read_from_sub0_rom() -> None:
 def test_subslot0_write_ignored() -> None:
     sub_rom = bytearray([0x00] * 0x4000)
     mem = _make_memory(slot_register=0xC3)
-    mem.sub0_rom = bytes(sub_rom)
-    mem.sub_slot_reg = 0x00
+    mem.set_sub0_rom(bytes(sub_rom))
+    mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0x00  # unchanged
 
@@ -128,8 +128,8 @@ def test_subslot0_address_out_of_range_returns_ff() -> None:
     sub_rom = bytes([0xAA] * 0x4000)
     # page1 = slot3, sub-slot 0 → but sub0_rom only covers 0x0000-0x3FFF
     mem = _make_memory(slot_register=0xCC)  # page3=slot3, page2=slot3, page1=slot3, page0=slot0
-    mem.sub0_rom = sub_rom
-    mem.sub_slot_reg = 0x00  # all pages → sub-slot 0
+    mem.set_sub0_rom(sub_rom)
+    mem.set_sub_slot_reg(0x00)  # all pages → sub-slot 0
     # Read at 0x4000 (page1) → sub-slot 0 but addr > 0x3FFF → 0xFF
     assert mem.read(0x4000) == 0xFF
 
@@ -140,13 +140,13 @@ def test_subslot0_address_out_of_range_returns_ff() -> None:
 
 def test_subslot1_read_returns_ff() -> None:
     mem = _make_memory(slot_register=0xC3)  # page0=slot3
-    mem.sub_slot_reg = 0x01  # page0 → sub-slot 1
+    mem.set_sub_slot_reg(0x01)  # page0 → sub-slot 1
     assert mem.read(0x0000) == 0xFF
 
 
 def test_subslot1_write_ignored() -> None:
     mem = _make_memory(slot_register=0xC3)
-    mem.sub_slot_reg = 0x01
+    mem.set_sub_slot_reg(0x01)
     mem.write(0x0000, 0xFF)  # should not raise
 
 
@@ -156,13 +156,13 @@ def test_subslot1_write_ignored() -> None:
 
 def test_subslot2_routes_to_ram_mapper() -> None:
     mem = _make_memory(slot_register=0xC0)  # page3=slot3
-    mem.sub_slot_reg = 0b10_00_00_00  # page3 → sub-slot 2; others → sub-slot 0
+    mem.set_sub_slot_reg(0b10_00_00_00)  # page3 → sub-slot 2; others → sub-slot 0
     mem.ram_mapper.write(0xC000, 0x42)
     assert mem.read(0xC000) == 0x42
 
 
 def test_subslot3_routes_to_ram_mapper() -> None:
     mem = _make_memory(slot_register=0xC0)  # page3=slot3
-    mem.sub_slot_reg = 0b11_00_00_00  # page3 → sub-slot 3
+    mem.set_sub_slot_reg(0b11_00_00_00)  # page3 → sub-slot 3
     mem.ram_mapper.write(0xC000, 0x77)
     assert mem.read(0xC000) == 0x77

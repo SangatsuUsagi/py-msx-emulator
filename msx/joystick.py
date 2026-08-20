@@ -1,9 +1,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from msx.input import InputState
+
+
+class _SdlJoystickApi(Protocol):
+    """Typed subset of the `sdl2` module this class actually calls.
+
+    `sdl2` (pysdl2) ships no type stubs, so importing it gives `Any`; this
+    Protocol exists purely to make the surface JoystickManager depends on
+    explicit and closed, instead of an open-ended `Any` standing in for
+    "whatever attributes get accessed at runtime."
+    """
+
+    SDL_CONTROLLERDEVICEADDED: int
+    SDL_CONTROLLERDEVICEREMOVED: int
+    SDL_JOYDEVICEADDED: int
+    SDL_JOYDEVICEREMOVED: int
+    SDL_CONTROLLERBUTTONDOWN: int
+    SDL_CONTROLLERBUTTONUP: int
+    SDL_CONTROLLERAXISMOTION: int
+    SDL_JOYBUTTONDOWN: int
+    SDL_JOYBUTTONUP: int
+    SDL_JOYAXISMOTION: int
+    SDL_JOYHATMOTION: int
+    SDL_HAT_UP: int
+    SDL_HAT_DOWN: int
+    SDL_HAT_LEFT: int
+    SDL_HAT_RIGHT: int
+
+    def SDL_IsGameController(self, device_index: int) -> int: ...
+    def SDL_GameControllerOpen(self, device_index: int) -> Any: ...
+    def SDL_GameControllerGetJoystick(self, controller: Any) -> Any: ...
+    def SDL_JoystickInstanceID(self, joy: Any) -> int: ...
+    def SDL_JoystickOpen(self, device_index: int) -> Any: ...
+    def SDL_GameControllerClose(self, controller: Any) -> None: ...
+    def SDL_JoystickClose(self, joy: Any) -> None: ...
 
 AXIS_DEAD_ZONE: int = 8192
 TURBO_PERIOD: int = 3   # frames per turbo cycle at 60 fps → 20 Hz
@@ -63,7 +97,7 @@ class JoystickManager:
     """
 
     _input: InputState
-    _sdl: Any = field(default=None, repr=False)
+    _sdl: _SdlJoystickApi = field(repr=False)
 
     # GameController button maps and turbo period; default to the built-in
     # tables/rate but may be replaced from py_emulator.yaml (see msx.app_config).
@@ -75,6 +109,15 @@ class JoystickManager:
     )
     _turbo_period: int = TURBO_PERIOD
 
+    # PORT-NOTE: `_slots` holds opaque SDL device/controller handles
+    #   (SDL_GameControllerOpen/SDL_JoystickOpen's return value), untyped
+    #   since pysdl2 ships no stubs for them -- same reason as `event: Any`
+    #   below.
+    # Rust equivalent: an actual typed handle (e.g. `sdl2::GameController`/
+    #   `sdl2::Joystick`) held directly, not an opaque reference.
+    # C++ equivalent: same -- a typed `SDL_GameController*`/`SDL_Joystick*`.
+    # Kept as-is here because: pysdl2 has no stubs for these handle types, so
+    #   there's nothing narrower to type them as on the Python side.
     _slots: list[Any] = field(default_factory=lambda: [None, None], init=False, repr=False)
     _is_gc: list[bool] = field(default_factory=lambda: [False, False], init=False, repr=False)
     _instance_ids: list[int] = field(default_factory=lambda: [-1, -1], init=False, repr=False)
@@ -161,6 +204,23 @@ class JoystickManager:
     def handle_event(self, event: Any) -> None:
         """Dispatch one SDL2 event: device hotplug, or a button/axis/hat
         change on an already-claimed device. Ignores any other event type.
+
+        PORT-NOTE: `event` stays untyped here (rather than a Protocol like
+          `_sdl`'s `_SdlJoystickApi`) because it's a real ctypes union
+          (`sdl2.SDL_Event`) whose member structs (cdevice/cbutton/caxis/
+          jdevice/jbutton/jaxis/jhat) don't type-check meaningfully against a
+          Python Protocol either way.
+        Rust equivalent: the `sdl2` crate's `Event` is already a proper
+          tagged enum (`Event::ControllerButtonDown { which, button, .. }`),
+          so a port gets this dispatch shape for free via `match` -- no
+          separate typed-wrapper step needed.
+        C++ equivalent: SDL_Event is a C union too, so a port typically
+          wraps it in its own tagged-variant type at the dispatch boundary
+          rather than passing the raw union deeper into the call chain.
+        Kept as-is here because: dispatched a handful of times per frame
+          (event-loop cadence, not per-sample), so the untyped union costs
+          nothing measurable; and Python has no useful way to express a
+          ctypes union's active-member-by-tag shape as a static type.
         """
         sdl = self._sdl
         event_type = event.type

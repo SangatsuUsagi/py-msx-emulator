@@ -33,6 +33,19 @@ _COLLISION_Y_OFFSET = 8
 
 # Cache constant border-fill buffers per colour so a band prefill can slice-assign
 # a memoryview instead of rebuilding bytes([border]) * n every band/frame.
+#
+# PORT-NOTE: module-level mutable memoization cache keyed on border colour
+#   (0-15, so <=16 entries), grown lazily by _border_fill().
+# Rust equivalent: precompute all 16 constant border-fill buffers once at
+#   VDP/renderer construction (or as const data), not as a runtime-grown
+#   global — Rust has no ergonomic mutable static without OnceLock/interior
+#   mutability.
+# C++ equivalent: a fixed std::array<std::vector<uint8_t>, 16> (or similar)
+#   built once at construction, not a lazily-grown global map.
+# Kept as-is here because: port target/shape not decided yet, and a growable
+#   global cache shared across VDP instances is also a latent
+#   multi-instance-safety issue this single-machine-process design doesn't
+#   currently need to think about; revisit once Rust vs. C++ is chosen.
 _BORDER_CACHE: dict[int, bytes] = {}
 
 
@@ -72,10 +85,18 @@ _COLOR4: tuple[bytes, ...] = tuple(bytes([c] * 4) for c in range(16))
 
 # LUT caches for G4/G6 and G5 pixel expansion via bytes.translate().
 # Keys: (tp: bool, border: int).  At most 32 entries each (2 × 16).
-# Portability note: the dict-memoized bytes.translate() approach is Python-
-# specific. A Rust/C++ port keeps fixed [u8; 256] LUT arrays and precomputes
-# every (tp, border) pattern at init (only 32 combinations), indexing directly
-# instead of hashing a tuple key on demand.
+#
+# PORT-NOTE: dict-memoized bytes.translate() approach, keyed and grown lazily
+#   on demand.
+# Rust equivalent: fixed [u8; 256] LUT arrays, precomputing every (tp, border)
+#   pattern at init (only 32 combinations), indexed directly instead of
+#   hashing a tuple key on demand.
+# C++ equivalent: a fixed std::array<std::array<uint8_t,256>, 32> (or similar)
+#   built once at init, indexed by a small integer instead of a hashed pair.
+# Kept as-is here because: bytes.translate() itself is the perf-critical part
+#   (see the PORT-NOTE on _translate_rgb24 in msx/vdp/vdp.py); the dict cache
+#   around it only pays a hash lookup once per (tp, border) combination, not
+#   per pixel, so it isn't worth restructuring in Python.
 _G46_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes]] = {}
 _G5_LUT_CACHE: dict[tuple[bool, int], tuple[bytes, bytes, bytes, bytes]] = {}
 
@@ -108,6 +129,23 @@ def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
 
 
 # Precomputed tile-row lookup: _ROW_BYTES[pat][fg][bg] → 8-byte slice.
+#
+# PORT-NOTE: three-level nested list of bytes objects, each level a separate
+#   heap-allocated PyObject with its own indirection/refcount, built once at
+#   import via triple-nested comprehension and indexed _ROW_BYTES[pat][fg][bg]
+#   in the hottest tile-rendering loops (_render_g1/_render_g2/_render_text/
+#   _render_mc in this file; the MSX1 equivalent is renderer.py's own
+#   _ROW_BYTES).
+# Rust equivalent: flatten to a single [u8; 256*16*16*8] (or
+#   [[u8;8]; 256*16*16]) const array indexed by pat*256 + fg*16 + bg (built at
+#   compile time via a const fn or build script) — a single contiguous
+#   cache-friendly lookup instead of three pointer chases.
+# C++ equivalent: a single flat std::array<uint8_t, 256*16*16*8> (or
+#   std::array<std::array<uint8_t,8>, 256*16*16>) computed once via a
+#   constexpr function or static initializer.
+# Kept as-is here because: eliminates the 8-iteration per-pixel Python loop
+#   in the tile renderers; Python has no cheaper way to express a flat
+#   compile-time-computed array of this size than nested lists.
 _ROW_BYTES: list[list[list[bytes]]] = [
     [
         [
@@ -120,6 +158,8 @@ _ROW_BYTES: list[list[list[bytes]]] = [
 ]
 
 # Precomputed text-row lookup: _TEXT6_BYTES[pat][fg][bg] → 6-byte slice.
+# Same nested-list-LUT shape and PORT-NOTE as _ROW_BYTES above (6-byte rows
+# instead of 8-byte).
 _TEXT6_BYTES: list[list[list[bytes]]] = [
     [
         [
@@ -398,13 +438,23 @@ def _render_banded(vdp: "V9938") -> bytearray:
 
         _finalize(vdp)
     finally:
-        # Portability note: the band passes above temporarily rebind
-        # vdp.regs / vdp.palette to per-band snapshots (shared list objects held
-        # in `bands`). That reference-swap is a Python convenience that does not
-        # map to an ownership model — a port threads the band registers/palette
-        # as explicit parameters to the per-band renderers instead. The
-        # try/finally guarantees the live registers are restored even if a
-        # renderer raises mid-frame (the invariant is otherwise implicit).
+        # PORT-NOTE: the band passes above temporarily rebind vdp.regs /
+        #   vdp.palette to per-band snapshots (shared list objects held in
+        #   `bands`) via plain attribute reassignment.
+        # Rust equivalent: thread the band registers/palette as explicit
+        #   parameters to the per-band renderers instead of swapping a shared
+        #   owned field — Rust's borrow checker won't allow the same
+        #   temporary-rebind-then-restore pattern on a struct field this
+        #   loosely.
+        # C++ equivalent: same — pass band registers/palette as explicit
+        #   function parameters (or a small RAII guard that restores on scope
+        #   exit, the closest analogue to this try/finally) rather than
+        #   mutating a shared member and restoring it after.
+        # Kept as-is here because: port target/shape not decided yet — this
+        #   reference-swap is a Python convenience with no ownership-model
+        #   equivalent; the try/finally guarantees the live registers are
+        #   restored even if a renderer raises mid-frame (the invariant is
+        #   otherwise implicit). Revisit once Rust vs. C++ is chosen.
         vdp.regs = saved_regs
         vdp.palette = saved_palette
     return out

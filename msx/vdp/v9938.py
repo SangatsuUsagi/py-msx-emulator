@@ -231,16 +231,24 @@ class V9938:
     """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
     hardware command engine.
 
-    Integer-width contract (for a Rust/C++ port; consistent with the CPU
-    Registers width contract): ``vram`` bytes and ``regs`` / ``cmd_regs`` /
-    ``status`` entries are u8; the VRAM address (``_addr``) is 17-bit (kept
-    masked ``& 0x1FFFF``); palette entries are packed 9-bit GRB
-    (``(r << 6) | (g << 3) | b``). Values that are NOT a hardware-register
-    width and must be typed signed in a port: screen / sprite / command
-    coordinates that can go negative before clipping (e.g. ``x_byte -= 32``,
-    ``_cmd_x`` / ``_cmd_y``, the Bresenham error terms) → i16; the command
-    T-state countdown ``_cmd_remaining``, decremented below zero and tested
-    ``<= 0`` → i32."""
+    PORT-NOTE: ``vram`` bytes and ``regs`` / ``cmd_regs`` / ``status`` entries
+      are u8; the VRAM address (``_addr``) is 17-bit (kept masked
+      ``& 0x1FFFF``); palette entries are packed 9-bit GRB
+      (``(r << 6) | (g << 3) | b``). Values that are NOT a hardware-register
+      width and must be typed signed in a port: screen / sprite / command
+      coordinates that can go negative before clipping (e.g. ``x_byte -= 32``,
+      ``_cmd_x`` / ``_cmd_y``, the Bresenham error terms); the command T-state
+      countdown ``_cmd_remaining``, decremented below zero and tested ``<= 0``.
+    Rust equivalent: u8 fields per above; _addr as u32 masked to 17 bits;
+      signed coordinates/error terms as i16; _cmd_remaining as i32.
+    C++ equivalent: uint8_t fields per above; _addr as uint32_t masked to 17
+      bits; signed coordinates/error terms as int16_t; _cmd_remaining as
+      int32_t.
+    Kept as-is here because: semantic necessity, not performance — consistent
+      with the CPU Registers width contract (msx/cpu/registers.py); a port
+      must type each field per this contract since Python's plain int hides
+      the fixed hardware width and sign.
+    """
 
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
@@ -256,10 +264,16 @@ class V9938:
     # raster line at the end of begin_scanline(). A field, not a monkey-patched
     # method, so the same observation is expressible in a Rust/C++ port.
     on_scanline: Callable[[int], None] | None = None
-    # Portability note: these Callable hooks (on_interrupt, on_scanline, tracer,
-    # _get_pc, _get_cycle) are stored Python closures with no direct static-typed
-    # analogue. A Rust/C++ port models them as trait objects or feature-flagged
-    # fields resolved once, not per-call function pointers.
+    # PORT-NOTE: these Callable hooks (on_interrupt, on_scanline, tracer,
+    #   _get_pc, _get_cycle) are stored as Python closures assigned at wiring
+    #   time. Same shape as msx/vdp/vdp.py's equivalent VDP hooks.
+    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
+    #   resolved once at construction, not per-call function pointers.
+    # C++ equivalent: std::function members or a virtual interface pointer,
+    #   assigned once at construction.
+    # Kept as-is here because: resolved once at wiring time and called at
+    #   most once per interrupt/scanline, not per VRAM/command-engine access;
+    #   the closure indirection costs nothing measurable here.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)

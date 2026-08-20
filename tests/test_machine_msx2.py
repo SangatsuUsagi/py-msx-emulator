@@ -57,7 +57,7 @@ def test_msx2_extrom_accessible_at_slot3_subslot0() -> None:
     extrom = bytes([0xDD] + [0x00] * (16384 - 1))
     machine = make_machine_msx2(_DUMMY_ROM, extrom)
     # Map page 0 to slot 3 (slot_register bits 1:0 = 11)
-    machine.memory.slot_register = 0x03  # page0=slot3, pages1-3=slot0
+    machine.memory.set_slot_register(0x03)  # page0=slot3, pages1-3=slot0
     # sub_slot_reg=0x00 (default): page0 → sub-slot 0 → extrom
     assert machine.memory.read(0x0000) == 0xDD
 
@@ -141,10 +141,10 @@ def test_run_frame_clears_ce_for_small_hmmv() -> None:
     assert vdp._status2 & 0x01 == 0  # CE cleared within one frame
 
 
-def test_build_machine_wires_psg_get_cycle() -> None:
+def test_build_machine_wires_psg_machine_reference() -> None:
     """build_machine wires the PSG cycle source so register writes are
     timestamped for sub-frame audio (mirrors the DAC wiring)."""
     machine = make_machine_msx2(bytes(32768), bytes(32768))
-    assert machine.psg._get_cycle is not None
+    assert machine.psg._machine is machine
     machine.cycle_count = 4242
-    assert machine.psg._get_cycle() == 4242
+    assert machine.psg._machine.cycle_count == 4242

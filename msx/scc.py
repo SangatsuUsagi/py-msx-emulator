@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 
@@ -11,13 +11,18 @@ NUM_CHANNELS: int = 5
 WAVE_BANKS: int = 5
 WAVE_LEN: int = 32          # bytes per waveform bank, and steps per playback cycle
 
-# Portability note: _waves (WAVE_BANKS banks of WAVE_LEN bytes) and
-# _freq/_vol/_phase_cnt/_phase_idx (NUM_CHANNELS entries each) are
-# fixed-length for the object's whole lifetime -- constructed once and only
-# ever indexed, never resized or appended to. A Rust/C++ port should use
-# fixed-size arrays ([[u8; 32]; 4], [u16; 5], etc.) rather than Vec/
-# Vec<Vec<_>>, the same convention msx/mapper.py's _window_is_sram note
-# documents for its own fixed-4 field.
+# PORT-NOTE: _waves (WAVE_BANKS banks of WAVE_LEN bytes) and
+#   _freq/_vol/_phase_cnt/_phase_idx (NUM_CHANNELS entries each) are
+#   fixed-length for the object's whole lifetime -- constructed once and only
+#   ever indexed, never resized or appended to.
+# Rust equivalent: fixed-size arrays ([[u8; 32]; 5], [u16; 5], etc.), not
+#   Vec/Vec<Vec<_>> -- the same convention msx/mapper.py's fixed-length-list
+#   notes document for their own fields.
+# C++ equivalent: std::array<std::array<uint8_t,32>,5>, std::array<uint16_t,5>,
+#   etc.
+# Kept as-is here because: no fixed-size array type is idiomatic in plain
+#   Python; the fields are still constant-size in practice, so a plain list
+#   costs nothing extra here versus a hypothetical fixed-array wrapper.
 
 __all__ = ["SCC", "SCC_CLOCK", "SAMPLES_PER_FRAME", "SccState"]
 
@@ -161,6 +166,10 @@ class SCC:
         self._plus_mode = False
 
     # ------------------------------------------------------------ save-state
+    # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
+    #   canonical note on this explicit-TypedDict-field save-state boundary
+    #   pattern (shared by PSG/SCC/OPLL/FmPac) and its Rust serde /
+    #   C++ nlohmann::json crate candidates.
 
     def snapshot(self) -> SccState:
         """Capture full chip state for save-state (paired with restore)."""
@@ -174,7 +183,7 @@ class SCC:
             "_clk_frac": self._clk_frac,
         }
 
-    def restore(self, state: dict[str, Any]) -> None:
+    def restore(self, state: dict[str, object]) -> None:
         """Restore chip state produced by snapshot()."""
         typed_state = cast(SccState, state)
         waves = [list(w) for w in typed_state["_waves"]]

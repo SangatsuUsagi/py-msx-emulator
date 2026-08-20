@@ -21,7 +21,7 @@ class PPI:
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
         if port == 0xA8:
-            self.memory.slot_register = value
+            self.memory.set_slot_register(value)
         elif port == 0xAA:
             self._port_c = value
         elif port == 0xAB:

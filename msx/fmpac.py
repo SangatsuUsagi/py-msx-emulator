@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+
+from msx.mapper import MapperKind
 
 if TYPE_CHECKING:
     from msx.opll import Opll, OpllState
@@ -58,6 +60,7 @@ _ENABLE_MASK = 0x11
 class FmPac:
     """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
 
+    kind: ClassVar[MapperKind] = MapperKind.FMPAC
     rom: bytes
     opll: "Opll"
     sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE))
@@ -177,6 +180,10 @@ class FmPac:
     # constructor argument; __post_init__ blanks a wrong-size image.
 
     # ------------------------------------------------------------- save-state
+    # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
+    #   canonical note on this explicit-TypedDict-field save-state boundary
+    #   pattern (shared by PSG/SCC/OPLL/FmPac) and its Rust serde /
+    #   C++ nlohmann::json crate candidates.
 
     def snapshot(self) -> FmPacState:
         """Capture device state for save-state (paired with restore),
@@ -203,3 +210,6 @@ class FmPac:
         self._r1fff = typed_state["r1fff"]
         self.opll.restore(cast(dict[str, Any], typed_state["opll"]))
         self._check_sram_enable()
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return None

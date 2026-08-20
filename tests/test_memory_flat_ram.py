@@ -43,36 +43,36 @@ def _make_flat(sub0_rom: bytes | None = None, fdc: object | None = None) -> Memo
 def test_flat_ram_responds_only_in_its_subslot() -> None:
     """Flat RAM answers in sub-slot 3; the same address in empty sub-slot 2 is 0xFF."""
     mem = _make_flat()
-    mem.sub_slot_reg = 0xC0  # page3 -> sub-slot 3
+    mem.set_sub_slot_reg(0xC0)  # page3 -> sub-slot 3
     mem.write(0xC000, 0x5A)
     assert mem.read(0xC000) == 0x5A
-    mem.sub_slot_reg = 0x80  # page3 -> sub-slot 2 (empty)
+    mem.set_sub_slot_reg(0x80)  # page3 -> sub-slot 2 (empty)
     assert mem.read(0xC000) == 0xFF
 
 
 def test_flat_ram_addressable_across_full_space() -> None:
     """Offset == address: byte written via page 0 is read back at the same RAM cell."""
     mem = _make_flat()
-    mem.sub_slot_reg = 0x03  # page0 -> sub-slot 3
+    mem.set_sub_slot_reg(0x03)  # page0 -> sub-slot 3
     mem.write(0x0000, 0x11)
-    mem.sub_slot_reg = 0xC0  # page3 -> sub-slot 3
+    mem.set_sub_slot_reg(0xC0)  # page3 -> sub-slot 3
     mem.write(0xC000, 0x22)
-    mem.sub_slot_reg = 0x03
+    mem.set_sub_slot_reg(0x03)
     assert mem.read(0x0000) == 0x11
-    mem.sub_slot_reg = 0xC0
+    mem.set_sub_slot_reg(0xC0)
     assert mem.read(0xC000) == 0x22
 
 
 def test_empty_subslot_1_reads_open_bus() -> None:
     mem = _make_flat()
-    mem.sub_slot_reg = 0x40  # page3 -> sub-slot 1
+    mem.set_sub_slot_reg(0x40)  # page3 -> sub-slot 1
     assert mem.read(0xC000) == 0xFF
 
 
 def test_sub0_page0_serves_sub_rom() -> None:
     sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
     mem = _make_flat(sub0_rom=sub_rom)
-    mem.sub_slot_reg = 0x00  # page0 -> sub-slot 0
+    mem.set_sub_slot_reg(0x00)  # page0 -> sub-slot 0
     assert mem.read(0x0000) == 0xAA
 
 
@@ -80,7 +80,7 @@ def test_sub0_page1_open_bus_without_fdc() -> None:
     """Sub-slot 0 page 1 (0x4000) is open bus when no FDC is wired."""
     sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
     mem = _make_flat(sub0_rom=sub_rom)
-    mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
+    mem.set_sub_slot_reg(0x00)  # page1 -> sub-slot 0
     assert mem.read(0x4000) == 0xFF
 
 
@@ -91,7 +91,7 @@ def test_sub0_page1_read_delegates_to_fdc() -> None:
     branch)."""
     fdc = _StubFdc()
     mem = _make_flat(fdc=fdc)
-    mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
+    mem.set_sub_slot_reg(0x00)  # page1 -> sub-slot 0
     assert mem.read(0x4000) == 0x99
     assert fdc.reads == [0x4000]
 
@@ -99,7 +99,7 @@ def test_sub0_page1_read_delegates_to_fdc() -> None:
 def test_sub0_page1_write_delegates_to_fdc() -> None:
     fdc = _StubFdc()
     mem = _make_flat(fdc=fdc)
-    mem.sub_slot_reg = 0x00  # page1 -> sub-slot 0
+    mem.set_sub_slot_reg(0x00)  # page1 -> sub-slot 0
     mem.write(0x4000, 0x77)
     assert fdc.writes == [(0x4000, 0x77)]
 
@@ -111,7 +111,7 @@ def test_sub0_page0_not_affected_by_fdc_presence() -> None:
     sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
     fdc = _StubFdc()
     mem = _make_flat(sub0_rom=sub_rom, fdc=fdc)
-    mem.sub_slot_reg = 0x00  # page0 -> sub-slot 0
+    mem.set_sub_slot_reg(0x00)  # page0 -> sub-slot 0
     assert mem.read(0x0000) == 0xAA
     assert fdc.reads == []
 
@@ -119,15 +119,15 @@ def test_sub0_page0_not_affected_by_fdc_presence() -> None:
 def test_write_to_empty_subslot_is_ignored() -> None:
     """A write while an empty sub-slot is selected must not reach the flat RAM."""
     mem = _make_flat()
-    mem.sub_slot_reg = 0x80  # page3 -> sub-slot 2 (empty)
+    mem.set_sub_slot_reg(0x80)  # page3 -> sub-slot 2 (empty)
     mem.write(0xC000, 0x77)
-    mem.sub_slot_reg = 0xC0  # page3 -> sub-slot 3 (RAM)
+    mem.set_sub_slot_reg(0xC0)  # page3 -> sub-slot 3 (RAM)
     assert mem.read(0xC000) == 0x00
 
 
 def test_sub_rom_write_is_ignored() -> None:
     sub_rom = bytes([0xAA] + [0x00] * 0x3FFF)
     mem = _make_flat(sub0_rom=sub_rom)
-    mem.sub_slot_reg = 0x00
+    mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0xAA

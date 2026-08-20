@@ -27,7 +27,7 @@ def _build(rom: bytes):
     the stack non-functional; 0xD4 maps page 3 (0xC000-0xFFFF) to slot 3 RAM.
     """
     m = make_machine(rom=rom)
-    m.memory.slot_register = 0xD4
+    m.memory.set_slot_register(0xD4)
     return m
 
 

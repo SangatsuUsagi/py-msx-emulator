@@ -10,10 +10,20 @@ back during power-on, looping forever if the read-back is invalid.
 The chip is a 4-bit device: only the low nibble of each data byte is meaningful,
 and the MSX floats the high nibble to 1s (reads return 0xF0 | nibble).
 
-Porting seam: the host clock is read exactly once, at construction, and converted
-to fixed BCD nibbles (`_time_block0` / `_leap`); nothing in the read path touches
-a date library. A port injects a timestamp there and computes the digits with its
-own calendar routine — the rest of the device is plain integer state.
+PORT-NOTE: the host clock is read exactly once, at construction (via
+  __post_init__ -> _time_to_nibbles), and converted to fixed BCD nibbles
+  (`_time_block0` / `_leap`); nothing on the read path (_refresh_time_regs)
+  touches a date/calendar library.
+Rust equivalent: capture std::time::SystemTime (or chrono::Local::now()) once
+  at construction, convert to the BCD nibbles there; the register-read path
+  stays a plain integer copy.
+C++ equivalent: capture std::chrono::system_clock::now() once at
+  construction, convert with <ctime>/a date lib there only.
+Kept as-is here because: real hardware's RTC read path is a plain register
+  copy -- repeating calendar computation on every register read would be
+  both slower and non-deterministic across a run; capturing once at
+  construction matches real hardware and keeps the hot read path
+  integer-only.
 """
 from __future__ import annotations
 

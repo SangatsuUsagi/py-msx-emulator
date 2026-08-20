@@ -150,7 +150,7 @@ def test_ram_mapper_and_flat_subslot_together_rejected_post_construction() -> No
     routing through one strategy while the other field disagrees."""
     mem = _make_mem(flat_ram_subslot=3, sub_slot_enabled=True)
     with pytest.raises(ValueError, match="mutually exclusive"):
-        mem.ram_mapper = RamMapper()
+        mem.set_ram_mapper(RamMapper())
 
 
 def test_fdc_without_flat_subslot_rejected_post_construction() -> None:
@@ -163,4 +163,4 @@ def test_fdc_without_flat_subslot_rejected_post_construction() -> None:
 
     mem = _make_mem()
     with pytest.raises(ValueError, match="flat_ram_subslot"):
-        mem.fdc = _StubFdc()
+        mem.set_fdc(_StubFdc())

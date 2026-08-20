@@ -3,11 +3,21 @@ import pytest
 from msx.input import InputState
 from msx.machine import CYCLES_PER_FRAME, Machine
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
+from msx.romdb import RomDbEntry
 from tests.factories import make_machine
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)
 _HALT_ROM = bytes([0x76] + [0x00] * 32767)
+
+
+def _patch_db(
+    monkeypatch: pytest.MonkeyPatch, romdb: object, raw: dict[str, dict[str, str]]
+) -> None:
+    """Inject fake ROM-database entries by patching the _load() seam directly."""
+    entries = {sha1: RomDbEntry(mapper=v.get("mapper"), system=None, title_jp=None)
+               for sha1, v in raw.items()}
+    monkeypatch.setattr(romdb, "_load", lambda: entries)
 
 
 def _make_machine(rom: bytes = _NOP_ROM) -> Machine:
@@ -145,7 +155,7 @@ def test_make_machine_mapper_konami() -> None:
 
 def test_auto_no_cartridge_uses_flat(monkeypatch: pytest.MonkeyPatch) -> None:
     import msx.romdb as romdb
-    monkeypatch.setattr(romdb, "_db", {})
+    _patch_db(monkeypatch, romdb, {})
     m = make_machine(rom=_NOP_ROM, mapper="auto")
     assert isinstance(m.memory._mapper, FlatMapper)
     assert m.scc is None
@@ -155,7 +165,7 @@ def test_auto_unknown_cartridge_falls_back_to_mirrored(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import msx.romdb as romdb
-    monkeypatch.setattr(romdb, "_db", {})  # empty DB → always miss
+    _patch_db(monkeypatch, romdb, {})  # empty DB → always miss
     cart = bytes([0x01, 0x02])
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, FlatMapper)
@@ -171,7 +181,7 @@ def test_auto_unsupported_db_mapper_falls_back(
     import msx.romdb as romdb
     cart = b"\xDE\xAD"
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "CrossBlaim"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "CrossBlaim"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, FlatMapper)
     stderr = capsys.readouterr().err
@@ -187,7 +197,7 @@ def test_auto_known_konamisco_selects_scc_mapper(
     from msx.mapper import KonamiSCCMapper
     cart = bytes(65536)  # dummy 64 KB
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KonamiSCC"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "KonamiSCC"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, KonamiSCCMapper)
     assert m.scc is not None
@@ -201,7 +211,7 @@ def test_auto_known_konami_selects_konami_mapper(
     import msx.romdb as romdb
     cart = bytes(65536)
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "Konami"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "Konami"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, KonamiMapper)
     assert m.scc is None
@@ -224,7 +234,7 @@ def test_auto_known_fixed_page_types_select_fixed_page_mapper(
     from msx.mapper import FixedPageMapper
     cart = bytes(16384)  # dummy 16 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": db_mapper}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": db_mapper}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, FixedPageMapper)
     assert m.memory._mapper.base == expected_base
@@ -241,7 +251,7 @@ def test_auto_known_koeisram32_selects_koeisram32_mapper(
     from msx.mapper import KoeiSRAM32Mapper
     cart = bytes(65536)  # dummy 64 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KoeiSRAM32"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "KoeiSRAM32"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     assert isinstance(m.memory._mapper, KoeiSRAM32Mapper)
     assert "unsupported mapper type" not in capsys.readouterr().err
@@ -257,7 +267,7 @@ def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
     from msx.mapper import GameMaster2Mapper
     cart = bytes(128 * 1024)  # dummy 128 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "GameMaster2"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "GameMaster2"}})
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     mapper = m.memory._mapper
     assert isinstance(mapper, GameMaster2Mapper)
@@ -273,7 +283,7 @@ def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
 def test_make_machine_no_cartridge2_slot2_open_bus() -> None:
     m = make_machine(rom=_NOP_ROM)
     # page 1 → slot 2: slot_register bits 3:2 = 0b10 → 0x08
-    m.memory.slot_register = 0x08
+    m.memory.set_slot_register(0x08)
     assert m.memory.read(0x4000) == 0xFF
 
 
@@ -281,7 +291,7 @@ def test_make_machine_cartridge2_wired_to_slot2() -> None:
     cart2 = b"\xBB" + b"\x00" * 32767
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Mirrored")
     # page 1 → slot 2
-    m.memory.slot_register = 0x08
+    m.memory.set_slot_register(0x08)
     assert m.memory.read(0x4000) == 0xBB
 
 
@@ -293,7 +303,7 @@ def test_make_machine_mapper2_konamisco_falls_back_to_konami(
     import msx.romdb as romdb
     cart2 = bytes(65536)
     sha1 = hashlib.sha1(cart2).hexdigest()
-    monkeypatch.setattr(romdb, "_db", {sha1: {"mapper": "KonamiSCC"}})
+    _patch_db(monkeypatch, romdb, {sha1: {"mapper": "KonamiSCC"}})
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="auto")
     assert isinstance(m.memory._mapper2, KonamiMapper)
     assert "KonamiSCC" in capsys.readouterr().err
@@ -327,8 +337,8 @@ def test_reset_full_power_on_state() -> None:
     m = _make_machine()
     m.psg.regs[7] = 0xAB
     m.psg.latch = 5
-    m.memory.slot_register = 0xFF
-    m.memory.sub_slot_reg = 0xFF
+    m.memory.set_slot_register(0xFF)
+    m.memory.set_sub_slot_reg(0xFF)
     m.vdp.status = 0xFF
     m.vdp.regs[1] = 0x60
     m.reset()

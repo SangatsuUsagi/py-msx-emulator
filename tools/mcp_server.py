@@ -19,6 +19,7 @@ read from MSX_RPC_SOCKET (default /tmp/py_msx_emu.sock).
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import socket
@@ -42,7 +43,7 @@ mcp = FastMCP(
 # Transport helper
 # ---------------------------------------------------------------------------
 
-_req_counter = 0
+_req_ids = itertools.count(1)
 
 
 def _rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -54,9 +55,7 @@ def _rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     Raises:
         RuntimeError: if the socket is unreachable or the emulator returns an error.
     """
-    global _req_counter
-    _req_counter += 1
-    payload: dict[str, Any] = {"id": str(_req_counter), "method": method}
+    payload: dict[str, Any] = {"id": str(next(_req_ids)), "method": method}
     if params:
         payload["params"] = params
 

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, NamedTuple, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
 from msx.input import InputState
 from msx.mouse import MouseDevice
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 _REG_IO_PORT_A = 14
 
@@ -92,17 +95,23 @@ class PSG:
     _mouse: MouseSlot | None = field(default=None, repr=False)
 
     # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
-    # _get_cycle so generate_samples can place them at their in-frame sample
-    # positions (reproduces software PCM). _regs_base / _gen_base snapshot the
-    # register + generator state at the frame's first write, for replay rewind.
+    # `_machine.cycle_count` so generate_samples can place them at their
+    # in-frame sample positions (reproduces software PCM). _regs_base /
+    # _gen_base snapshot the register + generator state at the frame's first
+    # write, for replay rewind.
     #
-    # Portability note: _get_cycle is a closure assigned at wiring time
-    # (machine_loader sets `lambda: machine.cycle_count`), capturing the Machine
-    # that owns this PSG — a reference cycle Rust/C++ cannot express as a plain
-    # Fn field. A port should thread the cycle count through write_port (via the
-    # IOBus write dispatch) or hold a clock handle resolved once at construction,
-    # mirroring the bus-hook notes on Z80/VDP/mapper.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # PORT-NOTE: _machine is a direct reference to the owning Machine,
+    #   resolved once at wiring time (machine_loader sets `psg._machine =
+    #   machine`, after Machine is fully constructed).
+    # Rust equivalent: a `Rc<RefCell<Machine>>`, or a narrower shared cycle
+    #   counter if the back-reference proves awkward at port time.
+    # C++ equivalent: a raw or shared pointer to the owning Machine, or the
+    #   same narrower-counter alternative.
+    # Kept as a direct reference (not a closure) because: measured ~2x
+    #   faster per read than the closure this replaced. Full benchmark and
+    #   the rejected shared-Clock-object alternative in
+    #   openspec/changes/archive/*-psg-cycle-source-refactor/design.md.
+    _machine: "Machine | None" = field(default=None, repr=False)
     # Recorded writes as (cycle, reg, value); a port would use a small struct.
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
     _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
@@ -110,6 +119,16 @@ class PSG:
     _gen_base: _GenState | None = field(default=None, init=False, repr=False)
 
     # --- synthesiser state (not part of __init__) ---
+    #
+    # PORT-NOTE: _tone_cnt/_tone_out are 3-element list[int] fields, fixed
+    #   size for the instance's whole lifetime, indexed in the per-sample hot
+    #   loop (_render, below).
+    # Rust equivalent: [i32; 3] fields, not Vec<i32>.
+    # C++ equivalent: std::array<int32_t, 3>.
+    # Kept as-is here because: Python has no cheap fixed-size numeric array
+    #   type outside NumPy (which this project doesn't depend on), and a
+    #   3-element list's overhead is immaterial next to the per-sample work
+    #   _render already does.
     _tone_cnt: list[int] = field(default_factory=lambda: [1, 1, 1], init=False, repr=False)
     _tone_out: list[int] = field(default_factory=lambda: [0, 0, 0], init=False, repr=False)
     _noise_cnt: int = field(default=1, init=False, repr=False)
@@ -144,7 +163,7 @@ class PSG:
                     # Frame's first write: snapshot state to rewind to at replay.
                     self._regs_base = self.regs[:]
                     self._gen_base = self._snapshot_gen()
-                cyc = self._get_cycle() if self._get_cycle is not None else 0
+                cyc = self._machine.cycle_count if self._machine is not None else 0
                 self._events.append((cyc, reg, value))
             self.regs[reg] = value
             if reg == 13:
@@ -154,12 +173,13 @@ class PSG:
                 # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
                 # register-15 write, independent of JOY_SELECT (bit 6).
                 pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                # Independent call to _get_cycle(), not a reuse of the `cyc`
-                # computed above: that one is skipped once the per-frame
-                # event buffer (_MAX_EVENTS) is full, so it isn't reliably in
-                # scope here. _get_cycle() is a pure read, so calling it
-                # twice per write_port invocation is correct and cheap.
-                cycle = self._get_cycle() if self._get_cycle is not None else 0
+                # Independent read of _machine.cycle_count, not a reuse of
+                # the `cyc` computed above: that one is skipped once the
+                # per-frame event buffer (_MAX_EVENTS) is full, so it isn't
+                # reliably in scope here. Reading cycle_count is a pure
+                # attribute access, so reading it twice per write_port
+                # invocation is correct and cheap.
+                cycle = self._machine.cycle_count if self._machine is not None else 0
                 self._mouse.device.write_pin8((value >> pin8_bit) & 1, cycle)
 
     def read_port(self, port: int) -> int:
@@ -199,6 +219,10 @@ class PSG:
         self._gen_base = None
 
     # ------------------------------------------------------------ save-state
+    # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
+    #   canonical note on this explicit-TypedDict-field save-state boundary
+    #   pattern (shared by PSG/SCC/OPLL/FmPac) and its Rust serde /
+    #   C++ nlohmann::json crate candidates.
 
     def snapshot_synth(self) -> PsgSynthState:
         """Capture internal tone/noise/envelope generator state for
@@ -220,7 +244,7 @@ class PSG:
             "_clk_frac": self._clk_frac,
         }
 
-    def restore_synth(self, state: dict[str, Any]) -> None:
+    def restore_synth(self, state: dict[str, object]) -> None:
         """Restore internal generator state produced by snapshot_synth()."""
         typed_state = cast(PsgSynthState, state)
         self._tone_cnt = list(typed_state["_tone_cnt"])
@@ -308,10 +332,19 @@ class PSG:
                     break
                 # Repeating shape: reload counter; alternate reverses the ramp
                 # immediately (no dwell). (_env_step & 0x20) is the underflow bit.
-                # Portability note: _env_step went negative here (Python ints are
-                # arbitrary precision, so -1 & 0x20 == 0x20). Rust/C++ unsigned
-                # types underflow instead — a port must use a signed type (i32)
-                # or an explicit wrap so bit 5 still flags the -1 boundary.
+                #
+                # PORT-NOTE: _env_step went negative here (Python ints are
+                #   arbitrary precision, so -1 & 0x20 == 0x20).
+                # Rust equivalent: an unsigned type wraps instead of going
+                #   negative; use a signed i32 for _env_step, or an explicit
+                #   wrapping_sub + bit-5 check, so bit 5 still flags the -1
+                #   boundary.
+                # C++ equivalent: same — use a signed int32_t, since unsigned
+                #   underflow wraps to a large positive value instead.
+                # Kept as-is here because: semantic necessity, not
+                #   performance — Python's arbitrary-precision two's-complement
+                #   masking already gives the signed-underflow behavior a port
+                #   must introduce explicitly via a signed type.
                 if self._env_alternate and (self._env_step & 0x20):
                     self._env_attack ^= 0x1F
                 self._env_step &= 0x1F
@@ -462,7 +495,7 @@ class PSG:
                                 env_step = 0
                                 break
                             # (env_step & 0x20) is the underflow bit -- see
-                            # _step_envelope's Rust/C++ signed-type caveat above.
+                            # _step_envelope's PORT-NOTE (signed-type caveat) above.
                             if env_alternate and (env_step & 0x20):
                                 env_attack ^= 0x1F
                             env_step &= 0x1F
@@ -495,9 +528,18 @@ class PSG:
                 elif hi2:
                     sample += amp * hi2 // ticks
 
-            # sample is a non-negative i32 here (3 channels × 12287 max = 36861
-            # pre-clamp); amp * hiN // ticks is floor division on non-negative
-            # operands, matching truncating integer division in a Rust/C++ port.
+            # PORT-NOTE: sample is a non-negative i32 here (3 channels x 12287
+            #   max = 36861 pre-clamp); amp * hiN // ticks is Python floor
+            #   division.
+            # Rust equivalent: integer `/` on non-negative i32 operands already
+            #   truncates toward zero, which matches floor division here since
+            #   both operands are non-negative — a direct `amp * hiN / ticks`.
+            # C++ equivalent: same — `/` on non-negative ints truncates toward
+            #   zero, matching this floor division.
+            # Kept as-is here because: semantic necessity, not performance —
+            #   noted so a port doesn't need to double-check whether `//` here
+            #   requires special-casing; on these non-negative operands, plain
+            #   truncating division already matches.
             if sample > 32767:
                 sample = 32767
 

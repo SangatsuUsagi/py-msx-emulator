@@ -41,7 +41,20 @@ class PauseReason(str, enum.Enum):
 
     Subclasses `str` so each member serializes to its wire value (e.g.
     ``"breakpoint"``) and compares equal to that string, keeping the JSON-RPC
-    contract unchanged. A Rust/C++ port maps it 1:1 to `enum PauseReason`.
+    contract unchanged.
+
+    PORT-NOTE: this is a closed string-tagged enum, used both as a Python enum
+      and as its wire string.
+    Rust equivalent: `enum PauseReason { UserRequest, Breakpoint, Watchpoint,
+      StepComplete }` with `#[serde(rename_all = "snake_case")]` (or explicit
+      `#[serde(rename = "...")]` per variant) so serde produces the same wire
+      strings.
+    C++ equivalent: `enum class PauseReason` plus an explicit to/from-string
+      table at the JSON-RPC boundary, since C++ enums don't serialize to
+      strings on their own.
+    Kept as-is here because: this maps 1:1 to a closed target-language enum
+      with no translation ambiguity -- noted for completeness, not a spot
+      needing a Python-side change.
     """
 
     USER_REQUEST = "user_request"
@@ -53,7 +66,7 @@ class PauseReason(str, enum.Enum):
 @dataclass
 class Machine:
     cpu: Z80
-    vdp: VDP
+    vdp: VDP | V9938
     memory: Memory
     io: IOBus
     psg: PSG
@@ -64,9 +77,14 @@ class Machine:
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME
-    # Free-running T-state clock, never reset. Portability note: at 3.58 MHz a
-    # u32 wraps in ~20 minutes, so a port needs u64 here; the per-frame totals
-    # threaded through _run_lines() are frame-relative and fit in u32.
+    # Free-running T-state clock, never reset.
+    #
+    # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
+    # Rust/C++ equivalent: u64/uint64_t for this field; the per-frame totals
+    #   threaded through _run_lines() are frame-relative and fit in u32.
+    # Kept as-is here because: semantic necessity, not performance -- Python's
+    #   arbitrary-precision int never wraps, so this width requirement is
+    #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
@@ -106,13 +124,20 @@ class Machine:
     _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # Portability note: this wires the CPU's memory/IO bus by reassigning
-        # bound methods onto Callable fields at runtime — the hottest path in
-        # the emulator. Rust/C++ has no runtime method swap; a port expresses
-        # the bus as a `trait MemoryBus` (or an `enum { Normal, Watchpoint }`)
-        # whose concrete implementation is selected once behind a flag, so the
-        # per-access dispatch stays branch-free. Kept as a comment, not a
-        # rewrite, to avoid adding a per-access call/branch in Python.
+        # PORT-NOTE: this wires the CPU's memory/IO bus by reassigning bound
+        #   methods onto Callable fields at runtime -- the hottest path in
+        #   the emulator (see also set_watchpoints below, which re-swaps the
+        #   same fields).
+        # Rust equivalent: a `trait MemoryBus` (or an `enum { Normal,
+        #   Watchpoint }`) whose concrete implementation is selected once
+        #   behind a flag at construction, not reassigned at runtime.
+        # C++ equivalent: same -- a virtual `MemoryBus` interface or a
+        #   feature-flagged concrete type chosen once, not a runtime method
+        #   swap (C++ has no equivalent of rebinding an instance method).
+        # Kept as-is here because: read/written on every CPU memory/IO access;
+        #   resolving the bus once (here and in set_watchpoints) keeps the
+        #   per-access dispatch a single bound-method call with no added
+        #   branch, which a per-access abstraction layer would cost in Python.
         self.cpu.read_byte = self.memory.read
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
@@ -141,8 +166,8 @@ class Machine:
         if self.fdc is not None:
             self.fdc.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
-        self.memory.slot_register = 0x00
-        self.memory.sub_slot_reg = 0x00
+        self.memory.set_slot_register(0x00)
+        self.memory.set_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
 
@@ -154,12 +179,17 @@ class Machine:
         entering the blocking interactive debugger REPL. `reason` is a
         `PauseReason` member.
 
-        Portability note: this is the *only* seam the core exposes to the RPC
-        adapter (msx/rpc_server.py). The core has no knowledge of sockets, JSON,
-        or threads — it just calls this generic callback. In a Rust/C++ port this
-        becomes a `trait PauseSink` (and `reason` an `enum PauseReason`), so the
-        RPC layer can live in a separate, feature-gated crate. See the crate-split
-        note in msx/rpc_server.py.
+        PORT-NOTE: this is the *only* seam the core exposes to the RPC adapter
+          (msx/rpc_server.py). The core has no knowledge of sockets, JSON, or
+          threads -- it just calls this generic callback.
+        Rust equivalent: a `trait PauseSink` (with `reason: PauseReason`), so
+          the RPC layer can live in a separate, feature-gated crate.
+        C++ equivalent: a `PauseSink` abstract interface, injected the same
+          way, so the core stays free of socket/JSON/threading dependencies.
+        Kept as-is here because: this is already the target shape (a generic
+          callback seam), not a Python-specific pattern needing translation
+          -- noted for completeness, and see the crate-split note in
+          msx/rpc_server.py for how the RPC layer sits behind it.
         """
         self._pause_hook = hook
 
@@ -300,11 +330,17 @@ class Machine:
 
     def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
         """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
-        # Portability note: enabling watchpoints re-swaps cpu.read_byte/
-        # write_byte between the plain memory bus and the watch variant at
-        # runtime (see __post_init__). Rust/C++ selects the same behaviour via
-        # an `enum { Normal, Watchpoint }` bus (or trait object) chosen once,
-        # not by reassigning a function pointer per configuration change.
+        # PORT-NOTE: enabling watchpoints re-swaps cpu.read_byte/write_byte
+        #   between the plain memory bus and the watch variant at runtime --
+        #   same shape as __post_init__'s initial wiring above.
+        # Rust equivalent: an `enum { Normal, Watchpoint }` bus (or trait
+        #   object) chosen once per configuration change, not a reassigned
+        #   function pointer.
+        # C++ equivalent: same -- select a concrete `MemoryBus` implementation
+        #   once per configuration change, not a runtime method swap.
+        # Kept as-is here because: same hot-path reasoning as __post_init__'s
+        #   bus wiring -- resolving once here keeps every memory access a
+        #   single bound-method call with no added branch.
         r: set[int] = set()
         w: set[int] = set()
         for addr, mode in entries[:4]:
@@ -386,6 +422,9 @@ class Machine:
                     vdp9938, first_line=vblank_split, end_line=lpf, total=total
                 )
         else:
+            # vdp9938 is None here only because the isinstance(self.vdp, V9938)
+            # check above was False, and self.vdp hasn't been reassigned since.
+            assert isinstance(self.vdp, VDP)
             result = render_frame(self.vdp, skip_render=skip_render)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
@@ -419,12 +458,22 @@ class Machine:
         needs (break conditions / hot / logger); return the running T-state
         total, measured from the start of the frame.
 
-        Portability note: the arms take `self` and `vdp9938` — which aliases
-        `self.vdp` — at the same time, and alternate between mutating the VDP
-        and mutating the Machine. Rust rejects that double mutable borrow; a
-        port drops the parameter (dispatching on a `VdpKind` tag inside each
-        arm) or splits Machine into an owning bus struct plus debugger state so
-        the two borrows are disjoint."""
+        PORT-NOTE: the arms take `self` and `vdp9938` -- which aliases
+          `self.vdp` -- at the same time, and alternate between mutating the
+          VDP and mutating the Machine.
+        Rust equivalent: drop the `vdp9938` parameter and dispatch on a
+          `VdpKind` tag inside each arm instead, or split Machine into an
+          owning bus struct plus debugger state so the two borrows are
+          disjoint -- Rust's borrow checker rejects this double mutable
+          borrow as written.
+        C++ equivalent: no borrow-checker issue, but the same aliasing is
+          worth avoiding for clarity -- prefer a `VdpKind` tag dispatch or
+          the same struct split, since two mutable references/pointers to
+          overlapping state is a well-known source of aliasing bugs there too.
+        Kept as-is here because: semantic necessity, not performance -- this
+          is a translation hazard specific to Rust's ownership model, not a
+          Python optimization to preserve.
+        """
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if self._logger is None:
@@ -506,6 +555,18 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        # PORT-NOTE: Ctrl-C here is delivered as a Python KeyboardInterrupt
+        #   exception, caught around the whole scanline loop with zero
+        #   steady-state cost (no exception raised = no cost in CPython).
+        #   Same shape in _run_lines_debug and _run_lines_logged.
+        # Rust equivalent: install a SIGINT handler that sets an AtomicBool;
+        #   check it once per scanline (not per instruction) alongside the
+        #   existing per-line break-condition checks.
+        # C++ equivalent: std::signal(SIGINT, ...) setting a
+        #   std::atomic<bool>, polled the same way.
+        # Kept as-is here because: the try/except costs nothing per
+        #   instruction in CPython, and rewriting to a polled flag now would
+        #   add a branch to this fast-path loop for no Python-side benefit.
         try:
             if vdp9938 is not None:
                 for line in range(first_line, end_line):

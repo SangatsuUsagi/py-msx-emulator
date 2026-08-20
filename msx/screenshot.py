@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING
 from PIL import Image as _PIL_Image
 
 if TYPE_CHECKING:
+    from msx.vdp.v9938 import V9938
     from msx.vdp.vdp import VDP
 
 
-def render_current_rgb24(vdp: VDP) -> tuple[bytes, int, int]:
+def render_current_rgb24(vdp: "VDP | V9938") -> tuple[bytes, int, int]:
     """Render the *current* VDP state to RGB24 without perturbing frame state.
 
     Picks the V9938 or TMS renderer, saves and restores `vdp._frame_count` so the
@@ -33,12 +34,11 @@ def render_current_rgb24(vdp: VDP) -> tuple[bytes, int, int]:
     from msx.vdp.v9938 import V9938
     from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 
-    saved_fc = getattr(vdp, "_frame_count", None)
+    saved_fc = vdp._frame_count
     try:
         idx = render_frame_v9938(vdp) if isinstance(vdp, V9938) else render_frame(vdp)
     finally:
-        if saved_fc is not None:
-            vdp._frame_count = saved_fc
+        vdp._frame_count = saved_fc
     return vdp.to_rgb24(idx), vdp.display_width, OUTPUT_H
 
 
