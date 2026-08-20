@@ -323,3 +323,69 @@ class Memory:
             return (0x0000, 0xFFFF)
         low = max(0, 0x10000 - len(self.ram))
         return (low, 0xFFFF)
+
+    # ------------------------------------------------------------- debug REPL
+    #
+    # The three methods below back the debugger's `sl`/`st` slot-inspector
+    # commands (msx/debugger/prompt.py). They exist so that debugger code
+    # never needs to reflect on Memory's private fields (_mapper/_mapper2)
+    # from outside this class -- see openspec/changes/archive/
+    # *-debugger-slot-mapper-interface.
+
+    def debug_slot_content(
+        self, primary: int, secondary: int | None, page: int | None
+    ) -> str:
+        """Human-readable description of what a slot/sub-slot contains."""
+        if primary == 0:
+            name = self.rom_name or "ROM"
+            return f"ROM {name}" if name != "ROM" else "ROM"
+        if primary in (1, 2):
+            mapper = self._mapper if primary == 1 else self._mapper2
+            if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
+                return "Cartridge (empty)"
+            cls = type(mapper).__name__.replace("Mapper", "")
+            return f"Cartridge {cls}"
+        if primary == 3:
+            if secondary == 0:
+                name = self.sub0_rom_name or "ROM"
+                return f"ROM {name}" if name != "ROM" else "ROM"
+            if secondary == 1:
+                return "empty"
+            if secondary in (2, 3):
+                if self.ram_mapper is not None:
+                    return "RAM (mapper:standard)"
+                return "RAM"
+            return "empty"
+        return "empty"
+
+    def debug_slot_bank(
+        self, primary: int, secondary: int | None, page: int | None
+    ) -> str:
+        """Bank-register display string for the `sl` active-slot view."""
+        if primary == 3 and secondary in (2, 3) and page is not None:
+            rm = self.ram_mapper
+            if rm is not None:
+                return f"seg={rm.banks[page]}"
+        if primary in (1, 2) and page is not None:
+            mapper = self._mapper if primary == 1 else self._mapper2
+            info = mapper.debug_bank_info(page)
+            if info is not None:
+                return info
+        return "-"
+
+    def debug_slot_size_kb(self, primary: int, secondary: int | None) -> str:
+        """Size string (e.g. "32KB") for the `st` tree view, or "" for none."""
+        if primary == 0:
+            n = len(self.rom)
+            return f"{n // 1024}KB" if n else ""
+        if primary == 3 and secondary == 0:
+            sub = self.sub0_rom
+            n = len(sub) if sub is not None else 0
+            return f"{n // 1024}KB" if n else ""
+        if primary == 3 and secondary in (2, 3):
+            rm = self.ram_mapper
+            if rm is not None:
+                return "128KB"
+            n = len(self.ram)
+            return f"{n // 1024}KB" if n else ""
+        return ""
