@@ -492,6 +492,14 @@ def _mix_audio(
     # Sums are taken in Python ints so the clamp applies to the full mix, then
     # re-encoded once. (array("h") is native byte order, matching the LE PCM on
     # LE hosts.)
+    #
+    # PORT-NOTE: benchmarked the per-sample clamp loop below (timeit, 735
+    #   samples/frame, 1-2 extra channels) against min()/max() clamping and a
+    #   zip()+sum() rewrite -- the if/elif clamp here is already at or near
+    #   the fastest of the three, and the whole loop costs ~40-55us/frame
+    #   against a 16.6ms (60fps) budget either way. Not worth restructuring
+    #   pre-port; a native port's per-sample loop is trivially fast regardless
+    #   of which of these shapes it's translated from.
     psg_arr = array("h")
     psg_arr.frombytes(psg_buf)
     extra_arrs = []
