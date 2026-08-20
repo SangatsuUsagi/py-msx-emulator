@@ -11,32 +11,6 @@ if TYPE_CHECKING:
 
 from msx.mapper import FlatMapper
 
-# Fields whose reassignment invalidates the page-routing cache (see
-# Memory.__setattr__). slot_register/sub_slot_reg drive routing directly;
-# ram_mapper/sub0_rom/fdc/flat_ram_subslot/_mapper/_mapper2 are assumed
-# construction-time-fixed by the routing decision, but a *reassignment* (not
-# content mutation, e.g. a test replacing mem.sub0_rom after construction)
-# must still be observed.
-_CACHE_INVALIDATING_FIELDS = frozenset(
-    {
-        "slot_register",
-        "sub_slot_reg",
-        "ram_mapper",
-        "sub0_rom",
-        "fdc",
-        "flat_ram_subslot",
-        "_mapper",
-        "_mapper2",
-    }
-)
-
-# Subset of _CACHE_INVALIDATING_FIELDS that also participate in the
-# SlotThreeStrategyIsExclusive invariant (see _validate_slot3_strategy):
-# reassigning any of these must re-check the invariant, not just invalidate
-# the cache, or a reassignment could silently desync it from the routing
-# decision the cache actually makes.
-_SLOT3_STRATEGY_FIELDS = frozenset({"ram_mapper", "flat_ram_subslot", "fdc"})
-
 
 @dataclass(slots=True)
 class Memory:
@@ -79,12 +53,12 @@ class Memory:
     # _extrom_len above (ram is assumed construction-time-fixed, same as rom).
     _ram_len: int = field(init=False, repr=False, default=0)
     _msx1_ram_base: int = field(init=False, repr=False, default=0)
-    # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever
-    # __setattr__ observes a write to one of _CACHE_INVALIDATING_FIELDS
-    # (event-driven: a single bool check per access, no per-access
-    # recomputation of a comparison key). extrom isn't in that set:
-    # _read_rom() reads self.extrom live, unconditionally correct regardless
-    # of when it's assigned.
+    # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever one
+    # of the 8 set_*() methods below invalidates it (event-driven: a single
+    # bool check per access, no per-access recomputation of a comparison
+    # key). extrom has no setter and needs none: _read_rom() reads
+    # self.extrom live, unconditionally correct regardless of when it's
+    # assigned.
     #
     # PORT-NOTE: _page_read/_page_write are a Callable dispatch table (bound
     #   methods/closures over `self`), rebuilt on cache invalidation and
@@ -97,10 +71,10 @@ class Memory:
     #   inline instead.
     # C++ equivalent: same — a switch over a per-page enum tag rather than a
     #   std::function table, to avoid the equivalent allocation/vtable cost.
-    # Kept as-is here because: rebuild is rare (only on
-    #   _CACHE_INVALIDATING_FIELDS writes) and read/write is hot (every CPU
-    #   memory access); CPython's bound-method list-index is already close to
-    #   the cheapest per-access dispatch Python offers.
+    # Kept as-is here because: rebuild is rare (only on a setter-triggered
+    #   invalidation) and read/write is hot (every CPU memory access);
+    #   CPython's bound-method list-index is already close to the cheapest
+    #   per-access dispatch Python offers.
     _page_cache_valid: bool = field(init=False, repr=False, default=False)
     _page_read: list[Callable[[int], int]] = field(init=False, repr=False, default_factory=list)
     _page_write: list[Callable[[int, int], None]] = field(
@@ -111,50 +85,19 @@ class Memory:
     # slot_register/sub_slot_enabled (see _rebuild_page_cache).
     _page3_intercept_active: bool = field(init=False, repr=False, default=False)
 
-    def __setattr__(self, name: str, value: object) -> None:
-        """Invalidate the page-routing cache on writes to _CACHE_INVALIDATING_FIELDS.
-
-        PORT-NOTE: intercepting plain attribute assignment has no static-
-          language equivalent.
-        Rust equivalent: explicit setters (e.g. `set_slot_register`) that call
-          the equivalent of `invalidate_cache()` directly, instead of relying
-          on assignment interception -- Rust has no operator-overload hook for
-          plain field assignment on a struct.
-        C++ equivalent: same -- explicit setter methods, since C++ has no
-          portable equivalent of intercepting `obj.field = value` on a plain
-          struct either (short of wrapping every field in a property-like
-          accessor class, which this design avoids).
-        Kept as-is here because: port target/shape not decided yet, and this
-          is exercised as public API well beyond this file (msx/ppi.py,
-          msx/machine.py, msx/state.py all do `mem.field = value`) -- the
-          setters would need to replace every one of those call sites, not
-          just this file, so it's tracked as a separate large-scope item
-          rather than a mechanical refactor here.
-        """
-        object.__setattr__(self, name, value)
-        if name in _CACHE_INVALIDATING_FIELDS:
-            object.__setattr__(self, "_page_cache_valid", False)
-        if name in _SLOT3_STRATEGY_FIELDS:
-            self._validate_slot3_strategy()
-
     def _validate_slot3_strategy(self) -> None:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
         are mutually exclusive slot-3 RAM strategies, and fdc requires
-        flat_ram_subslot. Re-run whenever a _SLOT3_STRATEGY_FIELDS member is
-        assigned (not just at construction) so a post-construction
-        reassignment can't silently desync the routing cache from this
-        invariant the way a bare cache-invalidation check wouldn't catch.
-
-        Reads via getattr(..., None): __setattr__ (which calls this) also
-        fires while the dataclass-generated __init__ is still assigning
-        fields one at a time, before every _SLOT3_STRATEGY_FIELDS member
-        exists yet on this slots instance — a not-yet-assigned field reads
-        as None here (harmless: __post_init__ re-validates once everything
-        is set, which is the authoritative check for construction).
+        flat_ram_subslot. Called from __post_init__ (once, at the end of
+        construction) and from set_ram_mapper/set_fdc/set_flat_ram_subslot
+        (so a post-construction reassignment can't silently desync the
+        routing cache from this invariant) -- every caller runs after the
+        dataclass __init__ has finished, so all three fields always exist
+        by the time this runs.
         """
-        ram_mapper = getattr(self, "ram_mapper", None)
-        flat_ram_subslot = getattr(self, "flat_ram_subslot", None)
-        fdc = getattr(self, "fdc", None)
+        ram_mapper = self.ram_mapper
+        flat_ram_subslot = self.flat_ram_subslot
+        fdc = self.fdc
         if ram_mapper is not None and flat_ram_subslot is not None:
             raise ValueError(
                 "Memory: ram_mapper and flat_ram_subslot are mutually "
@@ -166,10 +109,14 @@ class Memory:
                 "data-driven slot-3 layout hosts an FDC)"
             )
 
-    # Explicit setters for the fields __setattr__ above currently intercepts.
-    # Callers outside this class should use these, not direct assignment --
-    # see openspec/changes/memory-explicit-setters (__setattr__ is removed
-    # once every call site is migrated to call these instead).
+    # Explicit setters for the 8 fields that affect page routing. Callers
+    # outside this class must use these, not direct assignment -- this class
+    # has no __setattr__ hook (removed by the memory-explicit-setters
+    # OpenSpec change) to catch a stray `mem.field = value` the way it used
+    # to, so a direct assignment here silently leaves the routing cache
+    # stale instead of raising or invalidating anything. A regression test
+    # (tests/test_memory_setter_discipline.py) statically scans for this
+    # mistake.
 
     def set_slot_register(self, value: int) -> None:
         self.slot_register = value
