@@ -89,11 +89,12 @@ class Memory:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
         are mutually exclusive slot-3 RAM strategies, and fdc requires
         flat_ram_subslot. Called from __post_init__ (once, at the end of
-        construction) and from set_ram_mapper/set_fdc/set_flat_ram_subslot
-        (so a post-construction reassignment can't silently desync the
-        routing cache from this invariant) -- every caller runs after the
-        dataclass __init__ has finished, so all three fields always exist
-        by the time this runs.
+        construction) and from set_ram_mapper/set_fdc (so a post-construction
+        reassignment of either can't silently desync the routing cache from
+        this invariant -- flat_ram_subslot itself is construction-time-fixed,
+        with no setter, so it can't cause the same desync) -- every caller
+        runs after the dataclass __init__ has finished, so all three fields
+        always exist by the time this runs.
         """
         ram_mapper = self.ram_mapper
         flat_ram_subslot = self.flat_ram_subslot
