@@ -8,6 +8,7 @@ from msx.cpu.registers import Registers
 from msx.debugger import prompt as prompt_module
 from msx.debugger.prompt import Debugger
 from msx.mapper import FlatMapper
+from msx.memory import Memory
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
@@ -468,19 +469,20 @@ def _make_slot_memory(
     rom_name: str = "cbios_main.rom",
     sub0_rom_name: str = "",
     with_ram_mapper: bool = False,
-) -> MagicMock:
-    mem = MagicMock()
-    mem.slot_register = slot_register
-    mem.sub_slot_enabled = sub_slot_enabled
-    mem.sub_slot_reg = sub_slot_reg
-    mem.rom = b"\x00" * 32768
-    mem.rom_name = rom_name
-    mem.sub0_rom = b"\x00" * 16384 if sub0_rom_name else None
-    mem.sub0_rom_name = sub0_rom_name
-    mem._mapper = FlatMapper(None)
-    mem._mapper2 = FlatMapper(None)
-    mem.ram_mapper = RamMapper() if with_ram_mapper else None
-    return mem
+) -> Memory:
+    return Memory(
+        rom=b"\x00" * 32768,
+        ram=bytearray(0x2000),
+        _mapper=FlatMapper(None),
+        _mapper2=FlatMapper(None),
+        slot_register=slot_register,
+        sub_slot_enabled=sub_slot_enabled,
+        sub_slot_reg=sub_slot_reg,
+        rom_name=rom_name,
+        sub0_rom=b"\x00" * 16384 if sub0_rom_name else None,
+        sub0_rom_name=sub0_rom_name,
+        ram_mapper=RamMapper() if with_ram_mapper else None,
+    )
 
 
 def _make_slot_machine(
@@ -587,55 +589,41 @@ class TestSlotRomMapperBank:
         return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(8192)])
 
     def test_ascii16_window_bank_and_offset(self):
-        from msx.debugger.prompt import _rom_mapper_bank_info
         from msx.mapper import Ascii16Mapper
         m = Ascii16Mapper(self._rom16(8))
         # power-on: both windows bank 0
-        assert _rom_mapper_bank_info(m, 1) == "bank 0 @00000-03FFF"
-        assert _rom_mapper_bank_info(m, 2) == "bank 0 @00000-03FFF"
+        assert m.debug_bank_info(1) == "bank 0 @00000-03FFF"
+        assert m.debug_bank_info(2) == "bank 0 @00000-03FFF"
         # switch window 1 (0x8000) to bank 3
         m.write(0x7000, 3)
-        assert _rom_mapper_bank_info(m, 2) == "bank 3 @0C000-0FFFF"
+        assert m.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
 
     def test_ascii8_shows_both_windows_per_page(self):
-        from msx.debugger.prompt import _rom_mapper_bank_info
         from msx.mapper import Ascii8Mapper
         m = Ascii8Mapper(self._rom8(8))
         m.write(0x6000, 1)  # window 0 (0x4000) -> bank 1
         m.write(0x6800, 2)  # window 1 (0x6000) -> bank 2
-        assert _rom_mapper_bank_info(m, 1) == "w0=b1@02000  w1=b2@04000"
+        assert m.debug_bank_info(1) == "w0=b1@02000  w1=b2@04000"
 
     def test_flat_mapper_has_no_bank(self):
-        from msx.debugger.prompt import _rom_mapper_bank_info
         from msx.mapper import FlatMapper
-        assert _rom_mapper_bank_info(FlatMapper(b"\x00" * 32768), 1) is None
+        assert FlatMapper(b"\x00" * 32768).debug_bank_info(1) is None
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
-        from types import SimpleNamespace
-
-        from msx.debugger.prompt import _sl_bank
         from msx.mapper import Ascii16Mapper
-        mem = SimpleNamespace(
-            _mapper=Ascii16Mapper(self._rom16(8)), _mapper2=None, ram_mapper=None
-        )
-        assert _sl_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
+        assert mem.debug_slot_bank(1, None, 2) == "bank 0 @00000-03FFF"
 
     def test_sl_bank_ram_mapper_segment_unchanged(self):
-        from types import SimpleNamespace
-
-        from msx.debugger.prompt import _sl_bank
         from msx.ram_mapper import RamMapper
         rm = RamMapper()
         rm.banks[3] = 2
-        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=rm)
-        assert _sl_bank(mem, 3, 2, 3) == "seg=2"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        assert mem.debug_slot_bank(3, 2, 3) == "seg=2"
 
     def test_sl_bank_dash_for_bios(self):
-        from types import SimpleNamespace
-
-        from msx.debugger.prompt import _sl_bank
-        mem = SimpleNamespace(_mapper=None, _mapper2=None, ram_mapper=None)
-        assert _sl_bank(mem, 0, None, 0) == "-"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
+        assert mem.debug_slot_bank(0, None, 0) == "-"
 
 
 # ---------------------------------------------------------------------------
