@@ -96,7 +96,7 @@ class Mapper(Protocol):
 
 
 @dataclass
-class _BankTracing:
+class BankTracingMapper:
     """Shared bank-change tracing state for the bank-switching mappers.
 
     Consolidated into one base so every mapper carries the same four hook
@@ -111,7 +111,7 @@ class _BankTracing:
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
 
-def _trace_bank(mapper: _BankTracing, window: int, old: int, new: int, addr: int) -> None:
+def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
     """Notify an injected MapperTracer of a bank change. No-op without a tracer."""
     tracer = mapper._tracer
     if tracer is None or old == new:
@@ -192,7 +192,7 @@ class Ascii8MapperState(TypedDict):
 
 
 @dataclass
-class Ascii8Mapper(_BankTracing):
+class Ascii8Mapper(BankTracingMapper):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
 
     Control registers written to 0x6000–0x7FFF select which ROM page each
@@ -277,7 +277,7 @@ class Ascii16MapperState(TypedDict):
 
 
 @dataclass
-class Ascii16Mapper(_BankTracing):
+class Ascii16Mapper(BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
@@ -527,7 +527,7 @@ class GameMaster2MapperState(TypedDict):
 
 
 @dataclass
-class GameMaster2Mapper(_BankTracing):
+class GameMaster2Mapper(BankTracingMapper):
     """Konami Game Master 2 mapper: 128 KB ROM + 8 KB battery-backed SRAM.
 
     Follows openMSX RomGameMaster2.cc. Four 8 KB windows at 0x4000-0x5FFF
@@ -867,7 +867,7 @@ class RTypeMapperState(TypedDict):
 
 
 @dataclass
-class RTypeMapper(_BankTracing):
+class RTypeMapper(BankTracingMapper):
     """R-Type (Irem) mapper: 16 KB fixed at 0x4000, 16 KB switchable at 0x8000.
 
     The fixed window at 0x4000–0x7FFF always shows ROM block
@@ -965,7 +965,7 @@ class KonamiMapperState(TypedDict):
 
 
 @dataclass
-class KonamiMapper(_BankTracing):
+class KonamiMapper(BankTracingMapper):
     """Konami (Konami4) mapper: four 8 KB windows.
 
     Window 0 (0x4000–0x5FFF) is permanently fixed to page 0.
@@ -1142,7 +1142,7 @@ class KonamiSCCMapperState(TypedDict):
 
 
 @dataclass
-class KonamiSCCMapper(_BankTracing):
+class KonamiSCCMapper(BankTracingMapper):
     """Konami SCC mapper: 8 KB bank switching in the same style as
     KonamiMapper, extended with SCC mode. Same two-tier page-select
     resolution (see _select_page), but a different mask -- derived from
@@ -1302,7 +1302,7 @@ class SCCICartState(TypedDict):
 
 
 @dataclass
-class SCCICart(_BankTracing):
+class SCCICart(BankTracingMapper):
     """SCC-I cartridge (community/openMSX docs: "SCC+"): 64 KB of physical
     bank-switched RAM, addressed as if it were 128 KB (block N mirrors
     block N+8 -- see `_SCCI_BANK_MASK`) in four 8 KB windows at

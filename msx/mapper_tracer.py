@@ -71,11 +71,11 @@ def attach_to_machine(
     """
     # PORT-NOTE: this attaches by reflection — `getattr`/`hasattr` probing for
     #   `_tracer` and injecting `_get_pc`/`_get_cycle`/`_get_frame` closures at
-    #   runtime (the `_BankTracing` base already gives every mapper the hook
+    #   runtime (the `BankTracingMapper` base already gives every mapper the hook
     #   fields statically, so this reflection is only for the optional-attach
     #   dance, not because the fields' shape is unknown).
     # Rust equivalent: a `SupportsTracing` trait implemented by every mapper
-    #   (matching `_BankTracing`'s hook fields), with a typed accessor object
+    #   (matching `BankTracingMapper`'s hook fields), with a typed accessor object
     #   injected via a setter method, not closures assigned by attribute name.
     # C++ equivalent: same — a `SupportsTracing` interface/mixin every mapper
     #   implements, with a typed accessor object passed to an explicit
