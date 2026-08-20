@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2136%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2147%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -452,14 +452,14 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 306.31 | ~5.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 453.91 | ~7.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1211.24 | ~20.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1184.13 | ~19.7× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 78.64 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 114.76 | ~1.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 288.19 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 323.65 | ~5.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 304.38 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 449.72 | ~7.5× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1209.46 | ~20.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1427.64 | ~23.8× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 77.95 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 115.44 | ~1.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 290.91 | ~4.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 462.85 | ~7.7× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
@@ -480,7 +480,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.5.0, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.5.7, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -527,8 +527,10 @@ The required filenames for each machine ID are listed in the corresponding YAML
 under `config/machines/`.
 
 > **Legal note:** do not use a copyrighted MSX BIOS dump extracted from a
-> commercial machine. C-BIOS is the recommended free and legal alternative. The
-> `roms/` directory is excluded from version control by `.gitignore`.
+> commercial machine, unless you own the corresponding real MSX hardware and
+> the dump was extracted from your own unit. C-BIOS is the recommended free
+> and legal alternative. The `roms/` directory is excluded from version
+> control by `.gitignore`.
 
 ---
 
@@ -935,7 +937,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2136 tests spanning unit tests
+The test suite covers all major components with 2147 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -998,7 +1000,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2136 tests
+├── tests/                 # Test suite — 2147 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1059,6 +1061,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
 - **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
 - **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.
 - **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
