@@ -129,10 +129,10 @@ def test_old_format_version_rejected(saves_dir):
 
 def test_msx2_roundtrip_sub_slot_reg(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
-    machine.memory.sub_slot_reg = 0xA5
+    machine.memory.set_sub_slot_reg(0xA5)
     save_state(machine, _RGB_MSX2, "test")
 
-    machine.memory.sub_slot_reg = 0x00
+    machine.memory.set_sub_slot_reg(0x00)
     load_state(machine)
 
     assert machine.memory.sub_slot_reg == 0xA5

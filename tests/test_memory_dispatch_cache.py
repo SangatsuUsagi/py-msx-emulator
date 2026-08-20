@@ -41,7 +41,7 @@ def test_primary_slot_switch_msx1_flat() -> None:
     rom = bytes([0xAA] * 0x10000)
     mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None), slot_register=0x00)
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
-    mem.slot_register = 0xC0  # page3 -> slot3 (MSX1 flat RAM)
+    mem.set_slot_register(0xC0)  # page3 -> slot3 (MSX1 flat RAM)
     mem.write(0xC000, 0x11)
     assert mem.read(0xC000) == 0x11  # immediate, not stale ROM
 
@@ -52,7 +52,7 @@ def test_primary_slot_switch_ram_mapper() -> None:
     mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=0x00, ram_mapper=rm)
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
-    mem.slot_register = 0xC0  # page3 -> slot3 (RAM mapper)
+    mem.set_slot_register(0xC0)  # page3 -> slot3 (RAM mapper)
     mem.write(0xC000, 0x22)
     assert mem.read(0xC000) == 0x22  # immediate, not stale ROM
     assert rm.read(0xC000) == 0x22
@@ -64,7 +64,7 @@ def test_primary_slot_switch_flat_subslot() -> None:
                  slot_register=0x00, sub_slot_enabled=True, flat_ram_subslot=3,
                  sub_slot_reg=0xC0)  # page3 -> sub-slot 3 once slot3 is selected
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
-    mem.slot_register = 0xC0  # page3 -> slot3 (flat RAM)
+    mem.set_slot_register(0xC0)  # page3 -> slot3 (flat RAM)
     mem.write(0xC000, 0x33)
     assert mem.read(0xC000) == 0x33  # immediate, not stale ROM
 
@@ -82,7 +82,7 @@ def test_secondary_slot_switch_ram_mapper() -> None:
                  slot_register=0xC3,  # page0 -> slot3
                  ram_mapper=rm, sub0_rom=sub_rom, sub_slot_enabled=True, sub_slot_reg=0x00)
     assert mem.read(0x0000) == 0x41  # sub-slot 0 -> SUB-ROM
-    mem.sub_slot_reg = 0x02  # page0 -> sub-slot 2 (RAM mapper)
+    mem.set_sub_slot_reg(0x02)  # page0 -> sub-slot 2 (RAM mapper)
     assert mem.read(0x0000) == 0x52  # immediate, not stale SUB-ROM byte
 
 
@@ -92,7 +92,7 @@ def test_secondary_slot_switch_flat_subslot() -> None:
                  flat_ram_subslot=3, sub_slot_reg=0x00)
     mem.ram[0x0000] = 0x63
     assert mem.read(0x0000) == 0xFF  # sub-slot 0, no sub0_rom -> open bus
-    mem.sub_slot_reg = 0x03  # page0 -> sub-slot 3 (flat RAM)
+    mem.set_sub_slot_reg(0x03)  # page0 -> sub-slot 3 (flat RAM)
     assert mem.read(0x0000) == 0x63  # immediate, not stale open bus
 
 
@@ -103,7 +103,7 @@ def test_secondary_slot_switch_msx1_flat_with_sub0_rom() -> None:
     mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=0xC3, sub0_rom=sub_rom, sub_slot_enabled=True, sub_slot_reg=0x00)
     assert mem.read(0x0000) == 0x41  # sub-slot 0 -> SUB-ROM
-    mem.sub_slot_reg = 0x02  # page0 -> sub-slot 2 -> MSX1 flat RAM fallback (out of range here)
+    mem.set_sub_slot_reg(0x02)  # page0 -> sub-slot 2 -> MSX1 flat RAM fallback (out of range here)
     assert mem.read(0x0000) == 0xFF  # immediate, not stale SUB-ROM byte
 
 

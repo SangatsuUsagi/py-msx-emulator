@@ -101,8 +101,8 @@ def test_disk_rom_and_registers_routed_through_memory(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     machine = build_machine(_fdc_spec(tmp_path))
     mem = machine.memory
-    mem.slot_register = 0xFF  # all pages -> slot 3
-    mem.sub_slot_reg = 0x00   # all pages -> sub-slot 0
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0x00)  # all pages -> sub-slot 0
     assert mem.read(0x4000) == 0xC3        # DISK ROM byte 0
     mem.write(0x7FF8, 0x80)                # COMMAND = READ SECTOR (routed via Memory)
     assert (mem.read(0x7FF8) & 0x80) != 0  # FDC STATUS: NOT_READY (no disk), no crash

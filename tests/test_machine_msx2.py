@@ -57,7 +57,7 @@ def test_msx2_extrom_accessible_at_slot3_subslot0() -> None:
     extrom = bytes([0xDD] + [0x00] * (16384 - 1))
     machine = make_machine_msx2(_DUMMY_ROM, extrom)
     # Map page 0 to slot 3 (slot_register bits 1:0 = 11)
-    machine.memory.slot_register = 0x03  # page0=slot3, pages1-3=slot0
+    machine.memory.set_slot_register(0x03)  # page0=slot3, pages1-3=slot0
     # sub_slot_reg=0x00 (default): page0 → sub-slot 0 → extrom
     assert machine.memory.read(0x0000) == 0xDD
 
