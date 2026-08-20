@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from msx.input import InputState
 from msx.mouse import MouseDevice
 from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
@@ -280,7 +282,7 @@ def test_reset_restores_register_defaults() -> None:
 
 def test_reset_clears_pending_events() -> None:
     psg = PSG()
-    psg._get_cycle = lambda: 5
+    psg._machine = SimpleNamespace(cycle_count=5)
     psg.write_port(0xA0, 8)
     psg.write_port(0xA1, 0x0F)
     assert psg._events

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, NamedTuple, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from msx.input import InputState
 from msx.mouse import MouseDevice
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 _REG_IO_PORT_A = 14
 
@@ -92,27 +95,30 @@ class PSG:
     _mouse: MouseSlot | None = field(default=None, repr=False)
 
     # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
-    # _get_cycle so generate_samples can place them at their in-frame sample
-    # positions (reproduces software PCM). _regs_base / _gen_base snapshot the
-    # register + generator state at the frame's first write, for replay rewind.
+    # `_machine.cycle_count` so generate_samples can place them at their
+    # in-frame sample positions (reproduces software PCM). _regs_base /
+    # _gen_base snapshot the register + generator state at the frame's first
+    # write, for replay rewind.
     #
-    # PORT-NOTE: _get_cycle is a closure assigned at wiring time
-    #   (machine_loader sets `lambda: machine.cycle_count`), capturing the
-    #   Machine that owns this PSG.
-    # Rust equivalent: a reference cycle like this can't be expressed as a
-    #   plain Fn field owning its captured struct; thread the cycle count
-    #   through write_port explicitly instead (see msx/io.py's matching
-    #   _get_pc note — both closures share the same call sites).
-    # C++ equivalent: same — pass the cycle count as an explicit parameter
-    #   rather than a captured back-reference, avoiding an ownership cycle
-    #   between PSG and its owning Machine.
-    # Kept as-is here because: port target/shape not decided yet — replacing
-    #   this with an explicit cycle: int parameter on write_port ripples
-    #   through msx/io.py's IOBus dispatch and every machine_loader.py device
-    #   registration site (6 device types x 2 directions), and whether that
-    #   costs more than the current closure call needs benchmarking before
-    #   committing to a shape; see msx/io.py:_get_pc for the paired item.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # PORT-NOTE: _machine is a direct reference to the owning Machine,
+    #   resolved once at wiring time (machine_loader sets `psg._machine =
+    #   machine`, after Machine is fully constructed).
+    # Rust equivalent: a `Rc<RefCell<Machine>>` (or, if this back-reference
+    #   proves awkward at port time, a narrower shared cycle counter --
+    #   e.g. `Rc<Cell<u64>>` -- PSG holds instead of the whole Machine;
+    #   evaluated and rejected for the Python side specifically because it
+    #   required Machine's own hot per-scanline cycle_count increment to go
+    #   through an extra indirection, measured as a net loss overall).
+    # C++ equivalent: a raw or shared pointer to the owning Machine, or the
+    #   same narrower-counter alternative.
+    # Kept as a direct reference (not a closure) because: measured ~2x
+    #   faster per read than the closure this replaced (a two-hop attribute
+    #   read vs. a bound-closure call), and Machine.cycle_count itself stays
+    #   a plain flat field with no added indirection in Machine's own hot
+    #   scanline loop. See openspec/changes/archive/*-psg-cycle-source-
+    #   refactor/design.md for the full benchmark and the rejected
+    #   shared-Clock-object alternative.
+    _machine: "Machine | None" = field(default=None, repr=False)
     # Recorded writes as (cycle, reg, value); a port would use a small struct.
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
     _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
@@ -164,7 +170,7 @@ class PSG:
                     # Frame's first write: snapshot state to rewind to at replay.
                     self._regs_base = self.regs[:]
                     self._gen_base = self._snapshot_gen()
-                cyc = self._get_cycle() if self._get_cycle is not None else 0
+                cyc = self._machine.cycle_count if self._machine is not None else 0
                 self._events.append((cyc, reg, value))
             self.regs[reg] = value
             if reg == 13:
@@ -174,12 +180,13 @@ class PSG:
                 # bit 4 = Joy1, bit 5 = Joy2. Driven on both ports on every
                 # register-15 write, independent of JOY_SELECT (bit 6).
                 pin8_bit = 4 if self._mouse.port == JoystickPort.JOY1 else 5
-                # Independent call to _get_cycle(), not a reuse of the `cyc`
-                # computed above: that one is skipped once the per-frame
-                # event buffer (_MAX_EVENTS) is full, so it isn't reliably in
-                # scope here. _get_cycle() is a pure read, so calling it
-                # twice per write_port invocation is correct and cheap.
-                cycle = self._get_cycle() if self._get_cycle is not None else 0
+                # Independent read of _machine.cycle_count, not a reuse of
+                # the `cyc` computed above: that one is skipped once the
+                # per-frame event buffer (_MAX_EVENTS) is full, so it isn't
+                # reliably in scope here. Reading cycle_count is a pure
+                # attribute access, so reading it twice per write_port
+                # invocation is correct and cheap.
+                cycle = self._machine.cycle_count if self._machine is not None else 0
                 self._mouse.device.write_pin8((value >> pin8_bit) & 1, cycle)
 
     def read_port(self, port: int) -> int:
