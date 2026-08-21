@@ -11,8 +11,11 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
+from typing import cast
+
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 
 # Sony/Philips register window offsets (addr & 0x3FFF), shared by
@@ -52,10 +55,24 @@ class FloppyDisk:
       which needs a second, structurally different connection style to
       confirm against. SonyPhilipsInterface alone can't tell us that. See
       logs/review-python-20260814-210824.md.
-    TODO: revisit this split when a TC8566AF-based connection style is added
-      (second concrete FloppyDisk implementation) -- that's the missing
-      signature-validation case, not a decision that can be made from
-      SonyPhilipsInterface alone.
+    RESOLVED (was a TODO to revisit this split when a second, structurally
+      different connection style existed): TC8566AFInterface below is that
+      case, and it validates the dispatch trait as designed -- read_mem(addr)
+      -> int / write_mem(addr, value) -> None / reset() -> None hold
+      unchanged, no time parameter or extra return value needed, confirmed
+      against both this implementation and openMSX's own TC8566AF-based
+      connection style (TurboRFDC). No has-a split was needed; the has-a/is-a
+      analysis above is otherwise unaffected and still applies if/when a
+      Rust/C++ port is undertaken (still not decided). See
+      openspec/changes/add-tc8566af-fdc/design.md for the full comparison.
+      One real (if narrow) signature gap did surface only once a second
+      controller *type* existed, not a second connection-style *dispatch
+      signature*: this class's own `__init__(self, controller: WD2793, ...)`
+      type hint is WD2793-specific, so `self.controller`'s static type is
+      inherited as `WD2793` in TC8566AFInterface too; that class works around
+      it locally with `typing.cast` rather than widening this hint here (a
+      small, deliberately deferred follow-up -- not a decision to make from
+      inside a single connection-style class).
     """
 
     def __init__(
@@ -215,3 +232,64 @@ class SonyPhilipsInterface(FloppyDisk):
             else:
                 self.controller.drive = None
         # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.
+
+
+# TC8566AF connection style register window offsets (addr & 0x3FFF), used by
+# the non-turboR TC8566AF-based machines (e.g. Panasonic FS-A1F) -- the
+# "R7FF8" register set from openMSX's TurboRFDC.cc.
+TC_REG_CONTROL0: int = 0x3FF8  # write-only
+TC_REG_CONTROL1: int = 0x3FF9  # write-only
+TC_REG_STATUS: int = 0x3FFA    # read-only Main Status Register
+TC_REG_DATA: int = 0x3FFB      # read/write Data Register
+# 0x3FFC-0x3FFF: not wired to controller state; reads return fixed values
+# observed on real non-turboR TC8566AF-based MSX hardware.
+_TC_RESERVED: dict[int, int] = {0x3FFC: 0xFC, 0x3FFD: 0xFC, 0x3FFE: 0xFF, 0x3FFF: 0x3F}
+
+
+class TC8566AFInterface(FloppyDisk):
+    """TC8566AF connection style (Panasonic FS-A1F).
+
+    Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
+    in the DISK-ROM page that is 0x7FF8-0x7FFF. The DISK ROM is visible at
+    0x4000-0x7FFF everywhere else in the page, same as SonyPhilipsInterface.
+    Unlike SonyPhilipsInterface's WD2793, the TC8566AF controller owns all
+    drives directly (Control Register 0 addresses one of them) rather than
+    being handed a single externally-swapped "current drive" reference -- see
+    openspec/changes/add-tc8566af-fdc/design.md.
+    """
+
+    # PORT-NOTE: FloppyDisk.__init__ (not touched by this change) declares
+    #   `controller: WD2793`, so `self.controller`'s static type is inherited
+    #   as WD2793 here too. `_ctrl()` narrows it locally to TC8566AF via
+    #   typing.cast rather than widening that base-class type hint --
+    #   loosening it is a small, deliberately deferred follow-up (see
+    #   openspec/changes/add-tc8566af-fdc/design.md), not a decision to make
+    #   from inside the connection-style layer alone.
+    def _ctrl(self) -> TC8566AF:
+        return cast(TC8566AF, self.controller)
+
+    def reset(self) -> None:
+        self._ctrl().reset()
+
+    def read_mem(self, addr: int) -> int:
+        reg = addr & 0x3FFF
+        if reg == TC_REG_STATUS:
+            return self._ctrl().read_main_status()
+        if reg == TC_REG_DATA:
+            return self._ctrl().read_data()
+        if reg in _TC_RESERVED:
+            return _TC_RESERVED[reg]
+        if self.disk_rom is not None and reg < len(self.disk_rom):
+            return self.disk_rom[reg]
+        return 0xFF
+
+    def write_mem(self, addr: int, value: int) -> None:
+        reg = addr & 0x3FFF
+        value &= 0xFF
+        if reg == TC_REG_CONTROL0:
+            self._ctrl().write_control_reg0(value)
+        elif reg == TC_REG_CONTROL1:
+            self._ctrl().write_control_reg1(value)
+        elif reg == TC_REG_DATA:
+            self._ctrl().write_data(value)
+        # TC_REG_STATUS / reserved offsets / DISK ROM: not writable.
