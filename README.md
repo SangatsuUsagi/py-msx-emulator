@@ -296,6 +296,22 @@ write-back on exit; disks can be swapped at runtime from the debugger REPL
   - WRITE TRACK discards stream content and formats by byte count only,
     without real gap-byte/address-mark interpretation.
 
+### Floppy disk drive (TC8566AF)
+
+A second FDC controller/connection-style pair on the same generic FDC layer,
+as used by the Panasonic FS-A1F (`--machine fs_a1f`). Registers are
+memory-mapped in slot 3 sub-slot 0 (Main Status Register, Data Register, two
+control registers — no directly addressable TRACK/SECTOR register, unlike
+WD2793); `*.dsk` images mount the same way via `--fdd1`. Implements SPECIFY,
+SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE, SEEK, READ DATA,
+and WRITE DATA — the commands the MSX DISK ROM's boot/sector-I/O path needs.
+
+- Known limitations:
+  - No timing model (same functional-model approach as WD2793).
+  - Non-DMA mode only — the chip's DRQ2/-DACK2/DMATC pins are not modelled.
+  - FORMAT / READ ID / READ DIAGNOSTIC / SCAN / deleted-data commands are not
+    implemented (not needed for the Disk BASIC boot/sector-I/O path).
+
 ### ROM database
 
 SHA1 title lookup for automatic game-title detection and mapper selection.
@@ -854,10 +870,17 @@ automatically (MSX1 ROM → `cbios_msx1_jp`; MSX2 ROM or no cartridge →
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
 | `hb_f1xd` | MSX2 | Japan | V9938 |
+| `fs_a1f` | MSX2 | Japan | V9938 |
 
 `hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
 disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and
 `hb-f1xd_disk.rom` under `roms/hb_f1xd/` and mount a disk with `--fdd1`.
+
+`fs_a1f` (Panasonic FS-A1F) uses the real machine ROMs and adds a TC8566AF
+floppy disk drive; place its `fs-a1f_basic-bios2.rom`, `fs-a1f_msx2sub.rom`,
+and `fs-a1f_disk.rom` under `roms/fs_a1f/` and mount a disk with `--fdd1`.
+Real hardware ships these as one combined 128 KB mask ROM — see
+`config/machines/fs_a1f.yaml`'s comment for the expected split.
 
 ### Machine YAML structure
 
