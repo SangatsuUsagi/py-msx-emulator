@@ -84,8 +84,8 @@ _SUPPORTED_MAPPERS = frozenset({
 # Supported FDC controller chips and connection styles, selected by machine YAML.
 # New entries here (plus a builder branch in _build_fdc) add hardware without
 # touching Memory.
-_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793"})
-_SUPPORTED_FDC_STYLES = frozenset({"sony"})
+_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793", "tc8566af"})
+_SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -998,7 +998,8 @@ def _build_fdc(
     fdd_images into the drive with the matching index (fdd_images[0] -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
-    from msx.fdc.interface import SonyPhilipsInterface
+    from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
+    from msx.fdc.tc8566af import TC8566AF
     from msx.fdc.wd2793 import WD2793
 
     assert spec.fdc is not None
@@ -1007,9 +1008,12 @@ def _build_fdc(
     else:
         disk_rom = _load_rom(spec.rom_base_dir, spec.fdc.disk_rom_entry.file, required=True)
     drives = [DiskDrive() for _ in range(spec.fdc.drives)]
-    controller = WD2793()
-    # connection_style was validated by the loader; only 'sony' exists today.
-    device = SonyPhilipsInterface(controller, drives, disk_rom=disk_rom)
+    # controller/connection_style were validated by the loader (_SUPPORTED_FDC_*).
+    device: SonyPhilipsInterface | TC8566AFInterface
+    if spec.fdc.controller == "tc8566af":
+        device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
+    else:
+        device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
     for idx, image_path in enumerate(fdd_images):
         if image_path is None:
             continue

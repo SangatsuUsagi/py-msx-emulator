@@ -1,0 +1,65 @@
+schema_version: 1
+id: fs_a1f
+name: "Panasonic FS-A1F (MSX2, Japan)"
+generation: msx2
+video_standard: ntsc
+rom_base: roms/fs_a1f
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+
+# Panasonic FS-A1F: BIOS+BASIC, SUB ROM, TC8566AF floppy interface (DISK ROM +
+# memory-mapped FDC registers, TC8566AF connection style -- io_regs "7FF8" per
+# openMSX's Panasonic_FS-A1F.xml) in slot 3 sub-slot 0, and a flat 64 KB RAM in
+# sub-slot 3. Real hardware ships all four ROM images (BASIC/SUB/DISK/Kanji
+# driver, plus bundled "Cockpit" software) concatenated in one 128 KB mask ROM
+# (openMSX: DA1024D0365R.rom, sha1 9a62d7a5ccda974261f7c0600476d85e10deb99b);
+# this project's loader has no byte-offset ROM-window support (see
+# openspec/changes/add-tc8566af-fdc/design.md and proposal.md), so the two
+# ROM entries below expect that file pre-split into its BASIC+BIOS and
+# SUB+DISK component pieces -- no per-slice advisory sha1 is available since
+# openMSX itself never hashes the individual slices, only the combined file.
+# Kanji ROM/font and the "Cockpit" bundled software are not modelled (not
+# needed to exercise the FDC).
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: fs-a1f_basic-bios2.rom
+            size_kb: 32
+            pages: [0, 1]
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          content:
+            - rom:
+                file: fs-a1f_msx2sub.rom
+                size_kb: 16
+                pages: [0]
+          fdc:
+            ref: fdc_tc8566af
+            controller: tc8566af
+            connection_style: tc8566af
+            drives: 1
+            rom:
+              file: fs-a1f_disk.rom
+              size_kb: 16
+              pages: [1]
+        3:
+          type: ram
+          size_kb: 64
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+
+default_extensions: []

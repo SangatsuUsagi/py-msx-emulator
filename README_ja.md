@@ -202,6 +202,15 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
   - READ TRACK は空のスタブのみ。
   - WRITE TRACK は転送されたストリーム内容を破棄し、実際のギャップバイト/アドレスマーク解釈を行わずバイト数のみでフォーマットする。
 
+### フロッピーディスクドライブ（TC8566AF）
+
+同じ汎用 FDC 層上の2つ目のコントローラ/接続スタイルの組み合わせ。Panasonic FS-A1F（`--machine fs_a1f`）が採用。スロット 3 サブスロット 0 にメモリマップ（Main Status Register・Data Register・2つのコントロールレジスタ — WD2793と異なりTRACK/SECTORレジスタは直接アドレス指定不可）。`*.dsk` イメージは同様に `--fdd1` でマウント。SPECIFY・SENSE INTERRUPT STATUS・SENSE DEVICE STATUS・RECALIBRATE・SEEK・READ DATA・WRITE DATA を実装 — MSX DISK ROM の起動/セクタ入出力パスに必要なコマンド。
+
+- 既知の制限：
+  - タイミングモデルを持たない(WD2793と同じ関数モデル方式)。
+  - Non-DMAモードのみ — DRQ2/-DACK2/DMATCピンは未実装。
+  - FORMAT / READ ID / READ DIAGNOSTIC / SCAN / deleted-data系コマンドは未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
+
 ### ROM データベース
 
 SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自動判別します。
@@ -686,8 +695,11 @@ claude mcp list        # msx-emulator  ●  connected
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
+| `fs_a1f` | MSX2 | 日本 | V9938 |
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
+
+`fs_a1f`（Panasonic FS-A1F）は実機 ROM を使用し、TC8566AF フロッピーディスクドライブを備えます。`fs-a1f_basic-bios2.rom`・`fs-a1f_msx2sub.rom`・`fs-a1f_disk.rom` を `roms/fs_a1f/` に配置し、`--fdd1` でディスクをマウントします。実機はこれらを1つの128KBマスクROMとして出荷しています — 期待される分割方法は `config/machines/fs_a1f.yaml` のコメントを参照してください。
 
 ### マシン YAML の構造
 
