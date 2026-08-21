@@ -242,10 +242,12 @@ class _FdcDef:
 class _Slot3Msx2:
     """Resolved MSX2 slot 3 layout (named to avoid a positional tuple)."""
     sub_rom: _RomEntry | None = None
+    sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
     fdc: _FdcDef | None = None
+    fdc_subslot: int = 0
 
 
 @dataclass
@@ -290,8 +292,18 @@ class MachineSpec:
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
 
-    # Floppy interface in slot 3 sub-slot 0, or None when the machine has none.
+    # Which sub-slot the SUB ROM resolves to -- default 0 preserves every
+    # existing machine's resolved layout (all predate this field and
+    # declare SUB ROM in sub-slot 0).
+    sub_rom_subslot: int = 0
+
+    # Floppy interface in slot 3, or None when the machine has none. Which
+    # sub-slot it resolves to -- default 0, same backward-compat rationale
+    # as sub_rom_subslot -- independent of sub_rom_subslot (a machine MAY
+    # place SUB ROM and the FDC in different sub-slots, e.g. FS-A1F's real
+    # hardware layout).
     fdc: _FdcDef | None = None
+    fdc_subslot: int = 0
 
 
 @dataclass
@@ -408,17 +420,17 @@ def _parse_slot3_msx1(slot3: dict[str, Any]) -> int:
     return int(slot3.get("size_kb", 32))
 
 
-def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
-    """Resolve an optional `fdc:` block in slot 3 sub-slot 0.
+def _parse_fdc(sub_val: dict[str, Any], machine_id: str, sub_idx: int) -> _FdcDef | None:
+    """Resolve an optional `fdc:` block in the given MSX2 slot 3 sub-slot.
 
     Raises:
         MachineLoadError: On a missing DISK ROM entry, or an unsupported
             controller type or connection style.
     """
-    fdc_raw: Any = sub0.get("fdc")
+    fdc_raw: Any = sub_val.get("fdc")
     if not isinstance(fdc_raw, dict):
         return None
-    context = f"machine '{machine_id}' slot 3 sub-slot 0 fdc"
+    context = f"machine '{machine_id}' slot 3 sub-slot {sub_idx} fdc"
     rom_data: Any = fdc_raw.get("rom")
     if not isinstance(rom_data, dict):
         raise MachineLoadError(f"{context}: missing required 'rom' entry")
@@ -455,25 +467,34 @@ def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
 
     A sub-slot declaring `type: ram` without `mapper: standard` is a flat
     (non-mapper) RAM (e.g. HB-F1XD's 64 KB in sub-slot 3); a `mapper: standard`
-    sub-slot sets has_ram_mapper as before. An `fdc:` block in sub-slot 0
-    resolves the floppy interface.
+    sub-slot sets has_ram_mapper as before. The SUB ROM and an `fdc:` block are
+    each resolved from whichever sub-slot declares them -- scanned in
+    ascending sub-slot order, first match wins -- independently of each other,
+    so a machine MAY place them in the same sub-slot (every machine predating
+    this generalisation does, and still resolves to sub-slot 0 for both,
+    unchanged) or in different sub-slots (e.g. FS-A1F's real hardware layout).
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
-        sub0: Any = secondary.get(0, {})
-        if isinstance(sub0, dict):
-            for item in sub0.get("content", []):
-                rom_data: Any = item.get("rom")
-                if isinstance(rom_data, dict):
-                    result.sub_rom = _parse_rom_entry(
-                        rom_data, f"machine '{machine_id}' slot 3 sub-slot 0"
-                    )
-                    break
-            result.fdc = _parse_fdc(sub0, machine_id)
-        for sub_idx, sub_val in secondary.items():
+        for sub_idx in sorted(secondary):
+            sub_val = secondary[sub_idx]
             if not isinstance(sub_val, dict):
                 continue
+            if result.sub_rom is None:
+                for item in sub_val.get("content", []):
+                    rom_data: Any = item.get("rom")
+                    if isinstance(rom_data, dict):
+                        result.sub_rom = _parse_rom_entry(
+                            rom_data, f"machine '{machine_id}' slot 3 sub-slot {sub_idx}"
+                        )
+                        result.sub_rom_subslot = sub_idx
+                        break
+            if result.fdc is None:
+                fdc = _parse_fdc(sub_val, machine_id, sub_idx)
+                if fdc is not None:
+                    result.fdc = fdc
+                    result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
             elif sub_val.get("type") == "ram":
@@ -569,11 +590,13 @@ def load_machine_spec(
         )
 
     sub_rom_entry: _RomEntry | None = None
+    sub_rom_subslot = 0
     has_ram_mapper = False
     ram_size_kb = 32
     flat_ram_subslot: int | None = None
     flat_ram_size_kb = 64
     fdc: _FdcDef | None = None
+    fdc_subslot = 0
 
     slot3: Any = primary.get(3, {})
     if not isinstance(slot3, dict):
@@ -582,10 +605,12 @@ def load_machine_spec(
     if generation == "msx2":
         s3 = _parse_slot3_msx2(slot3, machine_id)
         sub_rom_entry = s3.sub_rom
+        sub_rom_subslot = s3.sub_rom_subslot
         has_ram_mapper = s3.has_ram_mapper
         flat_ram_subslot = s3.flat_ram_subslot
         flat_ram_size_kb = s3.flat_ram_size_kb
         fdc = s3.fdc
+        fdc_subslot = s3.fdc_subslot
     else:
         ram_size_kb = _parse_slot3_msx1(slot3)
 
@@ -651,7 +676,9 @@ def load_machine_spec(
         m1_wait_states=m1_wait_states,
         flat_ram_subslot=flat_ram_subslot,
         flat_ram_size_kb=flat_ram_size_kb,
+        sub_rom_subslot=sub_rom_subslot,
         fdc=fdc,
+        fdc_subslot=fdc_subslot,
     )
 
 
@@ -1095,7 +1122,9 @@ def _build_msx2(
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
         flat_ram_subslot=flat_ram_subslot,
+        sub_rom_subslot=spec.sub_rom_subslot,
         fdc=fdc_device,
+        fdc_subslot=spec.fdc_subslot,
         rom_name=spec.main_rom_entry.file,
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
