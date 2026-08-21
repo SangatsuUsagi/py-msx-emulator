@@ -103,25 +103,39 @@ def test_read_data_register_during_write_execution_returns_open_bus(tmp_path: Pa
 
 # -- rule-success.SeekCommand / RecalibrateCommand: not-ready abnormal path --
 
-def test_seek_no_disk_reports_not_ready_via_sense_interrupt_status(tmp_path: Path) -> None:
-    tc, _drive = _ctrl(tmp_path, with_disk=False)
+def test_seek_no_disk_still_completes_via_sense_interrupt_status(tmp_path: Path) -> None:
+    """Readiness for SEEK/RECALIBRATE depends only on the drive existing, not
+    on disk presence -- the head/track-0 sensor is mechanical. Updated after
+    SeekCommand/RecalibrateCommand's `ready` condition was fixed to drop the
+    disk_present(drive) check (matching openMSX's TC8566AF::doSeek); the
+    prior version of this test asserted the old, wrong behaviour."""
+    tc, drive = _ctrl(tmp_path, with_disk=False)
     tc.write_data(CMD_SEEK)
     tc.write_data(0x00)
     tc.write_data(42)
+    assert drive.track == 42
     tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
     st0 = tc.read_data()
-    assert st0 & 0x40  # abnormal termination
-    assert st0 & 0x08  # not ready
+    assert st0 & 0x20  # seek end
+    assert not (st0 & 0x40)  # not abnormal termination
+    assert not (st0 & 0x08)  # ready
 
 
-def test_recalibrate_no_disk_reports_not_ready(tmp_path: Path) -> None:
-    tc, _drive = _ctrl(tmp_path, with_disk=False)
+def test_recalibrate_no_disk_still_completes_via_sense_interrupt_status(
+    tmp_path: Path,
+) -> None:
+    """Same fix as test_seek_no_disk_still_completes_via_sense_interrupt_status,
+    for RECALIBRATE -- see that test's docstring."""
+    tc, drive = _ctrl(tmp_path, with_disk=False)
+    drive.track = 30
     tc.write_data(CMD_RECALIBRATE)
     tc.write_data(0x00)
+    assert drive.track == 0
     tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
     st0 = tc.read_data()
-    assert st0 & 0x40
-    assert st0 & 0x08
+    assert st0 & 0x20
+    assert not (st0 & 0x40)
+    assert not (st0 & 0x08)
 
 
 # -- rule-success.ReadDataCommand / WriteDataCommand: not-ready / no-data ----

@@ -279,14 +279,22 @@ class TC8566AF:
 
     def _cmd_seek_class(self, params: bytearray, *, ncn: int) -> None:
         """Shared SEEK/RECALIBRATE handling: both move a drive's head and
-        report only through a later SENSE INTERRUPT STATUS (no Result Phase)."""
+        report only through a later SENSE INTERRUPT STATUS (no Result Phase).
+
+        Readiness here depends only on the drive existing, not on whether a
+        disk is inserted -- the head/track-0 sensor is purely mechanical, so a
+        real drive homes/seeks fine with no media loaded (matching openMSX's
+        TC8566AF::doSeek, which sets Not Ready only for a non-existent
+        "dummy" drive and otherwise runs the seek to completion regardless of
+        isDiskInserted()). This differs from READ DATA/WRITE DATA/SENSE
+        DEVICE STATUS, which genuinely do require a disk."""
         index = params[0] & 0x03
         self._selected_drive_index = index
         drive = self._drive(index)
         st0 = index & 0x03
         if (params[0] >> 2) & 1:
             st0 |= 0x04  # HD echoed
-        if drive is None or not drive.has_disk:
+        if drive is None:
             st0 |= ST0_NOT_READY | ST0_ABNORMAL
         else:
             drive.track = ncn & 0xFF
