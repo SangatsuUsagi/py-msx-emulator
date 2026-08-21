@@ -11,6 +11,7 @@ from msx.machine_loader import (
     MachineSpec,
     _FdcDef,
     _parse_fdc,
+    _parse_slot3_msx2,
     _RomEntry,
     build_machine,
     load_device_registry,
@@ -40,18 +41,36 @@ def test_cbios_msx2_has_no_fdc() -> None:
     assert spec.fdc is None
 
 
+@pytest.mark.parametrize(
+    "machine_id",
+    ["cbios_msx2", "cbios_msx2_jp", "cbios_msx2_br", "cbios_msx2_eu", "hb_f1xd", "fs_a1f"],
+)
+def test_every_existing_msx2_machine_defaults_both_roles_to_subslot_0(machine_id: str) -> None:
+    """openspec/changes/parameterize-subslot-index task 5.1's audit, pinned as
+    a regression test: every MSX2 machine YAML predating the independent
+    SUB-ROM/FDC sub-slot fields declares both (where present) in sub-slot 0,
+    so both resolve to the loader's default (0) unchanged. fs_a1f is included
+    here even though its real hardware wants sub-slot 1/2 -- it still ships
+    the provisional (combined, sub-slot 0) layout until
+    parameterize-subslot-index's own follow-up step switches it."""
+    registry = load_device_registry(_CONFIG)
+    spec = load_machine_spec(machine_id, _CONFIG, registry, _ROOT)
+    assert spec.sub_rom_subslot == 0
+    assert spec.fdc_subslot == 0
+
+
 def test_unknown_controller_rejected() -> None:
     sub0 = {"fdc": {"rom": {"file": "d.rom", "size_kb": 16, "pages": [1]},
                     "controller": "bogus"}}
     with pytest.raises(MachineLoadError, match="controller"):
-        _parse_fdc(sub0, "test")
+        _parse_fdc(sub0, "test", 0)
 
 
 def test_unknown_connection_style_rejected() -> None:
     sub0 = {"fdc": {"rom": {"file": "d.rom", "size_kb": 16, "pages": [1]},
                     "controller": "wd2793", "connection_style": "bogus"}}
     with pytest.raises(MachineLoadError, match="connection_style"):
-        _parse_fdc(sub0, "test")
+        _parse_fdc(sub0, "test", 0)
 
 
 def test_mismatched_controller_style_pair_rejected() -> None:
@@ -60,7 +79,7 @@ def test_mismatched_controller_style_pair_rejected() -> None:
     sub0 = {"fdc": {"rom": {"file": "d.rom", "size_kb": 16, "pages": [1]},
                     "controller": "wd2793", "connection_style": "tc8566af"}}
     with pytest.raises(MachineLoadError, match="does not support"):
-        _parse_fdc(sub0, "test")
+        _parse_fdc(sub0, "test", 0)
 
 
 def test_loader_resolves_fdc_from_fs_a1f() -> None:
@@ -75,7 +94,53 @@ def test_loader_resolves_fdc_from_fs_a1f() -> None:
 
 def test_fdc_block_missing_rom_rejected() -> None:
     with pytest.raises(MachineLoadError, match="rom"):
-        _parse_fdc({"fdc": {"controller": "wd2793"}}, "test")
+        _parse_fdc({"fdc": {"controller": "wd2793"}}, "test", 0)
+
+
+def test_sub_rom_and_fdc_default_to_subslot_0_when_combined() -> None:
+    """hb_f1xd.yaml's existing shape: SUB ROM content and an fdc: block both
+    declared in the same (sub-slot 0) secondary dict -- must resolve both
+    indices to 0, unchanged from before this generalisation."""
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {
+                "content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}],
+                "fdc": {
+                    "rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]},
+                    "controller": "wd2793",
+                    "connection_style": "sony",
+                },
+            },
+            3: {"type": "ram", "size_kb": 64},
+        },
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.sub_rom is not None and result.sub_rom_subslot == 0
+    assert result.fdc is not None and result.fdc_subslot == 0
+
+
+def test_sub_rom_and_fdc_resolve_to_independent_subslots() -> None:
+    """FS-A1F's real hardware shape: SUB ROM in one secondary slot, the fdc:
+    block in a different one -- each resolves to its own declared index."""
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {"type": "ram", "size_kb": 64},
+            1: {"content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}]},
+            2: {
+                "fdc": {
+                    "rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]},
+                    "controller": "tc8566af",
+                    "connection_style": "tc8566af",
+                },
+            },
+        },
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.sub_rom is not None and result.sub_rom_subslot == 1
+    assert result.fdc is not None and result.fdc_subslot == 2
+    assert result.flat_ram_subslot == 0
 
 
 # --- Memory / Machine wiring (synthetic ROMs) ----------------------------
