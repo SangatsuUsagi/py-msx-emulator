@@ -246,6 +246,18 @@ class TC8566AF:
             self._result_buffer = bytearray([self._last_st0, self._last_pcn & 0xFF])
             self._result_index = 0
             self._phase = Phase.RESULT
+            # SENSE INTERRUPT STATUS consumes the pending seek/recalibrate
+            # result: a second, spurious call with no new seek in between
+            # reports "nothing pending" (matches the power-on/reset default,
+            # see ST0_INVALID) instead of replaying the same stale abnormal
+            # status forever. Without this, a DISK ROM probing for a second
+            # drive that doesn't exist (RECALIBRATE index=1 -> not ready ->
+            # SENSE INTERRUPT STATUS) never sees its own acknowledgement take
+            # effect and loops on SENSE INTERRUPT STATUS indefinitely --
+            # matches openMSX's TC8566AF::resultsPhaseRead, which zeroes
+            # status0 as soon as its first result byte is read.
+            self._last_st0 = ST0_INVALID
+            self._last_pcn = 0
         elif opcode == CMD_SENSE_DEVICE_STATUS:
             self._cmd_sense_device_status(params)
         elif opcode == CMD_RECALIBRATE:
@@ -287,7 +299,24 @@ class TC8566AF:
         TC8566AF::doSeek, which sets Not Ready only for a non-existent
         "dummy" drive and otherwise runs the seek to completion regardless of
         isDiskInserted()). This differs from READ DATA/WRITE DATA/SENSE
-        DEVICE STATUS, which genuinely do require a disk."""
+        DEVICE STATUS, which genuinely do require a disk.
+
+        A nonexistent drive (index beyond the configured drive count -- e.g.
+        a DISK ROM probing for a second drive the machine doesn't have)
+        still reports Seek End, not Abnormal Termination: openMSX's
+        DummyDrive.isTrack00() always returns false ("National_FS-5500F1 2nd
+        drive detection depends on this"), so TC8566AF::doSeek's RECALIBRATE
+        path never takes its immediate-completion shortcut and instead steps
+        the full 255-pulse limit before giving up -- reported as Seek End
+        (+ Equipment Check, not modelled here -- see Deferred
+        Specifications) rather than Abnormal Termination, since the seek
+        mechanism itself did finish trying. This model's SEEK/RECALIBRATE
+        are already instantaneous (no real step timing, a documented
+        simplification), so that eventual completion is reported
+        immediately here too, rather than looping. A DISK ROM polling SENSE
+        INTERRUPT STATUS for Seek End to learn "no second drive" would
+        otherwise never see it (found via FS-A1F hanging at boot on its
+        drive-B probe)."""
         index = params[0] & 0x03
         self._selected_drive_index = index
         drive = self._drive(index)
@@ -295,7 +324,7 @@ class TC8566AF:
         if (params[0] >> 2) & 1:
             st0 |= 0x04  # HD echoed
         if drive is None:
-            st0 |= ST0_NOT_READY | ST0_ABNORMAL
+            st0 |= ST0_NOT_READY | ST0_SEEK_END
         else:
             drive.track = ncn & 0xFF
             st0 |= ST0_SEEK_END
