@@ -55,10 +55,24 @@ class FloppyDisk:
       which needs a second, structurally different connection style to
       confirm against. SonyPhilipsInterface alone can't tell us that. See
       logs/review-python-20260814-210824.md.
-    TODO: revisit this split when a TC8566AF-based connection style is added
-      (second concrete FloppyDisk implementation) -- that's the missing
-      signature-validation case, not a decision that can be made from
-      SonyPhilipsInterface alone.
+    RESOLVED (was a TODO to revisit this split when a second, structurally
+      different connection style existed): TC8566AFInterface below is that
+      case, and it validates the dispatch trait as designed -- read_mem(addr)
+      -> int / write_mem(addr, value) -> None / reset() -> None hold
+      unchanged, no time parameter or extra return value needed, confirmed
+      against both this implementation and openMSX's own TC8566AF-based
+      connection style (TurboRFDC). No has-a split was needed; the has-a/is-a
+      analysis above is otherwise unaffected and still applies if/when a
+      Rust/C++ port is undertaken (still not decided). See
+      openspec/changes/add-tc8566af-fdc/design.md for the full comparison.
+      One real (if narrow) signature gap did surface only once a second
+      controller *type* existed, not a second connection-style *dispatch
+      signature*: this class's own `__init__(self, controller: WD2793, ...)`
+      type hint is WD2793-specific, so `self.controller`'s static type is
+      inherited as `WD2793` in TC8566AFInterface too; that class works around
+      it locally with `typing.cast` rather than widening this hint here (a
+      small, deliberately deferred follow-up -- not a decision to make from
+      inside a single connection-style class).
     """
 
     def __init__(
