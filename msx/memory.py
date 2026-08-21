@@ -44,10 +44,13 @@ class Memory:
     flat_ram_subslot: int | None = field(default=None)
     # Which sub-slot owns the SUB ROM (page 0 of that sub-slot) and which owns
     # the FDC (`fdc_page` of that sub-slot) -- independent of each other and of
-    # flat_ram_subslot. Both default to 0 (today's only configuration, used by
-    # every existing MSX2 machine: HB-F1XD and FS-A1F's provisional layout both
-    # combine SUB ROM + FDC in sub-slot 0), fdc_page defaults to 1 (the DISK-ROM
-    # window's existing fixed page). Construction-time-fixed, like
+    # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
+    # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
+    # resolves them to sub-slot 1 and 2 respectively, its real hardware's
+    # 4-independent-secondary-slot layout (RESOLVED by
+    # openspec/changes/parameterize-subslot-index -- previously this dataclass
+    # only supported sub-slot 0 for both roles). fdc_page defaults to 1 (the
+    # DISK-ROM window's existing fixed page). Construction-time-fixed, like
     # flat_ram_subslot/_mapper/_mapper2 -- no code ever reassigns them after
     # construction, so they have no setter (see the "Page-routing cache
     # invalidation happens through explicit setter methods" spec Requirement).
