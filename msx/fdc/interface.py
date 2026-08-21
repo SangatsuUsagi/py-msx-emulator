@@ -258,6 +258,19 @@ class TC8566AFInterface(FloppyDisk):
     openspec/changes/add-tc8566af-fdc/design.md.
     """
 
+    def __init__(
+        self,
+        controller: TC8566AF,
+        drives: list[DiskDrive],
+        disk_rom: bytes | None = None,
+    ) -> None:
+        # See _ctrl()'s PORT-NOTE below: FloppyDisk.__init__ declares
+        # `controller: WD2793`. Casting here (once) is what lets external
+        # callers (e.g. machine_loader.py) construct this class with a
+        # correctly-typed `controller: TC8566AF` parameter instead of each
+        # needing their own cast.
+        super().__init__(cast(WD2793, controller), drives, disk_rom)
+
     # PORT-NOTE: FloppyDisk.__init__ (not touched by this change) declares
     #   `controller: WD2793`, so `self.controller`'s static type is inherited
     #   as WD2793 here too. `_ctrl()` narrows it locally to TC8566AF via
