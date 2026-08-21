@@ -54,6 +54,25 @@ def test_unknown_connection_style_rejected() -> None:
         _parse_fdc(sub0, "test")
 
 
+def test_mismatched_controller_style_pair_rejected() -> None:
+    """Each supported controller/connection_style is individually valid, but
+    wd2793+tc8566af isn't a pair _build_fdc knows how to construct."""
+    sub0 = {"fdc": {"rom": {"file": "d.rom", "size_kb": 16, "pages": [1]},
+                    "controller": "wd2793", "connection_style": "tc8566af"}}
+    with pytest.raises(MachineLoadError, match="does not support"):
+        _parse_fdc(sub0, "test")
+
+
+def test_loader_resolves_fdc_from_fs_a1f() -> None:
+    registry = load_device_registry(_CONFIG)
+    spec = load_machine_spec("fs_a1f", _CONFIG, registry, _ROOT)
+    assert spec.fdc is not None
+    assert spec.fdc.controller == "tc8566af"
+    assert spec.fdc.connection_style == "tc8566af"
+    assert spec.fdc.drives == 1
+    assert spec.fdc.disk_rom_entry.file == "fs-a1f_disk.rom"
+
+
 def test_fdc_block_missing_rom_rejected() -> None:
     with pytest.raises(MachineLoadError, match="rom"):
         _parse_fdc({"fdc": {"controller": "wd2793"}}, "test")

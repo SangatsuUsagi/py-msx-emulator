@@ -86,6 +86,13 @@ _SUPPORTED_MAPPERS = frozenset({
 # touching Memory.
 _SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793", "tc8566af"})
 _SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
+# (controller, connection_style) pairs _build_fdc actually knows how to
+# construct -- each controller family has exactly one style today, but the
+# two are independent axes in the YAML schema, so validate the pair
+# explicitly rather than silently defaulting a mismatched combo (e.g.
+# controller: wd2793 + connection_style: tc8566af) to whichever branch
+# _build_fdc happens to fall into.
+_SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -427,6 +434,12 @@ def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
         raise MachineLoadError(
             f"{context}: unsupported connection_style {style!r} "
             f"(supported: {sorted(_SUPPORTED_FDC_STYLES)})"
+        )
+    if (controller, style) not in _SUPPORTED_FDC_PAIRS:
+        raise MachineLoadError(
+            f"{context}: controller {controller!r} does not support "
+            f"connection_style {style!r} "
+            f"(supported pairs: {sorted(_SUPPORTED_FDC_PAIRS)})"
         )
     drives = int(fdc_raw.get("drives", 1))
     return _FdcDef(
