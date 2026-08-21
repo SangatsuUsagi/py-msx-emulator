@@ -195,6 +195,32 @@ def test_recalibrate_succeeds_with_no_disk_inserted() -> None:
     assert not (st0 & 0x08)                 # NR (not ready) clear
 
 
+def test_recalibrate_against_nonexistent_drive_still_reports_seek_end() -> None:
+    """A RECALIBRATE targeting a drive index beyond the configured drive
+    count (e.g. a DISK ROM probing for a second drive the machine doesn't
+    have) reports Seek End + Not Ready, not Abnormal Termination -- matching
+    openMSX's DummyDrive.isTrack00() always returning false
+    ("National_FS-5500F1 2nd drive detection depends on this"), which makes
+    TC8566AF::doSeek's RECALIBRATE step the full 255-pulse limit before
+    giving up (Seek End + Equipment Check, not Abnormal Termination) rather
+    than aborting immediately. Reporting Abnormal Termination here (as this
+    model used to) hung FS-A1F's boot: the DISK ROM's second-drive probe
+    polls SENSE INTERRUPT STATUS in a tight loop waiting specifically for
+    Seek End, which this model's own SENSE INTERRUPT STATUS retry-then-
+    invalid fix (see test_no_disk_reports_not_ready_on_sense_device_status's
+    neighbour) does not by itself provide -- Seek End never came, so it
+    never stopped."""
+    tc = TC8566AF(drives=[DiskDrive()])     # only drive 0 configured
+
+    tc.write_data(CMD_RECALIBRATE)
+    tc.write_data(0x01)                     # HD_DS -> drive 1 (nonexistent)
+    tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
+    st0 = tc.read_data()
+    assert st0 & 0x20                       # SE (seek end) set
+    assert st0 & 0x08                       # NR (not ready) set
+    assert not (st0 & 0x40)                 # IC0 (abnormal termination) clear
+
+
 def test_write_protect_rejects_write_data(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path, write_protected=True)
     tc.write_data(CMD_WRITE_DATA)
