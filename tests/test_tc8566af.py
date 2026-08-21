@@ -10,6 +10,7 @@ from pathlib import Path
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 from msx.fdc.tc8566af import (
+    CMD_FORMAT,
     CMD_READ_DATA,
     CMD_RECALIBRATE,
     CMD_SEEK,
@@ -152,6 +153,68 @@ def test_write_data_persists_and_read_data_round_trips(tmp_path: Path) -> None:
         tc.write_data(b)
     out = bytes(tc.read_data() for _ in range(SECTOR_SIZE))
     assert out == payload
+
+
+def test_format_blanks_track_then_write_read_round_trips(tmp_path: Path) -> None:
+    """CALL FORMAT's underlying protocol: 5 command params (HD_DS, N, SC, GPL,
+    D) then SC*4 descriptor bytes (C,H,R,N per sector, discarded -- see
+    _cmd_format's docstring), blanking every sector of the drive's current
+    (track, side) to the D fill byte. Regression for FS-A1F's CALL FORMAT
+    never completing (FORMAT, opcode 0x0D, was entirely unimplemented)."""
+    tc, drive = _ctrl(tmp_path)
+    sectors_per_track = 9
+
+    tc.write_data(CMD_FORMAT)
+    for b in (0x00, 0x02, sectors_per_track, 0x50, 0xF6):  # HD_DS,N,SC,GPL,D
+        tc.write_data(b)
+    for sector in range(1, sectors_per_track + 1):
+        for b in (0, 0, sector, 2):  # C,H,R,N per sector (content ignored)
+            tc.write_data(b)
+
+    msr = tc.read_main_status()
+    assert msr & MSR_DIO                    # Result Phase
+    st0 = tc.read_data()
+    assert not (st0 & 0x40)                 # IC0 (abnormal termination) clear
+    for _ in range(6):                      # drain the rest of the Result Phase
+        tc.read_data()
+
+    assert drive.image.read_sector(0) == bytes([0xF6]) * SECTOR_SIZE
+
+    payload = bytes(i & 0xFF for i in range(SECTOR_SIZE))
+    tc.write_data(CMD_WRITE_DATA)
+    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+        tc.write_data(b)
+    for b in payload:
+        tc.write_data(b)
+    for _ in range(7):
+        tc.read_data()
+
+    tc.write_data(CMD_READ_DATA)
+    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+        tc.write_data(b)
+    out = bytes(tc.read_data() for _ in range(SECTOR_SIZE))
+    assert out == payload
+
+
+def test_format_no_disk_reports_not_ready(tmp_path: Path) -> None:
+    tc = TC8566AF(drives=[DiskDrive()])     # empty drive
+    tc.write_data(CMD_FORMAT)
+    for b in (0x00, 0x02, 9, 0x50, 0xF6):
+        tc.write_data(b)
+    st0 = tc.read_data()
+    assert st0 & 0x08                       # NR (not ready)
+    assert st0 & 0x40                       # IC0 (abnormal termination)
+
+
+def test_format_write_protected_disk_rejected(tmp_path: Path) -> None:
+    tc, _drive = _ctrl(tmp_path, write_protected=True)
+    tc.write_data(CMD_FORMAT)
+    for b in (0x00, 0x02, 9, 0x50, 0xF6):
+        tc.write_data(b)
+    st0 = tc.read_data()
+    st1 = tc.read_data()
+    assert st0 & 0x40                       # IC0 (abnormal termination)
+    assert st1 & 0x02                       # NW (not writable)
 
 
 def test_recalibrate_seeks_selected_drive_to_track0(tmp_path: Path) -> None:

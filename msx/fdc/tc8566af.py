@@ -12,11 +12,16 @@ TRACK/SECTOR register: cylinder/head/sector/N are Command-Phase parameters
 and Result-Phase echo bytes carried entirely through the Data Register.
 
 Implements SPECIFY, SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE,
-SEEK, READ DATA, and WRITE DATA -- enough for the MSX DISK ROM's boot/sector
-I/O path. READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID /
-SCAN / FORMAT are not needed for that path and are not implemented (matches
-the WD2793 model's own precedent of leaving out READ TRACK as "not needed for
-the MSX boot path").
+SEEK, READ DATA, WRITE DATA, and FORMAT -- enough for the MSX DISK ROM's
+boot/sector I/O path and `CALL FORMAT`. READ DELETED DATA / WRITE DELETED
+DATA / READ DIAGNOSTIC / READ ID / SCAN are not needed for that path and are
+not implemented (matches the WD2793 model's own precedent of leaving out
+READ TRACK as "not needed for the MSX boot path"). Like WD2793's own WRITE
+TRACK, FORMAT discards the descriptor bytes DISK ROM streams for each
+sector (C/H/R/N) rather than writing real gap/sync/ID/CRC bytes to a
+simulated physical track -- it just blanks every sector of the drive's
+current (track, side) via DiskDrive.format_track(), positioned by whatever
+SEEK/RECALIBRATE already set, not by the streamed C values.
 """
 from __future__ import annotations
 
@@ -42,9 +47,13 @@ CMD_WRITE_DATA: int = 0x05
 CMD_READ_DATA: int = 0x06
 CMD_RECALIBRATE: int = 0x07
 CMD_SENSE_INTERRUPT_STATUS: int = 0x08
+CMD_FORMAT: int = 0x0D
 CMD_SEEK: int = 0x0F
 
 # Number of Command-Phase parameter bytes (after the command byte) per command.
+# FORMAT's 5: HD_DS, N (bytes/sector code, ignored -- this model's sectors are
+# fixed at SECTOR_SIZE), SC (sectors/cylinder), GPL (gap length, ignored), D
+# (fill byte).
 _PARAM_COUNT: dict[int, int] = {
     CMD_SPECIFY: 2,
     CMD_SENSE_DEVICE_STATUS: 1,
@@ -52,6 +61,7 @@ _PARAM_COUNT: dict[int, int] = {
     CMD_READ_DATA: 8,
     CMD_RECALIBRATE: 1,
     CMD_SENSE_INTERRUPT_STATUS: 0,
+    CMD_FORMAT: 5,
     CMD_SEEK: 2,
 }
 
@@ -109,7 +119,12 @@ class TC8566AF:
     _exec_buffer: bytearray = field(default_factory=bytearray)
     _exec_index: int = 0
     _exec_is_write: bool = False
+    # Target _exec_buffer length that completes the Execution Phase: fixed at
+    # SECTOR_SIZE for WRITE DATA, 4 * sectors-per-cylinder (one C,H,R,N
+    # descriptor group per sector) for FORMAT.
+    _exec_needed: int = 0
     _exec_ctr: tuple[int, int, int, int] = (0, 0, 0, 0)  # C, H, R, N for the result echo
+    _format_fill: int = 0  # FORMAT's D (fill byte) parameter
     _selected_drive_index: int = 0
     _last_st0: int = ST0_INVALID  # SENSE INTERRUPT STATUS with nothing pending
     _last_pcn: int = 0
@@ -205,12 +220,15 @@ class TC8566AF:
                 self._execute_command()
         elif self._phase is Phase.EXECUTION and self._exec_is_write:
             self._exec_buffer.append(value)
-            if len(self._exec_buffer) >= SECTOR_SIZE:
-                c, h, r, _n = self._exec_ctr
-                drive = self._drive(self._selected_drive_index)
-                if drive is not None:
-                    drive.write_sector(c, h, r, bytes(self._exec_buffer))
-                self._start_result_phase()
+            if len(self._exec_buffer) >= self._exec_needed:
+                if (self._command & _CMD_MASK) == CMD_FORMAT:
+                    self._complete_format()
+                else:
+                    c, h, r, _n = self._exec_ctr
+                    drive = self._drive(self._selected_drive_index)
+                    if drive is not None:
+                        drive.write_sector(c, h, r, bytes(self._exec_buffer))
+                    self._start_result_phase()
         # RESULT Phase / read-side EXECUTION Phase: a host write here is
         # "Illegal" per the datasheet's Main Status Register function table;
         # this model simply ignores it rather than modelling the illegal-combo
@@ -268,6 +286,8 @@ class TC8566AF:
             self._cmd_read_data(params)
         elif opcode == CMD_WRITE_DATA:
             self._cmd_write_data(params)
+        elif opcode == CMD_FORMAT:
+            self._cmd_format(params)
         else:
             self._invalid_command()
 
@@ -367,8 +387,47 @@ class TC8566AF:
         self._exec_buffer = bytearray()
         self._exec_index = 0
         self._exec_is_write = True
+        self._exec_needed = SECTOR_SIZE
         self._exec_ctr = (c, h, r, n)
         self._phase = Phase.EXECUTION
+
+    def _cmd_format(self, params: bytearray) -> None:
+        """FORMAT: blank every sector of the drive's current (track, side).
+
+        Positioned by whatever SEEK/RECALIBRATE already set (drive.track),
+        not by the C values DISK ROM streams per sector -- see the module
+        docstring. Readiness is checked upfront (drive/disk/write-protect),
+        matching this file's own _cmd_write_data rather than openMSX's
+        TC8566AF::executionPhaseWrite, which only discovers a write failure
+        at the end via a caught exception around flushTrack()."""
+        hd_ds, _n, sc, _gpl, filler = params
+        index = hd_ds & 0x03
+        self._selected_drive_index = index
+        head = (hd_ds >> 2) & 0x01
+        drive = self._drive(index)
+        if drive is None or not drive.has_disk:
+            self._abnormal_result(index, ST0_NOT_READY, 0, 0, head, 0, 0)
+            return
+        if drive.write_protected:
+            self._abnormal_result(index, 0, ST1_NOT_WRITABLE, 0, head, 0, 0)
+            return
+        self._exec_buffer = bytearray()
+        self._exec_index = 0
+        self._exec_is_write = True
+        self._exec_needed = 4 * max(1, sc)
+        self._format_fill = filler
+        self._exec_ctr = (0, head, 0, 0)
+        self._phase = Phase.EXECUTION
+
+    def _complete_format(self) -> None:
+        _c, head, _r, _n = self._exec_ctr
+        drive = self._drive(self._selected_drive_index)
+        if drive is not None:
+            drive.format_track(drive.track, head, fill=self._format_fill)
+        st0 = self._selected_drive_index & 0x03
+        self._result_buffer = bytearray([st0 & 0xFF, 0, 0, 0, head, 0, 0])
+        self._result_index = 0
+        self._phase = Phase.RESULT
 
     def _abnormal_result(
         self, index: int, st0_extra: int, st1: int, c: int, h: int, r: int, n: int
