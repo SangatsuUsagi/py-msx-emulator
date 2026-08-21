@@ -172,6 +172,29 @@ def test_no_disk_reports_not_ready_on_sense_device_status(tmp_path: Path) -> Non
     assert not (st3 & 0x20)                 # RDY not set
 
 
+def test_recalibrate_succeeds_with_no_disk_inserted() -> None:
+    """RECALIBRATE/SEEK readiness depends only on the drive existing, not on
+    disk presence -- the head/track-0 sensor is mechanical (openMSX's
+    TC8566AF::doSeek: Not Ready only for a non-existent drive). A real MSX2
+    DISK ROM issues RECALIBRATE during its init before it can know whether a
+    disk is present; reporting abnormal termination here hung FS-A1F's boot
+    (SENSE INTERRUPT STATUS retried forever waiting for a completion that
+    never came)."""
+    drive = DiskDrive()                     # empty drive, no disk mounted
+    tc = TC8566AF(drives=[drive])
+    drive.track = 30
+
+    tc.write_data(CMD_RECALIBRATE)
+    tc.write_data(0x00)                     # HD_DS -> drive 0
+    assert drive.track == 0                 # seek to track 0 still runs
+
+    tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
+    st0 = tc.read_data()
+    assert st0 & 0x20                       # SE (seek end), not abnormal
+    assert not (st0 & 0x40)                 # IC0 (abnormal termination) clear
+    assert not (st0 & 0x08)                 # NR (not ready) clear
+
+
 def test_write_protect_rejects_write_data(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path, write_protected=True)
     tc.write_data(CMD_WRITE_DATA)
