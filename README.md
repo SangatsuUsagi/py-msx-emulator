@@ -300,9 +300,10 @@ write-back on exit; disks can be swapped at runtime from the debugger REPL
 
 A second FDC controller/connection-style pair on the same generic FDC layer,
 as used by the Panasonic FS-A1F (`--machine fs_a1f`). Registers are
-memory-mapped in slot 3 sub-slot 0 (Main Status Register, Data Register, two
-control registers — no directly addressable TRACK/SECTOR register, unlike
-WD2793); `*.dsk` images mount the same way via `--fdd1`. Implements SPECIFY,
+memory-mapped in slot 3 sub-slot 2 (FS-A1F's real hardware layout — RAM in
+sub-slot 0, SUB ROM in sub-slot 1) as Main Status Register, Data Register, and
+two control registers — no directly addressable TRACK/SECTOR register, unlike
+WD2793; `*.dsk` images mount the same way via `--fdd1`. Implements SPECIFY,
 SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE, SEEK, READ DATA,
 and WRITE DATA — the commands the MSX DISK ROM's boot/sector-I/O path needs.
 
