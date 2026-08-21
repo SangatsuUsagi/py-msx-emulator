@@ -43,16 +43,18 @@ def test_cbios_msx2_has_no_fdc() -> None:
 
 @pytest.mark.parametrize(
     "machine_id",
-    ["cbios_msx2", "cbios_msx2_jp", "cbios_msx2_br", "cbios_msx2_eu", "hb_f1xd", "fs_a1f"],
+    ["cbios_msx2", "cbios_msx2_jp", "cbios_msx2_br", "cbios_msx2_eu", "hb_f1xd"],
 )
-def test_every_existing_msx2_machine_defaults_both_roles_to_subslot_0(machine_id: str) -> None:
-    """openspec/changes/parameterize-subslot-index task 5.1's audit, pinned as
-    a regression test: every MSX2 machine YAML predating the independent
-    SUB-ROM/FDC sub-slot fields declares both (where present) in sub-slot 0,
-    so both resolve to the loader's default (0) unchanged. fs_a1f is included
-    here even though its real hardware wants sub-slot 1/2 -- it still ships
-    the provisional (combined, sub-slot 0) layout until
-    parameterize-subslot-index's own follow-up step switches it."""
+def test_every_msx2_machine_except_fs_a1f_defaults_both_roles_to_subslot_0(
+    machine_id: str,
+) -> None:
+    """Permanent spec, not a temporary exclusion: every MSX2 machine except
+    fs_a1f declares SUB ROM and the FDC (where present) in sub-slot 0, so both
+    resolve to the loader's default (0). fs_a1f is the deliberate, permanent
+    exception -- its real hardware wires SUB ROM into sub-slot 1 and the FDC
+    into sub-slot 2 (config/machines/fs_a1f.yaml), and that non-default
+    resolution is itself asserted as a permanent regression test in
+    tests/test_machine_fs_a1f.py::test_loader_resolves_tc8566af_fdc."""
     registry = load_device_registry(_CONFIG)
     spec = load_machine_spec(machine_id, _CONFIG, registry, _ROOT)
     assert spec.sub_rom_subslot == 0
