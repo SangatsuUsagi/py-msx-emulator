@@ -52,6 +52,15 @@ def test_control_reg0_selects_drive_and_enables_motor(tmp_path: Path) -> None:
     assert iface.controller.motor_on(0) is True
 
 
+def test_control_registers_read_as_open_bus_not_disk_rom(tmp_path: Path) -> None:
+    """0x7FF8/0x7FF9 are write-only; reading them must not fall through to
+    the DISK ROM byte at that offset (regression: allium:weed found this
+    falling through prior to the fix)."""
+    iface = _iface(tmp_path)
+    assert iface.read_mem(0x7FF8) == 0xFF
+    assert iface.read_mem(0x7FF9) == 0xFF
+
+
 def test_reserved_offsets_read_fixed_diagnostic_values(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     assert iface.read_mem(0x7FFC) == 0xFC

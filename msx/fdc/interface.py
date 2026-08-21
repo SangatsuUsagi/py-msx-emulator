@@ -286,12 +286,18 @@ class TC8566AFInterface(FloppyDisk):
 
     def read_mem(self, addr: int) -> int:
         reg = addr & 0x3FFF
-        if reg == TC_REG_STATUS:
-            return self._ctrl().read_main_status()
-        if reg == TC_REG_DATA:
-            return self._ctrl().read_data()
-        if reg in _TC_RESERVED:
-            return _TC_RESERVED[reg]
+        if TC_REG_CONTROL0 <= reg <= TC_REG_DATA or reg in _TC_RESERVED:
+            # The whole 0x3FF8-0x3FFF register window (including the two
+            # write-only control registers, which have no read behaviour) is
+            # never DISK ROM, matching openMSX TurboRFDC::peekMem's default
+            # 0xFF for undefined offsets in this region.
+            if reg == TC_REG_STATUS:
+                return self._ctrl().read_main_status()
+            if reg == TC_REG_DATA:
+                return self._ctrl().read_data()
+            if reg in _TC_RESERVED:
+                return _TC_RESERVED[reg]
+            return 0xFF  # TC_REG_CONTROL0 / TC_REG_CONTROL1: write-only
         if self.disk_rom is not None and reg < len(self.disk_rom):
             return self.disk_rom[reg]
         return 0xFF
