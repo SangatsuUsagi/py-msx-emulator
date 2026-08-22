@@ -1,6 +1,6 @@
 """Tests for the TC8566AF controller (functional model).
 
-One test per Scenario in openspec/changes/add-tc8566af-fdc/specs/fdc-tc8566af/
+One test per Scenario in openspec/changes/archive/2026-08-21-add-tc8566af-fdc/specs/fdc-tc8566af/
 spec.md (written before msx/fdc/tc8566af.py exists -- TDD red phase).
 """
 from __future__ import annotations

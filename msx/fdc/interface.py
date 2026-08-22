@@ -111,7 +111,9 @@ class FloppyDisk:
       directly) -- read_mem(addr) -> int / write_mem(addr, value) -> None /
       reset() -> None hold unchanged across both, confirmed against openMSX's
       own TC8566AF-based connection style (TurboRFDC) too. See
-      openspec/changes/add-tc8566af-fdc/design.md for the full comparison.
+      openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md for the
+      full comparison (including its post-archive addendum recording this
+      split's actual implementation).
       `self.state.controller`'s static type is `WD2793 | TC8566AF` (not
       WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
       construct one -- only `_ctrl()`'s narrowing back to the concrete
@@ -296,7 +298,7 @@ class TC8566AFInterface(FloppyDisk):
     Unlike SonyPhilipsInterface's WD2793, the TC8566AF controller owns all
     drives directly (Control Register 0 addresses one of them) rather than
     being handed a single externally-swapped "current drive" reference -- see
-    openspec/changes/add-tc8566af-fdc/design.md.
+    openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
     """
 
     def __init__(

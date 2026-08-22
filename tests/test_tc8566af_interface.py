@@ -1,6 +1,6 @@
 """Tests for the TC8566AF FDC connection-style interface (Panasonic FS-A1F).
 
-One test per Scenario in openspec/changes/add-tc8566af-fdc/specs/fdc-interface/
+One test per Scenario in openspec/changes/archive/2026-08-21-add-tc8566af-fdc/specs/fdc-interface/
 spec.md's "TC8566AF connection style register decode" Requirement (written
 before TC8566AFInterface exists -- TDD red phase).
 """

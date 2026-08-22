@@ -96,7 +96,7 @@ class TC8566AF:
     chip's Control Register 0 addresses one of up to four drives it owns
     directly, and READ DATA/WRITE DATA/SEEK/RECALIBRATE/SENSE DEVICE STATUS
     each carry their own target drive in their first parameter byte (DS1:DS0)
-    -- see openspec/changes/add-tc8566af-fdc/design.md.
+    -- see openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
     """
 
     drives: list[DiskDrive]
