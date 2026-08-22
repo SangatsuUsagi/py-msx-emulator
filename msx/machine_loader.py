@@ -321,10 +321,12 @@ class _FmPacOverlay:
 #
 # One TypedDict per distinct raw-YAML shape this file validates, named
 # `<Thing>Yaml` to stay visually distinct from the *resolved* dataclasses
-# above (e.g. RomEntryYaml vs _RomEntry). Required/optional fields are
-# expressed via TypedDict inheritance (a total=True base + a total=False
-# subclass) rather than typing.NotRequired, since NotRequired needs Python
-# 3.11 or a typing_extensions dependency and this project targets 3.10.
+# above (e.g. RomEntryYaml vs _RomEntry). Every shape is a single
+# `total=False` TypedDict, no field statically required: this file's
+# validation style is per-field `.get()` + immediate raise, inline in the
+# same function that uses the value, not an upstream gate that downstream
+# code could trust -- see design.md Decision 2 for why a required/optional
+# split (the originally-planned approach) doesn't fit that style.
 #
 # Each shape's `_is_<thing>_shape(data: object) -> TypeGuard[<Thing>Yaml]`
 # function performs the same isinstance/.get() checks the corresponding
@@ -358,6 +360,33 @@ def _is_device_entry_shape(data: object) -> TypeGuard[DeviceEntryYaml]:
     """True if `data` is a dict (device YAML top-level shape). `id`/`type`
     presence are still checked by `load_device_registry` itself, not
     guaranteed here -- see design.md Decision 2."""
+    return isinstance(data, dict)
+
+
+class ContentItemYaml(TypedDict, total=False):
+    rom: RomEntryYaml
+
+
+def _is_content_item_shape(data: object) -> TypeGuard[ContentItemYaml]:
+    """True if `data` is a dict (slot content-list item shape)."""
+    return isinstance(data, dict)
+
+
+class Slot0Yaml(TypedDict, total=False):
+    content: list[ContentItemYaml]
+
+
+def _is_slot0_shape(data: object) -> TypeGuard[Slot0Yaml]:
+    """True if `data` is a dict (slot 0 block shape)."""
+    return isinstance(data, dict)
+
+
+class Slot3Msx1Yaml(TypedDict, total=False):
+    size_kb: int
+
+
+def _is_slot3_msx1_shape(data: object) -> TypeGuard[Slot3Msx1Yaml]:
+    """True if `data` is a dict (MSX1 slot 3 block shape)."""
     return isinstance(data, dict)
 
 
@@ -443,7 +472,7 @@ def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
 
 
 def _parse_slot0(
-    slot0: dict[str, Any], machine_id: str
+    slot0: Slot0Yaml, machine_id: str
 ) -> tuple[_RomEntry | None, _RomEntry | None]:
     """Extract main ROM (pages [0,1]) and optional logo ROM (page [2]) from slot 0."""
     main_rom: _RomEntry | None = None
@@ -461,7 +490,7 @@ def _parse_slot0(
     return main_rom, logo_rom
 
 
-def _parse_slot3_msx1(slot3: dict[str, Any]) -> int:
+def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
     """Return flat RAM size in KB for an MSX1 slot 3 declaration."""
     return int(slot3.get("size_kb", 32))
 
@@ -681,9 +710,8 @@ def load_machine_spec(
     slots: dict[str, Any] = raw.get("slots", {})
     primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
 
-    slot0: Any = primary.get(0, {})
-    if not isinstance(slot0, dict):
-        slot0 = {}
+    slot0_raw = primary.get(0, {})
+    slot0: Slot0Yaml = slot0_raw if _is_slot0_shape(slot0_raw) else {}
     main_rom_entry, logo_rom_entry = _parse_slot0(slot0, machine_id)
     if main_rom_entry is None:
         raise MachineLoadError(
@@ -699,7 +727,7 @@ def load_machine_spec(
     fdc: _FdcDef | None = None
     fdc_subslot = 0
 
-    slot3: Any = primary.get(3, {})
+    slot3: dict[str, Any] = primary.get(3, {})
     if not isinstance(slot3, dict):
         slot3 = {}
 
@@ -713,7 +741,10 @@ def load_machine_spec(
         fdc = s3.fdc
         fdc_subslot = s3.fdc_subslot
     else:
-        ram_size_kb = _parse_slot3_msx1(slot3)
+        # slot3 is already confirmed dict-shaped above; TypedDict is a plain
+        # dict at runtime, so this is a widening/narrowing view of the same
+        # object, not an unchecked cast (design.md Decision 2).
+        ram_size_kb = _parse_slot3_msx1(cast(Slot3Msx1Yaml, slot3))
 
     # --- Builtin device resolution ---
     has_v9938, has_rtc, keyboard_type, device_io_ports = _parse_builtin_devices(
