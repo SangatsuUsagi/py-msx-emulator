@@ -14,7 +14,7 @@ from pathlib import Path
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import TC8566AFInterface
-from msx.fdc.tc8566af import TC8566AF
+from msx.fdc.tc8566af import TC8566AF, Phase
 
 _2DD = 737280
 
@@ -71,7 +71,6 @@ def test_swap_disk_aborts_transfer_only_on_targeted_drive(tmp_path: Path) -> Non
     iface.write_mem(0x7FFB, 0x06)  # CMD_READ_DATA
     for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
         iface.write_mem(0x7FFB, b)
-    from msx.fdc.tc8566af import Phase
     assert iface.controller._phase == Phase.EXECUTION
 
     new_image_path = tmp_path / "swap1.dsk"

@@ -129,7 +129,7 @@ def test_load_device_registry_returns_device(tmp_path: Path) -> None:
     config_dir = _make_device_dir(tmp_path)
     registry = load_device_registry(config_dir)
     assert "psg_ay8910" in registry
-    assert registry["psg_ay8910"].type == "io_device"
+    assert registry["psg_ay8910"].raw["type"] == "io_device"
     assert registry["psg_ay8910"].implemented is True
 
 

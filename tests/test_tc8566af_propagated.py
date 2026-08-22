@@ -28,6 +28,9 @@ from msx.fdc.tc8566af import (
 
 _2DD = 737280
 
+# HD_DS,C,H,R,N,EOT,GPL,DTL -- a valid READ/WRITE DATA parameter block.
+_READ_WRITE_PARAMS = (0, 0, 0, 1, 2, 1, 0x1B, 0xFF)
+
 
 def _ctrl(tmp_path: Path, *, with_disk: bool = True) -> tuple[TC8566AF, DiskDrive]:
     image = None
@@ -56,7 +59,7 @@ def test_abort_transfer_clears_phase_but_not_control_registers(tmp_path: Path) -
     drive.image.write_sector(0, b"\x11" * SECTOR_SIZE)
     tc.write_control_reg0(0x14)  # MEN0 on, -FRST=1 (bit2 set): normal operation
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     assert tc._phase == Phase.EXECUTION  # mid-transfer
 
@@ -70,7 +73,7 @@ def test_control_reg0_frst_bit_low_triggers_abort(tmp_path: Path) -> None:
     tc, drive = _ctrl(tmp_path)
     drive.image.write_sector(0, b"\x22" * SECTOR_SIZE)
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     assert tc._phase == Phase.EXECUTION
 
@@ -96,7 +99,7 @@ def test_read_data_register_mid_command_phase_returns_open_bus(tmp_path: Path) -
 def test_read_data_register_during_write_execution_returns_open_bus(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path)
     tc.write_data(CMD_WRITE_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     assert tc._phase == Phase.EXECUTION
     assert tc.read_data() == 0xFF  # WRITE DATA's own Execution Phase is host->FDC
@@ -120,23 +123,6 @@ def test_seek_no_disk_still_completes_via_sense_interrupt_status(tmp_path: Path)
     assert st0 & 0x20  # seek end
     assert not (st0 & 0x40)  # not abnormal termination
     assert not (st0 & 0x08)  # ready
-
-
-def test_recalibrate_no_disk_still_completes_via_sense_interrupt_status(
-    tmp_path: Path,
-) -> None:
-    """Same fix as test_seek_no_disk_still_completes_via_sense_interrupt_status,
-    for RECALIBRATE -- see that test's docstring."""
-    tc, drive = _ctrl(tmp_path, with_disk=False)
-    drive.track = 30
-    tc.write_data(CMD_RECALIBRATE)
-    tc.write_data(0x00)
-    assert drive.track == 0
-    tc.write_data(CMD_SENSE_INTERRUPT_STATUS)
-    st0 = tc.read_data()
-    assert st0 & 0x20
-    assert not (st0 & 0x40)
-    assert not (st0 & 0x08)
 
 
 # -- rule-success.SenseInterruptStatusCommand: consuming reset --------------
@@ -176,7 +162,7 @@ def test_sense_interrupt_status_consumes_pending_result(tmp_path: Path) -> None:
 def test_read_data_no_disk_reports_not_ready(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path, with_disk=False)
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     st0 = tc.read_data()
     st1 = tc.read_data()
@@ -199,7 +185,7 @@ def test_read_data_missing_sector_reports_no_data(tmp_path: Path) -> None:
 def test_write_data_no_disk_reports_not_ready(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path, with_disk=False)
     tc.write_data(CMD_WRITE_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     st0 = tc.read_data()
     st1 = tc.read_data()

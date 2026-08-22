@@ -14,6 +14,7 @@ from msx.fdc.tc8566af import (
     CMD_READ_DATA,
     CMD_RECALIBRATE,
     CMD_SEEK,
+    CMD_SENSE_DEVICE_STATUS,
     CMD_SENSE_INTERRUPT_STATUS,
     CMD_WRITE_DATA,
     MSR_CB,
@@ -23,6 +24,9 @@ from msx.fdc.tc8566af import (
 )
 
 _2DD = 737280
+
+# HD_DS,C,H,R,N,EOT,GPL,DTL -- a valid READ/WRITE DATA parameter block.
+_READ_WRITE_PARAMS = (0, 0, 0, 1, 2, 1, 0x1B, 0xFF)
 
 
 def _ctrl(tmp_path: Path, *, write_protected: bool = False) -> tuple[TC8566AF, DiskDrive]:
@@ -38,7 +42,7 @@ def _ctrl(tmp_path: Path, *, write_protected: bool = False) -> tuple[TC8566AF, D
 def test_main_status_register_reflects_readiness_and_direction(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path)
     tc.write_data(CMD_READ_DATA)          # command byte
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):  # HD_DS,C,H,R,N,EOT,GPL,DTL
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     msr = tc.read_main_status()
     assert msr & MSR_RQM                  # ready
@@ -118,7 +122,7 @@ def test_result_phase_must_be_fully_drained(tmp_path: Path) -> None:
     drive.image.write_sector(0, payload)  # track0 side0 sector1 -> LSN 0
 
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     out = bytes(tc.read_data() for _ in range(SECTOR_SIZE))
     assert out == payload
@@ -140,7 +144,7 @@ def test_write_data_persists_and_read_data_round_trips(tmp_path: Path) -> None:
     payload = bytes((255 - (i & 0xFF)) for i in range(SECTOR_SIZE))
 
     tc.write_data(CMD_WRITE_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     for b in payload:
         tc.write_data(b)
@@ -149,7 +153,7 @@ def test_write_data_persists_and_read_data_round_trips(tmp_path: Path) -> None:
         tc.read_data()
 
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     out = bytes(tc.read_data() for _ in range(SECTOR_SIZE))
     assert out == payload
@@ -182,7 +186,7 @@ def test_format_blanks_track_then_write_read_round_trips(tmp_path: Path) -> None
 
     payload = bytes(i & 0xFF for i in range(SECTOR_SIZE))
     tc.write_data(CMD_WRITE_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     for b in payload:
         tc.write_data(b)
@@ -190,7 +194,7 @@ def test_format_blanks_track_then_write_read_round_trips(tmp_path: Path) -> None
         tc.read_data()
 
     tc.write_data(CMD_READ_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     out = bytes(tc.read_data() for _ in range(SECTOR_SIZE))
     assert out == payload
@@ -227,8 +231,6 @@ def test_recalibrate_seeks_selected_drive_to_track0(tmp_path: Path) -> None:
 
 def test_no_disk_reports_not_ready_on_sense_device_status(tmp_path: Path) -> None:
     tc = TC8566AF(drives=[DiskDrive()])     # empty drive
-    from msx.fdc.tc8566af import CMD_SENSE_DEVICE_STATUS
-
     tc.write_data(CMD_SENSE_DEVICE_STATUS)
     tc.write_data(0x00)
     st3 = tc.read_data()
@@ -287,7 +289,7 @@ def test_recalibrate_against_nonexistent_drive_still_reports_seek_end() -> None:
 def test_write_protect_rejects_write_data(tmp_path: Path) -> None:
     tc, _drive = _ctrl(tmp_path, write_protected=True)
     tc.write_data(CMD_WRITE_DATA)
-    for b in (0, 0, 0, 1, 2, 1, 0x1B, 0xFF):
+    for b in _READ_WRITE_PARAMS:
         tc.write_data(b)
     st0 = tc.read_data()
     st1 = tc.read_data()

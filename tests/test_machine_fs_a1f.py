@@ -11,13 +11,18 @@ from pathlib import Path
 
 from msx.fdc.interface import TC8566AFInterface
 from msx.fdc.tc8566af import TC8566AF
-from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+from msx.machine_loader import (
+    MachineSpec,
+    build_machine,
+    load_device_registry,
+    load_machine_spec,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
 
 
-def _spec():
+def _spec() -> MachineSpec:
     registry = load_device_registry(_CONFIG)
     return load_machine_spec("fs_a1f", _CONFIG, registry, _ROOT)
 
