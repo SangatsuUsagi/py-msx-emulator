@@ -359,6 +359,31 @@ class Memory:
                 return "Cartridge (empty)"
             return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
         if primary == 3:
+            flat_sub = self.flat_ram_subslot
+            if flat_sub is not None:
+                # Data-driven layout (e.g. FS-A1F): mirror
+                # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
+                # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
+                # RAM in flat_sub, open bus elsewhere. `page is None` (the
+                # `st` tree view, one line per sub-slot) matches the
+                # page-0/fdc_page role regardless of page, same as the
+                # legacy branch below always describing sub-slot 0 as ROM.
+                if (
+                    secondary == self.sub_rom_subslot
+                    and self.sub0_rom is not None
+                    and page in (0, None)
+                ):
+                    name = self.sub0_rom_name or "ROM"
+                    return f"ROM {name}" if name != "ROM" else "ROM"
+                if (
+                    secondary == self.fdc_subslot
+                    and self.fdc is not None
+                    and page in (self.fdc_page, None)
+                ):
+                    return "FDC"
+                if secondary == flat_sub:
+                    return "RAM"
+                return "empty"
             if secondary == 0:
                 name = self.sub0_rom_name or "ROM"
                 return f"ROM {name}" if name != "ROM" else "ROM"
@@ -391,11 +416,13 @@ class Memory:
         if primary == 0:
             n = len(self.rom)
             return f"{n // 1024}KB" if n else ""
-        if primary == 3 and secondary == 0:
+        if primary == 3 and secondary == self.sub_rom_subslot:
             sub = self.sub0_rom
             n = len(sub) if sub is not None else 0
             return f"{n // 1024}KB" if n else ""
-        if primary == 3 and secondary in (2, 3):
+        flat_sub = self.flat_ram_subslot
+        is_ram_subslot = secondary == flat_sub if flat_sub is not None else secondary in (2, 3)
+        if primary == 3 and is_ram_subslot:
             rm = self.ram_mapper
             if rm is not None:
                 return "128KB"
