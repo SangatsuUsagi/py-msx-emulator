@@ -27,7 +27,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypedDict, TypeGuard, cast
 
 import yaml
 
@@ -317,6 +317,51 @@ class _FmPacOverlay:
 
 
 # ---------------------------------------------------------------------------
+# Raw YAML shapes (TypedDict + TypeGuard)
+#
+# One TypedDict per distinct raw-YAML shape this file validates, named
+# `<Thing>Yaml` to stay visually distinct from the *resolved* dataclasses
+# above (e.g. RomEntryYaml vs _RomEntry). Required/optional fields are
+# expressed via TypedDict inheritance (a total=True base + a total=False
+# subclass) rather than typing.NotRequired, since NotRequired needs Python
+# 3.11 or a typing_extensions dependency and this project targets 3.10.
+#
+# Each shape's `_is_<thing>_shape(data: object) -> TypeGuard[<Thing>Yaml]`
+# function performs the same isinstance/.get() checks the corresponding
+# parser already performed before this change -- TypeGuard only tells mypy
+# "trust the narrower type once this returns True", it does not generate or
+# replace runtime validation. See openspec/changes/typed-machine-loader-yaml/
+# design.md for the full rationale.
+# ---------------------------------------------------------------------------
+
+class RomEntryYaml(TypedDict, total=False):
+    file: str
+    size_kb: int
+    pages: list[int]
+    sha1: str
+
+
+def _is_rom_entry_shape(data: object) -> TypeGuard[RomEntryYaml]:
+    """True if `data` is a dict (rom: block shape). `file`'s presence is
+    still checked by `_parse_rom_entry` itself, not guaranteed here -- see
+    openspec/changes/typed-machine-loader-yaml/design.md Decision 2."""
+    return isinstance(data, dict)
+
+
+class DeviceEntryYaml(TypedDict, total=False):
+    id: str
+    type: str
+    implemented: bool
+
+
+def _is_device_entry_shape(data: object) -> TypeGuard[DeviceEntryYaml]:
+    """True if `data` is a dict (device YAML top-level shape). `id`/`type`
+    presence are still checked by `load_device_registry` itself, not
+    guaranteed here -- see design.md Decision 2."""
+    return isinstance(data, dict)
+
+
+# ---------------------------------------------------------------------------
 # Pass 1: device registry
 # ---------------------------------------------------------------------------
 
@@ -339,21 +384,25 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
         return registry
     for path in sorted(devices_dir.glob("*.yaml")):
         with path.open(encoding="utf-8") as fh:
-            raw: Any = yaml.safe_load(fh)
-        if not isinstance(raw, dict):
+            raw = yaml.safe_load(fh)
+        if not _is_device_entry_shape(raw):
             raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
-        dev_id: Any = raw.get("id")
+        dev_id = raw.get("id")
         if not dev_id:
             raise MachineLoadError(f"{path}: missing required field 'id'")
         if dev_id != path.stem:
             raise MachineLoadError(
                 f"{path}: 'id' field {dev_id!r} does not match filename stem {path.stem!r}"
             )
-        dev_type: Any = raw.get("type")
+        dev_type = raw.get("type")
         if not dev_type:
             raise MachineLoadError(f"{path}: missing required field 'type'")
-        implemented: bool = bool(raw.get("implemented", True))
-        registry[str(dev_id)] = _DeviceDef(implemented=implemented, raw=raw)
+        implemented = bool(raw.get("implemented", True))
+        # _DeviceDef.raw stays dict[str, Any] (arbitrary passthrough fields
+        # beyond DeviceEntryYaml's known keys, e.g. keyboard_type/io_ports --
+        # design.md Decision 5); TypedDict is a plain dict at runtime, so this
+        # cast is a widening, not a type mismatch.
+        registry[str(dev_id)] = _DeviceDef(implemented=implemented, raw=cast(dict[str, Any], raw))
     return registry
 
 
@@ -361,7 +410,7 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
 # Slot parsers
 # ---------------------------------------------------------------------------
 
-def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
+def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     """Parse a `rom: {file, size_kb, pages, sha1}` block into a _RomEntry.
 
     This is the one shared slot-resident-device ROM schema in the loader: it
@@ -372,13 +421,13 @@ def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
     (load_fmpac_overlay). A new ROM-bearing device added to the loader should
     reuse this rather than hand-rolling another parser.
     """
-    file: Any = entry.get("file")
+    file = entry.get("file")
     if not file:
         raise MachineLoadError(f"{context}: ROM entry missing required field 'file'")
-    size_kb: int = int(entry.get("size_kb", 0))
-    pages_raw: Any = entry.get("pages", [])
+    size_kb = entry.get("size_kb", 0)
+    pages_raw = entry.get("pages", [])
     pages: list[int] = [int(p) for p in pages_raw]
-    sha1: str | None = entry.get("sha1") or None
+    sha1 = entry.get("sha1") or None
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
@@ -401,8 +450,8 @@ def _parse_slot0(
     logo_rom: _RomEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
-        rom_data: Any = item.get("rom")
-        if not isinstance(rom_data, dict):
+        rom_data = item.get("rom")
+        if not _is_rom_entry_shape(rom_data):
             continue
         entry = _parse_rom_entry(rom_data, context)
         if 0 in entry.pages or 1 in entry.pages:
@@ -428,8 +477,8 @@ def _parse_fdc(sub_val: dict[str, Any], machine_id: str, sub_idx: int) -> _FdcDe
     if not isinstance(fdc_raw, dict):
         return None
     context = f"machine '{machine_id}' slot 3 sub-slot {sub_idx} fdc"
-    rom_data: Any = fdc_raw.get("rom")
-    if not isinstance(rom_data, dict):
+    rom_data = fdc_raw.get("rom")
+    if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{context}: missing required 'rom' entry")
     disk_rom_entry = _parse_rom_entry(rom_data, context)
     controller = str(fdc_raw.get("controller", "wd2793")).lower()
@@ -480,8 +529,8 @@ def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
                 continue
             if result.sub_rom is None:
                 for item in sub_val.get("content", []):
-                    rom_data: Any = item.get("rom")
-                    if isinstance(rom_data, dict):
+                    rom_data = item.get("rom")
+                    if _is_rom_entry_shape(rom_data):
                         result.sub_rom = _parse_rom_entry(
                             rom_data, f"machine '{machine_id}' slot 3 sub-slot {sub_idx}"
                         )
@@ -737,8 +786,8 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
     rom_base: str = str(raw.get("rom_base", "roms/fmpac"))
     rom_base_dir = project_root / rom_base
 
-    rom_data: Any = raw.get("rom")
-    if not isinstance(rom_data, dict):
+    rom_data = raw.get("rom")
+    if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{path}: missing required 'rom' entry")
     rom_entry = _parse_rom_entry(rom_data, f"FM-PAC overlay '{path}'")
 
