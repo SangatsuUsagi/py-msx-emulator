@@ -5,20 +5,32 @@ Raises MachineLoadError with specific file and field names on any validation fai
 
 PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
-  et al.) is the largest source of `Any` in this codebase (same pattern, at
-  smaller scale, in msx/app_config.py and msx/romdb.py).
+  et al.) used to be the largest source of `Any` in this codebase (same
+  pattern, at smaller scale, still applies to msx/app_config.py and
+  msx/romdb.py). RESOLVED for this file by
+  openspec/changes/typed-machine-loader-yaml: every raw YAML mapping this
+  file validates is now typed via `TypedDict` (`RomEntryYaml`,
+  `DeviceEntryYaml`, `MachineEntryYaml`, etc.) with `TypeGuard`-returning
+  `_is_<thing>_shape` narrowing functions, so a field read off an
+  already-validated mapping is checked against a known shape, not `Any`.
+  This is a Python-side approximation, not a schema-validation library --
+  the `TypeGuard` functions still hand-write the same runtime checks this
+  file always performed (see design.md Decision 3); only the point where
+  static typing starts moved earlier. Remaining `Any` in this file is
+  deliberate: `_DeviceDef.raw`/`overrides` (arbitrary per-device passthrough
+  content), and `secondary`/`primary`/`slots` (raw YAML keys before
+  `_int_keys()` coercion narrows their values per-item).
 Rust crate candidates: serde + serde_yaml (or saphyr) deserializing directly
   into the equivalent MachineSpec/AppConfig structs, replacing this hand-
   written validation layer with derive-macro-generated checks -- would need
   custom Deserialize impls to reproduce the exact error messages and
-  _KNOWN_*_KEYS unknown-key warnings this file emits.
+  _KNOWN_*_KEYS unknown-key warnings this file emits. The TypedDict shapes
+  this file now declares are a reasonable 1:1 map to the equivalent serde
+  structs, should a Rust port be undertaken.
 C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
   validation (closest to today's Python shape), or a schema-validated
   approach via nlohmann/json-style patterns if the config format were
   migrated to JSON at port time.
-Not adopted now because: this is inherent to dynamically-typed YAML, not a
-  code-quality gap in the current Python; no new dependency needed for the
-  Python codebase today (PyYAML already covers this).
 """
 from __future__ import annotations
 
@@ -468,6 +480,30 @@ def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
     return isinstance(data, dict)
 
 
+class SramYaml(TypedDict, total=False):
+    save_file: str
+
+
+def _is_sram_shape(data: object) -> TypeGuard[SramYaml]:
+    """True if `data` is a dict (sram: block shape)."""
+    return isinstance(data, dict)
+
+
+class FmPacOverlayYaml(TypedDict, total=False):
+    schema_version: int
+    slot: int
+    rom_base: str
+    rom: RomEntryYaml
+    sram: SramYaml
+
+
+def _is_fmpac_overlay_shape(data: object) -> TypeGuard[FmPacOverlayYaml]:
+    """True if `data` is a dict (fmpac.yaml top-level shape). Individual
+    required fields are still checked by `load_fmpac_overlay` itself, not
+    guaranteed here (design.md Decision 2)."""
+    return isinstance(data, dict)
+
+
 # ---------------------------------------------------------------------------
 # Pass 1: device registry
 # ---------------------------------------------------------------------------
@@ -879,11 +915,11 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
         raise MachineLoadError(f"FM-PAC overlay not found: {path}")
 
     with path.open(encoding="utf-8") as fh:
-        raw: Any = yaml.safe_load(fh)
-    if not isinstance(raw, dict):
+        raw = yaml.safe_load(fh)
+    if not _is_fmpac_overlay_shape(raw):
         raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
 
-    schema_version: Any = raw.get("schema_version")
+    schema_version = raw.get("schema_version")
     if schema_version != 1:
         raise MachineLoadError(
             f"{path}: unsupported schema_version {schema_version!r} (expected 1)"
@@ -902,9 +938,9 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
         raise MachineLoadError(f"{path}: missing required 'rom' entry")
     rom_entry = _parse_rom_entry(rom_data, f"FM-PAC overlay '{path}'")
 
-    sram_data: Any = raw.get("sram")
+    sram_data = raw.get("sram")
     save_file = str(sram_data.get("save_file", "saves/sram/fmpac.sram")) \
-        if isinstance(sram_data, dict) else "saves/sram/fmpac.sram"
+        if _is_sram_shape(sram_data) else "saves/sram/fmpac.sram"
 
     return _FmPacOverlay(
         rom_base_dir=rom_base_dir,
