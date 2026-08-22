@@ -51,11 +51,10 @@ def live(sock_dir) -> Iterator[tuple]:
                 time.sleep(0.001)
 
     thread = threading.Thread(target=loop, daemon=True)
-    thread.start()
-
-    mod = _load("mcp_server_under_test", "mcp_server.py")
-    mod.SOCK_PATH = sock
     try:
+        thread.start()
+        mod = _load("mcp_server_under_test", "mcp_server.py")
+        mod.SOCK_PATH = sock
         yield mod, machine, srv
     finally:
         stop.set()

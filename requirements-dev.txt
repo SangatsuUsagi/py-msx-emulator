@@ -29,4 +29,6 @@ scalene>=1.5
 py-spy>=0.4
 
 # MCP server for Claude Code integration (tools/mcp_server.py)
-mcp[cli]>=1.0
+# <2.0: mcp 2.0 renamed FastMCP to mcp.server.mcpserver.MCPServer;
+# tools/mcp_server.py is written against the 1.x FastMCP API.
+mcp[cli]>=1.0,<2.0
