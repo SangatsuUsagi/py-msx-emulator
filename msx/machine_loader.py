@@ -216,7 +216,6 @@ class MachineLoadError(Exception):
 
 @dataclass
 class _DeviceDef:
-    type: str
     implemented: bool
     raw: dict[str, Any]
 
@@ -354,9 +353,7 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
         if not dev_type:
             raise MachineLoadError(f"{path}: missing required field 'type'")
         implemented: bool = bool(raw.get("implemented", True))
-        registry[str(dev_id)] = _DeviceDef(
-            type=str(dev_type), implemented=implemented, raw=raw
-        )
+        registry[str(dev_id)] = _DeviceDef(implemented=implemented, raw=raw)
     return registry
 
 
@@ -509,6 +506,61 @@ def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
 # Pass 2: machine spec
 # ---------------------------------------------------------------------------
 
+def _parse_builtin_devices(
+    raw: dict[str, Any],
+    device_registry: dict[str, _DeviceDef],
+    machine_path: Path,
+) -> tuple[bool, bool, str, dict[str, tuple[int, int]]]:
+    """Resolve the `builtin_devices` list against the device registry.
+
+    Returns (has_v9938, has_rtc, keyboard_type, device_io_ports).
+    """
+    has_v9938 = False
+    has_rtc = False
+    keyboard_type = "int"
+    device_io_ports: dict[str, tuple[int, int]] = {}
+
+    for entry in raw.get("builtin_devices", []):
+        if not isinstance(entry, dict):
+            continue
+        ref: Any = entry.get("ref")
+        if ref is None:
+            continue
+        ref_str = str(ref)
+        if ref_str not in device_registry:
+            raise MachineLoadError(
+                f"{machine_path}: builtin_devices ref {ref_str!r} not found in device registry"
+            )
+        dev = device_registry[ref_str]
+        if not dev.implemented:
+            print(
+                f"warning: device {ref_str!r} is not implemented, skipping",
+                file=sys.stderr,
+            )
+            continue
+        if ref_str == "vdp_v9938":
+            has_v9938 = True
+        elif ref_str == "rtc_rp5c01":
+            has_rtc = True
+        elif ref_str == "ppi8255":
+            # Keyboard layout: device-YAML default, optionally overridden per machine.
+            kt = dev.raw.get("keyboard_type", "int")
+            overrides = entry.get("overrides")
+            if isinstance(overrides, dict) and "keyboard_type" in overrides:
+                kt = overrides["keyboard_type"]
+            kt = str(kt).lower()
+            if kt not in ("int", "jp"):
+                raise MachineLoadError(
+                    f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
+                )
+            keyboard_type = kt
+        ports_raw: Any = dev.raw.get("io_ports")
+        if isinstance(ports_raw, list) and len(ports_raw) >= 1:
+            device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
+
+    return has_v9938, has_rtc, keyboard_type, device_io_ports
+
+
 def load_machine_spec(
     machine_id: str,
     config_dir: Path,
@@ -615,48 +667,9 @@ def load_machine_spec(
         ram_size_kb = _parse_slot3_msx1(slot3)
 
     # --- Builtin device resolution ---
-    has_v9938 = False
-    has_rtc = False
-    keyboard_type = "int"
-    device_io_ports: dict[str, tuple[int, int]] = {}
-
-    for entry in raw.get("builtin_devices", []):
-        if not isinstance(entry, dict):
-            continue
-        ref: Any = entry.get("ref")
-        if ref is None:
-            continue
-        ref_str = str(ref)
-        if ref_str not in device_registry:
-            raise MachineLoadError(
-                f"{machine_path}: builtin_devices ref {ref_str!r} not found in device registry"
-            )
-        dev = device_registry[ref_str]
-        if not dev.implemented:
-            print(
-                f"warning: device {ref_str!r} is not implemented, skipping",
-                file=sys.stderr,
-            )
-            continue
-        if ref_str == "vdp_v9938":
-            has_v9938 = True
-        elif ref_str == "rtc_rp5c01":
-            has_rtc = True
-        elif ref_str == "ppi8255":
-            # Keyboard layout: device-YAML default, optionally overridden per machine.
-            kt = dev.raw.get("keyboard_type", "int")
-            overrides = entry.get("overrides")
-            if isinstance(overrides, dict) and "keyboard_type" in overrides:
-                kt = overrides["keyboard_type"]
-            kt = str(kt).lower()
-            if kt not in ("int", "jp"):
-                raise MachineLoadError(
-                    f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
-                )
-            keyboard_type = kt
-        ports_raw: Any = dev.raw.get("io_ports")
-        if isinstance(ports_raw, list) and len(ports_raw) >= 1:
-            device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
+    has_v9938, has_rtc, keyboard_type, device_io_ports = _parse_builtin_devices(
+        raw, device_registry, machine_path
+    )
 
     return MachineSpec(
         name=name,
@@ -754,6 +767,27 @@ def _io_range(
     return spec.device_io_ports.get(device_id, fallback)
 
 
+def _register_common_io(
+    io: IOBus,
+    spec: MachineSpec,
+    vdp: "VDP | V9938",
+    psg: PSG,
+    ppi: PPI,
+    vdp_default_ports: tuple[int, int],
+) -> None:
+    """Register the VDP/PSG/PPI port ranges every machine generation shares."""
+    vdp_dev_id = "vdp_v9938" if isinstance(vdp, V9938) else "vdp_tms9918a"
+    vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
+    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
+    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
+
+
 # ---------------------------------------------------------------------------
 # ROM loading helper
 # ---------------------------------------------------------------------------
@@ -780,6 +814,21 @@ def _load_rom(rom_base_dir: Path, filename: str, *, required: bool) -> bytes | N
         print(f"warning: optional ROM file not found, skipping: {path}", file=sys.stderr)
         return None
     return path.read_bytes()
+
+
+def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytearray | None:
+    """Load a save file's SRAM bytes, or warn and start fresh if the size mismatches."""
+    if not path.exists():
+        return None
+    raw = path.read_bytes()
+    if len(raw) == expected_size:
+        return bytearray(raw)
+    print(
+        f"warning: {label}SRAM file {path} has wrong size "
+        f"({len(raw)} != {expected_size}), starting fresh",
+        file=sys.stderr,
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -873,17 +922,7 @@ def build_machine(
             # None here, so cart_sha1 is set).
             assert cart_sha1 is not None
             sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
-            expected_size = _SRAM_SIZES[resolved]
-            if sram_save_path.exists():
-                raw = sram_save_path.read_bytes()
-                if len(raw) == expected_size:
-                    sram_data = bytearray(raw)
-                else:
-                    print(
-                        f"warning: SRAM file {sram_save_path} has wrong size "
-                        f"({len(raw)} != {expected_size}), starting fresh",
-                        file=sys.stderr,
-                    )
+            sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
 
         mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
 
@@ -907,17 +946,9 @@ def build_machine(
             fmpac_overlay.rom_base_dir, fmpac_overlay.rom_entry.file, required=True
         )
         assert fmpac_rom is not None
-        fmpac_sram: bytearray | None = None
-        if fmpac_overlay.sram_save_path.exists():
-            raw_sram = fmpac_overlay.sram_save_path.read_bytes()
-            if len(raw_sram) == FMPAC_SRAM_SIZE:
-                fmpac_sram = bytearray(raw_sram)
-            else:
-                print(
-                    f"warning: FM-PAC SRAM file {fmpac_overlay.sram_save_path} has wrong "
-                    f"size ({len(raw_sram)} != {FMPAC_SRAM_SIZE}), starting fresh",
-                    file=sys.stderr,
-                )
+        fmpac_sram = _load_sram_or_warn(
+            fmpac_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
+        )
         fmpac_device = FmPac(
             rom=fmpac_rom,
             opll=Opll(),
@@ -1010,15 +1041,7 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
-    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", _DEFAULT_IO_PORTS["vdp_tms9918a"])
-    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
-    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
-    io.register_read(vdp_s, vdp_e, vdp.read_port)
-    io.register_write(vdp_s, vdp_e, vdp.write_port)
-    io.register_read(psg_s, psg_e, psg.read_port)
-    io.register_write(psg_s, psg_e, psg.write_port)
-    io.register_read(ppi_s, ppi_e, ppi.read_port)
-    io.register_write(ppi_s, ppi_e, ppi.write_port)
+    _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states, _logger=logger)
     return machine_cls(
@@ -1132,19 +1155,10 @@ def _build_msx2(
     rtc: RTC | None = RTC() if spec.has_rtc else None
     ppi = PPI(memory=memory, _input=input_state)
 
-    vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
     # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the
     # TMS9918A stops at 0x99.
     vdp_default_ports = (0x98, 0x9B) if spec.has_v9938 else _DEFAULT_IO_PORTS["vdp_tms9918a"]
-    vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
-    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
-    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
-    io.register_read(vdp_s, vdp_e, vdp.read_port)
-    io.register_write(vdp_s, vdp_e, vdp.write_port)
-    io.register_read(psg_s, psg_e, psg.read_port)
-    io.register_write(psg_s, psg_e, psg.write_port)
-    io.register_read(ppi_s, ppi_e, ppi.read_port)
-    io.register_write(ppi_s, ppi_e, ppi.write_port)
+    _register_common_io(io, spec, vdp, psg, ppi, vdp_default_ports)
     if rtc is not None:
         rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01", _DEFAULT_IO_PORTS["rtc_rp5c01"])
         io.register_read(rtc_s, rtc_e, rtc.read_port)
