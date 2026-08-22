@@ -429,6 +429,45 @@ def _is_slot3_msx2_shape(data: object) -> TypeGuard[Slot3Msx2Yaml]:
     return isinstance(data, dict)
 
 
+class BuiltinDeviceEntryYaml(TypedDict, total=False):
+    ref: str
+    # Arbitrary per-device override content (e.g. {"keyboard_type": "jp"}) --
+    # not a good TypedDict candidate, same reasoning as _DeviceDef.raw
+    # (design.md Decision 5).
+    overrides: dict[str, Any]
+
+
+def _is_builtin_device_entry_shape(data: object) -> TypeGuard[BuiltinDeviceEntryYaml]:
+    """True if `data` is a dict (builtin_devices list-item shape)."""
+    return isinstance(data, dict)
+
+
+class CpuBlockYaml(TypedDict, total=False):
+    m1_wait_states: int
+
+
+class MachineEntryYaml(TypedDict, total=False):
+    schema_version: int
+    id: str
+    generation: str
+    name: str
+    rom_base: str
+    video_standard: str
+    cpu: CpuBlockYaml
+    # Raw YAML keys (int-or-str) pre-_int_keys() coercion under
+    # slots["primary"] -- narrowed per-item to Slot0Yaml/Slot3Msx1Yaml/
+    # Slot3Msx2Yaml after coercion (design.md Decision 4).
+    slots: dict[str, Any]
+    builtin_devices: list[BuiltinDeviceEntryYaml]
+
+
+def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
+    """True if `data` is a dict (machine YAML top-level shape). Individual
+    required fields (schema_version/id/generation) are still checked by
+    `load_machine_spec` itself, not guaranteed here (design.md Decision 2)."""
+    return isinstance(data, dict)
+
+
 # ---------------------------------------------------------------------------
 # Pass 1: device registry
 # ---------------------------------------------------------------------------
@@ -624,7 +663,7 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
 # ---------------------------------------------------------------------------
 
 def _parse_builtin_devices(
-    raw: dict[str, Any],
+    raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
     machine_path: Path,
 ) -> tuple[bool, bool, str, dict[str, tuple[int, int]]]:
@@ -638,9 +677,9 @@ def _parse_builtin_devices(
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
-        if not isinstance(entry, dict):
+        if not _is_builtin_device_entry_shape(entry):
             continue
-        ref: Any = entry.get("ref")
+        ref = entry.get("ref")
         if ref is None:
             continue
         ref_str = str(ref)
@@ -705,24 +744,24 @@ def load_machine_spec(
         raise MachineLoadError(f"machine not found: {machine_path}")
 
     with machine_path.open(encoding="utf-8") as fh:
-        raw: Any = yaml.safe_load(fh)
-    if not isinstance(raw, dict):
+        raw = yaml.safe_load(fh)
+    if not _is_machine_entry_shape(raw):
         raise MachineLoadError(f"{machine_path}: expected a YAML mapping at top level")
 
-    schema_version: Any = raw.get("schema_version")
+    schema_version = raw.get("schema_version")
     if schema_version != 1:
         raise MachineLoadError(
             f"{machine_path}: unsupported schema_version {schema_version!r} (expected 1)"
         )
 
-    m_id: Any = raw.get("id")
+    m_id = raw.get("id")
     if m_id != machine_path.stem:
         raise MachineLoadError(
             f"{machine_path}: 'id' field {m_id!r} does not match filename stem "
             f"{machine_path.stem!r}"
         )
 
-    generation: Any = raw.get("generation")
+    generation = raw.get("generation")
     if generation not in ("msx1", "msx2"):
         raise MachineLoadError(
             f"{machine_path}: unsupported generation {generation!r} "
@@ -742,11 +781,11 @@ def load_machine_spec(
     cycles_per_frame, lines_per_frame = _TIMING[video_standard]
 
     # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
-    cpu_block: dict[str, Any] = raw.get("cpu", {}) or {}
+    cpu_block: CpuBlockYaml = raw.get("cpu", {}) or {}
     m1_wait_states = int(cpu_block.get("m1_wait_states", 0))
 
     # --- Slot parsing ---
-    slots: dict[str, Any] = raw.get("slots", {})
+    slots = raw.get("slots", {})
     primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
 
     slot0_raw = primary.get(0, {})
