@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2147%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -174,8 +174,8 @@ argument together with `--scc-plus` is a startup error.
 
 > **Note**: the author does not own a real SCC-I (SCC+) cartridge or
 > compatible software, so this implementation is based on publicly
-> available technical documentation (including the openMSX source code)
-> and has not been verified against real hardware.
+> available technical documentation and has not been verified against real
+> hardware.
 
 | Item | Detail |
 | --- | --- |
@@ -826,7 +826,7 @@ python tools/rpc_client.py memory.read address=0xC000 length=16
 The MCP server needs the optional `mcp` dependency:
 
 ```bash
-pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0'
+pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
 Register it once with Claude Code (writes `.mcp.json`):
@@ -882,6 +882,12 @@ floppy disk drive; place its `fs-a1f_basic-bios2.rom`, `fs-a1f_msx2sub.rom`,
 and `fs-a1f_disk.rom` under `roms/fs_a1f/` and mount a disk with `--fdd1`.
 Real hardware ships these as one combined 128 KB mask ROM — see
 `config/machines/fs_a1f.yaml`'s comment for the expected split.
+
+> **Note**: real FS-A1F hardware also includes a bundled "Cockpit"
+> application and a Kanji ROM/font device; neither is emulated. The author
+> does not own a real FS-A1F, so this implementation is based on publicly
+> available technical documentation and has not been verified against real
+> hardware.
 
 ### Machine YAML structure
 
@@ -961,7 +967,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2147 tests spanning unit tests
+The test suite covers all major components with 2215 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1024,7 +1030,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2147 tests
+├── tests/                 # Test suite — 2215 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1085,6 +1091,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
 - **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
 - **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
 - **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.

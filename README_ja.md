@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2147%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -108,7 +108,7 @@
 
 `--scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 1 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したもので、これにより本プロジェクトが対象とする2タイトルそれぞれが前提とする工場出荷時RAM配置バリアントのどちらとも、1つの実装で互換になります。キャリアする SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。カートリッジ ROM 引数と `--scc-plus` を同時指定すると起動時エラーになります。
 
-> **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料（openMSX のソースコードを含む）に基づく実装であり、実機での動作確認は行っていません。
+> **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -653,7 +653,7 @@ python tools/rpc_client.py memory.read address=0xC000 length=16
 MCP サーバにはオプションの `mcp` 依存が必要です。
 
 ```bash
-pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0'
+pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
 Claude Code に一度だけ登録します（`.mcp.json` に書き込まれます）。
@@ -700,6 +700,8 @@ claude mcp list        # msx-emulator  ●  connected
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
 
 `fs_a1f`（Panasonic FS-A1F）は実機 ROM を使用し、TC8566AF フロッピーディスクドライブを備えます。`fs-a1f_basic-bios2.rom`・`fs-a1f_msx2sub.rom`・`fs-a1f_disk.rom` を `roms/fs_a1f/` に配置し、`--fdd1` でディスクをマウントします。実機はこれらを1つの128KBマスクROMとして出荷しています — 期待される分割方法は `config/machines/fs_a1f.yaml` のコメントを参照してください。
+
+> **注記**：実機の FS-A1F にはバンドルされた「コックピット」アプリケーションと漢字 ROM/フォントデバイスも搭載されていますが、どちらもエミュレートしていません。著者は実機の FS-A1F を所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 ### マシン YAML の構造
 
@@ -775,7 +777,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2147 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2215 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -835,7 +837,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2147 テスト
+├── tests/                 # テストスイート — 2215 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -879,6 +881,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
 - **v2.5.7** (2026-08-20) — 将来の Rust/C++ 移植に向けた大規模な内部リファクタリング：マッパーの save-state を型なし dict からタグ付き `MapperKind` enum に変更、`Memory` のキャッシュ無効化を明示的な setter メソッドに移行、デバッガの反射ベースのマッパー/スロット introspection を明示的なインターフェースメソッドに置き換え。観測可能な挙動変更なし（複数視点コードレビューと Allium 仕様整合性チェックで検証済み）。
 - **v2.5.6** (2026-08-19) — macOS で JIS ¥ キーが MSX キーボードマトリクスに届かない不具合を修正。SDL2 はこのキーを一貫した scancode で報告するが keysym は不安定なため、`key_down`/`key_up` は scancode のみから解決するよう変更。
 - **v2.5.5** (2026-08-19) — `Ascii16Sram2Mapper` の書き込み側 open bus リーク（0xC000 以降への書き込みが、ウィンドウが SRAM 選択中に SRAM を壊しうる不具合）を修正。`RTypeMapper` にもフラット読み取りミラーを追加し、毎読み取りでウィンドウを解決していた最後のマッパークラスを解消。
