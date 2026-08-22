@@ -390,6 +390,45 @@ def _is_slot3_msx1_shape(data: object) -> TypeGuard[Slot3Msx1Yaml]:
     return isinstance(data, dict)
 
 
+class FdcYaml(TypedDict, total=False):
+    rom: RomEntryYaml
+    controller: str
+    connection_style: str
+    drives: int
+
+
+def _is_fdc_shape(data: object) -> TypeGuard[FdcYaml]:
+    """True if `data` is a dict (fdc: block shape). `rom`'s presence is
+    still checked by `_parse_fdc` itself, not guaranteed here."""
+    return isinstance(data, dict)
+
+
+class SubSlotYaml(TypedDict, total=False):
+    content: list[ContentItemYaml]
+    mapper: str
+    type: str
+    size_kb: int
+    fdc: FdcYaml
+
+
+def _is_sub_slot_shape(data: object) -> TypeGuard[SubSlotYaml]:
+    """True if `data` is a dict (MSX2 slot 3 sub-slot block shape)."""
+    return isinstance(data, dict)
+
+
+class Slot3Msx2Yaml(TypedDict, total=False):
+    expanded: bool
+    mapper: str
+    # Raw YAML keys (int-or-str) pre-_int_keys() coercion -- narrowed to
+    # dict[int, SubSlotYaml] per-item after coercion (design.md Decision 4).
+    secondary: dict[Any, Any]
+
+
+def _is_slot3_msx2_shape(data: object) -> TypeGuard[Slot3Msx2Yaml]:
+    """True if `data` is a dict (MSX2 slot 3 block shape)."""
+    return isinstance(data, dict)
+
+
 # ---------------------------------------------------------------------------
 # Pass 1: device registry
 # ---------------------------------------------------------------------------
@@ -495,15 +534,15 @@ def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
     return int(slot3.get("size_kb", 32))
 
 
-def _parse_fdc(sub_val: dict[str, Any], machine_id: str, sub_idx: int) -> _FdcDef | None:
+def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef | None:
     """Resolve an optional `fdc:` block in the given MSX2 slot 3 sub-slot.
 
     Raises:
         MachineLoadError: On a missing DISK ROM entry, or an unsupported
             controller type or connection style.
     """
-    fdc_raw: Any = sub_val.get("fdc")
-    if not isinstance(fdc_raw, dict):
+    fdc_raw = sub_val.get("fdc")
+    if not _is_fdc_shape(fdc_raw):
         return None
     context = f"machine '{machine_id}' slot 3 sub-slot {sub_idx} fdc"
     rom_data = fdc_raw.get("rom")
@@ -537,7 +576,7 @@ def _parse_fdc(sub_val: dict[str, Any], machine_id: str, sub_idx: int) -> _FdcDe
     )
 
 
-def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
+def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
     A sub-slot declaring `type: ram` without `mapper: standard` is a flat
@@ -554,7 +593,7 @@ def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
         for sub_idx in sorted(secondary):
             sub_val = secondary[sub_idx]
-            if not isinstance(sub_val, dict):
+            if not _is_sub_slot_shape(sub_val):
                 continue
             if result.sub_rom is None:
                 for item in sub_val.get("content", []):
@@ -732,7 +771,9 @@ def load_machine_spec(
         slot3 = {}
 
     if generation == "msx2":
-        s3 = _parse_slot3_msx2(slot3, machine_id)
+        # Same reasoning as the msx1 branch's cast below: slot3 is already
+        # confirmed dict-shaped, shared with _parse_slot3_msx1's dict[str, Any].
+        s3 = _parse_slot3_msx2(cast(Slot3Msx2Yaml, slot3), machine_id)
         sub_rom_entry = s3.sub_rom
         sub_rom_subslot = s3.sub_rom_subslot
         has_ram_mapper = s3.has_ram_mapper
