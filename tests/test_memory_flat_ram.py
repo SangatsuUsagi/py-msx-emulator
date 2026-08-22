@@ -131,3 +131,59 @@ def test_sub_rom_write_is_ignored() -> None:
     mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0xAA
+
+
+# -- Independently-configurable SUB ROM / FDC sub-slots (parameterize-subslot-index) --
+
+def test_sub_rom_and_fdc_in_independent_subslots() -> None:
+    """FS-A1F's real hardware shape: SUB ROM in sub-slot 1, FDC in sub-slot 2,
+    RAM in sub-slot 0 -- all three resolved independently from one another,
+    unlike HB-F1XD's/FS-A1F's provisional layout (both combined in sub-slot 0)."""
+    sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
+    fdc = _StubFdc()
+    mem = Memory(
+        rom=bytes(32768),
+        ram=bytearray(65536),
+        _mapper=FlatMapper(None),
+        slot_register=_ALL_SLOT3,
+        sub_slot_enabled=True,
+        sub0_rom=sub_rom,
+        sub_rom_subslot=1,
+        fdc=fdc,  # type: ignore[arg-type]
+        fdc_subslot=2,
+        flat_ram_subslot=0,
+    )
+
+    mem.set_sub_slot_reg(0b00_00_00_00)  # every page -> sub-slot 0: flat RAM
+    mem.write(0x0000, 0x77)
+    assert mem.read(0x0000) == 0x77
+
+    mem.set_sub_slot_reg(0b01_01_01_01)  # every page -> sub-slot 1: SUB ROM
+    assert mem.read(0x0000) == 0x41       # page 0 of the SUB-ROM sub-slot
+    assert mem.read(0x4000) == 0xFF       # page 1 of the SUB-ROM sub-slot: open bus
+
+    mem.set_sub_slot_reg(0b10_10_10_10)  # every page -> sub-slot 2: FDC
+    assert mem.read(0x0000) == 0xFF       # page 0 of the FDC sub-slot: open bus (not page 1)
+    assert mem.read(0x4000) == 0x99       # page 1 (fdc_page) of the FDC sub-slot
+    assert fdc.reads == [0x4000]
+
+
+def test_fdc_at_a_different_page_than_default() -> None:
+    """FDC's own page within its sub-slot is independently configurable, not
+    hard-coded to page 1."""
+    fdc = _StubFdc()
+    mem = Memory(
+        rom=bytes(32768),
+        ram=bytearray(65536),
+        _mapper=FlatMapper(None),
+        slot_register=_ALL_SLOT3,
+        sub_slot_enabled=True,
+        fdc=fdc,  # type: ignore[arg-type]
+        fdc_subslot=0,
+        fdc_page=2,
+        flat_ram_subslot=3,
+    )
+    mem.set_sub_slot_reg(0x00)  # every page -> sub-slot 0
+    assert mem.read(0x4000) == 0xFF  # page 1: not the FDC's configured page
+    assert mem.read(0x8000) == 0x99  # page 2: the FDC's configured page
+    assert fdc.reads == [0x8000]

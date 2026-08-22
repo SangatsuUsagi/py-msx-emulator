@@ -11,8 +11,11 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
+from typing import cast
+
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 
 # Sony/Philips register window offsets (addr & 0x3FFF), shared by
@@ -29,41 +32,23 @@ REG_UNCONNECTED: int = 0x3FFE     # not wired to anything; reads open bus
 REG_CONTROL_STATUS: int = 0x3FFF  # active-low INTRQ (bit 6) / DRQ (bit 7)
 
 
-class FloppyDisk:
-    """Base connection-style device wiring a controller + drives + DISK ROM.
+class FloppyDiskState:
+    """Owned device state every connection style composes: controller, drives,
+    DISK ROM, plus the operations that only touch that state.
 
-    PORT-NOTE: this base class both owns concrete state (controller, drives,
-      disk_rom) and declares read_mem/write_mem/reset as NotImplementedError
-      for subclasses to fill in -- the project's usual interface convention
-      (no abc.ABC anywhere in msx/).
-    Rust equivalent: a trait can't carry required fields the way this class
-      carries them -- split into an owned-state struct (has-a: controller,
-      drives, disk_rom) plus a `FloppyInterface` trait for the dispatch
-      methods (is-a), composed rather than inherited.
-    C++ equivalent: same split -- an owned-state struct/class plus a small
-      abstract base (or concept) purely for read_mem/write_mem/reset, not one
-      class carrying both.
-    Kept as-is here because: port target/shape not decided yet. The split's
-      external ergonomics (has-a state accessed via `.drives`/`.swap()`/
-      `.mount()`, is-a dispatch via `.read_mem`/`.write_mem`/`.reset`) are
-      already exercised by today's single implementation, so that much is
-      answerable now -- what's actually blocked is validating the dispatch
-      trait's method *signatures* (read_mem/write_mem/reset's exact shape),
-      which needs a second, structurally different connection style to
-      confirm against. SonyPhilipsInterface alone can't tell us that. See
-      logs/review-python-20260814-210824.md.
-    TODO: revisit this split when a TC8566AF-based connection style is added
-      (second concrete FloppyDisk implementation) -- that's the missing
-      signature-validation case, not a decision that can be made from
-      SonyPhilipsInterface alone.
+    Has-a half of the has-a/is-a split documented on `FloppyDisk` below --
+    composed into each concrete connection style rather than inherited, so a
+    Rust/C++ port's per-style struct can hold this as a plain field and
+    implement a separate dispatch trait/interface (read_mem/write_mem/reset)
+    on the side, which a single class combining both can't model directly.
     """
 
     def __init__(
         self,
-        controller: WD2793,
+        controller: WD2793 | TC8566AF,
         drives: list[DiskDrive],
         disk_rom: bytes | None = None,
-    ):
+    ) -> None:
         if not drives:
             raise ValueError("FloppyDisk requires at least one drive")
         self.controller = controller
@@ -101,6 +86,74 @@ class FloppyDisk:
             if drive.image is not None:
                 drive.image.flush()
 
+
+class FloppyDisk:
+    """Base connection-style device: composes FloppyDiskState, declares the
+    read_mem/write_mem/reset register-dispatch surface for subclasses to fill in.
+
+    PORT-NOTE: is-a half of the has-a/is-a split -- read_mem/write_mem/reset
+      are declared as NotImplementedError for subclasses to fill in (the
+      project's usual interface convention, no abc.ABC anywhere in msx/),
+      while the has-a state (controller, drives, disk_rom) lives on the
+      composed `self.state: FloppyDiskState` instead of directly on this
+      class, exposed here only via read-only properties/thin delegating
+      methods for external API compatibility (`.controller`, `.drives`,
+      `.disk_rom`, `.mount()`, `.swap()`, `.flush()`).
+    Rust equivalent: FloppyDiskState -> an owned-state struct; this class's
+      read_mem/write_mem/reset -> a `FloppyInterface` trait each concrete
+      connection-style struct implements, holding a `FloppyDiskState` field.
+    C++ equivalent: same split -- FloppyDiskState as an owned-state
+      struct/class, a small abstract base (or concept) purely for
+      read_mem/write_mem/reset.
+    RESOLVED: this split was validated against two structurally different
+      connection styles (SonyPhilipsInterface's externally-swapped WD2793
+      `.drive` vs TC8566AFInterface's TC8566AF, which owns all drives
+      directly) -- read_mem(addr) -> int / write_mem(addr, value) -> None /
+      reset() -> None hold unchanged across both, confirmed against openMSX's
+      own TC8566AF-based connection style (TurboRFDC) too. See
+      openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md for the
+      full comparison (including its post-archive addendum recording this
+      split's actual implementation).
+      `self.state.controller`'s static type is `WD2793 | TC8566AF` (not
+      WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
+      construct one -- only `_ctrl()`'s narrowing back to the concrete
+      TC8566AF type remains, which is ordinary type narrowing, not a
+      declared-type mismatch.
+    """
+
+    def __init__(
+        self,
+        controller: WD2793 | TC8566AF,
+        drives: list[DiskDrive],
+        disk_rom: bytes | None = None,
+    ) -> None:
+        self.state = FloppyDiskState(controller, drives, disk_rom)
+
+    @property
+    def controller(self) -> WD2793 | TC8566AF:
+        return self.state.controller
+
+    @property
+    def drives(self) -> list[DiskDrive]:
+        return self.state.drives
+
+    @property
+    def disk_rom(self) -> bytes | None:
+        return self.state.disk_rom
+
+    def mount(self, image: DskDiskImage | None, drive: int = 0) -> None:
+        """Mount (or unmount with None) an image into a drive."""
+        self.state.mount(image, drive)
+
+    def swap(self, drive: int, image: DskDiskImage | None) -> None:
+        """Replace a drive's image at runtime (hot swap / eject). See
+        FloppyDiskState.swap for the full behaviour."""
+        self.state.swap(drive, image)
+
+    def flush(self) -> None:
+        """Flush every mounted image's pending writes back to its file."""
+        self.state.flush()
+
     def read_mem(self, addr: int) -> int:
         raise NotImplementedError
 
@@ -128,6 +181,13 @@ class SonyPhilipsInterface(FloppyDisk):
         super().__init__(controller, drives, disk_rom)
         self.side_reg = 0
         self.drive_reg = 0
+
+    @property
+    def controller(self) -> WD2793:
+        # self.state.controller's static type is WD2793 | TC8566AF; this
+        # class always constructs with a WD2793, so narrow it back here --
+        # mirrors TC8566AFInterface._ctrl().
+        return cast(WD2793, self.state.controller)
 
     def reset(self) -> None:
         """Power-on/Z80-reset: WD2793 core, side select, and drive/motor
@@ -215,3 +275,75 @@ class SonyPhilipsInterface(FloppyDisk):
             else:
                 self.controller.drive = None
         # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.
+
+
+# TC8566AF connection style register window offsets (addr & 0x3FFF), used by
+# the non-turboR TC8566AF-based machines (e.g. Panasonic FS-A1F) -- the
+# "R7FF8" register set from openMSX's TurboRFDC.cc.
+TC_REG_CONTROL0: int = 0x3FF8  # write-only
+TC_REG_CONTROL1: int = 0x3FF9  # write-only
+TC_REG_STATUS: int = 0x3FFA    # read-only Main Status Register
+TC_REG_DATA: int = 0x3FFB      # read/write Data Register
+# 0x3FFC-0x3FFF: not wired to controller state; reads return fixed values
+# observed on real non-turboR TC8566AF-based MSX hardware.
+_TC_RESERVED: dict[int, int] = {0x3FFC: 0xFC, 0x3FFD: 0xFC, 0x3FFE: 0xFF, 0x3FFF: 0x3F}
+
+
+class TC8566AFInterface(FloppyDisk):
+    """TC8566AF connection style (Panasonic FS-A1F).
+
+    Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
+    in the DISK-ROM page that is 0x7FF8-0x7FFF. The DISK ROM is visible at
+    0x4000-0x7FFF everywhere else in the page, same as SonyPhilipsInterface.
+    Unlike SonyPhilipsInterface's WD2793, the TC8566AF controller owns all
+    drives directly (Control Register 0 addresses one of them) rather than
+    being handed a single externally-swapped "current drive" reference -- see
+    openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
+    """
+
+    def __init__(
+        self,
+        controller: TC8566AF,
+        drives: list[DiskDrive],
+        disk_rom: bytes | None = None,
+    ) -> None:
+        super().__init__(controller, drives, disk_rom)
+
+    # self.controller's static type is WD2793 | TC8566AF (FloppyDisk composes
+    # FloppyDiskState, not WD2793-specific); this narrows it locally to the
+    # concrete TC8566AF this class always constructs with, same as any other
+    # union-to-member narrowing.
+    def _ctrl(self) -> TC8566AF:
+        return cast(TC8566AF, self.controller)
+
+    def reset(self) -> None:
+        self._ctrl().reset()
+
+    def read_mem(self, addr: int) -> int:
+        reg = addr & 0x3FFF
+        if TC_REG_CONTROL0 <= reg <= TC_REG_DATA or reg in _TC_RESERVED:
+            # The whole 0x3FF8-0x3FFF register window (including the two
+            # write-only control registers, which have no read behaviour) is
+            # never DISK ROM, matching openMSX TurboRFDC::peekMem's default
+            # 0xFF for undefined offsets in this region.
+            if reg == TC_REG_STATUS:
+                return self._ctrl().read_main_status()
+            if reg == TC_REG_DATA:
+                return self._ctrl().read_data()
+            if reg in _TC_RESERVED:
+                return _TC_RESERVED[reg]
+            return 0xFF  # TC_REG_CONTROL0 / TC_REG_CONTROL1: write-only
+        if self.disk_rom is not None and reg < len(self.disk_rom):
+            return self.disk_rom[reg]
+        return 0xFF
+
+    def write_mem(self, addr: int, value: int) -> None:
+        reg = addr & 0x3FFF
+        value &= 0xFF
+        if reg == TC_REG_CONTROL0:
+            self._ctrl().write_control_reg0(value)
+        elif reg == TC_REG_CONTROL1:
+            self._ctrl().write_control_reg1(value)
+        elif reg == TC_REG_DATA:
+            self._ctrl().write_data(value)
+        # TC_REG_STATUS / reserved offsets / DISK ROM: not writable.

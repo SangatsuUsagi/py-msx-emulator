@@ -38,12 +38,29 @@ class Memory:
     sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
     sub0_rom: bytes | None = field(default=None, repr=False)
     # Data-driven MSX2 slot-3 layout: when set, slot 3 hosts a flat (non-mapper)
-    # RAM in this sub-slot only, the SUB ROM in sub-slot 0 page 0, and open bus
-    # everywhere else. None keeps the legacy mapper / MSX1 flat-top behaviour.
+    # RAM in this sub-slot only, the SUB ROM in sub-slot `sub_rom_subslot` page 0,
+    # and open bus everywhere else. None keeps the legacy mapper / MSX1 flat-top
+    # behaviour.
     flat_ram_subslot: int | None = field(default=None)
-    # Memory-mapped floppy interface in slot 3 sub-slot 0 page 1 (0x4000-0x7FFF);
-    # the concrete FloppyDisk base exposes read_mem(addr)/write_mem(addr, value).
-    # None when the machine has no FDC.
+    # Which sub-slot owns the SUB ROM (page 0 of that sub-slot) and which owns
+    # the FDC (`fdc_page` of that sub-slot) -- independent of each other and of
+    # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
+    # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
+    # resolves them to sub-slot 1 and 2 respectively, its real hardware's
+    # 4-independent-secondary-slot layout (RESOLVED by
+    # openspec/changes/parameterize-subslot-index -- previously this dataclass
+    # only supported sub-slot 0 for both roles). fdc_page defaults to 1 (the
+    # DISK-ROM window's existing fixed page). Construction-time-fixed, like
+    # flat_ram_subslot/_mapper/_mapper2 -- no code ever reassigns them after
+    # construction, so they have no setter (see the "Page-routing cache
+    # invalidation happens through explicit setter methods" spec Requirement).
+    sub_rom_subslot: int = field(default=0)
+    fdc_subslot: int = field(default=0)
+    fdc_page: int = field(default=1)
+    # Memory-mapped floppy interface in slot 3 sub-slot `fdc_subslot` page
+    # `fdc_page` (0x4000-0x7FFF by default); the concrete FloppyDisk base
+    # exposes read_mem(addr)/write_mem(addr, value). None when the machine has
+    # no FDC.
     fdc: FloppyDisk | None = field(default=None, repr=False)
     rom_name: str = ""
     sub0_rom_name: str = ""
@@ -201,30 +218,32 @@ class Memory:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
-            # Data-driven MSX2 slot-3 (e.g. HB-F1XD): SUB ROM in sub-slot 0
-            # page 0, memory-mapped FDC in sub-slot 0 page 1, flat 64 KB RAM
-            # (offset == address) in `flat_sub`, else open bus.
-            if sub == 0:
-                if page == 0 and self.sub0_rom is not None:
-                    return self._read_sub0_rom
-                if page == 1 and self.fdc is not None:
-                    return self.fdc.read_mem
-                return self._read_open_bus
+            # Data-driven MSX2 slot-3 (e.g. HB-F1XD, FS-A1F): SUB ROM in
+            # sub-slot `sub_rom_subslot` page 0, memory-mapped FDC in
+            # sub-slot `fdc_subslot` page `fdc_page` -- independently
+            # configurable sub-slots, both defaulting to sub-slot 0 (page 1
+            # for the FDC) so every existing machine resolves identically to
+            # the pre-generalisation `if sub == 0: ...` special case -- flat
+            # 64 KB RAM (offset == address) in `flat_sub`, else open bus.
+            if sub == self.sub_rom_subslot and page == 0 and self.sub0_rom is not None:
+                return self._read_sub0_rom
+            if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+                return self.fdc.read_mem
             if sub == flat_sub:
                 return self._read_flat_ram
             return self._read_open_bus
         # Legacy sub-slot dispatch:
-        #   0: extension ROM in page 0 (if present), else main RAM
+        #   sub_rom_subslot: extension ROM in page 0 (if present), else main RAM
         #   1: reserved / unmapped -> open bus
         #   2, 3: main RAM
-        if sub == 0:
+        if sub == self.sub_rom_subslot:
             if self.sub0_rom is not None:
                 if page == 0:
                     return self._read_sub0_rom
                 return self._read_open_bus  # sub0_rom present, addr out of page-0 range
         elif sub == 1:
             return self._read_open_bus
-        # sub == 2, sub == 3, or sub == 0 without a sub0_rom -> RAM
+        # sub == 2, sub == 3, or sub == sub_rom_subslot without a sub0_rom -> RAM
         if self.ram_mapper is not None:
             return self.ram_mapper.read
         return self._read_msx1_flat_ram
@@ -234,18 +253,19 @@ class Memory:
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
             # Data-driven MSX2 slot-3 write (see _resolve_slot3_read_leaf).
-            if sub == 0:
-                if page == 1 and self.fdc is not None:
-                    return self.fdc.write_mem
-                return self._write_noop  # SUB ROM (page 0) / open-bus pages
+            # SUB ROM's own sub-slot needs no explicit check here: it is
+            # read-only, so it falls through to the same write_noop every
+            # other non-FDC, non-RAM sub-slot/page gets.
+            if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+                return self.fdc.write_mem
             if sub == flat_sub:
                 return self._write_flat_ram
-            return self._write_noop  # empty sub-slots ignore writes
+            return self._write_noop  # SUB ROM / reserved / empty sub-slots ignore writes
         if sub == 1:
             return self._write_noop  # reserved, ignore
-        if sub == 0 and self.sub0_rom is not None:
+        if sub == self.sub_rom_subslot and self.sub0_rom is not None:
             return self._write_noop  # sub0_rom is read-only
-        # sub-slots 0 (fallback), 2, and 3 → RAM mapper
+        # sub-slots `sub_rom_subslot` (fallback), 2, and 3 → RAM mapper
         if self.ram_mapper is not None:
             return self.ram_mapper.write
         return self._write_msx1_flat_ram
@@ -339,6 +359,31 @@ class Memory:
                 return "Cartridge (empty)"
             return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
         if primary == 3:
+            flat_sub = self.flat_ram_subslot
+            if flat_sub is not None:
+                # Data-driven layout (e.g. FS-A1F): mirror
+                # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
+                # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
+                # RAM in flat_sub, open bus elsewhere. `page is None` (the
+                # `st` tree view, one line per sub-slot) matches the
+                # page-0/fdc_page role regardless of page, same as the
+                # legacy branch below always describing sub-slot 0 as ROM.
+                if (
+                    secondary == self.sub_rom_subslot
+                    and self.sub0_rom is not None
+                    and page in (0, None)
+                ):
+                    name = self.sub0_rom_name or "ROM"
+                    return f"ROM {name}" if name != "ROM" else "ROM"
+                if (
+                    secondary == self.fdc_subslot
+                    and self.fdc is not None
+                    and page in (self.fdc_page, None)
+                ):
+                    return "FDC"
+                if secondary == flat_sub:
+                    return "RAM"
+                return "empty"
             if secondary == 0:
                 name = self.sub0_rom_name or "ROM"
                 return f"ROM {name}" if name != "ROM" else "ROM"
@@ -371,11 +416,13 @@ class Memory:
         if primary == 0:
             n = len(self.rom)
             return f"{n // 1024}KB" if n else ""
-        if primary == 3 and secondary == 0:
+        if primary == 3 and secondary == self.sub_rom_subslot:
             sub = self.sub0_rom
             n = len(sub) if sub is not None else 0
             return f"{n // 1024}KB" if n else ""
-        if primary == 3 and secondary in (2, 3):
+        flat_sub = self.flat_ram_subslot
+        is_ram_subslot = secondary == flat_sub if flat_sub is not None else secondary in (2, 3)
+        if primary == 3 and is_ram_subslot:
             rm = self.ram_mapper
             if rm is not None:
                 return "128KB"

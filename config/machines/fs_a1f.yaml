@@ -1,0 +1,85 @@
+schema_version: 1
+id: fs_a1f
+name: "Panasonic FS-A1F (MSX2, Japan)"
+generation: msx2
+video_standard: ntsc
+rom_base: roms/fs_a1f
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+
+# Panasonic FS-A1F. Slot 3 now matches real hardware's actual layout
+# (openMSX's references/openMSX/share/machines/Panasonic_FS-A1F.xml): four
+# independent secondary slots -- 0 = 64 KB flat RAM, 1 = SUB ROM (16 KB,
+# page 0), 2 = the TC8566AF FDC (`<io_regs>7FF8</io_regs>`) + its DISK ROM
+# window (page 1). RESOLVED (was PROVISIONAL, SUB ROM and the FDC combined
+# in sub-slot 0 like hb_f1xd.yaml, until msx/memory.py's slot-3 dispatch
+# generalised its `sub0_rom`/`if sub == 0` hard-coding to configurable
+# per-role sub-slot indices) by openspec/changes/parameterize-subslot-index.
+#
+# Two things real hardware has that this machine still does not model, both
+# unrelated to the slot-index generalisation above and each its own
+# separate follow-up if ever needed (neither is needed to exercise the FDC,
+# this machine's actual purpose):
+#   - Sub-slot 1's second ROM device, the Kanji Driver ROM (32 KB, pages
+#     1-2) -- this codebase has no Kanji rendering device to pair it with,
+#     and no support for a second ROM device sharing one sub-slot's
+#     remaining pages alongside SUB ROM.
+#   - Sub-slot 3, the bundled "A1 Cockpit" software ROM -- left undeclared
+#     (open bus) entirely, not merely relocated.
+#   - The FDC's real DISK ROM window is pages 1-2 (32 KB), mirrored from a
+#     16 KB slice of the combined mask ROM; this machine keeps the existing
+#     single-page (page 1, 16 KB, non-mirrored) shape every other FDC
+#     machine in this codebase uses.
+#
+# Real hardware ships all four ROM images (BASIC/SUB/DISK/Kanji driver,
+# plus Cockpit) concatenated in one 128 KB mask ROM (openMSX:
+# DA1024D0365R.rom, sha1 9a62d7a5ccda974261f7c0600476d85e10deb99b); this
+# project's loader has no byte-offset ROM-window support, so the ROM
+# entries below expect that file pre-split into its BASIC+BIOS, SUB, and
+# DISK component pieces -- no per-slice advisory sha1 is available since
+# openMSX itself never hashes the individual slices, only the combined
+# file.
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: fs-a1f_basic-bios2.rom
+            size_kb: 32
+            pages: [0, 1]
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          type: ram
+          size_kb: 64
+        1:
+          content:
+            - rom:
+                file: fs-a1f_msx2sub.rom
+                size_kb: 16
+                pages: [0]
+        2:
+          fdc:
+            ref: fdc_tc8566af
+            controller: tc8566af
+            connection_style: tc8566af
+            drives: 1
+            rom:
+              file: fs-a1f_disk.rom
+              size_kb: 16
+              pages: [1]
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+
+default_extensions: []

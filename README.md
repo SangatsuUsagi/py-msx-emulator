@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2147%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -174,8 +174,8 @@ argument together with `--scc-plus` is a startup error.
 
 > **Note**: the author does not own a real SCC-I (SCC+) cartridge or
 > compatible software, so this implementation is based on publicly
-> available technical documentation (including the openMSX source code)
-> and has not been verified against real hardware.
+> available technical documentation and has not been verified against real
+> hardware.
 
 | Item | Detail |
 | --- | --- |
@@ -295,6 +295,27 @@ write-back on exit; disks can be swapped at runtime from the debugger REPL
   - READ TRACK is a bare stub.
   - WRITE TRACK discards stream content and formats by byte count only,
     without real gap-byte/address-mark interpretation.
+
+### Floppy disk drive (TC8566AF)
+
+A second FDC controller/connection-style pair on the same generic FDC layer,
+as used by the Panasonic FS-A1F (`--machine fs_a1f`). Registers are
+memory-mapped in slot 3 sub-slot 2 (FS-A1F's real hardware layout — RAM in
+sub-slot 0, SUB ROM in sub-slot 1) as Main Status Register, Data Register, and
+two control registers — no directly addressable TRACK/SECTOR register, unlike
+WD2793; `*.dsk` images mount the same way via `--fdd1`. Implements SPECIFY,
+SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE, SEEK, READ DATA,
+WRITE DATA, and FORMAT — enough for the MSX DISK ROM's boot/sector-I/O path
+and `CALL FORMAT`.
+
+- Known limitations:
+  - No timing model (same functional-model approach as WD2793).
+  - Non-DMA mode only — the chip's DRQ2/-DACK2/DMATC pins are not modelled.
+  - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN
+    are not implemented (not needed for the Disk BASIC boot/sector-I/O path).
+  - Like WD2793's own WRITE TRACK, FORMAT discards the streamed descriptor
+    bytes and just blanks every sector of the current (track, side) rather
+    than writing real gap/sync/ID/CRC bytes.
 
 ### ROM database
 
@@ -452,19 +473,19 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 304.38 | ~5.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 449.72 | ~7.5× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1209.46 | ~20.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1427.64 | ~23.8× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 77.95 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 115.44 | ~1.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 290.91 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 462.85 | ~7.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 304.71 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 450.01 | ~7.5× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1205.03 | ~20.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1422.12 | ~23.7× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 77.70 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 115.05 | ~1.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 291.27 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 468.84 | ~7.8× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
 heaviest rendering/audio load among the target titles) at ~1.3×; PyPy raises the
-same case to ~4.8×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+same case to ~4.9×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -480,7 +501,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.5.7, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.5.8, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -809,7 +830,7 @@ python tools/rpc_client.py memory.read address=0xC000 length=16
 The MCP server needs the optional `mcp` dependency:
 
 ```bash
-pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0'
+pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
 Register it once with Claude Code (writes `.mcp.json`):
@@ -854,10 +875,23 @@ automatically (MSX1 ROM → `cbios_msx1_jp`; MSX2 ROM or no cartridge →
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
 | `hb_f1xd` | MSX2 | Japan | V9938 |
+| `fs_a1f` | MSX2 | Japan | V9938 |
 
 `hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
 disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and
 `hb-f1xd_disk.rom` under `roms/hb_f1xd/` and mount a disk with `--fdd1`.
+
+`fs_a1f` (Panasonic FS-A1F) uses the real machine ROMs and adds a TC8566AF
+floppy disk drive; place its `fs-a1f_basic-bios2.rom`, `fs-a1f_msx2sub.rom`,
+and `fs-a1f_disk.rom` under `roms/fs_a1f/` and mount a disk with `--fdd1`.
+Real hardware ships these as one combined 128 KB mask ROM — see
+`config/machines/fs_a1f.yaml`'s comment for the expected split.
+
+> **Note**: real FS-A1F hardware also includes a bundled "Cockpit"
+> application and a Kanji ROM/font device; neither is emulated. The author
+> does not own a real FS-A1F, so this implementation is based on publicly
+> available technical documentation and has not been verified against real
+> hardware.
 
 ### Machine YAML structure
 
@@ -937,7 +971,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2147 tests spanning unit tests
+The test suite covers all major components with 2215 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1000,7 +1034,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2147 tests
+├── tests/                 # Test suite — 2215 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1061,6 +1095,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
 - **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
 - **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
 - **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.

@@ -1,13 +1,15 @@
 [project]
 name = "py-msx-emulator"
-version = "2.5.7"
+version = "2.5.8"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0", "Pillow>=12.0", "pysdl2>=0.9.16"]
 
 [project.optional-dependencies]
 # MCP server for Claude Code integration (only needed to run tools/mcp_server.py;
 # the emulator and its socket RPC server have no extra runtime dependency).
-mcp = ["mcp[cli]>=1.0"]
+# <2.0: mcp 2.0 renamed FastMCP to mcp.server.mcpserver.MCPServer;
+# tools/mcp_server.py is written against the 1.x FastMCP API.
+mcp = ["mcp[cli]>=1.0,<2.0"]
 # Full dev toolset; kept in sync with requirements-dev.txt.
 dev = [
     # Testing
@@ -30,7 +32,7 @@ dev = [
     "scalene>=1.5",
     "py-spy>=0.4",
     # MCP server (so its tests can run in the dev environment)
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.0,<2.0",
 ]
 
 [tool.ruff]

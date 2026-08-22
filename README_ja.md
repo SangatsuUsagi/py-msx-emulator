@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2147%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -108,7 +108,7 @@
 
 `--scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 1 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したもので、これにより本プロジェクトが対象とする2タイトルそれぞれが前提とする工場出荷時RAM配置バリアントのどちらとも、1つの実装で互換になります。キャリアする SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。カートリッジ ROM 引数と `--scc-plus` を同時指定すると起動時エラーになります。
 
-> **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料（openMSX のソースコードを含む）に基づく実装であり、実機での動作確認は行っていません。
+> **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -201,6 +201,16 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
   - タイミングモデルを持たない — コマンド実行は即時完了する（シーク/ステップレート、回転数ベースの ID サーチ、ヘッドロード/シーク後ベリファイの遅延はいずれもなし）。
   - READ TRACK は空のスタブのみ。
   - WRITE TRACK は転送されたストリーム内容を破棄し、実際のギャップバイト/アドレスマーク解釈を行わずバイト数のみでフォーマットする。
+
+### フロッピーディスクドライブ（TC8566AF）
+
+同じ汎用 FDC 層上の2つ目のコントローラ/接続スタイルの組み合わせ。Panasonic FS-A1F（`--machine fs_a1f`）が採用。スロット 3 サブスロット 2（FS-A1Fの実機通りの配置 — RAMがサブスロット0、SUB ROMがサブスロット1）にメモリマップ（Main Status Register・Data Register・2つのコントロールレジスタ — WD2793と異なりTRACK/SECTORレジスタは直接アドレス指定不可）。`*.dsk` イメージは同様に `--fdd1` でマウント。SPECIFY・SENSE INTERRUPT STATUS・SENSE DEVICE STATUS・RECALIBRATE・SEEK・READ DATA・WRITE DATA・FORMAT を実装 — MSX DISK ROM の起動/セクタ入出力パスと `CALL FORMAT` に必要なコマンド。
+
+- 既知の制限：
+  - タイミングモデルを持たない(WD2793と同じ関数モデル方式)。
+  - Non-DMAモードのみ — DRQ2/-DACK2/DMATCピンは未実装。
+  - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN は未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
+  - WD2793のWRITE TRACKと同様、FORMATはストリームされたディスクリプタバイトを破棄し、現在の(トラック, サイド)の全セクタを単純にブランク化するのみで、実際のギャップ/シンク/ID/CRCバイトは書き込まない。
 
 ### ROM データベース
 
@@ -318,22 +328,22 @@ v2.5.0 以降は、仕様と実装の整合性を検証するための第2の振
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 304.38 | 約 5.1 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 449.72 | 約 7.5 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1209.46 | 約 20.2 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1427.64 | 約 23.8 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 77.95 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 115.44 | 約 1.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 290.91 | 約 4.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 462.85 | 約 7.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 304.71 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 450.01 | 約 7.5 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1205.03 | 約 20.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1422.12 | 約 23.7 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 77.70 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 115.05 | 約 1.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 291.27 | 約 4.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 468.84 | 約 7.8 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.8 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.5.7 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.5.8 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -644,7 +654,7 @@ python tools/rpc_client.py memory.read address=0xC000 length=16
 MCP サーバにはオプションの `mcp` 依存が必要です。
 
 ```bash
-pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0'
+pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0,<2.0'
 ```
 
 Claude Code に一度だけ登録します（`.mcp.json` に書き込まれます）。
@@ -686,8 +696,13 @@ claude mcp list        # msx-emulator  ●  connected
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
+| `fs_a1f` | MSX2 | 日本 | V9938 |
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
+
+`fs_a1f`（Panasonic FS-A1F）は実機 ROM を使用し、TC8566AF フロッピーディスクドライブを備えます。`fs-a1f_basic-bios2.rom`・`fs-a1f_msx2sub.rom`・`fs-a1f_disk.rom` を `roms/fs_a1f/` に配置し、`--fdd1` でディスクをマウントします。実機はこれらを1つの128KBマスクROMとして出荷しています — 期待される分割方法は `config/machines/fs_a1f.yaml` のコメントを参照してください。
+
+> **注記**：実機の FS-A1F にはバンドルされた「コックピット」アプリケーションと漢字 ROM/フォントデバイスも搭載されていますが、どちらもエミュレートしていません。著者は実機の FS-A1F を所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 ### マシン YAML の構造
 
@@ -763,7 +778,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2147 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2215 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -823,7 +838,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2147 テスト
+├── tests/                 # テストスイート — 2215 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -867,6 +882,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
 - **v2.5.7** (2026-08-20) — 将来の Rust/C++ 移植に向けた大規模な内部リファクタリング：マッパーの save-state を型なし dict からタグ付き `MapperKind` enum に変更、`Memory` のキャッシュ無効化を明示的な setter メソッドに移行、デバッガの反射ベースのマッパー/スロット introspection を明示的なインターフェースメソッドに置き換え。観測可能な挙動変更なし（複数視点コードレビューと Allium 仕様整合性チェックで検証済み）。
 - **v2.5.6** (2026-08-19) — macOS で JIS ¥ キーが MSX キーボードマトリクスに届かない不具合を修正。SDL2 はこのキーを一貫した scancode で報告するが keysym は不安定なため、`key_down`/`key_up` は scancode のみから解決するよう変更。
 - **v2.5.5** (2026-08-19) — `Ascii16Sram2Mapper` の書き込み側 open bus リーク（0xC000 以降への書き込みが、ウィンドウが SRAM 選択中に SRAM を壊しうる不具合）を修正。`RTypeMapper` にもフラット読み取りミラーを追加し、毎読み取りでウィンドウを解決していた最後のマッパークラスを解消。

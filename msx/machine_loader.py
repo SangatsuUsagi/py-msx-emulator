@@ -5,20 +5,32 @@ Raises MachineLoadError with specific file and field names on any validation fai
 
 PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
-  et al.) is the largest source of `Any` in this codebase (same pattern, at
-  smaller scale, in msx/app_config.py and msx/romdb.py).
+  et al.) used to be the largest source of `Any` in this codebase (same
+  pattern, at smaller scale, still applies to msx/app_config.py and
+  msx/romdb.py). RESOLVED for this file by
+  openspec/changes/typed-machine-loader-yaml: every raw YAML mapping this
+  file validates is now typed via `TypedDict` (`RomEntryYaml`,
+  `DeviceEntryYaml`, `MachineEntryYaml`, etc.) with `TypeGuard`-returning
+  `_is_<thing>_shape` narrowing functions, so a field read off an
+  already-validated mapping is checked against a known shape, not `Any`.
+  This is a Python-side approximation, not a schema-validation library --
+  the `TypeGuard` functions still hand-write the same runtime checks this
+  file always performed (see design.md Decision 3); only the point where
+  static typing starts moved earlier. Remaining `Any` in this file is
+  deliberate: `_DeviceDef.raw`/`overrides` (arbitrary per-device passthrough
+  content), and `secondary`/`primary`/`slots` (raw YAML keys before
+  `_int_keys()` coercion narrows their values per-item).
 Rust crate candidates: serde + serde_yaml (or saphyr) deserializing directly
   into the equivalent MachineSpec/AppConfig structs, replacing this hand-
   written validation layer with derive-macro-generated checks -- would need
   custom Deserialize impls to reproduce the exact error messages and
-  _KNOWN_*_KEYS unknown-key warnings this file emits.
+  _KNOWN_*_KEYS unknown-key warnings this file emits. The TypedDict shapes
+  this file now declares are a reasonable 1:1 map to the equivalent serde
+  structs, should a Rust port be undertaken.
 C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
   validation (closest to today's Python shape), or a schema-validated
   approach via nlohmann/json-style patterns if the config format were
   migrated to JSON at port time.
-Not adopted now because: this is inherent to dynamically-typed YAML, not a
-  code-quality gap in the current Python; no new dependency needed for the
-  Python codebase today (PyYAML already covers this).
 """
 from __future__ import annotations
 
@@ -27,7 +39,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypedDict, TypeGuard, cast
 
 import yaml
 
@@ -84,8 +96,15 @@ _SUPPORTED_MAPPERS = frozenset({
 # Supported FDC controller chips and connection styles, selected by machine YAML.
 # New entries here (plus a builder branch in _build_fdc) add hardware without
 # touching Memory.
-_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793"})
-_SUPPORTED_FDC_STYLES = frozenset({"sony"})
+_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793", "tc8566af"})
+_SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
+# (controller, connection_style) pairs _build_fdc actually knows how to
+# construct -- each controller family has exactly one style today, but the
+# two are independent axes in the YAML schema, so validate the pair
+# explicitly rather than silently defaulting a mismatched combo (e.g.
+# controller: wd2793 + connection_style: tc8566af) to whichever branch
+# _build_fdc happens to fall into.
+_SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -209,7 +228,6 @@ class MachineLoadError(Exception):
 
 @dataclass
 class _DeviceDef:
-    type: str
     implemented: bool
     raw: dict[str, Any]
 
@@ -235,10 +253,12 @@ class _FdcDef:
 class _Slot3Msx2:
     """Resolved MSX2 slot 3 layout (named to avoid a positional tuple)."""
     sub_rom: _RomEntry | None = None
+    sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
     fdc: _FdcDef | None = None
+    fdc_subslot: int = 0
 
 
 @dataclass
@@ -283,8 +303,18 @@ class MachineSpec:
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
 
-    # Floppy interface in slot 3 sub-slot 0, or None when the machine has none.
+    # Which sub-slot the SUB ROM resolves to -- default 0 preserves every
+    # existing machine's resolved layout (all predate this field and
+    # declare SUB ROM in sub-slot 0).
+    sub_rom_subslot: int = 0
+
+    # Floppy interface in slot 3, or None when the machine has none. Which
+    # sub-slot it resolves to -- default 0, same backward-compat rationale
+    # as sub_rom_subslot -- independent of sub_rom_subslot (a machine MAY
+    # place SUB ROM and the FDC in different sub-slots, e.g. FS-A1F's real
+    # hardware layout).
     fdc: _FdcDef | None = None
+    fdc_subslot: int = 0
 
 
 @dataclass
@@ -296,6 +326,182 @@ class _FmPacOverlay:
     rom_entry: _RomEntry
     slot: int
     sram_save_path: Path
+
+
+# ---------------------------------------------------------------------------
+# Raw YAML shapes (TypedDict + TypeGuard)
+#
+# One TypedDict per distinct raw-YAML shape this file validates, named
+# `<Thing>Yaml` to stay visually distinct from the *resolved* dataclasses
+# above (e.g. RomEntryYaml vs _RomEntry). Every shape is a single
+# `total=False` TypedDict, no field statically required: this file's
+# validation style is per-field `.get()` + immediate raise, inline in the
+# same function that uses the value, not an upstream gate that downstream
+# code could trust -- see design.md Decision 2 for why a required/optional
+# split (the originally-planned approach) doesn't fit that style.
+#
+# Each shape's `_is_<thing>_shape(data: object) -> TypeGuard[<Thing>Yaml]`
+# function performs the same isinstance/.get() checks the corresponding
+# parser already performed before this change -- TypeGuard only tells mypy
+# "trust the narrower type once this returns True", it does not generate or
+# replace runtime validation. See openspec/changes/typed-machine-loader-yaml/
+# design.md for the full rationale.
+# ---------------------------------------------------------------------------
+
+class RomEntryYaml(TypedDict, total=False):
+    file: str
+    size_kb: int
+    pages: list[int]
+    sha1: str
+
+
+def _is_rom_entry_shape(data: object) -> TypeGuard[RomEntryYaml]:
+    """True if `data` is a dict (rom: block shape). `file`'s presence is
+    still checked by `_parse_rom_entry` itself, not guaranteed here -- see
+    openspec/changes/typed-machine-loader-yaml/design.md Decision 2."""
+    return isinstance(data, dict)
+
+
+class DeviceEntryYaml(TypedDict, total=False):
+    id: str
+    type: str
+    implemented: bool
+
+
+def _is_device_entry_shape(data: object) -> TypeGuard[DeviceEntryYaml]:
+    """True if `data` is a dict (device YAML top-level shape). `id`/`type`
+    presence are still checked by `load_device_registry` itself, not
+    guaranteed here -- see design.md Decision 2."""
+    return isinstance(data, dict)
+
+
+class ContentItemYaml(TypedDict, total=False):
+    rom: RomEntryYaml
+
+
+def _is_content_item_shape(data: object) -> TypeGuard[ContentItemYaml]:
+    """True if `data` is a dict (slot content-list item shape)."""
+    return isinstance(data, dict)
+
+
+class Slot0Yaml(TypedDict, total=False):
+    content: list[ContentItemYaml]
+
+
+def _is_slot0_shape(data: object) -> TypeGuard[Slot0Yaml]:
+    """True if `data` is a dict (slot 0 block shape)."""
+    return isinstance(data, dict)
+
+
+class Slot3Msx1Yaml(TypedDict, total=False):
+    size_kb: int
+
+
+def _is_slot3_msx1_shape(data: object) -> TypeGuard[Slot3Msx1Yaml]:
+    """True if `data` is a dict (MSX1 slot 3 block shape)."""
+    return isinstance(data, dict)
+
+
+class FdcYaml(TypedDict, total=False):
+    rom: RomEntryYaml
+    controller: str
+    connection_style: str
+    drives: int
+
+
+def _is_fdc_shape(data: object) -> TypeGuard[FdcYaml]:
+    """True if `data` is a dict (fdc: block shape). `rom`'s presence is
+    still checked by `_parse_fdc` itself, not guaranteed here."""
+    return isinstance(data, dict)
+
+
+class SubSlotYaml(TypedDict, total=False):
+    content: list[ContentItemYaml]
+    mapper: str
+    type: str
+    size_kb: int
+    fdc: FdcYaml
+
+
+def _is_sub_slot_shape(data: object) -> TypeGuard[SubSlotYaml]:
+    """True if `data` is a dict (MSX2 slot 3 sub-slot block shape)."""
+    return isinstance(data, dict)
+
+
+class Slot3Msx2Yaml(TypedDict, total=False):
+    expanded: bool
+    mapper: str
+    # Raw YAML keys (int-or-str) pre-_int_keys() coercion -- narrowed to
+    # dict[int, SubSlotYaml] per-item after coercion (design.md Decision 4).
+    secondary: dict[Any, Any]
+
+
+def _is_slot3_msx2_shape(data: object) -> TypeGuard[Slot3Msx2Yaml]:
+    """True if `data` is a dict (MSX2 slot 3 block shape)."""
+    return isinstance(data, dict)
+
+
+class BuiltinDeviceEntryYaml(TypedDict, total=False):
+    ref: str
+    # Arbitrary per-device override content (e.g. {"keyboard_type": "jp"}) --
+    # not a good TypedDict candidate, same reasoning as _DeviceDef.raw
+    # (design.md Decision 5).
+    overrides: dict[str, Any]
+
+
+def _is_builtin_device_entry_shape(data: object) -> TypeGuard[BuiltinDeviceEntryYaml]:
+    """True if `data` is a dict (builtin_devices list-item shape)."""
+    return isinstance(data, dict)
+
+
+class CpuBlockYaml(TypedDict, total=False):
+    m1_wait_states: int
+
+
+class MachineEntryYaml(TypedDict, total=False):
+    schema_version: int
+    id: str
+    generation: str
+    name: str
+    rom_base: str
+    video_standard: str
+    cpu: CpuBlockYaml
+    # Raw YAML keys (int-or-str) pre-_int_keys() coercion under
+    # slots["primary"] -- narrowed per-item to Slot0Yaml/Slot3Msx1Yaml/
+    # Slot3Msx2Yaml after coercion (design.md Decision 4).
+    slots: dict[str, Any]
+    builtin_devices: list[BuiltinDeviceEntryYaml]
+
+
+def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
+    """True if `data` is a dict (machine YAML top-level shape). Individual
+    required fields (schema_version/id/generation) are still checked by
+    `load_machine_spec` itself, not guaranteed here (design.md Decision 2)."""
+    return isinstance(data, dict)
+
+
+class SramYaml(TypedDict, total=False):
+    save_file: str
+
+
+def _is_sram_shape(data: object) -> TypeGuard[SramYaml]:
+    """True if `data` is a dict (sram: block shape)."""
+    return isinstance(data, dict)
+
+
+class FmPacOverlayYaml(TypedDict, total=False):
+    schema_version: int
+    slot: int
+    rom_base: str
+    rom: RomEntryYaml
+    sram: SramYaml
+
+
+def _is_fmpac_overlay_shape(data: object) -> TypeGuard[FmPacOverlayYaml]:
+    """True if `data` is a dict (fmpac.yaml top-level shape). Individual
+    required fields are still checked by `load_fmpac_overlay` itself, not
+    guaranteed here (design.md Decision 2)."""
+    return isinstance(data, dict)
 
 
 # ---------------------------------------------------------------------------
@@ -321,23 +527,25 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
         return registry
     for path in sorted(devices_dir.glob("*.yaml")):
         with path.open(encoding="utf-8") as fh:
-            raw: Any = yaml.safe_load(fh)
-        if not isinstance(raw, dict):
+            raw = yaml.safe_load(fh)
+        if not _is_device_entry_shape(raw):
             raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
-        dev_id: Any = raw.get("id")
+        dev_id = raw.get("id")
         if not dev_id:
             raise MachineLoadError(f"{path}: missing required field 'id'")
         if dev_id != path.stem:
             raise MachineLoadError(
                 f"{path}: 'id' field {dev_id!r} does not match filename stem {path.stem!r}"
             )
-        dev_type: Any = raw.get("type")
+        dev_type = raw.get("type")
         if not dev_type:
             raise MachineLoadError(f"{path}: missing required field 'type'")
-        implemented: bool = bool(raw.get("implemented", True))
-        registry[str(dev_id)] = _DeviceDef(
-            type=str(dev_type), implemented=implemented, raw=raw
-        )
+        implemented = bool(raw.get("implemented", True))
+        # _DeviceDef.raw stays dict[str, Any] (arbitrary passthrough fields
+        # beyond DeviceEntryYaml's known keys, e.g. keyboard_type/io_ports --
+        # design.md Decision 5); TypedDict is a plain dict at runtime, so this
+        # cast is a widening, not a type mismatch.
+        registry[str(dev_id)] = _DeviceDef(implemented=implemented, raw=cast(dict[str, Any], raw))
     return registry
 
 
@@ -345,7 +553,7 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
 # Slot parsers
 # ---------------------------------------------------------------------------
 
-def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
+def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     """Parse a `rom: {file, size_kb, pages, sha1}` block into a _RomEntry.
 
     This is the one shared slot-resident-device ROM schema in the loader: it
@@ -356,13 +564,13 @@ def _parse_rom_entry(entry: dict[str, Any], context: str) -> _RomEntry:
     (load_fmpac_overlay). A new ROM-bearing device added to the loader should
     reuse this rather than hand-rolling another parser.
     """
-    file: Any = entry.get("file")
+    file = entry.get("file")
     if not file:
         raise MachineLoadError(f"{context}: ROM entry missing required field 'file'")
-    size_kb: int = int(entry.get("size_kb", 0))
-    pages_raw: Any = entry.get("pages", [])
+    size_kb = entry.get("size_kb", 0)
+    pages_raw = entry.get("pages", [])
     pages: list[int] = [int(p) for p in pages_raw]
-    sha1: str | None = entry.get("sha1") or None
+    sha1 = entry.get("sha1") or None
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
@@ -378,15 +586,15 @@ def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
 
 
 def _parse_slot0(
-    slot0: dict[str, Any], machine_id: str
+    slot0: Slot0Yaml, machine_id: str
 ) -> tuple[_RomEntry | None, _RomEntry | None]:
     """Extract main ROM (pages [0,1]) and optional logo ROM (page [2]) from slot 0."""
     main_rom: _RomEntry | None = None
     logo_rom: _RomEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
-        rom_data: Any = item.get("rom")
-        if not isinstance(rom_data, dict):
+        rom_data = item.get("rom")
+        if not _is_rom_entry_shape(rom_data):
             continue
         entry = _parse_rom_entry(rom_data, context)
         if 0 in entry.pages or 1 in entry.pages:
@@ -396,24 +604,24 @@ def _parse_slot0(
     return main_rom, logo_rom
 
 
-def _parse_slot3_msx1(slot3: dict[str, Any]) -> int:
+def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
     """Return flat RAM size in KB for an MSX1 slot 3 declaration."""
     return int(slot3.get("size_kb", 32))
 
 
-def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
-    """Resolve an optional `fdc:` block in slot 3 sub-slot 0.
+def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef | None:
+    """Resolve an optional `fdc:` block in the given MSX2 slot 3 sub-slot.
 
     Raises:
         MachineLoadError: On a missing DISK ROM entry, or an unsupported
             controller type or connection style.
     """
-    fdc_raw: Any = sub0.get("fdc")
-    if not isinstance(fdc_raw, dict):
+    fdc_raw = sub_val.get("fdc")
+    if not _is_fdc_shape(fdc_raw):
         return None
-    context = f"machine '{machine_id}' slot 3 sub-slot 0 fdc"
-    rom_data: Any = fdc_raw.get("rom")
-    if not isinstance(rom_data, dict):
+    context = f"machine '{machine_id}' slot 3 sub-slot {sub_idx} fdc"
+    rom_data = fdc_raw.get("rom")
+    if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{context}: missing required 'rom' entry")
     disk_rom_entry = _parse_rom_entry(rom_data, context)
     controller = str(fdc_raw.get("controller", "wd2793")).lower()
@@ -428,6 +636,12 @@ def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
             f"{context}: unsupported connection_style {style!r} "
             f"(supported: {sorted(_SUPPORTED_FDC_STYLES)})"
         )
+    if (controller, style) not in _SUPPORTED_FDC_PAIRS:
+        raise MachineLoadError(
+            f"{context}: controller {controller!r} does not support "
+            f"connection_style {style!r} "
+            f"(supported pairs: {sorted(_SUPPORTED_FDC_PAIRS)})"
+        )
     drives = int(fdc_raw.get("drives", 1))
     return _FdcDef(
         disk_rom_entry=disk_rom_entry,
@@ -437,30 +651,39 @@ def _parse_fdc(sub0: dict[str, Any], machine_id: str) -> _FdcDef | None:
     )
 
 
-def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
+def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
     A sub-slot declaring `type: ram` without `mapper: standard` is a flat
     (non-mapper) RAM (e.g. HB-F1XD's 64 KB in sub-slot 3); a `mapper: standard`
-    sub-slot sets has_ram_mapper as before. An `fdc:` block in sub-slot 0
-    resolves the floppy interface.
+    sub-slot sets has_ram_mapper as before. The SUB ROM and an `fdc:` block are
+    each resolved from whichever sub-slot declares them -- scanned in
+    ascending sub-slot order, first match wins -- independently of each other,
+    so a machine MAY place them in the same sub-slot (every machine predating
+    this generalisation does, and still resolves to sub-slot 0 for both,
+    unchanged) or in different sub-slots (e.g. FS-A1F's real hardware layout).
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
         secondary: dict[int, Any] = _int_keys(slot3.get("secondary", {}))
-        sub0: Any = secondary.get(0, {})
-        if isinstance(sub0, dict):
-            for item in sub0.get("content", []):
-                rom_data: Any = item.get("rom")
-                if isinstance(rom_data, dict):
-                    result.sub_rom = _parse_rom_entry(
-                        rom_data, f"machine '{machine_id}' slot 3 sub-slot 0"
-                    )
-                    break
-            result.fdc = _parse_fdc(sub0, machine_id)
-        for sub_idx, sub_val in secondary.items():
-            if not isinstance(sub_val, dict):
+        for sub_idx in sorted(secondary):
+            sub_val = secondary[sub_idx]
+            if not _is_sub_slot_shape(sub_val):
                 continue
+            if result.sub_rom is None:
+                for item in sub_val.get("content", []):
+                    rom_data = item.get("rom")
+                    if _is_rom_entry_shape(rom_data):
+                        result.sub_rom = _parse_rom_entry(
+                            rom_data, f"machine '{machine_id}' slot 3 sub-slot {sub_idx}"
+                        )
+                        result.sub_rom_subslot = sub_idx
+                        break
+            if result.fdc is None:
+                fdc = _parse_fdc(sub_val, machine_id, sub_idx)
+                if fdc is not None:
+                    result.fdc = fdc
+                    result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
             elif sub_val.get("type") == "ram":
@@ -475,117 +698,24 @@ def _parse_slot3_msx2(slot3: dict[str, Any], machine_id: str) -> _Slot3Msx2:
 # Pass 2: machine spec
 # ---------------------------------------------------------------------------
 
-def load_machine_spec(
-    machine_id: str,
-    config_dir: Path,
+def _parse_builtin_devices(
+    raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
-    project_root: Path,
-) -> MachineSpec:
-    """Load and validate a machine YAML by id.
+    machine_path: Path,
+) -> tuple[bool, bool, str, dict[str, tuple[int, int]]]:
+    """Resolve the `builtin_devices` list against the device registry.
 
-    Args:
-        machine_id: Stem of the YAML file in config_dir/machines/ (e.g. 'cbios_msx2').
-        config_dir: Path to the config/ directory.
-        device_registry: Pre-loaded registry from load_device_registry().
-        project_root: Project root used to resolve rom_base relative paths.
-
-    Returns:
-        A MachineSpec with all ROM entries and device flags resolved.
-
-    Raises:
-        MachineLoadError: On missing file, bad schema_version, unresolved ref,
-            missing slot 0 main ROM, or unknown generation.
+    Returns (has_v9938, has_rtc, keyboard_type, device_io_ports).
     """
-    machines_dir = config_dir / "machines"
-    machine_path = machines_dir / f"{machine_id}.yaml"
-    if not machine_path.exists():
-        raise MachineLoadError(f"machine not found: {machine_path}")
-
-    with machine_path.open(encoding="utf-8") as fh:
-        raw: Any = yaml.safe_load(fh)
-    if not isinstance(raw, dict):
-        raise MachineLoadError(f"{machine_path}: expected a YAML mapping at top level")
-
-    schema_version: Any = raw.get("schema_version")
-    if schema_version != 1:
-        raise MachineLoadError(
-            f"{machine_path}: unsupported schema_version {schema_version!r} (expected 1)"
-        )
-
-    m_id: Any = raw.get("id")
-    if m_id != machine_path.stem:
-        raise MachineLoadError(
-            f"{machine_path}: 'id' field {m_id!r} does not match filename stem "
-            f"{machine_path.stem!r}"
-        )
-
-    generation: Any = raw.get("generation")
-    if generation not in ("msx1", "msx2"):
-        raise MachineLoadError(
-            f"{machine_path}: unsupported generation {generation!r} "
-            f"(expected 'msx1' or 'msx2')"
-        )
-
-    name: str = str(raw.get("name", machine_id))
-    rom_base: str = str(raw.get("rom_base", "roms/cbios"))
-    rom_base_dir = project_root / rom_base
-
-    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
-    if video_standard not in _TIMING:
-        raise MachineLoadError(
-            f"{machine_path}: unsupported video_standard {video_standard!r} "
-            f"(expected 'ntsc' or 'pal')"
-        )
-    cycles_per_frame, lines_per_frame = _TIMING[video_standard]
-
-    # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
-    cpu_block: dict[str, Any] = raw.get("cpu", {}) or {}
-    m1_wait_states = int(cpu_block.get("m1_wait_states", 0))
-
-    # --- Slot parsing ---
-    slots: dict[str, Any] = raw.get("slots", {})
-    primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
-
-    slot0: Any = primary.get(0, {})
-    if not isinstance(slot0, dict):
-        slot0 = {}
-    main_rom_entry, logo_rom_entry = _parse_slot0(slot0, machine_id)
-    if main_rom_entry is None:
-        raise MachineLoadError(
-            f"{machine_path}: slot 0 has no main ROM (content with pages [0] or [1])"
-        )
-
-    sub_rom_entry: _RomEntry | None = None
-    has_ram_mapper = False
-    ram_size_kb = 32
-    flat_ram_subslot: int | None = None
-    flat_ram_size_kb = 64
-    fdc: _FdcDef | None = None
-
-    slot3: Any = primary.get(3, {})
-    if not isinstance(slot3, dict):
-        slot3 = {}
-
-    if generation == "msx2":
-        s3 = _parse_slot3_msx2(slot3, machine_id)
-        sub_rom_entry = s3.sub_rom
-        has_ram_mapper = s3.has_ram_mapper
-        flat_ram_subslot = s3.flat_ram_subslot
-        flat_ram_size_kb = s3.flat_ram_size_kb
-        fdc = s3.fdc
-    else:
-        ram_size_kb = _parse_slot3_msx1(slot3)
-
-    # --- Builtin device resolution ---
     has_v9938 = False
     has_rtc = False
     keyboard_type = "int"
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
-        if not isinstance(entry, dict):
+        if not _is_builtin_device_entry_shape(entry):
             continue
-        ref: Any = entry.get("ref")
+        ref = entry.get("ref")
         if ref is None:
             continue
         ref_str = str(ref)
@@ -620,6 +750,123 @@ def load_machine_spec(
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
+    return has_v9938, has_rtc, keyboard_type, device_io_ports
+
+
+def load_machine_spec(
+    machine_id: str,
+    config_dir: Path,
+    device_registry: dict[str, _DeviceDef],
+    project_root: Path,
+) -> MachineSpec:
+    """Load and validate a machine YAML by id.
+
+    Args:
+        machine_id: Stem of the YAML file in config_dir/machines/ (e.g. 'cbios_msx2').
+        config_dir: Path to the config/ directory.
+        device_registry: Pre-loaded registry from load_device_registry().
+        project_root: Project root used to resolve rom_base relative paths.
+
+    Returns:
+        A MachineSpec with all ROM entries and device flags resolved.
+
+    Raises:
+        MachineLoadError: On missing file, bad schema_version, unresolved ref,
+            missing slot 0 main ROM, or unknown generation.
+    """
+    machines_dir = config_dir / "machines"
+    machine_path = machines_dir / f"{machine_id}.yaml"
+    if not machine_path.exists():
+        raise MachineLoadError(f"machine not found: {machine_path}")
+
+    with machine_path.open(encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    if not _is_machine_entry_shape(raw):
+        raise MachineLoadError(f"{machine_path}: expected a YAML mapping at top level")
+
+    schema_version = raw.get("schema_version")
+    if schema_version != 1:
+        raise MachineLoadError(
+            f"{machine_path}: unsupported schema_version {schema_version!r} (expected 1)"
+        )
+
+    m_id = raw.get("id")
+    if m_id != machine_path.stem:
+        raise MachineLoadError(
+            f"{machine_path}: 'id' field {m_id!r} does not match filename stem "
+            f"{machine_path.stem!r}"
+        )
+
+    generation = raw.get("generation")
+    if generation not in ("msx1", "msx2"):
+        raise MachineLoadError(
+            f"{machine_path}: unsupported generation {generation!r} "
+            f"(expected 'msx1' or 'msx2')"
+        )
+
+    name: str = str(raw.get("name", machine_id))
+    rom_base: str = str(raw.get("rom_base", "roms/cbios"))
+    rom_base_dir = project_root / rom_base
+
+    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
+    if video_standard not in _TIMING:
+        raise MachineLoadError(
+            f"{machine_path}: unsupported video_standard {video_standard!r} "
+            f"(expected 'ntsc' or 'pal')"
+        )
+    cycles_per_frame, lines_per_frame = _TIMING[video_standard]
+
+    # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
+    cpu_block: CpuBlockYaml = raw.get("cpu", {}) or {}
+    m1_wait_states = int(cpu_block.get("m1_wait_states", 0))
+
+    # --- Slot parsing ---
+    slots = raw.get("slots", {})
+    primary: dict[int, Any] = _int_keys(slots.get("primary", {}))
+
+    slot0_raw = primary.get(0, {})
+    slot0: Slot0Yaml = slot0_raw if _is_slot0_shape(slot0_raw) else {}
+    main_rom_entry, logo_rom_entry = _parse_slot0(slot0, machine_id)
+    if main_rom_entry is None:
+        raise MachineLoadError(
+            f"{machine_path}: slot 0 has no main ROM (content with pages [0] or [1])"
+        )
+
+    sub_rom_entry: _RomEntry | None = None
+    sub_rom_subslot = 0
+    has_ram_mapper = False
+    ram_size_kb = 32
+    flat_ram_subslot: int | None = None
+    flat_ram_size_kb = 64
+    fdc: _FdcDef | None = None
+    fdc_subslot = 0
+
+    slot3: dict[str, Any] = primary.get(3, {})
+    if not isinstance(slot3, dict):
+        slot3 = {}
+
+    if generation == "msx2":
+        # Same reasoning as the msx1 branch's cast below: slot3 is already
+        # confirmed dict-shaped, shared with _parse_slot3_msx1's dict[str, Any].
+        s3 = _parse_slot3_msx2(cast(Slot3Msx2Yaml, slot3), machine_id)
+        sub_rom_entry = s3.sub_rom
+        sub_rom_subslot = s3.sub_rom_subslot
+        has_ram_mapper = s3.has_ram_mapper
+        flat_ram_subslot = s3.flat_ram_subslot
+        flat_ram_size_kb = s3.flat_ram_size_kb
+        fdc = s3.fdc
+        fdc_subslot = s3.fdc_subslot
+    else:
+        # slot3 is already confirmed dict-shaped above; TypedDict is a plain
+        # dict at runtime, so this is a widening/narrowing view of the same
+        # object, not an unchecked cast (design.md Decision 2).
+        ram_size_kb = _parse_slot3_msx1(cast(Slot3Msx1Yaml, slot3))
+
+    # --- Builtin device resolution ---
+    has_v9938, has_rtc, keyboard_type, device_io_ports = _parse_builtin_devices(
+        raw, device_registry, machine_path
+    )
+
     return MachineSpec(
         name=name,
         generation=str(generation),
@@ -638,7 +885,9 @@ def load_machine_spec(
         m1_wait_states=m1_wait_states,
         flat_ram_subslot=flat_ram_subslot,
         flat_ram_size_kb=flat_ram_size_kb,
+        sub_rom_subslot=sub_rom_subslot,
         fdc=fdc,
+        fdc_subslot=fdc_subslot,
     )
 
 
@@ -666,11 +915,11 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
         raise MachineLoadError(f"FM-PAC overlay not found: {path}")
 
     with path.open(encoding="utf-8") as fh:
-        raw: Any = yaml.safe_load(fh)
-    if not isinstance(raw, dict):
+        raw = yaml.safe_load(fh)
+    if not _is_fmpac_overlay_shape(raw):
         raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
 
-    schema_version: Any = raw.get("schema_version")
+    schema_version = raw.get("schema_version")
     if schema_version != 1:
         raise MachineLoadError(
             f"{path}: unsupported schema_version {schema_version!r} (expected 1)"
@@ -684,14 +933,14 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
     rom_base: str = str(raw.get("rom_base", "roms/fmpac"))
     rom_base_dir = project_root / rom_base
 
-    rom_data: Any = raw.get("rom")
-    if not isinstance(rom_data, dict):
+    rom_data = raw.get("rom")
+    if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{path}: missing required 'rom' entry")
     rom_entry = _parse_rom_entry(rom_data, f"FM-PAC overlay '{path}'")
 
-    sram_data: Any = raw.get("sram")
+    sram_data = raw.get("sram")
     save_file = str(sram_data.get("save_file", "saves/sram/fmpac.sram")) \
-        if isinstance(sram_data, dict) else "saves/sram/fmpac.sram"
+        if _is_sram_shape(sram_data) else "saves/sram/fmpac.sram"
 
     return _FmPacOverlay(
         rom_base_dir=rom_base_dir,
@@ -712,6 +961,27 @@ def _io_range(
 ) -> tuple[int, int]:
     """Return (first_port, last_port) for device_id from spec, or fallback."""
     return spec.device_io_ports.get(device_id, fallback)
+
+
+def _register_common_io(
+    io: IOBus,
+    spec: MachineSpec,
+    vdp: "VDP | V9938",
+    psg: PSG,
+    ppi: PPI,
+    vdp_default_ports: tuple[int, int],
+) -> None:
+    """Register the VDP/PSG/PPI port ranges every machine generation shares."""
+    vdp_dev_id = "vdp_v9938" if isinstance(vdp, V9938) else "vdp_tms9918a"
+    vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
+    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
+    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
+    io.register_read(vdp_s, vdp_e, vdp.read_port)
+    io.register_write(vdp_s, vdp_e, vdp.write_port)
+    io.register_read(psg_s, psg_e, psg.read_port)
+    io.register_write(psg_s, psg_e, psg.write_port)
+    io.register_read(ppi_s, ppi_e, ppi.read_port)
+    io.register_write(ppi_s, ppi_e, ppi.write_port)
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +1010,21 @@ def _load_rom(rom_base_dir: Path, filename: str, *, required: bool) -> bytes | N
         print(f"warning: optional ROM file not found, skipping: {path}", file=sys.stderr)
         return None
     return path.read_bytes()
+
+
+def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytearray | None:
+    """Load a save file's SRAM bytes, or warn and start fresh if the size mismatches."""
+    if not path.exists():
+        return None
+    raw = path.read_bytes()
+    if len(raw) == expected_size:
+        return bytearray(raw)
+    print(
+        f"warning: {label}SRAM file {path} has wrong size "
+        f"({len(raw)} != {expected_size}), starting fresh",
+        file=sys.stderr,
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -833,17 +1118,7 @@ def build_machine(
             # None here, so cart_sha1 is set).
             assert cart_sha1 is not None
             sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
-            expected_size = _SRAM_SIZES[resolved]
-            if sram_save_path.exists():
-                raw = sram_save_path.read_bytes()
-                if len(raw) == expected_size:
-                    sram_data = bytearray(raw)
-                else:
-                    print(
-                        f"warning: SRAM file {sram_save_path} has wrong size "
-                        f"({len(raw)} != {expected_size}), starting fresh",
-                        file=sys.stderr,
-                    )
+            sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
 
         mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
 
@@ -867,17 +1142,9 @@ def build_machine(
             fmpac_overlay.rom_base_dir, fmpac_overlay.rom_entry.file, required=True
         )
         assert fmpac_rom is not None
-        fmpac_sram: bytearray | None = None
-        if fmpac_overlay.sram_save_path.exists():
-            raw_sram = fmpac_overlay.sram_save_path.read_bytes()
-            if len(raw_sram) == FMPAC_SRAM_SIZE:
-                fmpac_sram = bytearray(raw_sram)
-            else:
-                print(
-                    f"warning: FM-PAC SRAM file {fmpac_overlay.sram_save_path} has wrong "
-                    f"size ({len(raw_sram)} != {FMPAC_SRAM_SIZE}), starting fresh",
-                    file=sys.stderr,
-                )
+        fmpac_sram = _load_sram_or_warn(
+            fmpac_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
+        )
         fmpac_device = FmPac(
             rom=fmpac_rom,
             opll=Opll(),
@@ -970,15 +1237,7 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(memory=memory, _input=input_state)
-    vdp_s, vdp_e = _io_range(spec, "vdp_tms9918a", _DEFAULT_IO_PORTS["vdp_tms9918a"])
-    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
-    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
-    io.register_read(vdp_s, vdp_e, vdp.read_port)
-    io.register_write(vdp_s, vdp_e, vdp.write_port)
-    io.register_read(psg_s, psg_e, psg.read_port)
-    io.register_write(psg_s, psg_e, psg.write_port)
-    io.register_read(ppi_s, ppi_e, ppi.read_port)
-    io.register_write(ppi_s, ppi_e, ppi.write_port)
+    _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
               m1_wait_states=spec.m1_wait_states, _logger=logger)
     return machine_cls(
@@ -998,7 +1257,8 @@ def _build_fdc(
     fdd_images into the drive with the matching index (fdd_images[0] -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
-    from msx.fdc.interface import SonyPhilipsInterface
+    from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
+    from msx.fdc.tc8566af import TC8566AF
     from msx.fdc.wd2793 import WD2793
 
     assert spec.fdc is not None
@@ -1007,9 +1267,12 @@ def _build_fdc(
     else:
         disk_rom = _load_rom(spec.rom_base_dir, spec.fdc.disk_rom_entry.file, required=True)
     drives = [DiskDrive() for _ in range(spec.fdc.drives)]
-    controller = WD2793()
-    # connection_style was validated by the loader; only 'sony' exists today.
-    device = SonyPhilipsInterface(controller, drives, disk_rom=disk_rom)
+    # controller/connection_style were validated by the loader (_SUPPORTED_FDC_*).
+    device: SonyPhilipsInterface | TC8566AFInterface
+    if spec.fdc.controller == "tc8566af":
+        device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
+    else:
+        device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
     for idx, image_path in enumerate(fdd_images):
         if image_path is None:
             continue
@@ -1078,7 +1341,9 @@ def _build_msx2(
         sub_slot_enabled=True,
         ram_mapper=ram_mapper,
         flat_ram_subslot=flat_ram_subslot,
+        sub_rom_subslot=spec.sub_rom_subslot,
         fdc=fdc_device,
+        fdc_subslot=spec.fdc_subslot,
         rom_name=spec.main_rom_entry.file,
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
@@ -1086,19 +1351,10 @@ def _build_msx2(
     rtc: RTC | None = RTC() if spec.has_rtc else None
     ppi = PPI(memory=memory, _input=input_state)
 
-    vdp_dev_id = "vdp_v9938" if spec.has_v9938 else "vdp_tms9918a"
     # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the
     # TMS9918A stops at 0x99.
     vdp_default_ports = (0x98, 0x9B) if spec.has_v9938 else _DEFAULT_IO_PORTS["vdp_tms9918a"]
-    vdp_s, vdp_e = _io_range(spec, vdp_dev_id, vdp_default_ports)
-    psg_s, psg_e = _io_range(spec, "psg_ay8910", _DEFAULT_IO_PORTS["psg_ay8910"])
-    ppi_s, ppi_e = _io_range(spec, "ppi8255", _DEFAULT_IO_PORTS["ppi8255"])
-    io.register_read(vdp_s, vdp_e, vdp.read_port)
-    io.register_write(vdp_s, vdp_e, vdp.write_port)
-    io.register_read(psg_s, psg_e, psg.read_port)
-    io.register_write(psg_s, psg_e, psg.write_port)
-    io.register_read(ppi_s, ppi_e, ppi.read_port)
-    io.register_write(ppi_s, ppi_e, ppi.write_port)
+    _register_common_io(io, spec, vdp, psg, ppi, vdp_default_ports)
     if rtc is not None:
         rtc_s, rtc_e = _io_range(spec, "rtc_rp5c01", _DEFAULT_IO_PORTS["rtc_rp5c01"])
         io.register_read(rtc_s, rtc_e, rtc.read_port)
