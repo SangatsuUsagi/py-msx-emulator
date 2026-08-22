@@ -305,13 +305,17 @@ sub-slot 0, SUB ROM in sub-slot 1) as Main Status Register, Data Register, and
 two control registers — no directly addressable TRACK/SECTOR register, unlike
 WD2793; `*.dsk` images mount the same way via `--fdd1`. Implements SPECIFY,
 SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE, SEEK, READ DATA,
-and WRITE DATA — the commands the MSX DISK ROM's boot/sector-I/O path needs.
+WRITE DATA, and FORMAT — enough for the MSX DISK ROM's boot/sector-I/O path
+and `CALL FORMAT`.
 
 - Known limitations:
   - No timing model (same functional-model approach as WD2793).
   - Non-DMA mode only — the chip's DRQ2/-DACK2/DMATC pins are not modelled.
-  - FORMAT / READ ID / READ DIAGNOSTIC / SCAN / deleted-data commands are not
-    implemented (not needed for the Disk BASIC boot/sector-I/O path).
+  - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN
+    are not implemented (not needed for the Disk BASIC boot/sector-I/O path).
+  - Like WD2793's own WRITE TRACK, FORMAT discards the streamed descriptor
+    bytes and just blanks every sector of the current (track, side) rather
+    than writing real gap/sync/ID/CRC bytes.
 
 ### ROM database
 
@@ -469,19 +473,19 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 304.38 | ~5.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 449.72 | ~7.5× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1209.46 | ~20.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1427.64 | ~23.8× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 77.95 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 115.44 | ~1.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 290.91 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 462.85 | ~7.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 304.71 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 450.01 | ~7.5× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1205.03 | ~20.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1422.12 | ~23.7× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 77.70 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 115.05 | ~1.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 291.27 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 468.84 | ~7.8× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
 heaviest rendering/audio load among the target titles) at ~1.3×; PyPy raises the
-same case to ~4.8×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+same case to ~4.9×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -497,7 +501,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.5.7, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.5.8, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 

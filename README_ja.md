@@ -204,12 +204,13 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 
 ### フロッピーディスクドライブ（TC8566AF）
 
-同じ汎用 FDC 層上の2つ目のコントローラ/接続スタイルの組み合わせ。Panasonic FS-A1F（`--machine fs_a1f`）が採用。スロット 3 サブスロット 2（FS-A1Fの実機通りの配置 — RAMがサブスロット0、SUB ROMがサブスロット1）にメモリマップ（Main Status Register・Data Register・2つのコントロールレジスタ — WD2793と異なりTRACK/SECTORレジスタは直接アドレス指定不可）。`*.dsk` イメージは同様に `--fdd1` でマウント。SPECIFY・SENSE INTERRUPT STATUS・SENSE DEVICE STATUS・RECALIBRATE・SEEK・READ DATA・WRITE DATA を実装 — MSX DISK ROM の起動/セクタ入出力パスに必要なコマンド。
+同じ汎用 FDC 層上の2つ目のコントローラ/接続スタイルの組み合わせ。Panasonic FS-A1F（`--machine fs_a1f`）が採用。スロット 3 サブスロット 2（FS-A1Fの実機通りの配置 — RAMがサブスロット0、SUB ROMがサブスロット1）にメモリマップ（Main Status Register・Data Register・2つのコントロールレジスタ — WD2793と異なりTRACK/SECTORレジスタは直接アドレス指定不可）。`*.dsk` イメージは同様に `--fdd1` でマウント。SPECIFY・SENSE INTERRUPT STATUS・SENSE DEVICE STATUS・RECALIBRATE・SEEK・READ DATA・WRITE DATA・FORMAT を実装 — MSX DISK ROM の起動/セクタ入出力パスと `CALL FORMAT` に必要なコマンド。
 
 - 既知の制限：
   - タイミングモデルを持たない(WD2793と同じ関数モデル方式)。
   - Non-DMAモードのみ — DRQ2/-DACK2/DMATCピンは未実装。
-  - FORMAT / READ ID / READ DIAGNOSTIC / SCAN / deleted-data系コマンドは未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
+  - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN は未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
+  - WD2793のWRITE TRACKと同様、FORMATはストリームされたディスクリプタバイトを破棄し、現在の(トラック, サイド)の全セクタを単純にブランク化するのみで、実際のギャップ/シンク/ID/CRCバイトは書き込まない。
 
 ### ROM データベース
 
@@ -327,22 +328,22 @@ v2.5.0 以降は、仕様と実装の整合性を検証するための第2の振
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 304.38 | 約 5.1 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 449.72 | 約 7.5 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1209.46 | 約 20.2 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1427.64 | 約 23.8 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 77.95 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 115.44 | 約 1.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 290.91 | 約 4.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 462.85 | 約 7.7 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 304.71 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 450.01 | 約 7.5 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1205.03 | 約 20.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1422.12 | 約 23.7 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 77.70 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 115.05 | 約 1.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 291.27 | 約 4.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 468.84 | 約 7.8 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.8 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.5.7 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.5.8 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
