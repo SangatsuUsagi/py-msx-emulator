@@ -27,6 +27,20 @@ def test_vram_size_is_128kb() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ports 0x9A/0x9B (palette / indirect register): write-only, read as open bus
+# ---------------------------------------------------------------------------
+
+def test_read_port_0x9a_palette_port_returns_0xff() -> None:
+    vdp = V9938()
+    assert vdp.read_port(0x9A) == 0xFF
+
+
+def test_read_port_0x9b_indirect_register_port_returns_0xff() -> None:
+    vdp = V9938()
+    assert vdp.read_port(0x9B) == 0xFF
+
+
+# ---------------------------------------------------------------------------
 # Port 0x98: VRAM read/write with address auto-increment
 # ---------------------------------------------------------------------------
 

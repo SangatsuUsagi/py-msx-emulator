@@ -909,6 +909,7 @@ class V9938:
             self._cmd_xstep = xs
             self._cmd_ystep = ys
             self._cmd_active = True
+            self._cmd_remaining = 0
             self._status2 |= _S2_CE | _S2_TR
             # The first dot is fetched at once (openMSX startLmcm sets its
             # transfer flag); every S#7 read takes one and stages the next.

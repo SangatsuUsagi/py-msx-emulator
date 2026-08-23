@@ -24,6 +24,13 @@ def _set_screen5(vdp: V9938) -> None:
     vdp.regs[0] = 0x06  # M3=bit1, M4=bit2
 
 
+def _set_screen4(vdp: V9938) -> None:
+    """GRAPHIC3 (M4=1, M3=0, M5=0): renders background like GRAPHIC2 but
+    still uses sprite mode 2, same as every other M4-set mode."""
+    _enable(vdp)
+    vdp.regs[0] = 0x04  # M4=bit2 only
+
+
 # R#5=0x70, R#11=0 → attr_reg = 0x70 << 7 = 0x3800.
 # V9938 sprite mode 2: R#5/R#11 → SAT base (512-byte aligned) = 0x3800;
 # colour table at SAT - 0x200 = 0x3600.
@@ -83,6 +90,24 @@ def test_sprite_mode2_colour_from_colour_table() -> None:
     buf = _active(vdp)
     # y=0 → y_top=1; sprite at scan line 1, col 0
     assert buf[1 * 256 + 0] == 6
+
+
+def test_screen4_graphic3_still_uses_sprite_mode2() -> None:
+    """GRAPHIC3 (SCREEN4) renders its background like GRAPHIC2, but sprites
+    use mode 2 (colour table, 216 terminator) just like every M4-set mode --
+    it is not sprite mode 1 despite the GRAPHIC2-like background."""
+    vdp = V9938()
+    _set_screen4(vdp)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)
+    _terminate_sat(vdp, after_idx=1)
+    _write_col_entry(vdp, sprite_idx=0, line_idx=0, color=6)
+    vdp.vram[0] = 0x80
+
+    buf = _active(vdp)
+    assert buf[1 * 256 + 0] == 6  # colour-table colour, the sprite-mode-2 path
 
 
 def test_sprite_mode2_terminator_is_216_not_208() -> None:

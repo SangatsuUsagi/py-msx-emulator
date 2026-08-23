@@ -50,6 +50,40 @@ def test_screen5_high_nibble_is_left_pixel() -> None:
     assert buf[0] == 5   # pixel 0: high nibble
 
 
+def _set_screen4(vdp: V9938) -> None:
+    """Set mode bits for SCREEN 4 / GRAPHIC3 (M4=1, M3=0, M5=0): R#0=0x04.
+
+    Real V9938 hardware renders GRAPHIC3 pixel-identically to GRAPHIC2 (same
+    name/pattern/colour table layout) -- only the sprite mode differs (mode 2
+    instead of mode 1). This is not a fallback or an approximation; it is the
+    hardware's actual behaviour (allium/v9938.allium's `graphic3` screen_mode
+    branch)."""
+    _enable(vdp)
+    vdp.regs[0] = 0x04  # M4=bit2 only
+
+
+def test_screen4_renders_as_graphic2_pixel_layout() -> None:
+    vdp = V9938()
+    _set_screen4(vdp)
+    vdp.regs[2] = 0x06   # name table at 0x1800 (same layout as GRAPHIC2)
+    vdp.regs[4] = 0x03   # pattern gen at 0x0000
+    vdp.regs[3] = 0xFF   # colour table at 0x2000
+    vdp.vram[0x1800] = 0x00  # tile 0 at name position (0, 0)
+    vdp.vram[0x0000] = 0xFF  # tile 0 pattern row 0: all foreground
+    vdp.vram[0x2000] = 0x41  # tile 0 colour: fg=4, bg=1
+
+    buf = _active(vdp)
+    assert buf[0] == 4  # foreground colour from the colour table, same as GRAPHIC2
+
+
+def test_screen4_display_width_is_256_not_512() -> None:
+    """GRAPHIC3 does not set M5, so it must not be misclassified as the wide
+    (M5=1, M4=0) bitmap modes."""
+    vdp = V9938()
+    _set_screen4(vdp)
+    assert vdp.display_width == 256
+
+
 def test_screen5_low_nibble_is_right_pixel() -> None:
     vdp = V9938()
     _set_screen5(vdp)
