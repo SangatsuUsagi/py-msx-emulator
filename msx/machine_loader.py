@@ -106,6 +106,15 @@ _SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
 # _build_fdc happens to fall into.
 _SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
+# The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
+# field (openspec/specs/msx2-subslot/spec.md's "Secondary slot register
+# field" Requirement: bits 7:6/5:4/3:2/1:0 select the sub-slot for pages
+# 3/2/1/0 respectively; the "Slot 3 sub-slot dispatch" Requirement extracts
+# it as `(sub_slot_reg >> (page * 2)) & 0x03`, matching msx/memory.py's own
+# `& 0x03` masks). A 2-bit field can only ever hold 0-3 -- this is not a
+# bound the loader is free to pick independently of that register layout.
+_MAX_SUB_SLOT_INDEX = 3
+
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
     "ASCII8SRAM8": 8192,
@@ -662,6 +671,14 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     so a machine MAY place them in the same sub-slot (every machine predating
     this generalisation does, and still resolves to sub-slot 0 for both,
     unchanged) or in different sub-slots (e.g. FS-A1F's real hardware layout).
+
+    Raises:
+        MachineLoadError: If a declared sub-slot role's index falls outside
+            0-_MAX_SUB_SLOT_INDEX, or if a mapper: standard sub-slot and a
+            flat (non-mapper) RAM sub-slot are both declared -- these are
+            mutually exclusive MSX2 slot 3 RAM strategies (see
+            allium/slots.allium's SlotThreeStrategyIsExclusive invariant and
+            Memory.__post_init__'s corresponding construction-time check).
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
@@ -691,6 +708,31 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                 result.flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
         result.has_ram_mapper = True
+
+    context = f"machine '{machine_id}' slot 3"
+    if result.sub_rom is not None and not (0 <= result.sub_rom_subslot <= _MAX_SUB_SLOT_INDEX):
+        raise MachineLoadError(
+            f"{context}: SUB ROM sub-slot {result.sub_rom_subslot} out of range "
+            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
+        )
+    if result.fdc is not None and not (0 <= result.fdc_subslot <= _MAX_SUB_SLOT_INDEX):
+        raise MachineLoadError(
+            f"{context}: fdc sub-slot {result.fdc_subslot} out of range "
+            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
+        )
+    if result.flat_ram_subslot is not None and not (
+        0 <= result.flat_ram_subslot <= _MAX_SUB_SLOT_INDEX
+    ):
+        raise MachineLoadError(
+            f"{context}: flat RAM sub-slot {result.flat_ram_subslot} out of range "
+            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
+        )
+    if result.has_ram_mapper and result.flat_ram_subslot is not None:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
+            "declared simultaneously -- these are mutually exclusive MSX2 slot 3 "
+            "RAM strategies (Memory cannot host both at once)"
+        )
     return result
 
 
