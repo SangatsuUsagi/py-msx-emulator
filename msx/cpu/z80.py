@@ -83,11 +83,11 @@ class Z80:
     def _fetch(self) -> int:
         b = self.read_byte(self.registers.PC)
         self.registers.PC = (self.registers.PC + 1) & 0xFFFF
-        # R is a 7-bit refresh counter: only bits 0-6 increment. On real
-        # hardware bit 7 is preserved (sticky) across increments; here we mask
-        # it to 0x7F, so bit 7 reads as 0. A port replicating exact R behaviour
-        # must keep bit 7 separately rather than masking it away.
-        self.registers.R = (self.registers.R + 1) & 0x7F
+        # R is a 7-bit refresh counter: only bits 0-6 increment on real
+        # hardware; bit 7 is preserved (sticky) across increments and only
+        # changes via a full-register write (e.g. LD R,A).
+        r = self.registers.R
+        self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
         return b
 
     def _fetch_word(self) -> int:
@@ -158,7 +158,7 @@ class Z80:
         self.instruction_pc = pc
         opcode = self.read_byte(pc)
         r.PC = (pc + 1) & 0xFFFF
-        r.R = (r.R + 1) & 0x7F
+        r.R = (r.R & 0x80) | ((r.R + 1) & 0x7F)
         if self._logger is not None:
             self._logger.on_step(pc, opcode)
         # + the M1 wait for this opcode fetch. Prefixed instructions add one more

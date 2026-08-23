@@ -404,6 +404,27 @@ def test_ld_a_r_reads_refresh_and_sets_pv_from_iff2() -> None:
     assert not (cpu.registers.F & F.FLAG_S)
 
 
+def test_fetch_operand_byte_preserves_r_bit7() -> None:
+    """The `_fetch()` path (used for operand/displacement/immediate bytes,
+    not just opcode M1 fetches) must also treat bit 7 as sticky."""
+    cpu = make_cpu([0xED, 0x5E, 0x00])  # LD A, R ; NOP (any 2+ byte stream)
+    cpu.registers.R = 0xC8  # bit 7 set
+    cpu._fetch()
+    assert cpu.registers.R == 0xC9  # bit 7 preserved, low 7 bits +1
+
+
+def test_ld_r_a_sets_bit7_and_next_fetch_preserves_it() -> None:
+    """R's auto-increment on fetch only touches bits 0-6; bit 7 is sticky
+    and changes only via a full-register write like LD R,A. Regression
+    guard for the sticky-bit-7 fix in Z80._fetch()/step()."""
+    cpu = make_cpu([0xED, 0x4F, 0x00])  # LD R, A ; NOP
+    cpu.registers.A = 0xC8  # bit 7 set
+    cpu.step()  # LD R,A: R = 0xC8 (2 fetches auto-incremented R first, then overwritten)
+    assert cpu.registers.R == 0xC8
+    cpu.step()  # NOP: one more fetch, auto-increment only bumps bits 0-6
+    assert cpu.registers.R == 0xC9  # bit 7 still set, low 7 bits incremented by 1
+
+
 def test_rrd_rotates_nibbles() -> None:
     rom = bytes([0xED, 0x67] + [0] * 32766)  # RRD
     ram = bytearray(32768)
