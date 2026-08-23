@@ -151,7 +151,7 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str
 
 def _require_scc(scc: SCC | None) -> SCC:
     if scc is None:
-        raise ValueError("KonamiSCC mapper requires an SCC instance")
+        raise MachineLoadError("KonamiSCC mapper requires an SCC instance")
     return scc
 
 
@@ -203,7 +203,7 @@ def _make_mapper(
 ) -> Mapper:
     builder = _MAPPER_BUILDERS.get(mapper_type)
     if builder is None:
-        raise ValueError(f"unknown mapper type: {mapper_type!r}")
+        raise MachineLoadError(f"unknown mapper type: {mapper_type!r}")
     rom_bytes = cartridge if cartridge is not None else b""
     return builder(cartridge, rom_bytes, sram, scc)
 
@@ -602,6 +602,8 @@ def _parse_slot0(
     logo_rom: _RomEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
+        if not _is_content_item_shape(item):
+            continue
         rom_data = item.get("rom")
         if not _is_rom_entry_shape(rom_data):
             continue
@@ -689,6 +691,8 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                 continue
             if result.sub_rom is None:
                 for item in sub_val.get("content", []):
+                    if not _is_content_item_shape(item):
+                        continue
                     rom_data = item.get("rom")
                     if _is_rom_entry_shape(rom_data):
                         result.sub_rom = _parse_rom_entry(

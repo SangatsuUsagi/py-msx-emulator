@@ -9,6 +9,11 @@ import pytest
 from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
+    _make_mapper,
+    _parse_slot0,
+    _parse_slot3_msx2,
+    _require_scc,
+    _RomEntry,
     build_machine,
     load_device_registry,
     load_machine_spec,
@@ -450,3 +455,208 @@ def test_m1_wait_states_read_from_cpu_block(tmp_path: Path) -> None:
     _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
     assert spec.m1_wait_states == 1
+
+
+# ---------------------------------------------------------------------------
+# Invalid keyboard_type override is rejected (allium A-2 regression guard —
+# the old spec modelled the `??` default-fallback chain as swallowing an
+# out-of-enum value into null; the real loader has always rejected it
+# unconditionally instead)
+# ---------------------------------------------------------------------------
+
+
+def test_keyboard_type_invalid_override_raises(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "devices" / "ppi8255.yaml",
+        "id: ppi8255\ntype: io_device\nimplemented: true\n"
+        "io_ports: [0xA8]\nkeyboard_type: int\n",
+    )
+    registry = load_device_registry(config_dir)
+    yaml_text = _msx1_yaml_with_extra_ref("ppi8255").replace(
+        "- ref: ppi8255",
+        "- ref: ppi8255\n    overrides: {keyboard_type: de}",
+    )
+    _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
+    with pytest.raises(MachineLoadError, match="must be 'int' or 'jp'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_keyboard_type_null_override_is_rejected_not_defaulted(tmp_path: Path) -> None:
+    """An explicit `keyboard_type: null` override is a declared-but-invalid
+    value, not "no override" — it must be rejected, not silently fall back
+    to the device's default."""
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "devices" / "ppi8255.yaml",
+        "id: ppi8255\ntype: io_device\nimplemented: true\n"
+        "io_ports: [0xA8]\nkeyboard_type: int\n",
+    )
+    registry = load_device_registry(config_dir)
+    yaml_text = _msx1_yaml_with_extra_ref("ppi8255").replace(
+        "- ref: ppi8255",
+        "- ref: ppi8255\n    overrides: {keyboard_type: null}",
+    )
+    _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
+    with pytest.raises(MachineLoadError, match="must be 'int' or 'jp'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Resolved keyboard_type reaches the built Machine's InputState (allium B-6)
+# ---------------------------------------------------------------------------
+
+
+def test_build_machine_input_state_keyboard_type_reaches_machine(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "devices" / "ppi8255.yaml",
+        "id: ppi8255\ntype: io_device\nimplemented: true\n"
+        "io_ports: [0xA8]\nkeyboard_type: int\n",
+    )
+    registry = load_device_registry(config_dir)
+    yaml_text = _msx1_yaml_with_extra_ref("ppi8255").replace(
+        "- ref: ppi8255",
+        "- ref: ppi8255\n    overrides: {keyboard_type: jp}",
+    )
+    _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.keyboard_type == "jp"
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert machine.input.keyboard_type == "jp"
+
+
+# ---------------------------------------------------------------------------
+# _parse_slot0 role assignment: single scan, main checked before logo
+# (allium A-1 — a block claiming both a main page and page 2 is main only,
+# never both main and logo, and never logo-only)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot0_entry_claiming_main_and_logo_pages_is_main_only() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "combo.rom", "size_kb": 48, "pages": [0, 1, 2]}},
+        ],
+    }
+    main_rom, logo_rom = _parse_slot0(slot0, "test")
+    assert main_rom is not None
+    assert main_rom.file == "combo.rom"
+    assert logo_rom is None
+
+
+def test_parse_slot0_last_match_wins_for_each_role() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main1.rom", "size_kb": 32, "pages": [0, 1]}},
+            {"rom": {"file": "main2.rom", "size_kb": 32, "pages": [0, 1]}},
+        ],
+    }
+    main_rom, _logo_rom = _parse_slot0(slot0, "test")
+    assert main_rom is not None
+    assert main_rom.file == "main2.rom"
+
+
+# ---------------------------------------------------------------------------
+# Flat (non-mapper) RAM sub-slot resolution: last declared sub-slot wins
+# (allium/slots.allium 1.1 — unlike SUB ROM/FDC, which are first-match-wins
+# via an `if result.X is None` guard, flat_ram_subslot is assigned
+# unconditionally on every `type: ram` sub-slot, msx/machine_loader.py:710-712)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot3_msx2_flat_ram_last_declared_subslot_wins() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            1: {"type": "ram", "size_kb": 64},
+            3: {"type": "ram", "size_kb": 64},
+        },
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.flat_ram_subslot == 3
+
+
+# ---------------------------------------------------------------------------
+# Malformed `content:` list items are silently skipped, not a crash
+# (allium A-8 / code fix: _is_content_item_shape guard)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot0_skips_non_mapping_content_item() -> None:
+    slot0 = {"content": ["oops", {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}}]}
+    main_rom, logo_rom = _parse_slot0(slot0, "test")
+    assert main_rom is not None
+    assert main_rom.file == "main.rom"
+    assert logo_rom is None
+
+
+def test_parse_slot3_msx2_skips_non_mapping_content_item() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {"content": ["oops", {"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}]},
+        },
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.sub_rom is not None
+    assert result.sub_rom.file == "sub.rom"
+
+
+# ---------------------------------------------------------------------------
+# Slot-3 validation order: sub_rom -> fdc -> flat_ram -> RAM-strategy
+# exclusivity. When multiple violations coexist, the first one in this
+# order is the one reported (allium A-6).
+# ---------------------------------------------------------------------------
+
+
+def test_slot3_multiple_violations_reports_sub_rom_out_of_range_first() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            4: {"content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}]},
+            0: {"mapper": "standard"},
+            1: {"type": "ram", "size_kb": 64},
+        },
+    }
+    with pytest.raises(MachineLoadError, match="SUB ROM sub-slot .* out of range"):
+        _parse_slot3_msx2(slot3, "test")
+
+
+# ---------------------------------------------------------------------------
+# _make_mapper / _require_scc raise MachineLoadError, not ValueError
+# (allium A-4 / code fix regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_make_mapper_unknown_type_raises_machine_load_error() -> None:
+    with pytest.raises(MachineLoadError, match="unknown mapper type"):
+        _make_mapper("NotAMapper", None)
+
+
+def test_require_scc_none_raises_machine_load_error() -> None:
+    with pytest.raises(MachineLoadError, match="requires an SCC instance"):
+        _require_scc(None)
+
+
+def test_make_mapper_konami_scc_without_scc_raises_machine_load_error() -> None:
+    with pytest.raises(MachineLoadError, match="requires an SCC instance"):
+        _make_mapper("KonamiSCC", bytes(0x4000), scc=None)
+
+
+# ---------------------------------------------------------------------------
+# logo_override bypasses disk loading entirely (allium B-1)
+# ---------------------------------------------------------------------------
+
+
+def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
+    spec = _make_msx1_spec(tmp_path)
+    # spec.logo_rom_entry is None (msx1 fixture declares no page-2 ROM) — set
+    # one by hand so the override path has a file to bypass.
+    spec.logo_rom_entry = _RomEntry(
+        file="nonexistent_logo.rom", size_kb=32, pages=[2], sha1=None
+    )
+    custom_logo = bytes([0xCD] + [0x00] * 32767)
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, logo_override=custom_logo)
+    assert machine.memory.extrom is not None
+    assert machine.memory.extrom[0] == 0xCD

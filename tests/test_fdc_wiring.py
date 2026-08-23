@@ -204,3 +204,28 @@ def test_fdd1_mounts_into_drive_a(tmp_path: Path) -> None:
     assert machine.fdc is not None
     assert machine.fdc.drives[0].has_disk is True
     assert isinstance(machine.fdc.drives[0].image, DskDiskImage)
+
+
+def _fdc_spec_two_drives(tmp_path: Path) -> MachineSpec:
+    spec = _fdc_spec(tmp_path)
+    spec.fdc = _FdcDef(
+        disk_rom_entry=spec.fdc.disk_rom_entry,
+        controller=spec.fdc.controller,
+        connection_style=spec.fdc.connection_style,
+        drives=2,
+    )
+    return spec
+
+
+def test_fdd2_alone_mounts_into_drive_b_not_a(tmp_path: Path) -> None:
+    """`fdd_images` position is preserved positionally, not compacted: an
+    unset fdd1 alongside a set fdd2 must leave drive A empty and mount into
+    drive B (index 1) -- not shift fdd2's image down into drive A."""
+    _make_roms(tmp_path)
+    dsk = tmp_path / "game.dsk"
+    dsk.write_bytes(bytes(_2DD))
+    machine = build_machine(_fdc_spec_two_drives(tmp_path), fdd1=None, fdd2=dsk)
+    assert machine.fdc is not None
+    assert machine.fdc.drives[0].has_disk is False
+    assert machine.fdc.drives[1].has_disk is True
+    assert isinstance(machine.fdc.drives[1].image, DskDiskImage)
