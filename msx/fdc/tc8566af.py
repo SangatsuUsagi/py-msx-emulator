@@ -102,10 +102,11 @@ class TC8566AF:
     drives: list[DiskDrive]
     control_reg0: int = 0
     control_reg1: int = 0
-    # PORT-NOTE: unused by command dispatch -- exists only so the shared
-    #   FloppyDisk.__init__ (msx/fdc/interface.py, not touched by this
-    #   change) can do `self.controller.drive = self.drives[0]` without
-    #   raising AttributeError. TC8566AF resolves "current drive" per command
+    # PORT-NOTE: unused by command dispatch -- exists only so
+    #   FloppyDiskState.__init__ (msx/fdc/interface.py; composed into every
+    #   connection style's shared FloppyDisk.__init__ as `self.state`) can do
+    #   `self.controller.drive = self.drives[0]` without raising
+    #   AttributeError. TC8566AF resolves "current drive" per command
     #   from that command's own DS1:DS0 parameter bits against `self.drives`,
     #   never from this field.
     drive: DiskDrive | None = None
