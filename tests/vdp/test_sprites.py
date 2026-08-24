@@ -233,6 +233,33 @@ def test_no_coincidence_when_no_overlap() -> None:
     assert not (vdp.status & 0x20), "coincidence flag must not be set"
 
 
+def test_5s_and_c_persist_across_frames_until_s0_read() -> None:
+    """5S/C are cleared only by a port-0x99 read of S#0 -- never reset at
+    frame start. A frame that sets them, followed by a frame with no
+    5th-sprite/collision and no intervening S#0 read, must leave them set
+    (matches real TMS9918A hardware and openMSX's unified VDP model)."""
+    vdp = make_sprite_vdp()
+    # 5 sprites all at X=0 -> triggers both 5S (more than 4 on the line)
+    # and C (all 5 fully overlap at pixel (0, 1)).
+    for i in range(5):
+        _sat_entry(vdp, i, 0, 0, i, 0x0F)
+        vdp.vram[_SPT + i * 8 + 0] = 0x80
+    _sat_entry(vdp, 5, 0xD0, 0, 0, 0)
+    render_frame(vdp)
+    assert vdp.status & 0x40  # 5S set this frame
+    assert vdp.status & 0x20  # C set this frame
+
+    # Next frame: single sprite, no 5th, no overlap -- and no S#0 read between.
+    for i in range(6):
+        _sat_entry(vdp, i, 0xD0, 0, 0, 0)
+    _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
+    _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
+    render_frame(vdp)
+
+    assert vdp.status & 0x40, "5S must persist across frames without an S#0 read"
+    assert vdp.status & 0x20, "C must persist across frames without an S#0 read"
+
+
 # ---------------------------------------------------------------------------
 # EC (Early Clock) bit — X shift left by 32
 # ---------------------------------------------------------------------------

@@ -365,9 +365,11 @@ def test_s0_read_falls_back_to_idle_index_when_5s_not_set() -> None:
     assert result & 0x1F == 0x1F
 
 
-def test_5s_and_c_do_not_persist_across_frames() -> None:
-    """A frame that sets 5S/C, with no S#0 read, must not leak the flags into a
-    later frame that has neither a 5th sprite nor a collision."""
+def test_5s_and_c_persist_across_frames_until_s0_read() -> None:
+    """A frame that sets 5S/C, with no S#0 read, must leak the flags into a
+    later frame that has neither a 5th sprite nor a collision (matches real
+    V9938/TMS9918A hardware and openMSX: 5S/C are only cleared by an S#0
+    read, never reset at frame start)."""
     vdp = V9938()
     _set_screen5(vdp)
     vdp.regs[5] = _SAT_R5
@@ -390,8 +392,8 @@ def test_5s_and_c_do_not_persist_across_frames() -> None:
     _terminate_sat(vdp, after_idx=1)
     _write_col_entry(vdp, 0, 0, color=1)
     render_frame(vdp)
-    assert not (vdp.status & 0x40), "5S must reset at frame start"
-    assert not (vdp.status & 0x20), "C must reset at frame start"
+    assert vdp.status & 0x40, "5S must persist across frames without an S#0 read"
+    assert vdp.status & 0x20, "C must persist across frames without an S#0 read"
 
 
 def test_sprite_mode2_9th_sprite_flag() -> None:
