@@ -322,6 +322,17 @@ class TestAscii16Sram2:
         m.write(0x4100, 0xBB)  # write to window 0 body -- no write path at all
         assert m.sram[0x100] == 0x00
 
+    def test_window0_sram_out_of_window_read_below_0x4000_wraps_correctly(self):
+        # _read_out_of_window's SRAM branch computes (addr - base) & _SRAM_MASK
+        # with base=0x4000; for addr just below that, the subtraction goes
+        # negative before the mask. Python's & on a negative int floors
+        # correctly (-1 & 0x7FF == 2047), unlike a naive truncating modulo --
+        # regression guard for allium's Ascii16SramReadByte offset formula fix.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
+        m.sram[2047] = 0x99
+        m.write(0x6000, 0x10)  # window 0 -> SRAM
+        assert m.read(0x3FFF) == 0x99  # (0x3FFF - 0x4000) & 0x7FF == 2047
+
     def test_window1_rom_read_when_below_num_pages(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.write(0x7000, 0x01)  # page 1 < 2 → ROM
