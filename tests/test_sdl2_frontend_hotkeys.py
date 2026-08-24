@@ -278,6 +278,16 @@ def test_ctrl_q_quits_without_touching_the_matrix() -> None:
     assert not _asserted(h.matrix, q_cell)
 
 
+def test_plain_q_without_ctrl_reaches_the_matrix() -> None:
+    # PlainKeyPressed's requires clause excludes Ctrl+Q specifically; without
+    # Ctrl held, 'q' must go through the normal path like any other key.
+    q_cell = KEY_MATRIX_INT[_FakeSDL.SDLK_q]
+    h = _Harness()
+    h.keydown(_FakeSDL.SDLK_q)
+    assert h.running is True
+    assert _asserted(h.matrix, q_cell)
+
+
 def test_releasing_fkey_with_no_active_combo_is_plain_release() -> None:
     # CtrlComboFKeyReleased requires combo.active != null; F1 released with
     # no Ctrl ever held must go through PlainKeyReleased instead.

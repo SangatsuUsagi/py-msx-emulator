@@ -108,6 +108,21 @@ def test_repeated_identical_pin8_value_is_noop() -> None:
     assert device._phase == phase_after_first
 
 
+def test_same_value_writes_refresh_the_idle_timer() -> None:
+    # A same-value register-15 write still refreshes _last_cycle (openMSX
+    # refreshes lastTime on every write()), so a train of same-value writes
+    # spaced within the timeout -- even though the *cumulative* span since
+    # the original edge exceeds it -- must not resync.
+    cycle = [0]
+    device = MouseDevice(_scale=1)
+    device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
+    assert device._phase == PHASE_XHIGH1
+    for _ in range(3):
+        cycle[0] += 3_000  # each gap within the ~5369-cycle timeout
+        device.write_pin8(1, cycle[0])  # same value -- refreshes the timer only
+    assert device._phase == PHASE_XHIGH1, "no resync: each gap was refreshed in time"
+
+
 def test_add_motion_subpixel_remainder_accumulates() -> None:
     device = MouseDevice(_scale=3)
     device.add_motion(1, 0)
@@ -118,18 +133,18 @@ def test_add_motion_subpixel_remainder_accumulates() -> None:
     assert device._cur_x_rel == 1
 
 
-def test_noop_write_does_not_trigger_resync() -> None:
-    # write_pin8's same-value early return happens before the timeout check,
-    # so a repeated value after a long gap must not resync (allium/js_mouse.
-    # allium: MousePin8Resync rule-failure -- the no-op guard short-circuits
-    # before the resync requires clause is even evaluated).
+def test_noop_write_still_triggers_resync() -> None:
+    # The timeout check runs unconditionally on every write_pin8 call,
+    # before the same-value early return (matches openMSX's Mouse.cc write():
+    # elapsed time is checked before the value is inspected), so a repeated
+    # value after a long gap still resyncs to PHASE_YLOW2.
     cycle = [0]
     device = MouseDevice(_scale=1)
     device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     assert device._phase == PHASE_XHIGH1
     cycle[0] = 100_000  # far beyond the timeout
-    device.write_pin8(1, cycle[0])  # same value as last write -- no-op, no resync check
-    assert device._phase == PHASE_XHIGH1
+    device.write_pin8(1, cycle[0])  # same value as last write -- resync still applies
+    assert device._phase == PHASE_YLOW2
 
 
 def test_resync_from_every_phase_lands_on_ylow2() -> None:
