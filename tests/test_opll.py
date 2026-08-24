@@ -465,3 +465,36 @@ def test_modulator_envelope_does_not_release_on_key_off() -> None:
     # car(ch)=slot[ch*2+1]).
     assert o._slot[1].eg_state == _RELEASE  # carrier releases on key-off
     assert o._slot[0].eg_state != _RELEASE  # modulator's envelope simply freezes
+
+
+# ---------------------------------------------------------------------------
+# allium/ym2413-core.allium: noise LFSR is 24-bit (taps at bits 23 and 9),
+# advanced 18 times per native tick (14+2+2 across _update_output's three
+# _update_noise calls) -- not the PSG's 17-bit/1-shift shape. Regression
+# guard for the allium width/rate fix.
+# ---------------------------------------------------------------------------
+
+def test_noise_lfsr_is_24_bit_not_truncated_to_17() -> None:
+    o = Opll()
+    o._noise = 1 << 20  # bit 20 set -- outside a 17-bit register (max bit 16)
+    o._update_output()
+    # bit 0 is clear throughout (a lone bit walking right never triggers the
+    # XOR feedback until it reaches bit 0, which takes 20 shifts, more than
+    # this tick's 18), so this is a plain 18-bit right-shift: 1<<20 -> 1<<2.
+    # If the register were (wrongly) masked to 17 bits somewhere, bit 20
+    # would already have been dropped before this point instead of arriving.
+    assert o._noise == 1 << 2
+
+
+def test_noise_lfsr_advances_18_shifts_per_native_tick() -> None:
+    o = Opll()
+    o._noise = 1  # bit 0 set: every shift XORs 0x800200 first
+    o._update_output()
+    # 18 applications of "if bit0: xor 0x800200; shift right 1", starting
+    # from 1, computed independently here as the expected value.
+    expected = 1
+    for _ in range(18):
+        if expected & 1:
+            expected ^= 0x800200
+        expected >>= 1
+    assert o._noise == expected

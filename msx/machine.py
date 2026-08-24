@@ -10,7 +10,7 @@ from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import MajutsushiMapper
+from msx.mapper import MajutsushiMapper, SCCICart
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
@@ -160,6 +160,9 @@ class Machine:
         self.psg.reset()
         if self.scc is not None:
             self.scc.reset()
+            for mapper in (self.memory._mapper, self.memory._mapper2):
+                if isinstance(mapper, SCCICart):
+                    mapper.resync_scc_mode()
         if self.fmpac is not None:
             self.fmpac.reset()
         self.vdp.reset()

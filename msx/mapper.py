@@ -1506,6 +1506,19 @@ class SCCICart(BankTracingMapper):
         else:
             self._scc_window_base = None
 
+    def resync_scc_mode(self) -> None:
+        """Re-push this cartridge's own (unreset) mode register into `scc`.
+
+        `Machine.reset()` resets the carried `SCC` chip directly, which clears
+        its `_plus_mode` back to Compatible -- but this cartridge's own mode
+        register and bank registers are not part of a soft reset (no mapper
+        in this codebase resets its bank state), so without this call
+        `_scc_window_base` would keep forwarding a Plus-mode window address
+        (0xB800) into a chip now decoding Compatible offsets. Mirrors what
+        restore() already does after loading a saved mode_register.
+        """
+        self._set_mode_register(self._mode_register)
+
     def snapshot(self) -> SCCICartState:
         # SCC chip state is snapshotted separately by the state module.
         return {
