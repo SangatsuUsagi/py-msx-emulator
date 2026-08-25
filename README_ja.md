@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2286%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -211,6 +211,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
   - Non-DMAモードのみ — DRQ2/-DACK2/DMATCピンは未実装。
   - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN は未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
   - WD2793のWRITE TRACKと同様、FORMATはストリームされたディスクリプタバイトを破棄し、現在の(トラック, サイド)の全セクタを単純にブランク化するのみで、実際のギャップ/シンク/ID/CRCバイトは書き込まない。
+  - 現状出荷しているマシンはすべてドライブ1台構成のため、複数ドライブ動作は未検証：実行時ディスク入れ替えの中断処理はドライブ0のみを正しく追跡し、ドライブ選択もControl Register 0の永続的な選択状態ではなく各コマンド自体のパラメータバイトから毎回決定している（いずれも実機のDISK ROM通信パターン上はシングルドライブ動作と一致する）。
 
 ### ROM データベース
 
@@ -778,7 +779,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2215 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2286 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -838,7 +839,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2215 テスト
+├── tests/                 # テストスイート — 2286 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -882,6 +883,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.9** (2026-08-25) — 全コンポーネントに対するOpenSpec/Alliumの棚卸しを実施し、各仕様書をopenMSXと実装に照らして再検証。その過程で見つかった精度バグを複数修正（V9938スプライト描画、ASCII8/ASCII16マッパーのバンク演算、SCC-Iモード同期、マウスプロトコルのタイミングなど）。
 - **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
 - **v2.5.7** (2026-08-20) — 将来の Rust/C++ 移植に向けた大規模な内部リファクタリング：マッパーの save-state を型なし dict からタグ付き `MapperKind` enum に変更、`Memory` のキャッシュ無効化を明示的な setter メソッドに移行、デバッガの反射ベースのマッパー/スロット introspection を明示的なインターフェースメソッドに置き換え。観測可能な挙動変更なし（複数視点コードレビューと Allium 仕様整合性チェックで検証済み）。
 - **v2.5.6** (2026-08-19) — macOS で JIS ¥ キーが MSX キーボードマトリクスに届かない不具合を修正。SDL2 はこのキーを一貫した scancode で報告するが keysym は不安定なため、`key_down`/`key_up` は scancode のみから解決するよう変更。

@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2286%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -316,6 +316,11 @@ and `CALL FORMAT`.
   - Like WD2793's own WRITE TRACK, FORMAT discards the streamed descriptor
     bytes and just blanks every sector of the current (track, side) rather
     than writing real gap/sync/ID/CRC bytes.
+  - Every shipped machine configures exactly one drive, so multi-drive
+    support is untested: a runtime disk-swap abort only tracks drive 0
+    correctly, and drive routing reads the target drive from each command's
+    own parameter byte rather than a persistent Control Register 0 selection
+    (both match single-drive behaviour, per real DISK ROM traffic).
 
 ### ROM database
 
@@ -971,7 +976,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2215 tests spanning unit tests
+The test suite covers all major components with 2286 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1034,7 +1039,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2215 tests
+├── tests/                 # Test suite — 2286 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1095,6 +1100,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
 - **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
 - **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
 - **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
