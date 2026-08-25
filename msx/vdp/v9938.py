@@ -414,6 +414,10 @@ class V9938:
         """Public accessor for _frame_count -- see VdpDevice's own docstring."""
         return self._frame_count
 
+    @frame_count.setter
+    def frame_count(self, value: int) -> None:
+        self._frame_count = value
+
     def irq_pending(self) -> bool:
         ie0 = bool(self.regs[1] & 0x20)
         f = bool(self.status & 0x80)

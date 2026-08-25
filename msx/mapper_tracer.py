@@ -97,5 +97,5 @@ def attach_to_machine(
         if mp._get_pc is None:
             mp._get_pc = lambda: machine.cpu.instruction_pc
             mp._get_cycle = lambda: machine.cycle_count
-            mp._get_frame = lambda: machine.vdp._frame_count
+            mp._get_frame = lambda: machine.vdp.frame_count
     return tracer

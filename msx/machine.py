@@ -18,7 +18,7 @@ from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
-from msx.vdp.vdp import VDP
+from msx.vdp.vdp import VDP, VdpDevice
 
 if TYPE_CHECKING:
     from msx.debugger.prompt import Debugger
@@ -66,7 +66,9 @@ class PauseReason(str, enum.Enum):
 @dataclass
 class Machine:
     cpu: Z80
-    vdp: VDP | V9938
+    # VDP and V9938 are unrelated classes sharing this structural contract by
+    # convention, not inheritance -- see VdpDevice's own docstring.
+    vdp: VdpDevice
     memory: Memory
     io: IOBus
     psg: PSG

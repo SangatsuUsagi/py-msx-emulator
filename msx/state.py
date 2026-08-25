@@ -262,7 +262,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         vdp_latch=vdp_latch,
         vdp_addr=vdp_addr,
         vdp_read_buf=vdp_read_buf,
-        vdp_frame_count=machine.vdp._frame_count,
+        vdp_frame_count=machine.vdp.frame_count,
         psg_regs=list(machine.psg.regs),
         psg_latch=machine.psg.latch,
         psg_synth=cast(dict[str, object], machine.psg.snapshot_synth()),
@@ -315,7 +315,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
     machine.vdp.status = snap.vdp_status
-    machine.vdp._frame_count = snap.vdp_frame_count
+    machine.vdp.frame_count = snap.vdp_frame_count
     # Common VDP address/latch state — identical field names on both VDP types.
     machine.vdp.latch = snap.vdp_latch
     machine.vdp.addr = snap.vdp_addr

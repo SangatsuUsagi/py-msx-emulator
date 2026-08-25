@@ -33,13 +33,12 @@ class VdpDevice(Protocol):
     site. `latch`/`addr`/`read_buf`/`frame_count` are plain fields on `VDP`
     and properties on `V9938`; both satisfy this Protocol identically.
 
-    Covers only the shared hardware-facing surface (register/port access,
-    reset, frame advance, RGB conversion) -- debug/diagnostic hooks that
-    exist only on `V9938` (`tracer`, `_get_pc`, `_get_cycle`,
-    `debug_disable_sprites`) are deliberately not part of this contract, so
-    `Machine.vdp` and other call sites needing those still declare the
-    concrete `VDP | V9938` union rather than this Protocol; `_register_common_io`
-    (msx/machine_loader.py) is the one place narrow enough to use it directly.
+    Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
+    `debug_disable_sprites`) too -- both classes declare these identically
+    (wired at machine-construction time by msx/machine_loader.py, consumed
+    by msx/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    itself is typed as this Protocol rather than the raw `VDP | V9938`
+    union.
     """
 
     vram: bytearray
@@ -49,11 +48,21 @@ class VdpDevice(Protocol):
     addr: int
     read_buf: int
     on_interrupt: Callable[[], None] | None
+    tracer: Tracer | None
+    _get_pc: Callable[[], int] | None
+    _get_cycle: Callable[[], int] | None
+    debug_disable_sprites: bool
 
     @property
     def frame_count(self) -> int: ...
+    @frame_count.setter
+    def frame_count(self, value: int) -> None: ...
     @property
     def framebuffer_format(self) -> FramebufferFormat: ...
+    @property
+    def display_width(self) -> int: ...
+    @property
+    def display_height(self) -> int: ...
     def reset(self) -> None: ...
     def increment_frame(self) -> None: ...
     def read_port(self, port: int) -> int: ...
@@ -186,6 +195,10 @@ class VDP:
     def frame_count(self) -> int:
         """Public accessor for _frame_count -- see VdpDevice's own docstring."""
         return self._frame_count
+
+    @frame_count.setter
+    def frame_count(self, value: int) -> None:
+        self._frame_count = value
 
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""

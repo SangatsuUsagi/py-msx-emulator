@@ -89,7 +89,7 @@ def _loop_dbg(iface: SonyPhilipsInterface) -> Debugger:
             registers=types.SimpleNamespace(PC=0x4000),
             read_byte=lambda addr: 0x00,
         ),
-        vdp=types.SimpleNamespace(_frame_count=0),
+        vdp=types.SimpleNamespace(frame_count=0),
     )
     return Debugger(machine)  # type: ignore[arg-type]
 
