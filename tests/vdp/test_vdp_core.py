@@ -102,6 +102,24 @@ def test_status_read_preserves_fifth_sprite_index() -> None:
     assert (vdp.status & 0x1F) == 0x1F  # bits 4:0 (5th-sprite index) untouched
 
 
+def test_status_read_substitutes_1f_for_stale_fifth_sprite_index_when_5s_clear() -> None:
+    # C-BIOS-safety hack (matches msx/vdp/v9938.py's own read_port): bits
+    # 4:0 read as 0x1F when 5S (bit 6) is clear, not whatever they actually
+    # hold -- some MSX BIOS/cartridge boot code feeds this into a loop
+    # counter and 0 there stalls it.
+    vdp = make_vdp()
+    vdp.status = 0x00  # F/5S/C all clear, bits 4:0 = 0
+    result = vdp.read_port(0x99)
+    assert (result & 0x1F) == 0x1F, "returned byte substitutes 31 for the stale index"
+
+
+def test_status_read_does_not_substitute_when_5s_set() -> None:
+    vdp = make_vdp()
+    vdp.status = 0x40 | 0x03  # 5S set, real index = 3
+    result = vdp.read_port(0x99)
+    assert (result & 0x1F) == 0x03, "the real index is returned, not substituted, when 5S is set"
+
+
 # --- Address latch and read-ahead buffer ---
 
 def test_write_address_setup() -> None:

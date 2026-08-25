@@ -199,7 +199,25 @@ class VDP:
             self.addr = (self.addr + 1) & 0x3FFF
             return result
         if port == 0x99:
-            result = self.status
+            # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)
+            # is clear, rather than whatever stale/zero value bits 4:0
+            # happen to hold -- matching msx/vdp/v9938.py's own read_port
+            # (same C-BIOS-safety hack: some MSX BIOS/cartridge boot code
+            # feeds S#0 bits 4:0 into a loop counter, and 0 there stalls
+            # it). This is a documented SIMPLIFICATION, not the real
+            # openMSX/hardware value: openMSX's SpriteChecker::checkSprites1
+            # (references/openMSX/src/video/SpriteChecker.cc:168-171)
+            # rewrites bits 4:0 to min(sprite, 31) on every sprite-attribute
+            # scan whenever 5S is clear, where `sprite` is the SAT index the
+            # scan actually stopped at -- typically well under 31 for most
+            # games, which usually terminate their SAT with far fewer than
+            # 31 active sprites. A fully accurate emulation would track and
+            # report that real per-scan index instead of a fixed 31; see
+            # this file's Open Questions.
+            if self.status & 0x40:
+                result = self.status
+            else:
+                result = (self.status & 0xE0) | 0x1F
             # Clear VBlank (bit 7), 5th-sprite flag (bit 6) and coincidence
             # (bit 5) together, keeping only the 5th-sprite index (bits 4:0).
             # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg
