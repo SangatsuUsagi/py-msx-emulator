@@ -1,7 +1,8 @@
 !saves/.place_holder
 .claude/
 .serena/
-references/
+references/*
+!references/MANIFEST.md
 roms/**/*.rom
 saves/*
 

@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2215%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2286%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -211,6 +211,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
   - Non-DMAモードのみ — DRQ2/-DACK2/DMATCピンは未実装。
   - READ DELETED DATA / WRITE DELETED DATA / READ DIAGNOSTIC / READ ID / SCAN は未実装(Disk BASIC 起動/セクタ入出力パスには不要)。
   - WD2793のWRITE TRACKと同様、FORMATはストリームされたディスクリプタバイトを破棄し、現在の(トラック, サイド)の全セクタを単純にブランク化するのみで、実際のギャップ/シンク/ID/CRCバイトは書き込まない。
+  - 現状出荷しているマシンはすべてドライブ1台構成のため、複数ドライブ動作は未検証：実行時ディスク入れ替えの中断処理はドライブ0のみを正しく追跡し、ドライブ選択もControl Register 0の永続的な選択状態ではなく各コマンド自体のパラメータバイトから毎回決定している（いずれも実機のDISK ROM通信パターン上はシングルドライブ動作と一致する）。
 
 ### ROM データベース
 
@@ -328,22 +329,22 @@ v2.5.0 以降は、仕様と実装の整合性を検証するための第2の振
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 304.71 | 約 5.1 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 450.01 | 約 7.5 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1205.03 | 約 20.1 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1422.12 | 約 23.7 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 77.70 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 115.05 | 約 1.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 291.27 | 約 4.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 468.84 | 約 7.8 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 291.61 | 約 4.9 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 489.35 | 約 8.2 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1159.55 | 約 19.3 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1353.42 | 約 22.6 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 76.20 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 128.24 | 約 2.1 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 290.21 | 約 4.8 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 423.50 | 約 7.1 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.8 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.5.8 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.5.9 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -377,7 +378,7 @@ MSX2（`cbios_msx2_jp`、カートリッジなし・MSX2 カートリッジ時�
 
 マシン ID ごとに必要なファイル名は `config/machines/` 以下の対応する YAML に記載されています。
 
-> **法的注記:** 該当する MSX 実機を所持し、その実機から自分でダンプした BIOS ファイルを使用する場合を除き、市販の MSX マシンから取り出した著作権で保護された BIOS ダンプは使用しないでください。C-BIOS が無償で合法的に利用できる推奨の代替品です。`roms/` ディレクトリは `.gitignore` によってバージョン管理から除外されています。
+> **法的注記:** BIOS ファイルは著作権で保護されています。該当する MSX 実機を所持し、その実機から自分でダンプしたファイルを必ず使用してください。C-BIOS が無償で合法的に利用できる推奨の代替品です。`roms/` ディレクトリは `.gitignore` によってバージョン管理から除外されています。
 
 ---
 
@@ -778,7 +779,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2215 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2286 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -838,7 +839,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2215 テスト
+├── tests/                 # テストスイート — 2286 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -882,6 +883,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.9** (2026-08-25) — 全コンポーネントに対するOpenSpec/Alliumの棚卸しを実施し、各仕様書をopenMSXと実装に照らして再検証。その過程で見つかった精度バグを複数修正（V9938スプライト描画、ASCII8/ASCII16マッパーのバンク演算、SCC-Iモード同期、マウスプロトコルのタイミングなど）。
 - **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
 - **v2.5.7** (2026-08-20) — 将来の Rust/C++ 移植に向けた大規模な内部リファクタリング：マッパーの save-state を型なし dict からタグ付き `MapperKind` enum に変更、`Memory` のキャッシュ無効化を明示的な setter メソッドに移行、デバッガの反射ベースのマッパー/スロット introspection を明示的なインターフェースメソッドに置き換え。観測可能な挙動変更なし（複数視点コードレビューと Allium 仕様整合性チェックで検証済み）。
 - **v2.5.6** (2026-08-19) — macOS で JIS ¥ キーが MSX キーボードマトリクスに届かない不具合を修正。SDL2 はこのキーを一貫した scancode で報告するが keysym は不安定なため、`key_down`/`key_up` は scancode のみから解決するよう変更。

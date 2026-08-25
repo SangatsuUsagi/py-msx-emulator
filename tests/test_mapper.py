@@ -165,6 +165,17 @@ def test_ascii8_page_wrap_around() -> None:
     assert m.read(0x4000) == 1
 
 
+def test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo() -> None:
+    # openMSX RomBlocks::setRom resolves an out-of-range bank register as
+    # `value & (nrBlocks - 1)`, not `value % nrBlocks` -- for a non-power-
+    # of-two page count the two disagree. 24 pages, value 25: modulo gives
+    # page 1, but openMSX's mask gives 25 & 23 == 17.
+    rom = _rom_8k_pages(24)
+    m = Ascii8Mapper(rom)
+    m.write(0x6000, 25)
+    assert m.read(0x4000) == 17
+
+
 def test_ascii8_switch_window_1() -> None:
     rom = _rom_8k_pages(8)
     m = Ascii8Mapper(rom)
@@ -272,6 +283,16 @@ def test_ascii16_page_wrap_around() -> None:
     assert m.read(0x4000) == 1
 
 
+def test_ascii16_out_of_range_bank_uses_openmsx_mask_not_modulo() -> None:
+    # See test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo: same
+    # openMSX RomBlocks::setRom two-tier resolution applies here. 24 pages,
+    # value 25: modulo gives page 1, openMSX's mask gives 25 & 23 == 17.
+    rom = _rom_16k_pages(24)
+    m = Ascii16Mapper(rom)
+    m.write(0x6000, 25)
+    assert m.read(0x4000) == 17
+
+
 def test_ascii16_write_to_upper_half_of_register_zone_is_ignored() -> None:
     # openMSX RomAscii16kB.cc only accepts the low half of each 4 KB
     # register zone (0x6000-0x67FF, 0x7000-0x77FF); the upper half
@@ -292,12 +313,18 @@ def test_ascii16_read_below_window_returns_open_bus() -> None:
     assert m.read(0x0000) == 0xFF
 
 
-def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF: re-uses window 1's bank/base arithmetic for any
-    # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
-    # resolves to open bus via the same bounds check, not a crash.
-    small_rom = _rom_16k_pages(1)
-    m = Ascii16Mapper(small_rom)
+def test_ascii16_read_above_window_is_open_bus_not_a_mirror() -> None:
+    # Above 0xBFFF is genuinely outside both windows: open bus, never a
+    # mirror of either bank's ROM content. Uses a 4-page (64 KB) ROM
+    # specifically: an earlier implementation re-used window 1's bank/base
+    # arithmetic here (page_offset = banks[1]*16K + (addr-0x8000)), which
+    # for a ROM this size lands the 0xC000 case squarely inside valid ROM
+    # bounds (page_offset=0x4000 < 64K) and returns page 1's real content
+    # instead of open bus -- a true mirror bug a small (exactly-16KB) ROM
+    # would coincidentally hide, since its bounds check alone happened to
+    # reject that offset.
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
     assert m.read(0xC000) == 0xFF
 
 

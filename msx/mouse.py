@@ -89,12 +89,16 @@ class MouseDevice:
 
     def write_pin8(self, value: int, cycle: int = 0) -> None:
         value &= 1
-        if value == self._last_pin8:
-            return
-        self._last_pin8 = value
+        # openMSX refreshes the idle timer on every register-15 write, not
+        # only on a pin-8 level change, so a same-level write after the
+        # timeout still resyncs to PHASE_YLOW2 (Mouse.cc's write() checks
+        # the elapsed time before inspecting the value).
         if cycle - self._last_cycle > _MOUSE_TIMEOUT_CYCLES:
             self._phase = PHASE_YLOW2
         self._last_cycle = cycle
+        if value == self._last_pin8:
+            return
+        self._last_pin8 = value
 
         # Each phase advances on the edge that ends its half of the pin-8
         # square wave: HIGH phases (even-numbered) end on a falling edge,

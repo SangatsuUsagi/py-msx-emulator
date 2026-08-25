@@ -13,14 +13,13 @@ from typing import TYPE_CHECKING
 from PIL import Image as _PIL_Image
 
 if TYPE_CHECKING:
-    from msx.vdp.v9938 import V9938
-    from msx.vdp.vdp import VDP
+    from msx.vdp.vdp import VdpDevice
 
 
-def render_current_rgb24(vdp: "VDP | V9938") -> tuple[bytes, int, int]:
+def render_current_rgb24(vdp: "VdpDevice") -> tuple[bytes, int, int]:
     """Render the *current* VDP state to RGB24 without perturbing frame state.
 
-    Picks the V9938 or TMS renderer, saves and restores `vdp._frame_count` so the
+    Picks the V9938 or TMS renderer, saves and restores `vdp.frame_count` so the
     render reflects the paused instant without advancing the frame counter, and
     returns (rgb_bytes, width, height). Shared by the debugger REPL and the RPC
     adapter so both capture the frame identically.
@@ -33,12 +32,17 @@ def render_current_rgb24(vdp: "VDP | V9938") -> tuple[bytes, int, int]:
     from msx.vdp.renderer import render_frame
     from msx.vdp.v9938 import V9938
     from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
+    from msx.vdp.vdp import VDP
 
-    saved_fc = vdp._frame_count
+    saved_fc = vdp.frame_count
     try:
-        idx = render_frame_v9938(vdp) if isinstance(vdp, V9938) else render_frame(vdp)
+        if isinstance(vdp, V9938):
+            idx = render_frame_v9938(vdp)
+        else:
+            assert isinstance(vdp, VDP)
+            idx = render_frame(vdp)
     finally:
-        vdp._frame_count = saved_fc
+        vdp.frame_count = saved_fc
     return vdp.to_rgb24(idx), vdp.display_width, OUTPUT_H
 
 

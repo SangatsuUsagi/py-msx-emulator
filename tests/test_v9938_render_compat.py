@@ -113,6 +113,26 @@ def test_screen1_background_colour_from_attribute_table() -> None:
     assert buf[0] == 1  # background colour index 1
 
 
+def test_screen1_colour_zero_nibbles_substitute_backdrop() -> None:
+    """Either colour-byte nibble being 0 substitutes the current backdrop
+    (R#7 low nibble), not palette entry 0 -- distinct from TEXT1's direct-use
+    rule and confirmed by using a non-zero backdrop below."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[2] = 0x01  # name_base = 0x0400
+    vdp.regs[3] = 0x80  # col_base  = 0x2000
+    vdp.regs[4] = 0x01  # pat_base  = 0x0800
+    vdp.regs[7] = 0x09  # backdrop (border low nibble) = colour 9
+
+    vdp.vram[0x0400] = 0      # tile 0
+    vdp.vram[0x2000] = 0x00   # fg nibble=0, bg nibble=0 -- both substitute
+    vdp.vram[0x0800] = 0x80   # pattern row 0: bit 7 set (fg pixel), bit 6 clear (bg pixel)
+
+    buf = _active(vdp)
+    assert buf[0] == 9  # fg=0 -> backdrop
+    assert buf[1] == 9  # bg=0 -> backdrop
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 2 (GRAPHIC2): per-row per-tile colour
 # ---------------------------------------------------------------------------
@@ -155,6 +175,27 @@ def test_screen2_second_row_has_independent_colour() -> None:
     buf = _active(vdp)
     assert buf[0 * 256 + 0] == 6   # line 0: fg=6
     assert buf[1 * 256 + 0] == 3   # line 1: fg=3
+
+
+def test_screen2_colour_zero_nibbles_substitute_backdrop() -> None:
+    """Same colour-0-substitutes-to-backdrop rule as GRAPHIC1, applied per
+    tile row instead of per 8-tile group."""
+    vdp = V9938()
+    _enable(vdp)
+    vdp.regs[0] = 0x02  # GRAPHIC2
+
+    vdp.regs[2] = 0x01  # name_base = 0x0400
+    vdp.regs[3] = 0x80  # col_base  = 0x2000
+    vdp.regs[4] = 0x00  # pat_base  = 0x0000
+    vdp.regs[7] = 0x0A  # backdrop = colour 10
+
+    vdp.vram[0x0400] = 0      # tile 0
+    vdp.vram[0x0000] = 0x80   # pattern row 0: bit 7 set (fg pixel), bit 6 clear (bg pixel)
+    vdp.vram[0x2000] = 0x00   # fg nibble=0, bg nibble=0
+
+    buf = _active(vdp)
+    assert buf[0] == 10  # fg=0 -> backdrop
+    assert buf[1] == 10  # bg=0 -> backdrop
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +349,22 @@ def test_mc_top_bottom_half_bytes() -> None:
     for scan in range(4, 8):     # bottom half → pattern byte +1
         assert buf[scan * 256 + 0] == 3
         assert buf[scan * 256 + 4] == 10
+
+
+def test_mc_colour_zero_nibbles_substitute_backdrop() -> None:
+    """MULTICOLOUR shares GRAPHIC1/GRAPHIC2's colour-0-substitutes-to-backdrop
+    rule: a 0 nibble in the pattern byte displays the backdrop, not literal 0."""
+    vdp = V9938()
+    vdp.regs[1] = 0x48   # M2 -> MULTICOLOR, BL -> display on
+    vdp.regs[2] = 0x0E   # name table at 0x3800
+    vdp.regs[4] = 0x00   # pattern generator at 0x0000
+    vdp.regs[7] = 0x0B   # backdrop = colour 11
+    vdp.vram[0x3800] = 0x00      # tile 0
+    vdp.vram[0x0000] = 0x00      # left nibble=0, right nibble=0 (top half)
+
+    buf = _active(vdp)
+    assert buf[0] == 11   # left block: 0 -> backdrop
+    assert buf[4] == 11   # right block: 0 -> backdrop
 
 
 # ---------------------------------------------------------------------------

@@ -317,6 +317,16 @@ def test_reset_returns_to_power_on_state(tmp_path: Path) -> None:
     assert wd.command_reg == 0
 
 
+def test_reset_does_not_disconnect_the_selected_drive(tmp_path: Path) -> None:
+    """Unlike every other field, `drive` is intentionally excluded from
+    reset() -- a soft reset must not un-select the drive the connection-style
+    layer wired up."""
+    wd, drive, _ = _ctrl(tmp_path)
+    assert wd.drive is drive
+    wd.reset()
+    assert wd.drive is drive
+
+
 # ---------------------------------------------------------------------------
 # ReadDataRegisterIdle / WriteDataRegisterIdle
 # ---------------------------------------------------------------------------
@@ -365,6 +375,17 @@ def test_no_drive_connected_at_all_reports_not_ready_but_type1_still_runs() -> N
     wd.set_command(0x00)  # RESTORE -- Type I commands run regardless of Ready
     assert wd.get_track() == 0
     assert wd.get_status() & NOT_READY  # still reported, just doesn't block Type I
+
+
+def test_restore_with_no_disk_reports_track00_and_not_ready_together() -> None:
+    """STATUS bits compose independently, not as a priority ladder: TRACK00
+    and NOT_READY must both be set, not one masking the other out. This is
+    the first command every MSX2 DISK ROM issues at boot with no disk
+    mounted. Regression guard for allium's PositioningCommandCompleted
+    composition fix (fdc-wd2793-core.allium)."""
+    wd = WD2793()  # no drive connected
+    wd.set_command(0x00)  # RESTORE
+    assert wd.get_status() == (TRACK00 | NOT_READY)  # exactly 0x84, not 0x80
 
 
 # ---------------------------------------------------------------------------

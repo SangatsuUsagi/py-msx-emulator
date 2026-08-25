@@ -494,6 +494,23 @@ def test_lmcm_sees_a_vram_write_made_mid_transfer() -> None:
     assert _read_status(vdp, 7) == 0x0D
 
 
+def test_lmcm_after_a_block_command_is_not_aborted_by_the_stale_ce_countdown() -> None:
+    """LMCM dispatch must reset _cmd_remaining like every other CPU-feed
+    command; before this fix, a preceding LMMV/LMMM/HMMV/HMMM/YMMM left a
+    stale non-zero countdown that tick() would run down and abort the LMCM
+    mid-transfer, even though LMCM has no CE-timed duration of its own."""
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=0x8, dx=0, dy=0, nx=2, ny=1)  # LMMV: leaves a nonzero CE countdown
+    assert vdp._cmd_remaining > 0
+    vdp.vram[0] = 0xAB
+    _dispatch(vdp, cmd_code=0xA, sx=0, sy=0, nx=8, ny=8)  # LMCM
+    vdp.tick(20)  # more than enough T-states to exhaust the stale countdown
+    assert vdp._cmd_active is True
+    assert vdp._status2 & _CE
+    assert vdp._cmd_code == 0xA
+    assert _read_status(vdp, 7) == 0x0A  # the transfer still works
+
+
 # ---------------------------------------------------------------------------
 # BD lifecycle (S#2 bit 4)
 # ---------------------------------------------------------------------------

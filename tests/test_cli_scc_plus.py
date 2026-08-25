@@ -173,6 +173,27 @@ def test_build_machine_installs_scci_cart_in_slot1(tmp_path: Path) -> None:
     assert machine.scc is machine.memory._mapper.scc
 
 
+def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
+    """Machine.reset() resets the carried SCC chip directly, clearing its
+    _plus_mode -- without resyncing, SCCICart's own (unreset) mode/bank
+    registers would keep forwarding the Plus-mode window address (0xB800)
+    into a chip now decoding Compatible offsets. Regression guard for the
+    scc.allium reset-desync fix."""
+    machine = build_machine(_msx1_spec(tmp_path), scc_plus=True)
+    cart = machine.memory._mapper
+    assert isinstance(cart, SCCICart)
+
+    cart.write(0xBFFE, 0x20)  # mode register: select Plus mode
+    cart.write(0xB000, 0x80)  # window 3 bank register (0xB000-0xB7FF): high bit -> Plus window
+    assert cart._scc_window_base == 0xB800
+    assert machine.scc._plus_mode is True
+
+    machine.reset()
+
+    assert machine.scc._plus_mode is True  # re-derived from cart's own mode register
+    assert cart._scc_window_base == 0xB800  # still consistent with the chip's mode
+
+
 def test_build_machine_scc_plus_false_preserves_normal_resolution(tmp_path: Path) -> None:
     machine = build_machine(_msx1_spec(tmp_path))
     assert not isinstance(machine.memory._mapper, SCCICart)

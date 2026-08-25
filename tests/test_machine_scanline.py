@@ -124,6 +124,27 @@ def test_irq_delayed_until_after_instruction_following_ei() -> None:
     assert cpu.registers.PC == 0x0038  # vectored to IM1 ISR
 
 
+def test_irq_withdrawn_before_acceptance_is_not_taken() -> None:
+    """Machine's per-instruction `cpu.int_pending = vdp9938.irq` mirror is
+    level-sensitive: it can withdraw a pending interrupt the same way it
+    raises one, before the CPU ever accepts it. Regression guard for the
+    allium DeassertMaskableInterrupt rule (cpu_z80.allium)."""
+    cpu = _make_cpu_with_rom([0x00])  # NOP
+    cpu.iff1 = True
+    cpu.iff2 = True
+    cpu.im = 1
+
+    # VDP IRQ line raised (as begin_scanline() would do)...
+    cpu.int_pending = True
+    # ...then withdrawn again before the next step() — same instruction
+    # boundary, as the scanline loop's `cpu.int_pending = vdp9938.irq`
+    # mirror does every instruction, not a one-way assert.
+    cpu.int_pending = False
+
+    cpu.step()  # NOP executes; no interrupt was accepted
+    assert cpu.registers.PC == 1  # not vectored to 0x0038
+
+
 def test_irq_not_taken_when_iff1_false() -> None:
     cpu = _make_cpu_with_rom([0x00])
     cpu.iff1 = False

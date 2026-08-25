@@ -50,6 +50,40 @@ def test_screen5_high_nibble_is_left_pixel() -> None:
     assert buf[0] == 5   # pixel 0: high nibble
 
 
+def _set_screen4(vdp: V9938) -> None:
+    """Set mode bits for SCREEN 4 / GRAPHIC3 (M4=1, M3=0, M5=0): R#0=0x04.
+
+    Real V9938 hardware renders GRAPHIC3 pixel-identically to GRAPHIC2 (same
+    name/pattern/colour table layout) -- only the sprite mode differs (mode 2
+    instead of mode 1). This is not a fallback or an approximation; it is the
+    hardware's actual behaviour (allium/v9938.allium's `graphic3` screen_mode
+    branch)."""
+    _enable(vdp)
+    vdp.regs[0] = 0x04  # M4=bit2 only
+
+
+def test_screen4_renders_as_graphic2_pixel_layout() -> None:
+    vdp = V9938()
+    _set_screen4(vdp)
+    vdp.regs[2] = 0x06   # name table at 0x1800 (same layout as GRAPHIC2)
+    vdp.regs[4] = 0x03   # pattern gen at 0x0000
+    vdp.regs[3] = 0xFF   # colour table at 0x2000
+    vdp.vram[0x1800] = 0x00  # tile 0 at name position (0, 0)
+    vdp.vram[0x0000] = 0xFF  # tile 0 pattern row 0: all foreground
+    vdp.vram[0x2000] = 0x41  # tile 0 colour: fg=4, bg=1
+
+    buf = _active(vdp)
+    assert buf[0] == 4  # foreground colour from the colour table, same as GRAPHIC2
+
+
+def test_screen4_display_width_is_256_not_512() -> None:
+    """GRAPHIC3 does not set M5, so it must not be misclassified as the wide
+    (M5=1, M4=0) bitmap modes."""
+    vdp = V9938()
+    _set_screen4(vdp)
+    assert vdp.display_width == 256
+
+
 def test_screen5_low_nibble_is_right_pixel() -> None:
     vdp = V9938()
     _set_screen5(vdp)
@@ -100,6 +134,35 @@ def test_screen5_second_row_offset() -> None:
     buf = _active(vdp)
     assert buf[1 * 256 + 0] == 0x0C
     assert buf[1 * 256 + 1] == 0x0D
+
+
+def test_screen5_colour_zero_uses_border_when_tp_clear() -> None:
+    """R#8 bit 5 (TP) defaults to 0: a colour-index-0 nibble is transparent and
+    displays the current border colour (R#7 low nibble) instead of palette 0."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x03  # border colour 3
+    vdp.vram[0] = 0x05  # high nibble=0 (transparent), low nibble=5 (opaque)
+
+    buf = _active(vdp)
+    assert buf[0] == 3  # colour 0 substituted with border
+    assert buf[1] == 5  # non-zero colour unaffected
+
+
+def test_screen5_colour_zero_is_opaque_when_tp_set() -> None:
+    """With TP set (R#8 bit 5), colour 0 is an ordinary opaque colour and
+    displays as palette entry 0, not the border."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x03  # border colour 3
+    vdp.regs[8] = 0x20  # TP
+    vdp.vram[0] = 0x05
+
+    buf = _active(vdp)
+    assert buf[0] == 0  # colour 0 displayed literally, not substituted
+    assert buf[1] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +401,33 @@ def test_screen6_vram_base_from_r2() -> None:
     assert buf[0] == 3
 
 
+def test_screen6_colour_zero_uses_border_when_tp_clear() -> None:
+    """TP clear (default): a 2-bit colour value of 0 is transparent and shows
+    the border colour, same TP semantics as SCREEN 5/7 (R#8 bit 5)."""
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x04  # border colour 4
+    vdp.vram[0] = 0b00_01_00_00  # pixel 0 = 0 (transparent), pixel 1 = 1
+
+    buf = _active(vdp)
+    assert buf[0] == 4  # colour 0 substituted with border
+    assert buf[1] == 1
+
+
+def test_screen6_colour_zero_is_opaque_when_tp_set() -> None:
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x04  # border colour 4
+    vdp.regs[8] = 0x20  # TP
+    vdp.vram[0] = 0b00_01_00_00
+
+    buf = _active(vdp)
+    assert buf[0] == 0  # colour 0 displayed literally
+    assert buf[1] == 1
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 7 (Graphic 6): 4-bpp, full 512-pixel width
 # ---------------------------------------------------------------------------
@@ -399,6 +489,33 @@ def test_screen7_second_row_offset() -> None:
 
     buf = _active(vdp)
     assert buf[1 * 512 + 0] == 7
+
+
+def test_screen7_colour_zero_uses_border_when_tp_clear() -> None:
+    """TP clear (default): a 4-bit colour-index-0 nibble is transparent and
+    shows the border colour, same TP semantics as SCREEN 5/6 (R#8 bit 5)."""
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x02  # border colour 2
+    vdp.vram[0] = 0x06  # high nibble=0 (transparent), low nibble=6 (opaque)
+
+    buf = _active(vdp)
+    assert buf[0] == 2  # colour 0 substituted with border
+    assert buf[1] == 6
+
+
+def test_screen7_colour_zero_is_opaque_when_tp_set() -> None:
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x00
+    vdp.regs[7] = 0x02  # border colour 2
+    vdp.regs[8] = 0x20  # TP
+    vdp.vram[0] = 0x06
+
+    buf = _active(vdp)
+    assert buf[0] == 0  # colour 0 displayed literally
+    assert buf[1] == 6
 
 
 # ---------------------------------------------------------------------------

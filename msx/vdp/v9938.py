@@ -409,6 +409,15 @@ class V9938:
         """Advance the completed-frame counter. Called once per frame."""
         self._frame_count += 1
 
+    @property
+    def frame_count(self) -> int:
+        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
+        return self._frame_count
+
+    @frame_count.setter
+    def frame_count(self, value: int) -> None:
+        self._frame_count = value
+
     def irq_pending(self) -> bool:
         ie0 = bool(self.regs[1] & 0x20)
         f = bool(self.status & 0x80)
@@ -820,7 +829,15 @@ class V9938:
         return max(4, nx_px * ny * _CYCLES_PER_PIXEL)
 
     def _dispatch_command(self) -> None:
-        """Execute or start the command written to R46 (cmd_regs[14])."""
+        """Execute or start the command written to R46 (cmd_regs[14]).
+
+        Decodes the shared register geometry once, then delegates each
+        command's own body to a private `_cmd_*` method below -- kept as a
+        single function until this refactor, which grew to 210 lines/13
+        commands and was hard to navigate; splitting it changes nothing about
+        the accuracy-justifying comments each command body carries, only
+        where they live.
+        """
         r46 = self.cmd_regs[14]  # R#46: command byte (high nibble) + logic op (low)
         cmd = (r46 >> 4) & 0xF
         log = r46 & 0xF
@@ -864,142 +881,166 @@ class V9938:
             return
 
         if cmd == _CMD_POINT:
-            # The sampled dot lands in the colour register, where S#7 reads it.
-            self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
-            return
-
-        if cmd == _CMD_PSET:
-            if not dst_ext:
-                self._vram_pixel_write(dx, dy, clr & px_mask, log)
-            return
-
-        if cmd == _CMD_SRCH:
-            stop_on_ne = bool(arg & _ARG_EQ)
-            clr_px = clr & px_mask
-            x = sx
-            found = False
-            while 0 <= x < sw:
-                pix = 0xFF if src_ext else self._vram_pixel_read(x, sy)
-                hit = (pix != clr_px) if stop_on_ne else (pix == clr_px)
-                if hit:
-                    found = True
-                    break
-                x += xs
-            # Result X coordinate goes to S#8/S#9; S#9 upper bits read as 1.
-            # Hardware exposes the scan counter whether or not the colour was
-            # found. BD is only ever SET here: a search that runs into the
-            # border leaves it untouched, and only an S#9 read clears it.
-            self._status8 = x & 0xFF
-            self._status9 = 0xFE | ((x >> 8) & 0x01)
-            if found:
-                self._status2 |= _S2_BD
-            return
-
-        if cmd == _CMD_LINE:
+            self._cmd_point(sx, sy, src_ext, px_mask)
+        elif cmd == _CMD_PSET:
+            self._cmd_pset(dx, dy, clr, log, dst_ext, px_mask)
+        elif cmd == _CMD_SRCH:
+            self._cmd_srch(sx, sy, clr, arg, xs, sw, src_ext, px_mask)
+        elif cmd == _CMD_LINE:
             self._draw_line(dx, dy, nx, ny & 0x3FF, clr & px_mask, log, arg, xs, ys, sw)
-            return
+        elif cmd == _CMD_LMCM:
+            self._cmd_lmcm(sx, sy, nx, ny, dix, diy, xs, ys, sw, src_ext, px_mask)
+        elif cmd == _CMD_LMMV:
+            self._cmd_lmmv(dx, dy, nx, ny, dix, diy, xs, ys, sw, clr, log, dst_ext, px_mask)
+        elif cmd == _CMD_LMMM:
+            self._cmd_lmmm(sx, sy, dx, dy, nx, ny, dix, diy, xs, ys, sw, log, src_ext, dst_ext,
+                            px_mask)
+        elif cmd == _CMD_HMMV:
+            self._cmd_hmmv(dx, dy, nx, ny, dix, diy, xs, ys, clr, dst_ext)
+        elif cmd == _CMD_HMMM:
+            self._cmd_hmmm(sx, sy, dx, dy, nx, ny, dix, diy, xs, ys, src_ext, dst_ext)
+        elif cmd == _CMD_YMMM:
+            self._cmd_ymmm(sy, dx, dy, ny, dix, diy, xs, ys, dst_ext)
+        else:
+            # HMMC (0xF) or LMMC (0xB): CPU-feed transfer.
+            self._cmd_cpu_feed(cmd, dx, dy, nx, ny, dix, diy, xs, ys, sw, log, clr)
 
-        if cmd == _CMD_LMCM:
-            self._cmd_sx = sx
-            self._cmd_sy = sy
-            self._cmd_nx = _clip_nx_dot(sx, nx, dix, sw)
-            self._cmd_ny = _clip_ny(sy, ny, diy)
-            self._cmd_x = 0
-            self._cmd_y = 0
-            self._cmd_xstep = xs
-            self._cmd_ystep = ys
-            self._cmd_active = True
-            self._status2 |= _S2_CE | _S2_TR
-            # The first dot is fetched at once (openMSX startLmcm sets its
-            # transfer flag); every S#7 read takes one and stages the next.
-            self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
-            return
+    def _cmd_point(self, sx: int, sy: int, src_ext: bool, px_mask: int) -> None:
+        # The sampled dot lands in the colour register, where S#7 reads it.
+        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
 
-        if cmd == _CMD_LMMV:
-            actual_nx = _clip_nx_dot(dx, nx, dix, sw)
-            actual_ny = _clip_ny(dy, ny, diy)
-            clr_px = clr & px_mask
-            if not dst_ext:
-                for row in range(actual_ny):
-                    yy = dy + row * ys
-                    for col in range(actual_nx):
-                        self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
-            self._cmd_active = True
-            self._status2 |= _S2_CE
-            self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
-            return
+    def _cmd_pset(self, dx: int, dy: int, clr: int, log: int, dst_ext: bool, px_mask: int) -> None:
+        if not dst_ext:
+            self._vram_pixel_write(dx, dy, clr & px_mask, log)
 
-        if cmd == _CMD_LMMM:
-            actual_nx = _clip_nx_dot_pair(sx, dx, nx, dix, sw)
-            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
-            if not dst_ext:
-                for row in range(actual_ny):
-                    syy = sy + row * ys
-                    dyy = dy + row * ys
-                    for col in range(actual_nx):
-                        src_pix = (px_mask if src_ext
-                                   else self._vram_pixel_read(sx + col * xs, syy))
-                        self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
-            self._cmd_active = True
-            self._status2 |= _S2_CE
-            self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
-            return
+    def _cmd_srch(self, sx: int, sy: int, clr: int, arg: int, xs: int, sw: int,
+                  src_ext: bool, px_mask: int) -> None:
+        stop_on_ne = bool(arg & _ARG_EQ)
+        clr_px = clr & px_mask
+        x = sx
+        found = False
+        while 0 <= x < sw:
+            pix = 0xFF if src_ext else self._vram_pixel_read(x, sy)
+            hit = (pix != clr_px) if stop_on_ne else (pix == clr_px)
+            if hit:
+                found = True
+                break
+            x += xs
+        # Result X coordinate goes to S#8/S#9; S#9 upper bits read as 1.
+        # Hardware exposes the scan counter whether or not the colour was
+        # found. BD is only ever SET here: a search that runs into the
+        # border leaves it untouched, and only an S#9 read clears it.
+        self._status8 = x & 0xFF
+        self._status9 = 0xFE | ((x >> 8) & 0x01)
+        if found:
+            self._status2 |= _S2_BD
 
-        if cmd == _CMD_HMMV:
-            # Byte-unit: NX is truncated to whole bytes and the engine walks
-            # byte columns, so an NX that is not a multiple of ppb covers fewer
-            # dots rather than part-writing an extra byte.
-            byte_cols = _clip_nx_byte(dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
-            actual_ny = _clip_ny(dy, ny, diy)
-            start_col = dx // self._cmd_ppb
-            if not dst_ext:
-                for row in range(actual_ny):
-                    yy = dy + row * ys
-                    for c in range(byte_cols):
-                        self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
-            self._cmd_active = True
-            self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
-            return
+    def _cmd_lmcm(self, sx: int, sy: int, nx: int, ny: int, dix: bool, diy: bool,
+                  xs: int, ys: int, sw: int, src_ext: bool, px_mask: int) -> None:
+        self._cmd_sx = sx
+        self._cmd_sy = sy
+        self._cmd_nx = _clip_nx_dot(sx, nx, dix, sw)
+        self._cmd_ny = _clip_ny(sy, ny, diy)
+        self._cmd_x = 0
+        self._cmd_y = 0
+        self._cmd_xstep = xs
+        self._cmd_ystep = ys
+        self._cmd_active = True
+        self._cmd_remaining = 0
+        self._status2 |= _S2_CE | _S2_TR
+        # The first dot is fetched at once (openMSX startLmcm sets its
+        # transfer flag); every S#7 read takes one and stages the next.
+        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
 
-        if cmd == _CMD_HMMM:
-            byte_cols = _clip_nx_byte_pair(sx, dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
-            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
-            src_col = sx // self._cmd_ppb
-            dst_col = dx // self._cmd_ppb
-            if not dst_ext:
-                for row in range(actual_ny):
-                    syy = sy + row * ys
-                    dyy = dy + row * ys
-                    for c in range(byte_cols):
-                        src = self._vram_byte_addr_col(src_col + c * xs, syy)
-                        dst = self._vram_byte_addr_col(dst_col + c * xs, dyy)
-                        self.vram[dst] = 0xFF if src_ext else self.vram[src]
-            self._cmd_active = True
-            self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
-            return
+    def _cmd_lmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
+                  xs: int, ys: int, sw: int, clr: int, log: int, dst_ext: bool,
+                  px_mask: int) -> None:
+        actual_nx = _clip_nx_dot(dx, nx, dix, sw)
+        actual_ny = _clip_ny(dy, ny, diy)
+        clr_px = clr & px_mask
+        if not dst_ext:
+            for row in range(actual_ny):
+                yy = dy + row * ys
+                for col in range(actual_nx):
+                    self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
 
-        if cmd == _CMD_YMMM:
-            # Y-direction copy: vertical strip at X=DX (NX ignored, the strip
-            # runs to whichever screen edge DIX points at); source row SY →
-            # destination row DY, both at the same X.
-            byte_cols = _clip_nx_byte(dx, 0, dix, self._cmd_ppb, self._cmd_bpl)
-            actual_ny = _clip_ny_pair(sy, dy, ny, diy)
-            start_col = dx // self._cmd_ppb
-            if not dst_ext:
-                for row in range(actual_ny):
-                    syy = sy + row * ys
-                    dyy = dy + row * ys
-                    for c in range(byte_cols):
-                        col = start_col + c * xs
-                        self.vram[self._vram_byte_addr_col(col, dyy)] = \
-                            self.vram[self._vram_byte_addr_col(col, syy)]
-            self._cmd_active = True
-            self._status2 |= _S2_CE
-            self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
-            return
+    def _cmd_lmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
+                  diy: bool, xs: int, ys: int, sw: int, log: int, src_ext: bool,
+                  dst_ext: bool, px_mask: int) -> None:
+        actual_nx = _clip_nx_dot_pair(sx, dx, nx, dix, sw)
+        actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+        if not dst_ext:
+            for row in range(actual_ny):
+                syy = sy + row * ys
+                dyy = dy + row * ys
+                for col in range(actual_nx):
+                    src_pix = (px_mask if src_ext
+                               else self._vram_pixel_read(sx + col * xs, syy))
+                    self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
 
+    def _cmd_hmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
+                  xs: int, ys: int, clr: int, dst_ext: bool) -> None:
+        # Byte-unit: NX is truncated to whole bytes and the engine walks
+        # byte columns, so an NX that is not a multiple of ppb covers fewer
+        # dots rather than part-writing an extra byte.
+        byte_cols = _clip_nx_byte(dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
+        actual_ny = _clip_ny(dy, ny, diy)
+        start_col = dx // self._cmd_ppb
+        if not dst_ext:
+            for row in range(actual_ny):
+                yy = dy + row * ys
+                for c in range(byte_cols):
+                    self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+
+    def _cmd_hmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
+                  diy: bool, xs: int, ys: int, src_ext: bool, dst_ext: bool) -> None:
+        byte_cols = _clip_nx_byte_pair(sx, dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
+        actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+        src_col = sx // self._cmd_ppb
+        dst_col = dx // self._cmd_ppb
+        if not dst_ext:
+            for row in range(actual_ny):
+                syy = sy + row * ys
+                dyy = dy + row * ys
+                for c in range(byte_cols):
+                    src = self._vram_byte_addr_col(src_col + c * xs, syy)
+                    dst = self._vram_byte_addr_col(dst_col + c * xs, dyy)
+                    self.vram[dst] = 0xFF if src_ext else self.vram[src]
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+
+    def _cmd_ymmm(self, sy: int, dx: int, dy: int, ny: int, dix: bool, diy: bool, xs: int,
+                  ys: int, dst_ext: bool) -> None:
+        # Y-direction copy: vertical strip at X=DX (NX ignored, the strip
+        # runs to whichever screen edge DIX points at); source row SY →
+        # destination row DY, both at the same X.
+        byte_cols = _clip_nx_byte(dx, 0, dix, self._cmd_ppb, self._cmd_bpl)
+        actual_ny = _clip_ny_pair(sy, dy, ny, diy)
+        start_col = dx // self._cmd_ppb
+        if not dst_ext:
+            for row in range(actual_ny):
+                syy = sy + row * ys
+                dyy = dy + row * ys
+                for c in range(byte_cols):
+                    col = start_col + c * xs
+                    self.vram[self._vram_byte_addr_col(col, dyy)] = \
+                        self.vram[self._vram_byte_addr_col(col, syy)]
+        self._cmd_active = True
+        self._status2 |= _S2_CE
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+
+    def _cmd_cpu_feed(self, cmd: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
+                      diy: bool, xs: int, ys: int, sw: int, log: int, clr: int) -> None:
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
         self._cmd_remaining = 0
         self._cmd_active = True

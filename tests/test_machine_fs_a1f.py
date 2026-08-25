@@ -74,3 +74,41 @@ def test_disk_rom_visible_and_registers_routed() -> None:
     assert mem.read(0x4000) == 0xC9          # first DISK ROM byte
     mem.write(0x7FFA, 0x00)                  # Main Status Register (read-only, ignored)
     assert mem.read(0x7FFA) & 0x80           # RQM ready, no crash
+
+
+def test_flat_ram_read_write_through_machine_memory() -> None:
+    """fs_a1f's real hardware layout puts the 64 KB flat RAM in sub-slot 0
+    (unlike hb_f1xd's sub-slot 3) -- confirms sub=0 reaches flat RAM through
+    the actual built fs_a1f machine, not just the generic Memory()-level
+    coverage in tests/test_memory_flat_ram.py::
+    test_sub_rom_and_fdc_in_independent_subslots."""
+    spec = _spec()
+    machine = build_machine(
+        spec,
+        bios_override=bytes(32768),
+        extrom_override=bytes(16384),
+        disk_rom_override=bytes(16384),
+    )
+    mem = machine.memory
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0x00)   # every page -> sub-slot 0 (flat RAM)
+    mem.write(0x4000, 0x3C)
+    assert mem.read(0x4000) == 0x3C
+
+
+def test_sub_rom_readable_through_machine_memory() -> None:
+    """fs_a1f's SUB ROM resolves to sub-slot 1 (unlike hb_f1xd's sub-slot 0)
+    -- confirms sub=1 page 0 reaches the SUB ROM through the actual built
+    fs_a1f machine."""
+    spec = _spec()
+    sub_rom = bytes([0x41]) + bytes(16383)
+    machine = build_machine(
+        spec,
+        bios_override=bytes(32768),
+        extrom_override=sub_rom,
+        disk_rom_override=bytes(16384),
+    )
+    mem = machine.memory
+    mem.set_slot_register(0xFF)  # all pages -> slot 3
+    mem.set_sub_slot_reg(0x01)   # page 0 -> sub-slot 1 (SUB ROM)
+    assert mem.read(0x0000) == 0x41

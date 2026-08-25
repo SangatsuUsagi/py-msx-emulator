@@ -111,6 +111,41 @@ def test_plus_mode_scc_window_read_forwards_to_chip() -> None:
     assert cart.read(0xB810) == 0x7F
 
 
+def test_write_at_mode_register_address_wins_over_active_plus_scc_window() -> None:
+    # allium/scci-cartridge.allium: ForwardWriteToScc's mode-register-address
+    # exclusion. 0xBFFE/0xBFFF fall inside the active Plus SCC window
+    # (0xB800-0xBFFF), but the mode register write is checked FIRST and
+    # consumes the write -- it must never reach the SCC chip.
+    cart = _cart()
+    cart.write(0xBFFE, 0x20)  # Plus mode
+    cart.write(0xB000, 0x80)  # window 3 enable bit -- Plus SCC window now active
+    before = cart.scc.read(0x00)
+    cart.write(0xBFFE, 0x21)  # would-be SCC write, but lands on the mode register
+    assert cart.scc.read(0x00) == before  # SCC untouched
+    assert cart._mode_register == 0x21  # mode register updated instead
+
+
+def test_read_at_mode_register_address_still_forwards_to_active_plus_scc_window() -> None:
+    # Asymmetric with the write side: reads have no such exclusion (the mode
+    # register is write-only and has no read-side presence at all), so a read
+    # at 0xBFFE/0xBFFF while the Plus SCC window is active is forwarded to the
+    # chip like any other address in 0xB800-0xBFFF -- landing wherever the
+    # SCC's own address decode puts it (0xBFFE - 0xB800 = 0x7FE, and the SCC
+    # masks to addr & 0xFF = 0xFE, the deformation-register range, which
+    # always reads 0xFF). The point isn't the 0xFF value itself, it's that
+    # this reaches the chip's own decode at all rather than short-circuiting
+    # to echo back the (write-only, and here never-read) mode register.
+    cart = _cart()
+    cart.write(0xBFFE, 0x20)  # Plus mode
+    cart.write(0xB000, 0x80)  # window 3 enable bit
+    assert cart.read(0xBFFE) == 0xFF
+    cart.write(0xBFFE, 0x21)  # change the mode register's stored value
+    assert cart._mode_register == 0x21
+    assert cart.read(0xBFFE) == 0xFF  # unchanged -- proves the read is not
+    # echoing _mode_register (which did change), it's genuinely the SCC's
+    # own fixed deform-register readback
+
+
 def test_ram_write_region_overrides_bank_register_zone() -> None:
     cart = _cart()
     cart.write(0xBFFE, 0x01)  # window 0 is a RAM-write region

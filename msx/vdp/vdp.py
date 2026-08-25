@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
@@ -19,6 +19,55 @@ class FramebufferFormat(Enum):
 
     PALETTE_INDEX4 = auto()
     GRB332 = auto()
+
+
+class VdpDevice(Protocol):
+    """Structural contract shared by `VDP` (TMS9918A) and `V9938` (MSX2).
+
+    The two are unrelated classes that happen to expose the same member
+    names by convention (see each class's own "Public accessors mirroring
+    the TMS9918A VDP field names" comment) -- this Protocol pins that
+    convention down explicitly, mirroring `msx/mapper.py`'s `Mapper(Protocol)`
+    for the same reason: a Rust/C++ port needs one declared trait/enum
+    surface to translate rather than reverse-engineering it from every call
+    site. `latch`/`addr`/`read_buf`/`frame_count` are plain fields on `VDP`
+    and properties on `V9938`; both satisfy this Protocol identically.
+
+    Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
+    `debug_disable_sprites`) too -- both classes declare these identically
+    (wired at machine-construction time by msx/machine_loader.py, consumed
+    by msx/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    itself is typed as this Protocol rather than the raw `VDP | V9938`
+    union.
+    """
+
+    vram: bytearray
+    regs: list[int]
+    status: int
+    latch: int | None
+    addr: int
+    read_buf: int
+    on_interrupt: Callable[[], None] | None
+    tracer: Tracer | None
+    _get_pc: Callable[[], int] | None
+    _get_cycle: Callable[[], int] | None
+    debug_disable_sprites: bool
+
+    @property
+    def frame_count(self) -> int: ...
+    @frame_count.setter
+    def frame_count(self, value: int) -> None: ...
+    @property
+    def framebuffer_format(self) -> FramebufferFormat: ...
+    @property
+    def display_width(self) -> int: ...
+    @property
+    def display_height(self) -> int: ...
+    def reset(self) -> None: ...
+    def increment_frame(self) -> None: ...
+    def read_port(self, port: int) -> int: ...
+    def write_port(self, port: int, value: int) -> None: ...
+    def to_rgb24(self, src: bytearray) -> bytes: ...
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +191,15 @@ class VDP:
         """Advance the completed-frame counter. Called once per frame."""
         self._frame_count += 1
 
+    @property
+    def frame_count(self) -> int:
+        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
+        return self._frame_count
+
+    @frame_count.setter
+    def frame_count(self, value: int) -> None:
+        self._frame_count = value
+
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
         self.regs = [0] * 8
@@ -199,7 +257,25 @@ class VDP:
             self.addr = (self.addr + 1) & 0x3FFF
             return result
         if port == 0x99:
-            result = self.status
+            # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)
+            # is clear, rather than whatever stale/zero value bits 4:0
+            # happen to hold -- matching msx/vdp/v9938.py's own read_port
+            # (same C-BIOS-safety hack: some MSX BIOS/cartridge boot code
+            # feeds S#0 bits 4:0 into a loop counter, and 0 there stalls
+            # it). This is a documented SIMPLIFICATION, not the real
+            # openMSX/hardware value: openMSX's SpriteChecker::checkSprites1
+            # (references/openMSX/src/video/SpriteChecker.cc:168-171)
+            # rewrites bits 4:0 to min(sprite, 31) on every sprite-attribute
+            # scan whenever 5S is clear, where `sprite` is the SAT index the
+            # scan actually stopped at -- typically well under 31 for most
+            # games, which usually terminate their SAT with far fewer than
+            # 31 active sprites. A fully accurate emulation would track and
+            # report that real per-scan index instead of a fixed 31; see
+            # this file's Open Questions.
+            if self.status & 0x40:
+                result = self.status
+            else:
+                result = (self.status & 0xE0) | 0x1F
             # Clear VBlank (bit 7), 5th-sprite flag (bit 6) and coincidence
             # (bit 5) together, keeping only the 5th-sprite index (bits 4:0).
             # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg

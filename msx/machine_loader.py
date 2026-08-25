@@ -39,7 +39,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypedDict, TypeGuard, cast
 
 import yaml
 
@@ -81,7 +81,7 @@ from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
-from msx.vdp.vdp import VDP
+from msx.vdp.vdp import VDP, VdpDevice
 
 # ---------------------------------------------------------------------------
 # Mapper helpers (shared with build_machine)
@@ -105,6 +105,15 @@ _SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
 # controller: wd2793 + connection_style: tc8566af) to whichever branch
 # _build_fdc happens to fall into.
 _SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
+
+# The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
+# field (openspec/specs/msx2-subslot/spec.md's "Secondary slot register
+# field" Requirement: bits 7:6/5:4/3:2/1:0 select the sub-slot for pages
+# 3/2/1/0 respectively; the "Slot 3 sub-slot dispatch" Requirement extracts
+# it as `(sub_slot_reg >> (page * 2)) & 0x03`, matching msx/memory.py's own
+# `& 0x03` masks). A 2-bit field can only ever hold 0-3 -- this is not a
+# bound the loader is free to pick independently of that register layout.
+_MAX_SUB_SLOT_INDEX = 3
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -142,7 +151,7 @@ def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str
 
 def _require_scc(scc: SCC | None) -> SCC:
     if scc is None:
-        raise ValueError("KonamiSCC mapper requires an SCC instance")
+        raise MachineLoadError("KonamiSCC mapper requires an SCC instance")
     return scc
 
 
@@ -194,7 +203,7 @@ def _make_mapper(
 ) -> Mapper:
     builder = _MAPPER_BUILDERS.get(mapper_type)
     if builder is None:
-        raise ValueError(f"unknown mapper type: {mapper_type!r}")
+        raise MachineLoadError(f"unknown mapper type: {mapper_type!r}")
     rom_bytes = cartridge if cartridge is not None else b""
     return builder(cartridge, rom_bytes, sram, scc)
 
@@ -397,11 +406,6 @@ class Slot3Msx1Yaml(TypedDict, total=False):
     size_kb: int
 
 
-def _is_slot3_msx1_shape(data: object) -> TypeGuard[Slot3Msx1Yaml]:
-    """True if `data` is a dict (MSX1 slot 3 block shape)."""
-    return isinstance(data, dict)
-
-
 class FdcYaml(TypedDict, total=False):
     rom: RomEntryYaml
     controller: str
@@ -434,11 +438,6 @@ class Slot3Msx2Yaml(TypedDict, total=False):
     # Raw YAML keys (int-or-str) pre-_int_keys() coercion -- narrowed to
     # dict[int, SubSlotYaml] per-item after coercion (design.md Decision 4).
     secondary: dict[Any, Any]
-
-
-def _is_slot3_msx2_shape(data: object) -> TypeGuard[Slot3Msx2Yaml]:
-    """True if `data` is a dict (MSX2 slot 3 block shape)."""
-    return isinstance(data, dict)
 
 
 class BuiltinDeviceEntryYaml(TypedDict, total=False):
@@ -574,14 +573,20 @@ def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
+def _coerce_int_key(key: Any) -> int | None:
+    try:
+        return int(key)
+    except (TypeError, ValueError):
+        return None
+
+
 def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
     """Coerce slot-map keys to int so string/JSON keys (e.g. "0") resolve via .get(0)."""
     out: dict[int, Any] = {}
     for key, value in slot_map.items():
-        try:
-            out[int(key)] = value
-        except (TypeError, ValueError):
-            continue
+        int_key = _coerce_int_key(key)
+        if int_key is not None:
+            out[int_key] = value
     return out
 
 
@@ -593,6 +598,8 @@ def _parse_slot0(
     logo_rom: _RomEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
+        if not _is_content_item_shape(item):
+            continue
         rom_data = item.get("rom")
         if not _is_rom_entry_shape(rom_data):
             continue
@@ -651,6 +658,14 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef |
     )
 
 
+def _check_subslot_index(context: str, label: str, value: int) -> None:
+    if not (0 <= value <= _MAX_SUB_SLOT_INDEX):
+        raise MachineLoadError(
+            f"{context}: {label} sub-slot {value} out of range "
+            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
+        )
+
+
 def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
@@ -662,6 +677,14 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     so a machine MAY place them in the same sub-slot (every machine predating
     this generalisation does, and still resolves to sub-slot 0 for both,
     unchanged) or in different sub-slots (e.g. FS-A1F's real hardware layout).
+
+    Raises:
+        MachineLoadError: If a declared sub-slot role's index falls outside
+            0-_MAX_SUB_SLOT_INDEX, or if a mapper: standard sub-slot and a
+            flat (non-mapper) RAM sub-slot are both declared -- these are
+            mutually exclusive MSX2 slot 3 RAM strategies (see
+            allium/slots.allium's SlotThreeStrategyIsExclusive invariant and
+            Memory.__post_init__'s corresponding construction-time check).
     """
     result = _Slot3Msx2()
     if slot3.get("expanded"):
@@ -672,6 +695,8 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                 continue
             if result.sub_rom is None:
                 for item in sub_val.get("content", []):
+                    if not _is_content_item_shape(item):
+                        continue
                     rom_data = item.get("rom")
                     if _is_rom_entry_shape(rom_data):
                         result.sub_rom = _parse_rom_entry(
@@ -691,6 +716,20 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                 result.flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
         result.has_ram_mapper = True
+
+    context = f"machine '{machine_id}' slot 3"
+    if result.sub_rom is not None:
+        _check_subslot_index(context, "SUB ROM", result.sub_rom_subslot)
+    if result.fdc is not None:
+        _check_subslot_index(context, "fdc", result.fdc_subslot)
+    if result.flat_ram_subslot is not None:
+        _check_subslot_index(context, "flat RAM", result.flat_ram_subslot)
+    if result.has_ram_mapper and result.flat_ram_subslot is not None:
+        raise MachineLoadError(
+            f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
+            "declared simultaneously -- these are mutually exclusive MSX2 slot 3 "
+            "RAM strategies (Memory cannot host both at once)"
+        )
     return result
 
 
@@ -698,15 +737,19 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
 # Pass 2: machine spec
 # ---------------------------------------------------------------------------
 
+class _BuiltinDevices(NamedTuple):
+    has_v9938: bool
+    has_rtc: bool
+    keyboard_type: str
+    io_ports: dict[str, tuple[int, int]]
+
+
 def _parse_builtin_devices(
     raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
     machine_path: Path,
-) -> tuple[bool, bool, str, dict[str, tuple[int, int]]]:
-    """Resolve the `builtin_devices` list against the device registry.
-
-    Returns (has_v9938, has_rtc, keyboard_type, device_io_ports).
-    """
+) -> _BuiltinDevices:
+    """Resolve the `builtin_devices` list against the device registry."""
     has_v9938 = False
     has_rtc = False
     keyboard_type = "int"
@@ -750,7 +793,7 @@ def _parse_builtin_devices(
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
-    return has_v9938, has_rtc, keyboard_type, device_io_ports
+    return _BuiltinDevices(has_v9938, has_rtc, keyboard_type, device_io_ports)
 
 
 def load_machine_spec(
@@ -966,7 +1009,7 @@ def _io_range(
 def _register_common_io(
     io: IOBus,
     spec: MachineSpec,
-    vdp: "VDP | V9938",
+    vdp: VdpDevice,
     psg: PSG,
     ppi: PPI,
     vdp_default_ports: tuple[int, int],

@@ -181,6 +181,18 @@ def test_hmmc_sets_ce_and_tr_on_dispatch() -> None:
     assert vdp._cmd_active
 
 
+def test_hmmc_dispatch_with_pending_clr_leaves_zero_tr_delay() -> None:
+    """Dispatch first consumes the pending CLR write (which would leave
+    TR=0, delay=8 on its own), then unconditionally re-asserts TR=1,
+    delay=0 for the still-active command -- the final net state, not the
+    intermediate one. Regression guard for allium's StartCpuWriteTransfer
+    TR/delay ordering fix (v9938_command_engine.allium)."""
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0xAB)
+    assert vdp._status2 & 0x80  # TR = 1
+    assert vdp._tr_delay == 0
+
+
 def test_hmmc_transfers_bytes_via_colour_register() -> None:
     vdp = _make_vdp()
     # NX=4 pixels = 2 bytes in G4. First byte is pre-loaded in CLR (R#44) and

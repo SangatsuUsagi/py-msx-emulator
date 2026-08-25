@@ -256,6 +256,73 @@ class FixedPageMapper(_NoStateMapperMixin):
         return 0xFF
 
 
+class _WindowedRomMapperMixin:
+    """Shared page-resolution behaviour for a bank-switching ROM mapper with N
+    fixed-size windows and a raw `_banks: list[int]` register per window.
+
+    Factors out what were previously separate, near-identical copies of
+    `_num_pages`/`_select_page`/`_sync_window`/`debug_bank_info` on
+    Ascii8Mapper and Ascii16Mapper -- differing only by `_MAPPER_PAGE_SIZE`
+    -- so the openMSX `RomBlocks::setRom` two-tier resolution rationale in
+    `_select_page` (see its own comment) is stated once, not restated
+    per-class where a future fix could land in one copy and not the other.
+
+    A plain (non-dataclass) mixin: it declares no dataclass fields itself,
+    only methods, so it can sit in a concrete mapper's MRO ahead of
+    BankTracingMapper without affecting `@dataclass` field synthesis. Each
+    concrete subclass still declares its own `rom`/`_banks`/`_flat` dataclass
+    fields (the mixin only reads them via `self`) and its own `_MAPPER_PAGE_SIZE`.
+
+    Not used by KonamiMapper (fixed 5-bit mask, not ROM-size-derived) or
+    RTypeMapper (two fixed hardware masks) -- both use a different page-select
+    shape by design; KonamiSCCMapper's own `_select_page` happens to match this
+    same two-tier shape but was left as its own copy rather than folded in
+    here, since its window/write semantics differ enough (4 independently
+    switchable windows via per-window register zones, not ASCII8/16's shared
+    zone) that sharing only the 3-method trio was judged not worth the added
+    MRO indirection for a class outside this review's actual scope.
+    """
+
+    _MAPPER_PAGE_SIZE: ClassVar[int]
+
+    rom: bytes
+    _banks: list[int]
+    _flat: bytearray
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // self._MAPPER_PAGE_SIZE)
+
+    def _select_page(self, value: int) -> int:
+        # openMSX RomBlocks::setRom's two-tier resolution (neither
+        # RomAscii8kB.cc nor RomAscii16kB.cc installs a setBlockMask
+        # override, so the mask is the default `nrBlocks - 1`, matching
+        # KonamiSCCMapper's own _select_page -- not KonamiMapper's fixed
+        # 5-bit mask): a raw value already below the ROM's real page count
+        # selects that page directly; otherwise it is masked with
+        # (pages - 1), which is only a contiguous-low-bits mask when pages
+        # is itself a power of two. This replaces a prior `value % pages`
+        # resolution, which diverges from this for a non-power-of-two page
+        # count (e.g. 24 pages: value=25 gives page 1 under modulo but page
+        # 17 under this mask).
+        pages = self._num_pages()
+        if value < pages:
+            return value
+        return value & (pages - 1)
+
+    def _sync_window(self, window: int) -> None:
+        page_size = self._MAPPER_PAGE_SIZE
+        page = self._select_page(self._banks[window])
+        src = self.rom[page * page_size : (page + 1) * page_size]
+        dst = window * page_size
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < page_size:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + page_size] = b"\xff" * (page_size - len(src))
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
+
 class Ascii8MapperState(TypedDict):
     """Save-state schema for Ascii8Mapper.snapshot()/restore()."""
 
@@ -263,7 +330,7 @@ class Ascii8MapperState(TypedDict):
 
 
 @dataclass
-class Ascii8Mapper(BankTracingMapper):
+class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
 
     Control registers written to 0x6000–0x7FFF select which ROM page each
@@ -285,7 +352,10 @@ class Ascii8Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8
+    _MAPPER_PAGE_SIZE: ClassVar[int] = _PAGE_8K
     rom: bytes
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -296,18 +366,6 @@ class Ascii8Mapper(BankTracingMapper):
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
-
-    def _num_pages(self) -> int:
-        return max(1, len(self.rom) // _PAGE_8K)
-
-    def _sync_window(self, window: int) -> None:
-        page = self._banks[window]
-        src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
-        dst = window * _PAGE_8K
-        self._flat[dst : dst + len(src)] = src
-        if len(src) < _PAGE_8K:
-            # Page runs past the end of a short/truncated ROM: open bus.
-            self._flat[dst + len(src) : dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
@@ -321,12 +379,16 @@ class Ascii8Mapper(BankTracingMapper):
         if 0x6000 <= addr <= 0x7FFF:
             # Bits 12:11 of address select register 0–3
             reg = (addr >> 11) & 0x03
-            new = value % self._num_pages()
             old = self._banks[reg]
-            self._banks[reg] = new
-            if new != old:
+            # Stored raw (unresolved) -- _sync_window applies _select_page
+            # when it resolves this into an actual ROM offset, so the same
+            # resolution covers Ascii8Sram2Mapper's inherited ROM path too
+            # (that subclass's write() stores the raw value directly, for
+            # its own SRAM-select bit test -- see that class's docstring).
+            self._banks[reg] = value
+            if value != old:
                 self._sync_window(reg)
-            _trace_bank(self, reg, old, new, addr)
+            _trace_bank(self, reg, old, value, addr)
 
     def snapshot(self) -> Ascii8MapperState:
         return {"banks": list(self._banks)}
@@ -340,9 +402,6 @@ class Ascii8Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        return _format_bank_info(self._banks, page)
-
 
 class Ascii16MapperState(TypedDict):
     """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
@@ -351,7 +410,7 @@ class Ascii16MapperState(TypedDict):
 
 
 @dataclass
-class Ascii16Mapper(BankTracingMapper):
+class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
@@ -369,7 +428,10 @@ class Ascii16Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16
+    _MAPPER_PAGE_SIZE: ClassVar[int] = _PAGE_16K
     rom: bytes
+    # Fixed-length (2) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
     # Flat mirror of the two banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -381,18 +443,6 @@ class Ascii16Mapper(BankTracingMapper):
         for window in range(2):
             self._sync_window(window)
 
-    def _num_pages(self) -> int:
-        return max(1, len(self.rom) // _PAGE_16K)
-
-    def _sync_window(self, window: int) -> None:
-        page = self._banks[window]
-        src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
-        dst = window * _PAGE_16K
-        self._flat[dst : dst + len(src)] = src
-        if len(src) < _PAGE_16K:
-            # Page runs past the end of a short/truncated ROM: open bus.
-            self._flat[dst + len(src) : dst + _PAGE_16K] = b"\xff" * (_PAGE_16K - len(src))
-
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
         if 0 <= idx < _WINDOW_BYTES:
@@ -400,24 +450,26 @@ class Ascii16Mapper(BankTracingMapper):
         return self._read_out_of_window(addr)
 
     def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x8000:
-            window, base = 0, 0x4000
-        else:
-            window, base = 1, 0x8000
-        page_offset = self._banks[window] * _PAGE_16K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the two 16 KB windows (addr < 0x4000 or addr >= 0xC000):
+        # open bus, not a mirror of either bank -- matching Ascii8Mapper's
+        # "no mirroring" contract (openMSX's RomAscii16kB.cc does not
+        # override reset() for the fixed-unmapped pages 0/3, and its SRAM
+        # sibling RomAscii16_2.cc doesn't either, so both leave those pages
+        # at the VDP/CPU's open-bus default rather than routing them
+        # through either bank register). Real-hardware verification is
+        # limited to this openMSX-source agreement -- no ASCII16-specific
+        # cartridge dump or real-machine trace has confirmed it directly;
+        # see allium/ascii_mappers.allium's Open Questions.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
         if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
             window = 0 if addr < 0x7000 else 1
-            new = value % self._num_pages()
             old = self._banks[window]
-            self._banks[window] = new
-            if new != old:
+            self._banks[window] = value
+            if value != old:
                 self._sync_window(window)
-            _trace_bank(self, window, old, new, addr)
+            _trace_bank(self, window, old, value, addr)
 
     def snapshot(self) -> Ascii16MapperState:
         return {"banks": list(self._banks)}
@@ -430,9 +482,6 @@ class Ascii16Mapper(BankTracingMapper):
         self._banks[:] = banks
         for window in range(2):
             self._sync_window(window)
-
-    def debug_bank_info(self, page: int) -> str | None:
-        return _format_bank_info(self._banks, page)
 
 
 class Ascii8Sram2MapperState(Ascii8MapperState):
@@ -883,15 +932,12 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         return self._read_out_of_window(addr)
 
     def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x8000:
-            window, base = 0, 0x4000
-        else:
-            window, base = 1, 0x8000
-        if self._is_sram_bank(window):
-            return self.sram[(addr - base) & self._SRAM_MASK]
-        page_offset = self._banks[window] * _PAGE_16K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the two 16 KB windows: open bus, regardless of whether
+        # either window is currently SRAM-selected -- see the base
+        # Ascii16Mapper._read_out_of_window for the full rationale
+        # (openMSX's RomAscii16_2.cc, the SRAM variant, does not override
+        # reset() for the fixed-unmapped pages either, so it gets no
+        # special-cased behaviour there over the plain ROM variant).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -1055,6 +1101,8 @@ class KonamiMapper(BankTracingMapper):
 
     kind: ClassVar[MapperKind] = MapperKind.KONAMI
     rom: bytes
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -1253,6 +1301,8 @@ class KonamiSCCMapper(BankTracingMapper):
     kind: ClassVar[MapperKind] = MapperKind.KONAMI_SCC
     rom: bytes
     scc: "SCC"
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _scc_mode: bool = field(default=False, init=False, repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
@@ -1505,6 +1555,19 @@ class SCCICart(BankTracingMapper):
             self._scc_window_base = 0x9800
         else:
             self._scc_window_base = None
+
+    def resync_scc_mode(self) -> None:
+        """Re-push this cartridge's own (unreset) mode register into `scc`.
+
+        `Machine.reset()` resets the carried `SCC` chip directly, which clears
+        its `_plus_mode` back to Compatible -- but this cartridge's own mode
+        register and bank registers are not part of a soft reset (no mapper
+        in this codebase resets its bank state), so without this call
+        `_scc_window_base` would keep forwarding a Plus-mode window address
+        (0xB800) into a chip now decoding Compatible offsets. Mirrors what
+        restore() already does after loading a saved mode_register.
+        """
+        self._set_mode_register(self._mode_register)
 
     def snapshot(self) -> SCCICartState:
         # SCC chip state is snapshotted separately by the state module.
