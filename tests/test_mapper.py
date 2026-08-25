@@ -292,12 +292,18 @@ def test_ascii16_read_below_window_returns_open_bus() -> None:
     assert m.read(0x0000) == 0xFF
 
 
-def test_ascii16_read_above_window_falls_back_to_bank_arithmetic() -> None:
-    # Above 0xBFFF: re-uses window 1's bank/base arithmetic for any
-    # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
-    # resolves to open bus via the same bounds check, not a crash.
-    small_rom = _rom_16k_pages(1)
-    m = Ascii16Mapper(small_rom)
+def test_ascii16_read_above_window_is_open_bus_not_a_mirror() -> None:
+    # Above 0xBFFF is genuinely outside both windows: open bus, never a
+    # mirror of either bank's ROM content. Uses a 4-page (64 KB) ROM
+    # specifically: an earlier implementation re-used window 1's bank/base
+    # arithmetic here (page_offset = banks[1]*16K + (addr-0x8000)), which
+    # for a ROM this size lands the 0xC000 case squarely inside valid ROM
+    # bounds (page_offset=0x4000 < 64K) and returns page 1's real content
+    # instead of open bus -- a true mirror bug a small (exactly-16KB) ROM
+    # would coincidentally hide, since its bounds check alone happened to
+    # reject that offset.
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
     assert m.read(0xC000) == 0xFF
 
 

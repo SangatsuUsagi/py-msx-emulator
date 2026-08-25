@@ -400,13 +400,16 @@ class Ascii16Mapper(BankTracingMapper):
         return self._read_out_of_window(addr)
 
     def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x8000:
-            window, base = 0, 0x4000
-        else:
-            window, base = 1, 0x8000
-        page_offset = self._banks[window] * _PAGE_16K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the two 16 KB windows (addr < 0x4000 or addr >= 0xC000):
+        # open bus, not a mirror of either bank -- matching Ascii8Mapper's
+        # "no mirroring" contract (openMSX's RomAscii16kB.cc does not
+        # override reset() for the fixed-unmapped pages 0/3, and its SRAM
+        # sibling RomAscii16_2.cc doesn't either, so both leave those pages
+        # at the VDP/CPU's open-bus default rather than routing them
+        # through either bank register). Real-hardware verification is
+        # limited to this openMSX-source agreement -- no ASCII16-specific
+        # cartridge dump or real-machine trace has confirmed it directly;
+        # see allium/ascii_mappers.allium's Open Questions.
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:
@@ -883,15 +886,12 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         return self._read_out_of_window(addr)
 
     def _read_out_of_window(self, addr: int) -> int:
-        if addr < 0x8000:
-            window, base = 0, 0x4000
-        else:
-            window, base = 1, 0x8000
-        if self._is_sram_bank(window):
-            return self.sram[(addr - base) & self._SRAM_MASK]
-        page_offset = self._banks[window] * _PAGE_16K + (addr - base)
-        if 0 <= page_offset < len(self.rom):
-            return self.rom[page_offset]
+        # Outside the two 16 KB windows: open bus, regardless of whether
+        # either window is currently SRAM-selected -- see the base
+        # Ascii16Mapper._read_out_of_window for the full rationale
+        # (openMSX's RomAscii16_2.cc, the SRAM variant, does not override
+        # reset() for the fixed-unmapped pages either, so it gets no
+        # special-cased behaviour there over the plain ROM variant).
         return 0xFF
 
     def write(self, addr: int, value: int) -> None:

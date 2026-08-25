@@ -322,16 +322,16 @@ class TestAscii16Sram2:
         m.write(0x4100, 0xBB)  # write to window 0 body -- no write path at all
         assert m.sram[0x100] == 0x00
 
-    def test_window0_sram_out_of_window_read_below_0x4000_wraps_correctly(self):
-        # _read_out_of_window's SRAM branch computes (addr - base) & _SRAM_MASK
-        # with base=0x4000; for addr just below that, the subtraction goes
-        # negative before the mask. Python's & on a negative int floors
-        # correctly (-1 & 0x7FF == 2047), unlike a naive truncating modulo --
-        # regression guard for allium's Ascii16SramReadByte offset formula fix.
+    def test_window0_sram_out_of_window_read_below_0x4000_is_open_bus(self):
+        # Below 0x4000 is genuinely outside both windows -- open bus
+        # (0xFF), not a wraparound mirror of the SRAM-selected window's
+        # content, regardless of which window is currently SRAM-selected.
+        # matches Ascii16Mapper's own out-of-window contract (see
+        # _read_out_of_window's docstring comment).
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.sram[2047] = 0x99
         m.write(0x6000, 0x10)  # window 0 -> SRAM
-        assert m.read(0x3FFF) == 0x99  # (0x3FFF - 0x4000) & 0x7FF == 2047
+        assert m.read(0x3FFF) == 0xFF
 
     def test_window1_rom_read_when_below_num_pages(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
@@ -363,12 +363,16 @@ class TestAscii16Sram2:
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         assert m.read(0x0000) == 0xFF
 
-    def test_read_above_window_falls_back_to_bank_arithmetic(self):
-        # Above 0xBFFF: re-uses window 1's bank/base arithmetic for any
-        # addr >= 0x8000, so a small ROM (bank's page_offset out of range)
-        # resolves to open bus via the same bounds check, not a crash.
-        small_rom = bytes(16384)  # 1 page, bank 1 defaults to page 0 (in range)
-        m = Ascii16Sram2Mapper(rom=small_rom)
+    def test_read_above_window_is_open_bus_not_a_mirror(self):
+        # Above 0xBFFF is genuinely outside both windows: open bus, never a
+        # mirror of either bank's ROM content. Uses the 32 KB (2-page)
+        # _ROM_32K specifically: an earlier implementation re-used window
+        # 1's bank/base arithmetic here (page_offset = banks[1]*16K +
+        # (addr-0x8000)), which for a ROM this size lands the 0xC000 case
+        # squarely inside valid ROM bounds and returns real page-1 content
+        # instead of open bus -- a true mirror bug a 1-page (exactly-16KB)
+        # ROM would coincidentally hide.
+        m = Ascii16Sram2Mapper(rom=_ROM_32K)
         assert m.read(0xC000) == 0xFF
 
     def test_window1_toggles_rom_sram_rom_reads_correctly_at_each_step(self):
