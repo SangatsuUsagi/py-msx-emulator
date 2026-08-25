@@ -434,7 +434,7 @@ class Machine:
         # Frame breakpoint (debugger 'gf'): checked once per frame, after the
         # frame is fully rendered and counted, so it never forces the slower
         # per-instruction debug loop the way a PC breakpoint does.
-        if self._frame_breakpoint is not None and self.vdp._frame_count == self._frame_breakpoint:
+        if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
             self._frame_breakpoint = None
             self._enter_break(PauseReason.BREAKPOINT)
         return result

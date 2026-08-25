@@ -256,6 +256,73 @@ class FixedPageMapper(_NoStateMapperMixin):
         return 0xFF
 
 
+class _WindowedRomMapperMixin:
+    """Shared page-resolution behaviour for a bank-switching ROM mapper with N
+    fixed-size windows and a raw `_banks: list[int]` register per window.
+
+    Factors out what were previously separate, near-identical copies of
+    `_num_pages`/`_select_page`/`_sync_window`/`debug_bank_info` on
+    Ascii8Mapper and Ascii16Mapper -- differing only by `_MAPPER_PAGE_SIZE`
+    -- so the openMSX `RomBlocks::setRom` two-tier resolution rationale in
+    `_select_page` (see its own comment) is stated once, not restated
+    per-class where a future fix could land in one copy and not the other.
+
+    A plain (non-dataclass) mixin: it declares no dataclass fields itself,
+    only methods, so it can sit in a concrete mapper's MRO ahead of
+    BankTracingMapper without affecting `@dataclass` field synthesis. Each
+    concrete subclass still declares its own `rom`/`_banks`/`_flat` dataclass
+    fields (the mixin only reads them via `self`) and its own `_MAPPER_PAGE_SIZE`.
+
+    Not used by KonamiMapper (fixed 5-bit mask, not ROM-size-derived) or
+    RTypeMapper (two fixed hardware masks) -- both use a different page-select
+    shape by design; KonamiSCCMapper's own `_select_page` happens to match this
+    same two-tier shape but was left as its own copy rather than folded in
+    here, since its window/write semantics differ enough (4 independently
+    switchable windows via per-window register zones, not ASCII8/16's shared
+    zone) that sharing only the 3-method trio was judged not worth the added
+    MRO indirection for a class outside this review's actual scope.
+    """
+
+    _MAPPER_PAGE_SIZE: ClassVar[int]
+
+    rom: bytes
+    _banks: list[int]
+    _flat: bytearray
+
+    def _num_pages(self) -> int:
+        return max(1, len(self.rom) // self._MAPPER_PAGE_SIZE)
+
+    def _select_page(self, value: int) -> int:
+        # openMSX RomBlocks::setRom's two-tier resolution (neither
+        # RomAscii8kB.cc nor RomAscii16kB.cc installs a setBlockMask
+        # override, so the mask is the default `nrBlocks - 1`, matching
+        # KonamiSCCMapper's own _select_page -- not KonamiMapper's fixed
+        # 5-bit mask): a raw value already below the ROM's real page count
+        # selects that page directly; otherwise it is masked with
+        # (pages - 1), which is only a contiguous-low-bits mask when pages
+        # is itself a power of two. This replaces a prior `value % pages`
+        # resolution, which diverges from this for a non-power-of-two page
+        # count (e.g. 24 pages: value=25 gives page 1 under modulo but page
+        # 17 under this mask).
+        pages = self._num_pages()
+        if value < pages:
+            return value
+        return value & (pages - 1)
+
+    def _sync_window(self, window: int) -> None:
+        page_size = self._MAPPER_PAGE_SIZE
+        page = self._select_page(self._banks[window])
+        src = self.rom[page * page_size : (page + 1) * page_size]
+        dst = window * page_size
+        self._flat[dst : dst + len(src)] = src
+        if len(src) < page_size:
+            # Page runs past the end of a short/truncated ROM: open bus.
+            self._flat[dst + len(src) : dst + page_size] = b"\xff" * (page_size - len(src))
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
+
 class Ascii8MapperState(TypedDict):
     """Save-state schema for Ascii8Mapper.snapshot()/restore()."""
 
@@ -263,7 +330,7 @@ class Ascii8MapperState(TypedDict):
 
 
 @dataclass
-class Ascii8Mapper(BankTracingMapper):
+class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
 
     Control registers written to 0x6000–0x7FFF select which ROM page each
@@ -285,7 +352,10 @@ class Ascii8Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8
+    _MAPPER_PAGE_SIZE: ClassVar[int] = _PAGE_8K
     rom: bytes
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 0, 0, 0], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -296,34 +366,6 @@ class Ascii8Mapper(BankTracingMapper):
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
-
-    def _num_pages(self) -> int:
-        return max(1, len(self.rom) // _PAGE_8K)
-
-    def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (RomAscii8kB
-        # installs no setBlockMask override, so the mask is the default
-        # `nrBlocks - 1`, matching KonamiSCCMapper's own _select_page --
-        # not KonamiMapper's fixed 5-bit mask): a raw value already below
-        # the ROM's real page count selects that page directly; otherwise
-        # it is masked with (pages - 1), which is only a contiguous-low-
-        # bits mask when pages is itself a power of two. Replaces a prior
-        # `value % pages` resolution, which diverges from this for a
-        # non-power-of-two page count (e.g. 24 pages: value=25 gives page
-        # 1 under modulo but page 17 under this mask).
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
-
-    def _sync_window(self, window: int) -> None:
-        page = self._select_page(self._banks[window])
-        src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
-        dst = window * _PAGE_8K
-        self._flat[dst : dst + len(src)] = src
-        if len(src) < _PAGE_8K:
-            # Page runs past the end of a short/truncated ROM: open bus.
-            self._flat[dst + len(src) : dst + _PAGE_8K] = b"\xff" * (_PAGE_8K - len(src))
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
@@ -360,9 +402,6 @@ class Ascii8Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def debug_bank_info(self, page: int) -> str | None:
-        return _format_bank_info(self._banks, page)
-
 
 class Ascii16MapperState(TypedDict):
     """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
@@ -371,7 +410,7 @@ class Ascii16MapperState(TypedDict):
 
 
 @dataclass
-class Ascii16Mapper(BankTracingMapper):
+class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII16 mapper: two 16 KB windows at 0x4000 and 0x8000.
 
     Control registers: window 0 at 0x6000–0x67FF, window 1 at 0x7000–0x77FF
@@ -389,7 +428,10 @@ class Ascii16Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16
+    _MAPPER_PAGE_SIZE: ClassVar[int] = _PAGE_16K
     rom: bytes
+    # Fixed-length (2) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
     # Flat mirror of the two banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -400,30 +442,6 @@ class Ascii16Mapper(BankTracingMapper):
         self._flat = bytearray(2 * _PAGE_16K)
         for window in range(2):
             self._sync_window(window)
-
-    def _num_pages(self) -> int:
-        return max(1, len(self.rom) // _PAGE_16K)
-
-    def _select_page(self, value: int) -> int:
-        # openMSX RomBlocks::setRom's two-tier resolution (RomAscii16kB
-        # installs no setBlockMask override, so the mask is the default
-        # `nrBlocks - 1`, matching KonamiSCCMapper's own _select_page --
-        # not KonamiMapper's fixed 5-bit mask). See Ascii8Mapper's
-        # _select_page for the full rationale and the numeric example
-        # showing this diverges from a plain `value % pages`.
-        pages = self._num_pages()
-        if value < pages:
-            return value
-        return value & (pages - 1)
-
-    def _sync_window(self, window: int) -> None:
-        page = self._select_page(self._banks[window])
-        src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
-        dst = window * _PAGE_16K
-        self._flat[dst : dst + len(src)] = src
-        if len(src) < _PAGE_16K:
-            # Page runs past the end of a short/truncated ROM: open bus.
-            self._flat[dst + len(src) : dst + _PAGE_16K] = b"\xff" * (_PAGE_16K - len(src))
 
     def read(self, addr: int) -> int:
         idx = addr - 0x4000
@@ -464,9 +482,6 @@ class Ascii16Mapper(BankTracingMapper):
         self._banks[:] = banks
         for window in range(2):
             self._sync_window(window)
-
-    def debug_bank_info(self, page: int) -> str | None:
-        return _format_bank_info(self._banks, page)
 
 
 class Ascii8Sram2MapperState(Ascii8MapperState):
@@ -1086,6 +1101,8 @@ class KonamiMapper(BankTracingMapper):
 
     kind: ClassVar[MapperKind] = MapperKind.KONAMI
     rom: bytes
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on
     # bank switch: reads are hot (millions/frame), switches are rare, so
@@ -1284,6 +1301,8 @@ class KonamiSCCMapper(BankTracingMapper):
     kind: ClassVar[MapperKind] = MapperKind.KONAMI_SCC
     rom: bytes
     scc: "SCC"
+    # Fixed-length (4) for this class's whole lifetime -- see GameMaster2Mapper's
+    # _banks PORT-NOTE.
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _scc_mode: bool = field(default=False, init=False, repr=False)
     # Flat mirror of the four banked windows (0x4000-0xBFFF), rebuilt only on

@@ -624,22 +624,38 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
+    # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
+    # scanlines sharing a tile row -- cached here and re-fetched from VRAM
+    # only when `row` changes, so the per-scanline vscroll loop below doesn't
+    # pay for 8x as many name/colour-table reads as the pre-vscroll per-row
+    # loop did. `pat` still depends on `py` too, so it's re-fetched every
+    # scanline regardless.
+    row_tiles = [0] * 32
+    row_fg = [0] * 32
+    row_bg = [0] * 32
+    cached_row = -1
+
     for scan in range(y_start, ye):
         vline = (scan + vscroll) & 0xFF
         row = vline >> 3
         py = vline & 0x07
-        name_row = name_base + row * 32
+        if row != cached_row:
+            name_row = name_base + row * 32
+            for col in range(32):
+                tile = vdp.vram[(name_row + col) & 0x3FFF]
+                cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
+                row_tiles[col] = tile
+                hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+                row_fg[col] = hi_nib if hi_nib else bd
+                lo_nib = cb & 0x0F
+                row_bg[col] = lo_nib if lo_nib else bd
+            cached_row = row
         scan_w = scan * _W
         for col in range(32):
-            tile = vdp.vram[(name_row + col) & 0x3FFF]
-            cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
-            hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-            fg = hi_nib if hi_nib else bd
-            lo_nib = cb & 0x0F
-            bg = lo_nib if lo_nib else bd
+            tile = row_tiles[col]
             pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
             bx = col * 8
-            buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
+            buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][row_fg[col]][row_bg[col]]
 
 
 # ---------------------------------------------------------------------------
@@ -734,19 +750,30 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
+    # `tile` only depends on `row`, constant across the 8 scanlines sharing a
+    # tile row -- cached here and re-fetched from the name table only when
+    # `row` changes, so the per-scanline vscroll loop below doesn't pay for
+    # 8x as many name-table reads as the pre-vscroll per-row loop did.
+    row_tiles = [0] * 32
+    cached_row = -1
+
     for scan in range(y_start, ye):
         vline = (scan + vscroll) & 0xFF
         row = vline >> 3
         py = vline & 0x07
+        if row != cached_row:
+            name_row = name_base + row * 32
+            for col in range(32):
+                row_tiles[col] = vdp.vram[(name_row + col) & 0x3FFF]
+            cached_row = row
         # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
         # pair is selected by the character row (row & 3)*2, and the top vs
         # bottom 4 scanlines pick within the pair (py >> 2). Each nibble is a
         # solid 4x4 block, so the colour is constant across its 4 scanlines.
         seg = (row & 3) * 2
-        name_row = name_base + row * 32
         scan_w = scan * _W
         for col in range(32):
-            tile = vdp.vram[(name_row + col) & 0x3FFF]
+            tile = row_tiles[col]
             bx = col * 8
             pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
             hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
@@ -823,15 +850,22 @@ def _render_sprites(
     # height, not a fixed constant, so a 192-line frame does not allocate
     # (or bound-check against) 212 lines' worth of unused state.
     h = vdp.display_height
-    line_count = [0] * h
+    # scan_hi caps how far this pass's line index ever reaches (< scan_hi
+    # always), so sizing the per-line/per-pixel state below to scan_hi rather
+    # than the full h avoids over-allocating for a banded pass covering only
+    # the leading part of the frame (a mid-frame SAT switch's earlier
+    # segments; see _render_banded's multi-segment branch) -- a no-op size-
+    # wise for the common single-segment case, where scan_hi already equals h.
+    scan_hi = min(y_end if y_end is not None else h, h)
+    line_count = [0] * scan_hi
     fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     # Two separate claim arrays (see allium/tms9918a.allium's RenderFrame
     # for the base-class version of this split): sprite_painted tracks
     # z-order (only a pixel the VDP actually displays claims a pixel, so a
     # transparent higher-priority sprite does not block a lower-priority one
     # showing through); sprite_touched tracks coincidence.
-    sprite_painted = bytearray(_W * h)
-    sprite_touched = bytearray(_W * h)
+    sprite_painted = bytearray(_W * scan_hi)
+    sprite_touched = bytearray(_W * scan_hi)
     coincidence = False
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
@@ -839,13 +873,36 @@ def _render_sprites(
     col_line = 999
     col_x = 999
     had_collision = bool(vdp.status & 0x20)  # an earlier band already recorded one
-    scan_hi = min(y_end if y_end is not None else h, h)
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
     # does (see _sprite_runs). With no per-line schedule this is one run over
     # the whole range using the scalar vdp.regs[23], so the common non-banded
     # case is unaffected.
     sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
+
+    # Shared per-pixel plot: identical body for the scale==1 fast path and the
+    # general-scale loop below (only how `px` is computed differs), so it's
+    # factored into one closure instead of two copies -- defined once per
+    # function call, not per pixel/line/sprite, since Python resolves `row`/
+    # `line`/`color` (all reassigned in the loops below) at call time via the
+    # closure cell, not at def time.
+    def _plot(px: int) -> None:
+        nonlocal coincidence, col_line, col_x
+        if px < 0 or px >= _W:  # clip off-screen, no wrap
+            return
+        coord = row + px
+        if sprite_touched[coord]:
+            coincidence = True
+            if line < col_line or (line == col_line and px < col_x):
+                col_line = line
+                col_x = px
+        else:
+            sprite_touched[coord] = 1
+        # Colour 0 only reaches here when TP makes it opaque, and an
+        # opaque colour-0 pixel is displayed as palette entry 0.
+        if not sprite_painted[coord]:
+            sprite_painted[coord] = 1
+            buf[coord] = color
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -905,43 +962,14 @@ def _render_sprites(
 
                 if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                     for bit_i, pixel in enumerate(pixels):
-                        if not pixel:
-                            continue
-                        px = x_byte + bit_i
-                        if px < 0 or px >= _W:  # clip off-screen, no wrap
-                            continue
-                        coord = row + px
-                        if sprite_touched[coord]:
-                            coincidence = True
-                            if line < col_line or (line == col_line and px < col_x):
-                                col_line = line
-                                col_x = px
-                        else:
-                            sprite_touched[coord] = 1
-                        # Colour 0 only reaches here when TP makes it opaque, and an
-                        # opaque colour-0 pixel is displayed as palette entry 0.
-                        if not sprite_painted[coord]:
-                            sprite_painted[coord] = 1
-                            buf[coord] = color
+                        if pixel:
+                            _plot(x_byte + bit_i)
                 else:
                     for bit_i, pixel in enumerate(pixels):
                         if not pixel:
                             continue
                         for s in range(scale):
-                            px = x_byte + bit_i * scale + s
-                            if px < 0 or px >= _W:  # clip off-screen, no wrap
-                                continue
-                            coord = row + px
-                            if sprite_touched[coord]:
-                                coincidence = True
-                                if line < col_line or (line == col_line and px < col_x):
-                                    col_line = line
-                                    col_x = px
-                            else:
-                                sprite_touched[coord] = 1
-                            if not sprite_painted[coord]:
-                                sprite_painted[coord] = 1
-                                buf[coord] = color
+                            _plot(x_byte + bit_i * scale + s)
 
     if coincidence:
         vdp.status |= 0x20
@@ -1079,33 +1107,65 @@ def _render_sprites_mode2(
     # transparent and take no part in coincidence, same as sprite mode 1.
     can0collide = bool(vdp.regs[8] & 0x20)
 
-    line_count = [0] * h
+    # scan_hi caps how far this pass's line index ever reaches (< scan_hi
+    # always), so sizing the per-line/per-pixel state below to scan_hi rather
+    # than the full h avoids over-allocating for a banded pass covering only
+    # the leading part of the frame -- a no-op size-wise for the common
+    # single-segment case, where scan_hi already equals h.
+    scan_hi = min(y_end if y_end is not None else h, h)
+    line_count = [0] * scan_hi
     ninth_set = False
     # 0 = unclaimed. A displayed pixel stores colour | _SPRITE_CLAIM, so an
     # opaque colour-0 pixel (TP=1) claims its pixel too; the claim bit is
     # masked off when compositing.
-    sprite_buf = bytearray(h * width)
+    sprite_buf = bytearray(scan_hi * width)
     # Coincidence is tracked separately from sprite_buf (same split as
     # _render_sprites above): sprite_buf holds the composited colour and the
     # z-order winner, which a CC/IC sprite claims like any other, while
     # sprite_touched records only pixels a collision-eligible sprite covered.
-    sprite_touched = bytearray(h * width)
+    sprite_touched = bytearray(scan_hi * width)
     # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
     # visible if a higher-priority CC=0 sprite precedes it on the same line
     # (V9938 rule); leading CC=1 sprites are invisible.
-    cc0_seen = bytearray(h)
+    cc0_seen = bytearray(scan_hi)
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
     col_line = 999
     col_x = 999
     had_collision = bool(vdp.status & 0x20)
-    scan_hi = min(y_end if y_end is not None else h, h)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for
     # the usual single R#23/R#8; more only when a split changes either). Runs
     # whose SPD is set are skipped, so a band that blanks its sprites draws none.
     sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
+
+    # Shared per-pixel plot: identical body for the scale==1 fast path and the
+    # general-scale loop below (only how `sx` is computed differs), so it's
+    # factored into one closure instead of two copies -- defined once per
+    # function call, not per pixel/line/sprite, since Python resolves `line`/
+    # `line_off`/`collides`/`or_mode`/`color`/`claim` (all reassigned in the
+    # loops below) at call time via the closure cell, not at def time.
+    def _plot(sx: int) -> None:
+        nonlocal coincidence, col_line, col_x
+        if sx < 0 or sx >= _W:  # clip off-screen, no wrap
+            return
+        for ss in ss_offsets:  # horizontal doubling in 512-wide modes
+            coord = line_off + sx * screen_scale + ss
+            if collides:
+                if sprite_touched[coord]:
+                    coincidence = True
+                    if line < col_line or (line == col_line and sx < col_x):
+                        col_line = line
+                        col_x = sx
+                else:
+                    sprite_touched[coord] = 1
+            if sprite_buf[coord]:
+                if or_mode:
+                    sprite_buf[coord] |= color
+            else:
+                sprite_buf[coord] = claim
+                drawn.append(coord)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -1197,51 +1257,14 @@ def _render_sprites_mode2(
 
                 if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                     for bit_i, pixel in enumerate(pixels):
-                        if not pixel:
-                            continue
-                        sx = x_pos + bit_i  # position in the 256-dot sprite plane
-                        if sx < 0 or sx >= _W:  # clip off-screen, no wrap
-                            continue
-                        for ss in ss_offsets:  # horizontal doubling in 512-wide modes
-                            coord = line_off + sx * screen_scale + ss
-                            if collides:
-                                if sprite_touched[coord]:
-                                    coincidence = True
-                                    if line < col_line or (line == col_line and sx < col_x):
-                                        col_line = line
-                                        col_x = sx
-                                else:
-                                    sprite_touched[coord] = 1
-                            if sprite_buf[coord]:
-                                if or_mode:
-                                    sprite_buf[coord] |= color
-                            else:
-                                sprite_buf[coord] = claim
-                                drawn.append(coord)
+                        if pixel:  # position in the 256-dot sprite plane
+                            _plot(x_pos + bit_i)
                 else:
                     for bit_i, pixel in enumerate(pixels):
                         if not pixel:
                             continue
                         for s in range(scale):
-                            sx = x_pos + bit_i * scale + s  # position in the 256-dot sprite plane
-                            if sx < 0 or sx >= _W:  # clip off-screen, no wrap
-                                continue
-                            for ss in ss_offsets:  # horizontal doubling in 512-wide modes
-                                coord = line_off + sx * screen_scale + ss
-                                if collides:
-                                    if sprite_touched[coord]:
-                                        coincidence = True
-                                        if line < col_line or (line == col_line and sx < col_x):
-                                            col_line = line
-                                            col_x = sx
-                                    else:
-                                        sprite_touched[coord] = 1
-                                if sprite_buf[coord]:
-                                    if or_mode:
-                                        sprite_buf[coord] |= color
-                                else:
-                                    sprite_buf[coord] = claim
-                                    drawn.append(coord)
+                            _plot(x_pos + bit_i * scale + s)  # position in the sprite plane
 
     _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 

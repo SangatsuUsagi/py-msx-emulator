@@ -39,7 +39,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypedDict, TypeGuard, cast
 
 import yaml
 
@@ -81,7 +81,7 @@ from msx.rtc import RTC
 from msx.scc import SCC
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
-from msx.vdp.vdp import VDP
+from msx.vdp.vdp import VDP, VdpDevice
 
 # ---------------------------------------------------------------------------
 # Mapper helpers (shared with build_machine)
@@ -406,11 +406,6 @@ class Slot3Msx1Yaml(TypedDict, total=False):
     size_kb: int
 
 
-def _is_slot3_msx1_shape(data: object) -> TypeGuard[Slot3Msx1Yaml]:
-    """True if `data` is a dict (MSX1 slot 3 block shape)."""
-    return isinstance(data, dict)
-
-
 class FdcYaml(TypedDict, total=False):
     rom: RomEntryYaml
     controller: str
@@ -443,11 +438,6 @@ class Slot3Msx2Yaml(TypedDict, total=False):
     # Raw YAML keys (int-or-str) pre-_int_keys() coercion -- narrowed to
     # dict[int, SubSlotYaml] per-item after coercion (design.md Decision 4).
     secondary: dict[Any, Any]
-
-
-def _is_slot3_msx2_shape(data: object) -> TypeGuard[Slot3Msx2Yaml]:
-    """True if `data` is a dict (MSX2 slot 3 block shape)."""
-    return isinstance(data, dict)
 
 
 class BuiltinDeviceEntryYaml(TypedDict, total=False):
@@ -583,14 +573,20 @@ def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
+def _coerce_int_key(key: Any) -> int | None:
+    try:
+        return int(key)
+    except (TypeError, ValueError):
+        return None
+
+
 def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
     """Coerce slot-map keys to int so string/JSON keys (e.g. "0") resolve via .get(0)."""
     out: dict[int, Any] = {}
     for key, value in slot_map.items():
-        try:
-            out[int(key)] = value
-        except (TypeError, ValueError):
-            continue
+        int_key = _coerce_int_key(key)
+        if int_key is not None:
+            out[int_key] = value
     return out
 
 
@@ -662,6 +658,14 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef |
     )
 
 
+def _check_subslot_index(context: str, label: str, value: int) -> None:
+    if not (0 <= value <= _MAX_SUB_SLOT_INDEX):
+        raise MachineLoadError(
+            f"{context}: {label} sub-slot {value} out of range "
+            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
+        )
+
+
 def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
@@ -714,23 +718,12 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
         result.has_ram_mapper = True
 
     context = f"machine '{machine_id}' slot 3"
-    if result.sub_rom is not None and not (0 <= result.sub_rom_subslot <= _MAX_SUB_SLOT_INDEX):
-        raise MachineLoadError(
-            f"{context}: SUB ROM sub-slot {result.sub_rom_subslot} out of range "
-            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
-        )
-    if result.fdc is not None and not (0 <= result.fdc_subslot <= _MAX_SUB_SLOT_INDEX):
-        raise MachineLoadError(
-            f"{context}: fdc sub-slot {result.fdc_subslot} out of range "
-            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
-        )
-    if result.flat_ram_subslot is not None and not (
-        0 <= result.flat_ram_subslot <= _MAX_SUB_SLOT_INDEX
-    ):
-        raise MachineLoadError(
-            f"{context}: flat RAM sub-slot {result.flat_ram_subslot} out of range "
-            f"(must be 0-{_MAX_SUB_SLOT_INDEX})"
-        )
+    if result.sub_rom is not None:
+        _check_subslot_index(context, "SUB ROM", result.sub_rom_subslot)
+    if result.fdc is not None:
+        _check_subslot_index(context, "fdc", result.fdc_subslot)
+    if result.flat_ram_subslot is not None:
+        _check_subslot_index(context, "flat RAM", result.flat_ram_subslot)
     if result.has_ram_mapper and result.flat_ram_subslot is not None:
         raise MachineLoadError(
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
@@ -744,15 +737,19 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
 # Pass 2: machine spec
 # ---------------------------------------------------------------------------
 
+class _BuiltinDevices(NamedTuple):
+    has_v9938: bool
+    has_rtc: bool
+    keyboard_type: str
+    io_ports: dict[str, tuple[int, int]]
+
+
 def _parse_builtin_devices(
     raw: MachineEntryYaml,
     device_registry: dict[str, _DeviceDef],
     machine_path: Path,
-) -> tuple[bool, bool, str, dict[str, tuple[int, int]]]:
-    """Resolve the `builtin_devices` list against the device registry.
-
-    Returns (has_v9938, has_rtc, keyboard_type, device_io_ports).
-    """
+) -> _BuiltinDevices:
+    """Resolve the `builtin_devices` list against the device registry."""
     has_v9938 = False
     has_rtc = False
     keyboard_type = "int"
@@ -796,7 +793,7 @@ def _parse_builtin_devices(
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
-    return has_v9938, has_rtc, keyboard_type, device_io_ports
+    return _BuiltinDevices(has_v9938, has_rtc, keyboard_type, device_io_ports)
 
 
 def load_machine_spec(
@@ -1012,7 +1009,7 @@ def _io_range(
 def _register_common_io(
     io: IOBus,
     spec: MachineSpec,
-    vdp: "VDP | V9938",
+    vdp: VdpDevice,
     psg: PSG,
     ppi: PPI,
     vdp_default_ports: tuple[int, int],

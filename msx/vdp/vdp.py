@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
@@ -19,6 +19,46 @@ class FramebufferFormat(Enum):
 
     PALETTE_INDEX4 = auto()
     GRB332 = auto()
+
+
+class VdpDevice(Protocol):
+    """Structural contract shared by `VDP` (TMS9918A) and `V9938` (MSX2).
+
+    The two are unrelated classes that happen to expose the same member
+    names by convention (see each class's own "Public accessors mirroring
+    the TMS9918A VDP field names" comment) -- this Protocol pins that
+    convention down explicitly, mirroring `msx/mapper.py`'s `Mapper(Protocol)`
+    for the same reason: a Rust/C++ port needs one declared trait/enum
+    surface to translate rather than reverse-engineering it from every call
+    site. `latch`/`addr`/`read_buf`/`frame_count` are plain fields on `VDP`
+    and properties on `V9938`; both satisfy this Protocol identically.
+
+    Covers only the shared hardware-facing surface (register/port access,
+    reset, frame advance, RGB conversion) -- debug/diagnostic hooks that
+    exist only on `V9938` (`tracer`, `_get_pc`, `_get_cycle`,
+    `debug_disable_sprites`) are deliberately not part of this contract, so
+    `Machine.vdp` and other call sites needing those still declare the
+    concrete `VDP | V9938` union rather than this Protocol; `_register_common_io`
+    (msx/machine_loader.py) is the one place narrow enough to use it directly.
+    """
+
+    vram: bytearray
+    regs: list[int]
+    status: int
+    latch: int | None
+    addr: int
+    read_buf: int
+    on_interrupt: Callable[[], None] | None
+
+    @property
+    def frame_count(self) -> int: ...
+    @property
+    def framebuffer_format(self) -> FramebufferFormat: ...
+    def reset(self) -> None: ...
+    def increment_frame(self) -> None: ...
+    def read_port(self, port: int) -> int: ...
+    def write_port(self, port: int, value: int) -> None: ...
+    def to_rgb24(self, src: bytearray) -> bytes: ...
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +181,11 @@ class VDP:
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""
         self._frame_count += 1
+
+    @property
+    def frame_count(self) -> int:
+        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
+        return self._frame_count
 
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
