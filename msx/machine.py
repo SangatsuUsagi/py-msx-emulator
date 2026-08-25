@@ -523,7 +523,13 @@ class Machine:
                     total += n
                     line_cycles += n
                     if vdp9938 is not None:
-                        vdp9938.tick(n)
+                        # Full tick() (command-timer decrement + _line_cycle) only
+                        # while a command is actually running -- see _run_lines_fast's
+                        # own comment on this same optimization for the rationale.
+                        if vdp9938._cmd_active:
+                            vdp9938.tick(n)
+                        else:
+                            vdp9938._line_cycle += n
                     if post_checks and self._post_step_break():
                         self._enter_break(PauseReason.BREAKPOINT)
                         post_checks = self._post_step_checks_armed()
@@ -582,7 +588,19 @@ class Machine:
                         n = cpu_step()
                         total += n
                         line_cycles += n
-                        vdp9938.tick(n)
+                        # Full tick() (command-timer decrement + _line_cycle) only
+                        # while a command is actually running: _cmd_active is False
+                        # for most of a game's runtime, and tick()'s per-instruction
+                        # call overhead (profiled at roughly Z80.step()'s own
+                        # self-time) is otherwise paid for two branches that would
+                        # both be no-ops anyway. _line_cycle (the S#2 horizontal-
+                        # retrace input) still needs updating every instruction
+                        # regardless, via the direct increment below -- see
+                        # openspec vdp-cmd-timing for the full rationale.
+                        if vdp9938._cmd_active:
+                            vdp9938.tick(n)
+                        else:
+                            vdp9938._line_cycle += n
                     self.cycle_count += line_cycles
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
@@ -619,7 +637,11 @@ class Machine:
                     total += n
                     self.cycle_count += n
                     if vdp9938 is not None:
-                        vdp9938.tick(n)
+                        # Same optimization as _run_lines_fast's own comment.
+                        if vdp9938._cmd_active:
+                            vdp9938.tick(n)
+                        else:
+                            vdp9938._line_cycle += n
                     if not (cpu.halted and cpu.iff1):
                         if pc == self._last_pc:
                             self._pc_repeat += 1
