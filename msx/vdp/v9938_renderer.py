@@ -699,9 +699,13 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
     # palette — no colour-0 substitution).
     fg = (vdp.regs[7] >> 4) & 0x0F
     bg = vdp.regs[7] & 0x0F
+    # No mode-specific 192-line cap: VDP::getNumberOfLines() (real hardware)
+    # is mode-independent, so TEXT1's active display period at R#9 LN=1
+    # extends to 212 lines exactly like every other mode -- see this file's
+    # Open Questions.
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
-    row_end = min(24, (ye + 7) // 8)
+    row_end = (ye + 7) // 8
 
     for row in range(row_start, row_end):
         for col in range(40):
@@ -791,7 +795,16 @@ def _render_sprites(
     pat_size = 16 if si else 8
     render_size = pat_size * (2 if mag else 1)
 
-    sat_base = (vdp.regs[5] & 0x7F) << 7
+    # R#5/R#11 -> SAT base, matching sprite mode 2's addressing exactly (no
+    # further alignment rounding needed here: unlike mode 2, which shares one
+    # VRAM window with a colour table 0x200 bytes below the SAT and so needs
+    # the coarser 512-byte rounding _render_sprites_mode2 applies, sprite
+    # mode 1 has no such shared window -- openMSX's VDP::updateSpriteAttributeBase
+    # computes baseMask = (R#11<<15)|(R#5<<7)|0x7F for BOTH sprite modes
+    # unconditionally (only indexMask/alignment differs by mode: 7-bit for
+    # mode 1, 10-bit for mode 2), so V9938 extends sprite mode 1's SAT into
+    # the full 128 KB VRAM via R#11 exactly as it does for mode 2.
+    sat_base = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
@@ -800,15 +813,25 @@ def _render_sprites(
     # transparent and take no part in coincidence, same as before.
     can0collide = bool(vdp.regs[8] & 0x20)
 
-    line_count = [0] * _TILE_H
+    # No mode-specific 192-line cap: sprite mode 1's active display period is
+    # exactly as long as any other mode's (VDP::getNumberOfLines() is mode-
+    # independent on real hardware -- see the GRAPHIC1/MULTICOLOUR fix above
+    # and this file's Open Questions). h mirrors sprite mode 2's own `h`
+    # parameter (_render_sprites_mode2, which _render_sprites_for_mode
+    # computes once as vdp.display_height and passes down) -- both sprite
+    # renderers size their per-line/per-pixel state to the display's actual
+    # height, not a fixed constant, so a 192-line frame does not allocate
+    # (or bound-check against) 212 lines' worth of unused state.
+    h = vdp.display_height
+    line_count = [0] * h
     fifth_set = False  # mode 1: the 5th sprite on a line sets the 5S flag
     # Two separate claim arrays (see allium/tms9918a.allium's RenderFrame
     # for the base-class version of this split): sprite_painted tracks
     # z-order (only a pixel the VDP actually displays claims a pixel, so a
     # transparent higher-priority sprite does not block a lower-priority one
     # showing through); sprite_touched tracks coincidence.
-    sprite_painted = bytearray(_W * _TILE_H)
-    sprite_touched = bytearray(_W * _TILE_H)
+    sprite_painted = bytearray(_W * h)
+    sprite_touched = bytearray(_W * h)
     coincidence = False
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
@@ -816,7 +839,7 @@ def _render_sprites(
     col_line = 999
     col_x = 999
     had_collision = bool(vdp.status & 0x20)  # an earlier band already recorded one
-    scan_hi = min(y_end if y_end is not None else _TILE_H, _TILE_H)
+    scan_hi = min(y_end if y_end is not None else h, h)
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
     # does (see _sprite_runs). With no per-line schedule this is one run over
@@ -825,13 +848,13 @@ def _render_sprites(
     sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
 
     for i in range(32):
-        y_byte = vdp.vram[(sat_base + i * 4) & 0x3FFF]
+        y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
         if y_byte == 0xD0:
             break
 
-        x_byte = vdp.vram[(sat_base + i * 4 + 1) & 0x3FFF]
-        pat_idx = vdp.vram[(sat_base + i * 4 + 2) & 0x3FFF]
-        attr = vdp.vram[(sat_base + i * 4 + 3) & 0x3FFF]
+        x_byte = vdp.vram[(sat_base + i * 4 + 1) & 0x1FFFF]
+        pat_idx = vdp.vram[(sat_base + i * 4 + 2) & 0x1FFFF]
+        attr = vdp.vram[(sat_base + i * 4 + 3) & 0x1FFFF]
         color = attr & 0x0F
         if attr & 0x80:
             x_byte -= 32  # EC: shift 32px left; may go negative → clipped below

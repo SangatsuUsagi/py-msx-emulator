@@ -214,3 +214,73 @@ def test_multicolour_background_honours_vertical_scroll() -> None:
     buf = _active(vdp)
 
     assert buf[0] == 15, "row 1's block must display at screen row 0 after an 8px scroll"
+
+
+# ---------------------------------------------------------------------------
+# Open Question #3 (now resolved): sprite mode 1's SAT base honours R#11's
+# 128 KB VRAM extension, matching sprite mode 2 (previously ignored R#11
+# entirely and was masked to 16 KB).
+# ---------------------------------------------------------------------------
+
+def test_sprite_mode1_sat_base_honours_r11_128kb_extension() -> None:
+    vdp = V9938()
+    _set_g1(vdp)
+    vdp.regs[5] = 0x00
+    vdp.regs[11] = 0x01  # R#11 bit 0 -> SAT base = (1 << 15) | (0 << 7) = 0x8000
+    vdp.regs[6] = 0x01  # SPT at 0x0800 (kept away from the 0x0000 trap below)
+    sat = 0x8000
+    vdp.vram[sat + 0] = 9  # Y=9 -> y_top=10
+    vdp.vram[sat + 1] = 0  # X=0
+    vdp.vram[sat + 2] = 0  # pattern 0
+    vdp.vram[sat + 3] = 0x0F  # colour 15
+    vdp.vram[sat + 4] = 0xD0  # terminator (sprite index 1)
+    vdp.vram[0x0800] = 0x80  # pattern 0, row 0: leftmost pixel set
+    # If the old 16KB-wrapped address (0x8000 & 0x3FFF == 0) were read
+    # instead, this terminator byte would end the SAT scan at sprite 0.
+    vdp.vram[0x0000] = 0xD0
+
+    buf = _active(vdp)
+
+    assert buf[10 * 256 + 0] == 15, "SAT must be read from the real >16KB address (R#11 extension)"
+
+
+# ---------------------------------------------------------------------------
+# Open Question #4 (now resolved): TEXT1 and sprite mode 1 both extend to
+# the full 212 native lines at R#9 LN=1, matching every other screen mode
+# (real hardware's active display period is mode-independent -- see
+# VDP::getNumberOfLines() in openMSX). Both were previously hard-clamped to
+# 192 lines.
+# ---------------------------------------------------------------------------
+
+def test_text1_renders_beyond_192_lines_at_ln1() -> None:
+    vdp = V9938()
+    vdp.regs[0] = 0x00
+    vdp.regs[1] = 0x50  # BL | M1 -> TEXT1
+    vdp.regs[9] = 0x80  # LN=1 -> 212 native lines
+    vdp.regs[2] = 0x00  # name table at 0x0000
+    vdp.regs[4] = 0x00  # pattern generator at 0x0000
+    vdp.regs[7] = 0xF0  # fg=15, bg=0
+
+    row = 25  # tile row 25 -> scanline 200, beyond the old 24-row (192-line) cap
+    scan = row * 8
+    vdp.vram[row * 40 + 0] = 1  # name table: tile index 1 at (row, col 0)
+    vdp.vram[1 * 8 + 0] = 0x80  # pattern for tile 1, character row 0: leftmost pixel set
+
+    buf = _active(vdp)
+
+    assert buf[scan * 256 + 8] == 15, "TEXT1 must render past line 192 at LN=1"
+
+
+def test_sprite_mode1_renders_beyond_192_lines_at_ln1() -> None:
+    vdp = V9938()
+    _set_g1(vdp)
+    vdp.regs[5] = 0x20
+    vdp.regs[6] = 0x00
+    vdp.regs[9] = 0x80  # LN=1 -> 212 native lines
+    vdp.vram[0] = 0x80
+    _write_sat_entry(vdp, 0, y=199, x=0, pat=0, attr=0x0F)  # y_top=200
+    _write_sat_entry(vdp, 1, y=0xD0, x=0, pat=0, attr=0)
+
+    buf = _active(vdp)
+
+    assert buf[200 * 256 + 0] == 15, "sprite mode 1 must render past line 192 at LN=1"
