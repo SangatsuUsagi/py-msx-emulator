@@ -98,6 +98,20 @@ class TestAscii8Sram2:
         m.write(0x7000, 32)   # 32 & 0x20 == 0x20 → SRAM
         assert m.read(0x8000) == 0xBB  # SRAM
 
+    def test_rom_out_of_range_bank_uses_openmsx_mask_not_modulo(self):
+        # Same openMSX RomBlocks::setRom two-tier resolution as the plain
+        # Ascii8Mapper (see test_mapper.py's
+        # test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo)
+        # applies here for the non-SRAM (ROM) path, inherited via
+        # _sync_window's super() call. 24 pages, value 25: modulo gives
+        # page 1, openMSX's mask gives 25 & 23 == 17. Window 0 is not an
+        # SRAM-selectable window (_SRAM_PAGES == 0x30), so this value can
+        # only ever resolve to a ROM page here.
+        rom_24 = bytes([(p if i == 0 else 0) for p in range(24) for i in range(8192)])
+        m = Ascii8Sram2Mapper(rom=rom_24)
+        m.write(0x6000, 25)
+        assert m.read(0x4000) == 17
+
     def test_mapper_trace_called_on_bank_write(self):
         # Verify _trace_bank path: after write, _banks is updated (no crash)
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
@@ -337,6 +351,19 @@ class TestAscii16Sram2:
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.write(0x7000, 0x01)  # page 1 < 2 → ROM
         assert m.read(0x8000) == _ROM_32K[16384]
+
+    def test_rom_out_of_range_bank_uses_openmsx_mask_not_modulo(self):
+        # Same openMSX RomBlocks::setRom two-tier resolution as the plain
+        # Ascii16Mapper (see test_mapper.py's
+        # test_ascii16_out_of_range_bank_uses_openmsx_mask_not_modulo)
+        # applies here for the non-SRAM (ROM) path, inherited via
+        # _sync_window's super() call. 24 pages, value 25: modulo gives
+        # page 1, openMSX's mask gives 25 & 23 == 17 (25 != 0x10, so this
+        # never resolves to SRAM here).
+        rom_24 = bytes([(p if i == 0 else 0) for p in range(24) for i in range(16384)])
+        m = Ascii16Sram2Mapper(rom=rom_24)
+        m.write(0x6000, 25)
+        assert m.read(0x4000) == 17
 
     def test_sram_selected_only_on_exact_0x10(self):
         rom_256k = bytes(16 * 16384)  # 256KB = 16 pages of 16KB

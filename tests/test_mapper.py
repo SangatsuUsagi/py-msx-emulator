@@ -165,6 +165,17 @@ def test_ascii8_page_wrap_around() -> None:
     assert m.read(0x4000) == 1
 
 
+def test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo() -> None:
+    # openMSX RomBlocks::setRom resolves an out-of-range bank register as
+    # `value & (nrBlocks - 1)`, not `value % nrBlocks` -- for a non-power-
+    # of-two page count the two disagree. 24 pages, value 25: modulo gives
+    # page 1, but openMSX's mask gives 25 & 23 == 17.
+    rom = _rom_8k_pages(24)
+    m = Ascii8Mapper(rom)
+    m.write(0x6000, 25)
+    assert m.read(0x4000) == 17
+
+
 def test_ascii8_switch_window_1() -> None:
     rom = _rom_8k_pages(8)
     m = Ascii8Mapper(rom)
@@ -270,6 +281,16 @@ def test_ascii16_page_wrap_around() -> None:
     m = Ascii16Mapper(rom)
     m.write(0x6000, 5)  # 5 % 4 == 1
     assert m.read(0x4000) == 1
+
+
+def test_ascii16_out_of_range_bank_uses_openmsx_mask_not_modulo() -> None:
+    # See test_ascii8_out_of_range_bank_uses_openmsx_mask_not_modulo: same
+    # openMSX RomBlocks::setRom two-tier resolution applies here. 24 pages,
+    # value 25: modulo gives page 1, openMSX's mask gives 25 & 23 == 17.
+    rom = _rom_16k_pages(24)
+    m = Ascii16Mapper(rom)
+    m.write(0x6000, 25)
+    assert m.read(0x4000) == 17
 
 
 def test_ascii16_write_to_upper_half_of_register_zone_is_ignored() -> None:

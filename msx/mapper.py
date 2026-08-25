@@ -300,8 +300,24 @@ class Ascii8Mapper(BankTracingMapper):
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_8K)
 
+    def _select_page(self, value: int) -> int:
+        # openMSX RomBlocks::setRom's two-tier resolution (RomAscii8kB
+        # installs no setBlockMask override, so the mask is the default
+        # `nrBlocks - 1`, matching KonamiSCCMapper's own _select_page --
+        # not KonamiMapper's fixed 5-bit mask): a raw value already below
+        # the ROM's real page count selects that page directly; otherwise
+        # it is masked with (pages - 1), which is only a contiguous-low-
+        # bits mask when pages is itself a power of two. Replaces a prior
+        # `value % pages` resolution, which diverges from this for a
+        # non-power-of-two page count (e.g. 24 pages: value=25 gives page
+        # 1 under modulo but page 17 under this mask).
+        pages = self._num_pages()
+        if value < pages:
+            return value
+        return value & (pages - 1)
+
     def _sync_window(self, window: int) -> None:
-        page = self._banks[window]
+        page = self._select_page(self._banks[window])
         src = self.rom[page * _PAGE_8K : (page + 1) * _PAGE_8K]
         dst = window * _PAGE_8K
         self._flat[dst : dst + len(src)] = src
@@ -321,12 +337,16 @@ class Ascii8Mapper(BankTracingMapper):
         if 0x6000 <= addr <= 0x7FFF:
             # Bits 12:11 of address select register 0–3
             reg = (addr >> 11) & 0x03
-            new = value % self._num_pages()
             old = self._banks[reg]
-            self._banks[reg] = new
-            if new != old:
+            # Stored raw (unresolved) -- _sync_window applies _select_page
+            # when it resolves this into an actual ROM offset, so the same
+            # resolution covers Ascii8Sram2Mapper's inherited ROM path too
+            # (that subclass's write() stores the raw value directly, for
+            # its own SRAM-select bit test -- see that class's docstring).
+            self._banks[reg] = value
+            if value != old:
                 self._sync_window(reg)
-            _trace_bank(self, reg, old, new, addr)
+            _trace_bank(self, reg, old, value, addr)
 
     def snapshot(self) -> Ascii8MapperState:
         return {"banks": list(self._banks)}
@@ -384,8 +404,20 @@ class Ascii16Mapper(BankTracingMapper):
     def _num_pages(self) -> int:
         return max(1, len(self.rom) // _PAGE_16K)
 
+    def _select_page(self, value: int) -> int:
+        # openMSX RomBlocks::setRom's two-tier resolution (RomAscii16kB
+        # installs no setBlockMask override, so the mask is the default
+        # `nrBlocks - 1`, matching KonamiSCCMapper's own _select_page --
+        # not KonamiMapper's fixed 5-bit mask). See Ascii8Mapper's
+        # _select_page for the full rationale and the numeric example
+        # showing this diverges from a plain `value % pages`.
+        pages = self._num_pages()
+        if value < pages:
+            return value
+        return value & (pages - 1)
+
     def _sync_window(self, window: int) -> None:
-        page = self._banks[window]
+        page = self._select_page(self._banks[window])
         src = self.rom[page * _PAGE_16K : (page + 1) * _PAGE_16K]
         dst = window * _PAGE_16K
         self._flat[dst : dst + len(src)] = src
@@ -415,12 +447,11 @@ class Ascii16Mapper(BankTracingMapper):
     def write(self, addr: int, value: int) -> None:
         if (0x6000 <= addr < 0x6800) or (0x7000 <= addr < 0x7800):
             window = 0 if addr < 0x7000 else 1
-            new = value % self._num_pages()
             old = self._banks[window]
-            self._banks[window] = new
-            if new != old:
+            self._banks[window] = value
+            if value != old:
                 self._sync_window(window)
-            _trace_bank(self, window, old, new, addr)
+            _trace_bank(self, window, old, value, addr)
 
     def snapshot(self) -> Ascii16MapperState:
         return {"banks": list(self._banks)}
