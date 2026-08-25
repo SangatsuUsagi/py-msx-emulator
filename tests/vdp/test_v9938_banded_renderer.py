@@ -203,3 +203,36 @@ def test_hline_vscroll_change_does_not_affect_trigger_line() -> None:
     # Band [10, 192) = game field: uses new vscroll=60
     assert bands[1][0] == 10
     assert bands[1][2][23] == 60
+
+
+# ---------------------------------------------------------------------------
+# R#18 (display adjust) entries are logged but must not split a band: no band
+# renderer reads regs[18] directly, so a band split on it would only produce a
+# background re-render identical to the band above.
+# ---------------------------------------------------------------------------
+
+def test_r18_only_change_does_not_split_a_band() -> None:
+    vdp = make_g1_vdp()
+    vdp.begin_scanline(0)
+    vdp._reg_write_log = [_RegChange(96, 18, 0x0D)]  # R#18 write mid-frame
+    bands = _build_bands(vdp)
+    assert bands == [], "an R#18-only log entry must not produce a band split"
+
+
+def test_r18_change_alongside_other_reg_still_splits_on_the_other_reg_only() -> None:
+    """A R#18 entry sharing an effective line with a display-relevant register
+    write still produces exactly the bands the other register's change would
+    on its own -- R#18 contributes no extra band boundary."""
+    vdp = make_g1_vdp()
+    vdp.regs[7] = 0x05
+    vdp.begin_scanline(0)
+    vdp._reg_write_log = [
+        _RegChange(96, 18, 0x0D),
+        _RegChange(96, 7, 0x09),
+    ]
+    bands = _build_bands(vdp)
+    assert len(bands) == 2
+    assert bands[0][0] == 0 and bands[0][1] == 97
+    assert bands[0][2][7] == 0x05
+    assert bands[1][0] == 97 and bands[1][1] == 192
+    assert bands[1][2][7] == 0x09

@@ -545,12 +545,12 @@ def _render_sprites_for_mode(
 ) -> None:
     """Dispatch to the sprite renderer for the current screen mode over [y_start, y_end).
 
-    Sprite Y uses R#23 (vscroll) as on real hardware. row_vscroll, when given,
-    supplies the per-scanline vscroll (banded mode, where R#23 may change
-    mid-frame); otherwise the scalar vdp.regs[23] is used. row_spd likewise carries
-    the per-scanline SPD (R#8 sprite-disable) so a split screen can blank sprites
-    over just one band. Sprite mode 1 ignores vscroll. TEXT1 (M1) and blanked
-    display (BL=0) draw no sprites.
+    Sprite Y uses R#23 (vscroll) as on real hardware, in both sprite modes.
+    row_vscroll, when given, supplies the per-scanline vscroll (banded mode,
+    where R#23 may change mid-frame); otherwise the scalar vdp.regs[23] is
+    used. row_spd likewise carries the per-scanline SPD (R#8 sprite-disable)
+    so a split screen can blank sprites over just one band. TEXT1 (M1) and
+    blanked display (BL=0) draw no sprites.
     """
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
@@ -592,8 +592,8 @@ def _render_sprites_for_mode(
         )
     elif m1:
         pass  # TEXT1: no sprites
-    else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1 (no vertical scroll)
-        _render_sprites(vdp, buf, y_start, y_end)
+    else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1
+        _render_sprites(vdp, buf, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd)
 
 
 def _finalize(vdp: "V9938") -> None:
@@ -615,27 +615,31 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base = (vdp.regs[4] & 0x07) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
+    # R#23 vertical scroll: openMSX applies it to every non-text mode alike
+    # (PixelRenderer::draw: "if (!isTextMode()) displayY += getVerticalScroll()",
+    # with no GRAPHIC1-vs-GRAPHIC2 distinction), and this codebase's own
+    # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
+    # not a hardware fact.
+    vscroll = vdp.regs[23]
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
-    row_start = y_start // 8
-    row_end = min(24, (ye + 7) // 8)
 
-    for row in range(row_start, row_end):
+    for scan in range(y_start, ye):
+        vline = (scan + vscroll) & 0xFF
+        row = vline >> 3
+        py = vline & 0x07
+        name_row = name_base + row * 32
+        scan_w = scan * _W
         for col in range(32):
-            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            tile = vdp.vram[(name_row + col) & 0x3FFF]
             cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
             hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
             fg = hi_nib if hi_nib else bd
             lo_nib = cb & 0x0F
             bg = lo_nib if lo_nib else bd
-            pat_tile = pat_base + tile * 8
+            pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
             bx = col * 8
-            for py in range(8):
-                scan = row * 8 + py
-                if scan < y_start or scan >= ye:
-                    continue
-                pat = vdp.vram[(pat_tile + py) & 0x3FFF]
-                buf[scan * _W + bx : scan * _W + bx + 8] = _ROW_BYTES[pat][fg][bg]
+            buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
 
 # ---------------------------------------------------------------------------
@@ -719,31 +723,34 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
 def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base = (vdp.regs[4] & 0x07) << 11
+    # R#23 vertical scroll: applies here exactly as it does to G1/G2 -- see
+    # _render_g1's comment (openMSX PixelRenderer::draw treats every
+    # non-text mode alike).
+    vscroll = vdp.regs[23]
     bd = _backdrop(vdp)
     ye = y_end if y_end is not None else _TILE_H
-    row_start = y_start // 8
-    row_end = min(24, (ye + 7) // 8)
 
-    for row in range(row_start, row_end):
+    for scan in range(y_start, ye):
+        vline = (scan + vscroll) & 0xFF
+        row = vline >> 3
+        py = vline & 0x07
+        # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
+        # pair is selected by the character row (row & 3)*2, and the top vs
+        # bottom 4 scanlines pick within the pair (py >> 2). Each nibble is a
+        # solid 4x4 block, so the colour is constant across its 4 scanlines.
+        seg = (row & 3) * 2
+        name_row = name_base + row * 32
+        scan_w = scan * _W
         for col in range(32):
-            tile = vdp.vram[(name_base + row * 32 + col) & 0x3FFF]
+            tile = vdp.vram[(name_row + col) & 0x3FFF]
             bx = col * 8
-            # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
-            # pair is selected by the character row (row & 3)*2, and the top vs
-            # bottom 4 scanlines pick within the pair (py >> 2). Each nibble is a
-            # solid 4x4 block, so the colour is constant across its 4 scanlines.
-            seg = (row & 3) * 2
-            for py in range(8):
-                scan = row * 8 + py
-                if scan < y_start or scan >= ye:
-                    continue
-                pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
-                hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-                lc = hi_nib if hi_nib else bd
-                lo_nib = pat & 0x0F
-                rc = lo_nib if lo_nib else bd
-                buf[scan * _W + bx : scan * _W + bx + 4] = _COLOR4[lc]
-                buf[scan * _W + bx + 4 : scan * _W + bx + 8] = _COLOR4[rc]
+            pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
+            hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
+            lc = hi_nib if hi_nib else bd
+            lo_nib = pat & 0x0F
+            rc = lo_nib if lo_nib else bd
+            buf[scan_w + bx : scan_w + bx + 4] = _COLOR4[lc]
+            buf[scan_w + bx + 4 : scan_w + bx + 8] = _COLOR4[rc]
 
 
 # ---------------------------------------------------------------------------
@@ -753,12 +760,31 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 
 
 def _render_sprites(
-    vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938",
+    buf: bytearray,
+    y_start: int = 0,
+    y_end: int | None = None,
+    row_vscroll: list[int] | None = None,
+    row_spd: list[bool] | None = None,
 ) -> None:
+    """Sprite mode 1 for TEXT1/GRAPHIC1/GRAPHIC2/MULTICOLOR.
+
+    row_vscroll/row_spd carry the same per-scanline R#23/R#8-SPD schedule
+    sprite mode 2 already honours (see _render_sprites_mode2 and
+    _sprite_runs) -- openMSX applies R#23 to sprite mode 1 identically to
+    mode 2 (SpriteChecker::checkSprites1's displayDelta = getVerticalScroll()
+    - getLineZero(), same construction as checkSprites2's); there is no
+    hardware basis for sprite mode 1 ignoring vscroll or a banded pass's
+    per-line SPD schedule, and prior to this fix this function silently used
+    only the scalar vdp.regs[8]/vdp.regs[23], so a banded split-screen band
+    boundary (row_spd/row_vscroll) had no effect here even though the sprite
+    mode 2 path already handled it correctly.
+    """
     if vdp.debug_disable_sprites:  # debug: render background only
         return
-    if vdp.regs[8] & 0x02:  # SPD: sprite disable (R#8 bit 1)
-        return
+    spd_scalar = bool(vdp.regs[8] & 0x02)  # SPD: sprite disable (R#8 bit 1)
+    if row_spd is None and spd_scalar:
+        return  # sprites disabled for the whole pass (no per-line schedule)
     r1 = vdp.regs[1]
     si = (r1 >> 1) & 1
     mag = r1 & 1
@@ -791,6 +817,12 @@ def _render_sprites(
     col_x = 999
     had_collision = bool(vdp.status & 0x20)  # an earlier band already recorded one
     scan_hi = min(y_end if y_end is not None else _TILE_H, _TILE_H)
+    # Vertical scroll and SPD are both per scanline: split the range into runs
+    # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
+    # does (see _sprite_runs). With no per-line schedule this is one run over
+    # the whole range using the scalar vdp.regs[23], so the common non-banded
+    # case is unaffected.
+    sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x3FFF]
@@ -806,65 +838,53 @@ def _render_sprites(
 
         y_top = (y_byte + 1) & 0xFF
 
-        # Scan only the sprite's visible band [y_top, y_top+render_size) instead
-        # of every scanline; the second (wrapped) band is taken only when the
-        # & 0xFF row test actually wraps past 255. Per-sprite line order does not
-        # affect line_count / 5S / coincidence, so iterating the wrapped band
-        # first (increasing screen line) is equivalent to the old full scan.
-        end = y_top + render_size
-        lines: Iterable[int]
-        if end <= 256:
-            lines = range(max(y_start, y_top), min(scan_hi, end))
-        else:
-            lines = chain(
-                range(y_start, min(scan_hi, end - 256)), range(max(y_start, y_top), scan_hi)
-            )
-
-        for line in lines:
-            sprite_row = (line - y_top) & 0xFF  # guaranteed < render_size
-
-            if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
-                if not fifth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
-                    fifth_set = True
+        # Scan only the sprite's visible band per constant-vscroll run, as
+        # sprite mode 2 does: sprite Y is in VRAM space, so within a run the
+        # screen-line band starts at (y_top - vsc) & 0xFF and spans
+        # render_size lines; the wrapped band is taken only when it crosses
+        # line 255. Per-sprite line order does not affect line_count / 5S /
+        # coincidence, and the runs partition the scanlines, so this matches
+        # a single-vscroll full scan when there is no per-line schedule.
+        for run in sprite_runs:
+            if not run.enabled:  # SPD set over this run: sprites blanked here
                 continue
-
-            line_count[line] += 1
-
-            if color == 0 and not can0collide:
-                continue
-
-            src_row = sprite_row // 2 if mag else sprite_row
-            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row)
-            scale = 2 if mag else 1
-            row = line * _W
-
-            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    px = x_byte + bit_i
-                    if px < 0 or px >= _W:  # clip off-screen, no wrap
-                        continue
-                    coord = row + px
-                    if sprite_touched[coord]:
-                        coincidence = True
-                        if line < col_line or (line == col_line and px < col_x):
-                            col_line = line
-                            col_x = px
-                    else:
-                        sprite_touched[coord] = 1
-                    # Colour 0 only reaches here when TP makes it opaque, and an
-                    # opaque colour-0 pixel is displayed as palette entry 0.
-                    if not sprite_painted[coord]:
-                        sprite_painted[coord] = 1
-                        buf[coord] = color
+            vsc = run.vscroll
+            base_line = (y_top - vsc) & 0xFF
+            end = base_line + render_size
+            lines: Iterable[int]
+            if end <= 256:
+                lines = range(max(run.lo, base_line), min(run.hi, end))
             else:
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    for s in range(scale):
-                        px = x_byte + bit_i * scale + s
+                lines = chain(
+                    range(run.lo, min(run.hi, end - 256)), range(max(run.lo, base_line), run.hi)
+                )
+
+            for line in lines:
+                # Sprite Y is in VRAM coordinate space; account for vertical scroll.
+                vram_line = (line + vsc) & 0xFF
+                sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < render_size
+
+                if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
+                    if not fifth_set:
+                        vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                        fifth_set = True
+                    continue
+
+                line_count[line] += 1
+
+                if color == 0 and not can0collide:
+                    continue
+
+                src_row = sprite_row // 2 if mag else sprite_row
+                pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
+                scale = 2 if mag else 1
+                row = line * _W
+
+                if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                    for bit_i, pixel in enumerate(pixels):
+                        if not pixel:
+                            continue
+                        px = x_byte + bit_i
                         if px < 0 or px >= _W:  # clip off-screen, no wrap
                             continue
                         coord = row + px
@@ -875,9 +895,30 @@ def _render_sprites(
                                 col_x = px
                         else:
                             sprite_touched[coord] = 1
+                        # Colour 0 only reaches here when TP makes it opaque, and an
+                        # opaque colour-0 pixel is displayed as palette entry 0.
                         if not sprite_painted[coord]:
                             sprite_painted[coord] = 1
                             buf[coord] = color
+                else:
+                    for bit_i, pixel in enumerate(pixels):
+                        if not pixel:
+                            continue
+                        for s in range(scale):
+                            px = x_byte + bit_i * scale + s
+                            if px < 0 or px >= _W:  # clip off-screen, no wrap
+                                continue
+                            coord = row + px
+                            if sprite_touched[coord]:
+                                coincidence = True
+                                if line < col_line or (line == col_line and px < col_x):
+                                    col_line = line
+                                    col_x = px
+                            else:
+                                sprite_touched[coord] = 1
+                            if not sprite_painted[coord]:
+                                sprite_painted[coord] = 1
+                                buf[coord] = color
 
     if coincidence:
         vdp.status |= 0x20
