@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from msx.debugger.prompt import Debugger
     from msx.fdc.interface import FloppyDisk
     from msx.fmpac import FmPac
+    from msx.rtc import RTC
 
 # NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
 CYCLES_PER_FRAME: int = 59_659
@@ -76,6 +77,7 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
+    rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
     lines_per_frame: int = LINES_PER_FRAME
@@ -90,6 +92,7 @@ class Machine:
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
+    rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break

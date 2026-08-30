@@ -78,6 +78,7 @@ from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
+from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
@@ -1391,7 +1392,12 @@ def _build_msx2(
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
     vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP(_logger=logger)
-    rtc: RTC | None = RTC() if spec.has_rtc else None
+    rtc: RTC | None = None
+    rtc_sram_save_path: Path | None = None
+    if spec.has_rtc:
+        rtc_sram_save_path = Path("saves/sram/rtc.sram")
+        rtc_sram = _load_sram_or_warn(rtc_sram_save_path, RTC_SRAM_SIZE, label="RTC ")
+        rtc = RTC(sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE))
     ppi = PPI(memory=memory, _input=input_state)
 
     # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the
@@ -1416,6 +1422,8 @@ def _build_msx2(
         cycles_per_frame=spec.cycles_per_frame,
         lines_per_frame=spec.lines_per_frame,
         fdc=fdc_device,
+        rtc=rtc,
+        rtc_sram_save_path=rtc_sram_save_path,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer
