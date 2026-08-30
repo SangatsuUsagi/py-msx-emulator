@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from msx.rtc import HOUR_MODE_REG, MODE_REG, RTC, SRAM_SIZE
+from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
 from tests.factories import make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
@@ -50,6 +50,16 @@ def test_address_port_is_write_only() -> None:
     assert rtc.read_port(0xB4) == 0xFF
 
 
+def test_register_select_only_low_nibble_decoded() -> None:
+    """Only bits 0-3 of a register-select write are decoded; bits 4-7 are
+    ignored (rtc.addr = low_bits(value, 4))."""
+    rtc = RTC()
+    rtc.write_port(0xB4, 0xFD)  # low nibble 0xD == MODE_REG (13)
+    rtc.write_port(0xB5, 0x0B)
+    _select(rtc, MODE_REG)
+    assert rtc.read_port(0xB5) & 0x0F == 0x0B
+
+
 def test_cmos_ram_persists_written_values() -> None:
     """Blocks 2/3 are battery-backed RAM: what is written reads back (low nibble)."""
     rtc = RTC()
@@ -75,11 +85,52 @@ def test_blocks_are_independent() -> None:
     assert rtc.read_port(0xB5) & 0x0F == 0x0A
 
 
+def test_block1_masked_registers_clamp_write_to_mask() -> None:
+    """Block 1's per-register write mask genuinely clamps storable bits --
+    registers 3, 5, 6, 8 (alarm minutes tens, alarm hours tens, alarm
+    weekday, alarm day tens) each keep only their masked low bits."""
+    rtc = RTC()
+    _set_block(rtc, 1)
+    for reg, mask in ((3, 0x7), (5, 0x3), (6, 0x7), (8, 0x3)):
+        _select(rtc, reg)
+        rtc.write_port(0xB5, 0x0F)
+        assert rtc.read_port(0xB5) & 0x0F == mask
+
+
+def test_block1_unused_registers_are_unusable() -> None:
+    """Block 1 registers 0, 1, 9, 12 are unused (mask 0): bits marked 0 are
+    unusable, not merely unwritten -- any write is discarded entirely."""
+    rtc = RTC()
+    _set_block(rtc, 1)
+    for reg in (0, 1, 9, 12):
+        _select(rtc, reg)
+        rtc.write_port(0xB5, 0x0F)
+        assert rtc.read_port(0xB5) & 0x0F == 0x0
+
+
 def test_mode_register_reads_back() -> None:
     rtc = RTC()
     _select(rtc, MODE_REG)
     rtc.write_port(0xB5, 0x0B)
     assert rtc.read_port(0xB5) & 0x0F == 0x0B
+
+
+def test_test_register_read_ignores_stored_value() -> None:
+    """Register 14 (TEST) is write-only on real hardware: ReadDataPort
+    always returns a fixed 0x0F regardless of what was stored."""
+    rtc = RTC()
+    _select(rtc, TEST_REG)
+    rtc.write_port(0xB5, 0x5)
+    assert rtc.read_port(0xB5) & 0x0F == 0x0F
+
+
+def test_reset_register_read_ignores_stored_value() -> None:
+    """Register 15 (RESET) is write-only on real hardware: ReadDataPort
+    always returns a fixed 0x0F regardless of what was stored."""
+    rtc = RTC()
+    _select(rtc, RESET_REG)
+    rtc.write_port(0xB5, 0x3)
+    assert rtc.read_port(0xB5) & 0x0F == 0x0F
 
 
 def test_time_block_returns_valid_bcd() -> None:
@@ -92,6 +143,31 @@ def test_time_block_returns_valid_bcd() -> None:
     tens = rtc.read_port(0xB5) & 0x0F
     assert 0 <= units <= 9
     assert 0 <= tens <= 5
+
+
+def test_block0_write_never_survives_read() -> None:
+    """A write to a block-0 register is stored (subject to its mask), but
+    ReadDataPort unconditionally overwrites block 0 with the frozen epoch
+    snapshot on every read of block 0 or block 1 -- so the write is never
+    observable."""
+    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 30, 45))
+    _set_block(rtc, 0)
+    _select(rtc, 0)  # seconds units
+    baseline = rtc.read_port(0xB5) & 0x0F
+    rtc.write_port(0xB5, (baseline + 1) % 10)
+    assert rtc.read_port(0xB5) & 0x0F == baseline
+
+
+def test_leap_counter_write_never_survives_read() -> None:
+    """Block 1 register 11 (leap-year counter) gets the same
+    always-overwritten-on-read treatment as block 0: it always reads back
+    epoch_leap, regardless of what was last written."""
+    rtc = RTC(_epoch=datetime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
+    _set_block(rtc, 1)
+    _select(rtc, 11)
+    assert rtc.read_port(0xB5) & 0x0F == 2
+    rtc.write_port(0xB5, 0x0)
+    assert rtc.read_port(0xB5) & 0x0F == 2
 
 
 def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
