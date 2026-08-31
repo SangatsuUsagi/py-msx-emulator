@@ -235,3 +235,37 @@ def test_jp_iy() -> None:
     cpu.registers.IY = 0x4000
     cpu.step()
     assert cpu.registers.PC == 0x4000
+
+
+# ===========================================================================
+# allium:propagate reconciliation (cpu_z80_dd_fd.allium) — FD-side spot
+# checks for obligations that had no FD coverage at all.
+# ===========================================================================
+
+
+def test_push_pop_iy() -> None:
+    cpu = make_cpu([0xFD, 0xE5, 0xFD, 0xE1])  # PUSH IY; POP IY
+    cpu.registers.IY = 0xCAFE
+    cpu.registers.SP = 0xFFFF
+    cpu.step()
+    cpu.registers.IY = 0
+    cpu.step()
+    assert cpu.registers.IY == 0xCAFE
+
+
+def test_ld_ind_nn_iy() -> None:
+    cpu, mem = make_cpu_mem([0xFD, 0x22, 0x00, 0xC0])  # LD (0xC000), IY
+    cpu.registers.IY = 0xBEEF
+    cpu.step()
+    assert mem.read(0xC000) == 0xEF
+    assert mem.read(0xC001) == 0xBE
+
+
+def test_inc_iyh_sets_half_carry() -> None:
+    cpu = make_cpu([0xFD, 0x24])  # INC IYH
+    cpu.registers.IY = 0x0F00  # IYH=0x0F
+    cpu.registers.F = 0
+    t = cpu.step()
+    assert cpu.registers.IYH == 0x10
+    assert cpu.registers.F & F.FLAG_H
+    assert t == 8

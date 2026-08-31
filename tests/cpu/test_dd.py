@@ -629,3 +629,73 @@ def test_ld_ix_ind_nn() -> None:
     mem.write(0xC001, 0xAB)
     cpu.step()
     assert cpu.registers.IX == 0xABCD
+
+
+# ===========================================================================
+# allium:propagate reconciliation (cpu_z80_dd_fd.allium) — gaps not already
+# covered above.
+# ===========================================================================
+
+
+# --- INC/DEC IX: no flags affected (only the register result was asserted
+# --- previously) --------------------------------------------------------
+
+
+def test_inc_ix_no_flags_affected() -> None:
+    cpu = make_cpu([0xDD, 0x23])  # INC IX
+    cpu.registers.IX = 0x00FF
+    stale = 0xFF
+    cpu.registers.F = stale
+    cpu.step()
+    assert cpu.registers.IX == 0x0100
+    assert cpu.registers.F == stale
+
+
+def test_dec_ix_no_flags_affected() -> None:
+    cpu = make_cpu([0xDD, 0x2B])  # DEC IX
+    cpu.registers.IX = 0x0100
+    stale = 0xFF
+    cpu.registers.F = stale
+    cpu.step()
+    assert cpu.registers.IX == 0x00FF
+    assert cpu.registers.F == stale
+
+
+# --- EX (SP),IX: previously untested -- must assert BOTH the read-old-stack
+# --- value AND the write-IX-to-stack directions ----------------------------
+
+
+def test_ex_sp_ix_swaps_stack_and_register() -> None:
+    cpu, mem = make_cpu_mem([0xDD, 0xE3])  # EX (SP), IX
+    mem.write(0xC000, 0x34)
+    mem.write(0xC001, 0x12)
+    cpu.registers.IX = 0xBEEF
+    cpu.registers.SP = 0xC000
+    cpu.step()
+    assert cpu.registers.IX == 0x1234  # read from the old stack top
+    assert mem.read(0xC000) == 0xEF  # old IX low byte written to stack
+    assert mem.read(0xC001) == 0xBE  # old IX high byte written to stack
+
+
+# --- INC/DEC IXH/IXL: previously untested at all (0xDD24/25/2C/2D) --------
+
+
+def test_inc_ixh_sets_half_carry() -> None:
+    cpu = make_cpu([0xDD, 0x24])  # INC IXH
+    cpu.registers.IX = 0x0F00  # IXH=0x0F
+    cpu.registers.F = 0
+    t = cpu.step()
+    assert cpu.registers.IXH == 0x10
+    assert cpu.registers.F & F.FLAG_H
+    assert t == 8
+
+
+def test_dec_ixl_sets_zero_and_n() -> None:
+    cpu = make_cpu([0xDD, 0x2D])  # DEC IXL
+    cpu.registers.IX = 0x0001  # IXL=0x01
+    cpu.registers.F = 0
+    t = cpu.step()
+    assert cpu.registers.IXL == 0x00
+    assert cpu.registers.F & F.FLAG_Z
+    assert cpu.registers.F & F.FLAG_N
+    assert t == 8

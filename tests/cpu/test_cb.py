@@ -360,3 +360,76 @@ def test_set_7_hl_sets_bit_no_flags_affected() -> None:
     cpu.step()
     assert mem.read(0xC000) == 0x80
     assert cpu.registers.F == stale
+
+
+# ===========================================================================
+# allium:propagate reconciliation (cpu_z80_dd_fd.allium) — DDCB/FDCB row-0
+# op-selection gaps: only RLC had ever been exercised in indexed (DDCB/FDCB)
+# form; SRA/SLL/RL confirm the `bit` field selects the right rotate/shift
+# function and that carry threads through correctly, not just RLC.
+# ===========================================================================
+
+
+def test_ddcb_sra_preserves_sign_bit() -> None:
+    # SRA (IX+d): arithmetic shift preserves the sign bit -- distinguishes it
+    # from SLA/SRL and confirms the DDCB row-0 dispatch isn't hardcoded to
+    # RLC (the only row-0 op exercised elsewhere in DDCB/FDCB form).
+    rom = bytes([0xDD, 0xCB, 0x02, 0x2E] + [0] * 32764)  # SRA (IX+2)
+    ram = bytearray(32768)
+    ram[0x4002] = 0x81  # 0xC002
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.step()
+    assert mem.read(0xC002) == 0xC0
+    assert cpu.registers.F & F.FLAG_C
+
+
+def test_fdcb_sll_forces_bit0_set() -> None:
+    # SLL (IY+d) (undocumented): forces bit 0 to 1 regardless of shift-in --
+    # also gives an FD-prefixed spot check for the same DDCB row-0 dispatch.
+    rom = bytes([0xFD, 0xCB, 0x01, 0x36] + [0] * 32764)  # SLL (IY+1)
+    ram = bytearray(32768)
+    ram[0x4001] = 0x00  # 0xC001
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IY = 0xC000
+    cpu.step()
+    assert mem.read(0xC001) == 0x01
+    assert not (cpu.registers.F & F.FLAG_Z)
+    assert not (cpu.registers.F & F.FLAG_C)
+
+
+def test_ddcb_rl_rotates_through_carry() -> None:
+    # RL (IX+d): rotates through carry (carry-in becomes new bit 0, old bit
+    # 7 becomes carry-out) -- confirms the carry flag is correctly threaded
+    # into the DDCB row-0 path, unlike the carry-independent RLC already
+    # tested elsewhere.
+    rom = bytes([0xDD, 0xCB, 0x00, 0x16] + [0] * 32764)  # RL (IX+0)
+    ram = bytearray(32768)
+    ram[0x4000] = 0x76  # 0xC000
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.registers.F = F.FLAG_C
+    cpu.step()
+    assert mem.read(0xC000) == 0xED
+    assert not (cpu.registers.F & F.FLAG_C)
+
+
+def test_ddcb_bit_nonseven_set_does_not_set_sign() -> None:
+    # BIT 5,(IX+d): S depends on bit_index == 7, not merely on whether the
+    # tested bit is set -- the existing DDCB BIT tests only cover bit 7 and
+    # (separately) bit 5 without checking flags at all.
+    rom = bytes([0xDD, 0xCB, 0x00, 0x6E] + [0] * 32764)  # BIT 5,(IX+0)
+    ram = bytearray(32768)
+    ram[0x4000] = 0x20  # bit 5 set
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.registers.F = 0
+    cpu.step()
+    f = cpu.registers.F
+    assert not (f & F.FLAG_S)
+    assert not (f & F.FLAG_Z)
+    assert f & F.FLAG_H
