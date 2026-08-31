@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
+from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
 from msx.state import load_state, save_state
@@ -77,28 +79,28 @@ def test_wd2793_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     drive.track = 5
     drive.side = 1
     drive.disk_changed = True
-    ctrl = machine.fdc.controller
-    ctrl.track_reg = 5  # type: ignore[union-attr]
-    ctrl.sector_reg = 3  # type: ignore[union-attr]
-    ctrl.status_reg = 0x03  # type: ignore[union-attr]
+    ctrl = cast(WD2793, machine.fdc.controller)
+    ctrl.track_reg = 5
+    ctrl.sector_reg = 3
+    ctrl.status_reg = 0x03
 
     save_state(machine, _RGB_MSX2, "test")
 
     drive.track = 0
     drive.side = 0
     drive.disk_changed = False
-    ctrl.track_reg = 0  # type: ignore[union-attr]
-    ctrl.sector_reg = 1  # type: ignore[union-attr]
-    ctrl.status_reg = 0  # type: ignore[union-attr]
+    ctrl.track_reg = 0
+    ctrl.sector_reg = 1
+    ctrl.status_reg = 0
 
     load_state(machine)
 
     assert drive.track == 5
     assert drive.side == 1
     assert drive.disk_changed is True
-    assert ctrl.track_reg == 5  # type: ignore[union-attr]
-    assert ctrl.sector_reg == 3  # type: ignore[union-attr]
-    assert ctrl.status_reg == 0x03  # type: ignore[union-attr]
+    assert ctrl.track_reg == 5
+    assert ctrl.sector_reg == 3
+    assert ctrl.status_reg == 0x03
 
 
 def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> None:
@@ -112,16 +114,16 @@ def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> N
     machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     machine.fdc.write_mem(REG_DRIVE, 0x03)
-    ctrl = machine.fdc.controller
-    assert ctrl.drive is None  # type: ignore[union-attr]
+    ctrl = cast(WD2793, machine.fdc.controller)
+    assert ctrl.drive is None
 
     save_state(machine, _RGB_MSX2, "test")
 
-    ctrl.drive = machine.fdc.drives[0]  # type: ignore[union-attr]
+    ctrl.drive = machine.fdc.drives[0]
 
     load_state(machine)
 
-    assert ctrl.drive is None  # type: ignore[union-attr]
+    assert ctrl.drive is None
 
 
 def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
@@ -133,20 +135,20 @@ def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     drive = machine.fdc.drives[0]
     drive.track = 7
     drive.side = 1
-    ctrl = machine.fdc.controller
-    ctrl.control_reg0 = 0x11  # type: ignore[union-attr]
+    ctrl = cast(TC8566AF, machine.fdc.controller)
+    ctrl.control_reg0 = 0x11
 
     save_state(machine, _RGB_MSX2, "test")
 
     drive.track = 0
     drive.side = 0
-    ctrl.control_reg0 = 0  # type: ignore[union-attr]
+    ctrl.control_reg0 = 0
 
     load_state(machine)
 
     assert drive.track == 7
     assert drive.side == 1
-    assert ctrl.control_reg0 == 0x11  # type: ignore[union-attr]
+    assert ctrl.control_reg0 == 0x11
 
 
 # ---------------------------------------------------------------------------

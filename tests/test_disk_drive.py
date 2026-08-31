@@ -19,14 +19,7 @@ import pytest
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
-
-_2DD_BYTES = 737280  # 720 KB: 80 tracks * 2 sides * 9 sectors * 512
-
-
-def _make_dsk(path: Path, size: int = _2DD_BYTES, fill: int = 0x00) -> Path:
-    path.write_bytes(bytes([fill]) * size)
-    return path
-
+from tests.disk_factories import make_dsk as _make_dsk
 
 # --- mount / unmount / has_disk / write_protected, in isolation ----------
 

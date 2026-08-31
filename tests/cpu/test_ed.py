@@ -268,13 +268,19 @@ def test_otir_loops_until_b_zero() -> None:
 
 # --- 1.2 ADC HL,rr / SBC HL,rr — the four register pairs --------------------
 
-def _adc_hl(op: int, hl: int, pair_setup, carry: bool) -> Z80:
+def _run_hl16(op: int, hl: int, pair_setup, carry: bool) -> Z80:
+    """Shared by ADC HL,rr and SBC HL,rr below -- the opcode byte alone
+    selects which operation runs."""
     cpu = make_cpu([0xED, op])
     cpu.registers.HL = hl
     pair_setup(cpu.registers)
     cpu.registers.F = F.FLAG_C if carry else 0
     cpu.step()
     return cpu
+
+
+_adc_hl = _run_hl16
+_sbc_hl = _run_hl16
 
 
 def test_adc_hl_bc_pair_with_carry_in() -> None:
@@ -299,15 +305,6 @@ def test_adc_hl_sp_pair() -> None:
     cpu = _adc_hl(0x7A, 0x0FFF, lambda r: setattr(r, "SP", 0x0001), carry=False)
     assert cpu.registers.HL == 0x1000
     assert cpu.registers.F == F.FLAG_H
-
-
-def _sbc_hl(op: int, hl: int, pair_setup, carry: bool) -> Z80:
-    cpu = make_cpu([0xED, op])
-    cpu.registers.HL = hl
-    pair_setup(cpu.registers)
-    cpu.registers.F = F.FLAG_C if carry else 0
-    cpu.step()
-    return cpu
 
 
 def test_sbc_hl_bc_pair() -> None:

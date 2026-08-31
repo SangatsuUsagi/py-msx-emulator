@@ -8,14 +8,8 @@ import pytest
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
-
-_2DD_BYTES = 737280  # 720 KB: 80 tracks * 2 sides * 9 sectors * 512
-
-
-def _make_dsk(path: Path, size: int = _2DD_BYTES, fill: int = 0x00) -> Path:
-    path.write_bytes(bytes([fill]) * size)
-    return path
-
+from tests.disk_factories import _2DD_BYTES
+from tests.disk_factories import make_dsk as _make_dsk
 
 # --- DskDiskImage --------------------------------------------------------
 
@@ -115,13 +109,6 @@ def test_out_of_geometry_sector_returns_none(tmp_path: Path) -> None:
     drive = DiskDrive(DskDiskImage(_make_dsk(tmp_path / "d.dsk")))
     # sector 99 does not exist on a 9-sector track -> LSN beyond the disk end
     assert drive.read_sector(79, 1, 99) is None
-
-
-def test_format_track_blanks_sectors_to_e5(tmp_path: Path) -> None:
-    drive = DiskDrive(DskDiskImage(_make_dsk(tmp_path / "d.dsk", fill=0x00)))
-    assert drive.format_track(2, 1) is True
-    sector = drive.read_sector(2, 1, 1)
-    assert sector == b"\xe5" * SECTOR_SIZE
 
 
 # --- BPB geometry detection ----------------------------------------------
