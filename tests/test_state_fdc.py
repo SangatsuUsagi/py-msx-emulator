@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.interface import REG_DRIVE
 from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
 from msx.state import load_state, save_state
 
@@ -96,6 +97,29 @@ def test_wd2793_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     assert ctrl.track_reg == 5  # type: ignore[union-attr]
     assert ctrl.sector_reg == 3  # type: ignore[union-attr]
     assert ctrl.status_reg == 0x03  # type: ignore[union-attr]
+
+
+def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> None:
+    """drive_reg bits 1:0 = 0b11 ("no drive selected") must survive a
+    save/load round-trip -- restore must not leave controller.drive
+    pointing at drives[0] (FloppyDiskState.__init__'s construction-time
+    default) just because that's what a fresh machine starts with."""
+    _make_roms(tmp_path)
+    dsk = tmp_path / "game.dsk"
+    _make_disk(dsk)
+    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    assert machine.fdc is not None
+    machine.fdc.write_mem(REG_DRIVE, 0x03)
+    ctrl = machine.fdc.controller
+    assert ctrl.drive is None  # type: ignore[union-attr]
+
+    save_state(machine, _RGB_MSX2, "test")
+
+    ctrl.drive = machine.fdc.drives[0]  # type: ignore[union-attr]
+
+    load_state(machine)
+
+    assert ctrl.drive is None  # type: ignore[union-attr]
 
 
 def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:

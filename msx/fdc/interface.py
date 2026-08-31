@@ -262,6 +262,7 @@ class SonyPhilipsInterface(FloppyDisk):
     def _restore_connection_style(self, state: dict[str, object]) -> None:
         self.side_reg = cast(int, state["side_reg"])
         self.drive_reg = cast(int, state["drive_reg"])
+        self._select_drive(self.drive_reg)
 
     @property
     def controller(self) -> WD2793:
@@ -344,18 +345,26 @@ class SonyPhilipsInterface(FloppyDisk):
         elif reg == REG_DRIVE:
             # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none); bit 7 -> motor.
             self.drive_reg = value
-            sel = value & 0x03
-            if sel in (0, 2):
-                idx: int | None = 0
-            elif sel == 1:
-                idx = 1
-            else:
-                idx = None
-            if idx is not None and idx < len(self.drives):
-                self.controller.drive = self.drives[idx]
-            else:
-                self.controller.drive = None
+            self._select_drive(value)
         # REG_UNCONNECTED / REG_CONTROL_STATUS: no writable control bits.
+
+    def _select_drive(self, value: int) -> None:
+        # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none). Shared by the
+        # register write path and _restore_connection_style, so a restored
+        # snapshot reattaches the same drive (or none) drive_reg encoded,
+        # instead of leaving FloppyDiskState.__init__'s construction-time
+        # drives[0] default in place.
+        sel = value & 0x03
+        if sel in (0, 2):
+            idx: int | None = 0
+        elif sel == 1:
+            idx = 1
+        else:
+            idx = None
+        if idx is not None and idx < len(self.drives):
+            self.controller.drive = self.drives[idx]
+        else:
+            self.controller.drive = None
 
 
 # TC8566AF connection style register window offsets (addr & 0x3FFF), used by
