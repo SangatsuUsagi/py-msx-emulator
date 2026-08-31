@@ -11,12 +11,24 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
-from typing import cast
+from enum import Enum
+from typing import ClassVar, cast
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
+
+
+class FdcKind(str, Enum):
+    """Closed save-state identity discriminant for a FloppyDisk connection
+    style, mirroring MapperKind's own rationale (msx/mapper.py): one member
+    per (controller, connection_style) pair msx/machine_loader.py's own
+    _SUPPORTED_FDC_PAIRS validates -- a class rename must not change
+    save-state compatibility."""
+
+    WD2793_SONY = "wd2793_sony"
+    TC8566AF = "tc8566af"
 
 # Sony/Philips register window offsets (addr & 0x3FFF), shared by
 # SonyPhilipsInterface.read_mem/write_mem/reset and by _read_reg/_write_reg so
@@ -86,6 +98,24 @@ class FloppyDiskState:
             if drive.image is not None:
                 drive.image.flush()
 
+    def snapshot(self) -> dict[str, object]:
+        """Capture the controller's and every drive's own state (in
+        self.drives order). The connection-style-specific piece and the
+        FdcKind discriminant are FloppyDisk's own concern, layered around
+        this."""
+        return {
+            "controller": cast(dict[str, object], self.controller.snapshot()),
+            "drives": [cast(dict[str, object], drive.snapshot()) for drive in self.drives],
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore the controller's and every drive's own state produced by
+        snapshot()."""
+        self.controller.restore(cast(dict[str, object], state["controller"]))
+        drive_states = cast(list[dict[str, object]], state["drives"])
+        for drive, drive_state in zip(self.drives, drive_states, strict=True):
+            drive.restore(drive_state)
+
 
 class FloppyDisk:
     """Base connection-style device: composes FloppyDiskState, declares the
@@ -121,6 +151,13 @@ class FloppyDisk:
       declared-type mismatch.
     """
 
+    # Save-state identity discriminant -- each concrete connection style
+    # (SonyPhilipsInterface, TC8566AFInterface) assigns its own FdcKind.
+    # Never assigned here: FloppyDisk is never instantiated directly, only
+    # its two concrete subclasses (mirrors Mapper(Protocol)'s own required
+    # `kind` member, msx/mapper.py).
+    kind: ClassVar[FdcKind]
+
     def __init__(
         self,
         controller: WD2793 | TC8566AF,
@@ -154,6 +191,41 @@ class FloppyDisk:
         """Flush every mounted image's pending writes back to its file."""
         self.state.flush()
 
+    def _snapshot_connection_style(self) -> dict[str, object]:
+        """Connection-style-specific extra state beyond the controller/
+        drives FloppyDiskState already captures. Empty by default;
+        SonyPhilipsInterface overrides this for side_reg/drive_reg."""
+        return {}
+
+    def _restore_connection_style(self, state: dict[str, object]) -> None:
+        """Inverse of _snapshot_connection_style(). No-op by default."""
+
+    def snapshot(self) -> dict[str, object]:
+        """Capture this FDC's full save-state: identity (FdcKind),
+        connection-style-specific state, and the composed controller/drives
+        state (FloppyDiskState.snapshot())."""
+        state = dict(self.state.snapshot())
+        state["kind"] = self.kind.value
+        state["connection_style"] = self._snapshot_connection_style()
+        return state
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore state produced by snapshot().
+
+        Raises:
+            ValueError: If the snapshot's FdcKind doesn't match this FDC's
+                own kind (e.g. a WD2793/Sony state loaded into a TC8566AF
+                machine, or vice versa).
+        """
+        saved_kind = FdcKind(state["kind"])
+        if saved_kind != self.kind:
+            raise ValueError(
+                f"FDC kind mismatch: running {self.kind.value!r}, "
+                f"saved {saved_kind.value!r}"
+            )
+        self._restore_connection_style(cast(dict[str, object], state["connection_style"]))
+        self.state.restore(state)
+
     def read_mem(self, addr: int) -> int:
         raise NotImplementedError
 
@@ -172,6 +244,8 @@ class SonyPhilipsInterface(FloppyDisk):
     0x4000-0x7FFF everywhere else in the page.
     """
 
+    kind: ClassVar[FdcKind] = FdcKind.WD2793_SONY
+
     def __init__(
         self,
         controller: WD2793,
@@ -181,6 +255,13 @@ class SonyPhilipsInterface(FloppyDisk):
         super().__init__(controller, drives, disk_rom)
         self.side_reg = 0
         self.drive_reg = 0
+
+    def _snapshot_connection_style(self) -> dict[str, object]:
+        return {"side_reg": self.side_reg, "drive_reg": self.drive_reg}
+
+    def _restore_connection_style(self, state: dict[str, object]) -> None:
+        self.side_reg = cast(int, state["side_reg"])
+        self.drive_reg = cast(int, state["drive_reg"])
 
     @property
     def controller(self) -> WD2793:
@@ -300,6 +381,8 @@ class TC8566AFInterface(FloppyDisk):
     being handed a single externally-swapped "current drive" reference -- see
     openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md.
     """
+
+    kind: ClassVar[FdcKind] = FdcKind.TC8566AF
 
     def __init__(
         self,

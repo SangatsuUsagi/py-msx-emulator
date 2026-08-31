@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TypedDict, cast
 
 from msx.fdc.disk_drive import DiskDrive
 
@@ -43,6 +44,28 @@ TRACK_BYTES: int = 6250
 def _is_type1(command: int) -> bool:
     """Type I (positioning) or FORCE INTERRUPT -- both read STATUS the same way."""
     return (command & 0x80) == 0 or (command & 0xF0) == 0xD0
+
+
+class WD2793State(TypedDict):
+    """Save-state schema for WD2793.snapshot()/restore().
+
+    ``drive`` is not part of this state -- it's a live alias into whatever
+    list the connection-style layer owns, reattached by the machine's own
+    construction, same as a mapper's rom: bytes is never part of
+    Mapper.snapshot().
+    """
+
+    command_reg: int
+    track_reg: int
+    sector_reg: int
+    data_reg: int
+    status_reg: int
+    intrq: bool
+    drq: bool
+    mode: int
+    buffer: bytes
+    index: int
+    step_dir: int
 
 
 @dataclass
@@ -314,3 +337,37 @@ class WD2793:
         self._drq = False
         self.status_reg &= ~(BUSY | S_DRQ)
         self._intrq = True
+
+    # ------------------------------------------------------------ save-state
+
+    def snapshot(self) -> WD2793State:
+        """Capture register/phase/buffer state. `drive` is not included --
+        see WD2793State."""
+        return {
+            "command_reg": self.command_reg,
+            "track_reg": self.track_reg,
+            "sector_reg": self.sector_reg,
+            "data_reg": self.data_reg,
+            "status_reg": self.status_reg,
+            "intrq": self._intrq,
+            "drq": self._drq,
+            "mode": self._mode.value,
+            "buffer": bytes(self._buffer),
+            "index": self._index,
+            "step_dir": self._step_dir,
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore register/phase/buffer state produced by snapshot()."""
+        typed_state = cast(WD2793State, state)
+        self.command_reg = typed_state["command_reg"]
+        self.track_reg = typed_state["track_reg"]
+        self.sector_reg = typed_state["sector_reg"]
+        self.data_reg = typed_state["data_reg"]
+        self.status_reg = typed_state["status_reg"]
+        self._intrq = typed_state["intrq"]
+        self._drq = typed_state["drq"]
+        self._mode = Mode(typed_state["mode"])
+        self._buffer = bytearray(typed_state["buffer"])
+        self._index = typed_state["index"]
+        self._step_dir = typed_state["step_dir"]
