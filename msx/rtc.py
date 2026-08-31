@@ -99,7 +99,9 @@ class RTC:
         block0 = [
             now.second % 10, now.second // 10,
             now.minute % 10, now.minute // 10,
-            now.hour % 10, now.hour // 10,
+            now.hour % 10, now.hour // 10,  # placeholders: _refresh_time_regs
+            # always re-encodes indices 4/5 via _encode_hour(self._hour)
+            # instead, since HOUR_MODE_REG can change after construction.
             rp_wday,
             now.day % 10, now.day // 10,
             now.month % 10, now.month // 10,

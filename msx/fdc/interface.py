@@ -11,13 +11,28 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
-from typing import ClassVar, cast
+from typing import ClassVar, Protocol, cast
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
+
+
+class FdcController(Protocol):
+    """The four members `FloppyDiskState`/`FloppyDisk` call on their
+    `controller: WD2793 | TC8566AF` union, formalised as an explicit
+    contract -- mirrors `Mapper(Protocol)`'s own rationale (msx/mapper.py):
+    `WD2793`/`TC8566AF` satisfy this structurally, with no explicit
+    inheritance, same as every concrete `Mapper` implementer does for
+    `Mapper`."""
+
+    drive: DiskDrive | None
+    def abort(self) -> None: ...
+    def snapshot(self) -> Mapping[str, object]: ...
+    def restore(self, state: dict[str, object]) -> None: ...
 
 
 class FdcKind(str, Enum):
@@ -57,7 +72,7 @@ class FloppyDiskState:
 
     def __init__(
         self,
-        controller: WD2793 | TC8566AF,
+        controller: FdcController,
         drives: list[DiskDrive],
         disk_rom: bytes | None = None,
     ) -> None:
@@ -149,7 +164,7 @@ class FloppyDisk:
       openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md for the
       full comparison (including its post-archive addendum recording this
       split's actual implementation).
-      `self.state.controller`'s static type is `WD2793 | TC8566AF` (not
+      `self.state.controller`'s static type is `FdcController` (not
       WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
       construct one -- only `_ctrl()`'s narrowing back to the concrete
       TC8566AF type remains, which is ordinary type narrowing, not a
@@ -165,14 +180,14 @@ class FloppyDisk:
 
     def __init__(
         self,
-        controller: WD2793 | TC8566AF,
+        controller: FdcController,
         drives: list[DiskDrive],
         disk_rom: bytes | None = None,
     ) -> None:
         self.state = FloppyDiskState(controller, drives, disk_rom)
 
     @property
-    def controller(self) -> WD2793 | TC8566AF:
+    def controller(self) -> FdcController:
         return self.state.controller
 
     @property
@@ -271,7 +286,7 @@ class SonyPhilipsInterface(FloppyDisk):
 
     @property
     def controller(self) -> WD2793:
-        # self.state.controller's static type is WD2793 | TC8566AF; this
+        # self.state.controller's static type is FdcController; this
         # class always constructs with a WD2793, so narrow it back here --
         # mirrors TC8566AFInterface._ctrl().
         return cast(WD2793, self.state.controller)
@@ -356,7 +371,7 @@ class SonyPhilipsInterface(FloppyDisk):
     def _select_drive(self, value: int) -> None:
         # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none). Shared by the
         # register write path and _restore_connection_style, so a restored
-        # snapshot reattaches the same drive (or none) drive_reg encoded,
+        # snapshot reattaches whichever drive drive_reg encodes (or none),
         # instead of leaving FloppyDiskState.__init__'s construction-time
         # drives[0] default in place.
         sel = value & 0x03
@@ -406,10 +421,10 @@ class TC8566AFInterface(FloppyDisk):
     ) -> None:
         super().__init__(controller, drives, disk_rom)
 
-    # self.controller's static type is WD2793 | TC8566AF (FloppyDisk composes
+    # self.controller's static type is FdcController (FloppyDisk composes
     # FloppyDiskState, not WD2793-specific); this narrows it locally to the
     # concrete TC8566AF this class always constructs with, same as any other
-    # union-to-member narrowing.
+    # structural-to-concrete narrowing.
     def _ctrl(self) -> TC8566AF:
         return cast(TC8566AF, self.controller)
 
