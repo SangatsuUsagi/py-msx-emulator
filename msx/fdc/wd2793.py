@@ -360,14 +360,25 @@ class WD2793:
     def restore(self, state: dict[str, object]) -> None:
         """Restore register/phase/buffer state produced by snapshot()."""
         typed_state = cast(WD2793State, state)
-        self.command_reg = typed_state["command_reg"]
-        self.track_reg = typed_state["track_reg"]
-        self.sector_reg = typed_state["sector_reg"]
-        self.data_reg = typed_state["data_reg"]
-        self.status_reg = typed_state["status_reg"]
-        self._intrq = typed_state["intrq"]
-        self._drq = typed_state["drq"]
-        self._mode = Mode(typed_state["mode"])
-        self._buffer = bytearray(typed_state["buffer"])
-        self._index = typed_state["index"]
-        self._step_dir = typed_state["step_dir"]
+        command_reg = typed_state["command_reg"]
+        track_reg = typed_state["track_reg"]
+        sector_reg = typed_state["sector_reg"]
+        data_reg = typed_state["data_reg"]
+        status_reg = typed_state["status_reg"]
+        intrq = typed_state["intrq"]
+        drq = typed_state["drq"]
+        mode = Mode(typed_state["mode"])
+        buffer = bytearray(typed_state["buffer"])
+        index = typed_state["index"]
+        step_dir = typed_state["step_dir"]
+        self.command_reg = command_reg
+        self.track_reg = track_reg
+        self.sector_reg = sector_reg
+        self.data_reg = data_reg
+        self.status_reg = status_reg
+        self._intrq = intrq
+        self._drq = drq
+        self._mode = mode
+        self._buffer = buffer
+        self._index = index
+        self._step_dir = step_dir

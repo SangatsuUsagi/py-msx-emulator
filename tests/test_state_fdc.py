@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
-from msx.fdc.interface import REG_DRIVE
+from msx.fdc.interface import REG_DRIVE, FloppyDiskState
+from msx.fdc.wd2793 import WD2793
 from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
 from msx.state import load_state, save_state
 
@@ -210,3 +212,27 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
 
     with pytest.raises(ValueError, match="(?i)fdc"):
         load_state(no_fdc_machine)
+
+
+# ---------------------------------------------------------------------------
+# Restore atomicity (openspec/changes/2026-09-01-restore-atomicity)
+# ---------------------------------------------------------------------------
+
+def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> None:
+    """FloppyDiskState.restore() must reject a drive-count mismatch before
+    restoring the controller or any drive, not partway through the
+    drive-restore loop."""
+    drive = DiskDrive()
+    controller = WD2793(drive=drive)
+    state = FloppyDiskState(controller, drives=[drive])
+    drive.track = 5
+    controller.track_reg = 9
+
+    snap = dict(state.snapshot())
+    snap["drives"] = list(snap["drives"]) + [dict(snap["drives"][0])]  # type: ignore[list-item]
+
+    with pytest.raises(ValueError, match="(?i)drive count"):
+        state.restore(snap)
+
+    assert drive.track == 5
+    assert controller.track_reg == 9

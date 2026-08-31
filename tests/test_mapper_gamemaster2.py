@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from msx.mapper import GameMaster2Mapper
 
 _PAGE = 0x2000  # 8 KB
@@ -136,6 +138,32 @@ class TestSnapshotRestore:
         m2 = GameMaster2Mapper(rom=_ROM_128K)
         m2.restore(snap)
         assert m2.sram[0x100] == 0x99
+
+    def test_restore_with_missing_key_does_not_partially_mutate(self):
+        """A malformed state dict must not leave the mapper half-restored:
+        restore() reads every field from `state` before assigning any of
+        them, so a missing key fails before `_banks`/`_window_sram_half`
+        (assigned earlier in the method than the missing key used to be
+        read) are touched."""
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        m.write(0xA000, 0x10)
+        m.write(0xB100, 0x99)
+        snap = dict(m.snapshot())
+        pre_banks = list(m._banks)
+        pre_sram_half = m._sram_half
+        pre_window_sram_half = list(m._window_sram_half)
+        pre_sram_enabled = m._sram_enabled
+        pre_sram = bytes(m.sram)
+
+        del snap["sram_enabled"]
+        with pytest.raises(KeyError):
+            m.restore(snap)
+
+        assert list(m._banks) == pre_banks
+        assert m._sram_half == pre_sram_half
+        assert list(m._window_sram_half) == pre_window_sram_half
+        assert m._sram_enabled == pre_sram_enabled
+        assert bytes(m.sram) == pre_sram
 
     def test_restore_rebuilds_rom_and_sram_windows(self):
         m = GameMaster2Mapper(rom=_ROM_128K)

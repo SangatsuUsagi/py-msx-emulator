@@ -498,3 +498,24 @@ def test_noise_lfsr_advances_18_shifts_per_native_tick() -> None:
             expected ^= 0x800200
         expected >>= 1
     assert o._noise == expected
+
+
+# ---------------------------------------------------------------------------
+# Save-state restore atomicity
+# ---------------------------------------------------------------------------
+
+def test_restore_with_missing_key_does_not_partially_mutate() -> None:
+    """restore() reads every field it needs before assigning any of them,
+    so a missing key fails before any field (e.g. _reg/_patch_number,
+    assigned early in the method) is touched."""
+    o = Opll()
+    _key_on(o, 0)
+    o.write_reg(0x00, 0x01)
+    pre = o.snapshot()
+
+    snap = dict(pre)
+    del snap["out_time"]
+    with pytest.raises(KeyError):
+        o.restore(snap)
+
+    assert o.snapshot() == pre

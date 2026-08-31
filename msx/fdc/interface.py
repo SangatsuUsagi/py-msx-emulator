@@ -111,8 +111,13 @@ class FloppyDiskState:
     def restore(self, state: dict[str, object]) -> None:
         """Restore the controller's and every drive's own state produced by
         snapshot()."""
-        self.controller.restore(cast(dict[str, object], state["controller"]))
         drive_states = cast(list[dict[str, object]], state["drives"])
+        if len(drive_states) != len(self.drives):
+            raise ValueError(
+                f"FDC drive count mismatch: running has {len(self.drives)} drive(s), "
+                f"saved state has {len(drive_states)}"
+            )
+        self.controller.restore(cast(dict[str, object], state["controller"]))
         for drive, drive_state in zip(self.drives, drive_states, strict=True):
             drive.restore(drive_state)
 

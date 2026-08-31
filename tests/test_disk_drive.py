@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 
@@ -49,6 +51,24 @@ def test_unmount_clears_disk(tmp_path: Path) -> None:
     assert drive.has_disk is False
     assert drive.read_sector(0, 0, 1) is None
     assert drive.write_sector(0, 0, 1, b"\x00" * SECTOR_SIZE) is False
+
+
+def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> None:
+    """restore() reads track/side/disk_changed before assigning any of
+    them, so a missing key fails before track/side are touched."""
+    drive = DiskDrive(DskDiskImage(_make_dsk(tmp_path / "d.dsk")))
+    drive.track = 5
+    drive.side = 1
+    drive.disk_changed = True
+    snap = dict(drive.snapshot())
+
+    del snap["disk_changed"]
+    with pytest.raises(KeyError):
+        drive.restore(snap)
+
+    assert drive.track == 5
+    assert drive.side == 1
+    assert drive.disk_changed is True
 
 
 def test_mount_does_not_flush_outgoing_image_or_flag_disk_changed(tmp_path: Path) -> None:

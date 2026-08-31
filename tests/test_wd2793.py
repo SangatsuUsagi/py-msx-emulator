@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 from msx.fdc.wd2793 import (
@@ -158,3 +160,19 @@ def test_multi_sector_flag_decoded_as_single(tmp_path: Path) -> None:
     wd.set_command(0x90)
     out = bytes(wd.get_data() for _ in range(SECTOR_SIZE))
     assert out == b"\x5a" * SECTOR_SIZE
+
+
+def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> None:
+    """restore() (save-state) reads every field before assigning any of
+    them, so a missing key fails before earlier fields are touched."""
+    wd, _, _ = _ctrl(tmp_path)
+    wd.set_track(0x2A)
+    wd.set_sector(0x07)
+    pre = dict(wd.snapshot())
+
+    snap = dict(pre)
+    del snap["step_dir"]
+    with pytest.raises(KeyError):
+        wd.restore(snap)
+
+    assert dict(wd.snapshot()) == pre

@@ -158,6 +158,9 @@ class DiskDrive:
                     f"({current[1]} bytes, sha1 {current[2]}), "
                     f"saved {saved[0]!r} ({saved[1]} bytes, sha1 {saved[2]})"
                 )
-        self.track = typed_state["track"]
-        self.side = typed_state["side"]
-        self.disk_changed = typed_state["disk_changed"]
+        track = typed_state["track"]
+        side = typed_state["side"]
+        disk_changed = typed_state["disk_changed"]
+        self.track = track
+        self.side = side
+        self.disk_changed = disk_changed
