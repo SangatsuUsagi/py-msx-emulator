@@ -53,6 +53,27 @@ def test_flat_no_cartridge_returns_ff() -> None:
     assert m.read(0x5000) == 0xFF
 
 
+def test_flat_empty_cartridge_returns_ff() -> None:
+    # b"" is falsy exactly like None (msx/mapper.py's `if not self.cartridge`
+    # check treats them the same), but it is a distinct value -- pin the
+    # empty-bytes case separately from the None case above.
+    m = FlatMapper(b"")
+    assert m.read(0x5000) == 0xFF
+
+
+def test_flat_read_outside_cartridge_region_still_wraps_via_modulo() -> None:
+    # FlatReadByte has no domain requires clause: msx/mapper.py's read()
+    # never bounds-checks addr, so (addr - 0x4000) % len(rom) -- Python's
+    # floored modulo -- still yields a real ROM byte for an address below
+    # 0x4000 or at/above 0xC000, rather than open bus (unlike every other
+    # mapper in this family, which either clips or mirrors back inside a
+    # bounded window).
+    rom = bytes([0xAA, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77])
+    m = FlatMapper(rom)
+    assert m.read(0x3FFF) == 0x77  # (0x3FFF - 0x4000) % 8 == 7 (negative offset)
+    assert m.read(0xC000) == 0xAA  # (0xC000 - 0x4000) % 8 == 0
+
+
 def test_flat_8kb_rom_mirrors_in_32kb_space() -> None:
     # 8 KB ROM: read at offset 8192 (= 0x4000 + 0x2000) should mirror back to offset 0.
     cart = bytes([0xAB] + [0] * (8192 - 1))
@@ -122,6 +143,21 @@ def test_fixed_page_does_not_mirror_past_rom_end() -> None:
     m = FixedPageMapper(rom, base=0x8000)
     assert m.read(0x8000) == 0xAB
     assert m.read(0xA000) == 0xFF
+
+
+def test_fixed_page_snapshot_restore_is_empty_and_noop() -> None:
+    rom = bytes([0xAB] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    snap = m.snapshot()
+    assert snap == {}
+    m.restore(snap)
+    assert m.read(0x8000) == 0xAB
+
+
+def test_fixed_page_has_no_bank_info() -> None:
+    rom = bytes([0xAB] + [0] * (16384 - 1))
+    m = FixedPageMapper(rom, base=0x8000)
+    assert m.debug_bank_info(1) is None
 
 
 # ---------------------------------------------------------------------------
