@@ -75,8 +75,10 @@ def test_im2() -> None:
 def test_ld_i_a() -> None:
     cpu = make_cpu([0xED, 0x47])  # LD I, A
     cpu.registers.A = 0xAB
+    cpu.registers.F = F.FLAG_S | F.FLAG_C  # no flags affected
     cpu.step()
     assert cpu.registers.I == 0xAB
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_C)
 
 
 def test_ld_a_i() -> None:
@@ -419,8 +421,10 @@ def test_ld_r_a_sets_bit7_and_next_fetch_preserves_it() -> None:
     guard for the sticky-bit-7 fix in Z80._fetch()/step()."""
     cpu = make_cpu([0xED, 0x4F, 0x00])  # LD R, A ; NOP
     cpu.registers.A = 0xC8  # bit 7 set
+    cpu.registers.F = F.FLAG_Z | F.FLAG_C  # LD R,A affects no flags
     cpu.step()  # LD R,A: R = 0xC8 (2 fetches auto-incremented R first, then overwritten)
     assert cpu.registers.R == 0xC8
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_C)
     cpu.step()  # NOP: one more fetch, auto-increment only bumps bits 0-6
     assert cpu.registers.R == 0xC9  # bit 7 still set, low 7 bits incremented by 1
 
@@ -450,3 +454,209 @@ def test_rld_rotates_nibbles() -> None:
     cpu.step()
     assert cpu.registers.A == 0x13
     assert mem.read(0xC000) == 0x42
+
+
+# ===========================================================================
+# allium:propagate reconciliation (cpu_z80_ed.allium) — gaps not already
+# covered above or in tests/cpu/test_alu16.py / tests/cpu/test_io.py.
+# ===========================================================================
+
+
+# --- NEG edge cases: 0 - 0 and the 0x80 self-negation special case ---------
+
+def test_neg_zero_clears_carry() -> None:
+    # 0 - 0 has no borrow either way -- NEG must NOT set carry here, unlike
+    # the general "NEG always sets carry unless A was 0" folk description.
+    cpu = make_cpu([0xED, 0x44])
+    cpu.registers.A = 0x00
+    cpu.step()
+    assert cpu.registers.A == 0x00
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+    assert not (cpu.registers.F & F.FLAG_C)
+
+
+def test_neg_0x80_sets_carry_and_overflow() -> None:
+    # 0 - 0x80 = -128, which wraps back to 0x80 -- the one input where NEG's
+    # result equals its operand. Carry and P/V (signed overflow) both set.
+    cpu = make_cpu([0xED, 0x44])
+    cpu.registers.A = 0x80
+    cpu.step()
+    assert cpu.registers.A == 0x80
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_PV | F.FLAG_N | F.FLAG_C)
+
+
+# --- LD A,I / LD A,R with IFF2=0: P/V must clear, not just "not parity" ----
+
+def test_ld_a_i_iff2_false_clears_pv() -> None:
+    cpu = make_cpu([0xED, 0x57])  # LD A, I
+    cpu.registers.I = 0x80
+    cpu.iff2 = False
+    cpu.registers.F = F.FLAG_C
+    cpu.step()
+    assert cpu.registers.A == 0x80
+    assert cpu.registers.F & F.FLAG_S
+    assert not (cpu.registers.F & F.FLAG_Z)
+    assert not (cpu.registers.F & F.FLAG_PV)  # PV <- IFF2, which is False
+    assert cpu.registers.F & F.FLAG_C  # carry preserved
+    assert not (cpu.registers.F & F.FLAG_H)
+    assert not (cpu.registers.F & F.FLAG_N)
+
+
+def test_ld_a_r_iff2_false_clears_pv() -> None:
+    cpu = make_cpu([0xED, 0x5F])  # LD A, R
+    cpu.registers.R = 0x01
+    cpu.iff2 = False
+    cpu.registers.F = F.FLAG_C
+    cpu.step()
+    assert cpu.registers.A == 0x03  # R incremented twice (ED + 5F fetches)
+    assert not (cpu.registers.F & F.FLAG_PV)
+    assert cpu.registers.F & F.FLAG_C
+    assert not (cpu.registers.F & F.FLAG_S)
+    assert not (cpu.registers.F & F.FLAG_Z)
+    assert not (cpu.registers.F & F.FLAG_H)
+    assert not (cpu.registers.F & F.FLAG_N)
+
+
+# --- LD (nn),rr / LD rr,(nn): all four register pairs, little-endian ------
+
+def _store_pair_direct(op: int, nn: int, pair_setup) -> tuple[Z80, Memory]:
+    rom = bytes([0xED, op, nn & 0xFF, (nn >> 8) & 0xFF] + [0] * 32764)
+    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    pair_setup(cpu.registers)
+    cpu.step()
+    return cpu, mem
+
+
+def test_ld_ind_nn_bc() -> None:
+    _cpu, mem = _store_pair_direct(0x43, 0xC000, lambda r: setattr(r, "BC", 0x1234))
+    assert mem.read(0xC000) == 0x34  # low byte first
+    assert mem.read(0xC001) == 0x12
+
+
+def test_ld_ind_nn_de() -> None:
+    _cpu, mem = _store_pair_direct(0x53, 0xC000, lambda r: setattr(r, "DE", 0x5678))
+    assert mem.read(0xC000) == 0x78
+    assert mem.read(0xC001) == 0x56
+
+
+def test_ld_ind_nn_hl() -> None:
+    # 0xED 0x63 -- the redundant duplicate of main-table 0x22 (StoreHLDirect).
+    _cpu, mem = _store_pair_direct(0x63, 0xC000, lambda r: setattr(r, "HL", 0x9ABC))
+    assert mem.read(0xC000) == 0xBC
+    assert mem.read(0xC001) == 0x9A
+
+
+def test_ld_ind_nn_sp() -> None:
+    _cpu, mem = _store_pair_direct(0x73, 0xC000, lambda r: setattr(r, "SP", 0xDEF0))
+    assert mem.read(0xC000) == 0xF0
+    assert mem.read(0xC001) == 0xDE
+
+
+def _load_pair_direct(op: int, nn: int, lo: int, hi: int) -> Z80:
+    rom = bytes([0xED, op, nn & 0xFF, (nn >> 8) & 0xFF] + [0] * 32764)
+    ram = bytearray(32768)
+    ram[(nn - 0x8000) & 0x7FFF] = lo
+    ram[(nn - 0x8000 + 1) & 0x7FFF] = hi
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.step()
+    return cpu
+
+
+def test_ld_rr_ind_nn_bc() -> None:
+    cpu = _load_pair_direct(0x4B, 0xC000, 0x34, 0x12)
+    assert cpu.registers.BC == 0x1234
+
+
+def test_ld_rr_ind_nn_de() -> None:
+    cpu = _load_pair_direct(0x5B, 0xC000, 0x78, 0x56)
+    assert cpu.registers.DE == 0x5678
+
+
+def test_ld_rr_ind_nn_hl() -> None:
+    # 0xED 0x6B -- the redundant duplicate of main-table 0x2A (LoadHLDirect).
+    cpu = _load_pair_direct(0x6B, 0xC000, 0xBC, 0x9A)
+    assert cpu.registers.HL == 0x9ABC
+
+
+def test_ld_rr_ind_nn_sp() -> None:
+    cpu = _load_pair_direct(0x7B, 0xC000, 0xF0, 0xDE)
+    assert cpu.registers.SP == 0xDEF0
+
+
+# --- Undocumented IN F,(C) / OUT (C),0 --------------------------------------
+
+def test_in_f_c_sets_flags_and_discards_value() -> None:
+    cpu = make_cpu([0xED, 0x70])  # IN F, (C)
+    cpu.read_port = lambda port: 0x81  # S and P/V (even parity) both set
+    cpu.registers.A = 0x55  # sentinel: must survive unchanged
+    cpu.registers.BC = 0x1234
+    cpu.registers.F = F.FLAG_C
+    cpu.step()
+    assert cpu.registers.A == 0x55  # value discarded, not stored anywhere
+    assert cpu.registers.F & F.FLAG_S
+    assert cpu.registers.F & F.FLAG_PV
+    assert cpu.registers.F & F.FLAG_C  # carry preserved
+    assert not (cpu.registers.F & F.FLAG_Z)
+
+
+def test_out_c_0_writes_literal_zero() -> None:
+    writes: list[tuple[int, int]] = []
+    cpu = make_cpu([0xED, 0x71])  # OUT (C), 0
+    cpu.write_port = lambda port, value: writes.append((port, value))
+    cpu.registers.BC = 0x0304
+    cpu.step()
+    assert writes == [(0x0304, 0x00)]
+
+
+# --- Block I/O P/V flag (openspec "Block I/O flag computation") -----------
+
+def test_ini_sets_pv_alongside_carry_half_and_zero() -> None:
+    # B=1,C=0,value=0xFF: b_after=0 (Z), k=0xFF+1=0x100>0xFF (H+C), value bit7
+    # set (N), and parity((k&7)^b_after) = parity(0) = even -> PV set too.
+    # test_ini_sets_carry_half_and_n above never asserts PV; this pins it.
+    cpu = make_cpu([0xED, 0xA2])  # INI
+    cpu.read_port = lambda port: 0xFF
+    cpu.registers.B = 0x01
+    cpu.registers.C = 0x00
+    cpu.registers.HL = 0xC000
+    cpu.step()
+    assert cpu.registers.B == 0x00
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_H | F.FLAG_PV | F.FLAG_N | F.FLAG_C)
+
+
+def test_outi_sets_pv_without_carry_or_half() -> None:
+    # B=2,C=0,value=0x80 (at HL, read before increment): new_hl=HL+1 so
+    # l_after=low_byte(new_hl); k=0x80+l_after=0x81 (<=0xFF, so H/C clear);
+    # b_after=1 (not zero, not signed); parity((k&7)^b_after)=parity(0)=even
+    # -> PV set on its own, distinct from the carry/half-set case above.
+    rom = bytes([0xED, 0xA3] + [0] * 32766)  # OUTI
+    ram = bytearray(32768)
+    ram[0x4000] = 0x80  # (0xC000)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    writes: list[tuple[int, int]] = []
+    cpu.write_port = lambda port, value: writes.append((port, value))
+    cpu.registers.B = 0x02
+    cpu.registers.C = 0x00
+    cpu.registers.HL = 0xC000
+    cpu.step()
+    assert writes == [(0x0200, 0x80)]
+    assert cpu.registers.HL == 0xC001
+    assert cpu.registers.B == 0x01
+    assert cpu.registers.F == (F.FLAG_PV | F.FLAG_N)
+
+
+# --- Undocumented IM-mirror opcodes fall through to undefined -------------
+
+def test_im_mirror_opcodes_do_not_set_interrupt_mode() -> None:
+    # Documented hardware treats 0x4E/0x66/0x6E/0x76/0x7E as duplicates of
+    # 0x46/0x56/0x5E, but opcodes_main.py's dispatch table only registers
+    # the canonical three -- these five fall through to _ed_undefined
+    # instead. Regression guard for that narrow, deliberate divergence.
+    for op in (0x4E, 0x66, 0x6E, 0x76, 0x7E):
+        cpu = make_cpu([0xED, op])
+        cpu.im = 9  # sentinel unreachable via SetInterruptMode (0/1/2 only)
+        cpu.step()
+        assert cpu.im == 9, f"opcode 0x{op:02X} unexpectedly touched cpu.im"
