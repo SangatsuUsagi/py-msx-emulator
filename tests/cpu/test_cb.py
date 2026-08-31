@@ -110,6 +110,59 @@ def test_bit7_ix_with_bit_clear_clears_sign_sets_zero() -> None:
     assert f & F.FLAG_Z
 
 
+def test_ddcb_rlc_echoes_into_named_register() -> None:
+    rom = bytes([0xDD, 0xCB, 0x03, 0x00] + [0] * 32764)  # RLC (IX+3),B
+    ram = bytearray(32768)
+    ram[0x4003] = 0x81  # 0xC003 -> ram[addr - 0x8000]
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.step()
+    assert mem.read(0xC003) == 0x03
+    assert cpu.registers.B == 0x03
+
+
+def test_fdcb_res_echoes_into_named_register() -> None:
+    rom = bytes([0xFD, 0xCB, 0x05, 0x9A] + [0] * 32764)  # RES 3,(IY+5),D
+    ram = bytearray(32768)
+    ram[0x4005] = 0xFF  # 0xC005 -> ram[addr - 0x8000]
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IY = 0xC000
+    cpu.step()
+    assert mem.read(0xC005) == 0xF7
+    assert cpu.registers.D == 0xF7
+
+
+def test_ddcb_set_with_register_field_6_writes_memory_only() -> None:
+    rom = bytes([0xDD, 0xCB, 0x02, 0xC6] + [0] * 32764)  # SET 0,(IX+2)
+    ram = bytearray(32768)
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.registers.B = cpu.registers.C = cpu.registers.D = 0x00
+    cpu.registers.E = cpu.registers.H = cpu.registers.L = cpu.registers.A = 0x00
+    cpu.step()
+    assert mem.read(0xC002) == 0x01
+    assert (cpu.registers.B, cpu.registers.C, cpu.registers.D) == (0, 0, 0)
+    assert (cpu.registers.E, cpu.registers.H, cpu.registers.L, cpu.registers.A) == (
+        0, 0, 0, 0,
+    )
+
+
+def test_ddcb_bit_does_not_echo_or_write_memory() -> None:
+    rom = bytes([0xDD, 0xCB, 0x00, 0x69] + [0] * 32764)  # BIT 5,(IX+0),C
+    ram = bytearray(32768)
+    ram[0x4000] = 0x20  # bit 5 set
+    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    cpu = Z80(read_byte=mem.read, write_byte=mem.write)
+    cpu.registers.IX = 0xC000
+    cpu.registers.C = 0x77
+    cpu.step()
+    assert mem.read(0xC000) == 0x20  # unchanged
+    assert cpu.registers.C == 0x77  # unchanged
+
+
 # ===========================================================================
 # allium:propagate reconciliation (cpu_z80_cb.allium) — gaps not already
 # covered above.

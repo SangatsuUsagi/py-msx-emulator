@@ -600,9 +600,12 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
     v = cpu.read_byte(ea)
     row = cb_op >> 6
     bit = (cb_op >> 3) & 7
+    reg = cb_op & 7
     if row == 0:
         result = _CB_ROTATE_FNS[bit](cpu, v)
         cpu.write_byte(ea, result)
+        if reg != 6:
+            _set_r(cpu, reg, result)
     elif row == 1:
         f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
         if not (v & (1 << bit)):
@@ -612,9 +615,15 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
         cpu.registers.F = f
         return 20
     elif row == 2:
-        cpu.write_byte(ea, v & ~(1 << bit))
+        result = v & ~(1 << bit)
+        cpu.write_byte(ea, result)
+        if reg != 6:
+            _set_r(cpu, reg, result)
     else:
-        cpu.write_byte(ea, v | (1 << bit))
+        result = v | (1 << bit)
+        cpu.write_byte(ea, result)
+        if reg != 6:
+            _set_r(cpu, reg, result)
     return 23
 
 
