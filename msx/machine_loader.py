@@ -297,6 +297,14 @@ class MachineSpec:
     # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
     keyboard_type: str = "int"
 
+    # The --machine value / config/machines/<machine_id>.yaml stem this spec
+    # was loaded for (set by load_machine_spec). Used for per-machine (as
+    # opposed to per-cartridge) persistence paths, e.g. each RTC-equipped
+    # machine's own CMOS RAM file. Defaults to "unknown" for direct/test
+    # construction, which never goes through load_machine_spec and doesn't
+    # need a real id (each test isolates its own saves/ via tmp_path).
+    machine_id: str = "unknown"
+
     # I/O port ranges from device YAML: device_id -> (first_port, last_port)
     device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
 
@@ -913,6 +921,7 @@ def load_machine_spec(
 
     return MachineSpec(
         name=name,
+        machine_id=machine_id,
         generation=str(generation),
         rom_base_dir=rom_base_dir,
         main_rom_entry=main_rom_entry,
@@ -1395,7 +1404,7 @@ def _build_msx2(
     rtc: RTC | None = None
     rtc_sram_save_path: Path | None = None
     if spec.has_rtc:
-        rtc_sram_save_path = Path("saves/sram/rtc.sram")
+        rtc_sram_save_path = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
         rtc_sram = _load_sram_or_warn(rtc_sram_save_path, RTC_SRAM_SIZE, label="RTC ")
         rtc = RTC(sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE))
     ppi = PPI(memory=memory, _input=input_state)

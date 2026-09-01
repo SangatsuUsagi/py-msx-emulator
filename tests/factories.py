@@ -31,6 +31,7 @@ def _msx1_spec() -> MachineSpec:
 def _msx2_spec() -> MachineSpec:
     return MachineSpec(
         name="test_msx2",
+        machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
         main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
