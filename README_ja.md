@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2286%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2389%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -167,9 +167,10 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 
 ### RTC — RP5C01
 
-リアルタイムクロック、ポート 0xB4–0xB5。
+リアルタイムクロック、ポート 0xB4–0xB5。バッテリーバックアップ CMOS RAM（ブロック 2/3、計 26 ニブル）と 12/24 時間モードのエンコード（レジスタ 10 の bit 0）にも対応。
 
 - 実装：`msx/rtc.py`
+- CMOS RAM 永続化：`saves/sram/rtc.sram`。起動時にロード、終了時に保存
 - 既知の制限：クロック読み出しはホストシステム時刻を反映；アラームおよびタイマー出力は未実装。
 
 ### カートリッジマッパー
@@ -258,7 +259,7 @@ SHA1 によるタイトル検索で、ゲームタイトルとマッパーを自
 
 ### ステートセーブ/ロード
 
-stdlib JSON による完全なハードウェアスナップショット（CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーバンク）、セーブごとに PNG スクリーンショットも保存、素早い復帰のための `saves/states/latest.*` シンボリックリンク。
+stdlib JSON による完全なハードウェアスナップショット（CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーバンク、FDC のレジスタ/フェーズ状態とマウント中ディスクの同一性）、セーブごとに PNG スクリーンショットも保存、素早い復帰のための `saves/states/latest.*` シンボリックリンク。ロード時にマウント中の `.dsk` がセーブ時に記録したもの（パス・サイズ・SHA1）と一致しない場合、黙って続行せずエラーを送出します。
 
 - 実装：`msx/state.py`
 
@@ -779,7 +780,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2286 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2389 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -839,7 +840,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2286 テスト
+├── tests/                 # テストスイート — 2389 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -883,6 +884,7 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.10** (2026-09-01) — 未整備だったコンポーネント（RTC、フロッピーディスクイメージ/ドライブ、plain/fixed-page マッパー、I/O バス、Z80 の ED/CB/DD/FD プレフィックス群）向けに Allium 仕様を追加し、その過程で見つかった実バグ2件を修正：RTC の CMOS RAM を `saves/sram/rtc.sram` に永続化する対応と 12/24 時間モードのエンコード不具合修正、および Z80 の非公式命令 DDCB/FDCB のレジスタエコー動作の実装漏れ。あわせて、フロッピーディスクの状態（WD2793/TC8566AF のレジスタ、ドライブ位置、マウント中ディスクの同一性）をステートセーブ/ロードに対応、FDC種別・ディスク同一性の不一致チェック付き。
 - **v2.5.9** (2026-08-25) — 全コンポーネントに対するOpenSpec/Alliumの棚卸しを実施し、各仕様書をopenMSXと実装に照らして再検証。その過程で見つかった精度バグを複数修正（V9938スプライト描画、ASCII8/ASCII16マッパーのバンク演算、SCC-Iモード同期、マウスプロトコルのタイミングなど）。
 - **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
 - **v2.5.7** (2026-08-20) — 将来の Rust/C++ 移植に向けた大規模な内部リファクタリング：マッパーの save-state を型なし dict からタグ付き `MapperKind` enum に変更、`Memory` のキャッシュ無効化を明示的な setter メソッドに移行、デバッガの反射ベースのマッパー/スロット introspection を明示的なインターフェースメソッドに置き換え。観測可能な挙動変更なし（複数視点コードレビューと Allium 仕様整合性チェックで検証済み）。
