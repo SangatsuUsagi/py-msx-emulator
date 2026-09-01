@@ -659,11 +659,13 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef |
             f"(supported pairs: {sorted(_SUPPORTED_FDC_PAIRS)})"
         )
     drives = int(fdc_raw.get("drives", 1))
+    if drives <= 0:
+        raise MachineLoadError(f"{context}: drives must be positive, got {drives}")
     return _FdcDef(
         disk_rom_entry=disk_rom_entry,
         controller=controller,
         connection_style=style,
-        drives=max(1, drives),
+        drives=drives,
     )
 
 
@@ -738,6 +740,20 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
             "declared simultaneously -- these are mutually exclusive MSX2 slot 3 "
             "RAM strategies (Memory cannot host both at once)"
+        )
+    if result.flat_ram_subslot is not None and result.sub_rom is not None \
+            and result.flat_ram_subslot == result.sub_rom_subslot:
+        raise MachineLoadError(
+            f"{context}: flat RAM and SUB ROM both declared in sub-slot "
+            f"{result.flat_ram_subslot} -- Memory's write path has no SUB-ROM "
+            "guard, so a write to that page would silently land in the flat RAM"
+        )
+    if result.flat_ram_subslot is not None and result.fdc is not None \
+            and result.flat_ram_subslot == result.fdc_subslot:
+        raise MachineLoadError(
+            f"{context}: flat RAM and fdc both declared in sub-slot "
+            f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
+            "guard, so a write to that page would silently land in the flat RAM"
         )
     return result
 
