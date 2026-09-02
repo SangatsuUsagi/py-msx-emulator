@@ -191,13 +191,19 @@ class SCC:
             raise ValueError(
                 f"SccState._waves must be {WAVE_BANKS} banks of {WAVE_LEN} bytes each"
             )
+        freq = list(typed_state["_freq"])
+        vol = list(typed_state["_vol"])
+        enable = int(typed_state["_enable"])
+        phase_cnt = list(typed_state["_phase_cnt"])
+        phase_idx = list(typed_state["_phase_idx"])
+        clk_frac = int(typed_state["_clk_frac"])
         self._waves = waves
-        self._freq = list(typed_state["_freq"])
-        self._vol = list(typed_state["_vol"])
-        self._enable = int(typed_state["_enable"])
-        self._phase_cnt = list(typed_state["_phase_cnt"])
-        self._phase_idx = list(typed_state["_phase_idx"])
-        self._clk_frac = int(typed_state["_clk_frac"])
+        self._freq = freq
+        self._vol = vol
+        self._enable = enable
+        self._phase_cnt = phase_cnt
+        self._phase_idx = phase_idx
+        self._clk_frac = clk_frac
 
     # -------------------------------------------------------- sample generation
 

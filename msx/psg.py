@@ -247,17 +247,28 @@ class PSG:
     def restore_synth(self, state: dict[str, object]) -> None:
         """Restore internal generator state produced by snapshot_synth()."""
         typed_state = cast(PsgSynthState, state)
-        self._tone_cnt = list(typed_state["_tone_cnt"])
-        self._tone_out = list(typed_state["_tone_out"])
-        self._noise_cnt = int(typed_state["_noise_cnt"])
-        self._lfsr = int(typed_state["_lfsr"])
-        self._env_cnt = int(typed_state["_env_cnt"])
-        self._env_step = int(typed_state["_env_step"])
-        self._env_attack = int(typed_state["_env_attack"])
-        self._env_alternate = bool(typed_state["_env_alternate"])
-        self._env_hold_flag = bool(typed_state["_env_hold_flag"])
-        self._env_holding = bool(typed_state["_env_holding"])
-        self._clk_frac = int(typed_state["_clk_frac"])
+        tone_cnt = list(typed_state["_tone_cnt"])
+        tone_out = list(typed_state["_tone_out"])
+        noise_cnt = int(typed_state["_noise_cnt"])
+        lfsr = int(typed_state["_lfsr"])
+        env_cnt = int(typed_state["_env_cnt"])
+        env_step = int(typed_state["_env_step"])
+        env_attack = int(typed_state["_env_attack"])
+        env_alternate = bool(typed_state["_env_alternate"])
+        env_hold_flag = bool(typed_state["_env_hold_flag"])
+        env_holding = bool(typed_state["_env_holding"])
+        clk_frac = int(typed_state["_clk_frac"])
+        self._tone_cnt = tone_cnt
+        self._tone_out = tone_out
+        self._noise_cnt = noise_cnt
+        self._lfsr = lfsr
+        self._env_cnt = env_cnt
+        self._env_step = env_step
+        self._env_attack = env_attack
+        self._env_alternate = env_alternate
+        self._env_hold_flag = env_hold_flag
+        self._env_holding = env_holding
+        self._clk_frac = clk_frac
 
     # --------------------------------------------------------- envelope reset
 

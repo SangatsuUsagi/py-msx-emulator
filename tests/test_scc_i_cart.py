@@ -1,4 +1,6 @@
 """Tests for the SCC-I cartridge mapper (msx/mapper.py:SCCICart)."""
+import pytest
+
 from msx.mapper import SCCICart
 from msx.scc import SCC
 
@@ -288,6 +290,24 @@ def test_snapshot_restore_round_trip() -> None:
     assert fresh._mode_register == cart._mode_register
     assert fresh._scc_window_base == cart._scc_window_base == 0xB800
     assert fresh.scc._plus_mode is True
+
+
+def test_restore_with_missing_mode_register_does_not_partially_mutate() -> None:
+    """restore() reads mode_register before assigning ram/_banks, so a
+    missing key fails before those fields change."""
+    cart = _cart()
+    cart.write(0x4000, 0x99)
+    cart.write(0x7000, 2)
+    snap = dict(cart.snapshot())
+    pre_ram = bytes(cart.ram)
+    pre_banks = list(cart._banks)
+
+    del snap["mode_register"]
+    with pytest.raises(KeyError):
+        cart.restore(snap)
+
+    assert bytes(cart.ram) == pre_ram
+    assert list(cart._banks) == pre_banks
 
 
 def test_snapshot_on_blank_cart_round_trips() -> None:

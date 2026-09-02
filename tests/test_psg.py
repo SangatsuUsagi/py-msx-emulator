@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from msx.input import InputState
 from msx.mouse import MouseDevice
 from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
@@ -362,6 +364,22 @@ def test_snapshot_synth_and_restore_synth_round_trip() -> None:
 
     psg.restore_synth(snapshot)
     assert psg.snapshot_synth() == snapshot
+
+
+def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
+    """restore_synth() reads every field before assigning any of them, so a
+    missing key fails before earlier fields are touched."""
+    psg = PSG()
+    _program_tone_noise_envelope(psg)
+    psg.generate_samples(500)
+    snapshot = dict(psg.snapshot_synth())
+    pre = dict(psg.snapshot_synth())
+
+    del snapshot["_clk_frac"]
+    with pytest.raises(KeyError):
+        psg.restore_synth(snapshot)
+
+    assert dict(psg.snapshot_synth()) == pre
 
 
 def test_snapshot_synth_on_silent_psg_round_trips() -> None:

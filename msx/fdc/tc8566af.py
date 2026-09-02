@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TypedDict, cast
 
 from msx.fdc.disk_drive import DiskDrive
 
@@ -86,6 +87,32 @@ class Phase(Enum):
     COMMAND = 1    # Command Phase, mid multi-byte parameters
     EXECUTION = 2  # data transfer in progress
     RESULT = 3     # Result Phase, mid multi-byte result bytes
+
+
+class TC8566AFState(TypedDict):
+    """Save-state schema for TC8566AF.snapshot()/restore().
+
+    ``drives``/``drive`` are not part of this state -- reattached by the
+    machine's own construction, same as WD2793State excludes ``drive``.
+    """
+
+    control_reg0: int
+    control_reg1: int
+    selected_drive_index: int
+    last_st0: int
+    last_pcn: int
+    phase: int
+    command: int
+    cmd_buffer: bytes
+    cmd_needed: int
+    result_buffer: bytes
+    result_index: int
+    exec_buffer: bytes
+    exec_index: int
+    exec_is_write: bool
+    exec_needed: int
+    exec_ctr: tuple[int, int, int, int]
+    format_fill: int
 
 
 @dataclass
@@ -444,3 +471,66 @@ class TC8566AF:
         self._result_buffer = bytearray([st0, 0, 0, c, h, (r + 1) & 0xFF, n])
         self._result_index = 0
         self._phase = Phase.RESULT
+
+    # ------------------------------------------------------------ save-state
+
+    def snapshot(self) -> TC8566AFState:
+        """Capture register/phase/buffer state. ``drives``/``drive`` are not
+        included -- see TC8566AFState."""
+        return {
+            "control_reg0": self.control_reg0,
+            "control_reg1": self.control_reg1,
+            "selected_drive_index": self._selected_drive_index,
+            "last_st0": self._last_st0,
+            "last_pcn": self._last_pcn,
+            "phase": self._phase.value,
+            "command": self._command,
+            "cmd_buffer": bytes(self._cmd_buffer),
+            "cmd_needed": self._cmd_needed,
+            "result_buffer": bytes(self._result_buffer),
+            "result_index": self._result_index,
+            "exec_buffer": bytes(self._exec_buffer),
+            "exec_index": self._exec_index,
+            "exec_is_write": self._exec_is_write,
+            "exec_needed": self._exec_needed,
+            "exec_ctr": self._exec_ctr,
+            "format_fill": self._format_fill,
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore register/phase/buffer state produced by snapshot()."""
+        typed_state = cast(TC8566AFState, state)
+        control_reg0 = typed_state["control_reg0"]
+        control_reg1 = typed_state["control_reg1"]
+        selected_drive_index = typed_state["selected_drive_index"]
+        last_st0 = typed_state["last_st0"]
+        last_pcn = typed_state["last_pcn"]
+        phase = Phase(typed_state["phase"])
+        command = typed_state["command"]
+        cmd_buffer = bytearray(typed_state["cmd_buffer"])
+        cmd_needed = typed_state["cmd_needed"]
+        result_buffer = bytearray(typed_state["result_buffer"])
+        result_index = typed_state["result_index"]
+        exec_buffer = bytearray(typed_state["exec_buffer"])
+        exec_index = typed_state["exec_index"]
+        exec_is_write = typed_state["exec_is_write"]
+        exec_needed = typed_state["exec_needed"]
+        c, h, r, n = typed_state["exec_ctr"]
+        format_fill = typed_state["format_fill"]
+        self.control_reg0 = control_reg0
+        self.control_reg1 = control_reg1
+        self._selected_drive_index = selected_drive_index
+        self._last_st0 = last_st0
+        self._last_pcn = last_pcn
+        self._phase = phase
+        self._command = command
+        self._cmd_buffer = cmd_buffer
+        self._cmd_needed = cmd_needed
+        self._result_buffer = result_buffer
+        self._result_index = result_index
+        self._exec_buffer = exec_buffer
+        self._exec_index = exec_index
+        self._exec_is_write = exec_is_write
+        self._exec_needed = exec_needed
+        self._exec_ctr = (c, h, r, n)
+        self._format_fill = format_fill

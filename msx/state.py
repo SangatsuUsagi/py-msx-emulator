@@ -27,7 +27,11 @@ if TYPE_CHECKING:
 # Version 6: mapper_class: str (Python class name) replaced with
 #   mapper_kind: MapperKind (closed enum, decoupled from class names) --
 #   see openspec/changes/mapper-state-tagged-union. No other field changed.
-CURRENT_FORMAT_VERSION: int = 6
+# Version 7: fdc_state: dict[str, object] | None added (WD2793/TC8566AF/
+#   DiskDrive/connection-style state, see
+#   openspec/changes/2026-08-31-fdc-state-save-load). No other field
+#   changed.
+CURRENT_FORMAT_VERSION: int = 7
 
 
 class StateLoadError(ValueError):
@@ -110,6 +114,8 @@ class MachineSnapshot:
     cmd_remaining: int | None = None
     # FM-PAC + OPLL (None when no FM-PAC is present)
     fmpac_state: dict[str, object] | None = None
+    # FDC: WD2793/TC8566AF + connection-style + drives (None when no FDC)
+    fdc_state: dict[str, object] | None = None
 
 
 class _MachineSnapshotFields(TypedDict):
@@ -150,6 +156,7 @@ class _MachineSnapshotFields(TypedDict):
     status2: int | None
     cmd_remaining: int | None
     fmpac_state: dict[str, object] | None
+    fdc_state: dict[str, object] | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -211,6 +218,28 @@ def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) ->
     # FmPac.restore() restores the carried OPLL's state too (from the
     # nested "opll" field) -- see msx/fmpac.py.
     machine.fmpac.restore(fmpac_state)
+
+
+def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
+    if machine.fdc is None:
+        return None
+    # Flush pending disk writes first so the disk-identity hash
+    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
+    # the .dsk file's own on-disk bytes.
+    machine.fdc.flush()
+    return machine.fdc.snapshot()
+
+
+def _restore_fdc(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
+    if (fdc_state is None) != (machine.fdc is None):
+        raise ValueError(
+            "FDC wiring mismatch: "
+            f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
+            f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
+        )
+    if machine.fdc is None or fdc_state is None:
+        return
+    machine.fdc.restore(fdc_state)
 
 
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
@@ -275,6 +304,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         status2=status2,
         cmd_remaining=cmd_remaining,
         fmpac_state=_fmpac_to_dict(machine),
+        fdc_state=_fdc_to_dict(machine),
     )
 
 
@@ -342,6 +372,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
     _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
     _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
+    _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
 
 
 # --- symlink helper -----------------------------------------------------------

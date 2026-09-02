@@ -1112,32 +1112,48 @@ class Opll:
     def restore(self, state: dict[str, object]) -> None:
         """Restore chip state produced by snapshot()."""
         typed_state = cast(OpllState, state)
-        self._reg = bytearray(typed_state["reg"])
-        self._patch_number = [int(x) for x in typed_state["patch_number"]]
+        reg = bytearray(typed_state["reg"])
+        patch_number = [int(x) for x in typed_state["patch_number"]]
+        user_patch = typed_state["user_patch"]
+        slots = typed_state["slots"]
+        adr = int(typed_state["adr"])
+        pm_phase = int(typed_state["pm_phase"])
+        am_phase = int(typed_state["am_phase"])
+        lfo_am = int(typed_state["lfo_am"])
+        noise = int(typed_state["noise"])
+        short_noise = int(typed_state["short_noise"])
+        test_flag = int(typed_state["test_flag"])
+        rhythm_mode = int(typed_state["rhythm_mode"])
+        slot_key_status = int(typed_state["slot_key_status"])
+        eg_counter = int(typed_state["eg_counter"])
+        ch_out = [int(x) for x in typed_state["ch_out"]]
+        out_time = float(typed_state["out_time"])
+        self._reg = reg
+        self._patch_number = patch_number
         # Rebuild the fixed preset bank, then the user tone from its saved fields.
         for i in range(19):
             mod, car = _dump_to_patch(_DEFAULT_INST[i])
             self._patch[i * 2 + 0] = mod
             self._patch[i * 2 + 1] = car
-        _set_patch_fields(self._patch[0], typed_state["user_patch"][0])
-        _set_patch_fields(self._patch[1], typed_state["user_patch"][1])
+        _set_patch_fields(self._patch[0], user_patch[0])
+        _set_patch_fields(self._patch[1], user_patch[1])
         for ch in range(9):
             self._mod(ch).patch = self._patch[self._patch_number[ch] * 2 + 0]
             self._car(ch).patch = self._patch[self._patch_number[ch] * 2 + 1]
-        for i, sf in enumerate(typed_state["slots"]):
+        for i, sf in enumerate(slots):
             _restore_slot_fields(self._slot[i], sf)
-        self._adr = int(typed_state["adr"])
-        self._pm_phase = int(typed_state["pm_phase"])
-        self._am_phase = int(typed_state["am_phase"])
-        self._lfo_am = int(typed_state["lfo_am"])
-        self._noise = int(typed_state["noise"])
-        self._short_noise = int(typed_state["short_noise"])
-        self._test_flag = int(typed_state["test_flag"])
-        self._rhythm_mode = int(typed_state["rhythm_mode"])
-        self._slot_key_status = int(typed_state["slot_key_status"])
-        self._eg_counter = int(typed_state["eg_counter"])
-        self._ch_out = [int(x) for x in typed_state["ch_out"]]
-        self._out_time = float(typed_state["out_time"])
+        self._adr = adr
+        self._pm_phase = pm_phase
+        self._am_phase = am_phase
+        self._lfo_am = lfo_am
+        self._noise = noise
+        self._short_noise = short_noise
+        self._test_flag = test_flag
+        self._rhythm_mode = rhythm_mode
+        self._slot_key_status = slot_key_status
+        self._eg_counter = eg_counter
+        self._ch_out = ch_out
+        self._out_time = out_time
 
 
 # Output gain from the chip's raw mix (each channel roughly ±4000 pre-mix,

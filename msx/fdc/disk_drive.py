@@ -8,6 +8,8 @@ within a cylinder (MSX-DOS ``.dsk`` layout):
 """
 from __future__ import annotations
 
+from typing import TypedDict, cast
+
 from msx.fdc.disk_image import (
     FALLBACK_SECTORS_PER_TRACK,
     FALLBACK_SIDES,
@@ -16,6 +18,24 @@ from msx.fdc.disk_image import (
 )
 
 FORMAT_FILL: int = 0xE5
+
+
+class DiskDriveState(TypedDict):
+    """Save-state schema for DiskDrive.snapshot()/restore().
+
+    disk_path/disk_size/disk_sha1 are the mounted image's identity (None
+    when no disk is mounted), not its content -- restore() rejects a
+    mismatch against the currently-mounted image rather than re-mounting
+    from the saved path, since the disk file itself is treated like
+    ROM/SRAM: an external file save-state doesn't own or embed.
+    """
+
+    track: int
+    side: int
+    disk_changed: bool
+    disk_path: str | None
+    disk_size: int | None
+    disk_sha1: str | None
 
 
 class DiskDrive:
@@ -87,3 +107,60 @@ class DiskDrive:
             if 0 <= lsn < self.image.num_sectors:
                 self.image.write_sector(lsn, blank)
         return True
+
+    def snapshot(self) -> DiskDriveState:
+        """Capture head position and the mounted image's identity (not its
+        content -- see DiskDriveState)."""
+        if self.image is None:
+            disk_path: str | None = None
+            disk_size: int | None = None
+            disk_sha1: str | None = None
+        else:
+            disk_path = str(self.image.path)
+            disk_size = self.image.num_sectors * SECTOR_SIZE
+            disk_sha1 = self.image.content_sha1()
+        return {
+            "track": self.track,
+            "side": self.side,
+            "disk_changed": self.disk_changed,
+            "disk_path": disk_path,
+            "disk_size": disk_size,
+            "disk_sha1": disk_sha1,
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore head position after verifying the currently-mounted
+        image's identity matches the snapshot's.
+
+        Raises:
+            ValueError: If exactly one of {a disk is mounted now, a disk was
+                mounted at snapshot time} is true, or both are mounted but
+                their (path, size, sha1) identity differs.
+        """
+        typed_state = cast(DiskDriveState, state)
+        saved_path = typed_state["disk_path"]
+        if (saved_path is None) != (self.image is None):
+            raise ValueError(
+                "disk mount mismatch: "
+                f"running has {'a disk' if self.image is not None else 'no disk'} mounted, "
+                f"saved state has {'a disk' if saved_path is not None else 'no disk'} mounted"
+            )
+        if self.image is not None and saved_path is not None:
+            current = (
+                str(self.image.path),
+                self.image.num_sectors * SECTOR_SIZE,
+                self.image.content_sha1(),
+            )
+            saved = (saved_path, typed_state["disk_size"], typed_state["disk_sha1"])
+            if current != saved:
+                raise ValueError(
+                    f"disk mismatch: running {current[0]!r} "
+                    f"({current[1]} bytes, sha1 {current[2]}), "
+                    f"saved {saved[0]!r} ({saved[1]} bytes, sha1 {saved[2]})"
+                )
+        track = typed_state["track"]
+        side = typed_state["side"]
+        disk_changed = typed_state["disk_changed"]
+        self.track = track
+        self.side = side
+        self.disk_changed = disk_changed

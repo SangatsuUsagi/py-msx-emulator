@@ -194,6 +194,22 @@ def test_snapshot_restore_roundtrips_banks_and_scc_mode(mapper: KonamiSCCMapper)
     assert other._scc_mode is True
 
 
+def test_restore_with_missing_scc_mode_does_not_partially_mutate(
+    mapper: KonamiSCCMapper,
+) -> None:
+    """restore() reads scc_mode before assigning _banks, so a missing key
+    fails before _banks changes."""
+    mapper.write(0x5000, 5)
+    pre_banks = list(mapper._banks)
+    pre_scc_mode = mapper._scc_mode
+
+    with pytest.raises(KeyError):
+        mapper.restore({"banks": [1, 2, 3, 4]})
+
+    assert list(mapper._banks) == pre_banks
+    assert mapper._scc_mode == pre_scc_mode
+
+
 def test_restore_rejects_negative_bank(mapper: KonamiSCCMapper) -> None:
     # Mirrors KonamiMapper's restore() validation: a negative bank would
     # make _sync_window slice self.rom with a negative start, which Python

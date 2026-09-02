@@ -6,6 +6,7 @@ size divided by 512. Data is held in memory and written back to the file on
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -110,3 +111,9 @@ class DskDiskImage:
         if self._dirty and not self._write_protected:
             self.path.write_bytes(self._data)
             self._dirty = False
+
+    def content_sha1(self) -> str:
+        """SHA1 hex digest of the image's current bytes (save-state disk
+        identity check; same hashlib convention as msx/romdb.py's ROM
+        identity)."""
+        return hashlib.sha1(bytes(self._data), usedforsecurity=False).hexdigest()

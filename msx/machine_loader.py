@@ -78,6 +78,7 @@ from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
+from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
@@ -295,6 +296,14 @@ class MachineSpec:
 
     # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
     keyboard_type: str = "int"
+
+    # The --machine value / config/machines/<machine_id>.yaml stem this spec
+    # was loaded for (set by load_machine_spec). Used for per-machine (as
+    # opposed to per-cartridge) persistence paths, e.g. each RTC-equipped
+    # machine's own CMOS RAM file. Defaults to "unknown" for direct/test
+    # construction, which never goes through load_machine_spec and doesn't
+    # need a real id (each test isolates its own saves/ via tmp_path).
+    machine_id: str = "unknown"
 
     # I/O port ranges from device YAML: device_id -> (first_port, last_port)
     device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
@@ -650,11 +659,13 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef |
             f"(supported pairs: {sorted(_SUPPORTED_FDC_PAIRS)})"
         )
     drives = int(fdc_raw.get("drives", 1))
+    if drives <= 0:
+        raise MachineLoadError(f"{context}: drives must be positive, got {drives}")
     return _FdcDef(
         disk_rom_entry=disk_rom_entry,
         controller=controller,
         connection_style=style,
-        drives=max(1, drives),
+        drives=drives,
     )
 
 
@@ -729,6 +740,20 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
             f"{context}: RAM mapper and flat RAM sub-slot {result.flat_ram_subslot} "
             "declared simultaneously -- these are mutually exclusive MSX2 slot 3 "
             "RAM strategies (Memory cannot host both at once)"
+        )
+    if result.flat_ram_subslot is not None and result.sub_rom is not None \
+            and result.flat_ram_subslot == result.sub_rom_subslot:
+        raise MachineLoadError(
+            f"{context}: flat RAM and SUB ROM both declared in sub-slot "
+            f"{result.flat_ram_subslot} -- Memory's write path has no SUB-ROM "
+            "guard, so a write to that page would silently land in the flat RAM"
+        )
+    if result.flat_ram_subslot is not None and result.fdc is not None \
+            and result.flat_ram_subslot == result.fdc_subslot:
+        raise MachineLoadError(
+            f"{context}: flat RAM and fdc both declared in sub-slot "
+            f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
+            "guard, so a write to that page would silently land in the flat RAM"
         )
     return result
 
@@ -912,6 +937,7 @@ def load_machine_spec(
 
     return MachineSpec(
         name=name,
+        machine_id=machine_id,
         generation=str(generation),
         rom_base_dir=rom_base_dir,
         main_rom_entry=main_rom_entry,
@@ -1391,7 +1417,12 @@ def _build_msx2(
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
     )
     vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP(_logger=logger)
-    rtc: RTC | None = RTC() if spec.has_rtc else None
+    rtc: RTC | None = None
+    rtc_sram_save_path: Path | None = None
+    if spec.has_rtc:
+        rtc_sram_save_path = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
+        rtc_sram = _load_sram_or_warn(rtc_sram_save_path, RTC_SRAM_SIZE, label="RTC ")
+        rtc = RTC(sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE))
     ppi = PPI(memory=memory, _input=input_state)
 
     # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the
@@ -1416,6 +1447,8 @@ def _build_msx2(
         cycles_per_frame=spec.cycles_per_frame,
         lines_per_frame=spec.lines_per_frame,
         fdc=fdc_device,
+        rtc=rtc,
+        rtc_sram_save_path=rtc_sram_save_path,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer

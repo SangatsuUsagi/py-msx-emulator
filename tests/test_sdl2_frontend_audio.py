@@ -160,7 +160,9 @@ class _FakeInitSDL:
     def SDL_SetHint(self, *_a: object) -> None:
         pass
 
-    def SDL_CreateTexture(self, _renderer: object, _fmt: int, _access: int, w: int, h: int) -> object:
+    def SDL_CreateTexture(
+        self, _renderer: object, _fmt: int, _access: int, w: int, h: int
+    ) -> object:
         self.created_texture_size = (w, h)
         return 1
 

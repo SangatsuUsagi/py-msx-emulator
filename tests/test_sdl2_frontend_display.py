@@ -16,7 +16,6 @@ from frontend.sdl2_frontend import (
     _upload_to_texture,
 )
 
-
 # --- allium/frontend.allium: config.output_height / config.base_width -----
 # The two constants CreateHostDisplay's rule pins as the fixed starting
 # geometry (Part 2's "output_height is already constant across every VDP
@@ -43,7 +42,9 @@ class _FakeResizeSDL:
     def SDL_DestroyTexture(self, texture: object) -> None:
         self.destroyed.append(texture)
 
-    def SDL_CreateTexture(self, _renderer: object, _fmt: int, _access: int, w: int, h: int) -> object:
+    def SDL_CreateTexture(
+        self, _renderer: object, _fmt: int, _access: int, w: int, h: int
+    ) -> object:
         self.created_sizes.append((w, h))
         if self._create_fails:
             return None

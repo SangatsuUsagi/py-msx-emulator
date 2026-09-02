@@ -203,12 +203,18 @@ class FmPac:
         carried OPLL's own state.
         """
         typed_state = cast(FmPacState, state)
-        self.sram[:] = typed_state["sram"]
-        self._bank = typed_state["bank"]
-        self._enable = typed_state["enable"]
-        self._r1ffe = typed_state["r1ffe"]
-        self._r1fff = typed_state["r1fff"]
-        self.opll.restore(cast(dict[str, Any], typed_state["opll"]))
+        sram = typed_state["sram"]
+        bank = typed_state["bank"]
+        enable = typed_state["enable"]
+        r1ffe = typed_state["r1ffe"]
+        r1fff = typed_state["r1fff"]
+        opll_state = cast(dict[str, Any], typed_state["opll"])
+        self.sram[:] = sram
+        self._bank = bank
+        self._enable = enable
+        self._r1ffe = r1ffe
+        self._r1fff = r1fff
+        self.opll.restore(opll_state)
         self._check_sram_enable()
 
     def debug_bank_info(self, page: int) -> str | None:

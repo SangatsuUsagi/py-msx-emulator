@@ -1,6 +1,8 @@
 """Tests for Konami SCC wavetable synthesizer."""
 import struct
 
+import pytest
+
 from msx.psg import SAMPLES_PER_FRAME
 from msx.scc import SCC
 
@@ -314,6 +316,22 @@ def test_snapshot_and_restore_round_trip() -> None:
 
     scc.restore(snapshot)
     assert scc.snapshot() == snapshot
+
+
+def test_restore_with_missing_key_does_not_partially_mutate() -> None:
+    """restore() reads every field before assigning any of them, so a
+    missing key fails before _waves (assigned first) is touched."""
+    scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
+    scc.write(0x00, 0x11)
+    scc.write(0x8F, 0x1F)
+    pre = scc.snapshot()
+
+    snap = dict(pre)
+    del snap["_clk_frac"]
+    with pytest.raises(KeyError):
+        scc.restore(snap)
+
+    assert scc.snapshot() == pre
 
 
 def test_snapshot_on_silent_scc_round_trips() -> None:

@@ -287,6 +287,31 @@ def test_wrong_size_sram_starts_blank() -> None:
     assert fmpac.sram == bytearray(SRAM_SIZE)
 
 
+def test_restore_with_missing_key_does_not_partially_mutate() -> None:
+    """restore() reads sram/bank/enable/r1ffe/r1fff/opll before assigning
+    any of them, so a missing key fails before any is touched."""
+    fmpac = FmPac(rom=_bank_rom(), opll=Opll())
+    fmpac.write(0x5FFE, 0x4D)
+    fmpac.write(0x5FFF, 0x69)
+    fmpac.write(0x4000, 0xAB)
+    snap = dict(fmpac.snapshot())
+    pre_sram = bytes(fmpac.sram)
+    pre_bank = fmpac._bank
+    pre_enable = fmpac._enable
+    pre_r1ffe = fmpac._r1ffe
+    pre_r1fff = fmpac._r1fff
+
+    del snap["r1fff"]
+    with pytest.raises(KeyError):
+        fmpac.restore(snap)
+
+    assert bytes(fmpac.sram) == pre_sram
+    assert fmpac._bank == pre_bank
+    assert fmpac._enable == pre_enable
+    assert fmpac._r1ffe == pre_r1ffe
+    assert fmpac._r1fff == pre_r1fff
+
+
 # ---------------------------------------------------------------------------
 # Overlay loader (config/machines/fmpac.yaml)
 # ---------------------------------------------------------------------------

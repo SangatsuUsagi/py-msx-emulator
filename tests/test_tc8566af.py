@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 from msx.fdc.tc8566af import (
@@ -295,3 +297,19 @@ def test_write_protect_rejects_write_data(tmp_path: Path) -> None:
     st1 = tc.read_data()
     assert st0 & 0x40                       # abnormal termination
     assert st1 & 0x02                       # NW (not writable)
+
+
+def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> None:
+    """restore() (save-state) reads every field before assigning any of
+    them, so a missing key fails before earlier fields are touched."""
+    tc, _drive = _ctrl(tmp_path)
+    tc.write_data(CMD_RECALIBRATE)
+    tc.write_data(0)
+    pre = dict(tc.snapshot())
+
+    snap = dict(pre)
+    del snap["format_fill"]
+    with pytest.raises(KeyError):
+        tc.restore(snap)
+
+    assert dict(tc.snapshot()) == pre

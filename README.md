@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2286%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2389%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -246,9 +246,14 @@ the 128 KB RAM mapper in sub-slot 3-2.
 
 ### RTC — RP5C01
 
-Real-time clock at ports 0xB4–0xB5.
+Real-time clock at ports 0xB4–0xB5, including its 26 nibbles of
+battery-backed CMOS RAM (blocks 2/3) and 12/24-hour mode encoding
+(register 10, bit 0).
 
 - Implementation: `msx/rtc.py`
+- CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram` (one file per
+  machine — real hardware has one physical RTC/battery per machine, unlike
+  a cartridge's SRAM), loaded on start and saved on exit
 - Known limitations: clock reads reflect host system time; no alarm or timer
   output.
 
@@ -381,9 +386,12 @@ suppressed on late frames; the VBlank interrupt still fires every frame).
 
 ### State save/load
 
-Complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, FM-PAC/OPLL, mapper banks)
-as a stdlib JSON container, a PNG screenshot alongside each save, and
-`saves/states/latest.*` symlinks for quick resume.
+Complete hardware snapshot (CPU, RAM, VDP, PSG, SCC, FM-PAC/OPLL, mapper
+banks, FDC register/phase state and mounted-disk identity) as a stdlib JSON
+container, a PNG screenshot alongside each save, and `saves/states/latest.*`
+symlinks for quick resume. Loading a save whose mounted `.dsk` doesn't match
+the one recorded at save time (by path, size, and SHA1) raises an error
+instead of silently proceeding.
 
 - Implementation: `msx/state.py`
 
@@ -478,14 +486,14 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 291.61 | ~4.9× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 489.35 | ~8.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1159.55 | ~19.3× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1353.42 | ~22.6× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 76.20 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 128.24 | ~2.1× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 290.21 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 423.50 | ~7.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 284.72 | ~4.7× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 476.83 | ~7.9× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 1101.15 | ~18.4× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 1270.47 | ~21.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (KonamiSCC) | 76.32 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (ASCII8) | 128.27 | ~2.1× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (KonamiSCC) | 287.51 | ~4.8× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (ASCII8) | 419.97 | ~7.0× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
@@ -506,7 +514,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.5.9, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.5.10, per platform and runtime:
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -975,7 +983,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2286 tests spanning unit tests
+The test suite covers all major components with 2389 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1038,7 +1046,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2286 tests
+├── tests/                 # Test suite — 2389 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1099,6 +1107,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.10** (2026-09-01) — Add Allium specs for the remaining uncovered components (RTC, floppy disk image/drive, plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups), fixing several real bugs found along the way: RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram` (previously a single shared file let one machine's settings leak into another's) with a 12/24-hour encoding fix, and an undocumented Z80 DDCB/FDCB register-echo behavior is now implemented. Also adds full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with FDC-kind and disk-identity mismatch checks.
 - **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
 - **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
 - **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).

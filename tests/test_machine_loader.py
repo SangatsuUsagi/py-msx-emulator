@@ -10,6 +10,7 @@ from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
     _make_mapper,
+    _parse_fdc,
     _parse_slot0,
     _parse_slot3_msx2,
     _require_scc,
@@ -621,6 +622,79 @@ def test_slot3_multiple_violations_reports_sub_rom_out_of_range_first() -> None:
     }
     with pytest.raises(MachineLoadError, match="SUB ROM sub-slot .* out of range"):
         _parse_slot3_msx2(slot3, "test")
+
+
+# ---------------------------------------------------------------------------
+# _parse_fdc: drives must be positive, not silently clamped
+# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# ---------------------------------------------------------------------------
+
+_FDC_ROM = {"rom": {"file": "disk.rom", "size_kb": 16, "pages": [1]}}
+_FDC_ROM_SUBSLOT = {"fdc": _FDC_ROM}
+
+
+def test_parse_fdc_rejects_zero_drives() -> None:
+    sub_val = {"fdc": {**_FDC_ROM, "drives": 0}}
+    with pytest.raises(MachineLoadError, match="drives must be positive"):
+        _parse_fdc(sub_val, "test", 0)
+
+
+def test_parse_fdc_rejects_negative_drives() -> None:
+    sub_val = {"fdc": {**_FDC_ROM, "drives": -1}}
+    with pytest.raises(MachineLoadError, match="drives must be positive"):
+        _parse_fdc(sub_val, "test", 0)
+
+
+# ---------------------------------------------------------------------------
+# flat RAM colliding with SUB ROM's or the FDC's sub-slot is rejected;
+# SUB ROM and FDC sharing a sub-slot (HB-F1XD's real layout) remains allowed
+# (openspec/changes/archive/2026-09-01-machine-loader-validation-gaps)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot3_msx2_flat_ram_colliding_with_sub_rom_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {
+                "content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}],
+                "type": "ram",
+                "size_kb": 64,
+            },
+        },
+    }
+    with pytest.raises(MachineLoadError, match="flat RAM and SUB ROM both declared"):
+        _parse_slot3_msx2(slot3, "test")
+
+
+def test_parse_slot3_msx2_flat_ram_colliding_with_fdc_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {**_FDC_ROM_SUBSLOT, "type": "ram", "size_kb": 64},
+        },
+    }
+    with pytest.raises(MachineLoadError, match="flat RAM and fdc both declared"):
+        _parse_slot3_msx2(slot3, "test")
+
+
+def test_parse_slot3_msx2_sub_rom_and_fdc_sharing_subslot_still_allowed() -> None:
+    """HB-F1XD's real shape: SUB ROM and fdc share sub-slot 0, flat RAM is
+    elsewhere -- must keep loading successfully."""
+    slot3 = {
+        "expanded": True,
+        "secondary": {
+            0: {
+                "content": [{"rom": {"file": "sub.rom", "size_kb": 16, "pages": [0]}}],
+                **_FDC_ROM_SUBSLOT,
+            },
+            3: {"type": "ram", "size_kb": 64},
+        },
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.sub_rom_subslot == 0
+    assert result.fdc_subslot == 0
+    assert result.flat_ram_subslot == 3
 
 
 # ---------------------------------------------------------------------------

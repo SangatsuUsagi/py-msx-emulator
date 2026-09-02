@@ -831,6 +831,8 @@ class GameMaster2Mapper(BankTracingMapper):
         banks = typed_state["banks"]
         window_sram_half = typed_state["window_sram_half"]
         sram = typed_state["sram"]
+        sram_half = typed_state["sram_half"]
+        sram_enabled = typed_state["sram_enabled"]
         if len(banks) != 4 or any(b < 0 for b in banks):
             raise ValueError("GameMaster2MapperState.banks must have 4 non-negative entries")
         if len(window_sram_half) != 4:
@@ -838,9 +840,9 @@ class GameMaster2Mapper(BankTracingMapper):
         if len(sram) != self._SRAM_SIZE:
             raise ValueError(f"GameMaster2MapperState.sram must have {self._SRAM_SIZE} entries")
         self._banks[:] = banks
-        self._sram_half = typed_state["sram_half"]
+        self._sram_half = sram_half
         self._window_sram_half[:] = window_sram_half
-        self._sram_enabled = typed_state["sram_enabled"]
+        self._sram_enabled = sram_enabled
         if self.sram is not None:
             self.sram[:] = sram
         for window in range(4):
@@ -1400,10 +1402,11 @@ class KonamiSCCMapper(BankTracingMapper):
     def restore(self, state: dict[str, object]) -> None:
         typed_state = cast(KonamiSCCMapperState, state)
         banks = typed_state["banks"]
+        scc_mode = typed_state["scc_mode"]
         if len(banks) != 4 or any(b < 0 for b in banks):
             raise ValueError("KonamiSCCMapperState.banks must have 4 non-negative entries")
         self._banks[:] = banks
-        self._scc_mode = typed_state["scc_mode"]
+        self._scc_mode = scc_mode
         for window in range(4):
             self._sync_window(window)
 
@@ -1581,6 +1584,7 @@ class SCCICart(BankTracingMapper):
         typed_state = cast(SCCICartState, state)
         ram = typed_state["ram"]
         banks = typed_state["banks"]
+        mode_register = typed_state["mode_register"]
         if len(ram) != _SCCI_RAM_SIZE or len(banks) != 4:
             raise ValueError(
                 f"SCCICartState.ram must be {_SCCI_RAM_SIZE} bytes and "
@@ -1590,7 +1594,7 @@ class SCCICart(BankTracingMapper):
         self._banks[:] = banks
         for window in range(4):
             self._sync_window_base(window)
-        self._set_mode_register(typed_state["mode_register"])
+        self._set_mode_register(mode_register)
 
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)

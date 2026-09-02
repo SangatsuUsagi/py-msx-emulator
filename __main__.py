@@ -286,6 +286,13 @@ def _cleanup(
     ):
         machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
         machine.fmpac.save_sram(machine.fmpac_sram_save_path)
+    if (
+        machine is not None
+        and machine.rtc is not None
+        and machine.rtc_sram_save_path is not None
+    ):
+        machine.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+        machine.rtc.save_sram(machine.rtc_sram_save_path)
     # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
     if machine is not None and machine.fdc is not None:
         machine.fdc.flush()

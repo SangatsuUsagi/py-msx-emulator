@@ -8,14 +8,8 @@ import pytest
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
-
-_2DD_BYTES = 737280  # 720 KB: 80 tracks * 2 sides * 9 sectors * 512
-
-
-def _make_dsk(path: Path, size: int = _2DD_BYTES, fill: int = 0x00) -> Path:
-    path.write_bytes(bytes([fill]) * size)
-    return path
-
+from tests.disk_factories import _2DD_BYTES
+from tests.disk_factories import make_dsk as _make_dsk
 
 # --- DskDiskImage --------------------------------------------------------
 
@@ -117,13 +111,6 @@ def test_out_of_geometry_sector_returns_none(tmp_path: Path) -> None:
     assert drive.read_sector(79, 1, 99) is None
 
 
-def test_format_track_blanks_sectors_to_e5(tmp_path: Path) -> None:
-    drive = DiskDrive(DskDiskImage(_make_dsk(tmp_path / "d.dsk", fill=0x00)))
-    assert drive.format_track(2, 1) is True
-    sector = drive.read_sector(2, 1, 1)
-    assert sector == b"\xe5" * SECTOR_SIZE
-
-
 # --- BPB geometry detection ----------------------------------------------
 
 def _bpb_image(path: Path, *, total: int, spt: int, heads: int,
@@ -187,3 +174,50 @@ def test_bpb_total_mismatch_falls_back(tmp_path: Path) -> None:
     p.write_bytes(data)
     img = DskDiskImage(p)
     assert (img.sectors_per_track, img.sides) == (9, 2)
+
+
+def test_bpb_spt_boundary_values_recognized(tmp_path: Path) -> None:
+    # spt=1 and spt=63 are the min/max in-range boundary values (config.
+    # min_sectors_per_track/max_sectors_per_track) -- both must be recognised,
+    # not just mid-range values like 9.
+    img_min = DskDiskImage(_bpb_image(tmp_path / "min.dsk", total=80, spt=1, heads=1))
+    assert img_min.sectors_per_track == 1
+    img_max = DskDiskImage(_bpb_image(tmp_path / "max.dsk", total=63 * 2, spt=63, heads=2))
+    assert img_max.sectors_per_track == 63
+
+
+def test_bpb_spt_out_of_range_falls_back(tmp_path: Path) -> None:
+    # spt=0 (below min) and spt=64 (above max) are each one step outside the
+    # recognised range and must fall back to the 720 KB 2DD default.
+    img_zero = DskDiskImage(_bpb_image(tmp_path / "zero.dsk", total=1440, spt=0, heads=2))
+    assert (img_zero.sectors_per_track, img_zero.sides) == (9, 2)
+    img_over = DskDiskImage(_bpb_image(tmp_path / "over.dsk", total=1440, spt=64, heads=2))
+    assert (img_over.sectors_per_track, img_over.sides) == (9, 2)
+
+
+def test_bpb_invalid_heads_falls_back(tmp_path: Path) -> None:
+    # heads must be exactly 1 or 2; any other value is an unrecognised BPB.
+    img = DskDiskImage(_bpb_image(tmp_path / "heads3.dsk", total=1440, spt=9, heads=3))
+    assert (img.sectors_per_track, img.sides) == (9, 2)
+
+
+def test_forced_write_protected_false_overrides_readonly_file(tmp_path: Path) -> None:
+    # The explicit override must work in both directions: forcing
+    # write_protected=False must let writes through even though the
+    # underlying file itself is not writable.
+    p = _make_dsk(tmp_path / "ro.dsk")
+    os.chmod(p, 0o444)
+    try:
+        img = DskDiskImage(p, write_protected=False)
+        assert img.write_protected is False
+        img.write_sector(0, b"\x00" * SECTOR_SIZE)  # must not raise
+    finally:
+        os.chmod(p, 0o644)
+
+
+def test_flush_is_noop_when_clean(tmp_path: Path) -> None:
+    p = _make_dsk(tmp_path / "d.dsk", fill=0x11)
+    img = DskDiskImage(p)
+    before = p.read_bytes()
+    img.flush()  # no writes since construction -> must not touch the file
+    assert p.read_bytes() == before
