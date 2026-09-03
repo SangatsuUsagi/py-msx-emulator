@@ -828,7 +828,7 @@ The RPC methods cover debugger pause/step/continue, breakpoints and watchpoints,
 memory and VRAM read/write, disassembly, VDP registers, keyboard/joystick
 injection, screenshot capture, save-state, and disk swap. The wire protocol and
 full method reference are documented in
-[`docs/msx_emulator_rpc_spec.md`](docs/msx_emulator_rpc_spec.md).
+[`docs/socket-rpc-mcp.md`](docs/socket-rpc-mcp.md).
 
 Quick manual test with the bundled client:
 

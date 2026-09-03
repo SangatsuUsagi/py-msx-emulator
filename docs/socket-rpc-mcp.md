@@ -1,9 +1,9 @@
 # Socket RPC & MCP Server
 
-The emulator can expose a local control interface so an external tool — most
-notably Claude Code — can pause it, inspect Z80/VDP state, inject input, and
-capture screenshots, all without touching the SDL window. Two pieces work
-together:
+The emulator can expose a local control interface so an external tool — a shell
+script, a test harness, or an AI coding agent such as Claude Code — can pause
+it, inspect Z80/VDP state, inject input, and capture screenshots, all without
+touching the SDL window. Two pieces work together:
 
 - **Socket RPC** (`msx/rpc_server.py`): an embedded JSON-RPC server on a Unix
   domain socket, built into the emulator itself. Enabled with `--rpc`.
@@ -15,12 +15,18 @@ the same breakpoint/watchpoint/step model as the terminal debugger (see
 [`docs/debugger.md`](debugger.md)) — the RPC surface just lets a program
 drive it instead of a person.
 
+This document is the reference for both layers, kept in step with the code.
+[`docs/msx_emulator_rpc_spec.md`](msx_emulator_rpc_spec.md) is the original
+design record for the same feature, written before it was built and carrying
+full source listings; read it for the reasoning behind a decision, not for
+current behaviour.
+
 ---
 
 ## Architecture
 
 ```
-Claude Code  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  msx/rpc_server.py (in-process)
+MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  msx/rpc_server.py (in-process)
 ```
 
 `tools/mcp_server.py` holds no emulator state of its own — every tool call
@@ -111,8 +117,9 @@ is always echoed back.
 | `-32601` | Method not found |
 | `-32602` | Invalid params |
 | `1` | Operation requires the emulator to be paused |
-| `2` | Reserved: operation requires running state (no handler needs it yet) |
-| `3` | Internal emulator error |
+| `3` | Internal emulator error, including the dispatch timeout below |
+
+(`2` is unused — no code is defined for it.)
 
 ### Server-push notifications
 
@@ -166,7 +173,8 @@ The `registers` object: `AF`, `BC`, `DE`, `HL`, `IX`, `IY`, `SP`, `PC` (as
 
 ### Breakpoints / watchpoints
 
-- **`debug.set_breakpoint`** — params: `{ address }` → `{ id, address, active }`.
+- **`debug.set_breakpoint`** — params: `{ address }` →
+  `{ id, address, active }`.
 - **`debug.remove_breakpoint`** — params: `{ id }` → `{ removed }`.
 - **`debug.list_breakpoints`** → `{ breakpoints: [{ id, address, active }] }`.
 - **`debug.set_watchpoint`** — params: `{ address, mode? }` (`"r"` / `"w"` /
@@ -174,10 +182,10 @@ The `registers` object: `AF`, `BC`, `DE`, `HL`, `IX`, `IY`, `SP`, `PC` (as
 - **`debug.remove_watchpoint`** — params: `{ id }` → `{ removed }`.
 
 Addresses may be given as a JSON int or a hex string (`"0xC000"` or `"C000"`).
-The underlying machine keeps at most 4 breakpoints and 4 watchpoints
-(matching the [interactive debugger](debugger.md)'s `ba`/`wa` limits); a 5th `debug.set_*`
-call still returns a new `id`, but only the first 4 (by allocation order)
-are actually armed.
+The underlying machine keeps at most 4 breakpoints and 4 watchpoints, matching
+the [interactive debugger](debugger.md)'s `ba`/`wa` limits. A 5th `debug.set_*`
+call still returns a new `id`, but only the first 4 (by allocation order) are
+actually armed.
 
 ### Memory
 
@@ -267,8 +275,10 @@ it at a non-default socket via the MCP registration's `env` block.
 
 ### Tool set
 
-Each tool maps 1:1 to the RPC method of the same shape described in
-[Method reference](#method-reference) (tool names swap the `.` for `_`):
+Each tool wraps the RPC method of the same name with the `.` swapped for `_`,
+described in [Method reference](#method-reference). The two raw
+keyboard-matrix methods (`input.press_key` / `input.release_key`, addressed by
+row and bit) have no tool — `input_press_key` is the named-key variant:
 
 - `emulator_status`, `emulator_pause`
 - `cpu_get_registers`, `cpu_step` (paused), `cpu_continue` (paused,
@@ -355,9 +365,7 @@ directly, for example:
 - "Take a screenshot at 3x scale so you can see what's on screen."
 - "Press SPACE and check the screen after a second."
 
-Under the hood each of these becomes one or more calls listed in
-[MCP server](#mcp-server) above, each of which maps 1:1 to a socket-RPC
-method. A typical debugging exchange looks like:
+A typical debugging exchange comes out as:
 
 1. `emulator_pause` → confirms the PC and reason.
 2. `memory_disassemble` / `cpu_get_registers` → inspect state.
@@ -375,8 +383,6 @@ method. A typical debugging exchange looks like:
   permissions on the socket file.
 - `memory.write` and `cpu.step` (state-mutating, precise-timing operations)
   require the emulator to be paused first.
-- Only one client can be connected at a time — see _Known limitations_ below
-  for what that means in practice.
 - RPC is strictly opt-in (`--rpc`); a normal run has no socket, no background
   thread, and no additional attack surface.
 
@@ -394,3 +400,9 @@ method. A typical debugging exchange looks like:
 - **`cpu.continue_sync` timeout is per-call.** If nothing pauses the emulator
   before `timeout_ms` elapses, the call returns `{ paused: false, reason:
   "timeout" }` rather than blocking indefinitely; the emulator keeps running.
+- **Requests need a running host loop.** Every method except
+  `cpu.continue_sync` is queued for `DebugServer.drain()`, which the host
+  calls once per frame and continuously while paused. If the emulator is
+  wedged badly enough not to drain within 30 seconds, the request fails with
+  a `"dispatch timeout"` internal error (code `3`) rather than hanging the
+  client.

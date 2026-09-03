@@ -637,7 +637,7 @@ RPC メソッドは、デバッガの一時停止/ステップ/継続、ブレ�
 ント、メモリ・VRAM の読み書き、逆アセンブル、VDP レジスタ、キーボード/ジョイス
 ティック入力、スクリーンショット取得、ステートセーブ、ディスク入れ替えを網羅しま
 す。ワイヤプロトコルと全メソッドの一覧は
-[`docs/msx_emulator_rpc_spec.md`](docs/msx_emulator_rpc_spec.md) を参照してくだ
+[`docs/socket-rpc-mcp_ja.md`](docs/socket-rpc-mcp_ja.md) を参照してくだ
 さい。
 
 同梱クライアントによる簡単な動作確認:
