@@ -4,6 +4,16 @@ This document describes the internal structure of the MSX1/MSX2 emulator — CPU
 execution, interrupt handling, I/O dispatch, VDP rendering, and the memory
 subsystem.
 
+- [CPU emulation](#cpu-emulation)
+- [Interrupt management](#interrupt-management)
+- [I/O bus](#io-bus)
+- [VDP](#vdp)
+- [Audio](#audio)
+- [Memory and slot system](#memory-and-slot-system)
+- [Floppy disk (FDC)](#floppy-disk-fdc)
+- [Machine YAML loader](#machine-yaml-loader)
+- [Portability](#portability)
+
 ---
 
 ## CPU emulation
@@ -45,8 +55,9 @@ corresponding prefix table.
 5. Otherwise: record the current PC in `instruction_pc`, fetch the opcode via
    `_fetch()`, dispatch.
 
-`_fetch()` reads one byte from `read_byte(PC)`, increments PC, and increments R
-(lower 7 bits only, wrapping at 0x7F).
+`_fetch()` reads one byte from `read_byte(PC)`, increments PC, and increments R.
+Only bits 0–6 of R count; bit 7 is sticky and changes only through a full
+register write such as `LD R,A`.
 
 ### Timing
 
@@ -78,8 +89,10 @@ PSG pitch are unaffected.
 ### Known limitations
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
-boundaries. The R register increments only on opcode fetches, not on data-bus
-accesses.
+boundaries. R increments on every byte `_fetch()` reads — operands included,
+since `_fetch_word()` calls it twice — whereas real hardware refreshes only on
+M1 opcode-fetch cycles, so code that reads R as an entropy source sees a
+different sequence.
 
 ---
 
@@ -232,7 +245,7 @@ correct scanline.
 `_reg_write_log`:
 
 ```python
-_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 19, 23})
+_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
 ```
 
 Each entry is either:
@@ -283,13 +296,12 @@ operations:
 | SRCH    | Search a scanline for a colour match (result in S#8/S#9) |
 | ABRT    | Abort the active command                                 |
 
-Commands are dispatched immediately — the VRAM result is committed at dispatch
-time. An approximate cycle budget (`_cmd_remaining`) is decremented by
-`V9938.tick(n)` (called each instruction with the consumed T-states) to model
-command duration. The budget is calibrated at `_CYCLES_PER_BYTE = 8` T-states
-per VRAM byte, derived from openMSX golden-log comparisons (230K T-states for a
-128×212 fill). Software that busy-waits on S#2 bit 0 (CE) will see CE clear
-after the budget expires.
+Commands are dispatched immediately. An approximate cycle budget
+(`_cmd_remaining`) is decremented by `V9938.tick(n)` (called each instruction
+with the consumed T-states) to model command duration. The budget is calibrated
+at `_CYCLES_PER_BYTE = 8` T-states per VRAM byte, derived from openMSX
+golden-log comparisons (230K T-states for a 128×212 fill). Software that
+busy-waits on S#2 bit 0 (CE) will see CE clear after the budget expires.
 
 The HMMC/LMMC transfer latch (`_cmd_transfer`) is set by writes to R#44 (COL).
 The first pixel/byte of a transfer comes from a pending COL write rather than
@@ -306,17 +318,21 @@ Logical operations (IMP, AND, OR, XOR, NOT) are applied per pixel via
   while a command is nominally in progress may see the completed result before
   CE clears.
 - The renderer is deferred: the CPU runs a full frame, VDP commands execute
-  instantly into VRAM, then one render pass occurs at end-of-frame. VRAM updates
+  instantly into VRAM, then a single render pass covers the whole frame — at the
+  start of vertical blanking on V9938, at end-of-frame on TMS9918A. VRAM updates
   that are synchronised to the raster within a frame (beam-raced blits,
-  double-buffered title screens) are not reproduced faithfully.
+  double-buffered title screens) are not reproduced faithfully. The banded
+  renderer above recovers mid-frame *register* changes, but not mid-frame VRAM
+  content.
 
 ---
 
 ## Audio
 
-The PSG (`msx/psg.py`), SCC (`msx/scc.py`), and Majutsushi DAC each render
-signed-16-bit mono PCM at 44,100 Hz, 735 samples per frame. The SDL2 frontend's
-`_mix_audio()` sums them, clamps to 16-bit, and queues the buffer to SDL.
+The PSG (`msx/psg.py`), SCC (`msx/scc.py`), the FM-PAC's OPLL (`msx/opll.py`),
+and the Majutsushi DAC each render signed-16-bit mono PCM at 44,100 Hz, 735
+samples per frame. The SDL2 frontend's `_mix_audio()` sums whichever of them the
+machine has, clamps to 16-bit, and queues the buffer to SDL.
 
 ### Sub-frame software PCM
 
@@ -409,20 +425,24 @@ Writing the segment number (0–7) to the register remaps that page immediately.
 
 ## Floppy disk (FDC)
 
-The floppy subsystem is a generic layer (`msx/fdc/`) so controllers other than
-the WD2793 can be added without touching `Memory`:
+The floppy subsystem is a generic layer (`msx/fdc/`) so a new controller chip or
+connection style plugs in without touching `Memory`. Two of each are wired up
+today — WD2793 with the Sony/Philips style, and TC8566AF with its own:
 
 | Layer      | File                             | Responsibility                                                                                                                                                                                                                                                    |
 | ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Disk image | `disk_image.py` (`DskDiskImage`) | Reads a `*.dsk` sector image; derives geometry from the FAT12 BPB (bytes/sector, total sectors, sectors/track, heads); buffers writes and flushes back to the file on exit                                                                                        |
 | Drive      | `disk_drive.py` (`DiskDrive`)    | One physical drive: holds the mounted image, tracks the head position, exposes sector read/write                                                                                                                                                                  |
-| Controller | `wd2793.py` (`WD2793`)           | The WD2793 FDC: Type I–IV command decode, status register, data/track/sector registers, `abort()`                                                                                                                                                                 |
-| Interface  | `interface.py`                   | Connection style between the controller and the memory bus. `SonyPhilipsInterface` (= openMSX PhilipsFDC) maps the DISK ROM at 0x4000–0x7FFF and the FDC registers at 0x7FF8–0x7FFF, and consumes the disk-change bit; a `swap()` method mounts/ejects at runtime |
+| Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I–IV command decode, status register, data/track/sector registers, `abort()`. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register |
+| Interface  | `interface.py`                   | Connection style between the controller and the memory bus, both mapping the DISK ROM at 0x4000–0x7FFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8–0x7FFF and consumes the disk-change bit; `TC8566AFInterface` puts two control registers, the Main Status Register and the Data Register at 0x7FF8–0x7FFB. `swap()` mounts/ejects at runtime and is shared by both |
 
-The Sony HB-F1XD (`hb_f1xd`) wires this into slot 3 sub-slot 0 (DISK ROM +
-memory-mapped registers) alongside 64 KB of flat RAM in sub-slot 3.
-`--fdd1`/`--fdd2` mount images into drives A/B; the debugger's `fdd1`/`fdd2`
-commands swap them at runtime. The implementation boots Disk BASIC, supports
+Which controller and connection style a machine gets is declared in its YAML
+`fdc:` block, so the two shipped floppy machines differ only in data. The Sony
+HB-F1XD (`hb_f1xd`) puts the WD2793 and its DISK ROM in slot 3 sub-slot 0,
+alongside 64 KB of flat RAM in sub-slot 3. The Panasonic FS-A1F (`fs_a1f`) uses
+the TC8566AF and spreads the roles across its four secondary slots — RAM in
+sub-slot 0, SUB ROM in 1, the FDC in 2. `--fdd1`/`--fdd2` mount images into
+drives A/B; the debugger's `fdd1`/`fdd2` commands swap them at runtime. The implementation boots Disk BASIC, supports
 `CALL FORMAT`, and reads/writes files with write-back on exit. `machine.fdc` is
 `None` on machines with no floppy interface.
 
@@ -455,9 +475,9 @@ types:
 - `"msx2"` — `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`
 
 Device YAML entries with `implemented: false` are skipped at load time with a
-stderr warning; the rest of the machine proceeds normally. This allows device
-definitions for unimplemented hardware (e.g. FM-PAC / MSX-MUSIC) to exist in the
-registry without breaking boots.
+stderr warning; the rest of the machine proceeds normally, so a device
+definition can be committed before its emulation exists without breaking boots.
+Every device currently under `config/devices/` is `implemented: true`.
 
 ---
 
@@ -505,10 +525,11 @@ what a Rust/C++ port would use instead.
 #### Bus hooks as reassignable bound methods
 
 `Z80` stores `read_byte` / `write_byte` / `read_port` / `write_port` as
-`Callable` fields (`z80.py:32`). `Machine.__post_init__` wires them by assigning
-bound methods at runtime. Enabling watchpoints later re-swaps `cpu.read_byte` /
+`Callable` fields. `Machine.__post_init__` wires them by assigning bound methods
+at runtime. Enabling watchpoints later re-swaps `cpu.read_byte` /
 `cpu.write_byte` between the plain memory handler and a watchpoint-trapping
-variant (`machine.py:64`, `machine.py:159`).
+variant `Machine._read_with_watch` / `_write_with_watch`, in
+`Machine.set_watchpoints`.
 
 Python allows this because a `Callable` field is just a slot that holds any
 object with `__call__`. In Rust/C++ there is no runtime method swap on a struct
@@ -520,7 +541,7 @@ behind a flag, so the per-access dispatch stays branch-free.
 
 `Registers` stores `BC`, `DE`, `HL` as 16-bit `int` fields but exposes `B`/`C`,
 `D`/`E`, `H`/`L` as `@property` getter/setter pairs that shift and mask over the
-16-bit pair (`registers.py:63`). Each opcode that reads or writes a single 8-bit
+16-bit pair (`Registers.B`/`C` and their siblings). Each opcode that reads or writes a single 8-bit
 half goes through the descriptor protocol, adding a call frame on the hot
 instruction path.
 
@@ -532,7 +553,7 @@ the property-call overhead entirely.
 
 Python integers are arbitrary precision: `-1 & 0x20 == 0x20`. The PSG envelope
 generator uses this when `_env_step` goes negative — bit 5 of a negative Python
-int still acts as an underflow flag (`psg.py:155`).
+int still acts as an underflow flag (`PSG._env_step`).
 
 Rust/C++ unsigned types wrap on underflow rather than extending sign, so the
 same expression produces 0 instead of `0x20`. A port must use a signed type
@@ -541,7 +562,8 @@ same expression produces 0 instead of `0x20`. A port must use a signed type
 #### `bytes.translate()` LUT cache in the renderer
 
 The V9938 G4/G6 and G5 per-scanline pixel expanders memoize `bytes.translate()`
-tables in a dict keyed on `(tp: bool, border: int)` (`v9938_renderer.py:54`).
+tables in `_G46_LUT_CACHE` / `_G5_LUT_CACHE`, dicts keyed on
+`(tp: bool, border: int)`.
 `bytes.translate()` is a CPython built-in that unpacks a full 256-byte lookup
 table in C, making it the fastest available path in Python for this
 transformation. The dict cache avoids allocating identical tables on every
@@ -555,7 +577,7 @@ them directly.
 #### Callable interrupt and tracer hooks
 
 Both `VDP` (TMS9918A) and `V9938` store `on_interrupt`, `tracer`, `_get_pc`, and
-`_get_cycle` as nullable `Callable` fields (`vdp.py:22`, `v9938.py:126`). These
+`_get_cycle` as nullable `Callable` fields. These
 are assigned at wiring time and invoked on each relevant event. The fields are
 typed as `Callable[[], None] | None` in Python but have no direct static
 analogue.
@@ -567,7 +589,7 @@ dispatch disappears in release builds.
 #### Spin loop in the frame timer
 
 `FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the final
-sub-millisecond stretch before the frame deadline (`frame_timer.py:51`). In
+sub-millisecond stretch before the frame deadline. In
 Python there is no way to hint to the scheduler that this is a spin.
 
 A Rust port inserts `std::hint::spin_loop()` inside the same loop to yield the

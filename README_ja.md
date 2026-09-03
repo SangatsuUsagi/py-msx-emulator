@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2389%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2395%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -29,7 +29,7 @@
 
 テストは作者が所有する物理 ROM/ディスクダンプのみで行っているため、上記以外の MSX1/MSX2 タイトルが正しく動作する保証はありません。他のタイトルのバグ報告は歓迎しますが、サポートはベストエフォートです。
 
-各ハードウェアコンポーネントは純粋な Python で書かれ、実装前に機械可読な仕様書（`openspec/specs/` 以下）として定義され、その仕様がテストを駆動します。コンポーネントの配線は `build_machine()` で手動で行い、リフレクションや依存性注入の魔法は使いません。プラットフォーム固有の依存は、ディスプレイ・オーディオフロントエンド用の pysdl2 のみです。
+各ハードウェアコンポーネントは純粋な Python で書かれ、実装前に機械可読な仕様書として定義され、その仕様がテストを駆動します（[仕様駆動アーキテクチャ](#仕様駆動アーキテクチャ)を参照）。コンポーネントの配線は `build_machine()` で手動で行い、リフレクションや依存性注入の魔法は使いません。プラットフォーム固有の依存は、ディスプレイ・オーディオフロントエンド用の pysdl2 のみです。内部構造は [`docs/technical-implementation_ja.md`](docs/technical-implementation_ja.md) で解説しています。
 
 ---
 
@@ -153,7 +153,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | 実装 | `msx/memory.py` |
 | アドレス空間 | フラット 64 KB（0x0000–0xFFFF）、4 つの 16 KB ページ |
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
-| スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と同じディレクトリに存在すれば自動ロード；存在しない場合は 0xFF を返す |
+| スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
 | スロット 1 | マッパー経由のカートリッジ ROM |
 | スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視） |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
@@ -265,7 +265,7 @@ stdlib JSON による完全なハードウェアスナップショット（CPU�
 
 ### インタラクティブデバッガ
 
-Ctrl+C またはブレークポイント到達でアクセスできる REPL：ブレークポイント/ウォッチポイント、ステップ実行、レジスタ/VRAM ダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットインスペクタ、フロッピーディスク入れ替え（`fdd1`/`fdd2 [FILE|-]`）。
+Ctrl+C またはブレークポイント到達でアクセスできる REPL：ブレークポイント/ウォッチポイント、ステップ実行、レジスタ/VRAM ダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットインスペクタ、フロッピーディスク入れ替え（`fdd1`/`fdd2 [FILE|-]`）。全コマンドの解説は [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照。
 
 - 実装：`msx/debugger/`
 
@@ -283,27 +283,23 @@ Ctrl+C またはブレークポイント到達でアクセスできる REPL：�
 
 v2.5.0 以降は、仕様と実装の整合性を検証するための第2の振る舞い中心仕様レイヤー（`allium/*.allium`）として、OpenSpec と並行して [Allium](https://juxt.github.io/allium/) を使用しています。
 
-### 仕組み
-
-仕様書は `openspec/specs/<component>/spec.md` に置かれます。各仕様書ファイルは、自然言語による要件と具体的な WHEN/THEN シナリオを組み合わせた構造化された散文形式を使用します。
+仕様書は `openspec/specs/<spec-id>/spec.md` にコンポーネントごとのディレクトリとして置かれ、ID にはドメイン接頭辞が付きます（`cpu-z80`、`vdp-tms9918a`、`audio-psg`、`fdc-wd2793` など）。各ファイルは自然言語による要件と具体的な WHEN/THEN シナリオを交互に記述します。以下は `vdp-tms9918a` の冒頭です。
 
 ```markdown
-### Requirement: Instruction fetch and execute
+### Requirement: VRAM
+The VDP SHALL maintain 16 KB of video RAM as a `bytearray` of length 0x4000.
+All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
-`Z80.step() -> int` SHALL fetch the opcode byte at PC, advance PC, decode and execute the instruction, and return the number of T-states consumed.
+#### Scenario: VRAM initialises to zero
+- **WHEN** a `VDP` instance is created
+- **THEN** all 16384 bytes of VRAM are 0x00
 
-#### Scenario: NOP executes in 4 T-states
-
-- **WHEN** opcode 0x00 (NOP) is at PC and `step()` is called
-- **THEN** the return value is 4 and PC is incremented by 1
-
-#### Scenario: LD BC, nn loads a 16-bit immediate
-
-- **WHEN** bytes [0x01, 0x34, 0x12] are at PC and `step()` is called
-- **THEN** BC is 0x1234 and PC is incremented by 3
+#### Scenario: VRAM write and read back
+- **WHEN** a byte is written to VRAM address 0x1234 via the data port
+- **THEN** reading VRAM at 0x1234 directly returns the same byte
 ```
 
-シナリオはユニットテストに直接対応しており、実装が仕様を満たしていることを容易に検証できます。新機能の追加や既存コンポーネントの変更時には、まず仕様書を更新し、その後実装を行います。
+シナリオはユニットテストに直接対応します。新機能の追加や既存コンポーネントの変更時には、まず仕様書を更新し、その後実装を行います。
 
 ---
 
@@ -641,7 +637,7 @@ RPC メソッドは、デバッガの一時停止/ステップ/継続、ブレ�
 ント、メモリ・VRAM の読み書き、逆アセンブル、VDP レジスタ、キーボード/ジョイス
 ティック入力、スクリーンショット取得、ステートセーブ、ディスク入れ替えを網羅しま
 す。ワイヤプロトコルと全メソッドの一覧は
-[`docs/msx_emulator_rpc_spec.md`](docs/msx_emulator_rpc_spec.md) を参照してくだ
+[`docs/socket-rpc-mcp_ja.md`](docs/socket-rpc-mcp_ja.md) を参照してくだ
 さい。
 
 同梱クライアントによる簡単な動作確認:
@@ -780,7 +776,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2389 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2395 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -808,6 +804,7 @@ py-msx-emulator/
 ├── msx/                   # コアエミュレータパッケージ
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
+│   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インタフェース）
 │   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
 │   ├── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
 │   ├── machine.py         # コンポーネント配線とフレームループ
@@ -828,19 +825,23 @@ py-msx-emulator/
 │   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── frame_timer.py     # 60 fps ペーシング + FPS 計測
+│   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
 │   └── state.py           # マシン状態のセーブ/ロード（JSON + PNG）
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
+├── tools/                 # 空ディスク作成、RPC クライアント、MCP サーバ
+├── docs/                  # デバッガガイド、ソケット RPC / MCP リファレンス
+├── assets/                # この README が参照するベンチマーク履歴グラフ
 ├── roms/
 │   └── cbios/             # C-BIOS ROM ファイルをここに置く（バージョン管理外）
 ├── saves/                 # ステートセーブとスクリーンショット（実行時に生成）
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2389 テスト
+├── tests/                 # テストスイート — 2395 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -852,7 +853,7 @@ py-msx-emulator/
 
 ### 仕様書優先ルール
 
-新しいハードウェアコンポーネントの追加や重要な動作変更を行う際は、実装コードを書く前に `openspec/specs/<component>/spec.md` に仕様書を追加または更新する必要があります。仕様書のシナリオはテストケースの信頼できる情報源です。対応する仕様書の更新なしに実装を追加するプルリクエストはマージされません。
+新しいハードウェアコンポーネントの追加や重要な動作変更を行う際は、実装コードを書く前に `openspec/specs/<spec-id>/spec.md` に仕様書を追加または更新する必要があります。新しい仕様書は独自の接頭辞を作らず、既存のドメイン接頭辞に属させます。仕様書のシナリオはテストケースの信頼できる情報源です。対応する仕様書の更新なしに実装を追加するプルリクエストはマージされません。
 
 ### コーディング規約
 

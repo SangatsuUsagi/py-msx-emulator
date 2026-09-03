@@ -1,8 +1,8 @@
 # Debugger Reference
 
 The emulator includes an interactive debug REPL accessible at any point during a
-run. It provides Z80 and VDP inspection, breakpoints, watchpoints, step
-execution, and tracing without requiring a separate debug build.
+run: Z80 and VDP inspection, breakpoints, watchpoints, step execution, and
+tracing.
 
 Commands marked **⚙V9938** require an MSX2 / V9938 machine. On MSX1 / TMS9918A
 they print a clear error message rather than raising an exception.
@@ -30,6 +30,15 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 The displayed image is the last rendered frame. Type `c` to resume emulation,
 `q` to exit. Pressing Ctrl+C again while at the REPL prompt exits the emulator
 immediately (`sys.exit(0)`) — it does not cancel input or return to the prompt.
+
+### Line editing and history
+
+Where the `readline` module is available — stock CPython and PyPy on macOS and
+Linux — the prompt gives you the usual line editing, Tab completion over every
+command name, and a command history carried across runs in
+`~/.msx_dbg_history` (last 500 entries, read on entry and written back on
+resume). Stock Windows CPython ships no `readline`; the REPL still works there,
+just without editing, completion, or history.
 
 ### Breakpoints and watchpoints at launch
 
@@ -319,12 +328,14 @@ On MSX1 (`sub_slot_enabled = False`), slot 3 is shown as a non-expanded primary.
 ### Floppy disk
 
 **`fdd1 [FILE|-]`**, **`fdd2 [FILE|-]`** — show, swap, or eject the disk in
-floppy drive A / B (machines with a floppy interface, e.g. `hb_f1xd`).
+floppy drive A / B (machines with a floppy interface, e.g. `hb_f1xd`,
+`fs_a1f`).
 
 - No argument prints the current mount (path or `empty`).
 - A path mounts that `*.dsk` (relative to the cwd or absolute; `~` is expanded).
-  On the next `c` (continue) the WD2793 sees the new disk via the disk-change
-  line.
+  On the next `c` (continue) the controller sees the new disk via the
+  disk-change line — the swap path is shared by both connection styles, so it
+  behaves the same on WD2793 and TC8566AF machines.
 - `-` ejects the current disk.
 
 Errors (missing file, unreadable image, no such drive) are reported without
@@ -332,27 +343,32 @@ changing the current disk. On a machine with no floppy interface, the command
 prints `this machine has no floppy interface`.
 
 ```
-(dbg) fdd1
+(msx-dbg cyc=720000 frm=12) fdd1
 fdd1: /path/to/game.dsk
-(dbg) fdd1 disk2.dsk
+(msx-dbg cyc=720000 frm=12) fdd1 disk2.dsk
 fdd1: mounted disk2.dsk
-(dbg) fdd1 "MY DISK 1.dsk"
+(msx-dbg cyc=720000 frm=12) fdd1 "MY DISK 1.dsk"
 fdd1: mounted MY DISK 1.dsk
-(dbg) fdd1 -
+(msx-dbg cyc=720000 frm=12) fdd1 -
 fdd1: ejected
 ```
-
-A path containing spaces must be double-quoted (see the note under
-[Command reference](#command-reference)).
 
 ---
 
 ### Screenshot
 
-**`ss`** — render the current VDP state and save
-`screenshot_YYYYMMDD_HHMMSS.png` to the working directory. The internal frame
-counter is preserved; `ss` has no side-effect on emulation state. Useful for
-correlating a visual snapshot with `v`/`dv`/`rv` output taken at the same pause.
+**`ss`** — render the current VDP state and save it as
+`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`, the same location the F10
+hotkey uses:
+
+```
+(msx-dbg cyc=724321 frm=12) ss
+screenshot saved: saves/screenshots/screenshot_20260101_120000.png
+```
+
+The internal frame counter is preserved; `ss` has no side-effect on emulation
+state. Useful for correlating a visual snapshot with `v`/`dv`/`rv` output taken
+at the same pause.
 
 ---
 

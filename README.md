@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2389%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2395%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -36,10 +36,13 @@ other MSX1 or MSX2 titles are not guaranteed to work. Bug reports for other
 titles are welcome, but support is best-effort.
 
 Every hardware component is pure Python and is defined by a machine-readable
-specification (under `openspec/specs/`) before it is implemented; those specs
-drive the test suite. Component wiring is explicit — done by hand in
-`build_machine()`, with no reflection or dependency-injection magic. The only
-platform-specific dependency is pysdl2, for the display and audio frontend.
+specification before it is implemented, and those specs drive the test suite —
+see [Spec-driven architecture](#spec-driven-architecture). Component wiring is
+explicit — done by hand in `build_machine()`, with no reflection or
+dependency-injection magic. The only platform-specific dependency is pysdl2,
+for the display and audio frontend.
+[`docs/technical-implementation.md`](docs/technical-implementation.md) walks
+through the internals.
 
 ---
 
@@ -232,7 +235,7 @@ the 128 KB RAM mapper in sub-slot 3-2.
 | Implementation | `msx/memory.py` |
 | Address space | Flat 64 KB (0x0000–0xFFFF), four 16 KB pages |
 | Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
-| Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; auto-loaded from same directory as BIOS; returns 0xFF if absent |
+| Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; declared in the machine YAML as a `pages: [2]` entry next to the BIOS; returns 0xFF if absent |
 | Slot 1 | Cartridge ROM via mapper |
 | Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF |
@@ -399,7 +402,8 @@ instead of silently proceeding.
 
 A REPL reachable via Ctrl+C or a breakpoint hit: breakpoints/watchpoints, step
 execution, register/VRAM dump, disassembly, VDP trace, mapper trace, slot
-inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`).
+inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`). Full command
+reference: [`docs/debugger.md`](docs/debugger.md).
 
 - Implementation: `msx/debugger/`
 
@@ -424,33 +428,29 @@ OpenSpec as a second, behaviour-focused specification layer (`allium/*.allium`)
 to verify that each component's implementation stays aligned with its
 specification.
 
-### How it works
-
-Specs live under `openspec/specs/<component>/spec.md`. Each spec file uses a
-structured prose format that interleaves natural-language requirements with
-concrete WHEN/THEN scenarios:
+Specs live under `openspec/specs/<spec-id>/spec.md`, one directory per
+component, the ID carrying a domain prefix (`cpu-z80`, `vdp-tms9918a`,
+`audio-psg`, `fdc-wd2793`, and so on). Each file interleaves natural-language
+requirements with concrete WHEN/THEN scenarios — this is how `vdp-tms9918a`
+opens:
 
 ```markdown
-### Requirement: Instruction fetch and execute
+### Requirement: VRAM
+The VDP SHALL maintain 16 KB of video RAM as a `bytearray` of length 0x4000.
+All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
-`Z80.step() -> int` SHALL fetch the opcode byte at PC, advance PC, decode and
-execute the instruction, and return the number of T-states consumed.
+#### Scenario: VRAM initialises to zero
+- **WHEN** a `VDP` instance is created
+- **THEN** all 16384 bytes of VRAM are 0x00
 
-#### Scenario: NOP executes in 4 T-states
-
-- **WHEN** opcode 0x00 (NOP) is at PC and `step()` is called
-- **THEN** the return value is 4 and PC is incremented by 1
-
-#### Scenario: LD BC, nn loads a 16-bit immediate
-
-- **WHEN** bytes [0x01, 0x34, 0x12] are at PC and `step()` is called
-- **THEN** BC is 0x1234 and PC is incremented by 3
+#### Scenario: VRAM write and read back
+- **WHEN** a byte is written to VRAM address 0x1234 via the data port
+- **THEN** reading VRAM at 0x1234 directly returns the same byte
 ```
 
-The scenarios map directly to unit tests, making it straightforward to verify
-that the implementation matches the specification. When a new feature is added
-or an existing component is changed, the spec is updated first and the
-implementation follows.
+The scenarios map directly to unit tests. When a new feature is added or an
+existing component is changed, the spec is updated first and the implementation
+follows.
 
 ---
 
@@ -828,7 +828,7 @@ The RPC methods cover debugger pause/step/continue, breakpoints and watchpoints,
 memory and VRAM read/write, disassembly, VDP registers, keyboard/joystick
 injection, screenshot capture, save-state, and disk swap. The wire protocol and
 full method reference are documented in
-[`docs/msx_emulator_rpc_spec.md`](docs/msx_emulator_rpc_spec.md).
+[`docs/socket-rpc-mcp.md`](docs/socket-rpc-mcp.md).
 
 Quick manual test with the bundled client:
 
@@ -983,7 +983,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2389 tests spanning unit tests
+The test suite covers all major components with 2395 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1014,6 +1014,7 @@ py-msx-emulator/
 ├── msx/                   # Core emulator package
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
+│   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
 │   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
 │   ├── debugger/          # Interactive REPL (prompt, disassembler)
 │   ├── machine.py         # Component wiring and frame loop
@@ -1034,19 +1035,23 @@ py-msx-emulator/
 │   ├── joystick.py        # Physical joystick manager (SDL2)
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── frame_timer.py     # 60 fps pacing + FPS measurement
+│   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   └── state.py           # Save/load machine state (JSON + PNG)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
+├── tools/                 # Blank-disk maker, RPC client, MCP server
+├── docs/                  # Debugger guide, socket RPC / MCP reference
+├── assets/                # Benchmark history charts used by this README
 ├── roms/
 │   └── cbios/             # C-BIOS ROM files (not in version control)
 ├── saves/                 # Save states and screenshots (created at runtime)
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2389 tests
+├── tests/                 # Test suite — 2395 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1059,10 +1064,11 @@ py-msx-emulator/
 ### Spec-first rule
 
 Every new hardware component or significant behaviour change must have a
-specification added or updated in `openspec/specs/<component>/spec.md` before
-any implementation code is written. The scenarios in the spec are the source of
-truth for test cases. A PR that adds implementation without a corresponding spec
-update will not be merged.
+specification added or updated in `openspec/specs/<spec-id>/spec.md` before any
+implementation code is written; a new spec joins an existing domain prefix
+rather than inventing one. The scenarios in the spec are the source of truth for
+test cases. A PR that adds implementation without a corresponding spec update
+will not be merged.
 
 ### Coding conventions
 

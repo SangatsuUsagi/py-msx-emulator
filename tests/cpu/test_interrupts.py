@@ -148,7 +148,7 @@ def test_ei_sets_iff1_iff2_and_ei_pending() -> None:
 # ===========================================================================
 # EI one-instruction interrupt-enable delay (Z80 User Manual — EI: "the
 # maskable interrupt is not accepted until after the instruction following
-# EI is executed"; see openspec/specs/z80-cpu/spec.md, "EI interrupt-enable
+# EI is executed"; see openspec/specs/cpu-z80/spec.md, "EI interrupt-enable
 # delay").
 # ===========================================================================
 

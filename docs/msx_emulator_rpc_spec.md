@@ -1,5 +1,12 @@
 # py-msx-emulator: Socket RPC & MCP Server Specification
 
+> **This is the design record, not the current reference.** It was written
+> before the feature was built and carries full source listings that the real
+> code has since moved past. For how the socket RPC and MCP server behave
+> today — method reference, wire protocol, error codes, setup —
+> see [`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md). Keep this file for the
+> reasoning behind a design decision.
+
 > **Purpose:** This document specifies two integration layers that together let Claude Code
 > control a running `py-msx-emulator` instance as a first-class MCP tool:
 >
@@ -41,7 +48,7 @@
 │    ├─ msx/cpu/z80.py                                   │
 │    ├─ msx/vdp/  (TMS9918A / V9938)                     │
 │    ├─ msx/input.py   (keyboard / joystick matrix)      │
-│    ├─ msx/debugger/repl.py                             │
+│    ├─ msx/debugger/prompt.py                           │
 │    └─ msx/screenshot.py                                │
 └────────────────────────────────────────────────────────┘
 ```
@@ -64,11 +71,9 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
 | Capability | Feasibility | Rationale |
 |---|---|---|
-| **Debugger control** | ✅ Green | `msx/debugger/repl.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
-| **Game input injection** | ✅ Green | `msx/input.py` holds an `InputState` object with an `_rows[11]` byte array; any code with a reference to that object can set/clear bits directly, and the PPI reads the same array every frame. |
-| **Screenshot capture** | ✅ Green | `msx/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
-
----
+| **Debugger control** | Green | `msx/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
+| **Game input injection** | Green | `msx/input.py` holds an `InputState` object with an `_rows[11]` byte array; any code with a reference to that object can set/clear bits directly, and the PPI reads the same array every frame. |
+| **Screenshot capture** | Green | `msx/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
 
 ---
 
@@ -116,8 +121,10 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 | `-32601` | Method not found |
 | `-32602` | Invalid params |
 | `1` | Emulator not in debug (paused) state |
-| `2` | Emulator is paused; operation requires running state |
 | `3` | Internal emulator error |
+
+Code `2` was sketched here for "requires running state" but no handler ever needed
+it, so it was never defined.
 
 ## Execution Model
 
@@ -128,6 +135,13 @@ and processed by the main thread between frames (or during the debugger REPL pau
 ---
 
 ## Socket RPC Method Reference
+
+These are the method shapes as designed. Most shipped unchanged, but a few
+differ — `state.save` treats `path` as a title stem and always writes its own
+timestamped file under `saves/states/`, and `screen.capture` returns the
+constant 212-line frame rather than 256×192. Check
+[`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md) before writing a client against
+any of them.
 
 ### `debugger.pause`
 
@@ -319,7 +333,10 @@ Works in both paused and running state.
 | 6   | F3    | F2    | F1    | CODE  | CAPS  | GRAPH | CTRL  | SHIFT |
 | 7   | RET   | SEL   | BS    | STOP  | TAB   | ESC   | F5    | F4    |
 | 8   | →     | ↓     | ↑     | ←     | DEL   | INS   | HOME  | SPACE |
-| 9   | NUM4  | NUM3  | NUM2  | NUM1  | NUM0  | —     | —     | —     |
+
+Rows 9 and 10 are the numeric keypad. The emulator allocates all 11 rows
+(`InputState.matrix`) but binds no host key to them, so `input.press_key` by raw
+row/bit is the only way to reach a keypad key.
 
 Common keys: SPACE(8,0) RETURN(7,7) ESC(7,2) UP(8,5) DOWN(8,6) LEFT(8,4) RIGHT(8,7) SHIFT(6,0) CTRL(6,1)
 
@@ -412,6 +429,12 @@ Clients that do not need push may ignore these frames.
 
 ## Socket RPC Implementation
 
+The frame loop and class skeleton below are design sketches, not extracts from
+the finished code. The shipped `DebugServer` diverges in at least two ways worth
+knowing: `cpu.continue_sync` is handled inline on the socket thread rather than
+queued (it has to block without stalling the emulator), and the queue wait has a
+named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
+
 ### New files
 
 | File | Purpose |
@@ -425,8 +448,8 @@ Clients that do not need push may ignore these frames.
 |---|---|
 | `msx/machine.py` | Instantiate `DebugServer`; call `_drain_rpc_queue()` in frame loop |
 | `msx/input.py` | Add `set_key_state(row, bit, pressed)` public method |
-| `msx/debugger/repl.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop |
-| `__main__.py` | Add `--rpc-socket PATH` / `--no-rpc` CLI flags |
+| `msx/debugger/prompt.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop |
+| `__main__.py` | Add `--rpc-socket PATH` / `--no-rpc` CLI flags. *Shipped as opt-in instead:* `--rpc` enables the server and `--rpc-socket PATH` sets the path; there is no `--no-rpc`, since a run without `--rpc` never opens a socket. |
 
 ### Frame loop integration
 
@@ -523,8 +546,6 @@ class DebugServer:
 
 ---
 
----
-
 # Part 2: Level 3 — MCP Server
 
 ## Overview
@@ -551,7 +572,7 @@ claude mcp add --transport stdio --scope user msx-emulator \
 
 # Verify
 claude mcp list
-# > msx-emulator  stdio  ● connected   18 tools
+# > msx-emulator  stdio  ● connected
 ```
 
 Inside a Claude Code session, run `/mcp` to confirm the server is connected and see all
@@ -560,14 +581,21 @@ available tools.
 ## Dependencies
 
 ```
-mcp[cli]>=1.0          # pip install mcp  or  uv add --dev mcp
+mcp[cli]>=1.0,<2.0     # pip install -e ".[mcp]"
 ```
 
-No additional dependencies beyond what `py-msx-emulator` already requires.
+This is the one dependency the emulator itself does not need, so it ships as the
+optional `mcp` extra rather than in `requirements.txt`. The upper bound matters:
+mcp 2.0 renamed `FastMCP` to `mcp.server.mcpserver.MCPServer`, and
+`tools/mcp_server.py` is written against the 1.x API.
 
 ---
 
 ## `tools/mcp_server.py` — Full Implementation
+
+This is the pre-implementation draft. The file that shipped has 24 tools; this
+listing and the summary table below have 23, missing `debug_remove_watchpoint`.
+Read `tools/mcp_server.py` itself for current behaviour.
 
 ```python
 #!/usr/bin/env python3
