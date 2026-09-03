@@ -400,7 +400,8 @@ instead of silently proceeding.
 
 A REPL reachable via Ctrl+C or a breakpoint hit: breakpoints/watchpoints, step
 execution, register/VRAM dump, disassembly, VDP trace, mapper trace, slot
-inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`).
+inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`). Full command
+reference: [`docs/debugger.md`](docs/debugger.md).
 
 - Implementation: `msx/debugger/`
 
