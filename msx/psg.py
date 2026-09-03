@@ -385,7 +385,7 @@ class PSG:
         constant-register segment (once for the whole buffer when there are no
         mid-frame writes). Behaviour matches the _step_* methods kept above.
 
-        Intentional exception to AGENTS.md's "keep functions short" convention:
+        Intentional exception to CLAUDE.md's "keep functions short" convention:
         this is the emulator's per-sample audio hot path, and the local-variable
         hoisting above is the reason for the length -- see the comment above
         _env_output_level for the readable, unhoisted equivalents this must stay

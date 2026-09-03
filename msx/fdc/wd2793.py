@@ -88,7 +88,7 @@ class WD2793:
     #   for the same lifetime-safety reason -- prefer a selected-drive index
     #   passed explicitly, same as the Rust shape.
     # Kept as-is here because: port target/shape not decided yet -- no
-    #   C++/Rust port exists yet (see AGENTS.md's "pure Python" tech-stack
+    #   C++/Rust port exists yet (see CLAUDE.md's "pure Python" tech-stack
     #   note), and the fix touches this class's entire public API plus every
     #   caller. See logs/review-python-20260814-210824.md for the full analysis.
     drive: DiskDrive | None = None
