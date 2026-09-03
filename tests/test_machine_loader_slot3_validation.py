@@ -18,7 +18,7 @@ from msx.machine_loader import MachineLoadError, _parse_slot3_msx2
 
 # allium/machine-config-loader.allium's config.max_sub_slot_index (= 3):
 # derived from the secondary slot register's 2-bit-per-page sub-slot field
-# (openspec/specs/msx2-subslot/spec.md's "Secondary slot register field" /
+# (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register field" /
 # "Slot 3 sub-slot dispatch" Requirements), not picked by this test.
 _OUT_OF_RANGE_SUBSLOT = 4
 

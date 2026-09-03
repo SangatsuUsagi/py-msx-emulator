@@ -599,7 +599,7 @@ class Machine:
                         # both be no-ops anyway. _line_cycle (the S#2 horizontal-
                         # retrace input) still needs updating every instruction
                         # regardless, via the direct increment below -- see
-                        # openspec vdp-cmd-timing for the full rationale.
+                        # openspec vdp-command-engine for the full rationale.
                         if vdp9938._cmd_active:
                             vdp9938.tick(n)
                         else:

@@ -108,7 +108,7 @@ _SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
 _SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
-# field (openspec/specs/msx2-subslot/spec.md's "Secondary slot register
+# field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
 # field" Requirement: bits 7:6/5:4/3:2/1:0 select the sub-slot for pages
 # 3/2/1/0 respectively; the "Slot 3 sub-slot dispatch" Requirement extracts
 # it as `(sub_slot_reg >> (page * 2)) & 0x03`, matching msx/memory.py's own

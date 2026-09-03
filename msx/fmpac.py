@@ -24,7 +24,7 @@ class FmPacState(TypedDict):
 
     Nests the carried OPLL's own OpllState, so restoring a FmPacState fully
     reinstates the device's persistent state (SRAM/bank/enable/magic
-    registers and the OPLL) in one call, matching the state-save-load spec's
+    registers and the OPLL) in one call, matching the machine-state spec's
     "Mapper snapshot and restore API" requirement.
     """
 
