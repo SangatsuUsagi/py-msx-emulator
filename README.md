@@ -41,6 +41,8 @@ see [Spec-driven architecture](#spec-driven-architecture). Component wiring is
 explicit — done by hand in `build_machine()`, with no reflection or
 dependency-injection magic. The only platform-specific dependency is pysdl2,
 for the display and audio frontend.
+[`docs/technical-implementation.md`](docs/technical-implementation.md) walks
+through the internals.
 
 ---
 
