@@ -1,9 +1,10 @@
 """Optional root ``py_emulator.yaml`` startup configuration.
 
-Loads user defaults for startup options (machine, speed, mapper, FM-PAC, RPC),
+Loads user defaults for startup options (machine, speed, FM-PAC, RPC),
 gamepad settings (button assignment, turbo rate), and mouse settings
 (enabled, port). Values are merged with the precedence built-in defaults <
-config file < CLI arguments; see ``__main__``.
+config file < CLI arguments; see ``__main__``. Cartridge mapper selection
+(``--mapper`` / ``--mapper2``) is CLI-only and has no config-file equivalent.
 
 When the file is absent (or unreadable), an all-unset :class:`AppConfig` is
 returned and behaviour is identical to running with no config.
@@ -30,10 +31,11 @@ DEFAULT_SCALE = 3
 DEFAULT_TURBO_PERIOD = 3
 DEFAULT_MOUSE_PORT = 2
 
-# Accepted cartridge mapper names for --mapper / config `mapper:`. Must stay in
-# sync with machine_loader._SUPPORTED_MAPPERS (plus "auto"); a test asserts the
-# two agree so the lists cannot drift. app_config does not import machine_loader
-# to avoid an import cycle, hence the duplicated literal guarded by that test.
+# Accepted cartridge mapper names for --mapper (CLI-only; no config-file
+# equivalent, see app-config-file spec). Must stay in sync with
+# machine_loader._SUPPORTED_MAPPERS (plus "auto"); a test asserts the two agree
+# so the lists cannot drift. app_config does not import machine_loader to avoid
+# an import cycle, hence the duplicated literal guarded by that test.
 VALID_MAPPERS: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16",
     "Konami", "KonamiSCC", "Majutsushi",
@@ -41,7 +43,7 @@ VALID_MAPPERS: tuple[str, ...] = (
     "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
 )
 
-# Accepted slot 2 cartridge mapper names for --mapper2 / config `mapper2:`.
+# Accepted slot 2 cartridge mapper names for --mapper2 (CLI-only, see above).
 # Slot 2 has no SCC/SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
 VALID_MAPPERS2: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
@@ -83,7 +85,7 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
 }
 
 _KNOWN_TOP_KEYS = frozenset({
-    "machine", "speed", "scale", "mapper", "fmpac", "slot2", "mapper2",
+    "machine", "speed", "scale", "fmpac", "slot2",
     "frame_skip", "scc_plus", "rpc", "joystick", "keyboard_joystick", "mouse",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
@@ -107,10 +109,8 @@ class AppConfig:
     machine: str | None = None
     speed: float | None = None
     scale: int | None = None
-    mapper: str | None = None
     fmpac: bool | None = None
     slot2: str | None = None
-    mapper2: str | None = None
     frame_skip: bool | None = None
     scc_plus: bool | None = None
     rpc_enabled: bool | None = None
@@ -243,10 +243,8 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.machine = _opt_str(raw, "machine")
     cfg.speed = _opt_positive_float(raw, "speed")
     cfg.scale = _opt_positive_int(raw, "scale")
-    cfg.mapper = _opt_mapper(raw)
     cfg.fmpac = _opt_bool(raw, "fmpac")
     cfg.slot2 = _opt_slot2(raw, root)
-    cfg.mapper2 = _opt_mapper2(raw)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
     cfg.scc_plus = _opt_bool(raw, "scc_plus")
     _parse_rpc(raw.get("rpc"), cfg)
@@ -293,24 +291,6 @@ def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
         raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be an integer")
     if value < 1:
         raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be a positive integer")
-    return value
-
-
-def _opt_mapper(raw: dict[str, Any]) -> str | None:
-    value = _opt_str(raw, "mapper")
-    if value is not None and value not in VALID_MAPPERS:
-        raise AppConfigError(
-            f"{CONFIG_FILENAME}: mapper {value!r} is not one of {', '.join(VALID_MAPPERS)}"
-        )
-    return value
-
-
-def _opt_mapper2(raw: dict[str, Any]) -> str | None:
-    value = _opt_str(raw, "mapper2")
-    if value is not None and value not in VALID_MAPPERS2:
-        raise AppConfigError(
-            f"{CONFIG_FILENAME}: mapper2 {value!r} is not one of {', '.join(VALID_MAPPERS2)}"
-        )
     return value
 
 

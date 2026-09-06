@@ -107,25 +107,29 @@ def test_builtin_scale_when_neither_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# mapper
+# mapper (CLI-only -- no py_emulator.yaml equivalent, see app-config-file spec
+# "Cartridge mapper selection is CLI-only")
 # ---------------------------------------------------------------------------
 
-def test_config_mapper_used_when_cli_omitted() -> None:
+def test_cli_mapper_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(mapper="KonamiSCC"))
-    assert build_mock.call_args.kwargs["mapper"] == "KonamiSCC"
-
-
-def test_cli_mapper_overrides_config() -> None:
-    _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1", "--mapper", "Konami"],
-        app_cfg=AppConfig(mapper="KonamiSCC"))
+        ["--machine", "cbios_msx1", "--mapper", "Konami"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["mapper"] == "Konami"
 
 
 def test_builtin_mapper_auto_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["mapper"] == "auto"
+
+
+def test_config_mapper_attr_has_no_effect() -> None:
+    """Regression: even a stray `mapper` attribute on AppConfig (as a stale
+    config-loader stub might carry) must not affect the effective mapper --
+    only `--mapper` does."""
+    cfg = AppConfig()
+    cfg.mapper = "KonamiSCC"  # type: ignore[attr-defined]
+    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
     assert build_mock.call_args.kwargs["mapper"] == "auto"
 
 
@@ -209,25 +213,28 @@ def test_no_slot2_cartridge_when_neither_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# mapper2
+# mapper2 (CLI-only -- no py_emulator.yaml equivalent, see app-config-file
+# spec "Cartridge mapper selection is CLI-only")
 # ---------------------------------------------------------------------------
 
-def test_config_mapper2_used_when_cli_omitted() -> None:
+def test_cli_mapper2_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(mapper2="Konami"))
-    assert build_mock.call_args.kwargs["mapper2"] == "Konami"
-
-
-def test_cli_mapper2_overrides_config() -> None:
-    _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1", "--mapper2", "ASCII8"],
-        app_cfg=AppConfig(mapper2="Konami"))
+        ["--machine", "cbios_msx1", "--mapper2", "ASCII8"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["mapper2"] == "ASCII8"
 
 
 def test_builtin_mapper2_auto_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["mapper2"] == "auto"
+
+
+def test_config_mapper2_attr_has_no_effect() -> None:
+    """Regression: a stray `mapper2` attribute on AppConfig must not affect
+    the effective slot 2 mapper -- only `--mapper2` does."""
+    cfg = AppConfig()
+    cfg.mapper2 = "Konami"  # type: ignore[attr-defined]
+    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
     assert build_mock.call_args.kwargs["mapper2"] == "auto"
 
 

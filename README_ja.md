@@ -521,9 +521,8 @@ cp py_emulator.example.yaml py_emulator.yaml
 machine: cbios_msx2_jp   # デフォルトのマシン ID（未設定なら自動判定）
 speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
-mapper: auto             # スロット 1 マッパー（--mapper の選択肢参照）
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
-# mapper2: auto          # スロット 2 マッパー（--mapper2 の選択肢参照）
+# mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
 fmpac: false             # スロット 2 に FM-PAC を重ねる
 scc_plus: false          # スロット 1 に SCC-I（SCC+）カートリッジを接続
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
@@ -558,8 +557,9 @@ mouse:
   port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
 ```
 
-設定できるのは `machine`・`speed`・`scale`・`mapper`・`slot2`・`mapper2`・`fmpac`・
-`scc_plus`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です。
+設定できるのは `machine`・`speed`・`scale`・`slot2`・`fmpac`・
+`scc_plus`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
+（`mapper`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper2` を参照）。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
 コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
@@ -885,6 +885,10 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.11** (2026-09-06) — `py_emulator.yaml` の `mapper`/`mapper2` 設定
+  キーを削除し、カートリッジマッパー選択を CLI 専用（`--mapper` /
+  `--mapper2`）に統一。設定ファイル側のデフォルトが `--scc-plus` との排他
+  チェックを誤って発火させていた不具合を修正。
 - **v2.5.10** (2026-09-01) — 未整備だったコンポーネント（RTC、フロッピーディスクイメージ/ドライブ、plain/fixed-page マッパー、I/O バス、Z80 の ED/CB/DD/FD プレフィックス群）向けに Allium 仕様を追加し、その過程で見つかった実バグを複数修正：RTC の CMOS RAM をマシンごとに `saves/sram/rtc_<machine_id>.sram` へ永続化する対応（従来は単一の共有ファイルで、あるマシンの設定が別マシンに漏れる不具合があった）と 12/24 時間モードのエンコード不具合修正、および Z80 の非公式命令 DDCB/FDCB のレジスタエコー動作の実装漏れ。あわせて、フロッピーディスクの状態（WD2793/TC8566AF のレジスタ、ドライブ位置、マウント中ディスクの同一性）をステートセーブ/ロードに対応、FDC種別・ディスク同一性の不一致チェック付き。
 - **v2.5.9** (2026-08-25) — 全コンポーネントに対するOpenSpec/Alliumの棚卸しを実施し、各仕様書をopenMSXと実装に照らして再検証。その過程で見つかった精度バグを複数修正（V9938スプライト描画、ASCII8/ASCII16マッパーのバンク演算、SCC-Iモード同期、マウスプロトコルのタイミングなど）。
 - **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。

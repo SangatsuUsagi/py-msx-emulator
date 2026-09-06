@@ -319,7 +319,7 @@ def main() -> None:
 
     speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
     scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
-    mapper_eff = _first_set(args.mapper, app_cfg.mapper, default=DEFAULT_MAPPER)
+    mapper_eff = _first_set(args.mapper, default=DEFAULT_MAPPER)
     fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, default=False)
     scc_plus_eff = _first_set(args.scc_plus, app_cfg.scc_plus, default=False)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
@@ -327,7 +327,7 @@ def main() -> None:
     # slot2's built-in default is "no cartridge" (None), unlike the concrete
     # defaults above — _first_set's keyword-only `default` accepts that directly.
     slot2_eff = _first_set(args.slot2, app_cfg.slot2, default=None)
-    mapper2_eff = _first_set(args.mapper2, app_cfg.mapper2, default="auto")
+    mapper2_eff = _first_set(args.mapper2, default="auto")
     if app_cfg.frame_skip is None:
         frame_skip_cfg = None
     elif app_cfg.frame_skip:
@@ -350,10 +350,12 @@ def main() -> None:
         print("error: --scc-plus and a cartridge ROM argument are mutually "
               "exclusive (SCC-I occupies slot 1)", file=sys.stderr)
         sys.exit(1)
-    # Checked against the raw sources, not mapper_eff: mapper_eff folds in
+    # Checked against args.mapper, not mapper_eff: mapper_eff folds in
     # DEFAULT_MAPPER ("auto"), so it can't distinguish an explicit
-    # --mapper auto from --mapper never having been passed at all.
-    if scc_plus_eff and (args.mapper is not None or app_cfg.mapper is not None):
+    # --mapper auto from --mapper never having been passed at all. --mapper
+    # has no config-file equivalent (see app-config-file spec), so only the
+    # CLI flag needs checking here.
+    if scc_plus_eff and args.mapper is not None:
         print("error: --scc-plus and --mapper are mutually exclusive "
               "(SCC-I forces slot 1 to the SCC-I cartridge)", file=sys.stderr)
         sys.exit(1)

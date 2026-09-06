@@ -34,12 +34,11 @@ def test_empty_file_returns_all_unset(tmp_path: Path) -> None:
 
 def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
     _write(tmp_path,
-           "machine: cbios_msx1_jp\nspeed: 2.0\nscale: 4\nmapper: KonamiSCC\nfmpac: true\n")
+           "machine: cbios_msx1_jp\nspeed: 2.0\nscale: 4\nfmpac: true\n")
     cfg = load_app_config(tmp_path)
     assert cfg.machine == "cbios_msx1_jp"
     assert cfg.speed == 2.0
     assert cfg.scale == 4
-    assert cfg.mapper == "KonamiSCC"
     assert cfg.fmpac is True
 
 
@@ -63,12 +62,11 @@ def test_nested_joystick_group_parsed(tmp_path: Path) -> None:
     assert cfg.gamepad_buttons == {"trigger_a": "leftshoulder"}
 
 
-def test_slot2_and_mapper2_parsed(tmp_path: Path) -> None:
+def test_slot2_parsed(tmp_path: Path) -> None:
     (tmp_path / "slot2.rom").write_bytes(b"\x00")
-    _write(tmp_path, "slot2: slot2.rom\nmapper2: Konami\n")
+    _write(tmp_path, "slot2: slot2.rom\n")
     cfg = load_app_config(tmp_path)
     assert cfg.slot2 == "slot2.rom"
-    assert cfg.mapper2 == "Konami"
 
 
 def test_frame_skip_parsed(tmp_path: Path) -> None:
@@ -106,15 +104,30 @@ def test_unknown_nested_key_warns(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "rpc.bogus" in capsys.readouterr().err
 
 
+def test_mapper_key_not_recognized(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`mapper` is CLI-only (--mapper); the config key is unrecognized. See
+    app-config-file spec, "Cartridge mapper selection is CLI-only"."""
+    _write(tmp_path, "mapper: Konami\n")
+    cfg = load_app_config(tmp_path)
+    assert not hasattr(cfg, "mapper")
+    assert "mapper" in capsys.readouterr().err
+
+
+def test_mapper2_key_not_recognized(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`mapper2` is CLI-only (--mapper2); the config key is unrecognized."""
+    _write(tmp_path, "mapper2: Konami\n")
+    cfg = load_app_config(tmp_path)
+    assert not hasattr(cfg, "mapper2")
+    assert "mapper2" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
-
-def test_invalid_mapper_rejected(tmp_path: Path) -> None:
-    _write(tmp_path, "mapper: NotAMapper\n")
-    with pytest.raises(AppConfigError):
-        load_app_config(tmp_path)
-
 
 def test_non_positive_speed_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "speed: 0\n")
@@ -148,12 +161,6 @@ def test_unknown_button_label_rejected(tmp_path: Path) -> None:
 
 def test_unknown_button_function_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "joystick:\n  buttons:\n    fire3: a\n")
-    with pytest.raises(AppConfigError):
-        load_app_config(tmp_path)
-
-
-def test_invalid_mapper2_rejected(tmp_path: Path) -> None:
-    _write(tmp_path, "mapper2: NotAMapper\n")
     with pytest.raises(AppConfigError):
         load_app_config(tmp_path)
 

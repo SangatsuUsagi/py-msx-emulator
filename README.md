@@ -711,9 +711,8 @@ is git-ignored, so local settings stay out of version control.
 machine: cbios_msx2_jp   # default machine ID (auto-detected when unset)
 speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
-mapper: auto             # slot 1 mapper (see --mapper choices)
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
-# mapper2: auto          # slot 2 mapper (see --mapper2 choices)
+# mapper/mapper2 are CLI-only (--mapper / --mapper2); not configurable here
 fmpac: false             # overlay an FM-PAC in slot 2
 scc_plus: false          # connect an SCC-I (SCC+) cartridge in slot 1
 frame_skip: true         # true = auto (default), false = none (disable)
@@ -748,9 +747,10 @@ mouse:
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
 ```
 
-`machine`, `speed`, `scale`, `mapper`, `slot2`, `mapper2`, `fmpac`, `scc_plus`,
+`machine`, `speed`, `scale`, `slot2`, `fmpac`, `scc_plus`,
 `frame_skip`, `mouse`, and RPC/gamepad/keyboard-joystick settings are
-configurable; the gamepad button map applies to the SDL GameController path
+configurable (`mapper`/`mapper2` are CLI-only, see `--mapper`/`--mapper2`
+above); the gamepad button map applies to the SDL GameController path
 (both ports share one map), `keyboard_joystick.buttons` applies to Joy1's
 keyboard emulation only, and `--mouse` on the command line always overrides
 `mouse.enabled`/`mouse.port`. See `py_emulator.example.yaml` for the full
@@ -1113,6 +1113,10 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.11** (2026-09-06) — Remove the `mapper`/`mapper2` `py_emulator.yaml`
+  config keys; cartridge mapper selection is now CLI-only (`--mapper` /
+  `--mapper2`). Fixes a config-file default silently and falsely tripping the
+  `--scc-plus`/`--mapper` mutual-exclusivity check.
 - **v2.5.10** (2026-09-01) — Add Allium specs for the remaining uncovered components (RTC, floppy disk image/drive, plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups), fixing several real bugs found along the way: RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram` (previously a single shared file let one machine's settings leak into another's) with a 12/24-hour encoding fix, and an undocumented Z80 DDCB/FDCB register-echo behavior is now implemented. Also adds full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with FDC-kind and disk-identity mismatch checks.
 - **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
 - **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).

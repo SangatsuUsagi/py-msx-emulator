@@ -90,18 +90,19 @@ def test_scc_plus_with_fmpac_boots() -> None:
 # py_emulator.yaml scc_plus key
 # ---------------------------------------------------------------------------
 
-def test_config_scc_plus_conflicts_with_config_mapper(tmp_path: Path) -> None:
+def test_config_mapper_key_is_ignored(tmp_path: Path) -> None:
+    """`mapper:` has no config-file equivalent (CLI-only, see app-config-file
+    spec "Cartridge mapper selection is CLI-only") -- the loader must not
+    surface it on AppConfig, and it must not make `scc_plus: true` conflict
+    with the (unset) mapper. Regression for a stray config `mapper:` key
+    falsely tripping the --scc-plus/--mapper mutual-exclusivity check."""
     from msx.app_config import load_app_config
     (tmp_path / "py_emulator.yaml").write_text(
         "scc_plus: true\nmapper: KonamiSCC\n", encoding="utf-8"
     )
     cfg = load_app_config(tmp_path)
     assert cfg.scc_plus is True
-    assert cfg.mapper == "KonamiSCC"
-    # __main__.py's own validation (args.mapper is None or app_cfg.mapper is
-    # not None) is exercised at the CLI level by
-    # test_scc_plus_and_mapper_conflict_exits_nonzero above; this test only
-    # confirms the config loader surfaces both values for that check to see.
+    assert not hasattr(cfg, "mapper")
 
 
 def _fake_app_config(**overrides: object) -> object:
@@ -128,12 +129,15 @@ def test_cli_scc_plus_overrides_config_false() -> None:
     assert "scc-plus" in out
 
 
-def test_config_scc_plus_and_config_mapper_conflict_exits_nonzero() -> None:
+def test_config_scc_plus_boots_even_with_stray_config_mapper_attr() -> None:
+    """A stale/foreign `mapper` attribute on AppConfig (as could come from an
+    out-of-date config-loader stub) must not be consulted by __main__.py --
+    only `--mapper` (the CLI flag) participates in the --scc-plus check."""
     with patch("msx.app_config.load_app_config",
                return_value=_fake_app_config(scc_plus=True, mapper="KonamiSCC")):
-        code, _out, err = _run_main(["--count-frame", "1"])
-    assert code != 0
-    assert "--scc-plus" in err and "--mapper" in err
+        code, out, _err = _run_main(["--count-frame", "1"])
+    assert code == 0
+    assert "scc-plus" in out
 
 
 # ---------------------------------------------------------------------------
