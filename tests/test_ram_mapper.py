@@ -1,4 +1,6 @@
 """Tests for msx.ram_mapper.RamMapper."""
+import pytest
+
 from msx.ram_mapper import RamMapper
 
 # ---------------------------------------------------------------------------
@@ -8,6 +10,24 @@ from msx.ram_mapper import RamMapper
 def test_ram_size_is_128kb() -> None:
     rm = RamMapper()
     assert len(rm.ram) == 131072
+
+
+def test_configured_size_256kb() -> None:
+    rm = RamMapper(size_kb=256)
+    assert len(rm.ram) == 262144
+    assert rm.bank_mask == 0x0F
+
+
+def test_configured_size_512kb() -> None:
+    rm = RamMapper(size_kb=512)
+    assert len(rm.ram) == 524288
+    assert rm.bank_mask == 0x1F
+
+
+@pytest.mark.parametrize("bad_size", [0, -16, 100, 15])
+def test_invalid_size_rejected(bad_size: int) -> None:
+    with pytest.raises(ValueError):
+        RamMapper(size_kb=bad_size)
 
 
 def test_initial_bank_registers() -> None:
@@ -130,3 +150,27 @@ def test_write_port_value_zero() -> None:
     rm = RamMapper()
     rm.write_port(0xFD, 0x00)
     assert rm.banks[1] == 0
+
+
+# ---------------------------------------------------------------------------
+# Configurable size: bank masking and port read-back for larger mappers
+# ---------------------------------------------------------------------------
+
+def test_bank_number_masked_to_4_bits_on_256kb() -> None:
+    rm = RamMapper(size_kb=256)
+    rm.write_port(0xFF, 0x10)  # 0x10 & 0x0F = 0
+    assert rm.banks[3] == 0
+    rm.write_port(0xFF, 0x1F)  # 0x1F & 0x0F = 0x0F (bank 15)
+    assert rm.banks[3] == 0x0F
+
+
+def test_read_port_returns_page2_bank_on_256kb() -> None:
+    rm = RamMapper(size_kb=256)
+    rm.banks[2] = 3
+    assert rm.read_port(0xFE) == 0xF3  # 0x03 | 0xF0
+
+
+def test_read_port_returns_page2_bank_on_512kb() -> None:
+    rm = RamMapper(size_kb=512)
+    rm.banks[2] = 3
+    assert rm.read_port(0xFE) == 0xE3  # 0x03 | 0xE0

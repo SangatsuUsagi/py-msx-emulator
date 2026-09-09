@@ -265,6 +265,7 @@ class _Slot3Msx2:
     sub_rom: _RomEntry | None = None
     sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
+    ram_mapper_size_kb: int = 128
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
     fdc: _FdcDef | None = None
@@ -296,6 +297,11 @@ class MachineSpec:
 
     # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
     keyboard_type: str = "int"
+
+    # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
+    # from the mapper: standard sub-slot's size_kb -- default 128 preserves
+    # every machine configured before this became configurable.
+    ram_mapper_size_kb: int = 128
 
     # The --machine value / config/machines/<machine_id>.yaml stem this spec
     # was loaded for (set by load_machine_spec). Used for per-machine (as
@@ -444,6 +450,7 @@ def _is_sub_slot_shape(data: object) -> TypeGuard[SubSlotYaml]:
 class Slot3Msx2Yaml(TypedDict, total=False):
     expanded: bool
     mapper: str
+    size_kb: int
     # Raw YAML keys (int-or-str) pre-_int_keys() coercion -- narrowed to
     # dict[int, SubSlotYaml] per-item after coercion (design.md Decision 4).
     secondary: dict[Any, Any]
@@ -677,6 +684,13 @@ def _check_subslot_index(context: str, label: str, value: int) -> None:
         )
 
 
+def _check_ram_mapper_size_kb(context: str, size_kb: int) -> None:
+    if size_kb <= 0 or size_kb % 16 != 0:
+        raise MachineLoadError(
+            f"{context}: RAM mapper size_kb must be a positive multiple of 16, got {size_kb}"
+        )
+
+
 def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
     """Resolve an MSX2 slot 3 declaration into a _Slot3Msx2.
 
@@ -722,11 +736,18 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
                     result.fdc_subslot = sub_idx
             if sub_val.get("mapper") == "standard":
                 result.has_ram_mapper = True
+                result.ram_mapper_size_kb = int(sub_val.get("size_kb", 128))
+                _check_ram_mapper_size_kb(
+                    f"machine '{machine_id}' slot 3 sub-slot {sub_idx}",
+                    result.ram_mapper_size_kb,
+                )
             elif sub_val.get("type") == "ram":
                 result.flat_ram_subslot = sub_idx
                 result.flat_ram_size_kb = int(sub_val.get("size_kb", 64))
     elif slot3.get("mapper") == "standard":
         result.has_ram_mapper = True
+        result.ram_mapper_size_kb = int(slot3.get("size_kb", 128))
+        _check_ram_mapper_size_kb(f"machine '{machine_id}' slot 3", result.ram_mapper_size_kb)
 
     context = f"machine '{machine_id}' slot 3"
     if result.sub_rom is not None:
@@ -903,6 +924,7 @@ def load_machine_spec(
     sub_rom_entry: _RomEntry | None = None
     sub_rom_subslot = 0
     has_ram_mapper = False
+    ram_mapper_size_kb = 128
     ram_size_kb = 32
     flat_ram_subslot: int | None = None
     flat_ram_size_kb = 64
@@ -920,6 +942,7 @@ def load_machine_spec(
         sub_rom_entry = s3.sub_rom
         sub_rom_subslot = s3.sub_rom_subslot
         has_ram_mapper = s3.has_ram_mapper
+        ram_mapper_size_kb = s3.ram_mapper_size_kb
         flat_ram_subslot = s3.flat_ram_subslot
         flat_ram_size_kb = s3.flat_ram_size_kb
         fdc = s3.fdc
@@ -944,6 +967,7 @@ def load_machine_spec(
         logo_rom_entry=logo_rom_entry,
         sub_rom_entry=sub_rom_entry,
         has_ram_mapper=has_ram_mapper,
+        ram_mapper_size_kb=ram_mapper_size_kb,
         ram_size_kb=ram_size_kb,
         has_v9938=has_v9938,
         has_rtc=has_rtc,
@@ -1390,7 +1414,7 @@ def _build_msx2(
         ram_bytes = bytearray(spec.flat_ram_size_kb * 1024)
         flat_ram_subslot: int | None = spec.flat_ram_subslot
     else:
-        ram_mapper = RamMapper() if spec.has_ram_mapper else None
+        ram_mapper = RamMapper(size_kb=spec.ram_mapper_size_kb) if spec.has_ram_mapper else None
         ram_bytes = bytearray(32768)
         flat_ram_subslot = None
 

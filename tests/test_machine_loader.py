@@ -1,6 +1,7 @@
 """Tests for msx/machine_loader.py — YAML-based machine configuration loader."""
 from __future__ import annotations
 
+import dataclasses
 import textwrap
 from pathlib import Path
 
@@ -372,6 +373,24 @@ def test_build_machine_msx2_has_ram_mapper(tmp_path: Path) -> None:
     assert isinstance(machine.memory.ram_mapper, RamMapper)
 
 
+def test_build_machine_msx2_ram_mapper_default_size_is_128kb(tmp_path: Path) -> None:
+    spec = _make_msx2_spec(tmp_path)
+    machine = build_machine(
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
+    )
+    assert machine.memory.ram_mapper is not None
+    assert len(machine.memory.ram_mapper.ram) == 131072
+
+
+def test_build_machine_msx2_ram_mapper_honours_configured_size(tmp_path: Path) -> None:
+    spec = dataclasses.replace(_make_msx2_spec(tmp_path), ram_mapper_size_kb=256)
+    machine = build_machine(
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
+    )
+    assert machine.memory.ram_mapper is not None
+    assert len(machine.memory.ram_mapper.ram) == 262144
+
+
 def test_build_machine_bios_override_no_disk_needed(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
     # rom_base_dir points at a directory that has no ROM files — override must bypass disk
@@ -579,6 +598,43 @@ def test_parse_slot3_msx2_flat_ram_last_declared_subslot_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
+# RAM mapper size resolution (openspec/changes/ram-mapper-configurable-size)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot3_msx2_mapper_standard_defaults_to_128kb() -> None:
+    slot3 = {"expanded": True, "secondary": {2: {"type": "ram", "mapper": "standard"}}}
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_size_kb == 128
+
+
+def test_parse_slot3_msx2_mapper_standard_honours_declared_size() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {2: {"type": "ram", "mapper": "standard", "size_kb": 256}},
+    }
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.ram_mapper_size_kb == 256
+
+
+def test_parse_slot3_msx2_mapper_standard_non_expanded_honours_declared_size() -> None:
+    slot3 = {"mapper": "standard", "size_kb": 512}
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.has_ram_mapper is True
+    assert result.ram_mapper_size_kb == 512
+
+
+def test_parse_slot3_msx2_mapper_standard_invalid_size_rejected() -> None:
+    slot3 = {
+        "expanded": True,
+        "secondary": {2: {"type": "ram", "mapper": "standard", "size_kb": 100}},
+    }
+    with pytest.raises(MachineLoadError, match="size_kb.*100"):
+        _parse_slot3_msx2(slot3, "test")
+
+
+# ---------------------------------------------------------------------------
 # Malformed `content:` list items are silently skipped, not a crash
 # (allium A-8 / code fix: _is_content_item_shape guard)
 # ---------------------------------------------------------------------------
@@ -734,3 +790,26 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
     machine = build_machine(spec, bios_override=_FAKE_ROM_32K, logo_override=custom_logo)
     assert machine.memory.extrom is not None
     assert machine.memory.extrom[0] == 0xCD
+
+
+# ---------------------------------------------------------------------------
+# Real config/machines/cbios_msx2*.yaml keep their pre-existing 128 KB RAM
+# mapper resolution unchanged now that size_kb is configurable
+# (openspec/changes/ram-mapper-configurable-size)
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_CONFIG = _REPO_ROOT / "config"
+
+
+@pytest.mark.parametrize(
+    "machine_id", ["cbios_msx2", "cbios_msx2_jp", "cbios_msx2_eu", "cbios_msx2_br"]
+)
+def test_real_cbios_msx2_machines_resolve_128kb_ram_mapper(machine_id: str) -> None:
+    registry = load_device_registry(_REPO_CONFIG)
+    spec = load_machine_spec(machine_id, _REPO_CONFIG, registry, _REPO_ROOT)
+    assert spec.has_ram_mapper is True
+    assert spec.ram_mapper_size_kb == 128
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K)
+    assert machine.memory.ram_mapper is not None
+    assert len(machine.memory.ram_mapper.ram) == 131072
