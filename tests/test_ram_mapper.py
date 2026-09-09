@@ -174,3 +174,23 @@ def test_read_port_returns_page2_bank_on_512kb() -> None:
     rm = RamMapper(size_kb=512)
     rm.banks[2] = 3
     assert rm.read_port(0xFE) == 0xE3  # 0x03 | 0xE0
+
+
+def test_bank_number_masked_to_5_bits_on_512kb() -> None:
+    rm = RamMapper(size_kb=512)
+    rm.write_port(0xFF, 0x20)  # 0x20 & 0x1F = 0
+    assert rm.banks[3] == 0
+    rm.write_port(0xFF, 0x3F)  # 0x3F & 0x1F = 0x1F (bank 31)
+    assert rm.banks[3] == 0x1F
+
+
+def test_minimum_size_16kb_single_bank() -> None:
+    # num_banks = 1 -> bit_ceil(1) - 1 = 0: the smallest valid configuration,
+    # where every bank register is forced to bank 0 regardless of what is
+    # written to it.
+    rm = RamMapper(size_kb=16)
+    assert len(rm.ram) == 16384
+    assert rm.bank_mask == 0
+    rm.write_port(0xFF, 0x07)
+    assert rm.banks[3] == 0
+    assert rm.read_port(0xFF) == 0xFF  # 0 | ~0 & 0xFF

@@ -399,11 +399,16 @@ class V9938:
     @property
     def display_width(self) -> int:
         """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
-        SCREEN 7 (G6), i.e. M5 set with M4 clear. SCREEN 8 (G7, M5+M4) is 256."""
+        SCREEN 7 (G6) (M5 set, M4 clear; SCREEN 8/G7, M5+M4, is 256), and for
+        TEXT2 (M1 and M4 set, M3 clear)."""
         r0 = self.regs[0]
+        r1 = self.regs[1]
+        m1 = (r1 >> 4) & 1
+        m3 = (r0 >> 1) & 1
         m4 = (r0 >> 2) & 1
         m5 = (r0 >> 3) & 1
-        return 512 if (m5 and not m4) else 256
+        is_text2 = m4 and m1 and not m3
+        return 512 if ((m5 and not m4) or is_text2) else 256
 
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""
