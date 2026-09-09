@@ -694,9 +694,14 @@ claude mcp list        # msx-emulator  ●  connected
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
+| `hb_f1xd_256` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
+
+`hb_f1xd_256` は上記 `hb_f1xd` と同じ ROM・フロッピードライブ構成を流用しつつ、スロット3のflat 64KB RAMを256KBのRAM mapperに置き換えたものです——MSX-DOS2の拡張BIOSマッパーサポートルーチンには128KB以上のRAM mapperが必要であり、flat RAMではサイズを増やしてもこの要件を満たせないためです。
+
+> **注記**：256KBのRAM mapperを搭載したHB-F1XDの実機は存在しません。実機のHB-F1XDは常に固定64KBのflat RAMであり、RAM mapperではありません。`hb_f1xd_256` は実機に関する未検証の主張ではなく、MSX-DOS2が必要とするメモリ構成を提供するためだけに作られた架空の構成です。それ以外のHB-F1XD実機の宣言はすべてそのまま流用しています。
 
 `fs_a1f`（Panasonic FS-A1F）は実機 ROM を使用し、TC8566AF フロッピーディスクドライブを備えます。`fs-a1f_basic-bios2.rom`・`fs-a1f_msx2sub.rom`・`fs-a1f_disk.rom` を `roms/fs_a1f/` に配置し、`--fdd1` でディスクをマウントします。実機はこれらを1つの128KBマスクROMとして出荷しています — 期待される分割方法は `config/machines/fs_a1f.yaml` のコメントを参照してください。
 

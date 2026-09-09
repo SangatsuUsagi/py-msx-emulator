@@ -887,11 +887,24 @@ automatically (MSX1 ROM → `cbios_msx1_jp`; MSX2 ROM or no cartridge →
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
 | `hb_f1xd` | MSX2 | Japan | V9938 |
+| `hb_f1xd_256` | MSX2 | Japan | V9938 |
 | `fs_a1f` | MSX2 | Japan | V9938 |
 
 `hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
 disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and
 `hb-f1xd_disk.rom` under `roms/hb_f1xd/` and mount a disk with `--fdd1`.
+
+`hb_f1xd_256` reuses the same ROMs and floppy drive as `hb_f1xd` above, but
+replaces slot 3's flat 64 KB RAM with a 256 KB RAM mapper — enough for
+MSX-DOS2's extended BIOS mapper support routines, which require a RAM
+mapper with at least 128 KB and cannot use flat RAM regardless of its size.
+
+> **Note**: no real HB-F1XD variant with a 256 KB RAM mapper was ever
+> manufactured; real HB-F1XD hardware always has a fixed 64 KB flat RAM,
+> not a RAM mapper. `hb_f1xd_256` is not an unverified claim about real
+> hardware — it is an invented configuration, built solely to give
+> MSX-DOS2 the memory layout it needs, reusing every other real-hardware
+> HB-F1XD declaration unchanged.
 
 `fs_a1f` (Panasonic FS-A1F) uses the real machine ROMs and adds a TC8566AF
 floppy disk drive; place its `fs-a1f_basic-bios2.rom`, `fs-a1f_msx2sub.rom`,

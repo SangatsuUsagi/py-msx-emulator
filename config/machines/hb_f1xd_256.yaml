@@ -1,0 +1,69 @@
+schema_version: 1
+id: hb_f1xd_256
+name: "Sony HB-F1XD (MSX2, Japan) -- hypothetical 256KB RAM mapper"
+generation: msx2
+video_standard: ntsc
+rom_base: roms/hb_f1xd
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+
+# Hypothetical Sony HB-F1XD variant: BIOS+BASIC, SUB ROM, and WD2793 floppy
+# interface are identical to hb_f1xd.yaml (same ROM files under roms/hb_f1xd/,
+# same SUB ROM + FDC in slot 3 sub-slot 0). The only difference is slot 3
+# sub-slot 3: real HB-F1XD hardware has a flat 64 KB RAM there, with no RAM
+# mapper at all. This configuration replaces that with a 256 KB RAM mapper
+# instead, because MSX-DOS2's extended BIOS mapper support routines require a
+# mapper with at least 128 KB (see "Memory Mapper - MSX Wiki.md"'s Software
+# support section), which a flat, non-mapper RAM cannot provide regardless of
+# size. No real HB-F1XD variant with a 256 KB RAM mapper was ever
+# manufactured -- this is not a claim about real hardware, only a
+# configuration built to give MSX-DOS2 the memory layout it needs while
+# reusing every other real-hardware-matching HB-F1XD declaration verbatim.
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: hb-f1xd_basic-bios2.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: 4ce41fcc1a603411ec4e99556409c442078f0ecf
+    1: {type: cartridge}
+    2: {type: cartridge}
+    3:
+      expanded: true
+      secondary:
+        0:
+          content:
+            - rom:
+                file: hb-f1xd_msx2sub.rom
+                size_kb: 16
+                pages: [0]
+                sha1: 0fbd45ef3dd7bb82d4c31f1947884f411f1ca344
+          fdc:
+            ref: fdc_wd2793
+            controller: wd2793
+            connection_style: sony
+            drives: 1
+            rom:
+              file: hb-f1xd_disk.rom
+              size_kb: 16
+              pages: [1]
+              sha1: 12f2cc79b3d09723840bae774be48c0d721ec1c6
+        3:
+          type: ram
+          mapper: standard
+          size_kb: 256
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
+
+default_extensions: []
