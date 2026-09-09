@@ -215,43 +215,67 @@ class Memory:
 
     # -- page-cache resolution ------------------------------------------------
 
+    # PORT-NOTE: the read/write leaf pair below is two independent dispatch
+    #   strategies (data-driven vs. legacy), each an ORDERED chain of guards
+    #   over role-owning sub-slot indices that are runtime-configurable and
+    #   may coincide (e.g. sub_rom_subslot == fdc_subslot == 0 on real
+    #   HB-F1XD) -- translate each as a guarded if/else-if chain in the same
+    #   order, not as a switch keyed only on `sub`'s numeric value. Do NOT
+    #   unify the read and write leaves into one shared "resolve role"
+    #   helper: their legacy branches' reserved-sub-slot-1 guards differ on
+    #   purpose (the read leaf excludes both fdc_subslot and sub_rom_subslot;
+    #   the write leaf excludes only fdc_subslot -- see
+    #   _resolve_slot3_read_leaf_legacy/_resolve_slot3_write_leaf_legacy's
+    #   docstrings for why), and a shared helper would silently erase that
+    #   asymmetry. This only runs on page-cache rebuild (a `set_*` call), not
+    #   per memory access, so a plain guard chain costs nothing here that a
+    #   match/switch would save.
+
     def _resolve_slot3_read_leaf(self, page: int) -> Callable[[int], int]:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        flat_sub = self.flat_ram_subslot
-        if flat_sub is not None:
-            # Data-driven MSX2 slot-3 (e.g. HB-F1XD, FS-A1F): SUB ROM in
-            # sub-slot `sub_rom_subslot` page 0, memory-mapped FDC in
-            # sub-slot `fdc_subslot` page `fdc_page` -- independently
-            # configurable sub-slots, both defaulting to sub-slot 0 (page 1
-            # for the FDC) so every existing machine resolves identically to
-            # the pre-generalisation `if sub == 0: ...` special case -- flat
-            # 64 KB RAM (offset == address) in `flat_sub`, else open bus.
-            if sub == self.sub_rom_subslot and page == 0 and self.sub0_rom is not None:
-                return self._read_sub0_rom
-            if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
-                return self.fdc.read_mem
-            if sub == flat_sub:
-                return self._read_flat_ram
-            return self._read_open_bus
-        # Legacy sub-slot dispatch: same four-role priority list as the
-        # data-driven branch above (SUB ROM page 0, then FDC, then RAM),
-        # adapted for this branch's RAM fallback (RAM mapper or MSX1 flat
-        # RAM, rather than a single flat_sub match) --
-        #   sub_rom_subslot page 0: extension ROM (if present)
-        #   fdc_subslot/fdc_page: memory-mapped FDC (if present) -- an FDC
-        #     may coexist with a RAM mapper here, just as it already does
-        #     with the data-driven flat-RAM strategy above
-        #   sub_rom_subslot (other pages, with a sub0_rom present): open bus
-        #   1 (unless it is the FDC's or the SUB-ROM's own sub-slot):
-        #     reserved / unmapped. The sub_rom_subslot exclusion preserves a
-        #     pre-existing quirk: a machine with sub_rom_subslot == 1 and no
-        #     sub0_rom loaded falls through to RAM rather than open bus,
-        #     because the original code reached this test only via an
-        #     `elif` after an `if sub == sub_rom_subslot:` that had already
-        #     claimed the branch without returning (see allium/slots.allium
-        #     ReadByte's guidance) -- no machine does this, but this
-        #     refactor preserves it rather than silently changing it
-        #   everything else: RAM
+        if self.flat_ram_subslot is not None:
+            return self._resolve_slot3_read_leaf_data_driven(page, sub)
+        return self._resolve_slot3_read_leaf_legacy(page, sub)
+
+    def _resolve_slot3_read_leaf_data_driven(self, page: int, sub: int) -> Callable[[int], int]:
+        """Data-driven MSX2 slot-3 (e.g. HB-F1XD, FS-A1F): SUB ROM in
+        sub-slot `sub_rom_subslot` page 0, memory-mapped FDC in sub-slot
+        `fdc_subslot` page `fdc_page` -- independently configurable
+        sub-slots, both defaulting to sub-slot 0 (page 1 for the FDC) so
+        every existing machine resolves identically to the
+        pre-generalisation `if sub == 0: ...` special case -- flat 64 KB RAM
+        (offset == address) in `self.flat_ram_subslot`, else open bus."""
+        if sub == self.sub_rom_subslot and page == 0 and self.sub0_rom is not None:
+            return self._read_sub0_rom
+        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+            return self.fdc.read_mem
+        if sub == self.flat_ram_subslot:
+            return self._read_flat_ram
+        return self._read_open_bus
+
+    def _resolve_slot3_read_leaf_legacy(self, page: int, sub: int) -> Callable[[int], int]:
+        """Legacy sub-slot dispatch: same four-role priority list as
+        `_resolve_slot3_read_leaf_data_driven` (SUB ROM page 0, then FDC,
+        then RAM), adapted for this branch's RAM fallback (RAM mapper or
+        MSX1 flat RAM, rather than a single flat_sub match) --
+          sub_rom_subslot page 0: extension ROM (if present)
+          fdc_subslot/fdc_page: memory-mapped FDC (if present) -- an FDC
+            may coexist with a RAM mapper here, just as it already does
+            with the data-driven flat-RAM strategy above
+          sub_rom_subslot (other pages, with a sub0_rom present): open bus
+          1 (unless it is the FDC's or the SUB-ROM's own sub-slot):
+            reserved / unmapped. The sub_rom_subslot exclusion preserves a
+            pre-existing quirk: a machine with sub_rom_subslot == 1 and no
+            sub0_rom loaded falls through to RAM rather than open bus,
+            because the original code reached this test only via an `elif`
+            after an `if sub == sub_rom_subslot:` that had already claimed
+            the branch without returning (see allium/slots.allium ReadByte's
+            guidance) -- no machine does this, but this refactor preserves
+            it rather than silently changing it. This exclusion has no
+            write-side counterpart -- see
+            `_resolve_slot3_write_leaf_legacy`'s docstring.
+          everything else: RAM
+        """
         if sub == self.sub_rom_subslot and self.sub0_rom is not None and page == 0:
             return self._read_sub0_rom
         if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
@@ -267,23 +291,43 @@ class Memory:
 
     def _resolve_slot3_write_leaf(self, page: int) -> Callable[[int, int], None]:
         sub = (self.sub_slot_reg >> (page * 2)) & 0x03
-        flat_sub = self.flat_ram_subslot
-        if flat_sub is not None:
-            # Data-driven MSX2 slot-3 write (see _resolve_slot3_read_leaf).
-            # SUB ROM's own sub-slot needs no explicit check here: it is
-            # read-only, so it falls through to the same write_noop every
-            # other non-FDC, non-RAM sub-slot/page gets.
-            if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
-                return self.fdc.write_mem
-            if sub == flat_sub:
-                return self._write_flat_ram
-            return self._write_noop  # SUB ROM / reserved / empty sub-slots ignore writes
-        # Legacy sub-slot write dispatch: FDC test first (an FDC may coexist
-        # with a RAM mapper, same as the data-driven write branch above),
-        # then the pre-existing reserved-sub-slot-1 and read-only-SUB-ROM
-        # tests (the latter needs no page==0 guard: it is read-only, so any
-        # page falls through to write_noop the same as an unmapped page
-        # would), then RAM.
+        if self.flat_ram_subslot is not None:
+            return self._resolve_slot3_write_leaf_data_driven(page, sub)
+        return self._resolve_slot3_write_leaf_legacy(page, sub)
+
+    def _resolve_slot3_write_leaf_data_driven(
+        self, page: int, sub: int
+    ) -> Callable[[int, int], None]:
+        """Data-driven MSX2 slot-3 write (see
+        `_resolve_slot3_read_leaf_data_driven`). SUB ROM's own sub-slot
+        needs no explicit check here: it is read-only, so it falls through
+        to the same write_noop every other non-FDC, non-RAM sub-slot/page
+        gets."""
+        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+            return self.fdc.write_mem
+        if sub == self.flat_ram_subslot:
+            return self._write_flat_ram
+        return self._write_noop  # SUB ROM / reserved / empty sub-slots ignore writes
+
+    def _resolve_slot3_write_leaf_legacy(
+        self, page: int, sub: int
+    ) -> Callable[[int, int], None]:
+        """Legacy sub-slot write dispatch: FDC test first (an FDC may
+        coexist with a RAM mapper, same as
+        `_resolve_slot3_write_leaf_data_driven` above), then the
+        pre-existing reserved-sub-slot-1 and read-only-SUB-ROM tests (the
+        latter needs no page==0 guard: it is read-only, so any page falls
+        through to write_noop the same as an unmapped page would), then
+        RAM.
+
+        Unlike `_resolve_slot3_read_leaf_legacy`, the reserved-sub-slot-1
+        test below excludes only `fdc_subslot`, not `sub_rom_subslot`: write
+        behaviour for `sub == 1` was never conditioned on SUB ROM presence
+        in the original (pre-refactor) code, so there is no write-side
+        counterpart to the read leaf's fallthrough-to-RAM quirk -- this is
+        not an oversight, do not add a `sub_rom_subslot` exclusion here to
+        "match" the read leaf.
+        """
         if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
             return self.fdc.write_mem
         if sub == 1 and sub != self.fdc_subslot:
@@ -450,7 +494,7 @@ class Memory:
         if primary == 3 and is_ram_subslot:
             rm = self.ram_mapper
             if rm is not None:
-                return "128KB"
+                return f"{rm.size_kb}KB"
             n = len(self.ram)
             return f"{n // 1024}KB" if n else ""
         return ""

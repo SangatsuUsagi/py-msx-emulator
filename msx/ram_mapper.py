@@ -36,6 +36,9 @@ class RamMapper:
     ram: bytearray = field(init=False, repr=False)
     banks: list[int] = field(init=False, default_factory=lambda: [0, 0, 0, 0])
     bank_mask: int = field(init=False, default=0)
+    # ~bank_mask & 0xFF, precomputed for read_port (constant for the instance's
+    # lifetime; avoids recomputing the inverse mask on every port read).
+    _read_port_or_mask: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         if self.size_kb <= 0 or self.size_kb % 16 != 0:
@@ -44,7 +47,10 @@ class RamMapper:
             )
         num_banks = self.size_kb // 16
         self.ram = bytearray(num_banks * _BANK_SIZE)
+        # Smallest mask covering num_banks: bit_ceil(num_banks) - 1 (see class
+        # docstring's bank_mask entry).
         self.bank_mask = (1 << (num_banks - 1).bit_length()) - 1
+        self._read_port_or_mask = ~self.bank_mask & 0xFF
 
     def reset(self) -> None:
         """Restore power-on/reset bank state. RAM contents are retained,
@@ -70,7 +76,7 @@ class RamMapper:
         MSXMemoryMapperBase::peekIO, `registers[page] | ~bankMask` — real
         hardware sets them, it doesn't clear them).
         """
-        return (self.banks[(port - 0xFC) & 0x03] & self.bank_mask) | (~self.bank_mask & 0xFF)
+        return (self.banks[(port - 0xFC) & 0x03] & self.bank_mask) | self._read_port_or_mask
 
     def write_port(self, port: int, value: int) -> None:
         """Set bank register for the page corresponding to port 0xFC–0xFF."""

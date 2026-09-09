@@ -12,13 +12,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+from msx.machine_loader import (
+    MachineSpec,
+    build_machine,
+    load_device_registry,
+    load_machine_spec,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
 
 
-def _spec():
+def _spec() -> MachineSpec:
     registry = load_device_registry(_CONFIG)
     return load_machine_spec("hb_f1xd_256", _CONFIG, registry, _ROOT)
 

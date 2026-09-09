@@ -1,9 +1,8 @@
 """Tests for FDC + RAM mapper coexistence in the legacy slot-3 strategy.
 
 Before openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence,
-an FDC required
-flat_ram_subslot (the data-driven strategy); this file covers the newly
-allowed combination of an FDC with a RAM mapper instead.
+an FDC required flat_ram_subslot (the data-driven strategy); this file
+covers the newly allowed combination of an FDC with a RAM mapper instead.
 
 slot_register 0xFF selects slot 3 for every page, so sub_slot_reg alone
 drives the sub-slot dispatch. sub_slot_reg bit pairs: page0=1:0, page1=3:2,
@@ -35,7 +34,9 @@ class _StubFdc:
         self.writes.append((addr, value))
 
 
-def _make_mapper(sub0_rom: bytes | None = None, fdc: object | None = None) -> Memory:
+def _make_memory_with_ram_mapper(
+    sub0_rom: bytes | None = None, fdc: object | None = None
+) -> Memory:
     """HB-F1XD's real sub-slot-0-sharing layout (SUB ROM page 0, FDC page 1,
     both sub-slot 0), but with a RAM mapper instead of flat RAM."""
     return Memory(
@@ -52,14 +53,14 @@ def _make_mapper(sub0_rom: bytes | None = None, fdc: object | None = None) -> Me
 
 def test_sub0_page0_serves_sub_rom_with_mapper_present() -> None:
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
-    mem = _make_mapper(sub0_rom=sub_rom)
+    mem = _make_memory_with_ram_mapper(sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)  # every page -> sub-slot 0
     assert mem.read(0x0000) == 0x41
 
 
 def test_sub0_page1_read_delegates_to_fdc() -> None:
     fdc = _StubFdc()
-    mem = _make_mapper(fdc=fdc)
+    mem = _make_memory_with_ram_mapper(fdc=fdc)
     mem.set_sub_slot_reg(0x00)  # every page -> sub-slot 0
     assert mem.read(0x4000) == 0x99
     assert fdc.reads == [0x4000]
@@ -68,7 +69,7 @@ def test_sub0_page1_read_delegates_to_fdc() -> None:
 def test_sub0_page0_not_affected_by_fdc_presence() -> None:
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
     fdc = _StubFdc()
-    mem = _make_mapper(sub0_rom=sub_rom, fdc=fdc)
+    mem = _make_memory_with_ram_mapper(sub0_rom=sub_rom, fdc=fdc)
     mem.set_sub_slot_reg(0x00)
     assert mem.read(0x0000) == 0x41
     assert fdc.reads == []
@@ -76,7 +77,7 @@ def test_sub0_page0_not_affected_by_fdc_presence() -> None:
 
 def test_other_subslot_routes_to_ram_mapper() -> None:
     fdc = _StubFdc()
-    mem = _make_mapper(fdc=fdc)
+    mem = _make_memory_with_ram_mapper(fdc=fdc)
     mem.set_sub_slot_reg(0b11_11_11_11)  # every page -> sub-slot 3: RAM mapper
     mem.write(0xC000, 0x55)
     assert mem.read(0xC000) == 0x55
@@ -85,7 +86,7 @@ def test_other_subslot_routes_to_ram_mapper() -> None:
 
 def test_sub0_page1_write_delegates_to_fdc() -> None:
     fdc = _StubFdc()
-    mem = _make_mapper(fdc=fdc)
+    mem = _make_memory_with_ram_mapper(fdc=fdc)
     mem.set_sub_slot_reg(0x00)
     mem.write(0x4000, 0x77)
     assert fdc.writes == [(0x4000, 0x77)]
@@ -93,7 +94,7 @@ def test_sub0_page1_write_delegates_to_fdc() -> None:
 
 def test_sub0_page0_write_ignored_when_sub_rom_present() -> None:
     sub_rom = bytes([0x41] + [0x00] * 0x3FFF)
-    mem = _make_mapper(sub0_rom=sub_rom)
+    mem = _make_memory_with_ram_mapper(sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0x41  # unchanged: SUB ROM is read-only
@@ -101,7 +102,7 @@ def test_sub0_page0_write_ignored_when_sub_rom_present() -> None:
 
 def test_write_to_other_subslot_reaches_ram_mapper() -> None:
     fdc = _StubFdc()
-    mem = _make_mapper(fdc=fdc)
+    mem = _make_memory_with_ram_mapper(fdc=fdc)
     mem.set_sub_slot_reg(0b10_10_10_10)  # every page -> sub-slot 2: RAM mapper
     mem.write(0x8000, 0x33)
     assert mem.read(0x8000) == 0x33
