@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2431%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2443%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -98,8 +98,10 @@ coincidence flags, and the VBlank interrupt.
 
 - Implementation: `msx/vdp/vdp.py`, `msx/vdp/renderer.py`
 - Known limitations:
-  - Mid-frame register-change timing and undocumented sprite-overflow
-    behaviour are not emulated.
+  - Mid-frame register-change timing is not emulated: a game that changes
+    screen mode, colours, or sprite settings mid-frame sees the new state
+    applied to the whole frame rather than only from the changed scanline
+    onward. Undocumented sprite-overflow behaviour is also not emulated.
   - During frame skip, sprite 5th-sprite/coincidence status is not updated
     on a skipped frame, so a ROM polling collision during turbo mode sees
     stale (last-rendered-frame) status.
@@ -122,9 +124,11 @@ mid-frame register and palette changes.
     addressing model is used instead, which diverges only when VRAM content
     written in a planar mode is read back after switching to a non-planar
     mode without an intervening clear.
-  - TEXT2 (SCREEN 0 WIDTH 80) blink colour/rate (R#12/R#13) and interlaced
-    mode / automatic alternate screen-page display (R#9 bit 3 / R#13 rate)
-    are not implemented.
+  - TEXT2 (SCREEN 0 WIDTH 80)'s blink colour/rate (R#12/R#13) is not
+    implemented, so blinking characters render in a single fixed colour
+    instead of alternating. Interlaced mode / automatic alternate
+    screen-page display (R#9 bit 3 / R#13 rate) is also not implemented, so
+    no interlaced or page-flipped output is produced.
   - During frame skip, sprite 5th-sprite/coincidence status is not updated
     on a skipped frame, so a ROM polling collision during turbo mode sees
     stale (last-rendered-frame) status.
@@ -296,6 +300,7 @@ via `--fdd1`. Supports Disk BASIC boot, `CALL FORMAT`, and file read/write with
 write-back on exit; disks can be swapped at runtime from the debugger REPL
 (`fdd1`/`fdd2`).
 
+- Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
   - No timing model — command execution is instantaneous (no seek/step
     rate, no revolution-based ID search, no head-load/verify-after-seek
@@ -316,6 +321,7 @@ SENSE INTERRUPT STATUS, SENSE DEVICE STATUS, RECALIBRATE, SEEK, READ DATA,
 WRITE DATA, and FORMAT — enough for the MSX DISK ROM's boot/sector-I/O path
 and `CALL FORMAT`.
 
+- Implementation: `msx/fdc/tc8566af.py`, `msx/fdc/interface.py`
 - Known limitations:
   - No timing model (same functional-model approach as WD2793).
   - Non-DMA mode only — the chip's DRQ2/-DACK2/DMATC pins are not modelled.
@@ -861,8 +867,10 @@ variable (settable in the `.mcp.json` `env` block).
 - The Unix socket is reachable only by local processes running as the same user.
 - `memory.write` and `cpu.step` mutate machine state and are **paused-only**.
 - There is no authentication; on a shared host, restrict the socket with
-  `chmod 600`. The server is opt-in (`--rpc`) precisely because it is a control
-  surface — no socket exists unless you ask for one.
+  `chmod 600` — otherwise any other local user can connect and drive
+  `memory.write`/`cpu.step` to alter the running machine's state at will. The
+  server is opt-in (`--rpc`) precisely because it is a control surface — no
+  socket exists unless you ask for one.
 
 ---
 
@@ -996,7 +1004,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2431 tests spanning unit tests
+The test suite covers all major components with 2443 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1064,7 +1072,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2431 tests
+├── tests/                 # Test suite — 2443 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1133,7 +1141,13 @@ MIT — see [LICENSE](LICENSE).
   `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony
   HB-F1XD (no real hardware matches this configuration) built to satisfy
   MSX-DOS2's extended BIOS mapper support routines, which require a RAM
-  mapper of at least 128 KB; confirmed booting MSX-DOS2 successfully.
+  mapper of at least 128 KB; confirmed booting MSX-DOS2 successfully. Also
+  implements the V9938's TEXT2 mode (SCREEN 0 WIDTH 80, MSX-DOS's `MODE 80`)
+  — previously misdispatched as a GRAPHIC2 background with sprite mode 2
+  sprites, corrupting the screen — fixing the mode-bit dispatch priority,
+  adding a dedicated 80-column/512-wide renderer, and extending
+  `display_width` and the debugger's screen-mode display; confirmed on
+  MSX-DOS.
 - **v2.5.11** (2026-09-06) — Remove the `mapper`/`mapper2` `py_emulator.yaml`
   config keys; cartridge mapper selection is now CLI-only (`--mapper` /
   `--mapper2`). Fixes a config-file default silently and falsely tripping the
