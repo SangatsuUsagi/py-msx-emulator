@@ -232,8 +232,9 @@ Implemented in `msx/vdp/v9938.py` with the renderer in
 - Level-based IRQ via `irq_pending()`
 
 The `display_height` property returns 192 normally, or 212 when R#9 bit 7 (LN)
-is set. The `display_width` property returns 512 for SCREEN 6/G5 (M5 set, M4
-clear) and 256 for all other modes.
+is set. The `display_width` property returns 512 for the wide modes (SCREEN
+6/G5 and SCREEN 7/G6, M5 set and M4 clear) and for TEXT2 (SCREEN 0 WIDTH 80,
+M1 and M4 set with M3 clear), and 256 for all other modes.
 
 ### Banded renderer
 

@@ -625,6 +625,12 @@ class TestSlotRomMapperBank:
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
         assert mem.debug_slot_bank(0, None, 0) == "-"
 
+    def test_debug_slot_size_kb_reflects_configured_ram_mapper_size(self):
+        from msx.ram_mapper import RamMapper
+        rm = RamMapper(size_kb=256)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        assert mem.debug_slot_size_kb(3, 2) == "256KB"
+
 
 # ---------------------------------------------------------------------------
 # ce / cd — mapper bank-switch trace

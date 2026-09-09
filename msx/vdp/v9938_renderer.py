@@ -187,9 +187,9 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
     The returned buffer always has the constant output height (length
-    display_width × OUTPUT_H, i.e. 256×212 or 512×212 for SCREEN 6/7). A
-    192-line frame (R#9 LN=0) is centred with border rows above and below so the
-    displayed image keeps a stable geometry regardless of LN.
+    display_width × OUTPUT_H, i.e. 256×212 normally, or 512×212 for SCREEN 6/7
+    and TEXT2). A 192-line frame (R#9 LN=0) is centred with border rows above
+    and below so the displayed image keeps a stable geometry regardless of LN.
 
     Frame counting is owned by the caller (Machine.run_frame), not the renderer.
     """
@@ -520,6 +520,8 @@ def _render_pass_range(
     elif m4:
         if m3:
             _render_g4(vdp, buf, h, y_start, y_end)
+        elif m1:
+            _render_text2(vdp, buf, y_start, y_end)
         else:
             _render_g2(vdp, buf, y_start, y_end)
     elif m1:
@@ -550,7 +552,7 @@ def _render_sprites_for_mode(
     where R#23 may change mid-frame); otherwise the scalar vdp.regs[23] is
     used. row_spd likewise carries the per-scanline SPD (R#8 sprite-disable)
     so a split screen can blank sprites over just one band. TEXT1 (M1) and
-    blanked display (BL=0) draw no sprites.
+    TEXT2 (M1+M4) draw no sprites, nor does a blanked display (BL=0).
     """
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
@@ -586,6 +588,8 @@ def _render_sprites_for_mode(
                 row_vscroll=row_vscroll,
                 row_spd=row_spd,
             )
+    elif m4 and m1:
+        pass  # TEXT2: no sprites
     elif m4:
         _render_sprites_mode2(
             vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
@@ -732,6 +736,45 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
                 off = scan * _W + 8 + col * 6
+                buf[off : off + 6] = _TEXT6_BYTES[pat][fg][bg]
+
+
+# ---------------------------------------------------------------------------
+# Text 2 (SCREEN 0, WIDTH 80) — 80×24 chars, 6 pixels wide, no sprites, no blink
+# ---------------------------------------------------------------------------
+
+
+def _render_text2(
+    vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
+    """TEXT2: same pattern generator table and R#7 colours as TEXT1 (MSX2
+    Technical Handbook 3.2.2), but 80 columns into a 512-wide buffer and a
+    4 KB-aligned name table selected by R#2 bits 6-2 (A16-A12) instead of
+    TEXT1's 1 KB-aligned, 4-bit addressing -- see openspec design.md Decision
+    1. Blink (R#12/R#13/blink table) is not implemented; every character
+    renders in its plain (non-blinking) colour.
+    """
+    name_base = (vdp.regs[2] & 0x7C) << 10
+    pat_base = (vdp.regs[4] & 0x07) << 11
+    fg = (vdp.regs[7] >> 4) & 0x0F
+    bg = vdp.regs[7] & 0x0F
+    ye = y_end if y_end is not None else _TILE_H
+    row_start = y_start // 8
+    row_end = (ye + 7) // 8
+    # 80 cols * 6 px = 480 of the 512-wide buffer; the remaining 32 px split
+    # into a 16 px margin each side, doubling TEXT1's 8 px margin at half the
+    # width (240 of 256) -- the wide text/bitmap modes double the pixel clock
+    # while the active-display time stays the same, so the border doubles in
+    # pixel count right along with the active area.
+    for row in range(row_start, row_end):
+        for col in range(80):
+            tile = vdp.vram[(name_base + row * 80 + col) & 0x1FFFF]
+            for py in range(8):
+                scan = row * 8 + py
+                if scan < y_start or scan >= ye:
+                    continue
+                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x1FFFF]
+                off = scan * 512 + 16 + col * 6
                 buf[off : off + 6] = _TEXT6_BYTES[pat][fg][bg]
 
 
@@ -1325,7 +1368,7 @@ def _render_g4(
 
 
 # ---------------------------------------------------------------------------
-# SCREEN 6 (Graphic 5) — 2-bpp, 512 virtual width, rendered 256 wide
+# SCREEN 6 (Graphic 5) — 2-bpp, 512 virtual width, rendered 512 wide
 # ---------------------------------------------------------------------------
 
 
@@ -1353,7 +1396,7 @@ def _render_g5(
 
 
 # ---------------------------------------------------------------------------
-# SCREEN 7 (Graphic 6) — 4-bpp, 512 virtual width, rendered 256 wide
+# SCREEN 7 (Graphic 6) — 4-bpp, 512 virtual width, rendered 512 wide
 # ---------------------------------------------------------------------------
 
 
