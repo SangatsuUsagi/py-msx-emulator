@@ -807,9 +807,17 @@ def _print_vdp_fancy(vdp: object) -> None:
 
 def _print_vdp_vram_layout(vdp: V9938) -> None:
     r = vdp.regs          # R#0-R#27
+    m1 = (r[1] >> 4) & 1  # R#1 bit4
+    m3 = (r[0] >> 1) & 1  # R#0 bit1
     m4 = (r[0] >> 2) & 1  # R#0 bit2
     m5 = (r[0] >> 3) & 1  # R#0 bit3
-    name_base    = (r[2] & 0x60) << 10 if (m4 or m5) else (r[2] & 0x0F) << 10
+    is_text2 = bool(m4 and m1 and not m3)
+    if is_text2:
+        name_base = (r[2] & 0x7C) << 10  # TEXT2: 5 bits, 4 KB aligned
+    elif m4 or m5:
+        name_base = (r[2] & 0x60) << 10
+    else:
+        name_base = (r[2] & 0x0F) << 10
     color_base   = ((r[10] & 0x07) << 14) | ((r[3]  & 0xFF) << 6)
     pattern_base = (r[4]  & 0x3F) << 11
     # R#5/R#11 → SAT base (512-byte aligned; colour table sits at SAT-0x200)

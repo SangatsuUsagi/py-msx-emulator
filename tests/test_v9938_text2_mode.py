@@ -1,3 +1,5 @@
+"""Tests for TEXT2 (SCREEN 0, WIDTH 80): MSX-DOS's MODE 80."""
+
 from msx.debugger.prompt import _decode_screen_mode
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
@@ -13,6 +15,11 @@ def _active(vdp: V9938) -> bytearray:
 def _enable_text2(vdp: V9938) -> None:
     vdp.regs[0] = 0x04  # M4 (bit2)
     vdp.regs[1] = 0x50  # M1 (bit4) + BL (bit6) -> TEXT2 with M4 above
+
+
+# ---------------------------------------------------------------------------
+# Colour / name-table / pattern-table rendering
+# ---------------------------------------------------------------------------
 
 
 def test_text2_colours_from_r7_at_column_0_and_80() -> None:
@@ -48,6 +55,11 @@ def test_text2_name_table_uses_r2_bits_6_2_only() -> None:
     assert buf[16] == 3  # fg -> read tile 1 from 0xC000, not tile 2 from 0xCC00
 
 
+# ---------------------------------------------------------------------------
+# Sprites are suppressed in TEXT2
+# ---------------------------------------------------------------------------
+
+
 def test_text2_draws_no_sprites() -> None:
     vdp = V9938()
     _enable_text2(vdp)
@@ -68,6 +80,11 @@ def test_text2_draws_no_sprites() -> None:
 
     buf = _active(vdp)
     assert buf[1 * 512 + 0] == 2  # bg/border, not the sprite's colour 7
+
+
+# ---------------------------------------------------------------------------
+# display_width / display_height geometry
+# ---------------------------------------------------------------------------
 
 
 def test_text2_display_width_is_512() -> None:
@@ -99,9 +116,19 @@ def test_text2_212_line_variant_renders_only_top_half_of_final_row() -> None:
     assert active[211 * 512 + 16] == 3
 
 
+# ---------------------------------------------------------------------------
+# Debugger's `_decode_screen_mode`
+# ---------------------------------------------------------------------------
+
+
 def test_decode_screen_mode_text2() -> None:
     # Exact register values from the MSX-DOS `MODE 80` repro that surfaced this bug.
     assert _decode_screen_mode(0x04, 0x70) == "SCREEN0 (TEXT2/80col)"
+
+
+# ---------------------------------------------------------------------------
+# VRAM addressing range and sprite status-flag side effects (allium propagate)
+# ---------------------------------------------------------------------------
 
 
 def test_text2_name_table_reaches_high_vram_via_wide_mask() -> None:

@@ -552,7 +552,7 @@ def _render_sprites_for_mode(
     where R#23 may change mid-frame); otherwise the scalar vdp.regs[23] is
     used. row_spd likewise carries the per-scanline SPD (R#8 sprite-disable)
     so a split screen can blank sprites over just one band. TEXT1 (M1) and
-    blanked display (BL=0) draw no sprites.
+    TEXT2 (M1+M4) draw no sprites, nor does a blanked display (BL=0).
     """
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
@@ -588,13 +588,12 @@ def _render_sprites_for_mode(
                 row_vscroll=row_vscroll,
                 row_spd=row_spd,
             )
+    elif m4 and m1:
+        pass  # TEXT2: no sprites
     elif m4:
-        if m1:
-            pass  # TEXT2: no sprites
-        else:
-            _render_sprites_mode2(
-                vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
-            )
+        _render_sprites_mode2(
+            vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
+        )
     elif m1:
         pass  # TEXT1: no sprites
     else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1

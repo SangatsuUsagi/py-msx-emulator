@@ -407,7 +407,7 @@ class V9938:
         m3 = (r0 >> 1) & 1
         m4 = (r0 >> 2) & 1
         m5 = (r0 >> 3) & 1
-        is_text2 = m4 and m1 and not m3
+        is_text2 = bool(m4 and m1 and not m3)
         return 512 if ((m5 and not m4) or is_text2) else 256
 
     def increment_frame(self) -> None:
