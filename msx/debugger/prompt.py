@@ -772,6 +772,7 @@ def _decode_screen_mode(r0: int, r1: int) -> str:
     modes: dict[tuple[int, ...], str] = {
         (0, 0, 0, 0, 0): "SCREEN1 (GRAPHIC1)",
         (1, 0, 0, 0, 0): "SCREEN0 (TEXT1/40col)",
+        (1, 0, 0, 1, 0): "SCREEN0 (TEXT2/80col)",
         (0, 0, 1, 0, 0): "SCREEN2 (GRAPHIC2)",
         (0, 1, 0, 0, 0): "SCREEN3 (MULTICOLOR)",
         (0, 0, 0, 1, 0): "SCREEN4 (GRAPHIC3)",

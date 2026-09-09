@@ -634,6 +634,25 @@ def test_parse_slot3_msx2_mapper_standard_invalid_size_rejected() -> None:
         _parse_slot3_msx2(slot3, "test")
 
 
+def test_parse_slot3_msx2_mapper_standard_non_expanded_invalid_size_rejected() -> None:
+    # Same _check_ram_mapper_size_kb helper as the expanded case above, but
+    # reached through the non-expanded `mapper: standard` call site.
+    slot3 = {"mapper": "standard", "size_kb": 100}
+    with pytest.raises(MachineLoadError, match="size_kb.*100"):
+        _parse_slot3_msx2(slot3, "test")
+
+
+def test_parse_slot3_msx2_flat_ram_size_not_validated_as_mapper_granularity() -> None:
+    # A flat (non-mapper) RAM sub-slot's size_kb is unrelated to the RAM
+    # mapper's 16KB-multiple granularity check -- RejectRamMapperSizeInvalid
+    # only fires when a sub-slot actually declares `mapper: standard`.
+    slot3 = {"expanded": True, "secondary": {3: {"type": "ram", "size_kb": 100}}}
+    result = _parse_slot3_msx2(slot3, "test")
+    assert result.has_ram_mapper is False
+    assert result.flat_ram_subslot == 3
+    assert result.flat_ram_size_kb == 100
+
+
 # ---------------------------------------------------------------------------
 # Malformed `content:` list items are silently skipped, not a crash
 # (allium A-8 / code fix: _is_content_item_shape guard)
