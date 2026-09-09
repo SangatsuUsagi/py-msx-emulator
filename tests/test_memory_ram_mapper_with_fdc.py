@@ -1,6 +1,7 @@
 """Tests for FDC + RAM mapper coexistence in the legacy slot-3 strategy.
 
-Before openspec/changes/slot3-fdc-ram-mapper-coexistence, an FDC required
+Before openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence,
+an FDC required
 flat_ram_subslot (the data-driven strategy); this file covers the newly
 allowed combination of an FDC with a RAM mapper instead.
 

@@ -598,7 +598,7 @@ def test_parse_slot3_msx2_flat_ram_last_declared_subslot_wins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RAM mapper size resolution (openspec/changes/ram-mapper-configurable-size)
+# RAM mapper size resolution (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
 # ---------------------------------------------------------------------------
 
 
@@ -795,7 +795,7 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Real config/machines/cbios_msx2*.yaml keep their pre-existing 128 KB RAM
 # mapper resolution unchanged now that size_kb is configurable
-# (openspec/changes/ram-mapper-configurable-size)
+# (openspec/changes/archive/2026-09-09-ram-mapper-configurable-size)
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
