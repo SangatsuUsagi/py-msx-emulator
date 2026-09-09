@@ -104,8 +104,9 @@ class Memory:
 
     def _validate_slot3_strategy(self) -> None:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
-        are mutually exclusive slot-3 RAM strategies, and fdc requires
-        flat_ram_subslot. Called from __post_init__ (once, at the end of
+        are mutually exclusive slot-3 RAM strategies, and fdc requires one of
+        the two (either satisfies it; an fdc may coexist with either RAM
+        strategy). Called from __post_init__ (once, at the end of
         construction) and from set_ram_mapper/set_fdc (so a post-construction
         reassignment of either can't silently desync the routing cache from
         this invariant -- flat_ram_subslot itself is construction-time-fixed,
@@ -121,10 +122,10 @@ class Memory:
                 "Memory: ram_mapper and flat_ram_subslot are mutually "
                 "exclusive slot-3 RAM strategies"
             )
-        if fdc is not None and flat_ram_subslot is None:
+        if fdc is not None and flat_ram_subslot is None and ram_mapper is None:
             raise ValueError(
-                "Memory: fdc requires flat_ram_subslot (only the "
-                "data-driven slot-3 layout hosts an FDC)"
+                "Memory: fdc requires a slot-3 RAM strategy "
+                "(flat_ram_subslot or ram_mapper)"
             )
 
     # Explicit setters for the fields that affect page routing and are
@@ -232,16 +233,32 @@ class Memory:
             if sub == flat_sub:
                 return self._read_flat_ram
             return self._read_open_bus
-        # Legacy sub-slot dispatch:
-        #   sub_rom_subslot: extension ROM in page 0 (if present), else main RAM
-        #   1: reserved / unmapped -> open bus
-        #   2, 3: main RAM
-        if sub == self.sub_rom_subslot:
-            if self.sub0_rom is not None:
-                if page == 0:
-                    return self._read_sub0_rom
-                return self._read_open_bus  # sub0_rom present, addr out of page-0 range
-        elif sub == 1:
+        # Legacy sub-slot dispatch: same four-role priority list as the
+        # data-driven branch above (SUB ROM page 0, then FDC, then RAM),
+        # adapted for this branch's RAM fallback (RAM mapper or MSX1 flat
+        # RAM, rather than a single flat_sub match) --
+        #   sub_rom_subslot page 0: extension ROM (if present)
+        #   fdc_subslot/fdc_page: memory-mapped FDC (if present) -- an FDC
+        #     may coexist with a RAM mapper here, just as it already does
+        #     with the data-driven flat-RAM strategy above
+        #   sub_rom_subslot (other pages, with a sub0_rom present): open bus
+        #   1 (unless it is the FDC's or the SUB-ROM's own sub-slot):
+        #     reserved / unmapped. The sub_rom_subslot exclusion preserves a
+        #     pre-existing quirk: a machine with sub_rom_subslot == 1 and no
+        #     sub0_rom loaded falls through to RAM rather than open bus,
+        #     because the original code reached this test only via an
+        #     `elif` after an `if sub == sub_rom_subslot:` that had already
+        #     claimed the branch without returning (see allium/slots.allium
+        #     ReadByte's guidance) -- no machine does this, but this
+        #     refactor preserves it rather than silently changing it
+        #   everything else: RAM
+        if sub == self.sub_rom_subslot and self.sub0_rom is not None and page == 0:
+            return self._read_sub0_rom
+        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+            return self.fdc.read_mem
+        if sub == self.sub_rom_subslot and self.sub0_rom is not None:
+            return self._read_open_bus  # sub0_rom present, addr out of page-0 range
+        if sub == 1 and sub != self.fdc_subslot and sub != self.sub_rom_subslot:
             return self._read_open_bus
         # sub == 2, sub == 3, or sub == sub_rom_subslot without a sub0_rom -> RAM
         if self.ram_mapper is not None:
@@ -261,7 +278,15 @@ class Memory:
             if sub == flat_sub:
                 return self._write_flat_ram
             return self._write_noop  # SUB ROM / reserved / empty sub-slots ignore writes
-        if sub == 1:
+        # Legacy sub-slot write dispatch: FDC test first (an FDC may coexist
+        # with a RAM mapper, same as the data-driven write branch above),
+        # then the pre-existing reserved-sub-slot-1 and read-only-SUB-ROM
+        # tests (the latter needs no page==0 guard: it is read-only, so any
+        # page falls through to write_noop the same as an unmapped page
+        # would), then RAM.
+        if sub == self.fdc_subslot and page == self.fdc_page and self.fdc is not None:
+            return self.fdc.write_mem
+        if sub == 1 and sub != self.fdc_subslot:
             return self._write_noop  # reserved, ignore
         if sub == self.sub_rom_subslot and self.sub0_rom is not None:
             return self._write_noop  # sub0_rom is read-only
