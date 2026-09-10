@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 #   DiskDrive/connection-style state, see
 #   openspec/changes/2026-08-31-fdc-state-save-load). No other field
 #   changed.
-CURRENT_FORMAT_VERSION: int = 7
+# Version 8: slot2_sub_slot_reg: int | None added (primary slot 2's own
+#   secondary slot register, independent of sub_slot_reg -- see
+#   openspec/changes/add-hbi-j1-support). No other field changed.
+CURRENT_FORMAT_VERSION: int = 8
 
 
 class StateLoadError(ValueError):
@@ -116,6 +119,10 @@ class MachineSnapshot:
     fmpac_state: dict[str, object] | None = None
     # FDC: WD2793/TC8566AF + connection-style + drives (None when no FDC)
     fdc_state: dict[str, object] | None = None
+    # Primary slot 2's own secondary slot register (None unless an extension
+    # needing an expanded slot 2, e.g. HBI-J1, is active) -- independent of
+    # sub_slot_reg above, mirroring its shape exactly.
+    slot2_sub_slot_reg: int | None = None
 
 
 class _MachineSnapshotFields(TypedDict):
@@ -157,6 +164,7 @@ class _MachineSnapshotFields(TypedDict):
     cmd_remaining: int | None
     fmpac_state: dict[str, object] | None
     fdc_state: dict[str, object] | None
+    slot2_sub_slot_reg: int | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -271,6 +279,12 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cmd_regs = None
         status2 = None
         cmd_remaining = None
+    # slot2_sub_slot_enabled is a machine/extension shape flag, independent
+    # of MSX1/MSX2-ness (unlike sub_slot_reg above, which is tied to
+    # vdp9938 presence) -- computed separately from the vdp9938 branch.
+    slot2_sub_slot_reg: int | None = (
+        machine.memory.slot2_sub_slot_reg if machine.memory.slot2_sub_slot_enabled else None
+    )
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type="msx2" if vdp9938 is not None else "msx1",
@@ -305,6 +319,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cmd_remaining=cmd_remaining,
         fmpac_state=_fmpac_to_dict(machine),
         fdc_state=_fdc_to_dict(machine),
+        slot2_sub_slot_reg=slot2_sub_slot_reg,
     )
 
 
@@ -373,6 +388,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
     _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
     _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
+    if snap.slot2_sub_slot_reg is not None:
+        machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
 
 
 # --- symlink helper -----------------------------------------------------------
