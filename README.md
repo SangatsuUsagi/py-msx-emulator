@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2457%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2530%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -213,6 +213,31 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 | OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
 | Known limitations | <ul><li>Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the analog-style low-pass cleans up the residual imaging.</li><li>Only the YM2413 instrument set is included (no VRC7 / YMF281 banks).</li><li>No channel masking / stereo pan.</li></ul> |
 
+### Sony HBI-J1 — Kanji-ROM + MSX-JE word processor
+
+Optional overlay cartridge enabled with `--extension hbi-j1`: a JIS Kanji font
+ROM I/O device (ports `0xD8-0xDB`, no slot location of its own) plus an
+*expanded* primary slot 2 hosting two sub-slot devices — a Halnote-mapped
+MSX-JE word-processor ROM with 16 KB battery-backed SRAM, and a flat Kanji
+driver + BASIC extension ROM. Unlike FM-PAC/SCC-I (a single flat device in
+slot 2), this is the only extension that itself expands slot 2 into
+sub-slots — it plugs into a stock MSX2 host, so slot 2's own expansion
+coexists with the host machine's own slot 3 expansion.
+
+The author physically owns this cartridge and dumped its ROMs (SHA1-verified
+against openMSX's `Sony_HBI-J1.xml`), so this implementation targets real
+hardware, not just documentation.
+
+| Item | Detail |
+| --- | --- |
+| Implementation | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring) |
+| Activation | `--extension hbi-j1` expands primary slot 2 (any base MSX2 `--machine`; conflicts with `--slot2`/`--mapper2`); ROMs at `roms/hbi_j1/` |
+| Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read; a 5-bit read counter auto-increments per read, wrapping to byte 0 of the same glyph every 32 reads |
+| Sub-slot 0 | `HalnoteMapper` — 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper shadowing `0x7000-0x7FFF` (bank-1 register bit 7) |
+| Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`; `0x0000-0x3FFF`/`0xC000-0xFFFF` open bus |
+| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`, loaded on start and saved on exit |
+| Known limitations | Real-hardware behavior past the Kanji-ROM read counter's 32nd consecutive read without an address rewrite is unverified — this implementation follows openMSX's documented behavior (wrap to the same glyph's byte 0) as ground truth |
+
 ### Audio output filter
 
 An analog-style output low-pass (2-pole Butterworth) models the RC filter on real
@@ -235,7 +260,9 @@ Slot-select register (port 0xA8), the 11-row × 8-bit MSX keyboard matrix (port
 MSX1 uses a 4-page × 4-slot dispatch: BIOS ROM in slot 0, a cartridge in slot 1,
 an optional second cartridge in slot 2, and 32 KB RAM in slot 3. On MSX2, primary
 slot 3 is expanded into 4 secondary slots, with the sub-ROM in sub-slot 3-0 and
-the 128 KB RAM mapper in sub-slot 3-2.
+the 128 KB RAM mapper in sub-slot 3-2. Primary slot 2 can independently also be
+expanded — `--extension hbi-j1` is the only case today — coexisting with slot 3's
+own expansion on the same machine, each with its own secondary slot register.
 
 | Item | Detail |
 | --- | --- |
@@ -244,7 +271,7 @@ the 128 KB RAM mapper in sub-slot 3-2.
 | Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
 | Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; declared in the machine YAML as a `pages: [2]` entry next to the BIOS; returns 0xFF if absent |
 | Slot 1 | Cartridge ROM via mapper |
-| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded |
+| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into 2 sub-slots under `--extension hbi-j1` (Halnote-mapped MSX-JE ROM in sub-slot 0, flat Kanji driver/BASIC ROM in sub-slot 1) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots; sub-ROM in 3-0, 128 KB RAM mapper in 3-2 |
 
@@ -642,6 +669,9 @@ python . path/to/game.rom --extension fmpac
 # boot from floppy instead
 python . --extension scc-plus --fdd1 path/to/disk.dsk
 
+# Attach the Sony HBI-J1 Kanji-ROM/MSX-JE cartridge (expands slot 2)
+python . --extension hbi-j1
+
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
@@ -681,7 +711,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
-| `--extension {fmpac,scc-plus}` | _(none)_ | Overlay a slot 2 extension device: `fmpac` (MSX-MUSIC + 8 KB SRAM) or `scc-plus` (an SCC-I / SCC+ cartridge). Conflicts with `--slot2`/`--mapper2` |
+| `--extension {fmpac,scc-plus,hbi-j1}` | _(none)_ | Overlay a slot 2 extension device: `fmpac` (MSX-MUSIC + 8 KB SRAM), `scc-plus` (an SCC-I / SCC+ cartridge), or `hbi-j1` (Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands slot 2 into two sub-slots). Conflicts with `--slot2`/`--mapper2` |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
@@ -721,7 +751,7 @@ speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
 # mapper/mapper2 are CLI-only (--mapper / --mapper2); not configurable here
-# extension: fmpac        # overlay a slot 2 extension: fmpac or scc-plus
+# extension: fmpac        # overlay a slot 2 extension: fmpac, scc-plus, or hbi-j1
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -1042,8 +1072,9 @@ py-msx-emulator/
 │   ├── machine.py         # Component wiring and frame loop
 │   ├── machine_loader.py  # YAML-based machine configuration loader
 │   ├── memory.py          # Slot-based memory bus
-│   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, ...)
+│   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
+│   ├── kanji.py           # JIS Kanji font ROM I/O device (Sony HBI-J1)
 │   ├── ram_mapper.py      # MSX2 RAM mapper (128 KB, 8 segments)
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
@@ -1135,6 +1166,20 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.14** (2026-09-10) — Add Sony HBI-J1 support via `--extension
+  hbi-j1`: a JIS Kanji font ROM I/O device (`msx/kanji.py`, ports
+  `0xD8-0xDB`), a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM
+  (`msx/mapper.py:HalnoteMapper`), and a flat Kanji driver + BASIC ROM,
+  wired via a new *expanded* extension-overlay shape that lets slot 2 itself
+  become an expanded slot with per-sub-slot devices (`cart-extension-
+  overlay`'s `shape: expanded`) — the first extension to need this, since
+  FM-PAC/SCC-I are each a single flat device. `Memory` now supports primary
+  slot 2 being independently expandable alongside slot 3's own expansion (a
+  standard MSX2 machine's slot 3 plus HBI-J1's slot 2 coexist, each with its
+  own secondary slot register). Save-state format bumps to version 10,
+  adding `slot2_sub_slot_reg` and a dedicated `machine.halnote_cart` state
+  path (mirroring SCC-I's). The author physically owns this cartridge and
+  dumped its ROMs (SHA1-verified against openMSX).
 - **v2.5.13** (2026-09-10) — Replace `--fmpac`/`--scc-plus` (and the
   `fmpac`/`scc_plus` `py_emulator.yaml` keys) with a single `--extension
   {fmpac,scc-plus}` flag (`extension` config key), backed by

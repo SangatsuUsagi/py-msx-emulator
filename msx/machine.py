@@ -10,7 +10,8 @@ from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import MajutsushiMapper, SCCICart
+from msx.kanji import KanjiRom
+from msx.mapper import HalnoteMapper, MajutsushiMapper, SCCICart
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
@@ -78,6 +79,8 @@ class Machine:
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
     scci_cart: SCCICart | None = field(default=None, repr=False)
+    halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
+    kanji: KanjiRom | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
@@ -93,6 +96,7 @@ class Machine:
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
+    halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
     rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
@@ -177,6 +181,7 @@ class Machine:
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
+        self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
 

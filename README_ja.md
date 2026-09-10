@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2457%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2530%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -131,6 +131,22 @@
 | OPLL 音源合成 | emu2413 v1.5.9 の忠実移植：対数ドメイン合成（log-sin + exp テーブル）、キースケール付きの実機エンベロープレートテーブル、AM/PM LFO、YM2413 音色 ROM、実機のショートノイズ/LFSR タップに基づくリズムモード（レジスタ 0x0E：バスドラム、スネア、タム、トップシンバル、ハイハット） |
 | 既知の制限 | <ul><li>出力レート変換は emu2413 の窓付き sinc リサンプラではなく積算平均デシメータ（チップ clk/72 → 44100 Hz）を使用。残留イメージングはアナログ風ローパスで除去。</li><li>YM2413 音色セットのみ（VRC7 / YMF281 バンクなし）。</li><li>チャンネルマスク/ステレオパンなし。</li></ul> |
 
+### Sony HBI-J1 — 漢字ROM + MSX-JEワードプロセッサ
+
+`--extension hbi-j1` で有効化するオプションのオーバーレイカートリッジ：JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。FM-PAC/SCC-I（スロット2に単一のフラットデバイスを配置するだけ）と異なり、このカートリッジのみがスロット2自体をサブスロット化する — 標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
+
+著者はこの実機を物理的に所有しており、そのROMをダンプ済みです（openMSXの `Sony_HBI-J1.xml` に対してSHA1で検証済み）。そのため、この実装は資料ベースではなく実機を対象としています。
+
+| 項目 | 詳細 |
+| --- | --- |
+| 実装 | `msx/kanji.py`（漢字ROMデバイス）、`msx/mapper.py:HalnoteMapper`（MSX-JEカートリッジ）、`msx/machine_loader.py`（拡張オーバーレイの配線） |
+| 有効化 | `--extension hbi-j1` でプライマリスロット2を拡張（`--machine` のベースMSX2マシンは任意；`--slot2`/`--mapper2` との併用不可）；ROM は `roms/hbi_j1/` |
+| 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別；5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
+| サブスロット0 | `HalnoteMapper` — 1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
+| サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM；`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
+| SRAM 永続化 | `saves/sram/hbi-j1_msx-je.sram`。起動時にロード、終了時に保存 |
+| 既知の制限 | 漢字ROM読み出しカウンタがアドレス書き換えなしに32回連続で読まれた後の実機での挙動は未検証 — この実装はopenMSXの文書化された挙動（同じ文字のバイト0へラップ）をground truthとして採用している |
+
 ### オーディオ出力フィルタ
 
 実機 MSX の音声出力段の RC フィルタを模したアナログ的な出力ローパス（2 極バターワース）で、混合後の PSG/SCC/DAC/OPLL 信号から残留イメージング/エイリアシングを除去します。
@@ -146,7 +162,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も独立に拡張可能です — 現状は `--extension hbi-j1` のみが該当し、スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -155,7 +171,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
 | スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視） |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension hbi-j1` では2つのサブスロットに拡張（サブスロット0にHalnoteマッパー方式のMSX-JE ROM、サブスロット1にフラットな漢字ドライバ/BASIC ROM） |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
@@ -445,6 +461,9 @@ python . path/to/game.rom --extension fmpac
 # フロッピーから起動
 python . --extension scc-plus --fdd1 path/to/disk.dsk
 
+# Sony HBI-J1（漢字ROM/MSX-JEカートリッジ、スロット2を拡張）を接続
+python . --extension hbi-j1
+
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
 
@@ -484,7 +503,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
-| `--extension {fmpac,scc-plus}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）または `scc-plus`（SCC-I / SCC+ カートリッジ）。`--slot2`/`--mapper2` と併用不可 |
+| `--extension {fmpac,scc-plus,hbi-j1}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）、`scc-plus`（SCC-I / SCC+ カートリッジ）、または `hbi-j1`（Sony HBI-J1：漢字ROM + MSX-JE + 漢字ドライバ/BASIC、スロット2を2つのサブスロットに拡張）。`--slot2`/`--mapper2` と併用不可 |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -524,7 +543,7 @@ speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-# extension: fmpac        # スロット 2 の拡張を重ねる：fmpac または scc-plus
+# extension: fmpac        # スロット 2 の拡張を重ねる：fmpac、scc-plus、または hbi-j1
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -817,8 +836,9 @@ py-msx-emulator/
 │   ├── machine.py         # コンポーネント配線とフレームループ
 │   ├── machine_loader.py  # YAML ベースのマシン設定ローダ
 │   ├── memory.py          # スロットベースのメモリバス
-│   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC...）
+│   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
+│   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス（Sony HBI-J1）
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（128 KB、8 セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
@@ -892,6 +912,19 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.14** (2026-09-10) — `--extension hbi-j1` で Sony HBI-J1 サポートを
+  追加：JIS漢字フォントROM I/Oデバイス（`msx/kanji.py`、ポート
+  `0xD8-0xDB`）、Halnoteマッパー方式のMSX-JEワードプロセッサROM + 16 KB
+  SRAM（`msx/mapper.py:HalnoteMapper`）、フラットな漢字ドライバ+BASIC
+  ROM。スロット2自体をサブスロット化する新しい*拡張*エクステンション
+  オーバーレイ形状（`cart-extension-overlay` の `shape: expanded`）で配線
+  ——FM-PAC/SCC-Iはいずれも単一のフラットデバイスだったため、これを必要と
+  する最初の拡張。`Memory` はプライマリスロット2をスロット3自体の拡張と
+  独立に拡張可能にした（標準的なMSX2機のスロット3拡張とHBI-J1のスロット2
+  拡張が共存し、それぞれ独自のセカンダリスロットレジスタを持つ）。セーブ
+  ステート形式はバージョン10に更新——`slot2_sub_slot_reg` と、SCC-Iを踏襲
+  した専用の `machine.halnote_cart` 状態パスを追加。著者はこの実機を物理
+  的に所有し、そのROMをダンプ済み（openMSXに対してSHA1検証済み）。
 - **v2.5.13** (2026-09-10) — `--fmpac`/`--scc-plus`（および
   `py_emulator.yaml` の `fmpac`/`scc_plus` キー）を、単一の `--extension
   {fmpac,scc-plus}` フラグ（`extension` 設定キー）に統合。

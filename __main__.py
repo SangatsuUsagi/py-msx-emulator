@@ -110,8 +110,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Slot 2 cartridge ROM path")
     parser.add_argument("--extension", choices=list(VALID_EXTENSIONS), default=None,
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
-                             "SRAM) or 'scc-plus' (an SCC-I / SCC+ cartridge) (conflicts with "
-                             "--slot2/--mapper2)")
+                             "SRAM), 'scc-plus' (an SCC-I / SCC+ cartridge), or 'hbi-j1' "
+                             "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
+                             "slot 2 into two sub-slots) (conflicts with --slot2/--mapper2)")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
@@ -215,7 +216,15 @@ def _print_startup_summary(
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
     if extension_overlay is not None:
-        if extension_overlay.rom_entry is not None:
+        from msx.machine_loader import _ExpandedExtensionOverlay
+        if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+            print(
+                f"extension: hbi-j1 (expanded slot 2: "
+                f"{len(extension_overlay.subslots)} sub-slot(s)"
+                + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
+                + ")"
+            )
+        elif extension_overlay.rom_entry is not None:
             print(
                 f"extension: {extension_overlay.device} "
                 f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"
@@ -286,6 +295,13 @@ def _cleanup(
     ):
         machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
         machine.fmpac.save_sram(machine.fmpac_sram_save_path)
+    if (
+        machine is not None
+        and machine.halnote_cart is not None
+        and machine.halnote_sram_save_path is not None
+    ):
+        machine.halnote_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+        machine.halnote_cart.save_sram(machine.halnote_sram_save_path)
     if (
         machine is not None
         and machine.rtc is not None

@@ -1604,6 +1604,9 @@ class SCCICart(BankTracingMapper):
 
 _HALNOTE_ROM_SIZE = 1048576   # 1 MB, 128 x 8 KB banks
 _HALNOTE_SRAM_SIZE = 16384    # 16 KB, two 8 KB windows at 0x0000-0x3FFF
+# Public alias for cross-module use (msx/machine_loader.py's HBI-J1 overlay
+# wiring), mirroring msx/fmpac.py's public SRAM_SIZE constant.
+HALNOTE_SRAM_SIZE = _HALNOTE_SRAM_SIZE
 _HALNOTE_SUBBANK_SIZE = 2048  # 2 KB JIS2 dictionary sub-mapper block
 _HALNOTE_SUBMAPPER_ROM_BASE = 524288  # 0x80000: upper half of the 1 MB ROM
 _HALNOTE_SRAM_ENABLE_BIT = 0x80    # bank-0 register bit 7
@@ -1708,6 +1711,9 @@ class HalnoteMapper(BankTracingMapper):
                 self._submapper_enabled = bool(value & _HALNOTE_SUBMAPPER_ENABLE_BIT)
             self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)
 
     def snapshot(self) -> HalnoteMapperState:
         return {

@@ -40,7 +40,13 @@ if TYPE_CHECKING:
 # Version 9: slot2_sub_slot_reg: int | None added (primary slot 2's own
 #   secondary slot register, independent of sub_slot_reg -- see
 #   openspec/changes/add-hbi-j1-support). No other field changed.
-CURRENT_FORMAT_VERSION: int = 9
+# Version 10: halnote_state: dict[str, object] | None added (HBI-J1's
+#   Halnote-mapped MSX-JE cartridge's bank/sub-bank registers, SRAM-enable/
+#   submapper-enable flags, and 16 KB SRAM contents, since slot 2's
+#   sub-slots have no generic mapper-state path -- mirrors scci_state's
+#   own precedent; see openspec/changes/add-hbi-j1-support). No other field
+#   changed.
+CURRENT_FORMAT_VERSION: int = 10
 
 
 class StateLoadError(ValueError):
@@ -132,6 +138,10 @@ class MachineSnapshot:
     # needing an expanded slot 2, e.g. HBI-J1, is active) -- independent of
     # sub_slot_reg above, mirroring its shape exactly.
     slot2_sub_slot_reg: int | None = None
+    # HBI-J1's Halnote-mapped MSX-JE cartridge (--extension hbi-j1, slot 2
+    # sub-slot 0): banks/sub-banks/enable-flags/SRAM (None when no HalnoteMapper
+    # is present)
+    halnote_state: dict[str, object] | None = None
 
 
 class _MachineSnapshotFields(TypedDict):
@@ -175,6 +185,7 @@ class _MachineSnapshotFields(TypedDict):
     fdc_state: dict[str, object] | None
     scci_state: dict[str, object] | None
     slot2_sub_slot_reg: int | None
+    halnote_state: dict[str, object] | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -251,6 +262,18 @@ def _restore_scci(machine: "Machine", scci_state: dict[str, object] | None) -> N
     if machine.scci_cart is None or scci_state is None:
         return
     machine.scci_cart.restore(scci_state)
+
+
+def _halnote_to_dict(machine: "Machine") -> dict[str, object] | None:
+    if machine.halnote_cart is None:
+        return None
+    return cast(dict[str, object], machine.halnote_cart.snapshot())
+
+
+def _restore_halnote(machine: "Machine", halnote_state: dict[str, object] | None) -> None:
+    if machine.halnote_cart is None or halnote_state is None:
+        return
+    machine.halnote_cart.restore(halnote_state)
 
 
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -346,6 +369,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         fdc_state=_fdc_to_dict(machine),
         scci_state=_scci_to_dict(machine),
         slot2_sub_slot_reg=slot2_sub_slot_reg,
+        halnote_state=_halnote_to_dict(machine),
     )
 
 
@@ -415,6 +439,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
     _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
     _restore_producer("scci", lambda: _restore_scci(machine, snap.scci_state))
+    _restore_producer("halnote", lambda: _restore_halnote(machine, snap.halnote_state))
     if snap.slot2_sub_slot_reg is not None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
 
