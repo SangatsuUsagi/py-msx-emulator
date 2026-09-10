@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2443%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2457%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -166,18 +166,21 @@ PSG. Two modes:
 
 ### SCC-I cartridge ("SCC+")
 
-A bare sound cartridge (no game ROM) enabled with `--scc-plus`, connected
-unconditionally in primary slot 1: 64 KB of physical bank-switched RAM
-addressed as if 128 KB (blank — no ROM/data file is ever loaded), with bank
-register bit 3 ignored so block N mirrors block N+8 — reproducing a
+A bare sound cartridge (no game ROM) enabled with `--extension scc-plus`,
+connected unconditionally in primary slot 2: 64 KB of physical bank-switched
+RAM addressed as if 128 KB (blank — no ROM/data file is ever loaded), with
+bank register bit 3 ignored so block N mirrors block N+8 — reproducing a
 documented real-hardware modification (["connect the two 64 KB
 banks"](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)) that lets
 one physical SCC-I cartridge work with either of the two factory
 RAM-population variants, each of which this project's two target titles
 expects — a mode register selecting the carried SCC chip's Compatible or
 Plus mode, and per-window RAM-write control. Targets FDD (floppy-disk) MSX2
-titles that plug this cartridge in purely for its audio; a cartridge ROM
-argument together with `--scc-plus` is a startup error.
+titles that plug this cartridge in purely for its audio. Because it occupies
+slot 2 rather than slot 1, a cartridge ROM argument and `--mapper` may be
+freely combined with `--extension scc-plus`; `--extension` (any value)
+conflicts with `--slot2`/`--mapper2` instead, since an extension
+unconditionally owns slot 2.
 
 > **Note**: the author does not own a real SCC-I (SCC+) cartridge or
 > compatible software, so this implementation is based on publicly
@@ -187,23 +190,23 @@ argument together with `--scc-plus` is a startup error.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/mapper.py:SCCICart` |
-| Activation | `--scc-plus` connects the cartridge in primary slot 1 (conflicts with a cartridge ROM argument and with `--mapper`) |
+| Activation | `--extension scc-plus` connects the cartridge in primary slot 2 (conflicts with `--slot2`/`--mapper2`) |
 | Memory map | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`; mode register at `0xBFFE`/`0xBFFF` |
 | SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), depending on the mode register |
 
 ### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
 
-Optional overlay cartridge enabled with `--fmpac`, placed in primary slot 2:
-64 KB banked ROM, 8 KB battery-backed SRAM with openMSX-compatible magic-value
-unlock, and a YM2413 (OPLL) FM sound chip — 9-channel 2-operator melody synthesis
-(15 built-in instruments plus a user-defined tone), ADSR envelopes, and rhythm
-mode (bass drum, snare, tom, top cymbal, hi-hat), mixed into the audio output
-alongside PSG/SCC.
+Optional overlay cartridge enabled with `--extension fmpac`, placed in
+primary slot 2: 64 KB banked ROM, 8 KB battery-backed SRAM with
+openMSX-compatible magic-value unlock, and a YM2413 (OPLL) FM sound chip —
+9-channel 2-operator melody synthesis (15 built-in instruments plus a
+user-defined tone), ADSR envelopes, and rhythm mode (bass drum, snare, tom,
+top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip) |
-| Activation | `--fmpac` overlays the cartridge in primary slot 2 (any base `--machine`); ROM at `roms/fmpac/fmpac.rom` |
+| Activation | `--extension fmpac` overlays the cartridge in primary slot 2 (any base `--machine`); ROM at `roms/fmpac/fmpac.rom` |
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`; 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`); memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`), enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by the enable register's bit 0 |
 | SRAM persistence | `saves/sram/fmpac.sram`, loaded on start and saved on exit |
@@ -633,11 +636,11 @@ python tools/make_blank_dsk.py blank.dsk
 python . path/to/game.rom --mapper KonamiSCC
 
 # Add an FM-PAC (MSX-MUSIC) cartridge in slot 2 alongside a game in slot 1
-python . path/to/game.rom --fmpac
+python . path/to/game.rom --extension fmpac
 
-# Connect an SCC-I (SCC+) cartridge in slot 1 (no cartridge ROM argument);
+# Connect an SCC-I (SCC+) cartridge in slot 2 (no cartridge ROM argument);
 # boot from floppy instead
-python . --scc-plus --fdd1 path/to/disk.dsk
+python . --extension scc-plus --fdd1 path/to/disk.dsk
 
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
@@ -678,8 +681,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `Majutsushi` (KonamiSCC not supported in slot 2) |
-| `--fmpac` | off | Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 (conflicts with `--slot2`) |
-| `--scc-plus` | off | Connect an SCC-I (SCC+) cartridge in slot 1 (conflicts with a cartridge ROM argument and with `--mapper`) |
+| `--extension {fmpac,scc-plus}` | _(none)_ | Overlay a slot 2 extension device: `fmpac` (MSX-MUSIC + 8 KB SRAM) or `scc-plus` (an SCC-I / SCC+ cartridge). Conflicts with `--slot2`/`--mapper2` |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
@@ -719,8 +721,7 @@ speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
 # mapper/mapper2 are CLI-only (--mapper / --mapper2); not configurable here
-fmpac: false             # overlay an FM-PAC in slot 2
-scc_plus: false          # connect an SCC-I (SCC+) cartridge in slot 1
+# extension: fmpac        # overlay a slot 2 extension: fmpac or scc-plus
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -753,7 +754,7 @@ mouse:
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
 ```
 
-`machine`, `speed`, `scale`, `slot2`, `fmpac`, `scc_plus`,
+`machine`, `speed`, `scale`, `slot2`, `extension`,
 `frame_skip`, `mouse`, and RPC/gamepad/keyboard-joystick settings are
 configurable (`mapper`/`mapper2` are CLI-only, see `--mapper`/`--mapper2`
 above); the gamepad button map applies to the SDL GameController path
@@ -1134,6 +1135,16 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
+- **v2.5.13** (2026-09-10) — Replace `--fmpac`/`--scc-plus` (and the
+  `fmpac`/`scc_plus` `py_emulator.yaml` keys) with a single `--extension
+  {fmpac,scc-plus}` flag (`extension` config key), backed by
+  `config/extensions/<id>.yaml` overlay files. **BREAKING**: SCC-I
+  (`scc-plus`) now occupies primary slot 2 instead of slot 1 — it can be
+  freely combined with a slot-1 cartridge and `--mapper` now, but can no
+  longer be combined with `--fmpac` (only one extension at a time).
+  `--extension` (any value) conflicts with `--slot2`/`--mapper2` instead.
+  Save-state format bumps to version 8, adding a dedicated SCC-I state path
+  (mirroring FM-PAC's) since slot 2 has no generic mapper-state coverage.
 - **v2.5.12** (2026-09-09) — `RamMapper`'s size is now configurable (whole
   16 KB banks, previously fixed at 128 KB), and slot 3's legacy (RAM-mapper)
   dispatch branch can now host an FDC alongside the RAM mapper — previously

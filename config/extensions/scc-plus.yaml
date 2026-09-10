@@ -1,0 +1,12 @@
+schema_version: 1
+id: scc-plus
+name: "SCC-I (SCC+) cartridge"
+device: scc_i_cart
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --extension scc-plus) to place the
+# SCC-I cartridge in primary slot 2. No ROM is ever loaded -- SCCICart's 64 KB
+# RAM starts blank -- and there is no battery-backed SRAM, so this overlay
+# declares neither a `rom:` nor an `sram:` block.
+overlay: true
+slot: 2
