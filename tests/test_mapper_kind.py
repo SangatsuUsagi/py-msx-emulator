@@ -15,6 +15,7 @@ from msx.mapper import (
     FixedPageMapper,
     FlatMapper,
     GameMaster2Mapper,
+    HalnoteMapper,
     KoeiSRAM32Mapper,
     KonamiMapper,
     KonamiSCCMapper,
@@ -45,6 +46,7 @@ _ALL_MAPPER_CLASSES: tuple[type[Mapper], ...] = (
     MajutsushiMapper,
     KonamiSCCMapper,
     SCCICart,
+    HalnoteMapper,
     FmPac,
 )
 
