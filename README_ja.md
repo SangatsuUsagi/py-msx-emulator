@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2443%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2457%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -106,25 +106,25 @@
 
 ### SCC-I カートリッジ（「SCC+」）
 
-`--scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 1 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。カートリッジ ROM 引数と `--scc-plus` を同時指定すると起動時エラーになります。
+`--extension scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 2 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。スロット 1 ではなくスロット 2 を占有するため、カートリッジ ROM 引数や `--mapper` と自由に併用できます。`--extension`（いずれの値でも）はスロット 2 を無条件に占有するため、`--slot2`/`--mapper2` とは併用不可です。
 
 > **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/mapper.py:SCCICart` |
-| 有効化 | `--scc-plus` でプライマリスロット 1 に接続（カートリッジ ROM 引数や `--mapper` との併用不可） |
+| 有効化 | `--extension scc-plus` でプライマリスロット 2 に接続（`--slot2`/`--mapper2` との併用不可） |
 | メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
 | SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
 ### FM-PAC — MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-`--fmpac` で有効化するオプションのオーバーレイカートリッジ。プライマリスロット 2 に配置：64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
+`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ。プライマリスロット 2 に配置：64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/fmpac.py`（カートリッジデバイス）、`msx/opll.py`（YM2413/OPLL チップ） |
-| 有効化 | `--fmpac` でプライマリスロット 2 にオーバーレイ（`--machine` のベースマシンは任意）；ROM は `roms/fmpac/fmpac.rom` |
+| 有効化 | `--extension fmpac` でプライマリスロット 2 にオーバーレイ（`--machine` のベースマシンは任意）；ROM は `roms/fmpac/fmpac.rom` |
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）；8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）；メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
 | SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
@@ -439,11 +439,11 @@ python tools/make_blank_dsk.py blank.dsk
 python . path/to/game.rom --mapper KonamiSCC
 
 # スロット 1 のゲームと合わせてスロット 2 に FM-PAC（MSX-MUSIC）を追加
-python . path/to/game.rom --fmpac
+python . path/to/game.rom --extension fmpac
 
-# スロット 1 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
+# スロット 2 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
 # フロッピーから起動
-python . --scc-plus --fdd1 path/to/disk.dsk
+python . --extension scc-plus --fdd1 path/to/disk.dsk
 
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
@@ -484,8 +484,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
-| `--fmpac` | オフ | プライマリスロット 2 に FM-PAC（MSX-MUSIC + 8 KB SRAM）カートリッジをオーバーレイ（`--slot2` と併用不可） |
-| `--scc-plus` | オフ | プライマリスロット 1 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数や `--mapper` と併用不可） |
+| `--extension {fmpac,scc-plus}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）または `scc-plus`（SCC-I / SCC+ カートリッジ）。`--slot2`/`--mapper2` と併用不可 |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -525,8 +524,7 @@ speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-fmpac: false             # スロット 2 に FM-PAC を重ねる
-scc_plus: false          # スロット 1 に SCC-I（SCC+）カートリッジを接続
+# extension: fmpac        # スロット 2 の拡張を重ねる：fmpac または scc-plus
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -559,8 +557,8 @@ mouse:
   port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
 ```
 
-設定できるのは `machine`・`speed`・`scale`・`slot2`・`fmpac`・
-`scc_plus`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
+設定できるのは `machine`・`speed`・`scale`・`slot2`・`extension`・
+`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
 （`mapper`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper2` を参照）。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
@@ -785,7 +783,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2443 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2457 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -850,7 +848,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2443 テスト
+├── tests/                 # テストスイート — 2457 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -894,6 +892,16 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
+- **v2.5.13** (2026-09-10) — `--fmpac`/`--scc-plus`（および
+  `py_emulator.yaml` の `fmpac`/`scc_plus` キー）を、単一の `--extension
+  {fmpac,scc-plus}` フラグ（`extension` 設定キー）に統合。
+  `config/extensions/<id>.yaml` オーバーレイファイルで定義。**破壊的変更**：
+  SCC-I（`scc-plus`）はスロット 1 ではなくプライマリスロット 2 を占有するよ
+  うになった——スロット 1 のカートリッジや `--mapper` と自由に併用できるよう
+  になった一方、`--fmpac` との併用（拡張は同時に1つのみ）はできなくなった。
+  `--extension`（いずれの値でも）は `--slot2`/`--mapper2` と併用不可。セーブ
+  ステート形式はバージョン 8 に更新——スロット 2 には汎用のマッパー状態機構
+  がないため、FM-PAC と同様の専用状態パスを SCC-I 用に新設。
 - **v2.5.12** (2026-09-09) — `RamMapper` のサイズを可変化（16KB単位のバンクで
   設定可能、従来は128KB固定）。あわせて、slot 3のlegacy（RAM mapper）ディス
   パッチ分岐でもFDCをRAM mapperと併用できるようにした——従来はFDCの搭載に

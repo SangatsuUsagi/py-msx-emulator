@@ -342,14 +342,20 @@ class MachineSpec:
 
 
 @dataclass
-class _FmPacOverlay:
-    """Resolved FM-PAC overlay (config/machines/fmpac.yaml): ROM + SRAM save
-    path for the --fmpac flag. Not a machine spec — applied on top of one."""
+class _ExtensionOverlay:
+    """Resolved extension overlay (config/extensions/<id>.yaml): the device
+    kind plus optional ROM/SRAM paths for the --extension flag. Not a machine
+    spec — applied on top of one, always in primary slot 2.
 
-    rom_base_dir: Path
-    rom_entry: _RomEntry
-    slot: int
-    sram_save_path: Path
+    `rom_base_dir`/`rom_entry`/`sram_save_path` are None for a device with no
+    ROM file and no persisted SRAM (e.g. "scc_i_cart", whose RAM starts
+    blank).
+    """
+
+    device: str
+    rom_base_dir: Path | None = None
+    rom_entry: _RomEntry | None = None
+    sram_save_path: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -504,18 +510,20 @@ def _is_sram_shape(data: object) -> TypeGuard[SramYaml]:
     return isinstance(data, dict)
 
 
-class FmPacOverlayYaml(TypedDict, total=False):
+class ExtensionOverlayYaml(TypedDict, total=False):
     schema_version: int
+    id: str
+    device: str
     slot: int
     rom_base: str
     rom: RomEntryYaml
     sram: SramYaml
 
 
-def _is_fmpac_overlay_shape(data: object) -> TypeGuard[FmPacOverlayYaml]:
-    """True if `data` is a dict (fmpac.yaml top-level shape). Individual
-    required fields are still checked by `load_fmpac_overlay` itself, not
-    guaranteed here (design.md Decision 2)."""
+def _is_extension_overlay_shape(data: object) -> TypeGuard[ExtensionOverlayYaml]:
+    """True if `data` is a dict (config/extensions/<id>.yaml top-level shape).
+    Individual required fields are still checked by `load_extension_overlay`
+    itself, not guaranteed here (design.md Decision 2)."""
     return isinstance(data, dict)
 
 
@@ -575,9 +583,9 @@ def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     parses every `rom:` block in the codebase, with the same shape and the
     same validation, regardless of where that ROM lives — slot 0 main/logo
     ROM and the MSX2 slot 3 sub ROM (_parse_slot0, _parse_slot3_msx2), the
-    FDC's DISK ROM (_parse_fdc), and the FM-PAC overlay's ROM
-    (load_fmpac_overlay). A new ROM-bearing device added to the loader should
-    reuse this rather than hand-rolling another parser.
+    FDC's DISK ROM (_parse_fdc), and an extension overlay's ROM
+    (load_extension_overlay). A new ROM-bearing device added to the loader
+    should reuse this rather than hand-rolling another parser.
     """
     file = entry.get("file")
     if not file:
@@ -985,31 +993,48 @@ def load_machine_spec(
 
 
 # ---------------------------------------------------------------------------
-# FM-PAC overlay (config/machines/fmpac.yaml)
+# Extension overlay (config/extensions/<id>.yaml)
 # ---------------------------------------------------------------------------
 
-def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
-    """Load and validate the FM-PAC overlay fragment.
+# Device kinds build_machine's extension_overlay dispatch (msx/machine_loader.py)
+# knows how to construct. Kept here, next to the overlay loader, as the single
+# place a new extension's device kind must be added.
+_KNOWN_EXTENSION_DEVICES = frozenset({"fmpac", "scc_i_cart"})
+
+# Device kinds whose overlay YAML MUST declare a 'rom' block (fmpac's device
+# construction requires a ROM; scc_i_cart's RAM starts blank, no file loaded).
+_EXTENSION_DEVICES_REQUIRING_ROM = frozenset({"fmpac"})
+
+
+def load_extension_overlay(
+    extension_id: str, config_dir: Path, project_root: Path
+) -> _ExtensionOverlay:
+    """Load and validate an extension overlay fragment.
 
     Args:
+        extension_id: The --extension value ("fmpac" or "scc-plus"), also the
+            YAML filename stem.
         config_dir: Path to the config/ directory.
         project_root: Project root used to resolve rom_base and the SRAM save
             path relative paths.
 
     Returns:
-        A resolved _FmPacOverlay, ready for build_machine(fmpac_overlay=...).
+        A resolved _ExtensionOverlay, ready for
+        build_machine(extension_overlay=...).
 
     Raises:
-        MachineLoadError: On missing file, bad schema_version, or a missing
-            'rom' entry.
+        MachineLoadError: On missing file, bad schema_version, missing or
+            unrecognized 'device' field, a 'device' that requires a 'rom'
+            block (e.g. "fmpac") but has none, or (when a 'rom' block is
+            present) a malformed 'rom' entry.
     """
-    path = config_dir / "machines" / "fmpac.yaml"
+    path = config_dir / "extensions" / f"{extension_id}.yaml"
     if not path.exists():
-        raise MachineLoadError(f"FM-PAC overlay not found: {path}")
+        raise MachineLoadError(f"extension overlay not found: {path}")
 
     with path.open(encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
-    if not _is_fmpac_overlay_shape(raw):
+    if not _is_extension_overlay_shape(raw):
         raise MachineLoadError(f"{path}: expected a YAML mapping at top level")
 
     schema_version = raw.get("schema_version")
@@ -1021,25 +1046,38 @@ def load_fmpac_overlay(config_dir: Path, project_root: Path) -> _FmPacOverlay:
     slot = int(raw.get("slot", 2))
     if slot != 2:
         raise MachineLoadError(
-            f"{path}: unsupported FM-PAC slot {slot!r} (only slot 2 is supported)"
+            f"{path}: unsupported extension slot {slot!r} (only slot 2 is supported)"
         )
-    rom_base: str = str(raw.get("rom_base", "roms/fmpac"))
-    rom_base_dir = project_root / rom_base
+
+    device = raw.get("device")
+    if not device:
+        raise MachineLoadError(f"{path}: missing required field 'device'")
+    if device not in _KNOWN_EXTENSION_DEVICES:
+        raise MachineLoadError(
+            f"{path}: unrecognized 'device' {device!r} "
+            f"(expected one of {sorted(_KNOWN_EXTENSION_DEVICES)})"
+        )
 
     rom_data = raw.get("rom")
+    if rom_data is None:
+        if device in _EXTENSION_DEVICES_REQUIRING_ROM:
+            raise MachineLoadError(f"{path}: device {device!r} requires a 'rom' entry")
+        return _ExtensionOverlay(device=str(device))
     if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{path}: missing required 'rom' entry")
-    rom_entry = _parse_rom_entry(rom_data, f"FM-PAC overlay '{path}'")
+    rom_base: str = str(raw.get("rom_base", ""))
+    rom_base_dir = project_root / rom_base
+    rom_entry = _parse_rom_entry(rom_data, f"extension overlay '{path}'")
 
     sram_data = raw.get("sram")
-    save_file = str(sram_data.get("save_file", "saves/sram/fmpac.sram")) \
-        if _is_sram_shape(sram_data) else "saves/sram/fmpac.sram"
+    sram_save_path = Path(str(sram_data.get("save_file"))) \
+        if _is_sram_shape(sram_data) and sram_data.get("save_file") else None
 
-    return _FmPacOverlay(
+    return _ExtensionOverlay(
+        device=str(device),
         rom_base_dir=rom_base_dir,
         rom_entry=rom_entry,
-        slot=slot,
-        sram_save_path=Path(save_file),
+        sram_save_path=sram_save_path,
     )
 
 
@@ -1138,9 +1176,8 @@ def build_machine(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    fmpac_overlay: _FmPacOverlay | None = None,
+    extension_overlay: _ExtensionOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
-    scc_plus: bool = False,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
@@ -1160,10 +1197,10 @@ def build_machine(
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
         joy_map: Optional Joy1 keyboard key map override for InputState
             (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
-        scc_plus: When True, slot 1 is unconditionally an SCC-I cartridge
-            (SCCICart) instead of the normal cartridge/mapper resolution --
-            `cartridge`/`mapper` are ignored. The caller (CLI layer) is
-            responsible for ensuring `cartridge is None` in this mode.
+        extension_overlay: Resolved --extension overlay (see
+            load_extension_overlay), or None for no extension. When given, it
+            unconditionally occupies primary slot 2, overriding whatever
+            `cartridge2`/`mapper2` resolved to.
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -1190,30 +1227,19 @@ def build_machine(
 
     # --- Cartridge mapper resolution ---
     sram_save_path: Path | None = None
-    scc: SCC | None
-    mapper_instance: Mapper
-    if scc_plus:
-        # SCC-I cartridge unconditionally occupies slot 1; normal cartridge/
-        # mapper resolution (and the SRAM path, which SCC-I has none of) is
-        # skipped entirely. The caller ensures `cartridge is None` here.
-        # is_052539=True: the SCC-I cartridge carries a genuine Konami-052539
-        # chip, not a 051649 (see SCC.is_052539's docstring).
-        scc = SCC(is_052539=True)
-        mapper_instance = SCCICart(scc=scc)
-    else:
-        resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
-        scc = SCC() if resolved == "KonamiSCC" else None
+    resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
+    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
 
-        # SRAM: load existing save file if mapper supports it
-        sram_data: bytearray | None = None
-        if resolved in _SRAM_SIZES and cartridge is not None:
-            # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not
-            # None here, so cart_sha1 is set).
-            assert cart_sha1 is not None
-            sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
-            sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
+    # SRAM: load existing save file if mapper supports it
+    sram_data: bytearray | None = None
+    if resolved in _SRAM_SIZES and cartridge is not None:
+        # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not
+        # None here, so cart_sha1 is set).
+        assert cart_sha1 is not None
+        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
+        sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
 
-        mapper_instance = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
+    mapper_instance: Mapper = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
 
     resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
     if resolved2 == "KonamiSCC":
@@ -1227,23 +1253,37 @@ def build_machine(
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     )
 
-    # FM-PAC overlay: occupies primary slot 2 (load_fmpac_overlay validates this),
-    # replacing whatever slot-2 cartridge mapper was resolved above.
+    # Extension overlay: unconditionally occupies primary slot 2, replacing
+    # whatever slot-2 cartridge mapper was resolved above.
     fmpac_device: FmPac | None = None
-    if fmpac_overlay is not None:
-        fmpac_rom = _load_rom(
-            fmpac_overlay.rom_base_dir, fmpac_overlay.rom_entry.file, required=True
-        )
-        assert fmpac_rom is not None
-        fmpac_sram = _load_sram_or_warn(
-            fmpac_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
-        )
-        fmpac_device = FmPac(
-            rom=fmpac_rom,
-            opll=Opll(),
-            sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
-        )
-        mapper2_instance = fmpac_device
+    scci_device: SCCICart | None = None
+    if extension_overlay is not None:
+        if extension_overlay.device == "fmpac":
+            assert extension_overlay.rom_base_dir is not None
+            assert extension_overlay.rom_entry is not None
+            fmpac_rom = _load_rom(
+                extension_overlay.rom_base_dir, extension_overlay.rom_entry.file,
+                required=True,
+            )
+            assert fmpac_rom is not None
+            fmpac_sram = _load_sram_or_warn(
+                extension_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
+            ) if extension_overlay.sram_save_path is not None else None
+            fmpac_device = FmPac(
+                rom=fmpac_rom,
+                opll=Opll(),
+                sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
+            )
+            mapper2_instance = fmpac_device
+        elif extension_overlay.device == "scc_i_cart":
+            # is_052539=True: the SCC-I cartridge carries a genuine
+            # Konami-052539 chip, not a 051649 (see SCC.is_052539's
+            # docstring). This chip becomes machine.scc, taking priority
+            # over a slot-1 KonamiSCC chip (real hardware never has both
+            # attached at once, and this Machine has a single `scc` field).
+            scc = SCC(is_052539=True)
+            scci_device = SCCICart(scc=scc)
+            mapper2_instance = scci_device
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     if joy_map is not None:
@@ -1297,8 +1337,11 @@ def build_machine(
     machine.psg._machine = machine
     machine.sram_save_path = sram_save_path
     machine.fmpac = fmpac_device
+    machine.scci_cart = scci_device
     machine.fmpac_sram_save_path = (
-        fmpac_overlay.sram_save_path if fmpac_overlay is not None else None
+        extension_overlay.sram_save_path
+        if fmpac_device is not None and extension_overlay is not None
+        else None
     )
     return machine
 

@@ -31,10 +31,16 @@ if TYPE_CHECKING:
 #   DiskDrive/connection-style state, see
 #   openspec/changes/2026-08-31-fdc-state-save-load). No other field
 #   changed.
-# Version 8: slot2_sub_slot_reg: int | None added (primary slot 2's own
+# Version 8: scci_state: dict[str, object] | None added (SCCICart's
+#   RAM/banks/mode-register state, now needed since --extension scc-plus
+#   moved SCCICart from primary slot 1 -- covered by the generic
+#   mapper_kind/mapper_state fields -- to slot 2, which has no generic
+#   mapper2 state path; see openspec/changes/add-extension-flag). No other
+#   field changed.
+# Version 9: slot2_sub_slot_reg: int | None added (primary slot 2's own
 #   secondary slot register, independent of sub_slot_reg -- see
 #   openspec/changes/add-hbi-j1-support). No other field changed.
-CURRENT_FORMAT_VERSION: int = 8
+CURRENT_FORMAT_VERSION: int = 9
 
 
 class StateLoadError(ValueError):
@@ -119,6 +125,9 @@ class MachineSnapshot:
     fmpac_state: dict[str, object] | None = None
     # FDC: WD2793/TC8566AF + connection-style + drives (None when no FDC)
     fdc_state: dict[str, object] | None = None
+    # SCC-I cartridge (--extension scc-plus, slot 2): RAM/banks/mode register
+    # (None when no SCC-I cartridge is present)
+    scci_state: dict[str, object] | None = None
     # Primary slot 2's own secondary slot register (None unless an extension
     # needing an expanded slot 2, e.g. HBI-J1, is active) -- independent of
     # sub_slot_reg above, mirroring its shape exactly.
@@ -164,6 +173,7 @@ class _MachineSnapshotFields(TypedDict):
     cmd_remaining: int | None
     fmpac_state: dict[str, object] | None
     fdc_state: dict[str, object] | None
+    scci_state: dict[str, object] | None
     slot2_sub_slot_reg: int | None
 
 
@@ -226,6 +236,21 @@ def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) ->
     # FmPac.restore() restores the carried OPLL's state too (from the
     # nested "opll" field) -- see msx/fmpac.py.
     machine.fmpac.restore(fmpac_state)
+
+
+def _scci_to_dict(machine: "Machine") -> dict[str, object] | None:
+    if machine.scci_cart is None:
+        return None
+    # SCCICart.snapshot() covers only its own RAM/banks/mode register -- the
+    # carried SCC chip's own state is snapshotted separately by _scc_to_dict
+    # (machine.scc), same chip object either way.
+    return cast(dict[str, object], machine.scci_cart.snapshot())
+
+
+def _restore_scci(machine: "Machine", scci_state: dict[str, object] | None) -> None:
+    if machine.scci_cart is None or scci_state is None:
+        return
+    machine.scci_cart.restore(scci_state)
 
 
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -319,6 +344,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cmd_remaining=cmd_remaining,
         fmpac_state=_fmpac_to_dict(machine),
         fdc_state=_fdc_to_dict(machine),
+        scci_state=_scci_to_dict(machine),
         slot2_sub_slot_reg=slot2_sub_slot_reg,
     )
 
@@ -388,6 +414,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
     _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
     _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
+    _restore_producer("scci", lambda: _restore_scci(machine, snap.scci_state))
     if snap.slot2_sub_slot_reg is not None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
 

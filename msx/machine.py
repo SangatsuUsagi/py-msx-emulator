@@ -77,6 +77,7 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
+    scci_cart: SCCICart | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME

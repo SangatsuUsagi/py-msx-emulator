@@ -22,19 +22,15 @@ speed: 1.0
 scale: 3
 
 # Slot 2 cartridge ROM path (relative to the repository root). Leave unset
-# for no slot 2 cartridge (default). Conflicts with `fmpac`. The slot 2
+# for no slot 2 cartridge (default). Conflicts with `extension`. The slot 2
 # mapper is CLI-only (--mapper2, default auto) -- not configurable here.
 # slot2: roms/slot2.rom
 
-# Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2.
-# Conflicts with a slot 2 cartridge (--slot2 / slot2 above).
-fmpac: false
-
-# Connect an SCC-I (SCC+) cartridge in slot 1 (128 KB bank-switched RAM,
-# blank -- no ROM/data file is ever loaded -- plus the SCC sound chip).
-# Conflicts with a cartridge ROM argument and with --mapper. Slot 1 mapper
-# selection (--mapper, default auto) is CLI-only -- not configurable here.
-scc_plus: false
+# Overlay a slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM) or
+# "scc-plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
+# no ROM/data file is ever loaded -- plus the SCC sound chip). Conflicts
+# with a slot 2 cartridge (--slot2/--mapper2 / slot2 above).
+# extension: fmpac
 
 # Frame skip mode: true = auto (adapt to frame overruns, default), false =
 # none (always render every frame; may stutter under load).

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, TypeVar
 
-from msx.app_config import VALID_MAPPERS, VALID_MAPPERS2
+from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -108,13 +108,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
-    parser.add_argument("--fmpac", action="store_const", const=True, default=None,
-                        help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
-                             "(conflicts with --slot2)")
-    parser.add_argument("--scc-plus", action="store_const", const=True, default=None,
-                        dest="scc_plus",
-                        help="Connect an SCC-I (SCC+) cartridge in slot 1 (conflicts with "
-                             "a cartridge ROM argument and with --mapper)")
+    parser.add_argument("--extension", choices=list(VALID_EXTENSIONS), default=None,
+                        help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
+                             "SRAM) or 'scc-plus' (an SCC-I / SCC+ cartridge) (conflicts with "
+                             "--slot2/--mapper2)")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
@@ -206,8 +203,7 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 def _print_startup_summary(
     spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
-    fmpac_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
-    scc_plus: bool = False,
+    extension_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
@@ -218,10 +214,14 @@ def _print_startup_summary(
         print(f"fdd1    : {fdd1_path}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
-    if fmpac_overlay is not None:
-        print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
-    if scc_plus:
-        print("scc-plus: SCC-I cartridge connected in slot 1")
+    if extension_overlay is not None:
+        if extension_overlay.rom_entry is not None:
+            print(
+                f"extension: {extension_overlay.device} "
+                f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"
+            )
+        else:
+            print(f"extension: {extension_overlay.device} (slot 2)")
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -320,8 +320,7 @@ def main() -> None:
     speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
     scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
     mapper_eff = _first_set(args.mapper, default=DEFAULT_MAPPER)
-    fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, default=False)
-    scc_plus_eff = _first_set(args.scc_plus, app_cfg.scc_plus, default=False)
+    extension_eff = _first_set(args.extension, app_cfg.extension, default=None)
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
     # slot2's built-in default is "no cartridge" (None), unlike the concrete
@@ -342,22 +341,18 @@ def main() -> None:
     if scale_eff < 1:
         print("error: --scale must be a positive integer", file=sys.stderr)
         sys.exit(1)
-    if fmpac_eff and slot2_eff:
-        print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
-              file=sys.stderr)
+    if extension_eff is not None and slot2_eff:
+        print("error: --extension and --slot2 are mutually exclusive "
+              "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
-    if scc_plus_eff and args.cartridge:
-        print("error: --scc-plus and a cartridge ROM argument are mutually "
-              "exclusive (SCC-I occupies slot 1)", file=sys.stderr)
-        sys.exit(1)
-    # Checked against args.mapper, not mapper_eff: mapper_eff folds in
-    # DEFAULT_MAPPER ("auto"), so it can't distinguish an explicit
-    # --mapper auto from --mapper never having been passed at all. --mapper
-    # has no config-file equivalent (see app-config-file spec), so only the
-    # CLI flag needs checking here.
-    if scc_plus_eff and args.mapper is not None:
-        print("error: --scc-plus and --mapper are mutually exclusive "
-              "(SCC-I forces slot 1 to the SCC-I cartridge)", file=sys.stderr)
+    # Checked against args.mapper2, not mapper2_eff: mapper2_eff folds in the
+    # "auto" default, so it can't distinguish an explicit --mapper2 auto from
+    # --mapper2 never having been passed. --mapper2 has no config-file
+    # equivalent (see app-config-file spec), so only the CLI flag needs
+    # checking here.
+    if extension_eff is not None and args.mapper2 is not None:
+        print("error: --extension and --mapper2 are mutually exclusive "
+              "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -373,13 +368,16 @@ def main() -> None:
         MachineLoadError,
         build_machine,
         load_device_registry,
-        load_fmpac_overlay,
+        load_extension_overlay,
         load_machine_spec,
     )
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        fmpac_overlay = load_fmpac_overlay(_CONFIG_DIR, _PROJECT_ROOT) if fmpac_eff else None
+        extension_overlay = (
+            load_extension_overlay(extension_eff, _CONFIG_DIR, _PROJECT_ROOT)
+            if extension_eff is not None else None
+        )
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -403,8 +401,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, mouse_port_eff, args,
-        scc_plus=scc_plus_eff,
+        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, mouse_port_eff, args,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -435,9 +432,8 @@ def main() -> None:
                 tracer=tracer,
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
-                fmpac_overlay=fmpac_overlay,
+                extension_overlay=extension_overlay,
                 joy_map=app_cfg.keyboard_joy_map(),
-                scc_plus=scc_plus_eff,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)
