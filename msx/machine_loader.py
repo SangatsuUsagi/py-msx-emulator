@@ -317,6 +317,14 @@ class MachineSpec:
     # I/O port ranges from device YAML: device_id -> (first_port, last_port)
     device_io_ports: dict[str, tuple[int, int]] = field(default_factory=dict)
 
+    # Slot-independent global I/O device declared directly on this machine
+    # (e.g. a built-in Kanji font ROM), as opposed to one supplied by an
+    # --extension overlay. Same resolved shape as an overlay's own io_device
+    # (_ExpandedSubslotDevice) -- see load_machine_spec's io_device parsing
+    # and build_machine's KanjiRom construction, either of which SHALL NOT
+    # both resolve a device at once (build_machine raises MachineLoadError).
+    io_device: _ExpandedSubslotDevice | None = None
+
     # Timing (derived from video_standard in YAML)
     cycles_per_frame: int = 59_659   # NTSC default
     lines_per_frame: int = 262       # NTSC default
@@ -521,6 +529,12 @@ class MachineEntryYaml(TypedDict, total=False):
     # Slot3Msx2Yaml after coercion (design.md Decision 4).
     slots: dict[str, Any]
     builtin_devices: list[BuiltinDeviceEntryYaml]
+    # Optional slot-independent global I/O device built into this machine
+    # (e.g. a Kanji font ROM) -- same shape as an extension overlay's own
+    # io_device (ExtensionOverlayYaml, defined below), reused rather than
+    # duplicated. Forward-referenced since ExtensionOverlayYaml is defined
+    # later in this file.
+    io_device: "ExtensionOverlayYaml"
 
 
 def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
@@ -1005,6 +1019,17 @@ def load_machine_spec(
         raw, device_registry, machine_path
     )
 
+    # --- Machine-level global I/O device (e.g. a built-in Kanji font ROM) ---
+    io_device_raw = raw.get("io_device")
+    io_device: _ExpandedSubslotDevice | None = None
+    if io_device_raw is not None:
+        if not _is_extension_overlay_shape(io_device_raw):
+            raise MachineLoadError(f"{machine_path}: io_device: expected a YAML mapping")
+        io_device = _parse_expanded_device(
+            io_device_raw, rom_base_dir, f"{machine_path}: io_device",
+            _KNOWN_IO_DEVICES, _IO_DEVICES_REQUIRING_ROM,
+        )
+
     return MachineSpec(
         name=name,
         machine_id=machine_id,
@@ -1028,6 +1053,7 @@ def load_machine_spec(
         sub_rom_subslot=sub_rom_subslot,
         fdc=fdc,
         fdc_subslot=fdc_subslot,
+        io_device=io_device,
     )
 
 
@@ -1400,6 +1426,18 @@ def build_machine(
     kanji_device: KanjiRom | None = None
     slot2_sub_slot_enabled = False
     mapper2_subslots: list[Mapper | None] = [None, None, None, None]
+
+    # Machine-declared global I/O device (e.g. a built-in Kanji font ROM),
+    # independent of any --extension overlay.
+    if spec.io_device is not None and spec.io_device.device == "kanji_rom":
+        assert spec.io_device.rom_base_dir is not None
+        assert spec.io_device.rom_entry is not None
+        machine_kanji_rom = _load_rom(
+            spec.io_device.rom_base_dir, spec.io_device.rom_entry.file, required=True
+        )
+        assert machine_kanji_rom is not None
+        kanji_device = KanjiRom(rom=machine_kanji_rom)
+
     if isinstance(extension_overlay, _ExpandedExtensionOverlay):
         slot2_sub_slot_enabled = True
         for index, subslot in extension_overlay.subslots.items():
@@ -1430,10 +1468,18 @@ def build_machine(
                 mapper2_subslots[index] = FixedPageMapper(rom=flat_rom, base=0x4000)
         if extension_overlay.io_device is not None and extension_overlay.io_device.device \
                 == "kanji_rom":
-            io_device = extension_overlay.io_device
-            assert io_device.rom_base_dir is not None
-            assert io_device.rom_entry is not None
-            kanji_rom = _load_rom(io_device.rom_base_dir, io_device.rom_entry.file, required=True)
+            if kanji_device is not None:
+                raise MachineLoadError(
+                    f"{spec.machine_id}: a machine-declared io_device and an extension "
+                    "overlay's io_device both resolve to a Kanji-ROM device on I/O "
+                    "ports 0xD8-0xDB -- these cannot coexist"
+                )
+            overlay_io_device = extension_overlay.io_device
+            assert overlay_io_device.rom_base_dir is not None
+            assert overlay_io_device.rom_entry is not None
+            kanji_rom = _load_rom(
+                overlay_io_device.rom_base_dir, overlay_io_device.rom_entry.file, required=True
+            )
             assert kanji_rom is not None
             kanji_device = KanjiRom(rom=kanji_rom)
     elif extension_overlay is not None:
