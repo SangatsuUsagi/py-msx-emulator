@@ -46,7 +46,18 @@ if TYPE_CHECKING:
 #   sub-slots have no generic mapper-state path -- mirrors scci_state's
 #   own precedent; see openspec/changes/add-hbi-j1-support). No other field
 #   changed.
-CURRENT_FORMAT_VERSION: int = 10
+# Version 11: fmpac_state/scci_state/halnote_state (three bespoke, per-
+#   device-kind fields) replaced by a generic slot-2 mechanism mirroring
+#   slot 1's mapper_kind/mapper_state: mapper2_kind: MapperKind and
+#   mapper2_state: dict[str, object] (always present, the flat slot-2
+#   case -- FM-PAC, SCC-I, or an empty mapper) plus
+#   mapper2_subslot_kinds/mapper2_subslot_states: list[...] | None
+#   (length-4 lists when slot 2 is expanded, e.g. HBI-J1's Halnote
+#   cartridge -- otherwise both None). A slot-2 mapper-kind or wiring
+#   mismatch now raises ValueError, matching slot 1's existing strict
+#   check, in place of the prior three fields' silent-skip-on-mismatch
+#   behavior. See openspec/changes/generalize-slot2-mapper-state.
+CURRENT_FORMAT_VERSION: int = 11
 
 
 class StateLoadError(ValueError):
@@ -105,6 +116,15 @@ class MachineSnapshot:
     # variant is a separate, larger redesign, deliberately out of scope here.
     mapper_kind: MapperKind
     mapper_state: dict[str, object]
+    # Primary slot 2, same generic mechanism as slot 1 above -- see
+    # openspec/changes/generalize-slot2-mapper-state. mapper2_kind/
+    # mapper2_state are always present (machine.memory._mapper2 always
+    # exists, even as an empty FlatMapper when nothing is configured
+    # there). mapper2_subslot_kinds/mapper2_subslot_states (defined below
+    # among the MSX2-only fields) are the expanded-slot-2 counterpart,
+    # None unless slot2_sub_slot_enabled.
+    mapper2_kind: MapperKind
+    mapper2_state: dict[str, object]
     # VDP
     vdp_vram: bytearray
     vdp_regs: list[int]
@@ -127,21 +147,20 @@ class MachineSnapshot:
     cmd_regs: list[int] | None = None
     status2: int | None = None
     cmd_remaining: int | None = None
-    # FM-PAC + OPLL (None when no FM-PAC is present)
-    fmpac_state: dict[str, object] | None = None
     # FDC: WD2793/TC8566AF + connection-style + drives (None when no FDC)
     fdc_state: dict[str, object] | None = None
-    # SCC-I cartridge (--extension scc-plus, slot 2): RAM/banks/mode register
-    # (None when no SCC-I cartridge is present)
-    scci_state: dict[str, object] | None = None
     # Primary slot 2's own secondary slot register (None unless an extension
     # needing an expanded slot 2, e.g. HBI-J1, is active) -- independent of
     # sub_slot_reg above, mirroring its shape exactly.
     slot2_sub_slot_reg: int | None = None
-    # HBI-J1's Halnote-mapped MSX-JE cartridge (--extension hbi-j1, slot 2
-    # sub-slot 0): banks/sub-banks/enable-flags/SRAM (None when no HalnoteMapper
-    # is present)
-    halnote_state: dict[str, object] | None = None
+    # Expanded slot 2's per-sub-slot mapper kind/state (length-4 lists, one
+    # entry per sub-slot; both None unless slot2_sub_slot_enabled) -- the
+    # generic counterpart to mapper2_kind/mapper2_state above, covering
+    # e.g. HBI-J1's Halnote-mapped MSX-JE cartridge in sub-slot 0. An
+    # unassigned sub-slot is kind=None/state={}. See
+    # openspec/changes/generalize-slot2-mapper-state.
+    mapper2_subslot_kinds: list[MapperKind | None] | None = None
+    mapper2_subslot_states: list[dict[str, object]] | None = None
 
 
 class _MachineSnapshotFields(TypedDict):
@@ -163,6 +182,8 @@ class _MachineSnapshotFields(TypedDict):
     slot_register: int
     mapper_kind: MapperKind
     mapper_state: dict[str, object]
+    mapper2_kind: MapperKind
+    mapper2_state: dict[str, object]
     vdp_vram: bytearray
     vdp_regs: list[int]
     vdp_status: int
@@ -181,11 +202,10 @@ class _MachineSnapshotFields(TypedDict):
     cmd_regs: list[int] | None
     status2: int | None
     cmd_remaining: int | None
-    fmpac_state: dict[str, object] | None
     fdc_state: dict[str, object] | None
-    scci_state: dict[str, object] | None
     slot2_sub_slot_reg: int | None
-    halnote_state: dict[str, object] | None
+    mapper2_subslot_kinds: list[MapperKind | None] | None
+    mapper2_subslot_states: list[dict[str, object]] | None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -232,50 +252,6 @@ def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> Non
     machine.scc.restore(scc_state)
 
 
-def _fmpac_to_dict(machine: "Machine") -> dict[str, object] | None:
-    if machine.fmpac is None:
-        return None
-    # FmPac.snapshot() returns a typed FmPacState (see msx/fmpac.py) that
-    # already nests the OPLL snapshot under "opll"; cast down to the wider
-    # dict[str, object] this function has always returned.
-    return cast(dict[str, object], machine.fmpac.snapshot())
-
-
-def _restore_fmpac(machine: "Machine", fmpac_state: dict[str, object] | None) -> None:
-    if machine.fmpac is None or fmpac_state is None:
-        return
-    # FmPac.restore() restores the carried OPLL's state too (from the
-    # nested "opll" field) -- see msx/fmpac.py.
-    machine.fmpac.restore(fmpac_state)
-
-
-def _scci_to_dict(machine: "Machine") -> dict[str, object] | None:
-    if machine.scci_cart is None:
-        return None
-    # SCCICart.snapshot() covers only its own RAM/banks/mode register -- the
-    # carried SCC chip's own state is snapshotted separately by _scc_to_dict
-    # (machine.scc), same chip object either way.
-    return cast(dict[str, object], machine.scci_cart.snapshot())
-
-
-def _restore_scci(machine: "Machine", scci_state: dict[str, object] | None) -> None:
-    if machine.scci_cart is None or scci_state is None:
-        return
-    machine.scci_cart.restore(scci_state)
-
-
-def _halnote_to_dict(machine: "Machine") -> dict[str, object] | None:
-    if machine.halnote_cart is None:
-        return None
-    return cast(dict[str, object], machine.halnote_cart.snapshot())
-
-
-def _restore_halnote(machine: "Machine", halnote_state: dict[str, object] | None) -> None:
-    if machine.halnote_cart is None or halnote_state is None:
-        return
-    machine.halnote_cart.restore(halnote_state)
-
-
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
@@ -298,6 +274,43 @@ def _restore_fdc(machine: "Machine", fdc_state: dict[str, object] | None) -> Non
     machine.fdc.restore(fdc_state)
 
 
+def _restore_mapper2_subslots(machine: "Machine", snap: "MachineSnapshot") -> None:
+    """Restore expanded slot 2's per-sub-slot mapper state (see
+    openspec/changes/generalize-slot2-mapper-state). Checks the slot-2
+    expansion wiring, then every assigned sub-slot's mapper kind, before
+    restoring anything -- mirroring _restore_fdc's wiring-mismatch check
+    and the "check every drive before restoring any" atomicity pattern
+    FloppyDiskState.restore() uses."""
+    running_enabled = machine.memory.slot2_sub_slot_enabled
+    saved_enabled = snap.mapper2_subslot_kinds is not None
+    if running_enabled != saved_enabled:
+        raise ValueError(
+            "slot 2 expansion wiring mismatch: "
+            f"running machine has {'an expanded' if running_enabled else 'a flat'} slot 2, "
+            f"saved state has {'an expanded' if saved_enabled else 'a flat'} slot 2"
+        )
+    if not running_enabled:
+        return
+    saved_kinds = snap.mapper2_subslot_kinds
+    saved_states = snap.mapper2_subslot_states
+    assert saved_kinds is not None
+    assert saved_states is not None
+    subslots = machine.memory._mapper2_subslots
+    for i, sub_mapper in enumerate(subslots):
+        running_kind = sub_mapper.kind if sub_mapper is not None else None
+        saved_kind = saved_kinds[i]
+        if running_kind != saved_kind:
+            running_repr = repr(running_kind.value) if running_kind is not None else "None"
+            saved_repr = repr(saved_kind.value) if saved_kind is not None else "None"
+            raise ValueError(
+                f"slot 2 sub-slot {i} mapper mismatch: "
+                f"running {running_repr}, saved {saved_repr}"
+            )
+    for i, sub_mapper in enumerate(subslots):
+        if sub_mapper is not None:
+            sub_mapper.restore(saved_states[i])
+
+
 def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     mapper = machine.memory._mapper
@@ -305,6 +318,26 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     # runtime every implementer still returns a plain dict, only read here
     # to serialise, never mutated -- cast to match MachineSnapshot's field.
     mapper_state = cast(dict[str, object], mapper.snapshot())
+    # Slot 2, same generic mechanism -- machine.memory._mapper2 always
+    # exists (an empty FlatMapper when nothing is configured), mirroring
+    # slot 1 exactly. See openspec/changes/generalize-slot2-mapper-state.
+    mapper2 = machine.memory._mapper2
+    mapper2_state = cast(dict[str, object], mapper2.snapshot())
+    mapper2_subslot_kinds: list[MapperKind | None] | None
+    mapper2_subslot_states: list[dict[str, object]] | None
+    if machine.memory.slot2_sub_slot_enabled:
+        mapper2_subslot_kinds = []
+        mapper2_subslot_states = []
+        for sub_mapper in machine.memory._mapper2_subslots:
+            if sub_mapper is None:
+                mapper2_subslot_kinds.append(None)
+                mapper2_subslot_states.append({})
+            else:
+                mapper2_subslot_kinds.append(sub_mapper.kind)
+                mapper2_subslot_states.append(cast(dict[str, object], sub_mapper.snapshot()))
+    else:
+        mapper2_subslot_kinds = None
+        mapper2_subslot_states = None
     # Common VDP address/latch state — identical field names on both VDP types.
     vdp_latch = machine.vdp.latch
     vdp_addr = machine.vdp.addr
@@ -347,6 +380,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         slot_register=machine.memory.slot_register,
         mapper_kind=mapper.kind,
         mapper_state=mapper_state,
+        mapper2_kind=mapper2.kind,
+        mapper2_state=mapper2_state,
         vdp_vram=bytearray(machine.vdp.vram),
         vdp_regs=list(machine.vdp.regs),
         vdp_status=machine.vdp.status,
@@ -365,11 +400,10 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         cmd_regs=cmd_regs,
         status2=status2,
         cmd_remaining=cmd_remaining,
-        fmpac_state=_fmpac_to_dict(machine),
         fdc_state=_fdc_to_dict(machine),
-        scci_state=_scci_to_dict(machine),
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        halnote_state=_halnote_to_dict(machine),
+        mapper2_subslot_kinds=mapper2_subslot_kinds,
+        mapper2_subslot_states=mapper2_subslot_states,
     )
 
 
@@ -392,6 +426,12 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"mapper mismatch: running {mapper.kind.value!r}, "
             f"saved {snap.mapper_kind.value!r}"
         )
+    mapper2 = machine.memory._mapper2
+    if mapper2.kind != snap.mapper2_kind:
+        raise ValueError(
+            f"slot 2 mapper mismatch: running {mapper2.kind.value!r}, "
+            f"saved {snap.mapper2_kind.value!r}"
+        )
 
     _restore_cpu_regs(machine, snap.cpu_regs)
     machine.cpu.halted = snap.cpu_halted
@@ -405,6 +445,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.memory.set_slot_register(snap.slot_register)
     _restore_producer(
         f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
+    )
+    _restore_producer(
+        f"mapper2 ({mapper2.kind.value})", lambda: mapper2.restore(snap.mapper2_state)
     )
 
     machine.vdp.vram[:] = snap.vdp_vram
@@ -436,10 +479,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.psg.latch = snap.psg_latch
     _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
     _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
-    _restore_producer("fmpac", lambda: _restore_fmpac(machine, snap.fmpac_state))
     _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
-    _restore_producer("scci", lambda: _restore_scci(machine, snap.scci_state))
-    _restore_producer("halnote", lambda: _restore_halnote(machine, snap.halnote_state))
+    _restore_producer("mapper2_subslots", lambda: _restore_mapper2_subslots(machine, snap))
     if snap.slot2_sub_slot_reg is not None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
 
@@ -572,12 +613,21 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
         )
-    # JSON round-trips mapper_kind as a plain str (MapperKind's own str-Enum
-    # values serialize directly, see save_state); convert it back to a
-    # MapperKind member here so _restore_snapshot's identity check and any
-    # later `.value` access see a real enum member, not a bare string.
-    if isinstance(fields, dict) and "mapper_kind" in fields:
-        fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
+    # JSON round-trips mapper_kind/mapper2_kind (and each entry of
+    # mapper2_subslot_kinds) as plain str/None (MapperKind's own str-Enum
+    # values serialize directly, see save_state); convert them back to
+    # MapperKind members here so _restore_snapshot's identity checks and
+    # any later `.value` access see real enum members, not bare strings.
+    if isinstance(fields, dict):
+        if "mapper_kind" in fields:
+            fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
+        if "mapper2_kind" in fields:
+            fields["mapper2_kind"] = MapperKind(fields["mapper2_kind"])
+        subslot_kinds = fields.get("mapper2_subslot_kinds")
+        if isinstance(subslot_kinds, list):
+            fields["mapper2_subslot_kinds"] = [
+                MapperKind(k) if k is not None else None for k in subslot_kinds
+            ]
     typed_fields = cast(_MachineSnapshotFields, fields)
     snap = MachineSnapshot(**typed_fields)
     _restore_snapshot(machine, snap)

@@ -75,10 +75,11 @@ class MapperKind(str, Enum):
     SCC_I_CART = "scc_i_cart"
     HALNOTE = "halnote"
     # FmPac (msx/fmpac.py) structurally satisfies Mapper (it's assignable to
-    # Memory._mapper2, see machine_loader.py), so it needs a kind too, even
-    # though msx/state.py's mapper_kind identity check only ever applies to
-    # the slot-1 cartridge mapper (machine.memory._mapper) -- FmPac's own
-    # state is captured separately via MachineSnapshot.fmpac_state.
+    # Memory._mapper2, see machine_loader.py), so it needs a kind too --
+    # msx/state.py's mapper2_kind identity check covers slot 2 (Memory.
+    # _mapper2/_mapper2_subslots) the same way mapper_kind already covers
+    # slot 1 (Memory._mapper), see openspec/changes/
+    # generalize-slot2-mapper-state.
     FMPAC = "fmpac"
 
 

@@ -502,22 +502,25 @@ def test_roundtrip_preserves_halnote_sram_and_banks(saves_dir: Path, tmp_path: P
     assert cart.read(0x4000) == 5
 
 
-def test_loading_plain_state_into_hbi_j1_machine_leaves_cart_blank(
+def test_loading_plain_state_into_hbi_j1_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
+    """As of generalize-slot2-mapper-state, a slot-2 expansion wiring
+    mismatch (a non-expanded state loaded into a machine with slot 2
+    expanded, or vice versa) raises ValueError, mirroring slot 1's
+    existing strict mapper_kind check -- a deliberate behavior change from
+    the prior silent-skip (msx/state.py's now-removed _restore_halnote)."""
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
     plain = build_machine(_msx1_spec(plain_dir))
     save_state(plain, _RGB, "test")
 
     hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
-    load_state(hbi_machine)  # does not raise
-    cart = hbi_machine.halnote_cart
-    assert cart is not None
-    assert cart.read(0x0000) == 0xFF  # SRAM stays disabled (no halnote_state to restore)
+    with pytest.raises(ValueError, match="slot 2 expansion wiring mismatch"):
+        load_state(hbi_machine)
 
 
-def test_loading_hbi_j1_state_into_plain_machine_does_not_raise(
+def test_loading_hbi_j1_state_into_plain_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
@@ -530,4 +533,43 @@ def test_loading_hbi_j1_state_into_plain_machine_does_not_raise(
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
     plain = build_machine(_msx1_spec(plain_dir))
-    load_state(plain)  # does not raise; plain has no halnote_cart to restore into
+    with pytest.raises(ValueError, match="slot 2 expansion wiring mismatch"):
+        load_state(plain)
+
+
+def test_loading_state_with_mismatched_subslot_kind_raises(
+    saves_dir: Path, tmp_path: Path
+) -> None:
+    """A per-sub-slot kind mismatch (both machines have slot 2 expanded,
+    but sub-slot 0 holds a different device kind on each side) raises
+    ValueError naming the sub-slot index and both kinds -- see
+    openspec/changes/generalize-slot2-mapper-state."""
+    hbi_machine = _hbi_j1_machine(tmp_path, name="hbi")
+    save_state(hbi_machine, _RGB, "test")
+
+    other_dir = tmp_path / "other_main_rom"
+    other_dir.mkdir()
+    other_rom_dir = tmp_path / "other_hbi_rom"
+    other_rom_dir.mkdir()
+    (other_rom_dir / "kanjibasic.rom").write_bytes(bytes(_KANJIBASIC_ROM_SIZE))
+    (other_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
+    # Same expanded shape as _hbi_j1_overlay, but flat_rom (not halnote) in
+    # sub-slot 0 -- a genuine per-index kind mismatch, not a wiring one.
+    other_overlay = _ExpandedExtensionOverlay(
+        subslots={
+            0: _ExpandedSubslotDevice(
+                device="flat_rom", rom_base_dir=other_rom_dir,
+                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+            ),
+        },
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=other_rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+        ),
+    )
+    other_machine = build_machine(_msx1_spec(other_dir), extension_overlay=other_overlay)
+
+    with pytest.raises(ValueError, match="slot 2 sub-slot 0 mapper mismatch") as exc_info:
+        load_state(other_machine)
+    assert "halnote" in str(exc_info.value)
+    assert "fixed_page" in str(exc_info.value)

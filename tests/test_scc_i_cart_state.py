@@ -3,10 +3,10 @@
 Ground truth for SCCICart/SCC register semantics: see tests/test_scc_i_cart.py
 and tests/test_scc.py. This file only checks that save_state/load_state
 faithfully round-trips SCCICart's RAM/bank/mode-register state (via the
-dedicated machine.scci_cart save-state path, msx/state.py -- SCCICart lives
-in slot 2 as of --extension scc-plus, which has no generic mapper2 state
-path) and the carried SCC chip's own state (via the existing generic scc
-save-state path).
+generic slot-2 mapper2_kind/mapper2_state mechanism, msx/state.py -- SCCICart
+lives in slot 2 as of --extension scc-plus, and is persisted the same way any
+flat slot-2 Mapper is, since generalize-slot2-mapper-state) and the carried
+SCC chip's own state (via the existing generic scc save-state path).
 """
 from __future__ import annotations
 
@@ -106,14 +106,14 @@ def test_roundtrip_preserves_scc_registers_and_plus_mode(saves_dir: Path, tmp_pa
 
 # ---------------------------------------------------------------------------
 # Extension mismatch (loading a state saved without --extension scc-plus
-# into a machine with it active, or vice versa): unlike slot 1's mapper_kind
-# check, this does NOT raise -- SCCICart's slot-2 state follows the same
-# "silently skip if either side lacks it" precedent as FM-PAC's fmpac_state
-# (msx/state.py's _restore_scci), since slot 1 (the strict mapper_kind check)
-# now resolves identically regardless of --extension.
+# into a machine with it active, or vice versa): as of
+# generalize-slot2-mapper-state, this IS a flat slot-2 mapper2_kind mismatch
+# and now raises ValueError, mirroring slot 1's existing strict mapper_kind
+# check -- a deliberate behavior change from the prior silent-skip
+# (msx/state.py's now-removed _restore_scci).
 # ---------------------------------------------------------------------------
 
-def test_loading_plain_state_into_scc_plus_machine_leaves_cart_blank(
+def test_loading_plain_state_into_scc_plus_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     plain_dir = tmp_path / "plain_main_rom"
@@ -122,12 +122,11 @@ def test_loading_plain_state_into_scc_plus_machine_leaves_cart_blank(
     save_state(plain, _RGB, "test")
 
     scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
-    cart = scc_plus_machine.memory._mapper2
-    load_state(scc_plus_machine)  # does not raise
-    assert cart.read(0x4000) == 0  # SCCICart's RAM stays blank (no scci_state to restore)
+    with pytest.raises(ValueError, match="slot 2 mapper mismatch"):
+        load_state(scc_plus_machine)
 
 
-def test_loading_scc_plus_state_into_plain_machine_does_not_raise(
+def test_loading_scc_plus_state_into_plain_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
@@ -139,7 +138,8 @@ def test_loading_scc_plus_state_into_plain_machine_does_not_raise(
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
     plain = build_machine(_msx1_spec(plain_dir))
-    load_state(plain)  # does not raise; plain has no scci_cart to restore into
+    with pytest.raises(ValueError, match="slot 2 mapper mismatch"):
+        load_state(plain)
 
 
 # ---------------------------------------------------------------------------
