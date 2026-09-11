@@ -290,6 +290,21 @@ def test_reset_restores_power_on_slot2_sub_slot_register(tmp_path: Path) -> None
     assert machine.memory.slot2_sub_slot_reg == 0x00
 
 
+def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
+    # openspec/changes/wire-kanji-and-halnote-reset: Machine.reset() now
+    # calls a present HalnoteMapper's reset(), restoring bank/sub-bank
+    # registers and both enable flags to their construction defaults.
+    machine = _hbi_j1_machine(tmp_path)
+    halnote = machine.halnote_cart
+    assert halnote is not None
+    halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
+    halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
+    machine.reset()
+    state = halnote.snapshot()
+    assert state["banks"] == [0, 1, 2, 3]
+    assert state["sram_enabled"] is False
+
+
 def test_subslot0_dispatches_to_halnote_mapper(tmp_path: Path) -> None:
     machine = _hbi_j1_machine(tmp_path)
     mem = machine.memory

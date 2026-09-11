@@ -164,7 +164,9 @@ class Machine:
         self.cpu.int_pending = True
 
     def reset(self) -> None:
-        """Full power-on reset: CPU, PSG, SCC (if present), VDP, and the
+        """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
+        present), VDP, FDC (if present), Kanji ROM (if present), Halnote
+        cartridge (if present), the RAM mapper (if present), and the
         primary/secondary slot registers. Memory/VRAM contents are retained."""
         self.cpu.reset()
         self.psg.reset()
@@ -178,6 +180,10 @@ class Machine:
         self.vdp.reset()
         if self.fdc is not None:
             self.fdc.reset()
+        if self.kanji is not None:
+            self.kanji.reset()
+        if self.halnote_cart is not None:
+            self.halnote_cart.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)

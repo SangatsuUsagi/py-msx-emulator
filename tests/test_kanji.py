@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from msx.kanji import KanjiRom
+from tests.factories import make_machine
 
 _ROM_128K = bytes(range(256)) * (131072 // 256)
 _ROM_256K = bytes(range(256)) * (262144 // 256)
@@ -176,3 +177,31 @@ def test_reset_zeroes_the_address() -> None:
     rom.write_port(0xD9, 0x15)
     rom.reset()
     assert rom.read_port(0xD9) == _ROM_256K[0]
+
+
+def test_reset_zeroes_the_counter_independent_of_column_row() -> None:
+    """WriteColumn/WriteRow already zero the counter as a side effect, so a
+    reset() call immediately after a register write can't distinguish
+    "reset() zeroed the counter" from "it was already 0". Advance the
+    counter via reads only (column/row stay at their already-zero default),
+    then reset() with no intervening write, and confirm the next read
+    returns byte 0 again -- not byte 5, which is what an un-reset counter
+    would return."""
+    rom = KanjiRom(rom=_ROM_256K)
+    for _ in range(5):
+        rom.read_port(0xD9)  # advance the counter to 5, no register write
+    rom.reset()
+    assert rom.read_port(0xD9) == _ROM_256K[0]
+
+
+# ---------------------------------------------------------------------------
+# Machine.reset() wiring (openspec/changes/wire-kanji-and-halnote-reset)
+# ---------------------------------------------------------------------------
+
+def test_machine_reset_zeroes_kanji_address() -> None:
+    machine = make_machine(rom=b"\x00" * 0x8000)
+    machine.kanji = KanjiRom(rom=_ROM_256K)
+    machine.kanji.write_port(0xD8, 0x2A)
+    machine.kanji.write_port(0xD9, 0x15)
+    machine.reset()
+    assert machine.kanji.read_port(0xD9) == _ROM_256K[0]

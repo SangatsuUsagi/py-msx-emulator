@@ -1677,6 +1677,17 @@ class HalnoteMapper(BankTracingMapper):
         dst = window * _PAGE_8K
         self._flat[dst:dst + _PAGE_8K] = src
 
+    def reset(self) -> None:
+        """Restore bank/sub-bank registers and both enable flags to their
+        construction defaults, matching openMSX's RomHalnote::reset(). SRAM
+        contents are left untouched -- only the enable flag resets."""
+        self._banks[:] = [0, 1, 2, 3]
+        self._subbanks[:] = [0, 0]
+        self._sram_enabled = False
+        self._submapper_enabled = False
+        for window in range(4):
+            self._sync_window(window)
+
     def read(self, addr: int) -> int:
         if addr < 0x4000:
             return self.sram[addr] if self._sram_enabled else 0xFF
@@ -1738,8 +1749,12 @@ class HalnoteMapper(BankTracingMapper):
             raise ValueError(f"HalnoteMapperState.sram must have {_HALNOTE_SRAM_SIZE} entries")
         self._banks[:] = banks
         self._subbanks[:] = subbanks
-        self._sram_enabled = typed_state["sram_enabled"]
-        self._submapper_enabled = typed_state["submapper_enabled"]
+        # sram_enabled/submapper_enabled are derived from bank_0/bank_1's top
+        # bit (see write()) -- re-derive rather than trust the snapshot's own
+        # copies, so restore() can't construct a state the top bit disagrees
+        # with (e.g. a hand-edited or foreign-generated state file).
+        self._sram_enabled = bool(self._banks[0] & _HALNOTE_SRAM_ENABLE_BIT)
+        self._submapper_enabled = bool(self._banks[1] & _HALNOTE_SUBMAPPER_ENABLE_BIT)
         self.sram[:] = sram
         for window in range(4):
             self._sync_window(window)

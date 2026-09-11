@@ -206,3 +206,59 @@ def test_state_round_trips_through_snapshot_restore() -> None:
     assert fresh.read(0xA000) == 3
     assert fresh.read(0x0000) == 0xAB
     assert fresh.read(0x7000) == 0x77  # sub-bank 7 restored
+
+
+# ---------------------------------------------------------------------------
+# reset() (openspec/changes/wire-kanji-and-halnote-reset)
+# ---------------------------------------------------------------------------
+
+def test_reset_restores_bank_registers() -> None:
+    cart = _cart()
+    cart.write(0x4FFF, 0x0A)
+    cart.write(0x6FFF, 0x0B)
+    cart.write(0x8FFF, 0x0C)
+    cart.write(0xAFFF, 0x0D)
+    cart.reset()
+    assert cart.read(0x4000) == 0
+    assert cart.read(0x6000) == 1
+    assert cart.read(0x8000) == 2
+    assert cart.read(0xA000) == 3
+
+
+def test_reset_disables_submapper() -> None:
+    rom = _make_rom()
+    rom[1 * 8192 + 0x1000] = 0xEE  # bank 1 (page 1)'s content at 0x7000-0x6000
+    cart = _cart(rom)
+    cart.write(0x6FFF, 0x85)  # sub-mapper enabled, bank 1 -> page 5
+    cart.write(0x77FF, 0x03)
+    cart.reset()
+    assert cart.read(0x7000) == 0xEE  # ordinary bank-1 content, sub-mapper disabled
+
+
+def test_reset_restores_subbank_registers_to_zero() -> None:
+    """While the sub-mapper is disabled (the state test_reset_disables_
+    submapper leaves it in), 0x7000-0x7FFF reads ordinary bank-1 content --
+    the sub-bank registers become unobservable, so that test alone can't
+    confirm reset() actually zeroed subbank_0/subbank_1. Re-enable the
+    sub-mapper afterward, without rewriting the sub-bank registers, to
+    observe their post-reset value directly."""
+    rom = _make_rom()
+    rom[0x80000] = 0x11  # sub-bank 0's block (offset 0x80000 + 0*0x800)
+    cart = _cart(rom)
+    cart.write(0x6FFF, 0x85)  # sub-mapper enabled, bank 1 -> page 5
+    cart.write(0x77FF, 0x05)  # sub-bank 0 -> 5 (non-default)
+    cart.write(0x7FFF, 0x09)  # sub-bank 1 -> 9 (non-default)
+    cart.reset()
+    cart.write(0x6FFF, 0x80)  # re-enable sub-mapper, sub-bank registers untouched
+    assert cart.read(0x7000) == 0x11  # sub-bank 0 reset to 0, not 5
+    assert cart.read(0x7800) == 0x11  # sub-bank 1 reset to 0, not 9
+
+
+def test_reset_disables_sram_without_erasing_contents() -> None:
+    cart = _cart()
+    cart.write(0x4FFF, 0x85)  # SRAM enabled
+    cart.write(0x0000, 0xAB)
+    cart.reset()
+    assert cart.read(0x0000) == 0xFF  # SRAM disabled again
+    cart.write(0x4FFF, 0x80)  # re-enable SRAM
+    assert cart.read(0x0000) == 0xAB  # contents survived the reset
