@@ -516,6 +516,38 @@ class CpuBlockYaml(TypedDict, total=False):
     m1_wait_states: int
 
 
+class SramYaml(TypedDict, total=False):
+    save_file: str
+
+
+def _is_sram_shape(data: object) -> TypeGuard[SramYaml]:
+    """True if `data` is a dict (sram: block shape)."""
+    return isinstance(data, dict)
+
+
+class ExpandedDeviceYaml(TypedDict, total=False):
+    """One `device`/`rom`/`sram` declaration -- the shape shared by an
+    expanded extension overlay's per-sub-slot entry, its own `io_device`
+    entry, and a machine YAML's own top-level `io_device` key (all three
+    resolved through `_parse_expanded_device`, just against different
+    known-device sets). Deliberately its own type, not folded into
+    ExtensionOverlayYaml below: that type is the raw overlay *file*
+    (schema_version/id/slot/rom_base/shape plus either this shape at its
+    own top level, for a flat overlay, or `subslots`/`io_device` entries
+    of this shape, for an expanded one) -- a sub-slot or io_device entry
+    never legally carries schema_version/id/slot/shape itself."""
+    device: str
+    rom: RomEntryYaml
+    sram: SramYaml
+
+
+def _is_expanded_device_shape(data: object) -> TypeGuard[ExpandedDeviceYaml]:
+    """True if `data` is a dict (a sub-slot or io_device entry's shape).
+    `device`'s presence is still checked by `_parse_expanded_device`
+    itself, not guaranteed here (design.md Decision 2)."""
+    return isinstance(data, dict)
+
+
 class MachineEntryYaml(TypedDict, total=False):
     schema_version: int
     id: str
@@ -531,10 +563,9 @@ class MachineEntryYaml(TypedDict, total=False):
     builtin_devices: list[BuiltinDeviceEntryYaml]
     # Optional slot-independent global I/O device built into this machine
     # (e.g. a Kanji font ROM) -- same shape as an extension overlay's own
-    # io_device (ExtensionOverlayYaml, defined below), reused rather than
-    # duplicated. Forward-referenced since ExtensionOverlayYaml is defined
-    # later in this file.
-    io_device: "ExtensionOverlayYaml"
+    # io_device entry, ExpandedDeviceYaml (defined above), reused rather
+    # than duplicated.
+    io_device: ExpandedDeviceYaml
 
 
 def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
@@ -544,16 +575,16 @@ def _is_machine_entry_shape(data: object) -> TypeGuard[MachineEntryYaml]:
     return isinstance(data, dict)
 
 
-class SramYaml(TypedDict, total=False):
-    save_file: str
-
-
-def _is_sram_shape(data: object) -> TypeGuard[SramYaml]:
-    """True if `data` is a dict (sram: block shape)."""
-    return isinstance(data, dict)
-
-
 class ExtensionOverlayYaml(TypedDict, total=False):
+    """The raw top-level shape of config/extensions/<id>.yaml, before
+    `shape` has been read to dispatch to the flat or expanded parse path
+    -- so it carries both shapes' fields as optional (`device`/`rom`/
+    `sram` for the flat case; `subslots`/`io_device` for the expanded
+    one), rather than being two separate discriminated types. Each
+    `subslots`/`io_device` entry is the narrower ExpandedDeviceYaml, not
+    this type recursively -- a sub-slot or io_device entry can never
+    itself carry schema_version/id/slot/shape or nest another level of
+    subslots/io_device."""
     schema_version: int
     id: str
     device: str
@@ -566,11 +597,10 @@ class ExtensionOverlayYaml(TypedDict, total=False):
     # "flat" when omitted, so every existing flat overlay YAML needs no
     # change. `subslots`' raw keys are pre-_int_keys()-coercion (same
     # convention this module's docstring documents for `secondary`/
-    # `primary`/`slots`), each value the same device/rom/sram shape as this
-    # TypedDict's own top level.
+    # `primary`/`slots`).
     shape: str
-    subslots: dict[Any, "ExtensionOverlayYaml"]
-    io_device: "ExtensionOverlayYaml"
+    subslots: dict[Any, ExpandedDeviceYaml]
+    io_device: ExpandedDeviceYaml
 
 
 def _is_extension_overlay_shape(data: object) -> TypeGuard[ExtensionOverlayYaml]:
@@ -1023,7 +1053,7 @@ def load_machine_spec(
     io_device_raw = raw.get("io_device")
     io_device: _ExpandedSubslotDevice | None = None
     if io_device_raw is not None:
-        if not _is_extension_overlay_shape(io_device_raw):
+        if not _is_expanded_device_shape(io_device_raw):
             raise MachineLoadError(f"{machine_path}: io_device: expected a YAML mapping")
         io_device = _parse_expanded_device(
             io_device_raw, rom_base_dir, f"{machine_path}: io_device",
@@ -1085,15 +1115,14 @@ _IO_DEVICES_REQUIRING_ROM = frozenset({"kanji_rom"})
 
 
 def _parse_expanded_device(
-    data: ExtensionOverlayYaml,
+    data: ExpandedDeviceYaml,
     rom_base_dir: Path,
     context: str,
     known_devices: frozenset[str],
     devices_requiring_rom: frozenset[str],
 ) -> _ExpandedSubslotDevice:
     """Parse one expanded-overlay device declaration (a sub-slot entry or
-    the top-level io_device) -- the same device/rom/sram schema a flat
-    overlay's top level has, just resolved against its own known-device set
+    the top-level io_device) -- resolved against its own known-device set
     rather than _KNOWN_EXTENSION_DEVICES."""
     device = data.get("device")
     if not device:
@@ -1136,7 +1165,7 @@ def _parse_expanded_extension_overlay(
     subslots: dict[int, _ExpandedSubslotDevice] = {}
     for index, sub_data in _int_keys(cast("dict[Any, Any]", subslots_raw)).items():
         _check_subslot_index(str(path), "extension", index)
-        if not _is_extension_overlay_shape(sub_data):
+        if not _is_expanded_device_shape(sub_data):
             raise MachineLoadError(f"{path}: subslot {index}: expected a YAML mapping")
         subslots[index] = _parse_expanded_device(
             sub_data, rom_base_dir, f"{path}: subslot {index}",
@@ -1146,7 +1175,7 @@ def _parse_expanded_extension_overlay(
     io_device_raw = raw.get("io_device")
     io_device: _ExpandedSubslotDevice | None = None
     if io_device_raw is not None:
-        if not _is_extension_overlay_shape(io_device_raw):
+        if not _is_expanded_device_shape(io_device_raw):
             raise MachineLoadError(f"{path}: io_device: expected a YAML mapping")
         io_device = _parse_expanded_device(
             io_device_raw, rom_base_dir, f"{path}: io_device",
