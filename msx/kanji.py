@@ -33,6 +33,7 @@ class KanjiRom:
 
     rom: bytes
     _adr: int = field(default=0, init=False, repr=False)
+    _rom_len: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if len(self.rom) not in (_ROM_SIZE_LEVEL1_ONLY, _ROM_SIZE_LEVEL1_AND_2):
@@ -40,6 +41,7 @@ class KanjiRom:
                 f"KanjiRom: expected a {_ROM_SIZE_LEVEL1_ONLY}- or "
                 f"{_ROM_SIZE_LEVEL1_AND_2}-byte ROM, got {len(self.rom)}"
             )
+        self._rom_len = len(self.rom)
 
     def reset(self) -> None:
         self._adr = 0
@@ -59,6 +61,6 @@ class KanjiRom:
         register = port & 3
         read_level = 1 if (register & 2) else 0
         address = self._adr | (read_level << _LEVEL_SHIFT)
-        value = self.rom[address] if address < len(self.rom) else 0xFF
+        value = self.rom[address] if address < self._rom_len else 0xFF
         self._adr = (self._adr & ~_COUNTER_MASK) | ((self._adr + 1) & _COUNTER_MASK)
         return value

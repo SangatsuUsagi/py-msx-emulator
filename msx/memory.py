@@ -478,6 +478,11 @@ class Memory:
         if primary == 0:
             name = self.rom_name or "ROM"
             return f"ROM {name}" if name != "ROM" else "ROM"
+        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
+            sub_mapper = self._mapper2_subslots[secondary]
+            if sub_mapper is None:
+                return "Cartridge (empty)"
+            return f"Cartridge {mapper_kind_display_name(sub_mapper.kind)}"
         if primary in (1, 2):
             mapper = self._mapper if primary == 1 else self._mapper2
             if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
@@ -529,6 +534,14 @@ class Memory:
             rm = self.ram_mapper
             if rm is not None:
                 return f"seg={rm.banks[page]}"
+        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
+            if page is not None:
+                sub_mapper = self._mapper2_subslots[secondary]
+                if sub_mapper is not None:
+                    info = sub_mapper.debug_bank_info(page)
+                    if info is not None:
+                        return info
+            return "-"
         if primary in (1, 2) and page is not None:
             mapper = self._mapper if primary == 1 else self._mapper2
             info = mapper.debug_bank_info(page)

@@ -4,9 +4,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
+
+if TYPE_CHECKING:
+    from msx.machine_loader import _ExpandedExtensionOverlay, _ExtensionOverlay
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -204,7 +207,8 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 def _print_startup_summary(
     spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
-    extension_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
