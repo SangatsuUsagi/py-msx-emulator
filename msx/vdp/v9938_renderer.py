@@ -12,7 +12,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
 from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
-from msx.vdp.v9938 import _PaletteChange, _RegChange
+from msx.vdp.v9938 import _S2_EO, _PaletteChange, _RegChange
 from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
 
 if TYPE_CHECKING:
@@ -603,7 +603,13 @@ def _render_sprites_for_mode(
 def _finalize(vdp: "V9938") -> None:
     # VBlank flag is now set by begin_scanline() in the scanline loop (machine.py).
     # _finalize only handles frame-buffer finalisation; no interrupt generation here.
-    pass
+    # S#2 bit 1 (current field) toggles once per frame, in step with the EO
+    # page-alternation parity (frame_count is stable for the whole render, and
+    # this runs exactly once per render_frame() call on every path).
+    if vdp.frame_count & 1:
+        vdp._status2 |= _S2_EO
+    else:
+        vdp._status2 &= ~_S2_EO
 
 
 def _backdrop(vdp: "V9938") -> int:
@@ -915,7 +921,7 @@ def _render_sprites(
     # the first colliding line and stops there).
     col_line = 999
     col_x = 999
-    had_collision = bool(vdp.status & 0x20)  # an earlier band already recorded one
+    had_collision = bool(vdp.status & 0x20)  # C set since last cleared by an S#0 read
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
     # does (see _sprite_runs). With no per-line schedule this is one run over
@@ -1016,7 +1022,7 @@ def _render_sprites(
 
     if coincidence:
         vdp.status |= 0x20
-        if not had_collision:  # first collision of the frame wins (openMSX)
+        if not had_collision:  # first collision since C was last cleared wins (openMSX)
             vdp.collision_x = col_x + _COLLISION_X_OFFSET
             vdp.collision_y = col_line + _COLLISION_Y_OFFSET
 
@@ -1313,7 +1319,7 @@ def _render_sprites_mode2(
 
     if coincidence:
         vdp.status |= 0x20
-        if not had_collision:  # first collision of the frame wins (openMSX)
+        if not had_collision:  # first collision since C was last cleared wins (openMSX)
             vdp.collision_x = col_x + _COLLISION_X_OFFSET
             vdp.collision_y = col_line + _COLLISION_Y_OFFSET
 
@@ -1342,6 +1348,20 @@ def _sprite_row_pixels(
     return _UNPACK8[left] + _UNPACK8[right]
 
 
+def _display_page_bits(vdp: "V9938", mask: int) -> int:
+    """R#2 display-page bits, LSB-toggled by frame parity when EO (R#9 bit 2)
+    is enabled -- the automatic even/odd page alternation used for interlace
+    in GRAPHIC4-7. `mask` is the page-select bits within R#2 (0x60 for the
+    32 KB-page modes SCREEN 5/6, 0x40 for the 64 KB-page modes SCREEN 7/8);
+    the toggled bit is the mask's lowest set bit, so one implementation
+    serves both mask shapes.
+    """
+    bits = vdp.regs[2] & mask
+    if vdp.even_odd_enabled and (vdp.frame_count & 1):
+        bits ^= mask & -mask
+    return bits
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 5 (Graphic 4) — 4-bpp bitmap, two palette indices per byte
 # ---------------------------------------------------------------------------
@@ -1351,7 +1371,7 @@ def _render_g4(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
 ) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
-    base = (vdp.regs[2] & 0x60) << 10
+    base = _display_page_bits(vdp, 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)  # R#8 bit5: 1=col0 solid, 0=col0 transparent→backdrop
     border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
@@ -1376,7 +1396,7 @@ def _render_g5(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
 ) -> None:
     """SCREEN 6: 2-bpp, 4 pixels per byte, full 512-pixel width."""
-    base = (vdp.regs[2] & 0x60) << 10
+    base = _display_page_bits(vdp, 0x60) << 10
     tp = bool(vdp.regs[8] & 0x20)
     border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
@@ -1404,7 +1424,7 @@ def _render_g6(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
 ) -> None:
     """SCREEN 7: 4-bpp, 2 pixels per byte, full 512-pixel width."""
-    base = (vdp.regs[2] & 0x40) << 10  # G6: 64KB pages, bit6 only
+    base = _display_page_bits(vdp, 0x40) << 10  # G6: 64KB pages, bit6 only
     tp = bool(vdp.regs[8] & 0x20)
     border = vdp.regs[7] & 0x0F
     vscroll = vdp.regs[23]
@@ -1448,7 +1468,7 @@ def _render_g7(
     vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
 ) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
-    base = (vdp.regs[2] & 0x40) << 10  # G7: 64KB pages, bit6 only
+    base = _display_page_bits(vdp, 0x40) << 10  # G7: 64KB pages, bit6 only
     vscroll = vdp.regs[23]
     vram = vdp.vram
     ye = y_end if y_end is not None else h
