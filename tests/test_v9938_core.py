@@ -323,6 +323,32 @@ def test_display_width_256_for_screen8() -> None:
 
 
 # ---------------------------------------------------------------------------
+# interlaced / even_odd_enabled (R#9 IL/EO)
+# ---------------------------------------------------------------------------
+
+def test_interlaced_false_by_default() -> None:
+    vdp = V9938()
+    assert vdp.interlaced is False
+
+
+def test_interlaced_true_when_il_set() -> None:
+    vdp = V9938()
+    vdp.regs[9] = 0x08  # IL bit
+    assert vdp.interlaced is True
+
+
+def test_even_odd_enabled_false_by_default() -> None:
+    vdp = V9938()
+    assert vdp.even_odd_enabled is False
+
+
+def test_even_odd_enabled_true_when_eo_set() -> None:
+    vdp = V9938()
+    vdp.regs[9] = 0x04  # EO bit
+    assert vdp.even_odd_enabled is True
+
+
+# ---------------------------------------------------------------------------
 # Port 0x9B: indirect register access via the R#17 pointer (auto-increment)
 # ---------------------------------------------------------------------------
 
@@ -444,3 +470,19 @@ def test_reset_retains_vram() -> None:
     vdp.reset()
 
     assert vdp.vram[0x10000] == 0xAB
+
+
+def test_reset_clears_current_field_but_preserves_frame_count() -> None:
+    """reset() zeroes the whole S#2 byte (clearing the EO current-field bit),
+    but deliberately does NOT reset frame_count -- the field-parity counter
+    keeps running across a reset, and current_field is simply rewritten from
+    frame parity on the next render."""
+    vdp = V9938()
+    vdp._status2 = 0x02  # simulate an odd field having just been rendered
+    vdp.frame_count = 5
+
+    vdp.reset()  # also zeroes regs, including R#15 (status register pointer)
+
+    vdp.regs[15] = 2  # select S#2 for port 0x99 reads
+    assert vdp.read_port(0x99) & 0x02 == 0  # current_field cleared
+    assert vdp.frame_count == 5  # NOT reset
