@@ -81,6 +81,11 @@ class MapperKind(str, Enum):
     # slot 1 (Memory._mapper), see openspec/changes/
     # generalize-slot2-mapper-state.
     FMPAC = "fmpac"
+    # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
+    # placed in Memory._mapper2_subslots (an expanded slot 2's --extension
+    # memory512k RAM cartridge) and covered by the same generic slot-2
+    # save-state mechanism as every other slot-2 device kind above.
+    RAM_MAPPER = "ram_mapper"
 
 
 # Debugger-facing display name per kind (msx/memory.py's debug_slot_content
@@ -108,6 +113,7 @@ _KIND_DISPLAY_NAME: dict[MapperKind, str] = {
     MapperKind.SCC_I_CART: "SCCICart",
     MapperKind.HALNOTE: "Halnote",
     MapperKind.FMPAC: "FmPac",
+    MapperKind.RAM_MAPPER: "RamMapper",
 }
 
 

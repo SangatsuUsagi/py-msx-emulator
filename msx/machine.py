@@ -15,6 +15,7 @@ from msx.mapper import HalnoteMapper, MajutsushiMapper, SCCICart
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
+from msx.ram_mapper import RamMapper
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
@@ -166,7 +167,8 @@ class Machine:
     def reset(self) -> None:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), Halnote
-        cartridge (if present), the RAM mapper (if present), and the
+        cartridge (if present), the RAM mapper (if present, in either its
+        slot-3 or its expanded-slot-2-sub-slot placement), and the
         primary/secondary slot registers. Memory/VRAM contents are retained."""
         self.cpu.reset()
         self.psg.reset()
@@ -190,6 +192,9 @@ class Machine:
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
+        for sub_mapper in self.memory._mapper2_subslots:
+            if isinstance(sub_mapper, RamMapper):
+                sub_mapper.reset()
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.

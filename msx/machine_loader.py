@@ -375,12 +375,15 @@ class _ExpandedSubslotDevice:
     within an expanded extension overlay -- same shape as _ExtensionOverlay
     above, since a sub-slot declaration uses the identical device/rom/sram
     schema a flat overlay's top level does (see cart-extension-overlay's
-    "Extension overlay shape: flat vs expanded" Requirement)."""
+    "Extension overlay shape: flat vs expanded" Requirement), plus a
+    `size_kb` alternative to `rom`/`sram` for a size-configured device kind
+    (e.g. `ram_mapper`, which needs no ROM file)."""
 
     device: str
     rom_base_dir: Path | None = None
     rom_entry: _RomEntry | None = None
     sram_save_path: Path | None = None
+    size_kb: int | None = None
 
 
 @dataclass
@@ -539,6 +542,7 @@ class ExpandedDeviceYaml(TypedDict, total=False):
     device: str
     rom: RomEntryYaml
     sram: SramYaml
+    size_kb: int
 
 
 def _is_expanded_device_shape(data: object) -> TypeGuard[ExpandedDeviceYaml]:
@@ -592,6 +596,12 @@ class ExtensionOverlayYaml(TypedDict, total=False):
     rom_base: str
     rom: RomEntryYaml
     sram: SramYaml
+    # size_kb is a size-configured sub-slot device's (e.g. ram_mapper)
+    # ExpandedDeviceYaml field, not a flat-overlay top-level one -- present
+    # here only so the top-level dict stays structurally assignable where
+    # _parse_expanded_device's ExpandedDeviceYaml parameter is expected (see
+    # this type's own docstring: it carries both shapes' fields as optional).
+    size_kb: int
     # Expanded-shape-only fields (see cart-extension-overlay's "Extension
     # overlay shape: flat vs expanded" Requirement). `shape` defaults to
     # "flat" when omitted, so every existing flat overlay YAML needs no
@@ -1104,8 +1114,11 @@ _EXTENSION_DEVICES_REQUIRING_ROM = frozenset({"fmpac"})
 # (build_machine's expanded-overlay dispatch knows how to construct each) --
 # a separate namespace from _KNOWN_EXTENSION_DEVICES above (flat-overlay-only
 # device names), which happens to share no members with it today.
-_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset({"halnote", "flat_rom"})
+_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset({"halnote", "flat_rom", "ram_mapper"})
 _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM = frozenset({"halnote", "flat_rom"})
+# ram_mapper carries no ROM -- it's configured by size instead (see
+# _ExpandedSubslotDevice.size_kb).
+_EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE = frozenset({"ram_mapper"})
 
 # Device kinds an expanded overlay's optional top-level io_device may name
 # (a device with no cartridge-slot address decode of its own, e.g. the
@@ -1120,6 +1133,7 @@ def _parse_expanded_device(
     context: str,
     known_devices: frozenset[str],
     devices_requiring_rom: frozenset[str],
+    devices_requiring_size: frozenset[str] = frozenset(),
 ) -> _ExpandedSubslotDevice:
     """Parse one expanded-overlay device declaration (a sub-slot entry or
     the top-level io_device) -- resolved against its own known-device set
@@ -1132,6 +1146,13 @@ def _parse_expanded_device(
             f"{context}: unrecognized 'device' {device!r} "
             f"(expected one of {sorted(known_devices)})"
         )
+    if device in devices_requiring_size:
+        size_kb = data.get("size_kb")
+        if not isinstance(size_kb, int) or size_kb <= 0:
+            raise MachineLoadError(f"{context}: device {device!r} requires a 'size_kb' entry")
+        if device == "ram_mapper":
+            _check_ram_mapper_size_kb(context, size_kb)
+        return _ExpandedSubslotDevice(device=str(device), size_kb=size_kb)
     rom_data = data.get("rom")
     if rom_data is None:
         if device in devices_requiring_rom:
@@ -1170,6 +1191,15 @@ def _parse_expanded_extension_overlay(
         subslots[index] = _parse_expanded_device(
             sub_data, rom_base_dir, f"{path}: subslot {index}",
             _KNOWN_EXPANDED_SUBSLOT_DEVICES, _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM,
+            _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
+        )
+
+    ram_mapper_indices = [i for i, sub in subslots.items() if sub.device == "ram_mapper"]
+    if len(ram_mapper_indices) > 1:
+        raise MachineLoadError(
+            f"{path}: at most one 'ram_mapper' sub-slot is allowed per overlay "
+            f"(found it at sub-slots {sorted(ram_mapper_indices)}) -- two would both "
+            "try to register the same standard memory-mapper I/O ports (0xFC-0xFF)"
         )
 
     io_device_raw = raw.get("io_device")
@@ -1191,8 +1221,8 @@ def load_extension_overlay(
     """Load and validate an extension overlay fragment.
 
     Args:
-        extension_id: The --extension value ("fmpac", "scc-plus", or
-            "hbi-j1"), also the YAML filename stem.
+        extension_id: The --extension value ("fmpac", "scc-plus", "hbi-j1",
+            or "memory512k"), also the YAML filename stem.
         config_dir: Path to the config/ directory.
         project_root: Project root used to resolve rom_base and the SRAM save
             path relative paths.
@@ -1413,6 +1443,15 @@ def _wire_extension_overlay(
     # Extension overlay: unconditionally occupies primary slot 2, replacing
     # whatever slot-2 cartridge mapper was resolved above.
     if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+        if spec.has_ram_mapper and any(
+            sub.device == "ram_mapper" for sub in extension_overlay.subslots.values()
+        ):
+            raise MachineLoadError(
+                f"{spec.machine_id}: a 'ram_mapper' extension sub-slot requires a machine "
+                "with no existing slot-3 memory mapper, but this machine already has one "
+                "(has_ram_mapper=True) -- two independent memory mappers sharing the same "
+                "I/O ports (0xFC-0xFF) is not supported"
+            )
         slot2_sub_slot_enabled = True
         for index, subslot in extension_overlay.subslots.items():
             sub_label = f"expanded overlay sub-slot {index}"
@@ -1431,6 +1470,9 @@ def _wire_extension_overlay(
                 mapper2_subslots[index] = FixedPageMapper(
                     rom=_load_device_rom(subslot, sub_label), base=0x4000
                 )
+            elif subslot.device == "ram_mapper":
+                assert subslot.size_kb is not None  # guaranteed by load-time validation
+                mapper2_subslots[index] = RamMapper(size_kb=subslot.size_kb)
             else:
                 raise MachineLoadError(
                     f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
@@ -1609,6 +1651,16 @@ def build_machine(
     if kanji_device is not None:
         io.register_read(0xD8, 0xDB, kanji_device.read_port)
         io.register_write(0xD8, 0xDB, kanji_device.write_port)
+    # An expanded slot 2's ram_mapper sub-slot (--extension memory512k)
+    # registers on the same standard memory-mapper ports slot 3's own
+    # RamMapper would use -- safe because _wire_extension_overlay already
+    # rejected this combination when spec.has_ram_mapper is True.
+    for sub_mapper in mapper2_subslots:
+        if isinstance(sub_mapper, RamMapper):
+            mm_s, mm_e = _io_range(spec, "memory_mapper_standard",
+                                    _DEFAULT_IO_PORTS["memory_mapper_standard"])
+            io.register_read(mm_s, mm_e, sub_mapper.read_port)
+            io.register_write(mm_s, mm_e, sub_mapper.write_port)
 
     if spec.generation == "msx2":
         machine = _build_msx2(

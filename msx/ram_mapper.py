@@ -6,9 +6,19 @@ Ports 0xFC–0xFF select which 16 KB bank is visible in each of the four
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar, TypedDict, cast
+
+from msx.mapper import MapperKind
 
 _BANK_SIZE = 0x4000  # 16 KB
 _DEFAULT_SIZE_KB = 128  # 8 banks, matching every machine before size became configurable
+
+
+class RamMapperState(TypedDict):
+    """Save-state schema for RamMapper.snapshot()/restore()."""
+
+    banks: list[int]
+    ram: bytes
 
 
 @dataclass
@@ -32,6 +42,7 @@ class RamMapper:
             bit width fixed at 3 bits.
     """
 
+    kind: ClassVar[MapperKind] = MapperKind.RAM_MAPPER
     size_kb: int = _DEFAULT_SIZE_KB
     ram: bytearray = field(init=False, repr=False)
     banks: list[int] = field(init=False, default_factory=lambda: [0, 0, 0, 0])
@@ -81,3 +92,32 @@ class RamMapper:
     def write_port(self, port: int, value: int) -> None:
         """Set bank register for the page corresponding to port 0xFC–0xFF."""
         self.banks[(port - 0xFC) & 0x03] = value & self.bank_mask
+
+    def snapshot(self) -> RamMapperState:
+        return {"banks": list(self.banks), "ram": bytes(self.ram)}
+
+    def restore(self, state: dict[str, object]) -> None:
+        typed_state = cast(RamMapperState, state)
+        banks = typed_state["banks"]
+        if len(banks) != 4 or any(b < 0 for b in banks):
+            raise ValueError("RamMapperState.banks must have 4 non-negative entries")
+        ram = typed_state["ram"]
+        if len(ram) != len(self.ram):
+            raise ValueError(
+                f"RamMapperState.ram must have {len(self.ram)} bytes, got {len(ram)}"
+            )
+        self.banks[:] = banks
+        self.ram[:] = ram
+
+    def debug_bank_info(self, page: int) -> str | None:
+        """Describe the bank visible at CPU page (0-3, i.e. addr >> 14).
+
+        One bank register maps directly to one 16 KB page here -- unlike
+        ASCII8/Konami's two-8KB-windows-per-page pairing (`_format_bank_info`
+        in msx/mapper.py), which does not apply to this mapper.
+        """
+        if not 0 <= page <= 3:
+            return None
+        bank = self.banks[page] & self.bank_mask
+        start = bank * _BANK_SIZE
+        return f"bank {bank} @{start:05X}-{start + _BANK_SIZE - 1:05X}"

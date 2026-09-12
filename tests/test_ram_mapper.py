@@ -194,3 +194,51 @@ def test_minimum_size_16kb_single_bank() -> None:
     rm.write_port(0xFF, 0x07)
     assert rm.banks[3] == 0
     assert rm.read_port(0xFF) == 0xFF  # 0 | ~0 & 0xFF
+
+
+# ---------------------------------------------------------------------------
+# Mapper protocol: kind, snapshot/restore, debug_bank_info
+# ---------------------------------------------------------------------------
+
+def test_kind_is_ram_mapper() -> None:
+    from msx.mapper import MapperKind
+    assert RamMapper.kind == MapperKind.RAM_MAPPER
+
+
+def test_snapshot_restore_round_trip() -> None:
+    rm = RamMapper(size_kb=256)
+    rm.banks = [1, 2, 3, 4]
+    rm.write(0xC000, 0x99)
+    state = rm.snapshot()
+
+    fresh = RamMapper(size_kb=256)
+    fresh.restore(state)
+    assert fresh.banks == [1, 2, 3, 4]
+    assert fresh.ram == rm.ram
+
+
+def test_restore_rejects_wrong_bank_count() -> None:
+    rm = RamMapper()
+    with pytest.raises(ValueError):
+        rm.restore({"banks": [0, 0, 0], "ram": bytes(len(rm.ram))})
+
+
+def test_restore_rejects_wrong_ram_length() -> None:
+    rm = RamMapper(size_kb=256)
+    with pytest.raises(ValueError):
+        rm.restore({"banks": [0, 0, 0, 0], "ram": bytes(16384)})
+
+
+def test_debug_bank_info_describes_page_bank() -> None:
+    rm = RamMapper()
+    rm.banks[2] = 5
+    info = rm.debug_bank_info(2)
+    assert info is not None
+    assert "5" in info
+    assert f"{5 * 0x4000:05X}" in info
+
+
+def test_debug_bank_info_out_of_range_page_is_none() -> None:
+    rm = RamMapper()
+    assert rm.debug_bank_info(4) is None
+    assert rm.debug_bank_info(-1) is None

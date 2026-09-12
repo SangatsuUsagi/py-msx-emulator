@@ -113,9 +113,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Slot 2 cartridge ROM path")
     parser.add_argument("--extension", choices=list(VALID_EXTENSIONS), default=None,
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
-                             "SRAM), 'scc-plus' (an SCC-I / SCC+ cartridge), or 'hbi-j1' "
+                             "SRAM), 'scc-plus' (an SCC-I / SCC+ cartridge), 'hbi-j1' "
                              "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
-                             "slot 2 into two sub-slots) (conflicts with --slot2/--mapper2)")
+                             "slot 2 into two sub-slots), or 'memory512k' (a 512 KB volatile "
+                             "RAM-mapper memory-expansion cartridge; requires a machine with "
+                             "no existing slot-3 memory mapper) (conflicts with "
+                             "--slot2/--mapper2)")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
@@ -223,12 +226,17 @@ def _print_startup_summary(
         from msx.machine_loader import _ExpandedExtensionOverlay
         if isinstance(extension_overlay, _ExpandedExtensionOverlay):
             print(
-                f"extension: hbi-j1 (expanded slot 2: "
+                f"extension: {args.extension} (expanded slot 2: "
                 f"{len(extension_overlay.subslots)} sub-slot(s)"
                 + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
                 + ")"
             )
         elif extension_overlay.rom_entry is not None:
+            # rom_base_dir is always set together with rom_entry (see
+            # _ExtensionOverlay's docstring: both are None only for a
+            # device with no ROM file, e.g. scc_i_cart) -- asserted here
+            # only to narrow the type for mypy, not a runtime possibility.
+            assert extension_overlay.rom_base_dir is not None
             print(
                 f"extension: {extension_overlay.device} "
                 f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"

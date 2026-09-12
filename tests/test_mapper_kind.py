@@ -24,7 +24,9 @@ from msx.mapper import (
     MapperKind,
     RTypeMapper,
     SCCICart,
+    mapper_kind_display_name,
 )
+from msx.ram_mapper import RamMapper
 
 # Every concrete Mapper(Protocol)-conforming class, including FmPac (which
 # structurally satisfies Mapper via machine.memory._mapper2, see
@@ -48,6 +50,7 @@ _ALL_MAPPER_CLASSES: tuple[type[Mapper], ...] = (
     SCCICart,
     HalnoteMapper,
     FmPac,
+    RamMapper,
 )
 
 
@@ -80,3 +83,8 @@ def test_subclass_inherits_kind_unless_overridden() -> None:
     assert Ascii16Sram2Mapper.kind == MapperKind.ASCII16_SRAM2
     assert Ascii16Sram8Mapper.kind == MapperKind.ASCII16_SRAM8
     assert MajutsushiMapper.kind == MapperKind.MAJUTSUSHI
+
+
+def test_ram_mapper_kind_and_display_name() -> None:
+    assert RamMapper.kind == MapperKind.RAM_MAPPER
+    assert mapper_kind_display_name(MapperKind.RAM_MAPPER) == "RamMapper"
