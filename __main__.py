@@ -297,7 +297,7 @@ def _cleanup(
         mapper_trace_file.close()
     if machine is not None and machine.sram_save_path is not None:
         mapper = machine.memory._mapper
-        if hasattr(mapper, "save_sram"):
+        if mapper.has_sram:
             machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
             mapper.save_sram(machine.sram_save_path)
     if (

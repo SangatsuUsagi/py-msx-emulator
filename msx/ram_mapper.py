@@ -6,6 +6,7 @@ Ports 0xFC–0xFF select which 16 KB bank is visible in each of the four
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
@@ -43,6 +44,9 @@ class RamMapper:
     """
 
     kind: ClassVar[MapperKind] = MapperKind.RAM_MAPPER
+    # Persisted entirely through the generic slot-2 save-state mechanism
+    # (snapshot()/restore()), never through a standalone .sram file.
+    has_sram: ClassVar[bool] = False
     size_kb: int = _DEFAULT_SIZE_KB
     ram: bytearray = field(init=False, repr=False)
     banks: list[int] = field(init=False, default_factory=lambda: [0, 0, 0, 0])
@@ -67,6 +71,10 @@ class RamMapper:
         """Restore power-on/reset bank state. RAM contents are retained,
         matching Machine.reset()'s "Memory/VRAM contents are retained"."""
         self.banks[:] = [0, 0, 0, 0]
+
+    def save_sram(self, path: Path) -> None:
+        """No-op: RamMapper has no separate .sram file, see has_sram."""
+        pass
 
     def _phys(self, addr: int) -> int:
         page = (addr & 0xFFFF) >> 14

@@ -156,6 +156,8 @@ _CMD_HMMC = 0xF
 
 # S2 status bits
 _S2_CE = 0x01  # command executing
+# Written from v9938_renderer._finalize (once per render_frame() call), not
+# locally -- the renderer owns frame-parity tracking for interlace mode.
 _S2_EO = 0x02  # current field (even/odd), toggles once per frame
 _S2_BD = 0x10  # border/colour detected (SRCH result)
 _S2_TR = 0x80  # transfer ready (CPU may send next byte)

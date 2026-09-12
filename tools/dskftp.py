@@ -31,6 +31,8 @@ Commands (see `help` inside the shell):
     quit / bye           leave the shell
 """
 
+from __future__ import annotations
+
 import argparse
 import cmd
 import datetime
@@ -41,7 +43,7 @@ import shlex
 import sys
 import unicodedata
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional
+from typing import Callable, Iterator
 
 try:
     import readline
@@ -116,7 +118,7 @@ class DirEntry:
     attr: int
     cluster: int
     size: int
-    mtime: Optional[datetime.datetime]
+    mtime: datetime.datetime | None
     offset: int
 
     @property
@@ -170,7 +172,7 @@ def name_key(raw11: bytes) -> str:
     return raw11.decode(MSX_ENCODING, "replace").upper()
 
 
-def _decode_mtime(date_word: int, time_word: int) -> Optional[datetime.datetime]:
+def _decode_mtime(date_word: int, time_word: int) -> datetime.datetime | None:
     if date_word == 0:
         return None
     year = 1980 + ((date_word >> 9) & 0x7F)
@@ -415,7 +417,7 @@ class MsxDisk:
     def list_dir(self, dir_cluster: int) -> list[DirEntry]:
         return [e for e in self._iter_entries(dir_cluster) if not e.attr & ATTR_VOLUME]
 
-    def find_entry(self, dir_cluster: int, name: str) -> Optional[DirEntry]:
+    def find_entry(self, dir_cluster: int, name: str) -> DirEntry | None:
         key = name_key(name83_bytes(name))
         for entry in self._iter_entries(dir_cluster):
             if name_key(bytes(self.data[entry.offset:entry.offset + 11])) == key:
@@ -437,7 +439,7 @@ class MsxDisk:
         return self.cluster_offset(new_cluster)
 
     def _write_slot(self, off: int, raw11: bytes, attr: int, cluster: int, size: int,
-                    when: Optional[datetime.datetime] = None) -> None:
+                    when: datetime.datetime | None = None) -> None:
         date_word, time_word = _encode_mtime(when or datetime.datetime.now())
         raw = bytearray(DIR_ENTRY_SIZE)
         raw[0:11] = raw11
@@ -674,7 +676,7 @@ class DskFtpShell(cmd.Cmd):
 
     def __init__(self) -> None:
         super().__init__()
-        self.disk: Optional[MsxDisk] = None
+        self.disk: MsxDisk | None = None
         self.cwd: list[str] = []
         self._update_prompt()
 
@@ -711,7 +713,10 @@ class DskFtpShell(cmd.Cmd):
     def emptyline(self) -> bool:
         return False
 
-    def default(self, line: str) -> bool:
+    def default(self, line: str) -> bool:  # type: ignore[override]
+        # cmd.Cmd's stub declares this -> None, but at runtime (like do_*,
+        # emptyline, postcmd) a truthy return stops the command loop -- the
+        # stub is narrower than the actual contract, not a real mismatch.
         print(f"Unknown command: {line.split()[0]}", file=sys.stderr)
         return False
 

@@ -135,6 +135,13 @@ class Mapper(Protocol):
     def snapshot(self) -> Mapping[str, object]: ...
     def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank_info(self, page: int) -> str | None: ...
+    def reset(self) -> None: ...
+    # Whether this mapper persists SRAM to a standalone .sram file via
+    # save_sram -- declared on the Protocol so a generic caller (e.g. the
+    # exit-time SRAM-save check) can ask directly instead of probing for
+    # the method's existence with hasattr.
+    has_sram: ClassVar[bool]
+    def save_sram(self, path: Path) -> None: ...
 
 
 def _format_bank_info(banks: list[int], page: int) -> str | None:
@@ -181,11 +188,26 @@ class BankTracingMapper:
     _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
+    has_sram: ClassVar[bool] = False
+
     def debug_bank_info(self, page: int) -> str | None:
         """Default for BankTracingMapper subclasses with no _banks list (e.g.
         RTypeMapper, which has a single _bank: int) -- overridden by the
         subclasses that do have one."""
         return None
+
+    def reset(self) -> None:
+        """Default for BankTracingMapper subclasses with no reset-affected
+        state -- Machine.reset() does not touch bank-switching ROM mapper
+        registers today, so this is a deliberate no-op, not a stub.
+        Overridden by subclasses that do have power-on-reset state
+        (HalnoteMapper)."""
+        pass
+
+    def save_sram(self, path: Path) -> None:
+        """Default for BankTracingMapper subclasses with has_sram = False --
+        overridden by the SRAM-carrying subclasses."""
+        pass
 
 
 def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
@@ -212,6 +234,8 @@ class _NoStateMapperMixin:
     """Shared no-op write/snapshot/restore for mappers with no persisted state
     (no bank registers, no SRAM)."""
 
+    has_sram: ClassVar[bool] = False
+
     def write(self, addr: int, value: int) -> None:
         pass
 
@@ -223,6 +247,12 @@ class _NoStateMapperMixin:
 
     def debug_bank_info(self, page: int) -> str | None:
         return None
+
+    def reset(self) -> None:
+        pass
+
+    def save_sram(self, path: Path) -> None:
+        pass
 
 
 @dataclass
@@ -520,6 +550,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
+    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
@@ -687,6 +718,7 @@ class GameMaster2Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.GAME_MASTER2
+    has_sram: ClassVar[bool] = True
     # Bank-register bit fields and the 4 KB SRAM-half geometry, named to match
     # the decode table in the class docstring.
     _SRAM_BIT: ClassVar[int] = 0x10        # bit 4: 1 = SRAM, 0 = ROM
@@ -883,6 +915,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
+    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
@@ -1624,8 +1657,6 @@ _HALNOTE_PAGE_MASK = 0x7F  # 128 banks fit exactly in 7 bits -- no modulo needed
 class HalnoteMapperState(TypedDict):
     banks: list[int]
     subbanks: list[int]
-    sram_enabled: bool
-    submapper_enabled: bool
     sram: bytes
 
 
@@ -1655,6 +1686,7 @@ class HalnoteMapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.HALNOTE
+    has_sram: ClassVar[bool] = True
 
     rom: bytes
     sram: bytearray = field(default_factory=lambda: bytearray(_HALNOTE_SRAM_SIZE))
@@ -1734,11 +1766,13 @@ class HalnoteMapper(BankTracingMapper):
         path.write_bytes(self.sram)
 
     def snapshot(self) -> HalnoteMapperState:
+        # sram_enabled/submapper_enabled are not persisted here -- they are
+        # fully determined by bank_0/bank_1's top bit (see restore(), which
+        # re-derives rather than restores them) -- see machine-state's
+        # "HBI-J1 MSX-JE SRAM state save and restore" Requirement.
         return {
             "banks": list(self._banks),
             "subbanks": list(self._subbanks),
-            "sram_enabled": self._sram_enabled,
-            "submapper_enabled": self._submapper_enabled,
             "sram": bytes(self.sram),
         }
 
@@ -1756,8 +1790,8 @@ class HalnoteMapper(BankTracingMapper):
         self._banks[:] = banks
         self._subbanks[:] = subbanks
         # sram_enabled/submapper_enabled are derived from bank_0/bank_1's top
-        # bit (see write()) -- re-derive rather than trust the snapshot's own
-        # copies, so restore() can't construct a state the top bit disagrees
+        # bit (see write()), not part of HalnoteMapperState -- deriving them
+        # here means restore() can't construct a state the top bit disagrees
         # with (e.g. a hand-edited or foreign-generated state file).
         self._sram_enabled = bool(self._banks[0] & _HALNOTE_SRAM_ENABLE_BIT)
         self._submapper_enabled = bool(self._banks[1] & _HALNOTE_SUBMAPPER_ENABLE_BIT)

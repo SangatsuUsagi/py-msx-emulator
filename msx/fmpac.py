@@ -61,6 +61,7 @@ class FmPac:
     """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
 
     kind: ClassVar[MapperKind] = MapperKind.FMPAC
+    has_sram: ClassVar[bool] = True
     rom: bytes
     opll: "Opll"
     sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE))

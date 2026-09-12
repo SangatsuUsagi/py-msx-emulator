@@ -1358,7 +1358,11 @@ def _display_page_bits(vdp: "V9938", mask: int) -> int:
     """
     bits = vdp.regs[2] & mask
     if vdp.even_odd_enabled and (vdp.frame_count & 1):
-        bits ^= mask & -mask
+        # Lowest set bit of `mask`, via explicit 8-bit-truncated negation
+        # (PORT-NOTE: mask & -mask relies on Python's unbounded int width;
+        # `-mask & 0xFF` pins the two's-complement negation to a u8 so the
+        # same expression is valid in a fixed-width target language).
+        bits ^= mask & (-mask & 0xFF)
     return bits
 
 

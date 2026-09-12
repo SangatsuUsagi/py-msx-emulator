@@ -30,13 +30,15 @@ Exit status: 0 success, 1 error, 2 the disk was imaged but some sectors stayed
 unreadable -- those are zero-filled in the image and listed on stdout.
 """
 
+from __future__ import annotations
+
 import argparse
 import fcntl
 import os
 import stat
 import struct
 import sys
-from typing import Optional
+from typing import BinaryIO
 
 SECTOR_SIZE = 512
 BLKGETSIZE64 = 0x80081272
@@ -59,7 +61,7 @@ class Failure(Exception):
 
 def get_block_device_size(fd: int) -> int:
     buf = fcntl.ioctl(fd, BLKGETSIZE64, struct.pack("L", 0))
-    return struct.unpack("L", buf)[0]
+    return int(struct.unpack("L", buf)[0])
 
 
 def read_sys_attr(device_name: str, attr: str) -> str:
@@ -129,7 +131,7 @@ def show_progress(done: int, total: int) -> None:
     print(f"\r  {done}/{total} bytes", end="", flush=True)
 
 
-def read_sectors(fd: int, offset: int, length: int) -> Optional[bytes]:
+def read_sectors(fd: int, offset: int, length: int) -> bytes | None:
     """Positional read, or None if the device errored or returned a short read."""
     try:
         data = os.pread(fd, length, offset)
@@ -140,7 +142,7 @@ def read_sectors(fd: int, offset: int, length: int) -> Optional[bytes]:
     return data
 
 
-def _read_sector_with_retry(fd: int, sector: int, retries: int) -> Optional[bytes]:
+def _read_sector_with_retry(fd: int, sector: int, retries: int) -> bytes | None:
     """Try one sector up to `retries + 1` times, returning the first successful
     read or None once every attempt has failed."""
     for _ in range(retries + 1):
@@ -150,7 +152,7 @@ def _read_sector_with_retry(fd: int, sector: int, retries: int) -> Optional[byte
     return None
 
 
-def read_disk(fd: int, sectors: int, retries: int, out) -> list[int]:
+def read_disk(fd: int, sectors: int, retries: int, out: BinaryIO) -> list[int]:
     """Copy `sectors` sectors from the device into `out`, zero-filling whatever
     cannot be read. Returns the sector numbers that stayed unreadable."""
     bad: list[int] = []
@@ -199,7 +201,7 @@ def write_disk(image_path: str, device_path: str, image_size: int) -> None:
             raise Failure(f"flushing {device_path} failed: {exc}") from exc
 
 
-def first_difference(image_path: str, device_path: str, image_size: int) -> Optional[int]:
+def first_difference(image_path: str, device_path: str, image_size: int) -> int | None:
     """Byte offset where the device stops matching the image, or None if equal."""
     with open(image_path, "rb") as src, open(device_path, "rb") as dst:
         offset = 0

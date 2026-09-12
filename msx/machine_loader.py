@@ -1397,10 +1397,162 @@ class _ExtensionWiring:
     slot2_sub_slot_enabled: bool
     mapper2_subslots: list[Mapper | None]
     fmpac_device: FmPac | None
-    scci_device: SCCICart | None
     halnote_device: HalnoteMapper | None
     halnote_sram_save_path: Path | None
     kanji_device: KanjiRom | None
+
+
+def _wire_machine_io_device(spec: MachineSpec) -> KanjiRom | None:
+    """Resolve a machine-declared global I/O device (currently only a
+    built-in Kanji font ROM), independent of any --extension overlay."""
+    if spec.io_device is not None and spec.io_device.device == "kanji_rom":
+        return KanjiRom(rom=_load_device_rom(spec.io_device, "machine io_device"))
+    return None
+
+
+@dataclass
+class _ExpandedOverlayWiring:
+    """Every device/flag an *expanded* --extension overlay (multiple slot-2
+    sub-slots) produces, for `_wire_extension_overlay` to fold into
+    `_ExtensionWiring`."""
+
+    mapper2_subslots: list[Mapper | None]
+    halnote_device: HalnoteMapper | None
+    halnote_sram_save_path: Path | None
+    kanji_device: KanjiRom | None
+
+
+def _wire_expanded_overlay(
+    spec: MachineSpec,
+    extension_overlay: _ExpandedExtensionOverlay,
+    kanji_device: KanjiRom | None,
+) -> _ExpandedOverlayWiring:
+    """Resolve an expanded --extension overlay's per-sub-slot devices and its
+    own optional `io_device`. `kanji_device` is whatever
+    `_wire_machine_io_device` already resolved, so a conflicting
+    overlay-declared Kanji ROM can be detected.
+
+    Raises:
+        MachineLoadError: If the overlay declares a 'ram_mapper' sub-slot on
+            a machine that already has a slot-3 memory mapper, if a
+            machine-declared and an overlay-declared `io_device` both
+            resolve to a Kanji-ROM device (ports 0xD8-0xDB cannot serve
+            two), or if a sub-slot names a device kind that passed
+            load-time validation but has no construction case here (an
+            internal consistency error between `_KNOWN_EXPANDED_SUBSLOT_DEVICES`
+            and this function).
+    """
+    if spec.has_ram_mapper and any(
+        sub.device == "ram_mapper" for sub in extension_overlay.subslots.values()
+    ):
+        raise MachineLoadError(
+            f"{spec.machine_id}: a 'ram_mapper' extension sub-slot requires a machine "
+            "with no existing slot-3 memory mapper, but this machine already has one "
+            "(has_ram_mapper=True) -- two independent memory mappers sharing the same "
+            "I/O ports (0xFC-0xFF) is not supported"
+        )
+    mapper2_subslots: list[Mapper | None] = _empty_mapper2_subslots()
+    halnote_device: HalnoteMapper | None = None
+    halnote_sram_save_path: Path | None = None
+    for index, subslot in extension_overlay.subslots.items():
+        sub_label = f"expanded overlay sub-slot {index}"
+        if subslot.device == "halnote":
+            halnote_sram_save_path = subslot.sram_save_path
+            halnote_sram = _load_sram_or_warn(
+                subslot.sram_save_path, HALNOTE_SRAM_SIZE, label="HBI-J1 MSX-JE "
+            ) if subslot.sram_save_path is not None else None
+            halnote_device = HalnoteMapper(
+                rom=_load_device_rom(subslot, sub_label),
+                sram=halnote_sram if halnote_sram is not None
+                else bytearray(HALNOTE_SRAM_SIZE),
+            )
+            mapper2_subslots[index] = halnote_device
+        elif subslot.device == "flat_rom":
+            mapper2_subslots[index] = FixedPageMapper(
+                rom=_load_device_rom(subslot, sub_label), base=0x4000
+            )
+        elif subslot.device == "ram_mapper":
+            assert subslot.size_kb is not None  # guaranteed by load-time validation
+            mapper2_subslots[index] = RamMapper(size_kb=subslot.size_kb)
+        else:
+            raise MachineLoadError(
+                f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
+                f"{index} device {subslot.device!r} passed load-time validation "
+                f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
+                "construction case"
+            )
+    if extension_overlay.io_device is not None and extension_overlay.io_device.device \
+            == "kanji_rom":
+        if kanji_device is not None:
+            raise MachineLoadError(
+                f"{spec.machine_id}: a machine-declared io_device and an extension "
+                "overlay's io_device both resolve to a Kanji-ROM device on I/O "
+                "ports 0xD8-0xDB -- these cannot coexist"
+            )
+        kanji_device = KanjiRom(
+            rom=_load_device_rom(extension_overlay.io_device, "expanded overlay io_device")
+        )
+    return _ExpandedOverlayWiring(
+        mapper2_subslots=mapper2_subslots,
+        halnote_device=halnote_device,
+        halnote_sram_save_path=halnote_sram_save_path,
+        kanji_device=kanji_device,
+    )
+
+
+@dataclass
+class _FlatOverlayWiring:
+    """Every device/flag a *flat* --extension overlay (fmpac / scc_i_cart,
+    replacing slot 2's cartridge mapper wholesale) produces."""
+
+    mapper2_instance: Mapper
+    scc: SCC | None
+    fmpac_device: FmPac | None
+
+
+def _wire_flat_overlay(
+    spec: MachineSpec,
+    extension_overlay: _ExtensionOverlay,
+    scc: SCC | None,
+) -> _FlatOverlayWiring:
+    """Resolve a flat --extension overlay's device, which unconditionally
+    replaces slot 2's `mapper2_instance` (and, for scc_i_cart, `scc` -- real
+    hardware never has two SCC chips attached at once, and `Machine` has a
+    single `scc` field).
+
+    Raises:
+        MachineLoadError: If `extension_overlay.device` passed load-time
+            validation (`_KNOWN_EXTENSION_DEVICES`) but has no construction
+            case here (an internal consistency error between the two).
+    """
+    fmpac_device: FmPac | None = None
+    if extension_overlay.device == "fmpac":
+        fmpac_sram = _load_sram_or_warn(
+            extension_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
+        ) if extension_overlay.sram_save_path is not None else None
+        fmpac_device = FmPac(
+            rom=_load_device_rom(extension_overlay, "fmpac extension"),
+            opll=Opll(),
+            sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
+        )
+        return _FlatOverlayWiring(
+            mapper2_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device
+        )
+    if extension_overlay.device == "scc_i_cart":
+        # is_052539=True: the SCC-I cartridge carries a genuine
+        # Konami-052539 chip, not a 051649 (see SCC.is_052539's
+        # docstring). This chip becomes machine.scc, taking priority
+        # over a slot-1 KonamiSCC chip (real hardware never has both
+        # attached at once, and this Machine has a single `scc` field).
+        scc = SCC(is_052539=True)
+        return _FlatOverlayWiring(
+            mapper2_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None
+        )
+    raise MachineLoadError(
+        f"{spec.machine_id}: internal error -- extension overlay device "
+        f"{extension_overlay.device!r} passed load-time validation "
+        "(_KNOWN_EXTENSION_DEVICES) but has no build_machine construction case"
+    )
 
 
 def _wire_extension_overlay(
@@ -1414,109 +1566,36 @@ def _wire_extension_overlay(
     dispatch. `mapper2_instance`/`scc` are the values `build_machine`
     already resolved from `cartridge2`/`mapper2`/the slot-1 cartridge --
     a flat overlay's device (fmpac/scc_i_cart) unconditionally replaces
-    `mapper2_instance`, and `scc_i_cart` also replaces `scc` (real
-    hardware never has two SCC chips attached at once, and `Machine` has
-    a single `scc` field); an expanded overlay leaves both alone and
-    populates the returned `mapper2_subslots` array instead.
+    `mapper2_instance`, and `scc_i_cart` also replaces `scc`; an expanded
+    overlay leaves both alone and populates the returned `mapper2_subslots`
+    array instead. See `_wire_machine_io_device`, `_wire_expanded_overlay`,
+    and `_wire_flat_overlay` for the three independent pieces this
+    assembles.
 
     Raises:
-        MachineLoadError: If a machine-declared and an overlay-declared
-            `io_device` both resolve to a Kanji-ROM device (ports
-            0xD8-0xDB cannot serve two), or if `extension_overlay`/its
-            sub-slots name a device kind that passed load-time validation
-            but has no construction case here (an internal consistency
-            error between the `_KNOWN_*` allow-lists and this function).
+        MachineLoadError: see `_wire_expanded_overlay`/`_wire_flat_overlay`.
     """
-    fmpac_device: FmPac | None = None
-    scci_device: SCCICart | None = None
-    halnote_device: HalnoteMapper | None = None
-    halnote_sram_save_path: Path | None = None
-    kanji_device: KanjiRom | None = None
+    kanji_device = _wire_machine_io_device(spec)
     slot2_sub_slot_enabled = False
     mapper2_subslots: list[Mapper | None] = _empty_mapper2_subslots()
-
-    # Machine-declared global I/O device (e.g. a built-in Kanji font ROM),
-    # independent of any --extension overlay.
-    if spec.io_device is not None and spec.io_device.device == "kanji_rom":
-        kanji_device = KanjiRom(rom=_load_device_rom(spec.io_device, "machine io_device"))
+    halnote_device: HalnoteMapper | None = None
+    halnote_sram_save_path: Path | None = None
+    fmpac_device: FmPac | None = None
 
     # Extension overlay: unconditionally occupies primary slot 2, replacing
     # whatever slot-2 cartridge mapper was resolved above.
     if isinstance(extension_overlay, _ExpandedExtensionOverlay):
-        if spec.has_ram_mapper and any(
-            sub.device == "ram_mapper" for sub in extension_overlay.subslots.values()
-        ):
-            raise MachineLoadError(
-                f"{spec.machine_id}: a 'ram_mapper' extension sub-slot requires a machine "
-                "with no existing slot-3 memory mapper, but this machine already has one "
-                "(has_ram_mapper=True) -- two independent memory mappers sharing the same "
-                "I/O ports (0xFC-0xFF) is not supported"
-            )
+        expanded = _wire_expanded_overlay(spec, extension_overlay, kanji_device)
         slot2_sub_slot_enabled = True
-        for index, subslot in extension_overlay.subslots.items():
-            sub_label = f"expanded overlay sub-slot {index}"
-            if subslot.device == "halnote":
-                halnote_sram_save_path = subslot.sram_save_path
-                halnote_sram = _load_sram_or_warn(
-                    subslot.sram_save_path, HALNOTE_SRAM_SIZE, label="HBI-J1 MSX-JE "
-                ) if subslot.sram_save_path is not None else None
-                halnote_device = HalnoteMapper(
-                    rom=_load_device_rom(subslot, sub_label),
-                    sram=halnote_sram if halnote_sram is not None
-                    else bytearray(HALNOTE_SRAM_SIZE),
-                )
-                mapper2_subslots[index] = halnote_device
-            elif subslot.device == "flat_rom":
-                mapper2_subslots[index] = FixedPageMapper(
-                    rom=_load_device_rom(subslot, sub_label), base=0x4000
-                )
-            elif subslot.device == "ram_mapper":
-                assert subslot.size_kb is not None  # guaranteed by load-time validation
-                mapper2_subslots[index] = RamMapper(size_kb=subslot.size_kb)
-            else:
-                raise MachineLoadError(
-                    f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
-                    f"{index} device {subslot.device!r} passed load-time validation "
-                    f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
-                    "construction case"
-                )
-        if extension_overlay.io_device is not None and extension_overlay.io_device.device \
-                == "kanji_rom":
-            if kanji_device is not None:
-                raise MachineLoadError(
-                    f"{spec.machine_id}: a machine-declared io_device and an extension "
-                    "overlay's io_device both resolve to a Kanji-ROM device on I/O "
-                    "ports 0xD8-0xDB -- these cannot coexist"
-                )
-            kanji_device = KanjiRom(
-                rom=_load_device_rom(extension_overlay.io_device, "expanded overlay io_device")
-            )
+        mapper2_subslots = expanded.mapper2_subslots
+        halnote_device = expanded.halnote_device
+        halnote_sram_save_path = expanded.halnote_sram_save_path
+        kanji_device = expanded.kanji_device
     elif extension_overlay is not None:
-        if extension_overlay.device == "fmpac":
-            fmpac_sram = _load_sram_or_warn(
-                extension_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
-            ) if extension_overlay.sram_save_path is not None else None
-            fmpac_device = FmPac(
-                rom=_load_device_rom(extension_overlay, "fmpac extension"),
-                opll=Opll(),
-                sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
-            )
-            mapper2_instance = fmpac_device
-        elif extension_overlay.device == "scc_i_cart":
-            # is_052539=True: the SCC-I cartridge carries a genuine
-            # Konami-052539 chip, not a 051649 (see SCC.is_052539's
-            # docstring). This chip becomes machine.scc, taking priority
-            # over a slot-1 KonamiSCC chip (real hardware never has both
-            # attached at once, and this Machine has a single `scc` field).
-            scc = SCC(is_052539=True)
-            scci_device = SCCICart(scc=scc)
-            mapper2_instance = scci_device
-        else:
-            raise MachineLoadError(
-                f"{spec.machine_id}: internal error -- extension overlay device "
-                f"{extension_overlay.device!r} passed load-time validation "
-                "(_KNOWN_EXTENSION_DEVICES) but has no build_machine construction case"
-            )
+        flat = _wire_flat_overlay(spec, extension_overlay, scc)
+        mapper2_instance = flat.mapper2_instance
+        scc = flat.scc
+        fmpac_device = flat.fmpac_device
 
     return _ExtensionWiring(
         mapper2_instance=mapper2_instance,
@@ -1524,7 +1603,6 @@ def _wire_extension_overlay(
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         mapper2_subslots=mapper2_subslots,
         fmpac_device=fmpac_device,
-        scci_device=scci_device,
         halnote_device=halnote_device,
         halnote_sram_save_path=halnote_sram_save_path,
         kanji_device=kanji_device,
@@ -1634,23 +1712,18 @@ def build_machine(
     scc = wiring.scc
     slot2_sub_slot_enabled = wiring.slot2_sub_slot_enabled
     mapper2_subslots = wiring.mapper2_subslots
-    fmpac_device = wiring.fmpac_device
-    scci_device = wiring.scci_device
-    halnote_device = wiring.halnote_device
-    halnote_sram_save_path = wiring.halnote_sram_save_path
-    kanji_device = wiring.kanji_device
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     if joy_map is not None:
         input_state.joy_map = joy_map
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
-    if fmpac_device is not None:
-        io.register_read(0x7C, 0x7D, fmpac_device.read_port)
-        io.register_write(0x7C, 0x7D, fmpac_device.write_port)
-    if kanji_device is not None:
-        io.register_read(0xD8, 0xDB, kanji_device.read_port)
-        io.register_write(0xD8, 0xDB, kanji_device.write_port)
+    if wiring.fmpac_device is not None:
+        io.register_read(0x7C, 0x7D, wiring.fmpac_device.read_port)
+        io.register_write(0x7C, 0x7D, wiring.fmpac_device.write_port)
+    if wiring.kanji_device is not None:
+        io.register_read(0xD8, 0xDB, wiring.kanji_device.read_port)
+        io.register_write(0xD8, 0xDB, wiring.kanji_device.write_port)
     # An expanded slot 2's ram_mapper sub-slot (--extension memory512k)
     # registers on the same standard memory-mapper ports slot 3's own
     # RamMapper would use -- safe because _wire_extension_overlay already
@@ -1708,17 +1781,16 @@ def build_machine(
     # them at their sub-frame sample positions (mirrors the DAC wiring).
     machine.psg._machine = machine
     machine.sram_save_path = sram_save_path
-    machine.fmpac = fmpac_device
-    machine.scci_cart = scci_device
-    machine.halnote_cart = halnote_device
-    machine.kanji = kanji_device
+    machine.fmpac = wiring.fmpac_device
+    machine.halnote_cart = wiring.halnote_device
+    machine.kanji = wiring.kanji_device
     machine.fmpac_sram_save_path = (
         extension_overlay.sram_save_path
-        if fmpac_device is not None and extension_overlay is not None
+        if wiring.fmpac_device is not None and extension_overlay is not None
         and not isinstance(extension_overlay, _ExpandedExtensionOverlay)
         else None
     )
-    machine.halnote_sram_save_path = halnote_sram_save_path
+    machine.halnote_sram_save_path = wiring.halnote_sram_save_path
     return machine
 
 

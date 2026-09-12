@@ -15,7 +15,6 @@ from msx.mapper import HalnoteMapper, MajutsushiMapper, SCCICart
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
-from msx.ram_mapper import RamMapper
 from msx.scc import SCC
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
@@ -79,7 +78,6 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
-    scci_cart: SCCICart | None = field(default=None, repr=False)
     halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
@@ -184,16 +182,20 @@ class Machine:
             self.fdc.reset()
         if self.kanji is not None:
             self.kanji.reset()
-        if self.halnote_cart is not None:
-            self.halnote_cart.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
+        # halnote_cart (when present) is always also one of these sub-slot
+        # entries -- _wire_expanded_overlay is the only place that ever
+        # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
+        # overlay's device allow-list, does not include "halnote") -- so
+        # resetting it via this loop, not a separate halnote_cart branch,
+        # covers it exactly once.
         for sub_mapper in self.memory._mapper2_subslots:
-            if isinstance(sub_mapper, RamMapper):
+            if sub_mapper is not None:
                 sub_mapper.reset()
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:

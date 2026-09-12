@@ -57,7 +57,13 @@ if TYPE_CHECKING:
 #   mismatch now raises ValueError, matching slot 1's existing strict
 #   check, in place of the prior three fields' silent-skip-on-mismatch
 #   behavior. See openspec/changes/generalize-slot2-mapper-state.
-CURRENT_FORMAT_VERSION: int = 11
+# Version 12: HalnoteMapperState's sram_enabled/submapper_enabled fields
+#   removed -- write-only in the persisted payload (HalnoteMapper.restore()
+#   has always re-derived both flags from the restored bank registers'
+#   top bit, never from these two fields). No behavior change; only the
+#   persisted schema shrinks. See
+#   openspec/changes/trim-halnote-derived-state-fields.
+CURRENT_FORMAT_VERSION: int = 12
 
 
 class StateLoadError(ValueError):

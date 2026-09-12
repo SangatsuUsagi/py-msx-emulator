@@ -302,7 +302,10 @@ def test_reset_restores_halnote_mapper_power_on_state(tmp_path: Path) -> None:
     machine.reset()
     state = halnote.snapshot()
     assert state["banks"] == [0, 1, 2, 3]
-    assert state["sram_enabled"] is False
+    # sram_enabled is not part of HalnoteMapperState (see
+    # trim-halnote-derived-state-fields) -- check the runtime attribute
+    # reset() itself cleared, not a persisted field.
+    assert halnote._sram_enabled is False
 
 
 def test_subslot0_dispatches_to_halnote_mapper(tmp_path: Path) -> None:

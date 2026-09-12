@@ -88,3 +88,50 @@ def test_subclass_inherits_kind_unless_overridden() -> None:
 def test_ram_mapper_kind_and_display_name() -> None:
     assert RamMapper.kind == MapperKind.RAM_MAPPER
     assert mapper_kind_display_name(MapperKind.RAM_MAPPER) == "RamMapper"
+
+
+# Classes that persist SRAM to a standalone .sram file via save_sram() (see
+# cart-sram-mapper's "SRAM persistence via save_sram", cart-halnote's and
+# cart-fmpac's own SRAM-persistence Requirements). Every other class in
+# _ALL_MAPPER_CLASSES has has_sram = False.
+_SRAM_CARRYING_CLASSES: frozenset[type[Mapper]] = frozenset({
+    Ascii8Sram2Mapper,
+    Ascii8Sram8Mapper,
+    KoeiSRAM32Mapper,
+    GameMaster2Mapper,
+    Ascii16Sram2Mapper,
+    Ascii16Sram8Mapper,
+    HalnoteMapper,
+    FmPac,
+})
+
+
+def test_has_sram_matches_the_known_sram_carrying_set() -> None:
+    for cls in _ALL_MAPPER_CLASSES:
+        expected = cls in _SRAM_CARRYING_CLASSES
+        assert cls.has_sram is expected, (
+            f"{cls.__name__}.has_sram is {cls.has_sram}, expected {expected}"
+        )
+
+
+def test_reset_does_not_raise_on_a_mapper_with_no_reset_affected_state() -> None:
+    # Machine.reset() does not touch bank-switching ROM mapper registers
+    # today (see machine-core's "Machine reset restores power-on state"),
+    # so the Mapper protocol's reset() default is a deliberate no-op for
+    # these -- confirm it is callable and genuinely inert.
+    flat = FlatMapper(cartridge=None)
+    flat.reset()
+
+    ascii8 = Ascii8Mapper(rom=bytes(range(256)) * 128)
+    ascii8.write(0x6000, 3)
+    banks_before = list(ascii8._banks)
+    ascii8.reset()
+    assert ascii8._banks == banks_before
+
+
+def test_save_sram_is_a_no_op_when_has_sram_is_false(tmp_path) -> None:
+    flat = FlatMapper(cartridge=None)
+    assert flat.has_sram is False
+    target = tmp_path / "should-not-exist.sram"
+    flat.save_sram(target)
+    assert not target.exists()
