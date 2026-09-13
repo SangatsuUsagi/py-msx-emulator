@@ -44,15 +44,21 @@ VALID_MAPPERS: tuple[str, ...] = (
 )
 
 # Accepted slot 2 cartridge mapper names for --mapper2 (CLI-only, see above).
-# Slot 2 has no SCC/SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
+# Slot 2 has no SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
+# KonamiSCC IS supported (a genuine Konami-SCC cartridge can physically occupy
+# slot 2, e.g. behind a Konami slot-converter cartridge in slot 1) but shares
+# Machine's single scc field with slot 1 -- rejected at build_machine time if
+# slot 1's own mapper also resolves to KonamiSCC (see machine-loader's "Slot 2
+# KonamiSCC mapper shares the machine's single SCC chip" spec Requirement).
 VALID_MAPPERS2: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
+    "KonamiSCC",
 )
 
 # Accepted --extension ids (see the cart-extension-overlay spec). Each maps to
 # a config/extensions/<id>.yaml overlay fragment placed in primary slot 2.
 VALID_EXTENSIONS: tuple[str, ...] = (
-    "fmpac", "scc_plus", "hbi_j1", "memory_512k", "msxdos2_512k",
+    "fmpac", "scc_plus", "hbi_j1", "memory_512k", "msxdos2_512k", "msxdos2_512k_kanji",
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.

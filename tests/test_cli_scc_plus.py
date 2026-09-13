@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from msx.machine_loader import (
+    MachineLoadError,
     MachineSpec,
     _ExtensionOverlay,
     _RomEntry,
@@ -82,12 +83,25 @@ def test_extension_scc_plus_alone_boots() -> None:
 
 def test_extension_scc_plus_with_cartridge_boots() -> None:
     """Unlike the old --scc-plus (slot 1), --extension scc_plus (slot 2) does
-    not conflict with a slot-1 cartridge argument or --mapper."""
+    not conflict with a slot-1 cartridge argument or --mapper -- as long as
+    slot 1's mapper doesn't itself need the single shared SCC chip (see
+    test_extension_scc_plus_rejected_when_slot1_is_konamiscc below)."""
     code, out, _err = _run_main(
-        ["--extension", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
+        ["--extension", "scc_plus", "--mapper", "Konami", "game.rom", "--count-frame", "1"]
     )
     assert code == 0
     assert "scc_i_cart" in out
+
+
+def test_extension_scc_plus_rejected_when_slot1_is_konamiscc() -> None:
+    """Machine has a single scc field: slot 1's own KonamiSCC chip and
+    scc_plus's fresh SCC-I chip can't both claim it -- real hardware never
+    has two SCC chips attached at once either."""
+    code, _out, err = _run_main(
+        ["--extension", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
+    )
+    assert code != 0
+    assert "scc" in err.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +173,15 @@ def test_build_machine_installs_scci_cart_in_slot2(tmp_path: Path) -> None:
     assert not isinstance(machine.memory._mapper, SCCICart)
     assert machine.scc is not None
     assert machine.scc is machine.memory._mapper2.scc
+
+
+def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) -> None:
+    cart1 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        build_machine(
+            _msx1_spec(tmp_path), cartridge=cart1, mapper="KonamiSCC",
+            extension_overlay=_scc_plus_overlay(),
+        )
 
 
 def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:

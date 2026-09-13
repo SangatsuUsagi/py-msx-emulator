@@ -1516,14 +1516,18 @@ def _wire_flat_overlay(
     scc: SCC | None,
 ) -> _FlatOverlayWiring:
     """Resolve a flat --extension overlay's device, which unconditionally
-    replaces slot 2's `mapper2_instance` (and, for scc_i_cart, `scc` -- real
+    replaces slot 2's `mapper2_instance` (and, for scc_i_cart, `scc` --
+    rejected instead when the incoming `scc` is already set, i.e. a cartridge
+    mapper in either slot already resolved its own KonamiSCC chip: real
     hardware never has two SCC chips attached at once, and `Machine` has a
     single `scc` field).
 
     Raises:
         MachineLoadError: If `extension_overlay.device` passed load-time
             validation (`_KNOWN_EXTENSION_DEVICES`) but has no construction
-            case here (an internal consistency error between the two).
+            case here (an internal consistency error between the two), or
+            if `scc_i_cart` is selected while a KonamiSCC cartridge mapper
+            already resolved a chip (see above).
     """
     fmpac_device: FmPac | None = None
     if extension_overlay.device == "fmpac":
@@ -1541,9 +1545,22 @@ def _wire_flat_overlay(
     if extension_overlay.device == "scc_i_cart":
         # is_052539=True: the SCC-I cartridge carries a genuine
         # Konami-052539 chip, not a 051649 (see SCC.is_052539's
-        # docstring). This chip becomes machine.scc, taking priority
-        # over a slot-1 KonamiSCC chip (real hardware never has both
-        # attached at once, and this Machine has a single `scc` field).
+        # docstring). This chip becomes machine.scc -- rejected below when
+        # one already exists, since real hardware never has two SCC chips
+        # attached at once and this Machine has a single `scc` field. The
+        # incoming `scc` param is non-None only for that reason, but either
+        # slot can be its source: both build_machine's slot-1 and its slot-2
+        # mapper resolution create one for the KonamiSCC family, and both
+        # run before this call. Only the slot-1 case is reachable from the
+        # command line, where --extension and --mapper2 are mutually
+        # exclusive (__main__.py), so the message stays slot-agnostic rather
+        # than naming a slot it cannot always identify.
+        if scc is not None:
+            raise MachineLoadError(
+                f"{spec.machine_id}: cannot combine a KonamiSCC cartridge mapper with "
+                "--extension scc_plus: real hardware never has two SCC chips "
+                "attached at once, and Machine has a single scc field"
+            )
         scc = SCC(is_052539=True)
         return _FlatOverlayWiring(
             mapper2_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None
@@ -1693,12 +1710,14 @@ def build_machine(
 
     resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
     if resolved2 == "KonamiSCC":
-        print(
-            "warning: KonamiSCC is not supported for slot 2, using Konami mapper",
-            file=sys.stderr,
-        )
-        resolved2 = "Konami"
-    mapper2_instance = _make_mapper(resolved2, cartridge2)
+        if scc is not None:
+            raise MachineLoadError(
+                "cannot use the KonamiSCC mapper in both slot 1 and slot 2: real "
+                "hardware never has two SCC chips attached at once, and Machine has "
+                "a single scc field"
+            )
+        scc = SCC()
+    mapper2_instance = _make_mapper(resolved2, cartridge2, scc=scc)
     dac: MajutsushiMapper | None = (
         mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
     )

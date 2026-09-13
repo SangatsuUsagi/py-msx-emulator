@@ -193,6 +193,39 @@ def test_config_extension_conflicts_with_mapper2() -> None:
     assert "--extension" in err and "--mapper2" in err
 
 
+def test_extension_none_overrides_config_extension() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none"],
+        app_cfg=AppConfig(extension="fmpac"))
+    extension_mock.assert_not_called()
+
+
+def test_extension_none_frees_slot2_from_config_extension_conflict() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none", "--slot2", "game2.rom"],
+        app_cfg=AppConfig(extension="fmpac"))
+    assert code == 0
+    assert err == ""
+    extension_mock.assert_not_called()
+    assert build_mock.call_args.kwargs["cartridge2"] is not None
+
+
+def test_extension_none_frees_mapper2_from_config_extension_conflict() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none", "--mapper2", "Konami"],
+        app_cfg=AppConfig(extension="scc_plus"))
+    assert code == 0
+    assert err == ""
+    extension_mock.assert_not_called()
+    assert build_mock.call_args.kwargs["mapper2"] == "Konami"
+
+
+def test_extension_none_without_config_extension_is_a_no_op() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none"], app_cfg=AppConfig())
+    extension_mock.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # slot2
 # ---------------------------------------------------------------------------
@@ -230,6 +263,18 @@ def test_cli_mapper2_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "ASCII8"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["mapper2"] == "ASCII8"
+
+
+def test_cli_mapper2_accepts_konamiscc() -> None:
+    # --mapper2 KonamiSCC is a valid argparse choice (VALID_MAPPERS2) and
+    # reaches build_machine unchanged; build_machine's own resolution is
+    # what actually constructs the SCC chip or rejects a slot-1 conflict
+    # (see tests/test_machine.py).
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper2", "KonamiSCC"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    assert build_mock.call_args.kwargs["mapper2"] == "KonamiSCC"
 
 
 def test_builtin_mapper2_auto_when_neither_set() -> None:

@@ -2,7 +2,8 @@ import pytest
 
 from msx.input import InputState
 from msx.machine import CYCLES_PER_FRAME, Machine
-from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper
+from msx.machine_loader import MachineLoadError
+from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
 from msx.romdb import RomDbEntry
 from tests.factories import make_machine
 
@@ -295,8 +296,8 @@ def test_make_machine_cartridge2_wired_to_slot2() -> None:
     assert m.memory.read(0x4000) == 0xBB
 
 
-def test_make_machine_mapper2_konamisco_falls_back_to_konami(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_make_machine_mapper2_konamiscc_builds_real_scc_chip(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
 
@@ -305,8 +306,32 @@ def test_make_machine_mapper2_konamisco_falls_back_to_konami(
     sha1 = hashlib.sha1(cart2).hexdigest()
     _patch_db(monkeypatch, romdb, {sha1: {"mapper": "KonamiSCC"}})
     m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="auto")
-    assert isinstance(m.memory._mapper2, KonamiMapper)
-    assert "KonamiSCC" in capsys.readouterr().err
+    assert isinstance(m.memory._mapper2, KonamiSCCMapper)
+    assert m.scc is not None
+    assert m.scc is m.memory._mapper2.scc
+    # The 051649 a Konami megaROM cartridge carries, not the SCC-I's 052539
+    # (see SCC.is_052539's docstring) -- same chip identity slot 1's own
+    # KonamiSCC resolution builds.
+    assert m.scc.is_052539 is False
+
+
+def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    import msx.romdb as romdb
+    cart1 = bytes(65536)
+    cart2 = bytes([0xFF]) + bytes(65535)
+    sha1_1 = hashlib.sha1(cart1).hexdigest()
+    sha1_2 = hashlib.sha1(cart2).hexdigest()
+    _patch_db(monkeypatch, romdb, {
+        sha1_1: {"mapper": "KonamiSCC"}, sha1_2: {"mapper": "KonamiSCC"},
+    })
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM, cartridge=cart1, mapper="auto", cartridge2=cart2, mapper2="auto"
+        )
 
 
 # ---------------------------------------------------------------------------

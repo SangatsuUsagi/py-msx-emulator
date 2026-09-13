@@ -111,18 +111,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
-    parser.add_argument("--extension", choices=list(VALID_EXTENSIONS), default=None,
+    parser.add_argument("--extension", choices=[*VALID_EXTENSIONS, "none"], default=None,
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
                              "SRAM), 'scc_plus' (an SCC-I / SCC+ cartridge), 'hbi_j1' "
                              "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
                              "slot 2 into two sub-slots), or 'memory_512k' (a 512 KB volatile "
                              "RAM-mapper memory-expansion cartridge; requires a machine with "
                              "no existing slot-3 memory mapper) (conflicts with "
-                             "--slot2/--mapper2)")
+                             "--slot2/--mapper2). 'none' forces no extension overlay even when "
+                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
-                        help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
+                        help="Slot 2 mapper type (default: auto; KonamiSCC builds its own "
+                             "SCC chip, rejected if slot 1's mapper also resolves to "
+                             "KonamiSCC or --extension scc_plus is active)")
     parser.add_argument("--fdd1", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive A")
     parser.add_argument("--fdd2", default=None, metavar="DSK",
@@ -348,7 +351,15 @@ def main() -> None:
     speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
     scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
     mapper_eff = _first_set(args.mapper, default=DEFAULT_MAPPER)
-    extension_eff = _first_set(args.extension, app_cfg.extension, default=None)
+    # "none" is a CLI-only sentinel (not in VALID_EXTENSIONS, never valid in
+    # py_emulator.yaml): it forces no extension overlay even when the config
+    # file sets one, since a plain omitted --extension can't be told apart
+    # from "let the config file decide" -- see cart-extension-overlay's
+    # "--extension none forces no extension overlay" Requirement.
+    extension_eff = (
+        None if args.extension == "none"
+        else _first_set(args.extension, app_cfg.extension, default=None)
+    )
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
     # slot2's built-in default is "no cartridge" (None), unlike the concrete

@@ -1,0 +1,42 @@
+schema_version: 1
+id: msxdos2_512k_kanji
+name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + Kanji font ROM"
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --extension msxdos2_512k_kanji).
+# Same slot-2 shape as msxdos2_512k (sub-slot 0 RAM mapper, sub-slot 1
+# MSX-DOS2 kernel ROM), plus a slot-independent global I/O device (the
+# Kanji-ROM font device, ports 0xD8-0xDB), same as hbi_j1's io_device.
+# Requires a machine with no existing slot-3 memory mapper
+# (has_ram_mapper == False) -- see cart-extension-overlay's "msxdos2_512k
+# extension installs a RAM-mapper cartridge and MSX-DOS2 kernel ROM in
+# slot 2" Requirement for why two independent memory mappers sharing the
+# same I/O ports (0xFC-0xFF) is not supported. Sub-slots 2-3 are left
+# unpopulated (open bus).
+overlay: true
+shape: expanded
+slot: 2
+
+rom_base: roms/msxdos2s
+
+subslots:
+  0:
+    device: ram_mapper
+    size_kb: 512
+  1:
+    # Flat (non-bank-switched) MSX-DOS2 kernel ROM, visible only at
+    # 0x4000-0xBFFF -- 0x0000-0x3FFF/0xC000-0xFFFF are open bus.
+    device: flat_rom
+    rom:
+      file: msxd22s.rom
+      size_kb: 32
+      sha1: 7ea584782507218577c65d9665742fa0044b18b5
+
+io_device:
+  # JIS Kanji font ROM device, no slot location of its own -- global I/O
+  # ports 0xD8-0xDB regardless of which sub-slot slot 2 currently selects.
+  device: kanji_rom
+  rom:
+    file: ../kanji/BugMaruMSX-16.rom
+    size_kb: 256
+    sha1: abd6cce93a013f2ea1ef63c4d20002d409379672
