@@ -12,10 +12,10 @@ from msx.fmpac import SRAM_SIZE, FmPac
 from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
-    _FmPacOverlay,
+    _ExtensionOverlay,
     _RomEntry,
     build_machine,
-    load_fmpac_overlay,
+    load_extension_overlay,
 )
 from msx.opll import Opll
 
@@ -313,26 +313,134 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Overlay loader (config/machines/fmpac.yaml)
+# Overlay loader (config/extensions/fmpac.yaml)
 # ---------------------------------------------------------------------------
 
 def test_load_fmpac_overlay_parses_yaml() -> None:
-    overlay = load_fmpac_overlay(_CONFIG, _ROOT)
-    assert overlay.slot == 2
+    overlay = load_extension_overlay("fmpac", _CONFIG, _ROOT)
+    assert overlay.device == "fmpac"
+    assert overlay.rom_entry is not None
     assert overlay.rom_entry.file == "fmpac.rom"
     assert overlay.sram_save_path == Path("saves/sram/fmpac.sram")
+
+
+def test_extension_overlay_slot_defaults_to_two_when_omitted(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 1\nid: bogus\ndevice: scc_i_cart\n", encoding="utf-8"
+    )
+    overlay = load_extension_overlay("bogus", tmp_path, tmp_path)
+    assert overlay.device == "scc_i_cart"
+
+
+def test_extension_overlay_rom_base_defaults_to_empty(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (tmp_path / "fmpac.rom").write_bytes(_bank_rom())
+    (ext_dir / "fmpac.yaml").write_text(
+        "schema_version: 1\nid: fmpac\ndevice: fmpac\nslot: 2\n"
+        "rom:\n  file: fmpac.rom\n  size_kb: 64\n",
+        encoding="utf-8",
+    )
+    overlay = load_extension_overlay("fmpac", tmp_path, tmp_path)
+    assert overlay.rom_base_dir == tmp_path
+
+
+def test_load_scc_plus_overlay_parses_yaml_with_no_rom_block() -> None:
+    overlay = load_extension_overlay("scc_plus", _CONFIG, _ROOT)
+    assert overlay.device == "scc_i_cart"
+    assert overlay.rom_base_dir is None
+    assert overlay.rom_entry is None
+    assert overlay.sram_save_path is None
+
+
+def test_missing_extension_overlay_file_rejected(tmp_path: Path) -> None:
+    with pytest.raises(MachineLoadError, match="not found"):
+        load_extension_overlay("nonexistent", tmp_path, tmp_path)
+
+
+def test_extension_overlay_not_a_mapping_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    with pytest.raises(MachineLoadError, match="expected a YAML mapping"):
+        load_extension_overlay("bogus", tmp_path, tmp_path)
+
+
+def test_extension_overlay_unsupported_schema_version_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 2\nid: bogus\ndevice: fmpac\nslot: 2\n", encoding="utf-8"
+    )
+    with pytest.raises(MachineLoadError, match="schema_version"):
+        load_extension_overlay("bogus", tmp_path, tmp_path)
+
+
+def test_extension_overlay_unsupported_slot_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 1\nid: bogus\ndevice: scc_i_cart\nslot: 1\n", encoding="utf-8"
+    )
+    with pytest.raises(MachineLoadError, match="unsupported extension slot"):
+        load_extension_overlay("bogus", tmp_path, tmp_path)
+
+
+def test_extension_overlay_missing_device_field_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 1\nid: bogus\nslot: 2\n", encoding="utf-8"
+    )
+    with pytest.raises(MachineLoadError, match="missing required field 'device'"):
+        load_extension_overlay("bogus", tmp_path, tmp_path)
+
+
+def test_extension_rom_block_not_a_mapping_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "fmpac.yaml").write_text(
+        "schema_version: 1\nid: fmpac\ndevice: fmpac\nslot: 2\nrom: not-a-mapping\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MachineLoadError, match="missing required 'rom' entry"):
+        load_extension_overlay("fmpac", tmp_path, tmp_path)
+
+
+def test_unrecognized_device_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 1\nid: bogus\ndevice: not_a_real_device\nslot: 2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MachineLoadError, match="not_a_real_device"):
+        load_extension_overlay("bogus", tmp_path, tmp_path)
+
+
+def test_fmpac_device_without_rom_block_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "fmpac.yaml").write_text(
+        "schema_version: 1\nid: fmpac\ndevice: fmpac\nslot: 2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MachineLoadError, match="requires a 'rom' entry"):
+        load_extension_overlay("fmpac", tmp_path, tmp_path)
 
 
 # ---------------------------------------------------------------------------
 # Machine wiring: slot-2 dispatch via a built machine (synthetic ROMs)
 # ---------------------------------------------------------------------------
 
-def _make_fmpac_overlay(tmp_path: Path) -> _FmPacOverlay:
+def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
     (tmp_path / "fmpac.rom").write_bytes(_bank_rom())
-    return _FmPacOverlay(
+    return _ExtensionOverlay(
+        device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
-        slot=2,
         sram_save_path=tmp_path / "fmpac.sram",
     )
 
@@ -355,7 +463,7 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
 
 def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
     assert machine.fmpac_sram_save_path == overlay.sram_save_path
@@ -363,7 +471,7 @@ def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
 
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)  # page 1 (0x4000-0x7FFF) -> slot 2
     assert mem.read(0x4000) == 0  # FM-PAC ROM bank 0 marker byte
@@ -371,7 +479,7 @@ def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
 
 def test_machine_io_ports_gated_by_enable(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)
     assert machine.fmpac is not None
@@ -392,7 +500,7 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
     saved[0] = 0xEE
     overlay.sram_save_path.write_bytes(bytes(saved))
 
-    machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x5FFE, 0x4D)
     machine.fmpac.write(0x5FFF, 0x69)
@@ -400,19 +508,19 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
 
 
 def test_missing_fmpac_rom_raises(tmp_path: Path) -> None:
-    overlay = _FmPacOverlay(
+    overlay = _ExtensionOverlay(
+        device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
-        slot=2,
         sram_save_path=tmp_path / "fmpac.sram",
     )
     with pytest.raises(MachineLoadError, match="fmpac.rom"):
-        build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+        build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
 
 
 def test_machine_reset_resets_fmpac(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x7FF7, 0x03)
     machine.reset()

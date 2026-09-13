@@ -1,10 +1,11 @@
 schema_version: 1
 id: fmpac
 name: "FM-PAC (MSX-MUSIC + 8 KB SRAM)"
+device: fmpac
 
 # Overlay fragment, not a standalone machine: applied on top of an
-# already-resolved base machine spec (via --fmpac) to place the FM-PAC
-# cartridge in a primary slot. Does not declare its own CPU/VDP/RAM.
+# already-resolved base machine spec (via --extension fmpac) to place the
+# FM-PAC cartridge in primary slot 2. Does not declare its own CPU/VDP/RAM.
 overlay: true
 slot: 2
 

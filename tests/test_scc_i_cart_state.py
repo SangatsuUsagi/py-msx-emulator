@@ -2,9 +2,11 @@
 
 Ground truth for SCCICart/SCC register semantics: see tests/test_scc_i_cart.py
 and tests/test_scc.py. This file only checks that save_state/load_state
-faithfully round-trips SCCICart's RAM/bank/mode-register state and the
-carried SCC chip's own state through the existing generic mapper/scc
-save-state paths (msx/state.py).
+faithfully round-trips SCCICart's RAM/bank/mode-register state (via the
+generic slot-2 mapper2_kind/mapper2_state mechanism, msx/state.py -- SCCICart
+lives in slot 2 as of --extension scc_plus, and is persisted the same way any
+flat slot-2 Mapper is, since generalize-slot2-mapper-state) and the carried
+SCC chip's own state (via the existing generic scc save-state path).
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+from msx.machine_loader import MachineSpec, _ExtensionOverlay, _RomEntry, build_machine
 from msx.state import load_state, save_state
 
 _RGB = bytearray(256 * 192 * 3)
@@ -44,7 +46,9 @@ def saves_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
-    return build_machine(_msx1_spec(main_dir), scc_plus=True)
+    return build_machine(
+        _msx1_spec(main_dir), extension_overlay=_ExtensionOverlay(device="scc_i_cart")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
 
 def test_roundtrip_preserves_ram(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper
+    cart = machine.memory._mapper2
     cart.write(0xBFFE, 0x01)  # window 0 RAM-write
     cart.write(0x4000, 0xAB)
     save_state(machine, _RGB, "test")
@@ -66,7 +70,7 @@ def test_roundtrip_preserves_ram(saves_dir: Path, tmp_path: Path) -> None:
 
 def test_roundtrip_preserves_banks_and_mode_register(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper
+    cart = machine.memory._mapper2
     cart.write(0x7000, 5)  # window 1 -> block 5
     cart.write(0xBFFE, 0x20)  # Plus mode
     cart.write(0xB000, 0x80)  # window 3 enable bit -> SCC+ window active
@@ -87,7 +91,7 @@ def test_roundtrip_preserves_banks_and_mode_register(saves_dir: Path, tmp_path: 
 
 def test_roundtrip_preserves_scc_registers_and_plus_mode(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper
+    cart = machine.memory._mapper2
     cart.write(0xBFFE, 0x20)  # Plus mode
     cart.write(0xB000, 0x80)  # SCC+ window active
     cart.write(0xB880, 0x22)  # channel 5 waveform byte 0 (Plus-mode offset 0x80)
@@ -101,22 +105,45 @@ def test_roundtrip_preserves_scc_registers_and_plus_mode(saves_dir: Path, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Mapper mismatch (loading a non-SCC-I state while --scc-plus is active)
+# Extension mismatch (loading a state saved without --extension scc_plus
+# into a machine with it active, or vice versa): as of
+# generalize-slot2-mapper-state, this IS a flat slot-2 mapper2_kind mismatch
+# and now raises ValueError, mirroring slot 1's existing strict mapper_kind
+# check -- a deliberate behavior change from the prior silent-skip
+# (msx/state.py's now-removed _restore_scci).
 # ---------------------------------------------------------------------------
 
-def test_mapper_mismatch_rejected(saves_dir: Path, tmp_path: Path) -> None:
+def test_loading_plain_state_into_scc_plus_machine_raises(
+    saves_dir: Path, tmp_path: Path
+) -> None:
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
     plain = build_machine(_msx1_spec(plain_dir))
     save_state(plain, _RGB, "test")
 
     scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
-    with pytest.raises(ValueError, match="mapper mismatch"):
+    with pytest.raises(ValueError, match="slot 2 mapper mismatch"):
         load_state(scc_plus_machine)
 
 
+def test_loading_scc_plus_state_into_plain_machine_raises(
+    saves_dir: Path, tmp_path: Path
+) -> None:
+    scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
+    cart = scc_plus_machine.memory._mapper2
+    cart.write(0xBFFE, 0x01)  # window 0 RAM-write
+    cart.write(0x4000, 0xAB)
+    save_state(scc_plus_machine, _RGB, "test")
+
+    plain_dir = tmp_path / "plain_main_rom"
+    plain_dir.mkdir()
+    plain = build_machine(_msx1_spec(plain_dir))
+    with pytest.raises(ValueError, match="slot 2 mapper mismatch"):
+        load_state(plain)
+
+
 # ---------------------------------------------------------------------------
-# No --scc-plus: existing save/load behaviour unaffected
+# No --scc_plus: existing save/load behaviour unaffected
 # ---------------------------------------------------------------------------
 
 def test_machine_without_scc_plus_roundtrips(saves_dir: Path, tmp_path: Path) -> None:

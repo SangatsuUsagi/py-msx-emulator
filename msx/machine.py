@@ -10,7 +10,8 @@ from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
-from msx.mapper import MajutsushiMapper, SCCICart
+from msx.kanji import KanjiRom
+from msx.mapper import HalnoteMapper, MajutsushiMapper, SCCICart
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
@@ -77,6 +78,8 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
+    halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
+    kanji: KanjiRom | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     cycles_per_frame: int = CYCLES_PER_FRAME
@@ -92,6 +95,7 @@ class Machine:
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
+    halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
     rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
@@ -159,7 +163,10 @@ class Machine:
         self.cpu.int_pending = True
 
     def reset(self) -> None:
-        """Full power-on reset: CPU, PSG, SCC (if present), VDP, and the
+        """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
+        present), VDP, FDC (if present), Kanji ROM (if present), Halnote
+        cartridge (if present), the RAM mapper (if present, in either its
+        slot-3 or its expanded-slot-2-sub-slot placement), and the
         primary/secondary slot registers. Memory/VRAM contents are retained."""
         self.cpu.reset()
         self.psg.reset()
@@ -173,11 +180,23 @@ class Machine:
         self.vdp.reset()
         if self.fdc is not None:
             self.fdc.reset()
+        if self.kanji is not None:
+            self.kanji.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
+        self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
+        # halnote_cart (when present) is always also one of these sub-slot
+        # entries -- _wire_expanded_overlay is the only place that ever
+        # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
+        # overlay's device allow-list, does not include "halnote") -- so
+        # resetting it via this loop, not a separate halnote_cart branch,
+        # covers it exactly once.
+        for sub_mapper in self.memory._mapper2_subslots:
+            if sub_mapper is not None:
+                sub_mapper.reset()
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.

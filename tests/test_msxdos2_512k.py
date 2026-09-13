@@ -1,0 +1,218 @@
+"""--extension msxdos2_512k tests: expanded-overlay parsing of the real
+config/extensions/msxdos2_512k.yaml (a 512 KB RamMapper in sub-slot 0 --
+identical to memory_512k's own -- plus a flat 32 KB MSX-DOS2 kernel ROM in
+sub-slot 1, the same shape hbi_j1's sub-slot 1 has), and build_machine
+wiring for the one thing that differs from tests/test_memory_512k.py's
+existing RamMapper-generic coverage: the sub-slot-1 ROM dispatch, the
+missing-ROM error, and CLI acceptance of the new --extension id. Mirrors
+tests/test_cli_hbi_j1.py's structure for the expanded-overlay case.
+"""
+from __future__ import annotations
+
+import importlib.util
+import io
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from msx.machine_loader import (
+    MachineLoadError,
+    MachineSpec,
+    _ExpandedExtensionOverlay,
+    _ExpandedSubslotDevice,
+    _RomEntry,
+    build_machine,
+    load_extension_overlay,
+)
+from msx.mapper import FixedPageMapper
+from msx.ram_mapper import RamMapper
+
+_MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
+_ROOT = Path(__file__).resolve().parent.parent
+_CONFIG = _ROOT / "config"
+
+_KERNEL_ROM_SIZE = 32768
+
+
+def _run_main(argv: list[str]) -> tuple[int, str, str]:
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+
+    def fake_read_bytes(self: Path) -> bytes:
+        return b"\x00" * _KERNEL_ROM_SIZE
+
+    def fake_read_text(self: Path, encoding: str | None = None) -> str:
+        return ""
+
+    with patch.object(sys, "argv", [".", *argv]), \
+         patch("builtins.print", side_effect=lambda *a, **kw: (
+             stdout_buf.write(" ".join(str(x) for x in a) + "\n")
+             if kw.get("file") is None else
+             stderr_buf.write(" ".join(str(x) for x in a) + "\n")
+         )), \
+         patch.object(Path, "exists", lambda self: True), \
+         patch.object(Path, "read_bytes", fake_read_bytes), \
+         patch.object(Path, "read_text", fake_read_text), \
+         patch("frontend.sdl2_frontend.run"):
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_emulator_main_msxdos2_512k", _MAIN_PATH
+            )
+            assert spec is not None and spec.loader is not None
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)  # type: ignore[union-attr]
+            m.main()
+            return 0, stdout_buf.getvalue(), stderr_buf.getvalue()
+        except SystemExit as exc:
+            return int(exc.code or 0), stdout_buf.getvalue(), stderr_buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# CLI-level: msxdos2_512k is now an accepted --extension choice
+# ---------------------------------------------------------------------------
+
+def test_extension_msxdos2_512k_alone_boots() -> None:
+    # cbios_msx1 (unlike the default cbios_msx2_jp) has no slot-3 memory
+    # mapper, so it doesn't hit the has_ram_mapper conflict rejection this
+    # extension's ram_mapper sub-slot deliberately still enforces.
+    code, out, _err = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "msxdos2_512k", "--count-frame", "1"]
+    )
+    assert code == 0
+    assert "msxdos2_512k" in out
+
+
+# ---------------------------------------------------------------------------
+# load_extension_overlay: expanded-shape parsing of the real
+# config/extensions/msxdos2_512k.yaml
+# ---------------------------------------------------------------------------
+
+def test_load_msxdos2_512k_overlay_parses_real_yaml() -> None:
+    overlay = load_extension_overlay("msxdos2_512k", _CONFIG, _ROOT)
+    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert set(overlay.subslots) == {0, 1}
+    assert overlay.subslots[0].device == "ram_mapper"
+    assert overlay.subslots[0].size_kb == 512
+    assert overlay.subslots[0].rom_entry is None
+    assert overlay.subslots[1].device == "flat_rom"
+    assert overlay.subslots[1].rom_entry is not None
+    assert overlay.subslots[1].rom_entry.file == "msxd22s.rom"
+    assert overlay.subslots[1].rom_entry.size_kb == 32
+
+
+# ---------------------------------------------------------------------------
+# build_machine wiring
+# ---------------------------------------------------------------------------
+
+def _msx1_spec(main_rom_dir: Path) -> MachineSpec:
+    (main_rom_dir / "main.rom").write_bytes(bytes(32768))
+    return MachineSpec(
+        name="test_msx1",
+        generation="msx1",
+        rom_base_dir=main_rom_dir,
+        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        logo_rom_entry=None,
+        sub_rom_entry=None,
+        has_ram_mapper=False,
+        ram_size_kb=64,
+        has_v9938=False,
+        has_rtc=False,
+    )
+
+
+def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> _ExpandedExtensionOverlay:
+    (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
+    return _ExpandedExtensionOverlay(
+        subslots={
+            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
+            1: _ExpandedSubslotDevice(
+                device="flat_rom", rom_base_dir=rom_dir,
+                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
+            ),
+        },
+    )
+
+
+def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots(tmp_path: Path) -> None:
+    main_dir = tmp_path / "main_rom"
+    main_dir.mkdir()
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    machine = build_machine(
+        _msx1_spec(main_dir), extension_overlay=_msxdos2_512k_overlay(rom_dir)
+    )
+    assert machine.memory.slot2_sub_slot_enabled is True
+
+    sub0 = machine.memory._mapper2_subslots[0]
+    assert isinstance(sub0, RamMapper)
+    assert len(sub0.ram) == 512 * 1024
+
+    sub1 = machine.memory._mapper2_subslots[1]
+    assert isinstance(sub1, FixedPageMapper)
+
+
+def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> None:
+    main_dir = tmp_path / "main_rom"
+    main_dir.mkdir()
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
+    overlay = _ExpandedExtensionOverlay(
+        subslots={
+            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
+            1: _ExpandedSubslotDevice(
+                device="flat_rom", rom_base_dir=rom_dir,
+                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
+            ),
+        },
+    )
+    machine = build_machine(_msx1_spec(main_dir), extension_overlay=overlay)
+    sub1 = machine.memory._mapper2_subslots[1]
+    assert isinstance(sub1, FixedPageMapper)
+    assert sub1.read(0x4000) == 0x42
+    assert sub1.read(0x0000) == 0xFF
+    assert sub1.read(0xC000) == 0xFF
+
+
+def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> None:
+    main_dir = tmp_path / "main_rom"
+    main_dir.mkdir()
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    machine = build_machine(
+        _msx1_spec(main_dir), extension_overlay=_msxdos2_512k_overlay(rom_dir)
+    )
+    machine.io.write_port(0xFC, 5)
+    assert machine.io.read_port(0xFC) & 0x1F == 5
+
+
+# ---------------------------------------------------------------------------
+# has_ram_mapper conflict validation (reused, unmodified, from memory_512k)
+# ---------------------------------------------------------------------------
+
+def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
+    main_dir = tmp_path / "main_rom"
+    main_dir.mkdir()
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    spec = _msx1_spec(main_dir)
+    spec.has_ram_mapper = True
+    with pytest.raises(MachineLoadError, match="has_ram_mapper"):
+        build_machine(spec, extension_overlay=_msxdos2_512k_overlay(rom_dir))
+
+
+# ---------------------------------------------------------------------------
+# Missing ROM asset reported
+# ---------------------------------------------------------------------------
+
+def test_missing_kernel_rom_raises_naming_file(tmp_path: Path) -> None:
+    main_dir = tmp_path / "main_rom"
+    main_dir.mkdir()
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    overlay = _msxdos2_512k_overlay(rom_dir)
+    (rom_dir / "msxd22s.rom").unlink()
+    with pytest.raises(MachineLoadError, match="msxd22s.rom"):
+        build_machine(_msx1_spec(main_dir), extension_overlay=overlay)

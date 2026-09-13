@@ -73,12 +73,19 @@ class MapperKind(str, Enum):
     MAJUTSUSHI = "majutsushi"
     KONAMI_SCC = "konami_scc"
     SCC_I_CART = "scc_i_cart"
+    HALNOTE = "halnote"
     # FmPac (msx/fmpac.py) structurally satisfies Mapper (it's assignable to
-    # Memory._mapper2, see machine_loader.py), so it needs a kind too, even
-    # though msx/state.py's mapper_kind identity check only ever applies to
-    # the slot-1 cartridge mapper (machine.memory._mapper) -- FmPac's own
-    # state is captured separately via MachineSnapshot.fmpac_state.
+    # Memory._mapper2, see machine_loader.py), so it needs a kind too --
+    # msx/state.py's mapper2_kind identity check covers slot 2 (Memory.
+    # _mapper2/_mapper2_subslots) the same way mapper_kind already covers
+    # slot 1 (Memory._mapper), see openspec/changes/
+    # generalize-slot2-mapper-state.
     FMPAC = "fmpac"
+    # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
+    # placed in Memory._mapper2_subslots (an expanded slot 2's --extension
+    # memory_512k RAM cartridge) and covered by the same generic slot-2
+    # save-state mechanism as every other slot-2 device kind above.
+    RAM_MAPPER = "ram_mapper"
 
 
 # Debugger-facing display name per kind (msx/memory.py's debug_slot_content
@@ -104,7 +111,9 @@ _KIND_DISPLAY_NAME: dict[MapperKind, str] = {
     MapperKind.MAJUTSUSHI: "Majutsushi",
     MapperKind.KONAMI_SCC: "KonamiSCC",
     MapperKind.SCC_I_CART: "SCCICart",
+    MapperKind.HALNOTE: "Halnote",
     MapperKind.FMPAC: "FmPac",
+    MapperKind.RAM_MAPPER: "RamMapper",
 }
 
 
@@ -126,6 +135,13 @@ class Mapper(Protocol):
     def snapshot(self) -> Mapping[str, object]: ...
     def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank_info(self, page: int) -> str | None: ...
+    def reset(self) -> None: ...
+    # Whether this mapper persists SRAM to a standalone .sram file via
+    # save_sram -- declared on the Protocol so a generic caller (e.g. the
+    # exit-time SRAM-save check) can ask directly instead of probing for
+    # the method's existence with hasattr.
+    has_sram: ClassVar[bool]
+    def save_sram(self, path: Path) -> None: ...
 
 
 def _format_bank_info(banks: list[int], page: int) -> str | None:
@@ -172,11 +188,26 @@ class BankTracingMapper:
     _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
+    has_sram: ClassVar[bool] = False
+
     def debug_bank_info(self, page: int) -> str | None:
         """Default for BankTracingMapper subclasses with no _banks list (e.g.
         RTypeMapper, which has a single _bank: int) -- overridden by the
         subclasses that do have one."""
         return None
+
+    def reset(self) -> None:
+        """Default for BankTracingMapper subclasses with no reset-affected
+        state -- Machine.reset() does not touch bank-switching ROM mapper
+        registers today, so this is a deliberate no-op, not a stub.
+        Overridden by subclasses that do have power-on-reset state
+        (HalnoteMapper)."""
+        pass
+
+    def save_sram(self, path: Path) -> None:
+        """Default for BankTracingMapper subclasses with has_sram = False --
+        overridden by the SRAM-carrying subclasses."""
+        pass
 
 
 def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
@@ -203,6 +234,8 @@ class _NoStateMapperMixin:
     """Shared no-op write/snapshot/restore for mappers with no persisted state
     (no bank registers, no SRAM)."""
 
+    has_sram: ClassVar[bool] = False
+
     def write(self, addr: int, value: int) -> None:
         pass
 
@@ -214,6 +247,12 @@ class _NoStateMapperMixin:
 
     def debug_bank_info(self, page: int) -> str | None:
         return None
+
+    def reset(self) -> None:
+        pass
+
+    def save_sram(self, path: Path) -> None:
+        pass
 
 
 @dataclass
@@ -511,6 +550,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
+    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
@@ -678,6 +718,7 @@ class GameMaster2Mapper(BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.GAME_MASTER2
+    has_sram: ClassVar[bool] = True
     # Bank-register bit fields and the 4 KB SRAM-half geometry, named to match
     # the decode table in the class docstring.
     _SRAM_BIT: ClassVar[int] = 0x10        # bit 4: 1 = SRAM, 0 = ROM
@@ -874,6 +915,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
+    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
@@ -1595,6 +1637,167 @@ class SCCICart(BankTracingMapper):
         for window in range(4):
             self._sync_window_base(window)
         self._set_mode_register(mode_register)
+
+    def debug_bank_info(self, page: int) -> str | None:
+        return _format_bank_info(self._banks, page)
+
+
+_HALNOTE_ROM_SIZE = 1048576   # 1 MB, 128 x 8 KB banks
+_HALNOTE_SRAM_SIZE = 16384    # 16 KB, two 8 KB windows at 0x0000-0x3FFF
+# Public alias for cross-module use (msx/machine_loader.py's HBI-J1 overlay
+# wiring), mirroring msx/fmpac.py's public SRAM_SIZE constant.
+HALNOTE_SRAM_SIZE = _HALNOTE_SRAM_SIZE
+_HALNOTE_SUBBANK_SIZE = 2048  # 2 KB JIS2 dictionary sub-mapper block
+_HALNOTE_SUBMAPPER_ROM_BASE = 524288  # 0x80000: upper half of the 1 MB ROM
+_HALNOTE_SRAM_ENABLE_BIT = 0x80    # bank-0 register bit 7
+_HALNOTE_SUBMAPPER_ENABLE_BIT = 0x80  # bank-1 register bit 7
+_HALNOTE_PAGE_MASK = 0x7F  # 128 banks fit exactly in 7 bits -- no modulo needed
+
+
+class HalnoteMapperState(TypedDict):
+    banks: list[int]
+    subbanks: list[int]
+    sram: bytes
+
+
+@dataclass
+class HalnoteMapper(BankTracingMapper):
+    """Sony HBI-J1's Halnote mapper (MSX-JE word-processor ROM): a 1 MB ROM
+    as 128 x 8 KB banks, a JIS2 dictionary sub-mapper, and 16 KB SRAM.
+
+    Ground truth: openMSX RomHalnote, cross-checked against "MegaROM Mappers
+    - MSX Wiki.md"'s Halnote section (register addresses agree exactly).
+
+    Four main 8 KB windows: 0x4000-0x5FFF (bank 0), 0x6000-0x7FFF (bank 1),
+    0x8000-0x9FFF (bank 2), 0xA000-0xBFFF (bank 3). Each bank register is
+    written at `(addr & 0x1FFF) == 0x0FFF` within its window (0x4FFF/0x6FFF/
+    0x8FFF/0xAFFF); the low 7 bits select one of the 128 physical pages
+    (128 = 2**7, so no page count exceeds this codebase's fixed-size ROM --
+    no masking-vs-modulo ambiguity the way non-power-of-two ROMs elsewhere
+    in this module have). Bank 0's top bit (0x80) additionally gates 16 KB
+    of SRAM at 0x0000-0x3FFF (two flat, non-bank-switched 8 KB halves); bank
+    1's top bit (0x80) additionally gates a sub-mapper that shadows
+    0x7000-0x77FF/0x7800-0x7FFF (the upper half of window 1) with two
+    independently-selected 2 KB blocks from the ROM's upper 512 KB, chosen
+    by sub-bank registers at 0x77FF/0x7FFF (each holding one full byte, 256
+    possible 2 KB blocks -- no masking needed, 256 x 2 KB exactly spans the
+    512 KB region). 0xC000-0xFFFF is always unmapped (0xFF/ignored) -- this
+    device never places content there.
+    """
+
+    kind: ClassVar[MapperKind] = MapperKind.HALNOTE
+    has_sram: ClassVar[bool] = True
+
+    rom: bytes
+    sram: bytearray = field(default_factory=lambda: bytearray(_HALNOTE_SRAM_SIZE))
+
+    _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
+    _subbanks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
+    _sram_enabled: bool = field(default=False, init=False, repr=False)
+    _submapper_enabled: bool = field(default=False, init=False, repr=False)
+    _flat: bytearray = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if len(self.rom) != _HALNOTE_ROM_SIZE:
+            raise ValueError(
+                f"HalnoteMapper: expected a {_HALNOTE_ROM_SIZE}-byte ROM, "
+                f"got {len(self.rom)}"
+            )
+        if len(self.sram) != _HALNOTE_SRAM_SIZE:
+            self.sram = bytearray(_HALNOTE_SRAM_SIZE)
+        self._flat = bytearray(_WINDOW_BYTES)
+        for window in range(4):
+            self._sync_window(window)
+
+    def _sync_window(self, window: int) -> None:
+        page = self._banks[window] & _HALNOTE_PAGE_MASK
+        src = self.rom[page * _PAGE_8K:(page + 1) * _PAGE_8K]
+        dst = window * _PAGE_8K
+        self._flat[dst:dst + _PAGE_8K] = src
+
+    def reset(self) -> None:
+        """Restore bank/sub-bank registers and both enable flags to their
+        construction defaults, matching openMSX's RomHalnote::reset(). SRAM
+        contents are left untouched -- only the enable flag resets."""
+        self._banks[:] = [0, 1, 2, 3]
+        self._subbanks[:] = [0, 0]
+        self._sram_enabled = False
+        self._submapper_enabled = False
+        for window in range(4):
+            self._sync_window(window)
+
+    def read(self, addr: int) -> int:
+        if addr < 0x4000:
+            return self.sram[addr] if self._sram_enabled else 0xFF
+        if addr < 0xC000:
+            if self._submapper_enabled and 0x7000 <= addr < 0x8000:
+                subbank = 0 if addr < 0x7800 else 1
+                offset = (
+                    _HALNOTE_SUBMAPPER_ROM_BASE
+                    + self._subbanks[subbank] * _HALNOTE_SUBBANK_SIZE
+                    + (addr & (_HALNOTE_SUBBANK_SIZE - 1))
+                )
+                return self.rom[offset]
+            return self._flat[addr - 0x4000]
+        return 0xFF  # 0xC000-0xFFFF: always unmapped
+
+    def write(self, addr: int, value: int) -> None:
+        if addr < 0x4000:
+            if self._sram_enabled:
+                self.sram[addr] = value & 0xFF
+            return
+        if addr >= 0xC000:
+            return  # always unmapped
+        if addr in (0x77FF, 0x7FFF):
+            self._subbanks[0 if addr == 0x77FF else 1] = value & 0xFF
+            return
+        if (addr & 0x1FFF) == 0x0FFF:
+            window = (addr - 0x4000) // _PAGE_8K
+            old = self._banks[window]
+            self._banks[window] = value
+            if window == 0:
+                self._sram_enabled = bool(value & _HALNOTE_SRAM_ENABLE_BIT)
+            elif window == 1:
+                self._submapper_enabled = bool(value & _HALNOTE_SUBMAPPER_ENABLE_BIT)
+            self._sync_window(window)
+            _trace_bank(self, window, old, value, addr)
+
+    def save_sram(self, path: Path) -> None:
+        path.write_bytes(self.sram)
+
+    def snapshot(self) -> HalnoteMapperState:
+        # sram_enabled/submapper_enabled are not persisted here -- they are
+        # fully determined by bank_0/bank_1's top bit (see restore(), which
+        # re-derives rather than restores them) -- see machine-state's
+        # "HBI-J1 MSX-JE SRAM state save and restore" Requirement.
+        return {
+            "banks": list(self._banks),
+            "subbanks": list(self._subbanks),
+            "sram": bytes(self.sram),
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        typed_state = cast(HalnoteMapperState, state)
+        banks = typed_state["banks"]
+        subbanks = typed_state["subbanks"]
+        sram = typed_state["sram"]
+        if len(banks) != 4:
+            raise ValueError("HalnoteMapperState.banks must have 4 entries")
+        if len(subbanks) != 2:
+            raise ValueError("HalnoteMapperState.subbanks must have 2 entries")
+        if len(sram) != _HALNOTE_SRAM_SIZE:
+            raise ValueError(f"HalnoteMapperState.sram must have {_HALNOTE_SRAM_SIZE} entries")
+        self._banks[:] = banks
+        self._subbanks[:] = subbanks
+        # sram_enabled/submapper_enabled are derived from bank_0/bank_1's top
+        # bit (see write()), not part of HalnoteMapperState -- deriving them
+        # here means restore() can't construct a state the top bit disagrees
+        # with (e.g. a hand-edited or foreign-generated state file).
+        self._sram_enabled = bool(self._banks[0] & _HALNOTE_SRAM_ENABLE_BIT)
+        self._submapper_enabled = bool(self._banks[1] & _HALNOTE_SUBMAPPER_ENABLE_BIT)
+        self.sram[:] = sram
+        for window in range(4):
+            self._sync_window(window)
 
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)

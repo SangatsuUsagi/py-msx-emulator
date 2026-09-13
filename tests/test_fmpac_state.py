@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _FmPacOverlay, _RomEntry, build_machine
+from msx.machine_loader import MachineSpec, _ExtensionOverlay, _RomEntry, build_machine
 from msx.state import load_state, save_state
 
 _RGB = bytearray(256 * 192 * 3)
@@ -25,13 +25,13 @@ def _bank_rom(num_banks: int = 4) -> bytes:
     return bytes(buf)
 
 
-def _make_fmpac_overlay(rom_dir: Path) -> _FmPacOverlay:
+def _make_fmpac_overlay(rom_dir: Path) -> _ExtensionOverlay:
     rom_dir.mkdir(parents=True, exist_ok=True)
     (rom_dir / "fmpac.rom").write_bytes(_bank_rom())
-    return _FmPacOverlay(
+    return _ExtensionOverlay(
+        device="fmpac",
         rom_base_dir=rom_dir,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
-        slot=2,
         sram_save_path=rom_dir / "fmpac.sram",
     )
 
@@ -62,7 +62,7 @@ def _fmpac_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     overlay = _make_fmpac_overlay(tmp_path / f"{name}_fmpac_rom")
-    machine = build_machine(_msx1_spec(main_dir), fmpac_overlay=overlay)
+    machine = build_machine(_msx1_spec(main_dir), extension_overlay=overlay)
     assert machine.fmpac is not None
     return machine
 

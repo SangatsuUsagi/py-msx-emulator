@@ -232,3 +232,38 @@ def test_mapper_kind_mismatch_raises_value_error(saves_dir):
         load_state(running_machine)
     assert "ascii8" in str(exc_info.value)
     assert "konami" in str(exc_info.value)
+
+
+# --- mapper2_kind (slot 2, openspec/changes/generalize-slot2-mapper-state) --
+
+def test_snapshot_persists_mapper2_kind(saves_dir):
+    import json
+
+    machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="ASCII16")
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["mapper2_kind"] == "ascii16"
+
+
+def test_mapper2_kind_mismatch_raises_value_error(saves_dir):
+    saved_machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="Konami")
+    rgb = bytearray(256 * 192 * 3)
+    save_state(saved_machine, rgb, "test")
+
+    running_machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="ASCII8")
+    with pytest.raises(ValueError, match="slot 2 mapper mismatch") as exc_info:
+        load_state(running_machine)
+    assert "ascii8" in str(exc_info.value)
+    assert "konami" in str(exc_info.value)
+
+
+def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
+    """A machine with nothing in slot 2 (an empty FlatMapper) still has a
+    real mapper2_kind/mapper2_state, and round-trips cleanly."""
+    machine = make_machine(rom=_ROM)
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+    load_state(machine)  # must not raise

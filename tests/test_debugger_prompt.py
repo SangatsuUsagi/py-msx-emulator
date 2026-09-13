@@ -469,6 +469,9 @@ def _make_slot_memory(
     rom_name: str = "cbios_main.rom",
     sub0_rom_name: str = "",
     with_ram_mapper: bool = False,
+    slot2_sub_slot_enabled: bool = False,
+    slot2_sub_slot_reg: int = 0x00,
+    mapper2_subslots: list | None = None,
 ) -> Memory:
     return Memory(
         rom=b"\x00" * 32768,
@@ -482,6 +485,10 @@ def _make_slot_memory(
         sub0_rom=b"\x00" * 16384 if sub0_rom_name else None,
         sub0_rom_name=sub0_rom_name,
         ram_mapper=RamMapper() if with_ram_mapper else None,
+        slot2_sub_slot_enabled=slot2_sub_slot_enabled,
+        slot2_sub_slot_reg=slot2_sub_slot_reg,
+        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
+        else [None, None, None, None],
     )
 
 
@@ -492,6 +499,9 @@ def _make_slot_machine(
     rom_name: str = "cbios_main.rom",
     sub0_rom_name: str = "",
     with_ram_mapper: bool = False,
+    slot2_sub_slot_enabled: bool = False,
+    slot2_sub_slot_reg: int = 0x00,
+    mapper2_subslots: list | None = None,
 ) -> MagicMock:
     m = _make_machine()
     m.memory = _make_slot_memory(
@@ -501,6 +511,9 @@ def _make_slot_machine(
         rom_name=rom_name,
         sub0_rom_name=sub0_rom_name,
         with_ram_mapper=with_ram_mapper,
+        slot2_sub_slot_enabled=slot2_sub_slot_enabled,
+        slot2_sub_slot_reg=slot2_sub_slot_reg,
+        mapper2_subslots=mapper2_subslots,
     )
     return m
 
@@ -552,6 +565,26 @@ class TestSlotActive:
         out = capsys.readouterr().out
         assert "seg=" in out
 
+    def test_sl_slot2_subslot_shows_its_own_mapper_content(self, capsys):
+        """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
+        report each page's actual sub-slot mapper via `_mapper2_subslots`,
+        not the flat `_mapper2` (which would misreport "Cartridge (empty)"
+        regardless of what's really mapped in)."""
+        from msx.mapper import FlatMapper as _FlatMapper
+
+        m = _make_slot_machine(
+            slot_register=0x20,  # 0b00_10_00_00 -> P0=0,P1=0,P2=2,P3=0
+            slot2_sub_slot_enabled=True,
+            slot2_sub_slot_reg=0x00,  # every page of slot 2 -> sub-slot 0
+            mapper2_subslots=[_FlatMapper(bytes(32768)), None, None, None],
+        )
+        Debugger(m)._cmd_slot_active()
+        out = capsys.readouterr().out
+        for line in out.splitlines():
+            if "P2" in line and "8000" in line:
+                assert "Cartridge (empty)" not in line
+                assert "Flat" in line
+
 
 class TestSlotTree:
     def test_st_msx2_shows_expanded_slot3(self, capsys):
@@ -573,6 +606,23 @@ class TestSlotTree:
         out = capsys.readouterr().out
         assert "[EXPANDED]" not in out
         assert "page-map" not in out
+
+    def test_st_shows_expanded_slot2_subslots(self, capsys):
+        """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
+        get its own [EXPANDED] tree entry, listing each sub-slot's actual
+        content -- mirroring slot 3's existing tree behaviour."""
+        from msx.mapper import FlatMapper as _FlatMapper
+
+        m = _make_slot_machine(
+            slot2_sub_slot_enabled=True,
+            slot2_sub_slot_reg=0x00,
+            mapper2_subslots=[_FlatMapper(bytes(32768)), None, None, None],
+        )
+        Debugger(m)._cmd_slot_tree()
+        out = capsys.readouterr().out
+        assert "Primary 2 [EXPANDED]" in out
+        assert "2-0  Cartridge Flat" in out
+        assert "2-1  Cartridge (empty)" in out
 
 
 # ---------------------------------------------------------------------------

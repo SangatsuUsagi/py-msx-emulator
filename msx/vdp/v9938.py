@@ -156,6 +156,9 @@ _CMD_HMMC = 0xF
 
 # S2 status bits
 _S2_CE = 0x01  # command executing
+# Written from v9938_renderer._finalize (once per render_frame() call), not
+# locally -- the renderer owns frame-parity tracking for interlace mode.
+_S2_EO = 0x02  # current field (even/odd), toggles once per frame
 _S2_BD = 0x10  # border/colour detected (SRCH result)
 _S2_TR = 0x80  # transfer ready (CPU may send next byte)
 
@@ -387,6 +390,16 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return 212 if (self.regs[9] & 0x80) else 192
+
+    @property
+    def interlaced(self) -> bool:
+        """R#9 bit 3 (IL): interlace enable."""
+        return bool(self.regs[9] & 0x08)
+
+    @property
+    def even_odd_enabled(self) -> bool:
+        """R#9 bit 2 (EO): automatic even/odd page alternation enable."""
+        return bool(self.regs[9] & 0x04)
 
     @property
     def vblank_start_line(self) -> int:

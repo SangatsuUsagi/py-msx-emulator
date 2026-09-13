@@ -24,7 +24,7 @@ def _write(root: Path, text: str) -> None:
 def test_absent_file_returns_all_unset(tmp_path: Path) -> None:
     cfg = load_app_config(tmp_path)
     assert cfg == AppConfig()
-    assert cfg.machine is None and cfg.speed is None and cfg.fmpac is None
+    assert cfg.machine is None and cfg.speed is None and cfg.extension is None
 
 
 def test_empty_file_returns_all_unset(tmp_path: Path) -> None:
@@ -34,18 +34,24 @@ def test_empty_file_returns_all_unset(tmp_path: Path) -> None:
 
 def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
     _write(tmp_path,
-           "machine: cbios_msx1_jp\nspeed: 2.0\nscale: 4\nfmpac: true\n")
+           "machine: cbios_msx1_jp\nspeed: 2.0\nscale: 4\nextension: fmpac\n")
     cfg = load_app_config(tmp_path)
     assert cfg.machine == "cbios_msx1_jp"
     assert cfg.speed == 2.0
     assert cfg.scale == 4
-    assert cfg.fmpac is True
+    assert cfg.extension == "fmpac"
 
 
-def test_scc_plus_key_parsed(tmp_path: Path) -> None:
-    _write(tmp_path, "scc_plus: true\n")
+def test_extension_key_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "extension: scc_plus\n")
     cfg = load_app_config(tmp_path)
-    assert cfg.scc_plus is True
+    assert cfg.extension == "scc_plus"
+
+
+def test_unknown_extension_id_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "extension: bogus\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
 
 
 def test_nested_rpc_group_parsed(tmp_path: Path) -> None:

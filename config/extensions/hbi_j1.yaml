@@ -1,0 +1,46 @@
+schema_version: 1
+id: hbi_j1
+name: "Sony HBI-J1 (Kanji-ROM + MSX-JE + Kanji driver/BASIC)"
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --extension hbi_j1). Unlike a flat
+# overlay (fmpac, scc_plus), this expands primary slot 2 itself into two
+# sub-slots, plus a slot-independent global I/O device (the Kanji-ROM font
+# device, ports 0xD8-0xDB) -- see cart-extension-overlay's "Extension
+# overlay shape: flat vs expanded" and "hbi_j1 extension installs an
+# expanded slot 2" Requirements.
+overlay: true
+shape: expanded
+slot: 2
+
+rom_base: roms/hbi_j1
+
+subslots:
+  0:
+    # Halnote-mapped MSX-JE ROM + 16 KB battery-backed SRAM, occupying the
+    # sub-slot's full 64 KB address range.
+    device: halnote
+    rom:
+      file: hbi-j1_msx-je.rom
+      size_kb: 1024
+      sha1: ade0c5ba5574f8114d7079050317099b4519e88f
+    sram:
+      size_kb: 16
+      save_file: saves/sram/hbi-j1_msx-je.sram
+  1:
+    # Flat (non-bank-switched) Kanji driver + BASIC extension ROM, visible
+    # only at 0x4000-0xBFFF -- 0x0000-0x3FFF/0xC000-0xFFFF are open bus.
+    device: flat_rom
+    rom:
+      file: hbi-j1_kanjibasic.rom
+      size_kb: 32
+      sha1: 1ef3956f7f918873fb9b031339bba45d1e5e5878
+
+io_device:
+  # JIS Kanji font ROM device, no slot location of its own -- global I/O
+  # ports 0xD8-0xDB regardless of which sub-slot slot 2 currently selects.
+  device: kanji_rom
+  rom:
+    file: hbi-j1_kanjifont.rom
+    size_kb: 256
+    sha1: 218d91eb6df2823c924d3774a9f455492a10aecb

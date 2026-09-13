@@ -672,6 +672,9 @@ class Debugger:
             if mem.sub_slot_enabled and prim == 3:
                 sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
                 sec_str = str(sec)
+            elif mem.slot2_sub_slot_enabled and prim == 2:
+                sec = (mem.slot2_sub_slot_reg >> (page * 2)) & 0x03
+                sec_str = str(sec)
             else:
                 sec = None
                 sec_str = "-"
@@ -696,6 +699,19 @@ class Debugger:
                     size = mem.debug_slot_size_kb(prim, sec)
                     suffix = f"  {size}" if size else ""
                     print(f"    3-{sec}  {content}{suffix}")
+            elif mem.slot2_sub_slot_enabled and prim == 2:
+                raw2 = mem.slot2_sub_slot_reg
+                print(f"  Primary 2 [EXPANDED]  secondary-select(raw)={raw2:02X}h")
+                parts2 = []
+                for pg in range(4):
+                    s = (raw2 >> (pg * 2)) & 0x03
+                    parts2.append(f"P{pg}->2-{s}")
+                print(f"    page-map: {'  '.join(parts2)}")
+                for sec in range(4):
+                    content = mem.debug_slot_content(prim, sec, None)
+                    size = mem.debug_slot_size_kb(prim, sec)
+                    suffix = f"  {size}" if size else ""
+                    print(f"    2-{sec}  {content}{suffix}")
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""

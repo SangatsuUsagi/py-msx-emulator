@@ -1,5 +1,6 @@
-"""--scc-plus tests: CLI/config wiring (patched filesystem, no SDL window) and
-direct build_machine wiring (SCCICart in slot 1, coexistence with --fmpac).
+"""--extension scc_plus tests: CLI/config wiring (patched filesystem, no SDL
+window) and direct build_machine wiring (SCCICart in slot 2, combinable with a
+slot-1 cartridge).
 """
 from __future__ import annotations
 
@@ -12,8 +13,9 @@ from unittest.mock import patch
 import pytest
 
 from msx.machine_loader import (
+    MachineLoadError,
     MachineSpec,
-    _FmPacOverlay,
+    _ExtensionOverlay,
     _RomEntry,
     build_machine,
 )
@@ -61,49 +63,50 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 # CLI-level conflicts
 # ---------------------------------------------------------------------------
 
-def test_scc_plus_and_cartridge_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--scc-plus", "game.rom"])
+def test_extension_scc_plus_and_slot2_conflict_exits_nonzero() -> None:
+    code, _out, err = _run_main(["--extension", "scc_plus", "--slot2", "game2.rom"])
     assert code != 0
-    assert "--scc-plus" in err
+    assert "--extension" in err and "--slot2" in err
 
 
-def test_scc_plus_and_mapper_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--scc-plus", "--mapper", "KonamiSCC"])
+def test_extension_scc_plus_and_mapper2_conflict_exits_nonzero() -> None:
+    code, _out, err = _run_main(["--extension", "scc_plus", "--mapper2", "Konami"])
     assert code != 0
-    assert "--scc-plus" in err and "--mapper" in err
+    assert "--extension" in err and "--mapper2" in err
 
 
-def test_scc_plus_alone_connects_cartridge() -> None:
-    code, out, _err = _run_main(["--scc-plus", "--count-frame", "1"])
+def test_extension_scc_plus_alone_boots() -> None:
+    code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
     assert code == 0
-    assert "scc-plus" in out
+    assert "scc_i_cart" in out
 
 
-def test_scc_plus_with_fmpac_boots() -> None:
-    code, out, _err = _run_main(["--scc-plus", "--fmpac", "--count-frame", "1"])
-    assert code == 0
-    assert "scc-plus" in out
-    assert "fmpac" in out
-
-
-# ---------------------------------------------------------------------------
-# py_emulator.yaml scc_plus key
-# ---------------------------------------------------------------------------
-
-def test_config_mapper_key_is_ignored(tmp_path: Path) -> None:
-    """`mapper:` has no config-file equivalent (CLI-only, see app-config-file
-    spec "Cartridge mapper selection is CLI-only") -- the loader must not
-    surface it on AppConfig, and it must not make `scc_plus: true` conflict
-    with the (unset) mapper. Regression for a stray config `mapper:` key
-    falsely tripping the --scc-plus/--mapper mutual-exclusivity check."""
-    from msx.app_config import load_app_config
-    (tmp_path / "py_emulator.yaml").write_text(
-        "scc_plus: true\nmapper: KonamiSCC\n", encoding="utf-8"
+def test_extension_scc_plus_with_cartridge_boots() -> None:
+    """Unlike the old --scc-plus (slot 1), --extension scc_plus (slot 2) does
+    not conflict with a slot-1 cartridge argument or --mapper -- as long as
+    slot 1's mapper doesn't itself need the single shared SCC chip (see
+    test_extension_scc_plus_rejected_when_slot1_is_konamiscc below)."""
+    code, out, _err = _run_main(
+        ["--extension", "scc_plus", "--mapper", "Konami", "game.rom", "--count-frame", "1"]
     )
-    cfg = load_app_config(tmp_path)
-    assert cfg.scc_plus is True
-    assert not hasattr(cfg, "mapper")
+    assert code == 0
+    assert "scc_i_cart" in out
 
+
+def test_extension_scc_plus_rejected_when_slot1_is_konamiscc() -> None:
+    """Machine has a single scc field: slot 1's own KonamiSCC chip and
+    scc_plus's fresh SCC-I chip can't both claim it -- real hardware never
+    has two SCC chips attached at once either."""
+    code, _out, err = _run_main(
+        ["--extension", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
+    )
+    assert code != 0
+    assert "scc" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# py_emulator.yaml extension key
+# ---------------------------------------------------------------------------
 
 def _fake_app_config(**overrides: object) -> object:
     from msx.app_config import AppConfig
@@ -113,31 +116,21 @@ def _fake_app_config(**overrides: object) -> object:
     return cfg
 
 
-def test_config_scc_plus_connects_cartridge_when_flag_omitted() -> None:
+def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
     with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(scc_plus=True)):
+               return_value=_fake_app_config(extension="scc_plus")):
         code, out, _err = _run_main(["--count-frame", "1"])
     assert code == 0
-    assert "scc-plus" in out
+    assert "scc_i_cart" in out
 
 
-def test_cli_scc_plus_overrides_config_false() -> None:
+def test_cli_extension_overrides_config_extension() -> None:
     with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(scc_plus=False)):
-        code, out, _err = _run_main(["--scc-plus", "--count-frame", "1"])
+               return_value=_fake_app_config(extension="fmpac")):
+        code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
     assert code == 0
-    assert "scc-plus" in out
-
-
-def test_config_scc_plus_boots_even_with_stray_config_mapper_attr() -> None:
-    """A stale/foreign `mapper` attribute on AppConfig (as could come from an
-    out-of-date config-loader stub) must not be consulted by __main__.py --
-    only `--mapper` (the CLI flag) participates in the --scc-plus check."""
-    with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(scc_plus=True, mapper="KonamiSCC")):
-        code, out, _err = _run_main(["--count-frame", "1"])
-    assert code == 0
-    assert "scc-plus" in out
+    assert "scc_i_cart" in out
+    assert "fmpac" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -160,21 +153,35 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
     )
 
 
-def _make_fmpac_overlay(tmp_path: Path) -> _FmPacOverlay:
+def _scc_plus_overlay() -> _ExtensionOverlay:
+    return _ExtensionOverlay(device="scc_i_cart")
+
+
+def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
     (tmp_path / "fmpac.rom").write_bytes(bytes(65536))
-    return _FmPacOverlay(
+    return _ExtensionOverlay(
+        device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
-        slot=2,
         sram_save_path=tmp_path / "fmpac.sram",
     )
 
 
-def test_build_machine_installs_scci_cart_in_slot1(tmp_path: Path) -> None:
-    machine = build_machine(_msx1_spec(tmp_path), scc_plus=True)
-    assert isinstance(machine.memory._mapper, SCCICart)
+def test_build_machine_installs_scci_cart_in_slot2(tmp_path: Path) -> None:
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
+    assert isinstance(machine.memory._mapper2, SCCICart)
+    assert not isinstance(machine.memory._mapper, SCCICart)
     assert machine.scc is not None
-    assert machine.scc is machine.memory._mapper.scc
+    assert machine.scc is machine.memory._mapper2.scc
+
+
+def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) -> None:
+    cart1 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        build_machine(
+            _msx1_spec(tmp_path), cartridge=cart1, mapper="KonamiSCC",
+            extension_overlay=_scc_plus_overlay(),
+        )
 
 
 def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
@@ -183,8 +190,8 @@ def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
     registers would keep forwarding the Plus-mode window address (0xB800)
     into a chip now decoding Compatible offsets. Regression guard for the
     scc.allium reset-desync fix."""
-    machine = build_machine(_msx1_spec(tmp_path), scc_plus=True)
-    cart = machine.memory._mapper
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
+    cart = machine.memory._mapper2
     assert isinstance(cart, SCCICart)
 
     cart.write(0xBFFE, 0x20)  # mode register: select Plus mode
@@ -198,25 +205,26 @@ def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
     assert cart._scc_window_base == 0xB800  # still consistent with the chip's mode
 
 
-def test_build_machine_scc_plus_false_preserves_normal_resolution(tmp_path: Path) -> None:
+def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: Path) -> None:
     machine = build_machine(_msx1_spec(tmp_path))
+    assert not isinstance(machine.memory._mapper2, SCCICart)
+
+
+def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
+    """--extension scc_plus (slot 2) no longer forces slot 1 -- a normal
+    cartridge/mapper resolves in slot 1 independently."""
+    machine = build_machine(
+        _msx1_spec(tmp_path), cartridge=bytes(65536), mapper="ASCII8",
+        extension_overlay=_scc_plus_overlay(),
+    )
+    assert isinstance(machine.memory._mapper2, SCCICart)
     assert not isinstance(machine.memory._mapper, SCCICart)
 
 
-def test_build_machine_scc_plus_and_fmpac_compose(tmp_path: Path) -> None:
-    overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), scc_plus=True, fmpac_overlay=overlay)
-    assert isinstance(machine.memory._mapper, SCCICart)
-    assert machine.fmpac is not None
-    assert machine.memory._mapper2 is machine.fmpac
-
-
 @pytest.mark.parametrize("addr", [0x9800, 0xB800])
-def test_scci_cart_dispatches_at_slot1(tmp_path: Path, addr: int) -> None:
-    machine = build_machine(_msx1_spec(tmp_path), scc_plus=True)
+def test_scci_cart_dispatches_at_slot2(tmp_path: Path, addr: int) -> None:
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
     mem = machine.memory
-    # Default slot_register already routes page 1 (0x4000-0x7FFF) and page 2
-    # (0x8000-0xBFFF) to slot 1 at power-on -- no explicit slot switch needed.
     # Just confirm dispatch reaches the SCCICart without raising; the SCC
     # window itself is inactive at power-on (see test_scc_i_cart.py).
     mem.read(addr)

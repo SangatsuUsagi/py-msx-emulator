@@ -17,13 +17,13 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
     """Run main() with heavy build/frontend patched. Returns a result bundle.
 
     Returns:
-        (exit_code, stdout, stderr, run_mock, build_mock, fmpac_mock, spec_spy).
+        (exit_code, stdout, stderr, run_mock, build_mock, extension_mock, spec_spy).
     """
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     run_mock = MagicMock(name="run")
     build_mock = MagicMock(name="build_machine")
-    fmpac_mock = MagicMock(name="load_fmpac_overlay", return_value=None)
+    extension_mock = MagicMock(name="load_extension_overlay", return_value=None)
     spec_spy = MagicMock(name="load_machine_spec",
                          side_effect=machine_loader.load_machine_spec)
 
@@ -39,7 +39,7 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         patch("frontend.sdl2_frontend.run", run_mock),
         patch("msx.debugger.prompt.Debugger"),
         patch("msx.machine_loader.build_machine", build_mock),
-        patch("msx.machine_loader.load_fmpac_overlay", fmpac_mock),
+        patch("msx.machine_loader.load_extension_overlay", extension_mock),
         patch("msx.machine_loader.load_machine_spec", spec_spy),
     ]
     if app_cfg is not None:
@@ -61,7 +61,7 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         for p in reversed(patches):
             p.stop()
     return (code, stdout_buf.getvalue(), stderr_buf.getvalue(),
-            run_mock, build_mock, fmpac_mock, spec_spy)
+            run_mock, build_mock, extension_mock, spec_spy)
 
 
 # ---------------------------------------------------------------------------
@@ -138,50 +138,92 @@ def test_config_mapper_attr_has_no_effect() -> None:
 # ---------------------------------------------------------------------------
 
 def test_config_machine_used_when_cli_omitted() -> None:
-    _c, _o, _e, _run, _build, _fmpac, spec_spy = _run_main(
+    _c, _o, _e, _run, _build, _ext, spec_spy = _run_main(
         [], app_cfg=AppConfig(machine="cbios_msx1"))
     assert spec_spy.call_args.args[0] == "cbios_msx1"
 
 
 def test_cli_machine_overrides_config() -> None:
-    _c, _o, _e, _run, _build, _fmpac, spec_spy = _run_main(
+    _c, _o, _e, _run, _build, _ext, spec_spy = _run_main(
         ["--machine", "cbios_msx2_jp"], app_cfg=AppConfig(machine="cbios_msx1"))
     assert spec_spy.call_args.args[0] == "cbios_msx2_jp"
 
 
 def test_default_machine_when_neither_set() -> None:
-    _c, _o, _e, _run, _build, _fmpac, spec_spy = _run_main([], app_cfg=AppConfig())
+    _c, _o, _e, _run, _build, _ext, spec_spy = _run_main([], app_cfg=AppConfig())
     assert spec_spy.call_args.args[0] == "cbios_msx2_jp"
 
 
 # ---------------------------------------------------------------------------
-# fmpac
+# extension
 # ---------------------------------------------------------------------------
 
-def test_config_fmpac_enables_overlay() -> None:
-    _c, _o, _e, _run, _build, fmpac_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(fmpac=True))
-    fmpac_mock.assert_called_once()
+def test_config_extension_enables_overlay() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension="fmpac"))
+    extension_mock.assert_called_once()
 
 
-def test_no_fmpac_overlay_by_default() -> None:
-    _c, _o, _e, _run, _build, fmpac_mock, _spy = _run_main(
+def test_no_extension_overlay_by_default() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    fmpac_mock.assert_not_called()
+    extension_mock.assert_not_called()
 
 
-def test_config_fmpac_conflicts_with_slot2() -> None:
+def test_config_extension_conflicts_with_slot2() -> None:
     code, _o, err, *_ = _run_main(
-        ["--machine", "cbios_msx1", "--slot2", "game2.rom"], app_cfg=AppConfig(fmpac=True))
+        ["--machine", "cbios_msx1", "--slot2", "game2.rom"],
+        app_cfg=AppConfig(extension="fmpac"))
     assert code != 0
-    assert "--fmpac" in err and "--slot2" in err
+    assert "--extension" in err and "--slot2" in err
 
 
-def test_config_fmpac_conflicts_with_config_slot2() -> None:
+def test_config_extension_conflicts_with_config_slot2() -> None:
     code, _o, err, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(fmpac=True, slot2="game2.rom"))
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension="fmpac", slot2="game2.rom"))
     assert code != 0
-    assert "--fmpac" in err and "--slot2" in err
+    assert "--extension" in err and "--slot2" in err
+
+
+def test_config_extension_conflicts_with_mapper2() -> None:
+    code, _o, err, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper2", "Konami"],
+        app_cfg=AppConfig(extension="scc_plus"))
+    assert code != 0
+    assert "--extension" in err and "--mapper2" in err
+
+
+def test_extension_none_overrides_config_extension() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none"],
+        app_cfg=AppConfig(extension="fmpac"))
+    extension_mock.assert_not_called()
+
+
+def test_extension_none_frees_slot2_from_config_extension_conflict() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none", "--slot2", "game2.rom"],
+        app_cfg=AppConfig(extension="fmpac"))
+    assert code == 0
+    assert err == ""
+    extension_mock.assert_not_called()
+    assert build_mock.call_args.kwargs["cartridge2"] is not None
+
+
+def test_extension_none_frees_mapper2_from_config_extension_conflict() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none", "--mapper2", "Konami"],
+        app_cfg=AppConfig(extension="scc_plus"))
+    assert code == 0
+    assert err == ""
+    extension_mock.assert_not_called()
+    assert build_mock.call_args.kwargs["mapper2"] == "Konami"
+
+
+def test_extension_none_without_config_extension_is_a_no_op() -> None:
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "none"], app_cfg=AppConfig())
+    extension_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +240,9 @@ def test_cli_slot2_used_when_given() -> None:
     # This only proves a CLI-only --slot2 loads a slot 2 cartridge (bytes are
     # indistinguishable from the config case since _run_main's Path.read_bytes
     # patch returns fixed bytes regardless of path). CLI-over-config
-    # precedence for the fmpac conflict specifically (i.e. CLI slot2 wins even
-    # when config also sets fmpac) is exercised by
-    # test_config_fmpac_conflicts_with_slot2.
+    # precedence for the extension conflict specifically (i.e. CLI slot2 wins
+    # even when config also sets extension) is exercised by
+    # test_config_extension_conflicts_with_slot2.
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot2", "game2.rom"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["cartridge2"] is not None
@@ -221,6 +263,18 @@ def test_cli_mapper2_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "ASCII8"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["mapper2"] == "ASCII8"
+
+
+def test_cli_mapper2_accepts_konamiscc() -> None:
+    # --mapper2 KonamiSCC is a valid argparse choice (VALID_MAPPERS2) and
+    # reaches build_machine unchanged; build_machine's own resolution is
+    # what actually constructs the SCC chip or rejects a slot-1 conflict
+    # (see tests/test_machine.py).
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper2", "KonamiSCC"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    assert build_mock.call_args.kwargs["mapper2"] == "KonamiSCC"
 
 
 def test_builtin_mapper2_auto_when_neither_set() -> None:

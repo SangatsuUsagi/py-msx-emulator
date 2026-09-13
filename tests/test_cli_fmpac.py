@@ -1,4 +1,5 @@
-"""CLI --fmpac tests — patches filesystem and SDL2, never opens a window."""
+"""CLI --extension fmpac tests — patches filesystem and SDL2, never opens a
+window."""
 from __future__ import annotations
 
 import importlib.util
@@ -17,6 +18,10 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_bytes(self: Path) -> bytes:
         return b"\x00" * 32768
 
+    def fake_read_text(self: Path, encoding: str | None = None) -> str:
+        # Isolate from the developer's own (git-ignored) py_emulator.yaml.
+        return ""
+
     with patch.object(sys, "argv", [".", *argv]), \
          patch("builtins.print", side_effect=lambda *a, **kw: (
              stdout_buf.write(" ".join(str(x) for x in a) + "\n")
@@ -25,6 +30,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
          )), \
          patch.object(Path, "exists", lambda self: True), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
+         patch.object(Path, "read_text", fake_read_text), \
          patch("frontend.sdl2_frontend.run"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main_fmpac", _MAIN_PATH)
@@ -37,7 +43,19 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
             return int(exc.code or 0), stdout_buf.getvalue(), stderr_buf.getvalue()
 
 
-def test_fmpac_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--fmpac", "--slot2", "game2.rom"])
+def test_extension_fmpac_alone_boots() -> None:
+    code, out, _err = _run_main(["--extension", "fmpac", "--count-frame", "1"])
+    assert code == 0
+    assert "fmpac" in out
+
+
+def test_extension_fmpac_and_slot2_conflict_exits_nonzero() -> None:
+    code, _out, err = _run_main(["--extension", "fmpac", "--slot2", "game2.rom"])
     assert code != 0
-    assert "--fmpac" in err and "--slot2" in err
+    assert "--extension" in err and "--slot2" in err
+
+
+def test_extension_fmpac_and_mapper2_conflict_exits_nonzero() -> None:
+    code, _out, err = _run_main(["--extension", "fmpac", "--mapper2", "Konami"])
+    assert code != 0
+    assert "--extension" in err and "--mapper2" in err

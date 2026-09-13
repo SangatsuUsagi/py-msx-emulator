@@ -1,8 +1,8 @@
-"""hb_f1xd_256: a hypothetical HB-F1XD variant with a 256 KB RAM mapper in
+"""hb_f1xd_256k: a hypothetical HB-F1XD variant with a 256 KB RAM mapper in
 slot 3 instead of the real machine's flat 64 KB RAM.
 
 Reuses HB-F1XD's real BIOS/SUB-ROM/FDC configuration verbatim (see
-config/machines/hb_f1xd_256.yaml's header comment and
+config/machines/hb_f1xd_256k.yaml's header comment and
 openspec/changes/archive/2026-09-09-hb-f1xd-256-machine/design.md) -- only slot 3's RAM
 strategy differs. No real HB-F1XD variant with this configuration exists;
 this machine's only purpose is to give MSX-DOS2 the RAM-mapper environment
@@ -25,7 +25,7 @@ _CONFIG = _ROOT / "config"
 
 def _spec() -> MachineSpec:
     registry = load_device_registry(_CONFIG)
-    return load_machine_spec("hb_f1xd_256", _CONFIG, registry, _ROOT)
+    return load_machine_spec("hb_f1xd_256k", _CONFIG, registry, _ROOT)
 
 
 def test_loader_resolves_ram_mapper() -> None:
@@ -84,11 +84,11 @@ def test_sub_rom_and_fdc_still_wired_alongside_ram_mapper() -> None:
 
 
 def test_shares_non_ram_configuration_with_real_hb_f1xd() -> None:
-    """hb_f1xd.yaml and hb_f1xd_256.yaml differ only in slot 3's RAM
+    """hb_f1xd.yaml and hb_f1xd_256k.yaml differ only in slot 3's RAM
     strategy -- main ROM, SUB ROM, and FDC resolve identically."""
     registry = load_device_registry(_CONFIG)
     real = load_machine_spec("hb_f1xd", _CONFIG, registry, _ROOT)
-    virtual = load_machine_spec("hb_f1xd_256", _CONFIG, registry, _ROOT)
+    virtual = load_machine_spec("hb_f1xd_256k", _CONFIG, registry, _ROOT)
 
     assert virtual.main_rom_entry == real.main_rom_entry
     assert virtual.sub_rom_entry == real.sub_rom_entry

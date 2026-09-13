@@ -4,9 +4,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from msx.app_config import VALID_MAPPERS, VALID_MAPPERS2
+from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
+
+if TYPE_CHECKING:
+    from msx.machine_loader import _ExpandedExtensionOverlay, _ExtensionOverlay
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -108,17 +111,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Cartridge mapper type (default: auto — detect from ROM database)")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
-    parser.add_argument("--fmpac", action="store_const", const=True, default=None,
-                        help="Overlay an FM-PAC (MSX-MUSIC + 8 KB SRAM) cartridge in slot 2 "
-                             "(conflicts with --slot2)")
-    parser.add_argument("--scc-plus", action="store_const", const=True, default=None,
-                        dest="scc_plus",
-                        help="Connect an SCC-I (SCC+) cartridge in slot 1 (conflicts with "
-                             "a cartridge ROM argument and with --mapper)")
+    parser.add_argument("--extension", choices=[*VALID_EXTENSIONS, "none"], default=None,
+                        help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
+                             "SRAM), 'scc_plus' (an SCC-I / SCC+ cartridge), 'hbi_j1' "
+                             "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
+                             "slot 2 into two sub-slots), or 'memory_512k' (a 512 KB volatile "
+                             "RAM-mapper memory-expansion cartridge; requires a machine with "
+                             "no existing slot-3 memory mapper) (conflicts with "
+                             "--slot2/--mapper2). 'none' forces no extension overlay even when "
+                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS2),
                         default=None,
-                        help="Slot 2 mapper type (default: auto; KonamiSCC not supported)")
+                        help="Slot 2 mapper type (default: auto; KonamiSCC builds its own "
+                             "SCC chip, rejected if slot 1's mapper also resolves to "
+                             "KonamiSCC or --extension scc_plus is active)")
     parser.add_argument("--fdd1", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive A")
     parser.add_argument("--fdd2", default=None, metavar="DSK",
@@ -206,8 +213,8 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 def _print_startup_summary(
     spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
-    fmpac_overlay: Any, mouse_port: int | None, args: argparse.Namespace,
-    scc_plus: bool = False,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
     print(f"rom_base: {spec.rom_base_dir}")
@@ -218,10 +225,27 @@ def _print_startup_summary(
         print(f"fdd1    : {fdd1_path}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
-    if fmpac_overlay is not None:
-        print(f"fmpac   : {fmpac_overlay.rom_base_dir / fmpac_overlay.rom_entry.file}")
-    if scc_plus:
-        print("scc-plus: SCC-I cartridge connected in slot 1")
+    if extension_overlay is not None:
+        from msx.machine_loader import _ExpandedExtensionOverlay
+        if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+            print(
+                f"extension: {args.extension} (expanded slot 2: "
+                f"{len(extension_overlay.subslots)} sub-slot(s)"
+                + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
+                + ")"
+            )
+        elif extension_overlay.rom_entry is not None:
+            # rom_base_dir is always set together with rom_entry (see
+            # _ExtensionOverlay's docstring: both are None only for a
+            # device with no ROM file, e.g. scc_i_cart) -- asserted here
+            # only to narrow the type for mypy, not a runtime possibility.
+            assert extension_overlay.rom_base_dir is not None
+            print(
+                f"extension: {extension_overlay.device} "
+                f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"
+            )
+        else:
+            print(f"extension: {extension_overlay.device} (slot 2)")
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -276,7 +300,7 @@ def _cleanup(
         mapper_trace_file.close()
     if machine is not None and machine.sram_save_path is not None:
         mapper = machine.memory._mapper
-        if hasattr(mapper, "save_sram"):
+        if mapper.has_sram:
             machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
             mapper.save_sram(machine.sram_save_path)
     if (
@@ -286,6 +310,13 @@ def _cleanup(
     ):
         machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
         machine.fmpac.save_sram(machine.fmpac_sram_save_path)
+    if (
+        machine is not None
+        and machine.halnote_cart is not None
+        and machine.halnote_sram_save_path is not None
+    ):
+        machine.halnote_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+        machine.halnote_cart.save_sram(machine.halnote_sram_save_path)
     if (
         machine is not None
         and machine.rtc is not None
@@ -320,8 +351,15 @@ def main() -> None:
     speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
     scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
     mapper_eff = _first_set(args.mapper, default=DEFAULT_MAPPER)
-    fmpac_eff = _first_set(args.fmpac, app_cfg.fmpac, default=False)
-    scc_plus_eff = _first_set(args.scc_plus, app_cfg.scc_plus, default=False)
+    # "none" is a CLI-only sentinel (not in VALID_EXTENSIONS, never valid in
+    # py_emulator.yaml): it forces no extension overlay even when the config
+    # file sets one, since a plain omitted --extension can't be told apart
+    # from "let the config file decide" -- see cart-extension-overlay's
+    # "--extension none forces no extension overlay" Requirement.
+    extension_eff = (
+        None if args.extension == "none"
+        else _first_set(args.extension, app_cfg.extension, default=None)
+    )
     rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
     mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
     # slot2's built-in default is "no cartridge" (None), unlike the concrete
@@ -342,22 +380,18 @@ def main() -> None:
     if scale_eff < 1:
         print("error: --scale must be a positive integer", file=sys.stderr)
         sys.exit(1)
-    if fmpac_eff and slot2_eff:
-        print("error: --fmpac and --slot2 are mutually exclusive (FM-PAC owns slot 2)",
-              file=sys.stderr)
+    if extension_eff is not None and slot2_eff:
+        print("error: --extension and --slot2 are mutually exclusive "
+              "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
-    if scc_plus_eff and args.cartridge:
-        print("error: --scc-plus and a cartridge ROM argument are mutually "
-              "exclusive (SCC-I occupies slot 1)", file=sys.stderr)
-        sys.exit(1)
-    # Checked against args.mapper, not mapper_eff: mapper_eff folds in
-    # DEFAULT_MAPPER ("auto"), so it can't distinguish an explicit
-    # --mapper auto from --mapper never having been passed at all. --mapper
-    # has no config-file equivalent (see app-config-file spec), so only the
-    # CLI flag needs checking here.
-    if scc_plus_eff and args.mapper is not None:
-        print("error: --scc-plus and --mapper are mutually exclusive "
-              "(SCC-I forces slot 1 to the SCC-I cartridge)", file=sys.stderr)
+    # Checked against args.mapper2, not mapper2_eff: mapper2_eff folds in the
+    # "auto" default, so it can't distinguish an explicit --mapper2 auto from
+    # --mapper2 never having been passed. --mapper2 has no config-file
+    # equivalent (see app-config-file spec), so only the CLI flag needs
+    # checking here.
+    if extension_eff is not None and args.mapper2 is not None:
+        print("error: --extension and --mapper2 are mutually exclusive "
+              "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
 
     from msx.romdb import lookup, lookup_system, lookup_title
@@ -373,13 +407,16 @@ def main() -> None:
         MachineLoadError,
         build_machine,
         load_device_registry,
-        load_fmpac_overlay,
+        load_extension_overlay,
         load_machine_spec,
     )
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        fmpac_overlay = load_fmpac_overlay(_CONFIG_DIR, _PROJECT_ROOT) if fmpac_eff else None
+        extension_overlay = (
+            load_extension_overlay(extension_eff, _CONFIG_DIR, _PROJECT_ROOT)
+            if extension_eff is not None else None
+        )
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -403,8 +440,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, fmpac_overlay, mouse_port_eff, args,
-        scc_plus=scc_plus_eff,
+        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, mouse_port_eff, args,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -435,9 +471,8 @@ def main() -> None:
                 tracer=tracer,
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
-                fmpac_overlay=fmpac_overlay,
+                extension_overlay=extension_overlay,
                 joy_map=app_cfg.keyboard_joy_map(),
-                scc_plus=scc_plus_eff,
             )
         except MachineLoadError as exc:
             print(f"error: {exc}", file=sys.stderr)

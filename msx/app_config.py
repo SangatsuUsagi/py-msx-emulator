@@ -1,6 +1,6 @@
 """Optional root ``py_emulator.yaml`` startup configuration.
 
-Loads user defaults for startup options (machine, speed, FM-PAC, RPC),
+Loads user defaults for startup options (machine, speed, extension, RPC),
 gamepad settings (button assignment, turbo rate), and mouse settings
 (enabled, port). Values are merged with the precedence built-in defaults <
 config file < CLI arguments; see ``__main__``. Cartridge mapper selection
@@ -44,9 +44,21 @@ VALID_MAPPERS: tuple[str, ...] = (
 )
 
 # Accepted slot 2 cartridge mapper names for --mapper2 (CLI-only, see above).
-# Slot 2 has no SCC/SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
+# Slot 2 has no SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
+# KonamiSCC IS supported (a genuine Konami-SCC cartridge can physically occupy
+# slot 2, e.g. behind a Konami slot-converter cartridge in slot 1) but shares
+# Machine's single scc field with slot 1 -- rejected at build_machine time if
+# slot 1's own mapper also resolves to KonamiSCC (see machine-loader's "Slot 2
+# KonamiSCC mapper shares the machine's single SCC chip" spec Requirement).
 VALID_MAPPERS2: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
+    "KonamiSCC",
+)
+
+# Accepted --extension ids (see the cart-extension-overlay spec). Each maps to
+# a config/extensions/<id>.yaml overlay fragment placed in primary slot 2.
+VALID_EXTENSIONS: tuple[str, ...] = (
+    "fmpac", "scc_plus", "hbi_j1", "memory_512k", "msxdos2_512k", "msxdos2_512k_kanji",
 )
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
@@ -85,8 +97,8 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
 }
 
 _KNOWN_TOP_KEYS = frozenset({
-    "machine", "speed", "scale", "fmpac", "slot2",
-    "frame_skip", "scc_plus", "rpc", "joystick", "keyboard_joystick", "mouse",
+    "machine", "speed", "scale", "extension", "slot2",
+    "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
@@ -109,10 +121,9 @@ class AppConfig:
     machine: str | None = None
     speed: float | None = None
     scale: int | None = None
-    fmpac: bool | None = None
+    extension: str | None = None
     slot2: str | None = None
     frame_skip: bool | None = None
-    scc_plus: bool | None = None
     rpc_enabled: bool | None = None
     rpc_socket: str | None = None
     turbo_hz: float | None = None
@@ -243,10 +254,9 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.machine = _opt_str(raw, "machine")
     cfg.speed = _opt_positive_float(raw, "speed")
     cfg.scale = _opt_positive_int(raw, "scale")
-    cfg.fmpac = _opt_bool(raw, "fmpac")
+    cfg.extension = _opt_extension(raw)
     cfg.slot2 = _opt_slot2(raw, root)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
-    cfg.scc_plus = _opt_bool(raw, "scc_plus")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
     _parse_keyboard_joystick(raw.get("keyboard_joystick"), cfg)
@@ -291,6 +301,15 @@ def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
         raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be an integer")
     if value < 1:
         raise AppConfigError(f"{CONFIG_FILENAME}: {key} must be a positive integer")
+    return value
+
+
+def _opt_extension(raw: dict[str, Any]) -> str | None:
+    value = _opt_str(raw, "extension")
+    if value is not None and value not in VALID_EXTENSIONS:
+        raise AppConfigError(
+            f"{CONFIG_FILENAME}: extension: {value!r} is not one of {VALID_EXTENSIONS}"
+        )
     return value
 
 

@@ -1,5 +1,5 @@
 schema_version: 1
-id: hb_f1xd_256
+id: hb_f1xd_256k
 name: "Sony HB-F1XD (MSX2, Japan) -- hypothetical 256KB RAM mapper"
 generation: msx2
 video_standard: ntsc

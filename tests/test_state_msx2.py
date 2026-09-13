@@ -148,6 +148,35 @@ def test_msx1_sub_slot_reg_none_in_snapshot(saves_dir):
 
 
 # ---------------------------------------------------------------------------
+# slot2_sub_slot_reg round-trip (independent of sub_slot_reg; gated on
+# memory.slot2_sub_slot_enabled, not MSX1/MSX2-ness -- no machine-loader
+# wiring exists yet to build one via make_machine_msx2, so the flag is set
+# directly for test purposes, matching how it has no setter in msx/memory.py)
+# ---------------------------------------------------------------------------
+
+def test_msx2_roundtrip_slot2_sub_slot_reg(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.memory.slot2_sub_slot_enabled = True
+    machine.memory.set_slot2_sub_slot_reg(0x5A)
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.memory.set_slot2_sub_slot_reg(0x00)
+    load_state(machine)
+
+    assert machine.memory.slot2_sub_slot_reg == 0x5A
+
+
+def test_slot2_sub_slot_disabled_none_in_snapshot(saves_dir):
+    """A machine without an expanded slot 2 (every machine without an
+    HBI-J1-style extension, the default) stores slot2_sub_slot_reg=None."""
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+
+    data = _load_state_json(state_path)
+    assert data["slot2_sub_slot_reg"] is None
+
+
+# ---------------------------------------------------------------------------
 # format_version 2 rejected (version bump to 3)
 # ---------------------------------------------------------------------------
 

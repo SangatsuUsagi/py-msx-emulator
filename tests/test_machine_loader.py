@@ -7,9 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from msx.kanji import KanjiRom
 from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
+    _ExpandedExtensionOverlay,
+    _ExpandedSubslotDevice,
     _make_mapper,
     _parse_fdc,
     _parse_slot0,
@@ -832,3 +835,209 @@ def test_real_cbios_msx2_machines_resolve_128kb_ram_mapper(machine_id: str) -> N
     machine = build_machine(spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K)
     assert machine.memory.ram_mapper is not None
     assert len(machine.memory.ram_mapper.ram) == 131072
+
+
+# ---------------------------------------------------------------------------
+# Machine-level io_device (openspec/changes/add-machine-io-device): a global
+# I/O device (kanji_rom) declared directly on a machine's own YAML, decoupled
+# from --extension's overlay-only io_device (see tests/test_cli_hbi_j1.py for
+# the overlay-side coverage of the same device kind).
+# ---------------------------------------------------------------------------
+
+_KANJI_FONT_ROM_SIZE = 131072  # 128 KB, JIS level 1 only
+
+
+def _msx1_yaml_with_io_device(device: str = "kanji_rom", rom_block: str | None = None) -> str:
+    if rom_block is None:
+        rom_block = "\n      rom:\n        file: kanjifont.rom\n        size_kb: 128"
+    return textwrap.dedent(f"""\
+    schema_version: 1
+    id: test_msx1
+    name: "Test MSX1"
+    generation: msx1
+    rom_base: roms/fake
+    cpu:
+      type: z80a
+      clock_mhz: 3.579545
+    slots:
+      primary:
+        0:
+          content:
+            - rom:
+                file: main.rom
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        1: {{type: cartridge}}
+        2: {{type: cartridge}}
+        3:
+          type: ram
+          size_kb: 32
+          mapper: none
+    builtin_devices:
+      - ref: psg_ay8910
+    io_device:
+      device: {device}{rom_block}
+    default_extensions: []
+    """)
+
+
+def test_load_machine_spec_io_device_resolves(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx1.yaml", _msx1_yaml_with_io_device())
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.io_device is not None
+    assert spec.io_device.device == "kanji_rom"
+    assert spec.io_device.rom_entry is not None
+    assert spec.io_device.rom_entry.file == "kanjifont.rom"
+
+
+def test_load_machine_spec_no_io_device_key_is_none(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx1.yaml", _msx1_machine_yaml())
+    spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+    assert spec.io_device is None
+
+
+def test_load_machine_spec_io_device_unknown_device_rejected(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_yaml_with_io_device(device="totally_unknown_device"),
+    )
+    with pytest.raises(MachineLoadError, match="unrecognized 'device'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_io_device_missing_rom_block_rejected(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_yaml_with_io_device(rom_block=""),
+    )
+    with pytest.raises(MachineLoadError, match="requires a 'rom' entry"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def _msx1_yaml_with_raw_io_device(io_device_yaml: str) -> str:
+    return textwrap.dedent(f"""\
+    schema_version: 1
+    id: test_msx1
+    name: "Test MSX1"
+    generation: msx1
+    rom_base: roms/fake
+    cpu:
+      type: z80a
+      clock_mhz: 3.579545
+    slots:
+      primary:
+        0:
+          content:
+            - rom:
+                file: main.rom
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        1: {{type: cartridge}}
+        2: {{type: cartridge}}
+        3:
+          type: ram
+          size_kb: 32
+          mapper: none
+    builtin_devices:
+      - ref: psg_ay8910
+    {io_device_yaml}
+    default_extensions: []
+    """)
+
+
+def test_load_machine_spec_io_device_not_a_mapping_rejected(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_yaml_with_raw_io_device("io_device: kanji_rom"),
+    )
+    with pytest.raises(MachineLoadError, match="expected a YAML mapping"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_io_device_missing_device_field_rejected(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_yaml_with_raw_io_device(
+            "io_device:\n      rom:\n        file: kanjifont.rom\n        size_kb: 128"
+        ),
+    )
+    with pytest.raises(MachineLoadError, match="missing required field 'device'"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_load_machine_spec_io_device_rom_block_not_a_mapping_rejected(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "machines" / "test_msx1.yaml",
+        _msx1_yaml_with_raw_io_device(
+            "io_device:\n      device: kanji_rom\n      rom: [1, 2, 3]"
+        ),
+    )
+    with pytest.raises(MachineLoadError, match="missing required 'rom' entry"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_build_machine_wires_machine_declared_kanji_device(tmp_path: Path) -> None:
+    rom_dir = tmp_path / "kanji_rom_dir"
+    rom_dir.mkdir()
+    (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
+    spec = dataclasses.replace(
+        _make_msx1_spec(tmp_path),
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+        ),
+    )
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert isinstance(machine.kanji, KanjiRom)
+
+
+def test_build_machine_missing_machine_declared_kanji_rom_raises_naming_file(
+    tmp_path: Path,
+) -> None:
+    rom_dir = tmp_path / "kanji_rom_dir"
+    rom_dir.mkdir()
+    spec = dataclasses.replace(
+        _make_msx1_spec(tmp_path),
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+        ),
+    )
+    with pytest.raises(MachineLoadError, match="kanjifont.rom"):
+        build_machine(spec, bios_override=_FAKE_ROM_32K)
+
+
+def test_build_machine_machine_declared_and_overlay_io_device_conflict(
+    tmp_path: Path,
+) -> None:
+    machine_rom_dir = tmp_path / "kanji_rom_dir"
+    machine_rom_dir.mkdir()
+    (machine_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
+    spec = dataclasses.replace(
+        _make_msx1_spec(tmp_path),
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=machine_rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+        ),
+    )
+    overlay_rom_dir = tmp_path / "overlay_kanji_rom_dir"
+    overlay_rom_dir.mkdir()
+    (overlay_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
+    overlay = _ExpandedExtensionOverlay(
+        subslots={},
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=overlay_rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+        ),
+    )
+    with pytest.raises(MachineLoadError, match="cannot coexist"):
+        build_machine(spec, bios_override=_FAKE_ROM_32K, extension_overlay=overlay)

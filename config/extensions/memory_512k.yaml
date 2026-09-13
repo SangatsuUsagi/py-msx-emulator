@@ -1,0 +1,24 @@
+schema_version: 1
+id: memory_512k
+name: "512 KB RAM-mapper memory expansion cartridge"
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --extension memory_512k) to place a
+# bank-switched RAM-mapper cartridge in primary slot 2, sub-slot 0. Volatile:
+# blank (all zero) at the start of every run, no save-file persistence --
+# unlike fmpac/hbi_j1's battery-backed SRAM, this models a RAM-disk
+# expansion cartridge, not a save-data cartridge. Requires a machine with no
+# existing slot-3 memory mapper (has_ram_mapper == False) -- see
+# cart-extension-overlay's "memory_512k extension installs a RAM-mapper
+# cartridge in slot 2" Requirement for why two independent memory mappers
+# sharing the same I/O ports (0xFC-0xFF) is not supported. Sub-slots 1-3 are
+# intentionally left unpopulated (open bus), reserved for a future change to
+# add the MSX-DOS2 kernel ROM alongside this RAM.
+overlay: true
+shape: expanded
+slot: 2
+
+subslots:
+  0:
+    device: ram_mapper
+    size_kb: 512
