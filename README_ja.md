@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2530%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2619%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -21,6 +21,7 @@
   - [沙羅曼蛇（Salamander）— KONAMI](https://ja.wikipedia.org/wiki/%E6%B2%99%E7%BE%85%E6%9B%BC%E8%9B%87)
   - [グラディウス2（Nemesis 2）— KONAMI](https://ja.wikipedia.org/wiki/%E3%82%B0%E3%83%A9%E3%83%87%E3%82%A3%E3%82%A6%E3%82%B92)
   - [夢大陸アドベンチャー（Penguin Adventure）— KONAMI](https://ja.wikipedia.org/wiki/%E5%A4%A2%E5%A4%A7%E9%99%B8%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC)
+  - [Game Master II（新10倍カートリッジ）— KONAMI](https://en.wikipedia.org/wiki/Konami_Game_Master)
 - **MSX2:**
   - [ドラゴンスレイヤーIV ドラスレファミリー（Legacy of the Wizard）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%89%E3%83%A9%E3%82%B4%E3%83%B3%E3%82%B9%E3%83%AC%E3%82%A4%E3%83%A4%E3%83%BCIV_%E3%83%89%E3%83%A9%E3%82%B9%E3%83%AC%E3%83%95%E3%82%A1%E3%83%9F%E3%83%AA%E3%83%BC)
   - [ロマンシア（Romancia）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9E%E3%83%B3%E3%82%B7%E3%82%A2)
@@ -84,7 +85,7 @@
 - 既知の制限：
   - コマンドタイミングは近似値；ビームレースの書き込みやフレーム内の VRAM ダブルバッファは忠実に再現されない。
   - GRAPHIC 6/7 のプレーナ VRAM インターリーブ（実機はこれらのモードを 2 個の VRAM IC に偶数/奇数バイトで分割する）はモデル化されておらず、代わりにリニアアドレッシングモデルを使用している。これはプレーナモードで書き込んだ VRAM 内容を、クリアを挟まずに非プレーナモードへ切り替えて読み戻した場合にのみ差異が生じる。
-  - TEXT2（SCREEN 0 WIDTH 80）の点滅色/点滅レート（R#12/R#13）は未実装のため、点滅する文字も交互に色が変わらず単一の固定色で表示される。インターレースモード/自動オルタネートスクリーン・ページ表示（R#9 ビット3/R#13 レート）も未実装のため、インターレースやページフリップされた出力は生成されない。
+  - TEXT2（SCREEN 0 WIDTH 80）の点滅色/点滅レート（R#12/R#13）は未実装のため、点滅する文字も交互に色が変わらず単一の固定色で表示される。R#9 の EO ビットは GRAPHIC4-7 の自動偶数/奇数ページ切り替え（実機の V9938 の挙動と一致）を駆動するが、真のインターレース（垂直解像度2倍）出力を生む半走査線単位の CRT フィールド融合シフトは、描画のシンプルさ/パフォーマンスを優先して意図的に対象外としている。
   - フレームスキップ中はスキップされたフレームで5番目スプライト/コインシデンスステータスが更新されないため、ターボモード中に衝突判定をポーリングする ROM は古い（最後に描画したフレームの）ステータスを見ることになる。
 
 ### PSG — AY-3-8910
@@ -208,7 +209,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | `KoeiSRAM32Mapper` | ASCII8 + 32 KB バッテリーバックアップ SRAM；SRAM 選択可能ウィンドウに 0x4000 を追加 |
 | `GameMaster2Mapper` | Konami 系 128 KB ROM + 8 KB バッテリーバックアップ SRAM；各バンクレジスタで ROM ページまたは 4 KB SRAM 半分（8 KB ウィンドウ内でミラー）を選択、SRAM 書き込みは 0xB000–0xBFFF |
 
-スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 では無効です。ROM データベースがスロット 2 カートリッジに対して `KonamiSCC` を返した場合、警告を stderr に表示したうえで `Konami` マッパーに自動フォールバックします。
+スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 でも有効です — Konami のスロットコンバータカートリッジ（スロット 1 に挿し、スロット 2 の実カートリッジをスロット 1 として見せかけるパススルーカートリッジ）の背後などで、実機の KonamiSCC カートリッジが物理的にスロット 2 を占有するケースを想定しています。ただしスロット 1・スロット 2 はマシン単一の `SCC` チップを共有するため、両方のスロットが同時に `KonamiSCC` に解決された場合は `MachineLoadError` が送出されます。
 
 ### フロッピーディスクドライブ（WD2793）
 
@@ -344,22 +345,22 @@ All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 284.72 | 約 4.7 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 476.83 | 約 7.9 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1101.15 | 約 18.4 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1270.47 | 約 21.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 76.32 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 128.27 | 約 2.1 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 287.51 | 約 4.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 419.97 | 約 7.0 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 298.16 | 約 5.0 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 491.12 | 約 8.2 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 1203.21 | 約 20.1 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 1370.83 | 約 22.8 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（KonamiSCC） | 75.64 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（ASCII8） | 127.27 | 約 2.1 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（KonamiSCC） | 296.31 | 約 4.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（ASCII8） | 430.75 | 約 7.2 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.8 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.5.10 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.5.14 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -502,8 +503,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--scale N` | `3` | 256×212 ベース解像度に対する整数の拡大率（例：小さいディスプレイなら `2`、大きいディスプレイなら `4`） |
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
-| `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
-| `--extension {fmpac,scc_plus,hbi_j1}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）、`scc_plus`（SCC-I / SCC+ カートリッジ）、または `hbi_j1`（Sony HBI-J1：漢字ROM + MSX-JE + 漢字ドライバ/BASIC、スロット2を2つのサブスロットに拡張）。`--slot2`/`--mapper2` と併用不可 |
+| `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`（KonamiSCC はスロット 1 とマシン単一の SCC チップを共有；スロット 1 も KonamiSCC に解決される場合は拒否） |
+| `--extension {none,fmpac,scc_plus,hbi_j1}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）、`scc_plus`（SCC-I / SCC+ カートリッジ）、または `hbi_j1`（Sony HBI-J1：漢字ROM + MSX-JE + 漢字ドライバ/BASIC、スロット2を2つのサブスロットに拡張）。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -838,7 +839,7 @@ py-msx-emulator/
 │   ├── memory.py          # スロットベースのメモリバス
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
-│   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス（Sony HBI-J1）
+│   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（128 KB、8 セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
@@ -912,45 +913,10 @@ MIT — [LICENSE](LICENSE) を参照してください。
 
 ## 更新履歴
 
-- **v2.5.14** (2026-09-10) — `--extension hbi-j1` で Sony HBI-J1 サポートを
-  追加：JIS漢字フォントROM I/Oデバイス（`msx/kanji.py`、ポート
-  `0xD8-0xDB`）、Halnoteマッパー方式のMSX-JEワードプロセッサROM + 16 KB
-  SRAM（`msx/mapper.py:HalnoteMapper`）、フラットな漢字ドライバ+BASIC
-  ROM。スロット2自体をサブスロット化する新しい*拡張*エクステンション
-  オーバーレイ形状（`cart-extension-overlay` の `shape: expanded`）で配線
-  ——FM-PAC/SCC-Iはいずれも単一のフラットデバイスだったため、これを必要と
-  する最初の拡張。`Memory` はプライマリスロット2をスロット3自体の拡張と
-  独立に拡張可能にした（標準的なMSX2機のスロット3拡張とHBI-J1のスロット2
-  拡張が共存し、それぞれ独自のセカンダリスロットレジスタを持つ）。セーブ
-  ステート形式はバージョン10に更新——`slot2_sub_slot_reg` と、SCC-Iを踏襲
-  した専用の `machine.halnote_cart` 状態パスを追加。著者はこの実機を物理
-  的に所有し、そのROMをダンプ済み（openMSXに対してSHA1検証済み）。
-- **v2.5.13** (2026-09-10) — `--fmpac`/`--scc-plus`（および
-  `py_emulator.yaml` の `fmpac`/`scc_plus` キー）を、単一の `--extension
-  {fmpac,scc-plus}` フラグ（`extension` 設定キー）に統合。
-  `config/extensions/<id>.yaml` オーバーレイファイルで定義。**破壊的変更**：
-  SCC-I（`scc-plus`）はスロット 1 ではなくプライマリスロット 2 を占有するよ
-  うになった——スロット 1 のカートリッジや `--mapper` と自由に併用できるよう
-  になった一方、`--fmpac` との併用（拡張は同時に1つのみ）はできなくなった。
-  `--extension`（いずれの値でも）は `--slot2`/`--mapper2` と併用不可。セーブ
-  ステート形式はバージョン 8 に更新——スロット 2 には汎用のマッパー状態機構
-  がないため、FM-PAC と同様の専用状態パスを SCC-I 用に新設。
-- **v2.5.12** (2026-09-09) — `RamMapper` のサイズを可変化（16KB単位のバンクで
-  設定可能、従来は128KB固定）。あわせて、slot 3のlegacy（RAM mapper）ディス
-  パッチ分岐でもFDCをRAM mapperと併用できるようにした——従来はFDCの搭載に
-  data-drivenのflat RAM構成が必須だった。実機Sony HB-F1XDのBIOS/SUB-ROM/FDC
-  構成を流用しつつRAM mapperを256KBに変更した仮想機種 `hb_f1xd_256` を追加
-  （この構成の実機は存在しない）——MSX-DOS2の拡張BIOSマッパーサポートルー
-  チンが要求する128KB以上のRAM mapperを満たすための構成で、MSX-DOS2の起動を
-  確認済み。あわせて、V9938のTEXT2モード（SCREEN 0 WIDTH 80、MSX-DOSの
-  `MODE 80`）を実装——従来はGRAPHIC2背景＋スプライトモード2として誤ディス
-  パッチされ画面が崩れていた問題を、モードビット判定の優先順位修正・80桁/
-  512幅の専用レンダラー追加・`display_width`とデバッガの画面モード表示の
-  拡張により解消。MSX-DOSでの動作を確認済み。
-- **v2.5.11** (2026-09-06) — `py_emulator.yaml` の `mapper`/`mapper2` 設定
-  キーを削除し、カートリッジマッパー選択を CLI 専用（`--mapper` /
-  `--mapper2`）に統一。設定ファイル側のデフォルトが `--scc-plus` との排他
-  チェックを誤って発火させていた不具合を修正。
+- **v2.5.14** (2026-09-12) — `--fmpac`/`--scc-plus` を統合し、単一の `--extension {none,fmpac,scc_plus,hbi_j1}` フラグに置き換え（`extension` 設定キー、`config/extensions/<id>.yaml` オーバーレイファイルで定義）。各拡張はプライマリスロット 2 を無条件に占有する。**破壊的変更**：SCC-I はスロット 1 ではなくプライマリスロット 2 を占有するようになった。`--mapper2` も `KonamiSCC` に対応——スロット 1 とマシン単一の SCC チップを共有する。
+- **v2.5.13** (2026-09-12) — `--extension hbi_j1` で Sony HBI-J1 サポートを追加（JIS漢字フォントROM I/Oデバイス、Halnoteマッパー方式のMSX-JEワードプロセッサROM + 16 KB SRAM、フラットな漢字ドライバ+BASIC ROM——スロット2を2つのサブスロットに拡張。著者はこの実機を物理的に所有し、そのROMをダンプ済み・openMSXに対してSHA1検証済み）。あわせて V9938 のインターレースモード（R#9 の IL/EO ビット、EO による GRAPHIC4-7 の自動偶数/奇数ページ切り替え——実機 V9938 の挙動と一致）を追加。
+- **v2.5.12** (2026-09-09) — `RamMapper` のサイズを可変化（16KB単位のバンクで設定可能、従来は128KB固定）。あわせて、slot 3のlegacy（RAM mapper）ディスパッチ分岐でもFDCをRAM mapperと併用できるようにした——従来はFDCの搭載にdata-drivenのflat RAM構成が必須だった。実機Sony HB-F1XDのBIOS/SUB-ROM/FDC構成を流用しつつRAM mapperを256KBに変更した仮想機種 `hb_f1xd_256` を追加（この構成の実機は存在しない）——MSX-DOS2の拡張BIOSマッパーサポートルーチンが要求する128KB以上のRAM mapperを満たすための構成で、MSX-DOS2の起動を確認済み。あわせて、V9938のTEXT2モード（SCREEN 0 WIDTH 80、MSX-DOSの `MODE 80`）を実装——従来はGRAPHIC2背景＋スプライトモード2として誤ディスパッチされ画面が崩れていた問題を、モードビット判定の優先順位修正・80桁/512幅の専用レンダラー追加・`display_width`とデバッガの画面モード表示の拡張により解消。MSX-DOSでの動作を確認済み。
+- **v2.5.11** (2026-09-06) — `py_emulator.yaml` の `mapper`/`mapper2` 設定キーを削除し、カートリッジマッパー選択を CLI 専用（`--mapper` / `--mapper2`）に統一。設定ファイル側のデフォルトが `--scc-plus` との排他チェックを誤って発火させていた不具合を修正。
 - **v2.5.10** (2026-09-01) — 未整備だったコンポーネント（RTC、フロッピーディスクイメージ/ドライブ、plain/fixed-page マッパー、I/O バス、Z80 の ED/CB/DD/FD プレフィックス群）向けに Allium 仕様を追加し、その過程で見つかった実バグを複数修正：RTC の CMOS RAM をマシンごとに `saves/sram/rtc_<machine_id>.sram` へ永続化する対応（従来は単一の共有ファイルで、あるマシンの設定が別マシンに漏れる不具合があった）と 12/24 時間モードのエンコード不具合修正、および Z80 の非公式命令 DDCB/FDCB のレジスタエコー動作の実装漏れ。あわせて、フロッピーディスクの状態（WD2793/TC8566AF のレジスタ、ドライブ位置、マウント中ディスクの同一性）をステートセーブ/ロードに対応、FDC種別・ディスク同一性の不一致チェック付き。
 - **v2.5.9** (2026-08-25) — 全コンポーネントに対するOpenSpec/Alliumの棚卸しを実施し、各仕様書をopenMSXと実装に照らして再検証。その過程で見つかった精度バグを複数修正（V9938スプライト描画、ASCII8/ASCII16マッパーのバンク演算、SCC-Iモード同期、マウスプロトコルのタイミングなど）。
 - **v2.5.8** (2026-08-22) — TC8566AF FDC コントローラと Panasonic FS-A1F のマシン設定（`--machine fs_a1f`）を追加。Sony HB-F1XD（WD2793）に続く、2 台目のフロッピーディスク対応 MSX2。FS-A1F は実機通りの 4 サブスロット配置（RAM・SUB ROM・FDC をそれぞれ独立配置）を採用。
