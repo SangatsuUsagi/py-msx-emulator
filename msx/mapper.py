@@ -83,7 +83,7 @@ class MapperKind(str, Enum):
     FMPAC = "fmpac"
     # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
     # placed in Memory._mapper2_subslots (an expanded slot 2's --extension
-    # memory512k RAM cartridge) and covered by the same generic slot-2
+    # memory_512k RAM cartridge) and covered by the same generic slot-2
     # save-state mechanism as every other slot-2 device kind above.
     RAM_MAPPER = "ram_mapper"
 

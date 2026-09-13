@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #   openspec/changes/2026-08-31-fdc-state-save-load). No other field
 #   changed.
 # Version 8: scci_state: dict[str, object] | None added (SCCICart's
-#   RAM/banks/mode-register state, now needed since --extension scc-plus
+#   RAM/banks/mode-register state, now needed since --extension scc_plus
 #   moved SCCICart from primary slot 1 -- covered by the generic
 #   mapper_kind/mapper_state fields -- to slot 2, which has no generic
 #   mapper2 state path; see openspec/changes/add-extension-flag). No other

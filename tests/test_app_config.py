@@ -43,9 +43,9 @@ def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
 
 
 def test_extension_key_parsed(tmp_path: Path) -> None:
-    _write(tmp_path, "extension: scc-plus\n")
+    _write(tmp_path, "extension: scc_plus\n")
     cfg = load_app_config(tmp_path)
-    assert cfg.extension == "scc-plus"
+    assert cfg.extension == "scc_plus"
 
 
 def test_unknown_extension_id_rejected(tmp_path: Path) -> None:

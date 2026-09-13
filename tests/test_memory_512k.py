@@ -1,4 +1,4 @@
-"""--extension memory512k tests: expanded-overlay `ram_mapper` sub-slot
+"""--extension memory_512k tests: expanded-overlay `ram_mapper` sub-slot
 device parsing, build_machine wiring (a 512 KB RamMapper in slot 2 sub-slot
 0, registered on the standard memory-mapper I/O ports), the has_ram_mapper
 conflict validation, the at-most-one-ram_mapper-per-overlay validation, and
@@ -139,11 +139,11 @@ def _has_mapper_spec(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# The real config/extensions/memory512k.yaml resolves as expected
+# The real config/extensions/memory_512k.yaml resolves as expected
 # ---------------------------------------------------------------------------
 
-def test_memory512k_yaml_resolves_ram_mapper_subslot() -> None:
-    overlay = load_extension_overlay("memory512k", _CONFIG, _ROOT)
+def test_memory_512k_yaml_resolves_ram_mapper_subslot() -> None:
+    overlay = load_extension_overlay("memory_512k", _CONFIG, _ROOT)
     assert isinstance(overlay, _ExpandedExtensionOverlay)
     assert set(overlay.subslots) == {0}
     subslot = overlay.subslots[0]
@@ -328,17 +328,17 @@ def test_accepted_on_machine_with_no_ram_mapper(tmp_path: Path) -> None:
 
 def test_real_hb_f1xd_has_no_ram_mapper(tmp_path: Path) -> None:
     """Sanity check against the real machine catalogue: hb_f1xd (real
-    hardware) accepts memory512k, hb_f1xd_256 (hypothetical, already has a
+    hardware) accepts memory_512k, hb_f1xd_256k (hypothetical, already has a
     slot-3 memory mapper) and cbios_msx2_jp (generic MSX2) reject it."""
     registry = load_device_registry(_CONFIG)
     hb_f1xd = load_machine_spec("hb_f1xd", _CONFIG, registry, _ROOT)
     assert hb_f1xd.has_ram_mapper is False
 
-    hb_f1xd_256 = load_machine_spec("hb_f1xd_256", _CONFIG, registry, _ROOT)
-    assert hb_f1xd_256.has_ram_mapper is True
+    hb_f1xd_256k = load_machine_spec("hb_f1xd_256k", _CONFIG, registry, _ROOT)
+    assert hb_f1xd_256k.has_ram_mapper is True
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
         build_machine(
-            hb_f1xd_256, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+            hb_f1xd_256k, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay=_ram_mapper_overlay(),
         )
 

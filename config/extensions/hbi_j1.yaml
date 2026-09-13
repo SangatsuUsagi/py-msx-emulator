@@ -1,13 +1,13 @@
 schema_version: 1
-id: hbi-j1
+id: hbi_j1
 name: "Sony HBI-J1 (Kanji-ROM + MSX-JE + Kanji driver/BASIC)"
 
 # Overlay fragment, not a standalone machine: applied on top of an
-# already-resolved base machine spec (via --extension hbi-j1). Unlike a flat
-# overlay (fmpac, scc-plus), this expands primary slot 2 itself into two
+# already-resolved base machine spec (via --extension hbi_j1). Unlike a flat
+# overlay (fmpac, scc_plus), this expands primary slot 2 itself into two
 # sub-slots, plus a slot-independent global I/O device (the Kanji-ROM font
 # device, ports 0xD8-0xDB) -- see cart-extension-overlay's "Extension
-# overlay shape: flat vs expanded" and "hbi-j1 extension installs an
+# overlay shape: flat vs expanded" and "hbi_j1 extension installs an
 # expanded slot 2" Requirements.
 overlay: true
 shape: expanded

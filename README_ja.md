@@ -106,14 +106,14 @@
 
 ### SCC-I カートリッジ（「SCC+」）
 
-`--extension scc-plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 2 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。スロット 1 ではなくスロット 2 を占有するため、カートリッジ ROM 引数や `--mapper` と自由に併用できます。`--extension`（いずれの値でも）はスロット 2 を無条件に占有するため、`--slot2`/`--mapper2` とは併用不可です。
+`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ。プライマリスロット 2 に無条件で接続されます：物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。スロット 1 ではなくスロット 2 を占有するため、カートリッジ ROM 引数や `--mapper` と自由に併用できます。`--extension`（いずれの値でも）はスロット 2 を無条件に占有するため、`--slot2`/`--mapper2` とは併用不可です。
 
 > **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/mapper.py:SCCICart` |
-| 有効化 | `--extension scc-plus` でプライマリスロット 2 に接続（`--slot2`/`--mapper2` との併用不可） |
+| 有効化 | `--extension scc_plus` でプライマリスロット 2 に接続（`--slot2`/`--mapper2` との併用不可） |
 | メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
 | SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
@@ -133,14 +133,14 @@
 
 ### Sony HBI-J1 — 漢字ROM + MSX-JEワードプロセッサ
 
-`--extension hbi-j1` で有効化するオプションのオーバーレイカートリッジ：JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。FM-PAC/SCC-I（スロット2に単一のフラットデバイスを配置するだけ）と異なり、このカートリッジのみがスロット2自体をサブスロット化する — 標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
+`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ：JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。FM-PAC/SCC-I（スロット2に単一のフラットデバイスを配置するだけ）と異なり、このカートリッジのみがスロット2自体をサブスロット化する — 標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
 
 著者はこの実機を物理的に所有しており、そのROMをダンプ済みです（openMSXの `Sony_HBI-J1.xml` に対してSHA1で検証済み）。そのため、この実装は資料ベースではなく実機を対象としています。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/kanji.py`（漢字ROMデバイス）、`msx/mapper.py:HalnoteMapper`（MSX-JEカートリッジ）、`msx/machine_loader.py`（拡張オーバーレイの配線） |
-| 有効化 | `--extension hbi-j1` でプライマリスロット2を拡張（`--machine` のベースMSX2マシンは任意；`--slot2`/`--mapper2` との併用不可）；ROM は `roms/hbi_j1/` |
+| 有効化 | `--extension hbi_j1` でプライマリスロット2を拡張（`--machine` のベースMSX2マシンは任意；`--slot2`/`--mapper2` との併用不可）；ROM は `roms/hbi_j1/` |
 | 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別；5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
 | サブスロット0 | `HalnoteMapper` — 1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM；`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
@@ -162,7 +162,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も独立に拡張可能です — 現状は `--extension hbi-j1` のみが該当し、スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も独立に拡張可能です — 現状は `--extension hbi_j1` のみが該当し、スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -171,7 +171,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
 | スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension hbi-j1` では2つのサブスロットに拡張（サブスロット0にHalnoteマッパー方式のMSX-JE ROM、サブスロット1にフラットな漢字ドライバ/BASIC ROM） |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension hbi_j1` では2つのサブスロットに拡張（サブスロット0にHalnoteマッパー方式のMSX-JE ROM、サブスロット1にフラットな漢字ドライバ/BASIC ROM） |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
@@ -459,10 +459,10 @@ python . path/to/game.rom --extension fmpac
 
 # スロット 2 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
 # フロッピーから起動
-python . --extension scc-plus --fdd1 path/to/disk.dsk
+python . --extension scc_plus --fdd1 path/to/disk.dsk
 
 # Sony HBI-J1（漢字ROM/MSX-JEカートリッジ、スロット2を拡張）を接続
-python . --extension hbi-j1
+python . --extension hbi_j1
 
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
@@ -503,7 +503,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`Majutsushi`（スロット 2 では KonamiSCC 非対応） |
-| `--extension {fmpac,scc-plus,hbi-j1}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）、`scc-plus`（SCC-I / SCC+ カートリッジ）、または `hbi-j1`（Sony HBI-J1：漢字ROM + MSX-JE + 漢字ドライバ/BASIC、スロット2を2つのサブスロットに拡張）。`--slot2`/`--mapper2` と併用不可 |
+| `--extension {fmpac,scc_plus,hbi_j1}` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ：`fmpac`（MSX-MUSIC + 8 KB SRAM）、`scc_plus`（SCC-I / SCC+ カートリッジ）、または `hbi_j1`（Sony HBI-J1：漢字ROM + MSX-JE + 漢字ドライバ/BASIC、スロット2を2つのサブスロットに拡張）。`--slot2`/`--mapper2` と併用不可 |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -543,7 +543,7 @@ speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-# extension: fmpac        # スロット 2 の拡張を重ねる：fmpac、scc-plus、または hbi-j1
+# extension: fmpac        # スロット 2 の拡張を重ねる：fmpac、scc_plus、または hbi_j1
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -715,14 +715,14 @@ claude mcp list        # msx-emulator  ●  connected
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
-| `hb_f1xd_256` | MSX2 | 日本 | V9938 |
+| `hb_f1xd_256k` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
 
-`hb_f1xd_256` は上記 `hb_f1xd` と同じ ROM・フロッピードライブ構成を流用しつつ、スロット3のflat 64KB RAMを256KBのRAM mapperに置き換えたものです——MSX-DOS2の拡張BIOSマッパーサポートルーチンには128KB以上のRAM mapperが必要であり、flat RAMではサイズを増やしてもこの要件を満たせないためです。
+`hb_f1xd_256k` は上記 `hb_f1xd` と同じ ROM・フロッピードライブ構成を流用しつつ、スロット3のflat 64KB RAMを256KBのRAM mapperに置き換えたものです——MSX-DOS2の拡張BIOSマッパーサポートルーチンには128KB以上のRAM mapperが必要であり、flat RAMではサイズを増やしてもこの要件を満たせないためです。
 
-> **注記**：256KBのRAM mapperを搭載したHB-F1XDの実機は存在しません。実機のHB-F1XDは常に固定64KBのflat RAMであり、RAM mapperではありません。`hb_f1xd_256` は実機に関する未検証の主張ではなく、MSX-DOS2が必要とするメモリ構成を提供するためだけに作られた架空の構成です。それ以外のHB-F1XD実機の宣言はすべてそのまま流用しています。
+> **注記**：256KBのRAM mapperを搭載したHB-F1XDの実機は存在しません。実機のHB-F1XDは常に固定64KBのflat RAMであり、RAM mapperではありません。`hb_f1xd_256k` は実機に関する未検証の主張ではなく、MSX-DOS2が必要とするメモリ構成を提供するためだけに作られた架空の構成です。それ以外のHB-F1XD実機の宣言はすべてそのまま流用しています。
 
 `fs_a1f`（Panasonic FS-A1F）は実機 ROM を使用し、TC8566AF フロッピーディスクドライブを備えます。`fs-a1f_basic-bios2.rom`・`fs-a1f_msx2sub.rom`・`fs-a1f_disk.rom` を `roms/fs_a1f/` に配置し、`--fdd1` でディスクをマウントします。実機はこれらを1つの128KBマスクROMとして出荷しています — 期待される分割方法は `config/machines/fs_a1f.yaml` のコメントを参照してください。
 

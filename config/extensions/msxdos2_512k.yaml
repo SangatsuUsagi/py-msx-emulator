@@ -1,0 +1,34 @@
+schema_version: 1
+id: msxdos2_512k
+name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM"
+
+# Overlay fragment, not a standalone machine: applied on top of an
+# already-resolved base machine spec (via --extension msxdos2_512k) to
+# place a bank-switched RAM-mapper cartridge and the MSX-DOS2 kernel ROM
+# in primary slot 2. Combines memory_512k's sub-slot-0 RAM mapper (same
+# size, same volatile/no-persistence behavior) with a flat MSX-DOS2
+# kernel ROM in sub-slot 1, the same shape hbi_j1's sub-slot 1 (Kanji
+# driver+BASIC) already has. Requires a machine with no existing slot-3
+# memory mapper (has_ram_mapper == False) -- see cart-extension-overlay's
+# "msxdos2_512k extension installs a RAM-mapper cartridge and MSX-DOS2
+# kernel ROM in slot 2" Requirement for why two independent memory
+# mappers sharing the same I/O ports (0xFC-0xFF) is not supported.
+# Sub-slots 2-3 are left unpopulated (open bus).
+overlay: true
+shape: expanded
+slot: 2
+
+rom_base: roms/msxdos2s
+
+subslots:
+  0:
+    device: ram_mapper
+    size_kb: 512
+  1:
+    # Flat (non-bank-switched) MSX-DOS2 kernel ROM, visible only at
+    # 0x4000-0xBFFF -- 0x0000-0x3FFF/0xC000-0xFFFF are open bus.
+    device: flat_rom
+    rom:
+      file: msxd22s.rom
+      size_kb: 32
+      sha1: 7ea584782507218577c65d9665742fa0044b18b5

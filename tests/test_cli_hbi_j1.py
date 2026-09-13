@@ -1,4 +1,4 @@
-"""--extension hbi-j1 tests: CLI/config wiring (patched filesystem, no SDL
+"""--extension hbi_j1 tests: CLI/config wiring (patched filesystem, no SDL
 window), load_extension_overlay's expanded-shape parsing, and direct
 build_machine wiring (expanded slot 2: HalnoteMapper in sub-slot 0, a flat
 Kanji driver+BASIC ROM in sub-slot 1, KanjiRom on I/O ports 0xD8-0xDB) --
@@ -44,7 +44,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 
     def fake_read_bytes(self: Path) -> bytes:
         # HalnoteMapper/KanjiRom validate ROM size strictly in __post_init__,
-        # unlike fmpac/scc-plus's tests (which mock every ROM to one fixed
+        # unlike fmpac/scc_plus's tests (which mock every ROM to one fixed
         # size) -- resolve the right size per filename.
         sizes = {
             "hbi-j1_msx-je.rom": _HALNOTE_ROM_SIZE,
@@ -82,29 +82,29 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 def test_extension_hbi_j1_alone_boots() -> None:
-    code, out, _err = _run_main(["--extension", "hbi-j1", "--count-frame", "1"])
+    code, out, _err = _run_main(["--extension", "hbi_j1", "--count-frame", "1"])
     assert code == 0
-    assert "hbi-j1" in out
+    assert "hbi_j1" in out
 
 
 def test_extension_hbi_j1_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "hbi-j1", "--slot2", "game2.rom"])
+    code, _out, err = _run_main(["--extension", "hbi_j1", "--slot2", "game2.rom"])
     assert code != 0
     assert "--extension" in err and "--slot2" in err
 
 
 def test_extension_hbi_j1_and_mapper2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "hbi-j1", "--mapper2", "Konami"])
+    code, _out, err = _run_main(["--extension", "hbi_j1", "--mapper2", "Konami"])
     assert code != 0
     assert "--extension" in err and "--mapper2" in err
 
 
 # ---------------------------------------------------------------------------
-# load_extension_overlay: expanded-shape parsing of the real hbi-j1.yaml
+# load_extension_overlay: expanded-shape parsing of the real hbi_j1.yaml
 # ---------------------------------------------------------------------------
 
 def test_load_hbi_j1_overlay_parses_real_yaml() -> None:
-    overlay = load_extension_overlay("hbi-j1", _CONFIG, _ROOT)
+    overlay = load_extension_overlay("hbi_j1", _CONFIG, _ROOT)
     assert isinstance(overlay, _ExpandedExtensionOverlay)
     assert set(overlay.subslots) == {0, 1}
     assert overlay.subslots[0].device == "halnote"

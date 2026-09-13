@@ -389,7 +389,7 @@ class _ExpandedSubslotDevice:
 @dataclass
 class _ExpandedExtensionOverlay:
     """Resolved expanded-shape extension overlay (config/extensions/<id>.yaml
-    with `shape: expanded`, e.g. hbi-j1.yaml): primary slot 2 becomes an
+    with `shape: expanded`, e.g. hbi_j1.yaml): primary slot 2 becomes an
     expanded slot with one device per declared sub-slot index, plus an
     optional slot-independent global I/O device (e.g. the Kanji-ROM font
     device, which has no cartridge-slot address decode of its own)."""
@@ -1221,8 +1221,8 @@ def load_extension_overlay(
     """Load and validate an extension overlay fragment.
 
     Args:
-        extension_id: The --extension value ("fmpac", "scc-plus", "hbi-j1",
-            or "memory512k"), also the YAML filename stem.
+        extension_id: The --extension value ("fmpac", "scc_plus", "hbi_j1",
+            or "memory_512k"), also the YAML filename stem.
         config_dir: Path to the config/ directory.
         project_root: Project root used to resolve rom_base and the SRAM save
             path relative paths.
@@ -1649,7 +1649,7 @@ def build_machine(
             (_ExtensionOverlay) overlay unconditionally occupies primary
             slot 2, overriding whatever `cartridge2`/`mapper2` resolved to.
             An expanded (_ExpandedExtensionOverlay) overlay instead expands
-            slot 2 into per-sub-slot devices (see the `hbi-j1` extension) --
+            slot 2 into per-sub-slot devices (see the `hbi_j1` extension) --
             `cartridge2`/`mapper2` are likewise overridden.
 
     Returns:
@@ -1724,7 +1724,7 @@ def build_machine(
     if wiring.kanji_device is not None:
         io.register_read(0xD8, 0xDB, wiring.kanji_device.read_port)
         io.register_write(0xD8, 0xDB, wiring.kanji_device.write_port)
-    # An expanded slot 2's ram_mapper sub-slot (--extension memory512k)
+    # An expanded slot 2's ram_mapper sub-slot (--extension memory_512k)
     # registers on the same standard memory-mapper ports slot 3's own
     # RamMapper would use -- safe because _wire_extension_overlay already
     # rejected this combination when spec.has_ram_mapper is True.

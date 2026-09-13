@@ -27,7 +27,7 @@ scale: 3
 # slot2: roms/slot2.rom
 
 # Overlay a slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM) or
-# "scc-plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
+# "scc_plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
 # no ROM/data file is ever loaded -- plus the SCC sound chip). Conflicts
 # with a slot 2 cartridge (--slot2/--mapper2 / slot2 above).
 # extension: fmpac

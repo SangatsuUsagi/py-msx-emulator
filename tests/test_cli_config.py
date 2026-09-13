@@ -188,7 +188,7 @@ def test_config_extension_conflicts_with_config_slot2() -> None:
 def test_config_extension_conflicts_with_mapper2() -> None:
     code, _o, err, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "Konami"],
-        app_cfg=AppConfig(extension="scc-plus"))
+        app_cfg=AppConfig(extension="scc_plus"))
     assert code != 0
     assert "--extension" in err and "--mapper2" in err
 

@@ -348,7 +348,7 @@ def test_extension_overlay_rom_base_defaults_to_empty(tmp_path: Path) -> None:
 
 
 def test_load_scc_plus_overlay_parses_yaml_with_no_rom_block() -> None:
-    overlay = load_extension_overlay("scc-plus", _CONFIG, _ROOT)
+    overlay = load_extension_overlay("scc_plus", _CONFIG, _ROOT)
     assert overlay.device == "scc_i_cart"
     assert overlay.rom_base_dir is None
     assert overlay.rom_entry is None

@@ -1,4 +1,4 @@
-"""--extension scc-plus tests: CLI/config wiring (patched filesystem, no SDL
+"""--extension scc_plus tests: CLI/config wiring (patched filesystem, no SDL
 window) and direct build_machine wiring (SCCICart in slot 2, combinable with a
 slot-1 cartridge).
 """
@@ -63,28 +63,28 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 def test_extension_scc_plus_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "scc-plus", "--slot2", "game2.rom"])
+    code, _out, err = _run_main(["--extension", "scc_plus", "--slot2", "game2.rom"])
     assert code != 0
     assert "--extension" in err and "--slot2" in err
 
 
 def test_extension_scc_plus_and_mapper2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "scc-plus", "--mapper2", "Konami"])
+    code, _out, err = _run_main(["--extension", "scc_plus", "--mapper2", "Konami"])
     assert code != 0
     assert "--extension" in err and "--mapper2" in err
 
 
 def test_extension_scc_plus_alone_boots() -> None:
-    code, out, _err = _run_main(["--extension", "scc-plus", "--count-frame", "1"])
+    code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
 
 
 def test_extension_scc_plus_with_cartridge_boots() -> None:
-    """Unlike the old --scc-plus (slot 1), --extension scc-plus (slot 2) does
+    """Unlike the old --scc-plus (slot 1), --extension scc_plus (slot 2) does
     not conflict with a slot-1 cartridge argument or --mapper."""
     code, out, _err = _run_main(
-        ["--extension", "scc-plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
+        ["--extension", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
     )
     assert code == 0
     assert "scc_i_cart" in out
@@ -104,7 +104,7 @@ def _fake_app_config(**overrides: object) -> object:
 
 def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
     with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(extension="scc-plus")):
+               return_value=_fake_app_config(extension="scc_plus")):
         code, out, _err = _run_main(["--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
@@ -113,7 +113,7 @@ def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
 def test_cli_extension_overrides_config_extension() -> None:
     with patch("msx.app_config.load_app_config",
                return_value=_fake_app_config(extension="fmpac")):
-        code, out, _err = _run_main(["--extension", "scc-plus", "--count-frame", "1"])
+        code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
     assert "fmpac" not in out
@@ -188,7 +188,7 @@ def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: 
 
 
 def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
-    """--extension scc-plus (slot 2) no longer forces slot 1 -- a normal
+    """--extension scc_plus (slot 2) no longer forces slot 1 -- a normal
     cartridge/mapper resolves in slot 1 independently."""
     machine = build_machine(
         _msx1_spec(tmp_path), cartridge=bytes(65536), mapper="ASCII8",

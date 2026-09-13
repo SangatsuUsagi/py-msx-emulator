@@ -51,7 +51,9 @@ VALID_MAPPERS2: tuple[str, ...] = (
 
 # Accepted --extension ids (see the cart-extension-overlay spec). Each maps to
 # a config/extensions/<id>.yaml overlay fragment placed in primary slot 2.
-VALID_EXTENSIONS: tuple[str, ...] = ("fmpac", "scc-plus", "hbi-j1", "memory512k")
+VALID_EXTENSIONS: tuple[str, ...] = (
+    "fmpac", "scc_plus", "hbi_j1", "memory_512k", "msxdos2_512k",
+)
 
 # SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
 GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {

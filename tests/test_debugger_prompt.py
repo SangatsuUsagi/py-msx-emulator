@@ -566,7 +566,7 @@ class TestSlotActive:
         assert "seg=" in out
 
     def test_sl_slot2_subslot_shows_its_own_mapper_content(self, capsys):
-        """Regression test: an expanded slot 2 (e.g. --extension hbi-j1) must
+        """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
         report each page's actual sub-slot mapper via `_mapper2_subslots`,
         not the flat `_mapper2` (which would misreport "Cartridge (empty)"
         regardless of what's really mapped in)."""
@@ -608,7 +608,7 @@ class TestSlotTree:
         assert "page-map" not in out
 
     def test_st_shows_expanded_slot2_subslots(self, capsys):
-        """Regression test: an expanded slot 2 (e.g. --extension hbi-j1) must
+        """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
         get its own [EXPANDED] tree entry, listing each sub-slot's actual
         content -- mirroring slot 3's existing tree behaviour."""
         from msx.mapper import FlatMapper as _FlatMapper

@@ -4,7 +4,7 @@ Ground truth for SCCICart/SCC register semantics: see tests/test_scc_i_cart.py
 and tests/test_scc.py. This file only checks that save_state/load_state
 faithfully round-trips SCCICart's RAM/bank/mode-register state (via the
 generic slot-2 mapper2_kind/mapper2_state mechanism, msx/state.py -- SCCICart
-lives in slot 2 as of --extension scc-plus, and is persisted the same way any
+lives in slot 2 as of --extension scc_plus, and is persisted the same way any
 flat slot-2 Mapper is, since generalize-slot2-mapper-state) and the carried
 SCC chip's own state (via the existing generic scc save-state path).
 """
@@ -105,7 +105,7 @@ def test_roundtrip_preserves_scc_registers_and_plus_mode(saves_dir: Path, tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Extension mismatch (loading a state saved without --extension scc-plus
+# Extension mismatch (loading a state saved without --extension scc_plus
 # into a machine with it active, or vice versa): as of
 # generalize-slot2-mapper-state, this IS a flat slot-2 mapper2_kind mismatch
 # and now raises ValueError, mirroring slot 1's existing strict mapper_kind
@@ -143,7 +143,7 @@ def test_loading_scc_plus_state_into_plain_machine_raises(
 
 
 # ---------------------------------------------------------------------------
-# No --scc-plus: existing save/load behaviour unaffected
+# No --scc_plus: existing save/load behaviour unaffected
 # ---------------------------------------------------------------------------
 
 def test_machine_without_scc_plus_roundtrips(saves_dir: Path, tmp_path: Path) -> None:
