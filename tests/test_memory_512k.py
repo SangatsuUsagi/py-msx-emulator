@@ -110,6 +110,55 @@ def _msx2_with_ram_mapper_yaml(main_file: str = "main2.rom") -> str:
     """
 
 
+def _msx2_no_ram_mapper_yaml(main_file: str = "main2.rom") -> str:
+    # An MSX2 machine with a flat (non-mapper) slot-3 RAM sub-slot, the same
+    # shape real hb_f1xd/fs_a1f machines use -- has_ram_mapper is False, so
+    # this is the MSX2 base machine memory_512k's own build_machine tests
+    # exercise (an expanded extension overlay has no MSX1 counterpart per
+    # cart-extension-overlay's "Expanded extension overlay requires an MSX2
+    # base machine" Requirement, so these tests need an MSX2 base machine
+    # even when they are not about the has_ram_mapper conflict itself).
+    return f"""\
+    schema_version: 1
+    id: test_msx2_no_mapper
+    name: "Test MSX2 (no memory mapper, flat slot-3 RAM)"
+    generation: msx2
+    rom_base: roms/fake
+    cpu:
+      type: z80a
+      clock_mhz: 3.579545
+    slots:
+      primary:
+        0:
+          content:
+            - rom:
+                file: {main_file}
+                size_kb: 32
+                pages: [0, 1]
+                sha1: null
+        1: {{type: cartridge}}
+        2: {{type: cartridge}}
+        3:
+          expanded: true
+          secondary:
+            0:
+              content:
+                - rom:
+                    file: sub.rom
+                    size_kb: 32
+                    pages: [0, 1]
+                    sha1: null
+            2:
+              type: ram
+              size_kb: 64
+    builtin_devices:
+      - ref: psg_ay8910
+      - ref: vdp_v9938
+      - ref: rtc_rp5c01
+    default_extensions: []
+    """
+
+
 def _full_registry(tmp_path: Path) -> tuple[Path, dict]:
     config_dir = tmp_path / "config"
     for dev_id, ports in [
@@ -126,10 +175,16 @@ def _full_registry(tmp_path: Path) -> tuple[Path, dict]:
     return config_dir, registry
 
 
-def _no_mapper_spec(tmp_path: Path):
+def _msx1_spec(tmp_path: Path):
     config_dir, registry = _full_registry(tmp_path)
     _write(config_dir / "machines" / "test_msx1.yaml", _msx1_no_ram_mapper_yaml())
     return load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def _no_mapper_spec(tmp_path: Path):
+    config_dir, registry = _full_registry(tmp_path)
+    _write(config_dir / "machines" / "test_msx2_no_mapper.yaml", _msx2_no_ram_mapper_yaml())
+    return load_machine_spec("test_msx2_no_mapper", config_dir, registry, tmp_path)
 
 
 def _has_mapper_spec(tmp_path: Path):
@@ -249,7 +304,8 @@ def _ram_mapper_overlay(size_kb: int = 512) -> _ExpandedExtensionOverlay:
 def test_build_machine_wires_ram_mapper_subslot(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     assert machine.memory.slot2_sub_slot_enabled is True
     sub0 = machine.memory._mapper2_subslots[0]
@@ -260,7 +316,8 @@ def test_build_machine_wires_ram_mapper_subslot(tmp_path: Path) -> None:
 def test_ram_mapper_subslot_responds_on_standard_ports(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     machine.io.write_port(0xFF, 0x05)
     sub0 = machine.memory._mapper2_subslots[0]
@@ -272,7 +329,8 @@ def test_ram_mapper_subslot_responds_on_standard_ports(tmp_path: Path) -> None:
 def test_ram_mapper_cartridge_starts_blank(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
@@ -282,7 +340,8 @@ def test_ram_mapper_cartridge_starts_blank(tmp_path: Path) -> None:
 def test_machine_reset_resets_slot2_subslot_ram_mapper_banks(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
@@ -296,7 +355,8 @@ def test_machine_reset_resets_slot2_subslot_ram_mapper_banks(tmp_path: Path) -> 
 def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     assert machine.memory._mapper2_subslots[1] is None
     assert machine.memory._mapper2_subslots[2] is None
@@ -321,9 +381,22 @@ def test_accepted_on_machine_with_no_ram_mapper(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     assert spec.has_ram_mapper is False
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     assert isinstance(machine.memory._mapper2_subslots[0], RamMapper)
+
+
+def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
+    # A memory-mapper sub-slot has no MSX1-standard hardware counterpart --
+    # see cart-extension-overlay's "Expanded extension overlay requires an
+    # MSX2 base machine" Requirement.
+    spec = _msx1_spec(tmp_path)
+    assert spec.generation == "msx1"
+    with pytest.raises(MachineLoadError, match="MSX1"):
+        build_machine(
+            spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        )
 
 
 def test_real_hb_f1xd_has_no_ram_mapper(tmp_path: Path) -> None:
@@ -369,7 +442,8 @@ def test_roundtrip_preserves_ram_mapper_banks_and_contents(
 ) -> None:
     spec = _no_mapper_spec(tmp_path)
     machine = build_machine(
-        spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay=_ram_mapper_overlay()
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)

@@ -1433,15 +1433,22 @@ def _wire_expanded_overlay(
     overlay-declared Kanji ROM can be detected.
 
     Raises:
-        MachineLoadError: If the overlay declares a 'ram_mapper' sub-slot on
-            a machine that already has a slot-3 memory mapper, if a
-            machine-declared and an overlay-declared `io_device` both
-            resolve to a Kanji-ROM device (ports 0xD8-0xDB cannot serve
-            two), or if a sub-slot names a device kind that passed
-            load-time validation but has no construction case here (an
-            internal consistency error between `_KNOWN_EXPANDED_SUBSLOT_DEVICES`
-            and this function).
+        MachineLoadError: If applied to an MSX1 machine, if the overlay
+            declares a 'ram_mapper' sub-slot on a machine that already has a
+            slot-3 memory mapper, if a machine-declared and an
+            overlay-declared `io_device` both resolve to a Kanji-ROM device
+            (ports 0xD8-0xDB cannot serve two), or if a sub-slot names a
+            device kind that passed load-time validation but has no
+            construction case here (an internal consistency error between
+            `_KNOWN_EXPANDED_SUBSLOT_DEVICES` and this function).
     """
+    if spec.generation == "msx1":
+        raise MachineLoadError(
+            f"{spec.machine_id}: an expanded extension overlay has no MSX1 "
+            "counterpart (a memory-mapper sub-slot device has no MSX1-standard "
+            "hardware, and a real HBI-J1 is an MSX2-era peripheral) -- MSX1 "
+            "machines are not supported for this extension shape"
+        )
     if spec.has_ram_mapper and any(
         sub.device == "ram_mapper" for sub in extension_overlay.subslots.values()
     ):

@@ -1022,8 +1022,13 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     machine_rom_dir = tmp_path / "kanji_rom_dir"
     machine_rom_dir.mkdir()
     (machine_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
+    # MSX2: an expanded extension overlay has no MSX1 counterpart (see
+    # cart-extension-overlay's "Expanded extension overlay requires an MSX2
+    # base machine" Requirement) -- unrelated to the io_device conflict this
+    # test targets, but _ExpandedExtensionOverlay's empty `subslots={}` still
+    # goes through _wire_expanded_overlay, which now checks generation first.
     spec = dataclasses.replace(
-        _make_msx1_spec(tmp_path),
+        _make_msx2_spec(tmp_path),
         io_device=_ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=machine_rom_dir,
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
@@ -1040,4 +1045,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
         ),
     )
     with pytest.raises(MachineLoadError, match="cannot coexist"):
-        build_machine(spec, bios_override=_FAKE_ROM_32K, extension_overlay=overlay)
+        build_machine(
+            spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+            extension_overlay=overlay,
+        )
