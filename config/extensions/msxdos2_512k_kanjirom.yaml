@@ -1,9 +1,9 @@
 schema_version: 1
-id: msxdos2_512k_kanji
+id: msxdos2_512k_kanjirom
 name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + Kanji font ROM"
 
 # Overlay fragment, not a standalone machine: applied on top of an
-# already-resolved base machine spec (via --extension msxdos2_512k_kanji).
+# already-resolved base machine spec (via --extension msxdos2_512k_kanjirom).
 # Same slot-2 shape as msxdos2_512k (sub-slot 0 RAM mapper, sub-slot 1
 # MSX-DOS2 kernel ROM), plus a slot-independent global I/O device (the
 # Kanji-ROM font device, ports 0xD8-0xDB), same as hbi_j1's io_device.

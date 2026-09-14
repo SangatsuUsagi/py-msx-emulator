@@ -1,0 +1,57 @@
+schema_version: 1
+id: msxdos2_512k_viewfont
+name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + View font ROM"
+
+# Verifies the ascii8/ascii16 expanded-overlay sub-slot device kinds
+# (openspec/changes/add-ascii-expanded-subslot-devices) against a real ROM.
+# Same shape as msxdos2_512k.yaml (sub-slot 0 RAM mapper, sub-slot 1
+# MSX-DOS2 kernel ROM), plus an ASCII8-mapped (8 KB-bank MEGA ROM
+# Controller) View font ROM in sub-slot 2.
+#
+# roms/kanji/kaname_v.rom (245,760 bytes = 30 x 8 KB banks) matches the
+# Extended View font layout exactly (references/docs/"MSX data room Let's
+# use MSX-View ROM.md" section 3.7.2: 0000H-3BFFFH = 245,760 bytes,
+# vs. 3.7.1's plain "MSX-View付属ROM" at 0000H-2FFFFH = 196,608 bytes) --
+# ASCII-type MEGA ROM Controller, bank register power-on state 0 in every
+# page, so no bank switch is needed before searching for it.
+#
+# Per that same document's section 3.2 ("View fontの検索"), View font
+# software does not assume a fixed slot: it searches every slot for the
+# 'MSXViewKROM' identifier string at bank 0, 0010H-001AH (and, for the
+# Extended variant, '&2nd' at 001BH-001EH) -- so placing it in sub-slot 2
+# here, behind msxdos2_512k's own RAM mapper and MSX-DOS2 kernel, is a
+# faithful placement: real View font ROMs are routinely found via exactly
+# this kind of slot search, not a fixed address.
+overlay: true
+shape: expanded
+slot: 2
+
+rom_base: roms/msxdos2s
+
+subslots:
+  0:
+    device: ram_mapper
+    size_kb: 512
+  1:
+    # Flat (non-bank-switched) MSX-DOS2 kernel ROM, visible only at
+    # 0x4000-0xBFFF -- 0x0000-0x3FFF/0xC000-0xFFFF are open bus.
+    device: flat_rom
+    rom:
+      file: msxd22s.rom
+      size_kb: 32
+      sha1: 7ea584782507218577c65d9665742fa0044b18b5
+  2:
+    # Extended View font ROM (ASCII8-mapped, see header comment). Path
+    # escapes rom_base (roms/msxdos2s) up to roms/kanji, the same
+    # cross-directory reference msxdos2_512k_kanjirom.yaml's io_device
+    # (../kanji/BugMaruMSX-16.rom) already uses. Named "viewfont", not
+    # "kanji", to stay distinct from msxdos2_512k_kanjirom despite both
+    # being Japanese-font-related: this one is a View font (ASCII8-mapped
+    # MEGA ROM), that one is the JIS Kanji font ROM io_device.
+    device: ascii8
+    rom:
+      file: ../kanji/kaname_v.rom
+      size_kb: 240
+      sha1: bdf941ccb21015e15f4a2f518d9ac092c1005d6b
+
+# Sub-slot 3 is left unpopulated (open bus).
