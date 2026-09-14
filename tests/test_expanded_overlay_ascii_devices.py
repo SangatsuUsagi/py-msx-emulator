@@ -161,6 +161,60 @@ def test_ascii16_subslot_without_rom_block_rejected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Sub-slot vs. io_device device namespaces are disjoint (allium's
+# ExpandedOverlayDeviceNamespacesAreDisjoint invariant): a sub-slot-only
+# device kind (ascii8) is unrecognized as an io_device, and an io_device-only
+# kind (kanji_rom) is unrecognized as a sub-slot -- _KNOWN_EXPANDED_SUBSLOT_
+# DEVICES and _KNOWN_IO_DEVICES share no members, so each parse call rejects
+# the other namespace's kind the same way it rejects any unknown value.
+# ---------------------------------------------------------------------------
+
+def test_kanji_rom_rejected_as_subslot_device(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    _write(
+        config_dir / "extensions" / "bad.yaml",
+        """\
+        schema_version: 1
+        id: bad
+        overlay: true
+        shape: expanded
+        slot: 2
+        subslots:
+          0: {device: kanji_rom}
+        """,
+    )
+    with pytest.raises(MachineLoadError, match="unrecognized 'device' 'kanji_rom'"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+def test_ascii8_rejected_as_io_device(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    rom_dir = config_dir / "extensions" / "roms"
+    rom_dir.mkdir(parents=True)
+    (rom_dir / "game.rom").write_bytes(bytes(32768))
+    _write(
+        config_dir / "extensions" / "bad.yaml",
+        """\
+        schema_version: 1
+        id: bad
+        overlay: true
+        shape: expanded
+        slot: 2
+        rom_base: extensions/roms
+        subslots:
+          0: {device: ram_mapper, size_kb: 512}
+        io_device:
+          device: ascii8
+          rom:
+            file: game.rom
+            size_kb: 32
+        """,
+    )
+    with pytest.raises(MachineLoadError, match="unrecognized 'device' 'ascii8'"):
+        load_extension_overlay("bad", config_dir, tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # build_machine wiring: Ascii8Mapper/Ascii16Mapper construction and dispatch
 # (task 2)
 # ---------------------------------------------------------------------------
