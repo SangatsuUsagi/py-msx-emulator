@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
 from msx.audio_filter import BiquadLowPass
 from msx.frame_timer import FrameTimer
-from msx.input import KEY_NAME_TO_CELL, SDLK_JIS_YEN, InputState
+from msx.input import (
+    KEY_NAME_TO_CELL,
+    SDLK_HOST_APOSTROPHE_KEY,
+    SDLK_HOST_EQUALS_KEY,
+    SDLK_JIS_YEN,
+    InputState,
+)
 from msx.joystick import (
     _DEFAULT_GC_BUTTON_BIT,
     _DEFAULT_GC_TURBO_BUTTON_BIT,
@@ -246,6 +252,13 @@ class _EventApi(Protocol):
     # report for that key -- its keysym.sym is unreliable, so this is the
     # only stable signal.
     SDL_SCANCODE_INTERNATIONAL3: int
+    # Host apostrophe/quote key detection (see `_resolve_key_sym`): on a JIS
+    # input source this key's sym collides with SHIFT+"7", so only scancode
+    # tells the two apart.
+    SDL_SCANCODE_APOSTROPHE: int
+    # Host "="/"+" key detection (see `_resolve_key_sym`): has no JIS role at
+    # all, so it is identified by scancode and repurposed for "_".
+    SDL_SCANCODE_EQUALS: int
 
     def SDL_GetError(self) -> bytes: ...
     def SDL_PollEvent(self, event: object) -> int: ...
@@ -402,10 +415,29 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     Neither matches KEY_MATRIX_JP's key, so `sym` can't identify this key
     reliably; only the scancode can. This substitutes the stable
     SDLK_JIS_YEN sentinel (see msx/input.py) whenever that scancode is seen,
-    regardless of `sym`; every other key passes through unchanged.
+    regardless of `sym`.
+
+    The host's dedicated apostrophe/quote key has the opposite problem: its
+    sym (SDLK_QUOTE) is perfectly consistent, but on a JIS input source it is
+    reported to collide with the sym SHIFT+"7" produces -- two different
+    physical actions on one sym (see msx/input.py's SDLK_HOST_APOSTROPHE_KEY).
+    This substitutes that sentinel whenever SDL_SCANCODE_APOSTROPHE is seen,
+    so _JP_SYMBOLS can bind the two separately regardless.
+
+    The host's dedicated "="/"+" key has a sym (SDLK_EQUALS) that stays
+    constant across SHIFT states too (probe-confirmed), but on a JIS input
+    source it has no JIS role at all -- see msx/input.py's
+    SDLK_HOST_EQUALS_KEY for why it is repurposed rather than left dead. This
+    substitutes that sentinel whenever SDL_SCANCODE_EQUALS is seen.
+
+    Every other key passes through unchanged.
     """
     if keysym.scancode == sdl2.SDL_SCANCODE_INTERNATIONAL3:
         return SDLK_JIS_YEN
+    if keysym.scancode == sdl2.SDL_SCANCODE_APOSTROPHE:
+        return SDLK_HOST_APOSTROPHE_KEY
+    if keysym.scancode == sdl2.SDL_SCANCODE_EQUALS:
+        return SDLK_HOST_EQUALS_KEY
     return keysym.sym
 
 
