@@ -1,0 +1,40 @@
+# Changelog
+
+[日本語版はこちら](CHANGELOG_ja.md)
+
+- **v2.5.14** (2026-09-12) — Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}` flag (`extension` config key, backed by `config/extensions/<id>.yaml` overlay files), each extension unconditionally occupying primary slot 2. **BREAKING**: SCC-I now occupies primary slot 2 instead of slot 1. `--mapper2` also gains `KonamiSCC` support, sharing the machine's single SCC chip with slot 1.
+- **v2.5.13** (2026-09-12) — Add Sony HBI-J1 support via `--extension hbi_j1` (a JIS Kanji font ROM I/O device, a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM, and a flat Kanji driver + BASIC ROM, expanding slot 2 into two sub-slots — the author physically owns this cartridge and dumped its ROMs, SHA1-verified against openMSX) and V9938 interlace mode (R#9 IL/EO bits, with EO driving GRAPHIC4-7's automatic even/odd page alternation, matching real V9938 behaviour).
+- **v2.5.12** (2026-09-09) — `RamMapper`'s size is now configurable (whole 16 KB banks, previously fixed at 128 KB), and slot 3's legacy (RAM-mapper) dispatch branch can now host an FDC alongside the RAM mapper — previously an FDC required the data-driven flat-RAM layout instead. Adds `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony HB-F1XD (no real hardware matches this configuration) built to satisfy MSX-DOS2's extended BIOS mapper support routines, which require a RAM mapper of at least 128 KB; confirmed booting MSX-DOS2 successfully. Also implements the V9938's TEXT2 mode (SCREEN 0 WIDTH 80, MSX-DOS's `MODE 80`) — previously misdispatched as a GRAPHIC2 background with sprite mode 2 sprites, corrupting the screen — fixing the mode-bit dispatch priority, adding a dedicated 80-column/512-wide renderer, and extending `display_width` and the debugger's screen-mode display; confirmed on MSX-DOS.
+- **v2.5.11** (2026-09-06) — Remove the `mapper`/`mapper2` `py_emulator.yaml` config keys; cartridge mapper selection is now CLI-only (`--mapper` / `--mapper2`). Fixes a config-file default silently and falsely tripping the `--scc-plus`/`--mapper` mutual-exclusivity check.
+- **v2.5.10** (2026-09-01) — Add Allium specs for the remaining uncovered components (RTC, floppy disk image/drive, plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups), fixing several real bugs found along the way: RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram` (previously a single shared file let one machine's settings leak into another's) with a 12/24-hour encoding fix, and an undocumented Z80 DDCB/FDCB register-echo behavior is now implemented. Also adds full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with FDC-kind and disk-identity mismatch checks.
+- **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
+- **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
+- **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
+- **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
+- **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.
+- **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
+- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI flags being silently ignored on MSX1 machines; the interactive debugger's own commands already worked there, only the CLI startup path was gated to MSX2.
+- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus`: a bare sound cartridge in slot 1 with 64 KB bank-switched RAM and a Plus-mode SCC chip, for floppy-disk MSX2 titles that use it purely for audio.
+- **v2.5.1** (2026-08-16) — Close most outstanding Allium open questions from v2.5.0, fixing two PPI (i8255) bugs and rebinding quit to Ctrl+Q along the way. Switch the PSG amplitude table to measured-silicon data — an audible change.
+- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused spec layer and distill one for every major component, fixing several accuracy bugs (V9938 sprite collision, FDC) found along the way. Also add save-state schemas, a memory dispatch cache, and JIS keyboard bindings.
+- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the scanline loop, fixing a one-frame tear on titles that update VRAM and a display register in the same VBlank ISR. Also speeds up the debugger's per-instruction loop by ~9%.
+- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml` with `slot2`/`mapper2` and `frame_skip` config keys, and a `keyboard_joystick.buttons` section for rebinding Joy1's keyboard-emulation keys.
+- **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (128 KB ROM + 8 KB battery-backed SRAM); reconcile `--mapper` accepted names with the loader's supported set.
+- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`) and `KoeiSRAM32`.
+- **v2.4.4** (2026-08-04) — Add MSX mouse emulation (`--mouse[=1|2]`), reproducing the real pin-8-clocked nibble protocol via the host mouse.
+- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers with a flat mirror rebuilt only on bank switch, instead of resolving the active window on every read.
+- **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
+- **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file; switch `--benchmark` to a frame count.
+- **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
+- **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
+- **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.
+- **v2.3.4** (2026-07-19) — Add per-line banding for the display-adjust register.
+- **v2.3.3** (2026-07-19) — Fix handling of filenames with spaces.
+- **v2.3.2** (2026-07-19) — Fix V9938 line-interrupt handling.
+- **v2.3.1** (2026-07-19) — Refactor the socket RPC and MCP server.
+- **v2.3.0** (2026-07-19) — Add a socket RPC interface and MCP server.
+- **v2.2.1** (2026-07-15) — Add cycle-accurate CPU timing and PSG PCM playback.
+- **v2.2.0** (2026-07-13) — Add support for the Sony HB-F1XD (FDD + RTC).
+- **v2.1.0** (2026-07-13) — Improve MSX2 emulation performance.
+- **v2.0.0** (2026-07-06) — Add MSX2 CBIOS support.
+- **v1.0.0** (2026-06-07) — Initial release.
