@@ -1,5 +1,7 @@
 # Technical Implementation
 
+[← README.md](../README.md)
+
 This document describes the internal structure of the MSX1/MSX2 emulator — CPU
 execution, interrupt handling, I/O dispatch, VDP rendering, and the memory
 subsystem.
@@ -11,6 +13,7 @@ subsystem.
 - [Audio](#audio)
 - [Memory and slot system](#memory-and-slot-system)
 - [Floppy disk (FDC)](#floppy-disk-fdc)
+- [Machine and extension YAML schema](#machine-and-extension-yaml-schema)
 - [Machine YAML loader](#machine-yaml-loader)
 - [Portability](#portability)
 
@@ -446,6 +449,281 @@ sub-slot 0, SUB ROM in 1, the FDC in 2. `--fdd1`/`--fdd2` mount images into
 drives A/B; the debugger's `fdd1`/`fdd2` commands swap them at runtime. The implementation boots Disk BASIC, supports
 `CALL FORMAT`, and reads/writes files with write-back on exit. `machine.fdc` is
 `None` on machines with no floppy interface.
+
+## Machine and extension YAML schema
+
+`msx/machine_loader.py` is the single source of truth for three YAML
+surfaces: device definitions (`config/devices/*.yaml`), machine
+specifications (`config/machines/*.yaml`), and extension overlays
+(`config/extensions/*.yaml`). All three are hand-validated `TypedDict`
+shapes (`DeviceEntryYaml`, `MachineEntryYaml`, `ExtensionOverlayYaml`, and
+their nested shapes), not schema-validated by a library — every field this
+section documents corresponds to an explicit `.get()` call somewhere in the
+loader; a key not read there is pure documentation, whatever the YAML
+comment beside it claims. See
+[README_extension.md's "Slot model" section](../README_extension.md#slot-model)
+for the user-facing summary of what each primary slot can hold; this
+section documents the YAML syntax that produces it.
+
+### Device YAML (`config/devices/*.yaml`)
+
+| Field | Type | Required | Read by |
+| --- | --- | --- | --- |
+| `id` | string | yes | must equal the filename stem, or `load_device_registry` raises `MachineLoadError` |
+| `type` | string | yes | presence is validated; the value itself is never checked (`io_device`, by convention) |
+| `implemented` | bool | no (default `true`) | `false` skips the device at `builtin_devices` resolution time with a stderr warning rather than a hard failure — lets a device definition land before its emulation does |
+| `io_ports` | list of int | no | first and last elements become the device's `(start, end)` I/O range, falling back to `_DEFAULT_IO_PORTS` when the key is absent |
+
+Every other key (`name`, `chip`, `controls`, `vram_kb`, `segment_size_kb`,
+`keyboard_type`, ...) is stored in `_DeviceDef.raw` but is *not* read by
+generic code. `dev.raw.get(...)` is called from exactly two places in the
+whole codebase: `io_ports` above, and `keyboard_type` below (`ppi8255`
+only). `vdp_v9938.yaml`'s `vram_kb: 128` is never read anywhere — V9938's
+VRAM size is the hardcoded `_VRAM_SIZE = 131072` constant in
+`msx/vdp/v9938.py`, so that key (and its per-machine
+`overrides: {vram_kb: 128}` echo, below) documents intent without having
+any effect on the running emulator.
+
+```yaml
+id: vdp_v9938
+type: io_device
+implemented: true
+name: Yamaha V9938 Video Display Processor (MSX2)
+chip: v9938
+io_ports: [0x98, 0x99, 0x9A, 0x9B]
+controls: video_display_processor
+vram_kb: 128    # documentation only -- see note above
+```
+
+### Machine YAML (`config/machines/*.yaml`)
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `schema_version` | int | — | must be exactly `1` |
+| `id` | string | — | must equal the filename stem |
+| `generation` | string | — | `msx1` or `msx2`; anything else raises |
+| `name` | string | `id` | display name only |
+| `rom_base` | string | `roms/cbios` | directory (relative to the project root) every `rom:` block's `file` resolves against |
+| `video_standard` | string | `ntsc` | `ntsc` → 59,659 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`) |
+| `cpu.m1_wait_states` | int | `0` | extra T-states per Z80 M1 cycle — see [CPU emulation](#cpu-emulation) above |
+| `slots.primary` | mapping | — | keyed `0`–`3`; only `0` and `3` are read (below) |
+| `builtin_devices` | list | `[]` | see below |
+| `io_device` | mapping | — | optional machine-level global I/O device, same shape as an extension overlay's `io_device` (below) |
+
+#### Slot 0 (fixed)
+
+```yaml
+0:
+  content:
+    - rom: {file: cbios_main_msx2.rom, size_kb: 32, pages: [0, 1], sha1: null}
+    - rom: {file: cbios_logo_msx2.rom, size_kb: 16, pages: [2], sha1: null}
+```
+
+`content` is a list of `{rom: {...}}` entries. `_parse_slot0` scans it for
+the entry whose `pages` includes `0` or `1` (the main BIOS ROM, required —
+its absence raises `MachineLoadError`) and the entry whose `pages` includes
+`2` (an optional logo ROM at 0x8000–0xBFFF). `sha1: null` disables hash
+verification for that ROM; any other string value is checked against the
+loaded file.
+
+#### Slots 1 and 2: not read from the machine YAML
+
+Every machine YAML declares `1: {type: cartridge}` and `2: {type: cartridge}`
+under `slots.primary` — but `load_machine_spec` never reads `primary[1]` or
+`primary[2]`, only `primary[0]` and `primary[3]`. These two entries are
+declared intent only. Slot 1's cartridge (the positional CLI argument plus
+`--mapper`) and slot 2's cartridge/mapper (`--slot2`/`--mapper2`) or overlay
+(`--extension`) are resolved entirely from `build_machine()`'s own
+parameters — a consequence of the CLI, not of anything under
+`slots.primary.1`/`.2` in the YAML.
+
+#### Slot 3 — MSX1
+
+```yaml
+3:
+  size_kb: 32   # optional, defaults to 32
+```
+
+`_parse_slot3_msx1` reads only `size_kb` (default `32`) — flat RAM at
+0x8000–0xFFFF, no further structure.
+
+#### Slot 3 — MSX2
+
+```yaml
+3:
+  expanded: true
+  secondary:
+    0:
+      content:
+        - rom: {file: cbios_sub.rom, size_kb: 32, pages: [0, 1], sha1: null}
+    2:
+      type: ram
+      mapper: standard
+      size_kb: 128
+```
+
+`expanded: true` switches slot 3 into four secondary slots (`secondary.0`–
+`.3`, keyed the same way as `slots.primary`). `_parse_slot3_msx2` scans them,
+independently, for:
+
+- the first sub-slot with `content` whose `rom.pages` includes `0` or `1` →
+  the SUB ROM (optional; its sub-slot index is recorded, not fixed to 0)
+- the first sub-slot with `mapper: standard` → a `RamMapper`, sized by its
+  `size_kb` (default `128`; must be a positive multiple of `16`, checked by
+  `_check_ram_mapper_size_kb`, or `MachineLoadError`)
+- the first sub-slot with `type: ram` (and no `mapper: standard`) → flat
+  (non-mapper) RAM, sized by `size_kb` (default `64`) — used by `hb_f1xd`'s
+  real fixed 64 KB
+- the first sub-slot with an `fdc:` block → see [Floppy disk (FDC)](#floppy-disk-fdc)
+
+A `mapper: standard` sub-slot and a `type: ram` sub-slot are mutually
+exclusive across the whole `secondary` mapping (`Memory` cannot host both a
+RAM mapper and flat RAM at once) — `MachineLoadError` if both are declared.
+Flat RAM sharing a sub-slot index with the SUB ROM or the FDC is also
+rejected, since `Memory`'s write path has no guard against a stray write to
+either landing in flat RAM instead. Every sub-slot index is checked against
+`0`–`3` (`_check_subslot_index`) independently of which role it carries.
+
+`fdc:` block fields (only meaningful inside a slot-3 sub-slot):
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `rom` | `rom:` block | — | required (the DISK ROM) |
+| `controller` | string | `wd2793` | `wd2793` or `tc8566af` |
+| `connection_style` | string | `sony` | `sony` or `tc8566af` |
+| `drives` | int | `1` | must be positive |
+
+`(controller, connection_style)` must be one of `(wd2793, sony)` or
+`(tc8566af, tc8566af)` — any other pairing raises, even if each value is
+individually valid (e.g. `wd2793` + `tc8566af` is rejected).
+
+#### `builtin_devices`
+
+```yaml
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}   # accepted, never read (see Device YAML above)
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
+```
+
+Each entry's `ref` must resolve against the device registry
+(`load_device_registry`'s output), or `MachineLoadError`. `overrides` is a
+free-form mapping, but `_parse_builtin_devices` only ever reads one key from
+it: `keyboard_type` (`int` or `jp`), and only when `ref: ppi8255` — every
+other `overrides` key, for every other `ref`, is accepted and ignored.
+`ref: vdp_v9938`/`rtc_rp5c01`/`ppi8255` presence sets the `has_v9938`/
+`has_rtc`/keyboard-layout flags `MachineSpec` carries; every other `ref`
+only contributes its `io_ports` range.
+
+#### Machine-level `io_device`
+
+```yaml
+io_device:
+  device: kanji_rom
+  rom: {file: some_kanji_font.rom, size_kb: 256, sha1: null}
+```
+
+Same shape as an extension overlay's `io_device` (below) — a slot-independent
+global I/O device the machine itself provides, validated against the same
+`kanji_rom`-only `_KNOWN_IO_DEVICES` set. No shipped machine YAML declares
+one today; `--extension hbi_j1`/`msxdos2_512k_kanjirom` are the only current
+sources of a `kanji_rom` device, via the extension overlay's own
+`io_device` (below) instead.
+
+### Extension overlay YAML (`config/extensions/*.yaml`)
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `schema_version` | int | — | must be `1` |
+| `id` | string | — | documentation only — `load_extension_overlay` never reads it; the file is located by filename stem alone (`config/extensions/<--extension value>.yaml`), unlike machine/device YAML's `id` |
+| `slot` | int | `2` | must be `2` — the only slot `--extension` can reach |
+| `shape` | string | `flat` | `flat` or `expanded` |
+| `rom_base` | string | `""` (project root) | base directory for every `rom:` block below |
+
+#### Flat shape (`shape: flat`, or omitted)
+
+```yaml
+device: fmpac
+rom: {file: fmpac.rom, size_kb: 64}
+sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
+```
+
+`device` must be `fmpac` or `scc_i_cart` (`_KNOWN_EXTENSION_DEVICES`) — a
+separate namespace from the expanded shape's sub-slot devices below, even
+though both are spelled `device`. `fmpac` requires a `rom:` block;
+`scc_i_cart` does not (its RAM starts blank, no file loaded). A flat
+overlay's device unconditionally replaces primary slot 2's mapper wholesale.
+
+#### Expanded shape (`shape: expanded`)
+
+```yaml
+shape: expanded
+slot: 2
+rom_base: roms/hbi_j1
+subslots:
+  0:
+    device: halnote
+    rom: {file: hbi-j1_msx-je.rom, size_kb: 1024, sha1: null}
+    sram: {size_kb: 16, save_file: saves/sram/hbi-j1_msx-je.sram}
+  1:
+    device: flat_rom
+    rom: {file: hbi-j1_kanjibasic.rom, size_kb: 32, sha1: null}
+io_device:
+  device: kanji_rom
+  rom: {file: hbi-j1_kanjifont.rom, size_kb: 256, sha1: null}
+```
+
+`subslots` is a required, non-empty mapping keyed `0`–`3` (same index range
+and `_check_subslot_index` as an MSX2 slot-3 sub-slot). Each entry's
+`device` must be one of `halnote`, `flat_rom`, `ram_mapper`, `ascii8`,
+`ascii16` (`_KNOWN_EXPANDED_SUBSLOT_DEVICES`):
+
+| `device` | Requires | Constructs |
+| --- | --- | --- |
+| `halnote` | `rom:` | `HalnoteMapper` (1 MB ROM, optional `sram:`) |
+| `flat_rom` | `rom:` | `FixedPageMapper(base=0x4000)` — visible only at 0x4000–0xBFFF |
+| `ascii8` | `rom:` | `Ascii8Mapper` |
+| `ascii16` | `rom:` | `Ascii16Mapper` |
+| `ram_mapper` | `size_kb:` (directly on the entry, no `rom:`) | `RamMapper`; `size_kb` must be a positive multiple of `16` |
+
+At most one `ram_mapper` sub-slot is allowed per overlay — a second one
+would double-register the standard memory-mapper I/O ports (0xFC–0xFF).
+Applying an expanded overlay to an MSX1 machine always raises
+`MachineLoadError` (no MSX1-standard hardware matches a memory-mapper
+sub-slot, and every current expanded overlay models MSX2-era hardware). A
+`ram_mapper` sub-slot also conflicts with a machine that already has its
+own slot-3 RAM mapper (`has_ram_mapper=True`) — two mappers would fight
+over the same ports.
+
+The optional top-level `io_device` is validated against a *third*, disjoint
+device namespace, `_KNOWN_IO_DEVICES = {kanji_rom}` — `device: kanji_rom`
+is invalid inside `subslots`, and `device: halnote` (or any sub-slot
+device) is invalid inside `io_device`. If both a machine-level `io_device`
+and an overlay's `io_device` resolve to `kanji_rom` at once, `build_machine`
+raises (ports 0xD8–0xDB cannot serve two Kanji-ROM devices).
+
+#### `rom:` and `sram:` blocks
+
+Both shapes share the same nested block schemas, parsed by
+`_parse_rom_entry` (also used for slot 0's ROMs, the MSX2 SUB ROM, and the
+FDC's DISK ROM — one shared implementation for every ROM-bearing field in
+the loader):
+
+| `rom:` field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `file` | string | yes | resolved against `rom_base` |
+| `size_kb` | int | no (default `0`) | documentation only — not checked against the actual file size |
+| `pages` | list of int | no (default `[]`) | only meaningful for slot 0 and the SUB ROM, where it selects which entry is the main/logo/SUB ROM |
+| `sha1` | string | no | `null`/omitted disables verification |
+
+| `sram:` field | Type | Notes |
+| --- | --- | --- |
+| `size_kb` | int | documentation only — ignored; each device's SRAM size is a Python-side constant (`HALNOTE_SRAM_SIZE`, `FMPAC_SRAM_SIZE`, ...) |
+| `save_file` | string | path (relative to the project root) the SRAM is persisted to; omit for no persistence |
 
 ## Machine YAML loader
 

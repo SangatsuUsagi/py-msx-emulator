@@ -1,5 +1,7 @@
 # 技術実装ドキュメント
 
+[← README_ja.md](../README_ja.md)
+
 本ドキュメントでは、MSX1/MSX2 エミュレータの内部構造——CPU 実行、割り込み管理、I/O ディスパッチ、VDP レンダリング、メモリサブシステム——を解説します。
 
 - [CPU エミュレーション](#cpu-エミュレーション)
@@ -9,6 +11,7 @@
 - [オーディオ](#オーディオ)
 - [メモリとスロットシステム](#メモリとスロットシステム)
 - [フロッピーディスク（FDC）](#フロッピーディスクfdc)
+- [マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ)
 - [マシン YAML ローダ](#マシン-yaml-ローダ)
 - [移植性](#移植性)
 
@@ -294,6 +297,279 @@ MSX2 ではスロット 3 が拡張されます（`sub_slot_enabled = True`）�
 | インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000–0x7FFF にマップする。`SonyPhilipsInterface`（= openMSX PhilipsFDC）は WD2793 のレジスタを 0x7FF8–0x7FFF に置き、ディスク交換ビットを消費。`TC8566AFInterface` は 2 本の制御レジスタ・Main Status Register・Data Register を 0x7FF8–0x7FFB に置く。`swap()` による実行中のマウント/イジェクトは両者で共有 |
 
 どのコントローラと接続方式を使うかはマシン YAML の `fdc:` ブロックで宣言するため、同梱の 2 機種はデータの違いだけで区別されます。Sony HB-F1XD（`hb_f1xd`）は WD2793 と DISK ROM をスロット 3 サブスロット 0 に置き、サブスロット 3 に 64 KB のフラット RAM を併設します。Panasonic FS-A1F（`fs_a1f`）は TC8566AF を使い、4 つのセカンダリスロットに役割を分散します——サブスロット 0 が RAM、1 が SUB ROM、2 が FDC です。`--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントし、デバッガの `fdd1`/`fdd2` コマンドで実行中に入れ替えできます。本実装は Disk BASIC を起動し、`CALL FORMAT` に対応し、ファイルの読み書き（終了時に書き戻し）を行います。フロッピーインターフェースを持たないマシンでは `machine.fdc` は `None` です。
+
+## マシンと拡張の YAML スキーマ
+
+`msx/machine_loader.py` は 3 種類の YAML ——デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）——の唯一の正とするソースです。3 種類とも手書きで検証する `TypedDict` 形状（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml`、およびそれらのネストした形状）であり、スキーマ検証ライブラリは使っていません——本節で扱う各フィールドは、ローダのどこかにある明示的な `.get()` 呼び出しに対応しています。読まれていないキーは、YAML 側のコメントが何を主張していようと単なるドキュメントにすぎません。各プライマリスロットが何を保持できるかのユーザー向けまとめは
+[README_extension.md の「Slot model」節](../README_extension.md#slot-model)（英語）を参照してください。本節ではそれを生成する YAML 構文そのものを解説します。
+
+### デバイス YAML（`config/devices/*.yaml`）
+
+| フィールド | 型 | 必須 | 読み出し箇所 |
+| --- | --- | --- | --- |
+| `id` | string | はい | ファイル名の stem と一致しなければ `load_device_registry` が `MachineLoadError` を送出 |
+| `type` | string | はい | 存在チェックのみで値そのものは検証されない（慣例で `io_device` 等） |
+| `implemented` | bool | いいえ（デフォルト `true`） | `false` の場合、`builtin_devices` 解決時に stderr 警告付きでスキップされる（ハード失敗ではない）——エミュレーションの実装より先にデバイス定義だけをコミットできる |
+| `io_ports` | int のリスト | いいえ | 先頭要素と末尾要素がそのデバイスの `(start, end)` I/O レンジになる。キーが無ければ `_DEFAULT_IO_PORTS` にフォールバック |
+
+それ以外のキー（`name`、`chip`、`controls`、`vram_kb`、`segment_size_kb`、
+`keyboard_type` 等）は `_DeviceDef.raw` に格納されますが、汎用コードからは
+**読まれません**。`dev.raw.get(...)` はコードベース全体でちょうど2箇所からしか
+呼ばれていません——上記の `io_ports` と、下記の `keyboard_type`（`ppi8255`
+のみ）です。`vdp_v9938.yaml` の `vram_kb: 128` はどこからも読まれません——
+V9938 の VRAM サイズは `msx/vdp/v9938.py` にハードコードされた定数
+`_VRAM_SIZE = 131072` で固定されており、このキー（および後述するマシン側の
+`overrides: {vram_kb: 128}` という echo）は意図を記すだけで、実際に動作中の
+エミュレータには何の効果もありません。
+
+```yaml
+id: vdp_v9938
+type: io_device
+implemented: true
+name: Yamaha V9938 Video Display Processor (MSX2)
+chip: v9938
+io_ports: [0x98, 0x99, 0x9A, 0x9B]
+controls: video_display_processor
+vram_kb: 128    # ドキュメント目的のみ -- 上記の注記を参照
+```
+
+### マシン YAML（`config/machines/*.yaml`）
+
+| フィールド | 型 | デフォルト | 備考 |
+| --- | --- | --- | --- |
+| `schema_version` | int | — | 必ず `1` |
+| `id` | string | — | ファイル名の stem と一致しなければならない |
+| `generation` | string | — | `msx1` または `msx2`。それ以外はエラー |
+| `name` | string | `id` | 表示名のみ |
+| `rom_base` | string | `roms/cbios` | すべての `rom:` ブロックの `file` を解決する基準ディレクトリ（プロジェクトルート相対） |
+| `video_standard` | string | `ntsc` | `ntsc` → 1 フレーム 59,659 T ステート/262 ライン、`pal` → 71,364/313（`cbios_msx1_eu` が使用） |
+| `cpu.m1_wait_states` | int | `0` | Z80 の M1 サイクルごとに追加される T ステート数 — 前述の[CPU エミュレーション](#cpu-エミュレーション)を参照 |
+| `slots.primary` | マッピング | — | `0`〜`3` をキーとする。読まれるのは `0` と `3` のみ（後述） |
+| `builtin_devices` | リスト | `[]` | 後述 |
+| `io_device` | マッピング | — | 任意のマシンレベル・グローバル I/O デバイス。拡張オーバーレイの `io_device`（後述）と同じ形状 |
+
+#### スロット 0（固定）
+
+```yaml
+0:
+  content:
+    - rom: {file: cbios_main_msx2.rom, size_kb: 32, pages: [0, 1], sha1: null}
+    - rom: {file: cbios_logo_msx2.rom, size_kb: 16, pages: [2], sha1: null}
+```
+
+`content` は `{rom: {...}}` エントリのリストです。`_parse_slot0` はこの中から
+`pages` に `0` または `1` を含むエントリ（メイン BIOS ROM——必須。無ければ
+`MachineLoadError`）と、`pages` に `2` を含むエントリ（0x8000–0xBFFF の任意の
+ロゴ ROM）を走査して取り出します。`sha1: null` はそのROMのハッシュ検証を
+無効化します。それ以外の文字列値が指定されていれば、読み込んだファイルと
+照合されます。
+
+#### スロット 1・2：マシン YAML からは読まれない
+
+すべてのマシン YAML は `slots.primary` に `1: {type: cartridge}` と
+`2: {type: cartridge}` を宣言していますが、`load_machine_spec` は
+`primary[1]` も `primary[2]` も読みません——読むのは `primary[0]` と
+`primary[3]` だけです。この 2 つのエントリは宣言された意図を示すだけの
+ものです。スロット 1 のカートリッジ（位置引数の ROM + `--mapper`）と
+スロット 2 のカートリッジ/マッパー（`--slot2`/`--mapper2`）またはオーバーレイ
+（`--extension`）は、すべて `build_machine()` 自身の引数から解決されます
+——これは CLI 側の帰結であって、YAML の `slots.primary.1`/`.2` の中身とは
+無関係です。
+
+#### スロット 3 — MSX1
+
+```yaml
+3:
+  size_kb: 32   # 任意、デフォルトは 32
+```
+
+`_parse_slot3_msx1` が読むのは `size_kb`（デフォルト `32`）のみです——
+0x8000–0xFFFF のフラット RAM で、それ以上の構造はありません。
+
+#### スロット 3 — MSX2
+
+```yaml
+3:
+  expanded: true
+  secondary:
+    0:
+      content:
+        - rom: {file: cbios_sub.rom, size_kb: 32, pages: [0, 1], sha1: null}
+    2:
+      type: ram
+      mapper: standard
+      size_kb: 128
+```
+
+`expanded: true` によってスロット 3 は 4 つのセカンダリスロット
+（`secondary.0`〜`.3`、`slots.primary` と同じキーの付け方）に切り替わります。
+`_parse_slot3_msx2` はこれらを独立に走査し、以下を解決します。
+
+- `content` を持ち、`rom.pages` に `0` または `1` を含む最初のサブスロット
+  → SUB ROM（任意。そのサブスロット番号は固定ではなく記録される）
+- `mapper: standard` を持つ最初のサブスロット → `RamMapper`。サイズは
+  `size_kb`（デフォルト `128`。16 の正の倍数でなければならず、
+  `_check_ram_mapper_size_kb` で検証、違反すると `MachineLoadError`）
+- `type: ram` を持ち `mapper: standard` を持たない最初のサブスロット →
+  フラット（非マッパー）RAM。サイズは `size_kb`（デフォルト `64`）——
+  `hb_f1xd` の実機固定 64 KB で使用
+- `fdc:` ブロックを持つ最初のサブスロット → [フロッピーディスク（FDC）](#フロッピーディスクfdc)を参照
+
+`mapper: standard` サブスロットと `type: ram` サブスロットは `secondary`
+マッピング全体で排他です（`Memory` は RAM マッパーとフラット RAM を同時に
+ホストできません）——両方宣言すると `MachineLoadError`。フラット RAM が
+SUB ROM や FDC と同じサブスロット番号を共有することも拒否されます。
+`Memory` の書き込みパスにはどちらかへの誤った書き込みを防ぐガードが
+無いためです。どのサブスロット番号も、担う役割に関わらず `0`〜`3`
+（`_check_subslot_index`）でチェックされます。
+
+`fdc:` ブロックのフィールド（スロット 3 のサブスロット内でのみ意味を持つ）：
+
+| フィールド | 型 | デフォルト | 備考 |
+| --- | --- | --- | --- |
+| `rom` | `rom:` ブロック | — | 必須（DISK ROM） |
+| `controller` | string | `wd2793` | `wd2793` または `tc8566af` |
+| `connection_style` | string | `sony` | `sony` または `tc8566af` |
+| `drives` | int | `1` | 正の値でなければならない |
+
+`(controller, connection_style)` の組は `(wd2793, sony)` または
+`(tc8566af, tc8566af)` のいずれかでなければなりません——それぞれの値が
+個別には有効でも、組み合わせが違えばエラーになります（例：`wd2793` +
+`tc8566af` は拒否される）。
+
+#### `builtin_devices`
+
+```yaml
+builtin_devices:
+  - ref: ppi8255
+    overrides: {keyboard_type: jp}
+  - ref: vdp_v9938
+    overrides: {vram_kb: 128}   # 受理されるが読まれない（上記デバイス YAML の節を参照）
+  - ref: psg_ay8910
+  - ref: rtc_rp5c01
+  - ref: memory_mapper_standard
+```
+
+各エントリの `ref` はデバイスレジストリ（`load_device_registry` の出力）に
+対して解決できなければならず、できなければ `MachineLoadError` です。
+`overrides` は自由形式のマッピングですが、`_parse_builtin_devices` が
+実際に読むキーは 1 つだけ——`keyboard_type`（`int` または `jp`）、しかも
+`ref: ppi8255` のときだけです。それ以外の `overrides` キーは、どの `ref`
+に対しても受理されて無視されます。`ref: vdp_v9938`/`rtc_rp5c01`/`ppi8255`
+の存在は `MachineSpec` が持つ `has_v9938`/`has_rtc`/キーボードレイアウトの
+各フラグを設定します。それ以外の `ref` は自身の `io_ports` レンジのみを
+提供します。
+
+#### マシンレベルの `io_device`
+
+```yaml
+io_device:
+  device: kanji_rom
+  rom: {file: some_kanji_font.rom, size_kb: 256, sha1: null}
+```
+
+拡張オーバーレイの `io_device`（後述）と同じ形状です——マシン自身が
+提供する、スロットに依存しないグローバル I/O デバイスで、同じ
+`kanji_rom` のみの `_KNOWN_IO_DEVICES` 集合に対して検証されます。
+現状、これを宣言している同梱マシン YAML はありません。`kanji_rom`
+デバイスの現在の供給元は `--extension hbi_j1`/`msxdos2_512k_kanjirom`
+のみで、いずれも拡張オーバーレイ自身の `io_device`（後述）経由です。
+
+### 拡張オーバーレイ YAML（`config/extensions/*.yaml`）
+
+| フィールド | 型 | デフォルト | 備考 |
+| --- | --- | --- | --- |
+| `schema_version` | int | — | `1` でなければならない |
+| `id` | string | — | ドキュメント目的のみ——`load_extension_overlay` はこれを一切読まない。ファイルはファイル名の stem のみ（`config/extensions/<--extension の値>.yaml`）で特定される。マシン/デバイス YAML の `id` とは異なる |
+| `slot` | int | `2` | `2` でなければならない——`--extension` が到達できる唯一のスロット |
+| `shape` | string | `flat` | `flat` または `expanded` |
+| `rom_base` | string | `""`（プロジェクトルート） | 以下の各 `rom:` ブロックの基準ディレクトリ |
+
+#### フラット形状（`shape: flat`、または省略時）
+
+```yaml
+device: fmpac
+rom: {file: fmpac.rom, size_kb: 64}
+sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
+```
+
+`device` は `fmpac` または `scc_i_cart`（`_KNOWN_EXTENSION_DEVICES`）で
+なければなりません——同じ `device` という名前でも、後述の拡張形状の
+サブスロットデバイスとは別の名前空間です。`fmpac` は `rom:` ブロックが
+必須、`scc_i_cart` は不要です（RAM は空の状態で開始し、ファイルはロード
+されません）。フラットオーバーレイのデバイスは、プライマリスロット 2 の
+マッパーを無条件かつ丸ごと置き換えます。
+
+#### 拡張形状（`shape: expanded`）
+
+```yaml
+shape: expanded
+slot: 2
+rom_base: roms/hbi_j1
+subslots:
+  0:
+    device: halnote
+    rom: {file: hbi-j1_msx-je.rom, size_kb: 1024, sha1: null}
+    sram: {size_kb: 16, save_file: saves/sram/hbi-j1_msx-je.sram}
+  1:
+    device: flat_rom
+    rom: {file: hbi-j1_kanjibasic.rom, size_kb: 32, sha1: null}
+io_device:
+  device: kanji_rom
+  rom: {file: hbi-j1_kanjifont.rom, size_kb: 256, sha1: null}
+```
+
+`subslots` は必須かつ空であってはならないマッピングで、`0`〜`3`
+（MSX2 スロット 3 のサブスロットと同じ番号範囲・同じ
+`_check_subslot_index`）をキーとします。各エントリの `device` は
+`halnote`、`flat_rom`、`ram_mapper`、`ascii8`、`ascii16`
+（`_KNOWN_EXPANDED_SUBSLOT_DEVICES`）のいずれかでなければなりません。
+
+| `device` | 必須項目 | 構築されるもの |
+| --- | --- | --- |
+| `halnote` | `rom:` | `HalnoteMapper`（1 MB ROM、`sram:` は任意） |
+| `flat_rom` | `rom:` | `FixedPageMapper(base=0x4000)`——0x4000–0xBFFF にのみ現れる |
+| `ascii8` | `rom:` | `Ascii8Mapper` |
+| `ascii16` | `rom:` | `Ascii16Mapper` |
+| `ram_mapper` | `size_kb:`（エントリに直接指定、`rom:` は無し） | `RamMapper`。`size_kb` は 16 の正の倍数でなければならない |
+
+`ram_mapper` サブスロットは 1 オーバーレイにつき最大 1 つまでです——
+2 つあると標準メモリマッパー I/O ポート（0xFC–0xFF）の二重登録に
+なるためです。拡張オーバーレイを MSX1 マシンに適用すると常に
+`MachineLoadError` になります（メモリマッパー・サブスロットに対応する
+MSX1 標準ハードウェアは存在せず、現在の拡張オーバーレイはいずれも
+MSX2 世代のハードウェアをモデル化しているため）。`ram_mapper`
+サブスロットは、既にスロット 3 に自前の RAM マッパーを持つマシン
+（`has_ram_mapper=True`）とも衝突します——2 つのマッパーが同じポートを
+奪い合うことになるためです。
+
+任意のトップレベル `io_device` は、*3 つめの*独立したデバイス名前空間
+`_KNOWN_IO_DEVICES = {kanji_rom}` に対して検証されます——`subslots`
+の `device` として `kanji_rom` は使えず、`io_device` の `device` として
+`halnote`（や他のサブスロットデバイス）も使えません。
+マシンレベルの `io_device` と拡張オーバーレイの `io_device` の両方が
+`kanji_rom` に解決された場合、`build_machine` はエラーを送出します
+（ポート 0xD8–0xDB は 2 つの漢字ROMデバイスを同時にはサービスできない
+ため）。
+
+#### `rom:` と `sram:` ブロック
+
+両形状とも、同じネストしたブロックスキーマを共有しています。これは
+`_parse_rom_entry` によってパースされます（スロット 0 の ROM 群、MSX2 の
+SUB ROM、FDC の DISK ROM でも使われる——ローダ内の ROM を扱うすべての
+フィールドで共有される、唯一の実装です）。
+
+| `rom:` のフィールド | 型 | 必須 | 備考 |
+| --- | --- | --- | --- |
+| `file` | string | はい | `rom_base` を基準に解決される |
+| `size_kb` | int | いいえ（デフォルト `0`） | ドキュメント目的のみ——実際のファイルサイズとは照合されない |
+| `pages` | int のリスト | いいえ（デフォルト `[]`） | スロット 0 と SUB ROM でのみ意味を持ち、どのエントリがメイン/ロゴ/SUB ROM かを選択する |
+| `sha1` | string | いいえ | `null`/省略でハッシュ検証を無効化 |
+
+| `sram:` のフィールド | 型 | 備考 |
+| --- | --- | --- |
+| `size_kb` | int | ドキュメント目的のみ——無視される。各デバイスの SRAM サイズは Python 側の定数（`HALNOTE_SRAM_SIZE`、`FMPAC_SRAM_SIZE` 等）で決まる |
+| `save_file` | string | SRAM の永続化先パス（プロジェクトルート相対）。省略すると永続化しない |
 
 ## マシン YAML ローダ
 

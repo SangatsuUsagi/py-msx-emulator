@@ -13,20 +13,21 @@
 **ハードウェア:**
 
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
-- [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004)
+- [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **ソフトウェア:**
 
 - **MSX1:**
-  - [沙羅曼蛇（Salamander）— KONAMI](https://ja.wikipedia.org/wiki/%E6%B2%99%E7%BE%85%E6%9B%BC%E8%9B%87)
-  - [グラディウス2（Nemesis 2）— KONAMI](https://ja.wikipedia.org/wiki/%E3%82%B0%E3%83%A9%E3%83%87%E3%82%A3%E3%82%A6%E3%82%B92)
-  - [夢大陸アドベンチャー（Penguin Adventure）— KONAMI](https://ja.wikipedia.org/wiki/%E5%A4%A2%E5%A4%A7%E9%99%B8%E3%82%A2%E3%83%89%E3%83%99%E3%83%B3%E3%83%81%E3%83%A3%E3%83%BC)
-  - [Game Master II（新10倍カートリッジ）— KONAMI](https://en.wikipedia.org/wiki/Konami_Game_Master)
+  - [沙羅曼蛇（Salamander）— KONAMI](https://generation-msx.nl/software/konami/salamander/941)
+  - [グラディウス2（Nemesis 2）— KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
+  - [夢大陸アドベンチャー（Penguin Adventure）— KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
+  - [コナミの新10倍カートリッジ（Game Master 2）— KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
 - **MSX2:**
-  - [ドラゴンスレイヤーIV ドラスレファミリー（Legacy of the Wizard）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%89%E3%83%A9%E3%82%B4%E3%83%B3%E3%82%B9%E3%83%AC%E3%82%A4%E3%83%A4%E3%83%BCIV_%E3%83%89%E3%83%A9%E3%82%B9%E3%83%AC%E3%83%95%E3%82%A1%E3%83%9F%E3%83%AA%E3%83%BC)
-  - [ロマンシア（Romancia）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%AD%E3%83%9E%E3%83%B3%E3%82%B7%E3%82%A2)
+  - [ドラゴンスレイヤーIVドラスレファミリー（Dragon Slayer IV - Drasle Family）— Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
+  - [ロマンシア（Romancia - Dragon Slayer Jr.）— Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
 - **MSX2（フロッピーディスク）:**
-  - [ドラゴンスレイヤー英雄伝説（Dragon Slayer: The Legend of Heroes）— Falcom](https://ja.wikipedia.org/wiki/%E3%83%89%E3%83%A9%E3%82%B4%E3%83%B3%E3%82%B9%E3%83%AC%E3%82%A4%E3%83%A4%E3%83%BC%E8%8B%B1%E9%9B%84%E4%BC%9D%E8%AA%AC)
+  - [ドラゴンスレイヤー英雄伝説（Dragon Slayer VI - The Legend of Heroes）— Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-vi-the-legend-of-heroes/1387)
+  - [はがき書右衛門（Letter Writer: Print Like Handwriting）— Sony](https://generation-msx.nl/software/sony-corporation/letter-writer-print-like-handwriting/1181)
 
 テストは作者が所有する物理 ROM/ディスクダンプのみで行っているため、上記以外の MSX1/MSX2 タイトルが正しく動作する保証はありません。他のタイトルのバグ報告は歓迎しますが、サポートはベストエフォートです。
 

@@ -17,20 +17,21 @@ software owned by the author.
 **Hardware:**
 
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
-- [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004)
+- [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **Software:**
 
 - **MSX1:**
-  - [Salamander (沙羅曼蛇) by KONAMI](<https://en.wikipedia.org/wiki/Salamander_(video_game)>)
-  - [Nemesis 2 (グラディウス2) by KONAMI](<https://en.wikipedia.org/wiki/Nemesis_2_(MSX)>)
-  - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://en.wikipedia.org/wiki/Penguin_Adventure)
-  - [Game Master II (新10倍カートリッジ) by KONAMI](https://en.wikipedia.org/wiki/Konami_Game_Master)
+  - [Salamander (沙羅曼蛇) by KONAMI](https://generation-msx.nl/software/konami/salamander/941)
+  - [Nemesis 2 (グラディウス2) by KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
+  - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
+  - [Game Master 2 (コナミの新10倍カートリッジ) by KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
 - **MSX2:**
-  - [Legacy of the Wizard (ドラゴンスレイヤーIV ドラスレファミリー) by Falcom](https://en.wikipedia.org/wiki/Legacy_of_the_Wizard)
-  - [Romancia (ロマンシア) by Falcom](https://en.wikipedia.org/wiki/Romancia)
+  - [Dragon Slayer IV - Drasle Family (ドラゴンスレイヤーIVドラスレファミリー) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
+  - [Romancia - Dragon Slayer Jr. (ロマンシア) by Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
 - **MSX2 (floppy disk):**
-  - [Dragon Slayer: The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://en.wikipedia.org/wiki/Dragon_Slayer:_The_Legend_of_Heroes)
+  - [Dragon Slayer VI - The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-vi-the-legend-of-heroes/1387)
+  - [Letter Writer: Print Like Handwriting (はがき書右衛門) by Sony](https://generation-msx.nl/software/sony-corporation/letter-writer-print-like-handwriting/1181)
 
 It has only been tested against physical ROM/disk dumps owned by the author, so
 other MSX1 or MSX2 titles are not guaranteed to work. Bug reports for other

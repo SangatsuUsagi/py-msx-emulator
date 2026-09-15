@@ -51,7 +51,7 @@ FM-PAC の同時使用、MSX-DOS2 で HBI-J1 の MSX-JE を使った日本語入
 
 ## FM-PAC
 
-`--extension fmpac` ── [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004) は実在する
+`--extension fmpac` ── [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072) は実在する
 MSX-MUSIC カートリッジで、YM2413（OPLL）FM 音源チップ、64 KB のバンク切り替え
 ROM、8 KB の電池バックアップ SRAM を備えます。カートリッジ自体の ROM が
 `roms/fmpac/fmpac.rom` に必要です ── このプロジェクトには含まれないため、各自

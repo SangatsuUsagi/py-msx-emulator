@@ -53,7 +53,7 @@ restriction.
 
 ## FM-PAC
 
-`--extension fmpac` — [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004), a real MSX-MUSIC
+`--extension fmpac` — [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072), a real MSX-MUSIC
 cartridge: a YM2413 (OPLL) FM sound chip, 64 KB banked ROM, and 8 KB
 battery-backed SRAM. Requires the cartridge's own ROM at
 `roms/fmpac/fmpac.rom` — not distributed with this project; obtain your own
