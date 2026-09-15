@@ -108,7 +108,7 @@ def test_load_msxdos2_512k_viewfont_overlay_parses_real_yaml() -> None:
     assert overlay.subslots[1].rom_entry.size_kb == 32
     assert overlay.subslots[2].device == "ascii8"
     assert overlay.subslots[2].rom_entry is not None
-    assert overlay.subslots[2].rom_entry.file == "../kanji/kaname_v.rom"
+    assert overlay.subslots[2].rom_entry.file == "../kanji/k12x8shn.rom"
     assert overlay.subslots[2].rom_entry.size_kb == 240
     assert overlay.io_device is None
 

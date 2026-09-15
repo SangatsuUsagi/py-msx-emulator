@@ -1,6 +1,8 @@
 schema_version: 1
 id: msxdos2_512k_kanjirom
-name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + Kanji font ROM"
+name:
+  "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + Kanji
+  font ROM"
 
 # Overlay fragment, not a standalone machine: applied on top of an
 # already-resolved base machine spec (via --extension msxdos2_512k_kanjirom).
@@ -37,6 +39,6 @@ io_device:
   # ports 0xD8-0xDB regardless of which sub-slot slot 2 currently selects.
   device: kanji_rom
   rom:
-    file: ../kanji/BugMaruMSX-16.rom
+    file: ../hbi_j1/hbi-j1_kanjifont.rom
     size_kb: 256
-    sha1: abd6cce93a013f2ea1ef63c4d20002d409379672
+    sha1: 218d91eb6df2823c924d3774a9f455492a10aecb

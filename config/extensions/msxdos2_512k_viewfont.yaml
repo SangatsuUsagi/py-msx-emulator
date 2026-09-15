@@ -1,6 +1,8 @@
 schema_version: 1
 id: msxdos2_512k_viewfont
-name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + View font ROM"
+name:
+  "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + View
+  font ROM"
 
 # Verifies the ascii8/ascii16 expanded-overlay sub-slot device kinds
 # (openspec/changes/add-ascii-expanded-subslot-devices) against a real ROM.
@@ -8,7 +10,7 @@ name: "512 KB RAM-mapper memory expansion cartridge + MSX-DOS2 kernel ROM + View
 # MSX-DOS2 kernel ROM), plus an ASCII8-mapped (8 KB-bank MEGA ROM
 # Controller) View font ROM in sub-slot 2.
 #
-# roms/kanji/kaname_v.rom (245,760 bytes = 30 x 8 KB banks) matches the
+# roms/kanji/k12x8shn.rom (245,760 bytes = 30 x 8 KB banks) matches the
 # Extended View font layout exactly (references/docs/"MSX data room Let's
 # use MSX-View ROM.md" section 3.7.2: 0000H-3BFFFH = 245,760 bytes,
 # vs. 3.7.1's plain "MSX-View付属ROM" at 0000H-2FFFFH = 196,608 bytes) --
@@ -43,15 +45,16 @@ subslots:
   2:
     # Extended View font ROM (ASCII8-mapped, see header comment). Path
     # escapes rom_base (roms/msxdos2s) up to roms/kanji, the same
-    # cross-directory reference msxdos2_512k_kanjirom.yaml's io_device
-    # (../kanji/BugMaruMSX-16.rom) already uses. Named "viewfont", not
+    # cross-directory-reference style msxdos2_512k_kanjirom.yaml's
+    # io_device (../hbi_j1/hbi-j1_kanjifont.rom) uses. Named "viewfont", not
     # "kanji", to stay distinct from msxdos2_512k_kanjirom despite both
     # being Japanese-font-related: this one is a View font (ASCII8-mapped
     # MEGA ROM), that one is the JIS Kanji font ROM io_device.
     device: ascii8
     rom:
-      file: ../kanji/kaname_v.rom
+      file: ../kanji/k12x8shn.rom
       size_kb: 240
-      sha1: bdf941ccb21015e15f4a2f518d9ac092c1005d6b
+      sha1: 9b3c7878c4bf1eb7ef067f931e7ef36b29b43ea4
 
 # Sub-slot 3 is left unpopulated (open bus).
+

@@ -44,7 +44,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_bytes(self: Path) -> bytes:
         sizes = {
             "msxd22s.rom": _KERNEL_ROM_SIZE,
-            "BugMaruMSX-16.rom": _KANJIFONT_ROM_SIZE,
+            "hbi-j1_kanjifont.rom": _KANJIFONT_ROM_SIZE,
         }
         return b"\x00" * sizes.get(self.name, 32768)
 
@@ -109,7 +109,7 @@ def test_load_msxdos2_512k_kanjirom_overlay_parses_real_yaml() -> None:
     assert overlay.io_device is not None
     assert overlay.io_device.device == "kanji_rom"
     assert overlay.io_device.rom_entry is not None
-    assert overlay.io_device.rom_entry.file == "../kanji/BugMaruMSX-16.rom"
+    assert overlay.io_device.rom_entry.file == "../hbi_j1/hbi-j1_kanjifont.rom"
     assert overlay.io_device.rom_entry.size_kb == 256
 
 
