@@ -62,6 +62,12 @@ class _FakeSDL:
     # the real SDL2 value, not an arbitrary sentinel like SDLK_F8..F11 above,
     # since a dedicated test pins it against the real pysdl2 library.
     SDL_SCANCODE_INTERNATIONAL3 = 137
+    # Host apostrophe/quote key scancode (see `_resolve_key_sym`), same
+    # real-value-pinning rationale as SDL_SCANCODE_INTERNATIONAL3 above.
+    SDL_SCANCODE_APOSTROPHE = 52
+    # Host "="/"+" key scancode (see `_resolve_key_sym`), same
+    # real-value-pinning rationale as SDL_SCANCODE_INTERNATIONAL3 above.
+    SDL_SCANCODE_EQUALS = 46
 
     def __init__(self, script: list[tuple[int, int, int, int]], event: _Event) -> None:
         self._script = list(script)
@@ -382,3 +388,87 @@ def test_jis_yen_key_reaches_matrix_via_scancode_fallback() -> None:
         assert _asserted(h.matrix, yen_cell)
         h.keyup(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
         assert not _asserted(h.matrix, yen_cell)
+
+
+def test_apostrophe_scancode_matches_real_sdl2_constant() -> None:
+    # Same rationale as test_jis_yen_scancode_matches_real_sdl2_constant:
+    # pins _FakeSDL.SDL_SCANCODE_APOSTROPHE against the real pysdl2 library
+    # so it can't silently drift.
+    import sdl2
+
+    assert sdl2.SDL_SCANCODE_APOSTROPHE == _FakeSDL.SDL_SCANCODE_APOSTROPHE == 52
+
+
+def test_host_apostrophe_key_reaches_colon_cell_via_scancode() -> None:
+    # On a JIS input source the host's dedicated apostrophe/quote key and
+    # SHIFT+"7" both report keysym.sym == SDLK_QUOTE (39) -- `_handle_events`
+    # must use scancode to route the former to SDLK_HOST_APOSTROPHE_KEY's
+    # cell (":"/"*", row 2 bit 0) and leave the latter (scancode for "7",
+    # left as plain sym 39) reaching _K_QUOTE's cell (row 0 bit 7) instead.
+    from msx.input import _K_QUOTE, KEY_MATRIX_JP, SDLK_HOST_APOSTROPHE_KEY
+
+    colon_cell = KEY_MATRIX_JP[SDLK_HOST_APOSTROPHE_KEY]
+    apostrophe_cell = KEY_MATRIX_JP[_K_QUOTE]
+    assert colon_cell != apostrophe_cell
+
+    h = _Harness()
+    h.machine.input.keyboard_type = "jp"
+    h.machine.input._matrix_map = KEY_MATRIX_JP
+
+    h.keydown(_K_QUOTE, scancode=_FakeSDL.SDL_SCANCODE_APOSTROPHE)
+    assert _asserted(h.matrix, colon_cell)
+    assert not _asserted(h.matrix, apostrophe_cell)
+    h.keyup(_K_QUOTE, scancode=_FakeSDL.SDL_SCANCODE_APOSTROPHE)
+    assert not _asserted(h.matrix, colon_cell)
+
+    # scancode 30 == SDL_SCANCODE_7, the "7" key SHIFT+7 collapses from.
+    h.keydown(_K_QUOTE, scancode=30)
+    assert _asserted(h.matrix, apostrophe_cell)
+    assert not _asserted(h.matrix, colon_cell)
+    h.keyup(_K_QUOTE, scancode=30)
+    assert not _asserted(h.matrix, apostrophe_cell)
+
+
+def test_equals_scancode_matches_real_sdl2_constant() -> None:
+    # Same rationale as test_jis_yen_scancode_matches_real_sdl2_constant:
+    # pins _FakeSDL.SDL_SCANCODE_EQUALS against the real pysdl2 library so it
+    # can't silently drift.
+    import sdl2
+
+    assert sdl2.SDL_SCANCODE_EQUALS == _FakeSDL.SDL_SCANCODE_EQUALS == 46
+
+
+def test_host_equals_key_reaches_underscore_cell_via_scancode() -> None:
+    # The host's dedicated "="/"+" key has no JIS role at all -- unlike the
+    # apostrophe key it isn't sym-ambiguous with anything (probe-confirmed:
+    # sym stays SDLK_EQUALS regardless of SHIFT), but `_handle_events` still
+    # identifies it by scancode so it can be repurposed onto "_"'s cell
+    # (row 2 bit 5) rather than left dead.
+    from msx.input import _K_EQUALS, KEY_MATRIX_JP, SDLK_HOST_EQUALS_KEY
+
+    underscore_cell = KEY_MATRIX_JP[SDLK_HOST_EQUALS_KEY]
+    assert _K_EQUALS not in KEY_MATRIX_JP
+
+    h = _Harness()
+    h.machine.input.keyboard_type = "jp"
+    h.machine.input._matrix_map = KEY_MATRIX_JP
+
+    h.keydown(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert _asserted(h.matrix, underscore_cell)
+    h.keyup(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert not _asserted(h.matrix, underscore_cell)
+
+
+def test_host_equals_key_reaches_equals_cell_on_international_via_scancode() -> None:
+    # On International layout the same scancode routes to the plain "="
+    # cell -- the defensive duplicate in _INT_SYMBOLS.
+    from msx.input import _K_EQUALS, KEY_MATRIX_INT, SDLK_HOST_EQUALS_KEY
+
+    equals_cell = KEY_MATRIX_INT[SDLK_HOST_EQUALS_KEY]
+    assert equals_cell == KEY_MATRIX_INT[_K_EQUALS]
+
+    h = _Harness()
+    h.keydown(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert _asserted(h.matrix, equals_cell)
+    h.keyup(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert not _asserted(h.matrix, equals_cell)

@@ -1,9 +1,11 @@
 from msx.input import (
     _K_AT,
+    _K_BACKQUOTE,
     _K_CARET,
     _K_COLON,
     _K_COMMA,
     _K_DOWN,
+    _K_EQUALS,
     _K_F1,
     _K_LALT,
     _K_LEFT,
@@ -24,6 +26,8 @@ from msx.input import (
     KEY_MATRIX_JP,
     KEY_NAME_TO_CELL,
     KEY_NAME_TO_SDLKEY,
+    SDLK_HOST_APOSTROPHE_KEY,
+    SDLK_HOST_EQUALS_KEY,
     InputState,
     _K_a,
     _K_j,
@@ -283,7 +287,11 @@ def test_int_specific_symbol_cells() -> None:
 def test_jp_specific_symbol_cells() -> None:
     assert KEY_MATRIX_JP[_K_RIGHTBRACKET] == (2, 1)   # ] differs from int
     assert KEY_MATRIX_JP[_K_LEFTBRACKET] == (1, 6)    # [ differs from int
-    assert _K_QUOTE not in KEY_MATRIX_JP               # JIS: apostrophe is Shift+7
+    # JIS apostrophe is reported to be SHIFT+"7" (row-0 bit-7) on real
+    # hardware, colliding on sym with SDLK_QUOTE -- see allium/ppi.allium's
+    # Open Questions for the (unverified) detail. Harmless belt-and-braces
+    # entry either way.
+    assert KEY_MATRIX_JP[_K_QUOTE] == (0, 7)
 
 
 def test_keyboard_type_selects_matrix_on_keypress() -> None:
@@ -296,10 +304,79 @@ def test_keyboard_type_selects_matrix_on_keypress() -> None:
     assert kjp.matrix[2] & (1 << 1) == 0   # jp cell (2,1)
 
 
-def test_jp_apostrophe_unmapped_is_noop() -> None:
+def test_jp_apostrophe_via_shift_seven_sym_maps_on_keypress() -> None:
     kjp = InputState(keyboard_type="jp")
-    kjp.key_down(_K_QUOTE)  # no JIS cell → must not raise, matrix unchanged
-    assert all(row == 0xFF for row in kjp.matrix)
+    kjp.key_down(_K_QUOTE)
+    assert kjp.matrix[0] & (1 << 7) == 0
+    kjp.key_up(_K_QUOTE)
+    assert kjp.matrix[0] & (1 << 7) != 0
+
+
+def test_jp_equals_reachable_via_minus_cell_no_alias_needed() -> None:
+    # JIS "=" is SHIFT+"-" (row-1 bit-2) on real hardware. Probe-confirmed:
+    # the "-" key's own sym does not change under SHIFT, so plain SHIFT +
+    # _K_MINUS already reaches this cell -- no _K_EQUALS alias needed (and
+    # none is present: the physical "=" key is repurposed for "_" instead,
+    # see test_jp_host_equals_key_repurposed_as_underscore_cell).
+    assert _K_EQUALS not in KEY_MATRIX_JP
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(_K_LSHIFT)
+    kjp.key_down(_K_MINUS)
+    assert kjp.matrix[1] & (1 << 2) == 0   # "-" cell asserted
+    assert kjp.matrix[6] & (1 << 0) == 0   # SHIFT cell also asserted
+
+
+def test_jp_backquote_repurposed_as_caret_cell() -> None:
+    # JIS has no keyboard key at the host's "`"/"~" position; it is
+    # deliberately repurposed onto "^"'s cell (row-1 bit-3) so the character
+    # is reachable at all, keytop label mismatch accepted.
+    assert KEY_MATRIX_JP[_K_BACKQUOTE] == KEY_MATRIX_JP[_K_CARET] == (1, 3)
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(_K_BACKQUOTE)
+    assert kjp.matrix[1] & (1 << 3) == 0
+    kjp.key_up(_K_BACKQUOTE)
+    assert kjp.matrix[1] & (1 << 3) != 0
+
+
+def test_jp_host_apostrophe_key_repurposed_as_colon_cell() -> None:
+    # The host's dedicated apostrophe/quote key collides on sym with
+    # SHIFT+"7" (both SDLK_QUOTE) on a JIS input source, so it is identified
+    # by scancode instead (SDLK_HOST_APOSTROPHE_KEY) and repurposed onto
+    # ":"/"*"'s cell (row-2 bit-0), distinct from _K_QUOTE's row-0 bit-7.
+    assert KEY_MATRIX_JP[SDLK_HOST_APOSTROPHE_KEY] == KEY_MATRIX_JP[_K_COLON] == (2, 0)
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(SDLK_HOST_APOSTROPHE_KEY)
+    assert kjp.matrix[2] & (1 << 0) == 0
+    kjp.key_up(SDLK_HOST_APOSTROPHE_KEY)
+    assert kjp.matrix[2] & (1 << 0) != 0
+
+
+def test_int_host_apostrophe_key_shares_quote_cell() -> None:
+    # On International layout, the scancode sentinel is a defensive
+    # duplicate of the plain _K_QUOTE sym -- both name the same key here.
+    assert KEY_MATRIX_INT[SDLK_HOST_APOSTROPHE_KEY] == KEY_MATRIX_INT[_K_QUOTE] == (2, 0)
+
+
+def test_jp_host_equals_key_repurposed_as_underscore_cell() -> None:
+    # The host's dedicated "="/"+" key has no JIS role at all (JIS "=" is
+    # reached via the "-" cell instead, see
+    # test_jp_equals_reachable_via_minus_cell_no_alias_needed), so it is
+    # identified by scancode (SDLK_HOST_EQUALS_KEY) and repurposed onto "_"'s
+    # cell (row-2 bit-5) -- which reproduces real JIS underscore-key
+    # behaviour for free: unshifted asserts the cell alone (BIOS renders
+    # nothing), SHIFT+cell renders "_".
+    assert KEY_MATRIX_JP[SDLK_HOST_EQUALS_KEY] == KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(SDLK_HOST_EQUALS_KEY)
+    assert kjp.matrix[2] & (1 << 5) == 0
+    kjp.key_up(SDLK_HOST_EQUALS_KEY)
+    assert kjp.matrix[2] & (1 << 5) != 0
+
+
+def test_int_host_equals_key_shares_equals_cell() -> None:
+    # On International layout, the scancode sentinel is a defensive
+    # duplicate of the plain _K_EQUALS sym -- both name the same key here.
+    assert KEY_MATRIX_INT[SDLK_HOST_EQUALS_KEY] == KEY_MATRIX_INT[_K_EQUALS] == (1, 3)
 
 
 def test_jp_at_caret_colon_underscore_cells() -> None:

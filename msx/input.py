@@ -96,6 +96,29 @@ _K_YEN      = 1073741961   # SDL_SCANCODE_INTERNATIONAL3 = 137 (JIS ¥ key, dist
 # key_up instead of the raw (unreliable) sym.
 SDLK_JIS_YEN: int = _K_YEN
 
+_K_APOSTROPHE_KEY = 1073741876   # 0x40000000 | SDL_SCANCODE_APOSTROPHE (52)
+
+# Public sentinel for the host's dedicated apostrophe/quote key, identified
+# by scancode rather than sym. On a JIS input source (see SDLK_JIS_YEN's
+# macOS note above), that host key and SHIFT+"7" both report keysym.sym ==
+# SDLK_QUOTE -- two different physical actions colliding on one sym -- so
+# _JP_SYMBOLS cannot bind SDLK_QUOTE itself to more than one cell. A
+# frontend must detect this key by scancode and pass this constant to
+# key_down/key_up instead of the ambiguous sym, exactly as SDLK_JIS_YEN does.
+SDLK_HOST_APOSTROPHE_KEY: int = _K_APOSTROPHE_KEY
+
+_K_EQUALS_KEY = 1073741870   # 0x40000000 | SDL_SCANCODE_EQUALS (46)
+
+# Public sentinel for the host's dedicated "="/"+" key, identified by
+# scancode rather than sym. Unlike SDLK_HOST_APOSTROPHE_KEY this key is not
+# ambiguous with anything -- it reports keysym.sym == SDLK_EQUALS regardless
+# of SHIFT (pinned by a probe: scancode 46, sym 61, both SHIFT states) -- but
+# on a JIS input source this key has no JIS role at all (JIS "=" is SHIFT +
+# the "-" key's own cell; see _JP_SYMBOLS), so it is deliberately repurposed
+# there rather than left dead. A frontend must detect this key by scancode
+# and pass this constant to key_down/key_up, exactly as SDLK_JIS_YEN does.
+SDLK_HOST_EQUALS_KEY: int = _K_EQUALS_KEY
+
 # MSX keyboard matrix: maps an SDL2 key constant to a (row, bit) cell.
 # Active-low: a cleared bit = key pressed.
 #
@@ -174,33 +197,78 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
 # Questions) is left unmapped: it has no single corresponding ASCII
 # character on any host layout, unlike every other cell here, so there is
 # no SDL keycode to bind it to.
+#
+# SDLK_HOST_APOSTROPHE_KEY and SDLK_HOST_EQUALS_KEY (scancode-based, see
+# above) are each bound to the same cell as the plain sym they duplicate, as
+# a defensive fallback -- both name the same physical key here, so it is
+# harmless if either arrives.
 _INT_SYMBOLS: dict[int, tuple[int, int]] = {
-    _K_EQUALS: (1, 3),        # =
-    _K_LEFTBRACKET: (1, 5),   # [
-    _K_RIGHTBRACKET: (1, 6),  # ]
-    _K_QUOTE: (2, 0),         # '
-    _K_BACKQUOTE: (2, 1),     # `
+    _K_EQUALS: (1, 3),           # =
+    _K_EQUALS_KEY: (1, 3),       # = (scancode fallback, see SDLK_HOST_EQUALS_KEY)
+    _K_LEFTBRACKET: (1, 5),      # [
+    _K_RIGHTBRACKET: (1, 6),     # ]
+    _K_QUOTE: (2, 0),            # '
+    _K_APOSTROPHE_KEY: (2, 0),   # ' (scancode fallback, see SDLK_HOST_APOSTROPHE_KEY)
+    _K_BACKQUOTE: (2, 1),        # `
 }
 
-# Japanese (JIS) layout: '[' and ']' sit at different cells; '=', "'" and '`'
-# have no direct JIS key and are left unmapped (JIS "=" is Shift+"-", JIS
-# apostrophe is Shift+7, both already reachable through _COMMON_MATRIX
-# without a dedicated cell here). '@', '^', ':' and '_' are real ASCII
-# characters, so unlike the International DEAD cell above they map onto
-# ordinary SDL keycodes regardless of host layout.
+# Japanese (JIS) layout: '[' and ']' sit at different cells. '@', '^', ':'
+# and '_' are real ASCII characters, so unlike the International DEAD cell
+# above they map onto ordinary SDL keycodes regardless of host layout.
+#
+# "=" IS reachable on real JIS hardware without a dedicated cell of its own:
+# JIS "=" is SHIFT plus the row-1 bit-2 cell ("-"). Unlike the apostrophe
+# case below, this genuinely needs no alias here -- probed empirically
+# (scancode 45, sym 45, both SHIFT states): the "-" key's own sym does not
+# change under SHIFT, so _COMMON_MATRIX's plain _K_MINUS entry combined with
+# a real SHIFT keypress already reaches the row-1 bit-2 cell correctly.
+#
+# Apostrophe is reported to work the same way on real JIS hardware (SHIFT
+# plus the row-0 bit-7 cell, "7") but that specific claim is informally
+# reported, not independently probed the way "-" was above -- see the Open
+# Question in allium/ppi.allium. The _K_QUOTE alias below is a harmless
+# belt-and-braces entry either way: if SHIFT+"7" really does replay plain
+# "7" under SHIFT, _COMMON_MATRIX's _K_7 entry already reaches this cell and
+# the alias is simply never hit; if it instead collapses to a distinct sym
+# the way the host's dedicated apostrophe key does (see next paragraph),
+# the alias is what makes it work.
+#
+# The host's dedicated apostrophe/quote key (SDLK_HOST_APOSTROPHE_KEY,
+# scancode-based, see above) reports keysym.sym == SDLK_QUOTE regardless of
+# SHIFT, which collides with the informally-reported SHIFT+"7" behaviour
+# above -- so it can't also be bound to the row-0 bit-7 cell without risking
+# swallowing that path; only scancode tells the two apart. Likewise the
+# host's dedicated "="/"+" key (SDLK_HOST_EQUALS_KEY, scancode-based, see
+# above) reports keysym.sym == SDLK_EQUALS regardless of SHIFT (this one IS
+# probe-confirmed), and the host's "`"/"~" key. JIS has no keyboard key of
+# its own at any of these three host positions, so all three are
+# deliberately repurposed below rather than left dead: the apostrophe key
+# onto ":"/"*" (row 2 bit 0, next to ";" the way "'"/'"' sits next to ";" on
+# an International host keyboard), "`"/"~" onto "^" (row 1 bit 3, JIS's own
+# unicode-real cell that a plain International/US keyboard has no dedicated
+# key for), and "="/"+" onto "_" (row 2 bit 5) -- which happens to reproduce
+# real JIS underscore-key behaviour for free: unshifted asserts the cell
+# alone (JIS BIOS renders nothing, matching the real key), SHIFT+cell
+# renders "_". Keytop label mismatch is accepted here in exchange for every
+# JIS BASIC/DOS character being reachable from a plain International/US host
+# keyboard.
 #
 # The ¥ key is different: on real JIS hardware it is a dedicated key with its
 # own scancode (SDL_SCANCODE_INTERNATIONAL3), not an alternate character on
 # the backslash key, so it needs its own entry (_K_YEN) rather than sharing
 # _K_BACKSLASH with the International layout.
 _JP_SYMBOLS: dict[int, tuple[int, int]] = {
-    _K_LEFTBRACKET: (1, 6),   # [
-    _K_RIGHTBRACKET: (2, 1),  # ]
-    _K_AT: (1, 5),            # @
-    _K_CARET: (1, 3),         # ^
-    _K_COLON: (2, 0),         # :
-    _K_UNDERSCORE: (2, 5),    # _
-    _K_YEN: (1, 4),           # ¥ (same MSX matrix cell as International \)
+    _K_LEFTBRACKET: (1, 6),      # [
+    _K_RIGHTBRACKET: (2, 1),     # ]
+    _K_AT: (1, 5),               # @
+    _K_CARET: (1, 3),            # ^
+    _K_COLON: (2, 0),            # :
+    _K_UNDERSCORE: (2, 5),       # _
+    _K_YEN: (1, 4),              # ¥ (same MSX matrix cell as International \)
+    _K_QUOTE: (0, 7),            # ' (belt-and-braces; see above)
+    _K_APOSTROPHE_KEY: (2, 0),   # : / * (repurposed host apostrophe key; see above)
+    _K_BACKQUOTE: (1, 3),        # ^ / ~ (repurposed host `/~ key; see above)
+    _K_EQUALS_KEY: (2, 5),       # _ (repurposed host =/+ key; see above)
 }
 
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}

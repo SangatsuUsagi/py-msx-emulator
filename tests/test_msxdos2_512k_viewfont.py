@@ -1,11 +1,11 @@
-"""--extension msxdos2_512k tests: expanded-overlay parsing of the real
-config/extensions/msxdos2_512k.yaml (a 512 KB RamMapper in sub-slot 0 --
-identical to memory_512k's own -- plus a flat 32 KB MSX-DOS2 kernel ROM in
-sub-slot 1, the same shape hbi_j1's sub-slot 1 has), and build_machine
-wiring for the one thing that differs from tests/test_memory_512k.py's
-existing RamMapper-generic coverage: the sub-slot-1 ROM dispatch, the
-missing-ROM error, and CLI acceptance of the new --extension id. Mirrors
-tests/test_cli_hbi_j1.py's structure for the expanded-overlay case.
+"""--extension msxdos2_512k_viewfont tests: expanded-overlay parsing of the
+real config/extensions/msxdos2_512k_viewfont.yaml (msxdos2_512k's 512 KB
+RamMapper in sub-slot 0 + flat 32 KB MSX-DOS2 kernel ROM in sub-slot 1,
+plus an ascii8-mapped View font ROM in sub-slot 2), and build_machine
+wiring for the one thing that differs from tests/test_msxdos2_512k.py's
+existing coverage: the ascii8 sub-slot. Mirrors
+tests/test_msxdos2_512k_kanjirom.py's and tests/test_cli_hbi_j1.py's
+structure.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from msx.machine_loader import (
     build_machine,
     load_extension_overlay,
 )
-from msx.mapper import FixedPageMapper
+from msx.mapper import Ascii8Mapper, FixedPageMapper
 from msx.ram_mapper import RamMapper
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
@@ -34,6 +34,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
 
 _KERNEL_ROM_SIZE = 32768
+_VIEWFONT_ROM_SIZE = 245760
 
 
 def _run_main(argv: list[str]) -> tuple[int, str, str]:
@@ -41,7 +42,11 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     stderr_buf = io.StringIO()
 
     def fake_read_bytes(self: Path) -> bytes:
-        return b"\x00" * _KERNEL_ROM_SIZE
+        sizes = {
+            "msxd22s.rom": _KERNEL_ROM_SIZE,
+            "kaname_v.rom": _VIEWFONT_ROM_SIZE,
+        }
+        return b"\x00" * sizes.get(self.name, 32768)
 
     def fake_read_text(self: Path, encoding: str | None = None) -> str:
         return ""
@@ -58,7 +63,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
          patch("frontend.sdl2_frontend.run"):
         try:
             spec = importlib.util.spec_from_file_location(
-                "_emulator_main_msxdos2_512k", _MAIN_PATH
+                "_emulator_main_msxdos2_512k_viewfont", _MAIN_PATH
             )
             assert spec is not None and spec.loader is not None
             m = importlib.util.module_from_spec(spec)
@@ -70,38 +75,42 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 
 
 # ---------------------------------------------------------------------------
-# CLI-level: msxdos2_512k is now an accepted --extension choice
+# CLI-level: msxdos2_512k_viewfont is now an accepted --extension choice
 # ---------------------------------------------------------------------------
 
-def test_extension_msxdos2_512k_alone_boots() -> None:
+def test_extension_msxdos2_512k_viewfont_alone_boots() -> None:
     # hb_f1xd is MSX2 (an expanded extension overlay has no MSX1 counterpart,
     # see cart-extension-overlay's "Expanded extension overlay requires an
     # MSX2 base machine" Requirement) with no slot-3 memory mapper (unlike
     # the default cbios_msx2_jp), so it doesn't hit the has_ram_mapper
     # conflict rejection this extension's ram_mapper sub-slot also enforces.
     code, out, _err = _run_main(
-        ["--machine", "hb_f1xd", "--extension", "msxdos2_512k", "--count-frame", "1"]
+        ["--machine", "hb_f1xd", "--extension", "msxdos2_512k_viewfont", "--count-frame", "1"]
     )
     assert code == 0
-    assert "msxdos2_512k" in out
+    assert "msxdos2_512k_viewfont" in out
 
 
 # ---------------------------------------------------------------------------
 # load_extension_overlay: expanded-shape parsing of the real
-# config/extensions/msxdos2_512k.yaml
+# config/extensions/msxdos2_512k_viewfont.yaml
 # ---------------------------------------------------------------------------
 
-def test_load_msxdos2_512k_overlay_parses_real_yaml() -> None:
-    overlay = load_extension_overlay("msxdos2_512k", _CONFIG, _ROOT)
+def test_load_msxdos2_512k_viewfont_overlay_parses_real_yaml() -> None:
+    overlay = load_extension_overlay("msxdos2_512k_viewfont", _CONFIG, _ROOT)
     assert isinstance(overlay, _ExpandedExtensionOverlay)
-    assert set(overlay.subslots) == {0, 1}
+    assert set(overlay.subslots) == {0, 1, 2}
     assert overlay.subslots[0].device == "ram_mapper"
     assert overlay.subslots[0].size_kb == 512
-    assert overlay.subslots[0].rom_entry is None
     assert overlay.subslots[1].device == "flat_rom"
     assert overlay.subslots[1].rom_entry is not None
     assert overlay.subslots[1].rom_entry.file == "msxd22s.rom"
     assert overlay.subslots[1].rom_entry.size_kb == 32
+    assert overlay.subslots[2].device == "ascii8"
+    assert overlay.subslots[2].rom_entry is not None
+    assert overlay.subslots[2].rom_entry.file == "../kanji/k12x8shn.rom"
+    assert overlay.subslots[2].rom_entry.size_kb == 240
+    assert overlay.io_device is None
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +139,8 @@ def _msx2_spec(has_ram_mapper: bool = False) -> MachineSpec:
     # base machine" Requirement), hence MSX2 here rather than _msx1_spec's
     # MSX1. bios_override/extrom_override supply the main and SUB ROM bytes
     # directly, so no real slot 0/slot 3 ROM files are needed -- only the
-    # extension overlay's own ROM (written by _msxdos2_512k_overlay) must
-    # exist on disk. Mirrors tests/test_cli_hbi_j1.py's own _msx2_spec.
+    # extension overlay's own ROMs (written by _msxdos2_512k_viewfont_overlay)
+    # must exist on disk. Mirrors tests/test_cli_hbi_j1.py's own _msx2_spec.
     return MachineSpec(
         name="test_msx2",
         machine_id="test_msx2",
@@ -147,8 +156,11 @@ def _msx2_spec(has_ram_mapper: bool = False) -> MachineSpec:
     )
 
 
-def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> _ExpandedExtensionOverlay:
+def _msxdos2_512k_viewfont_overlay(
+    rom_dir: Path, size_kb: int = 512
+) -> _ExpandedExtensionOverlay:
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
+    (rom_dir / "viewfont.rom").write_bytes(bytes(_VIEWFONT_ROM_SIZE))
     return _ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
@@ -156,16 +168,22 @@ def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> _ExpandedExtensi
                 device="flat_rom", rom_base_dir=rom_dir,
                 rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
             ),
+            2: _ExpandedSubslotDevice(
+                device="ascii8", rom_base_dir=rom_dir,
+                rom_entry=_RomEntry(file="viewfont.rom", size_kb=240, pages=[]),
+            ),
         },
     )
 
 
-def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots(tmp_path: Path) -> None:
-    rom_dir = tmp_path / "msxdos2_rom"
+def test_build_machine_wires_ram_mapper_kernel_rom_and_view_font_device(
+    tmp_path: Path,
+) -> None:
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
     machine = build_machine(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_msxdos2_512k_overlay(rom_dir),
+        extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
     )
     assert machine.memory.slot2_sub_slot_enabled is True
 
@@ -176,20 +194,15 @@ def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots(tmp_path: Path) 
     sub1 = machine.memory._mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
 
+    sub2 = machine.memory._mapper2_subslots[2]
+    assert isinstance(sub2, Ascii8Mapper)
+
 
 def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> None:
-    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
+    overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
-    overlay = _ExpandedExtensionOverlay(
-        subslots={
-            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
-            1: _ExpandedSubslotDevice(
-                device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
-            ),
-        },
-    )
     machine = build_machine(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
@@ -201,12 +214,34 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     assert sub1.read(0xC000) == 0xFF
 
 
+def test_view_font_subslot_dispatches_to_ascii8_mapper(tmp_path: Path) -> None:
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
+    rom_dir.mkdir()
+    # Page-marked ROM (each 8 KB page's first byte is its page index), so a
+    # bank-register change is observable through read().
+    view_font_rom = bytearray(_VIEWFONT_ROM_SIZE)
+    for page in range(_VIEWFONT_ROM_SIZE // 8192):
+        view_font_rom[page * 8192] = page & 0xFF
+    overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
+    (rom_dir / "viewfont.rom").write_bytes(bytes(view_font_rom))
+    machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay=overlay,
+    )
+    sub2 = machine.memory._mapper2_subslots[2]
+    assert isinstance(sub2, Ascii8Mapper)
+    assert sub2.read(0x4000) == 0x00  # window 0, bank 0 (power-on state)
+
+    sub2.write(0x6000, 5)  # window 0's control register -> bank 5
+    assert sub2.read(0x4000) == 5
+
+
 def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> None:
-    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
     machine = build_machine(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_msxdos2_512k_overlay(rom_dir),
+        extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
     )
     machine.io.write_port(0xFC, 5)
     assert machine.io.read_port(0xFC) & 0x1F == 5
@@ -217,13 +252,13 @@ def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
-    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
     spec = _msx2_spec(has_ram_mapper=True)
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
         build_machine(
             spec, bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=_msxdos2_512k_overlay(rom_dir),
+            extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
         )
 
 
@@ -233,11 +268,12 @@ def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     # MSX2 base machine" Requirement.
     main_dir = tmp_path / "main_rom"
     main_dir.mkdir()
-    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
     with pytest.raises(MachineLoadError, match="MSX1"):
         build_machine(
-            _msx1_spec(main_dir), extension_overlay=_msxdos2_512k_overlay(rom_dir)
+            _msx1_spec(main_dir),
+            extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
         )
 
 
@@ -246,11 +282,23 @@ def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_missing_kernel_rom_raises_naming_file(tmp_path: Path) -> None:
-    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
-    overlay = _msxdos2_512k_overlay(rom_dir)
+    overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "msxd22s.rom").unlink()
     with pytest.raises(MachineLoadError, match="msxd22s.rom"):
+        build_machine(
+            _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+            extension_overlay=overlay,
+        )
+
+
+def test_missing_view_font_rom_raises_naming_file(tmp_path: Path) -> None:
+    rom_dir = tmp_path / "msxdos2_viewfont_rom"
+    rom_dir.mkdir()
+    overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
+    (rom_dir / "viewfont.rom").unlink()
+    with pytest.raises(MachineLoadError, match="viewfont.rom"):
         build_machine(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,

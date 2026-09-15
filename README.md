@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2619%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2654%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -17,20 +17,21 @@ software owned by the author.
 **Hardware:**
 
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
-- [FM-PAC](https://www.msx.org/wiki/Panasoft_SW-M004)
+- [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **Software:**
 
 - **MSX1:**
-  - [Salamander (沙羅曼蛇) by KONAMI](<https://en.wikipedia.org/wiki/Salamander_(video_game)>)
-  - [Nemesis 2 (グラディウス2) by KONAMI](<https://en.wikipedia.org/wiki/Nemesis_2_(MSX)>)
-  - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://en.wikipedia.org/wiki/Penguin_Adventure)
-  - [Game Master II (新10倍カートリッジ) by KONAMI](https://en.wikipedia.org/wiki/Konami_Game_Master)
+  - [Salamander (沙羅曼蛇) by KONAMI](https://generation-msx.nl/software/konami/salamander/941)
+  - [Nemesis 2 (グラディウス2) by KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
+  - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
+  - [Game Master 2 (コナミの新10倍カートリッジ) by KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
 - **MSX2:**
-  - [Legacy of the Wizard (ドラゴンスレイヤーIV ドラスレファミリー) by Falcom](https://en.wikipedia.org/wiki/Legacy_of_the_Wizard)
-  - [Romancia (ロマンシア) by Falcom](https://en.wikipedia.org/wiki/Romancia)
+  - [Dragon Slayer IV - Drasle Family (ドラゴンスレイヤーIVドラスレファミリー) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
+  - [Romancia - Dragon Slayer Jr. (ロマンシア) by Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
 - **MSX2 (floppy disk):**
-  - [Dragon Slayer: The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://en.wikipedia.org/wiki/Dragon_Slayer:_The_Legend_of_Heroes)
+  - [Dragon Slayer VI - The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-vi-the-legend-of-heroes/1387)
+  - [Letter Writer: Print Like Handwriting (はがき書右衛門) by Sony](https://generation-msx.nl/software/sony-corporation/letter-writer-print-like-handwriting/1181)
 
 It has only been tested against physical ROM/disk dumps owned by the author, so
 other MSX1 or MSX2 titles are not guaranteed to work. Bug reports for other
@@ -169,21 +170,18 @@ PSG. Two modes:
 
 ### SCC-I cartridge ("SCC+")
 
-A bare sound cartridge (no game ROM) enabled with `--extension scc_plus`,
-connected unconditionally in primary slot 2: 64 KB of physical bank-switched
-RAM addressed as if 128 KB (blank — no ROM/data file is ever loaded), with
-bank register bit 3 ignored so block N mirrors block N+8 — reproducing a
-documented real-hardware modification (["connect the two 64 KB
+A bare sound cartridge (no game ROM), enabled with `--extension scc_plus` —
+see [`README_extension.md`](README_extension.md#scc-i-cartridge-scc) for
+activation and slot mechanics. 64 KB of physical bank-switched RAM addressed
+as if 128 KB (blank — no ROM/data file is ever loaded), with bank register
+bit 3 ignored so block N mirrors block N+8 — reproducing a documented
+real-hardware modification (["connect the two 64 KB
 banks"](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)) that lets
 one physical SCC-I cartridge work with either of the two factory
 RAM-population variants, each of which this project's two target titles
 expects — a mode register selecting the carried SCC chip's Compatible or
 Plus mode, and per-window RAM-write control. Targets FDD (floppy-disk) MSX2
-titles that plug this cartridge in purely for its audio. Because it occupies
-slot 2 rather than slot 1, a cartridge ROM argument and `--mapper` may be
-freely combined with `--extension scc_plus`; `--extension` (any value)
-conflicts with `--slot2`/`--mapper2` instead, since an extension
-unconditionally owns slot 2.
+titles that plug this cartridge in purely for its audio.
 
 > **Note**: the author does not own a real SCC-I (SCC+) cartridge or
 > compatible software, so this implementation is based on publicly
@@ -193,14 +191,15 @@ unconditionally owns slot 2.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/mapper.py:SCCICart` |
-| Activation | `--extension scc_plus` connects the cartridge in primary slot 2 (conflicts with `--slot2`/`--mapper2`) |
+| Activation | `--extension scc_plus` (see [`README_extension.md`](README_extension.md#scc-i-cartridge-scc)) |
 | Memory map | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`; mode register at `0xBFFE`/`0xBFFF` |
 | SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), depending on the mode register |
 
 ### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
 
-Optional overlay cartridge enabled with `--extension fmpac`, placed in
-primary slot 2: 64 KB banked ROM, 8 KB battery-backed SRAM with
+Optional overlay cartridge, enabled with `--extension fmpac` — see
+[`README_extension.md`](README_extension.md#fm-pac) for activation and ROM
+requirements. 64 KB banked ROM, 8 KB battery-backed SRAM with
 openMSX-compatible magic-value unlock, and a YM2413 (OPLL) FM sound chip —
 9-channel 2-operator melody synthesis (15 built-in instruments plus a
 user-defined tone), ADSR envelopes, and rhythm mode (bass drum, snare, tom,
@@ -209,7 +208,7 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip) |
-| Activation | `--extension fmpac` overlays the cartridge in primary slot 2 (any base `--machine`); ROM at `roms/fmpac/fmpac.rom` |
+| Activation | `--extension fmpac` (see [`README_extension.md`](README_extension.md#fm-pac)); ROM at `roms/fmpac/fmpac.rom` |
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`; 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`); memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`), enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by the enable register's bit 0 |
 | SRAM persistence | `saves/sram/fmpac.sram`, loaded on start and saved on exit |
@@ -218,14 +217,14 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 
 ### Sony HBI-J1 — Kanji-ROM + MSX-JE word processor
 
-Optional overlay cartridge enabled with `--extension hbi_j1`: a JIS Kanji font
-ROM I/O device (ports `0xD8-0xDB`, no slot location of its own) plus an
-*expanded* primary slot 2 hosting two sub-slot devices — a Halnote-mapped
-MSX-JE word-processor ROM with 16 KB battery-backed SRAM, and a flat Kanji
-driver + BASIC extension ROM. Unlike FM-PAC/SCC-I (a single flat device in
-slot 2), this is the only extension that itself expands slot 2 into
-sub-slots — it plugs into a stock MSX2 host, so slot 2's own expansion
-coexists with the host machine's own slot 3 expansion.
+Optional overlay cartridge, enabled with `--extension hbi_j1` — see
+[`README_extension.md`](README_extension.md#sony-hbi-j1) for activation, ROM
+requirements, and licensing. A JIS Kanji font ROM I/O device (ports
+`0xD8-0xDB`, no slot location of its own) plus an *expanded* primary slot 2
+hosting two sub-slot devices — a Halnote-mapped MSX-JE word-processor ROM
+with 16 KB battery-backed SRAM, and a flat Kanji driver + BASIC extension
+ROM. It plugs into a stock MSX2 host, so slot 2's own expansion coexists with
+the host machine's own slot 3 expansion.
 
 The author physically owns this cartridge and dumped its ROMs (SHA1-verified
 against openMSX's `Sony_HBI-J1.xml`), so this implementation targets real
@@ -234,7 +233,7 @@ hardware, not just documentation.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring) |
-| Activation | `--extension hbi_j1` expands primary slot 2 (any base MSX2 `--machine`; conflicts with `--slot2`/`--mapper2`); ROMs at `roms/hbi_j1/` |
+| Activation | `--extension hbi_j1` (see [`README_extension.md`](README_extension.md#sony-hbi-j1)); ROMs at `roms/hbi_j1/` |
 | Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read; a 5-bit read counter auto-increments per read, wrapping to byte 0 of the same glyph every 32 reads |
 | Sub-slot 0 | `HalnoteMapper` — 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper shadowing `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`; `0x0000-0x3FFF`/`0xC000-0xFFFF` open bus |
@@ -264,8 +263,11 @@ MSX1 uses a 4-page × 4-slot dispatch: BIOS ROM in slot 0, a cartridge in slot 1
 an optional second cartridge in slot 2, and 32 KB RAM in slot 3. On MSX2, primary
 slot 3 is expanded into 4 secondary slots, with the sub-ROM in sub-slot 3-0 and
 the 128 KB RAM mapper in sub-slot 3-2. Primary slot 2 can independently also be
-expanded — `--extension hbi_j1` is the only case today — coexisting with slot 3's
-own expansion on the same machine, each with its own secondary slot register.
+expanded via `--extension` — see
+[`README_extension.md`'s "Slot model" section](README_extension.md#slot-model)
+for what each slot can hold and which extensions expand slot 2 — coexisting
+with slot 3's own expansion on the same machine, each with its own secondary
+slot register.
 
 | Item | Detail |
 | --- | --- |
@@ -274,7 +276,7 @@ own expansion on the same machine, each with its own secondary slot register.
 | Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
 | Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; declared in the machine YAML as a `pages: [2]` entry next to the BIOS; returns 0xFF if absent |
 | Slot 1 | Cartridge ROM via mapper |
-| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into 2 sub-slots under `--extension hbi_j1` (Halnote-mapped MSX-JE ROM in sub-slot 0, flat Kanji driver/BASIC ROM in sub-slot 1) |
+| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into sub-slots under `--extension` — see [`README_extension.md`](README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots; sub-ROM in 3-0, 128 KB RAM mapper in 3-2 |
 
@@ -676,6 +678,9 @@ python . --extension scc_plus --fdd1 path/to/disk.dsk
 # Attach the Sony HBI-J1 Kanji-ROM/MSX-JE cartridge (expands slot 2)
 python . --extension hbi_j1
 
+# More --extension ids (MSX-DOS2 + RAM expansion, Kanji font, View font) are
+# documented in README_extension.md
+
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
@@ -715,7 +720,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi` (KonamiSCC shares the machine's single SCC chip with slot 1; rejected if slot 1 also resolves to KonamiSCC) |
-| `--extension {none,fmpac,scc_plus,hbi_j1}` | _(none)_ | Overlay a slot 2 extension device: `fmpac` (MSX-MUSIC + 8 KB SRAM), `scc_plus` (an SCC-I / SCC+ cartridge), or `hbi_j1` (Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands slot 2 into two sub-slots); conflicts with `--slot2`/`--mapper2`. `none` forces no extension overlay even when `py_emulator.yaml` sets one, freeing `--slot2`/`--mapper2` for CLI use |
+| `--extension ID` | _(none)_ | Overlay a slot 2 extension device — see [`README_extension.md`](README_extension.md) for the full list of ids and what each one is; conflicts with `--slot2`/`--mapper2`. `none` forces no extension overlay even when `py_emulator.yaml` sets one, freeing `--slot2`/`--mapper2` for CLI use |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
@@ -755,7 +760,7 @@ speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
 # mapper/mapper2 are CLI-only (--mapper / --mapper2); not configurable here
-# extension: fmpac        # overlay a slot 2 extension: fmpac, scc_plus, or hbi_j1
+# extension: fmpac        # overlay a slot 2 extension -- see README_extension.md
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -1039,7 +1044,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2443 tests spanning unit tests
+The test suite covers all major components with 2654 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1094,6 +1099,7 @@ py-msx-emulator/
 │   ├── frame_timer.py     # 60 fps pacing + FPS measurement
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
+│   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   └── state.py           # Save/load machine state (JSON + PNG)
 ├── config/
@@ -1108,7 +1114,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2443 tests
+├── tests/                 # Test suite — 2654 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1170,39 +1176,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## History
 
-- **v2.5.14** (2026-09-12) — Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}` flag (`extension` config key, backed by `config/extensions/<id>.yaml` overlay files), each extension unconditionally occupying primary slot 2. **BREAKING**: SCC-I now occupies primary slot 2 instead of slot 1. `--mapper2` also gains `KonamiSCC` support, sharing the machine's single SCC chip with slot 1.
-- **v2.5.13** (2026-09-12) — Add Sony HBI-J1 support via `--extension hbi_j1` (a JIS Kanji font ROM I/O device, a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM, and a flat Kanji driver + BASIC ROM, expanding slot 2 into two sub-slots — the author physically owns this cartridge and dumped its ROMs, SHA1-verified against openMSX) and V9938 interlace mode (R#9 IL/EO bits, with EO driving GRAPHIC4-7's automatic even/odd page alternation, matching real V9938 behaviour).
-- **v2.5.12** (2026-09-09) — `RamMapper`'s size is now configurable (whole 16 KB banks, previously fixed at 128 KB), and slot 3's legacy (RAM-mapper) dispatch branch can now host an FDC alongside the RAM mapper — previously an FDC required the data-driven flat-RAM layout instead. Adds `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony HB-F1XD (no real hardware matches this configuration) built to satisfy MSX-DOS2's extended BIOS mapper support routines, which require a RAM mapper of at least 128 KB; confirmed booting MSX-DOS2 successfully. Also implements the V9938's TEXT2 mode (SCREEN 0 WIDTH 80, MSX-DOS's `MODE 80`) — previously misdispatched as a GRAPHIC2 background with sprite mode 2 sprites, corrupting the screen — fixing the mode-bit dispatch priority, adding a dedicated 80-column/512-wide renderer, and extending `display_width` and the debugger's screen-mode display; confirmed on MSX-DOS.
-- **v2.5.11** (2026-09-06) — Remove the `mapper`/`mapper2` `py_emulator.yaml` config keys; cartridge mapper selection is now CLI-only (`--mapper` / `--mapper2`). Fixes a config-file default silently and falsely tripping the `--scc-plus`/`--mapper` mutual-exclusivity check.
-- **v2.5.10** (2026-09-01) — Add Allium specs for the remaining uncovered components (RTC, floppy disk image/drive, plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups), fixing several real bugs found along the way: RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram` (previously a single shared file let one machine's settings leak into another's) with a 12/24-hour encoding fix, and an undocumented Z80 DDCB/FDCB register-echo behavior is now implemented. Also adds full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with FDC-kind and disk-identity mismatch checks.
-- **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
-- **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
-- **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
-- **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
-- **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.
-- **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
-- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI flags being silently ignored on MSX1 machines; the interactive debugger's own commands already worked there, only the CLI startup path was gated to MSX2.
-- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus`: a bare sound cartridge in slot 1 with 64 KB bank-switched RAM and a Plus-mode SCC chip, for floppy-disk MSX2 titles that use it purely for audio.
-- **v2.5.1** (2026-08-16) — Close most outstanding Allium open questions from v2.5.0, fixing two PPI (i8255) bugs and rebinding quit to Ctrl+Q along the way. Switch the PSG amplitude table to measured-silicon data — an audible change.
-- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused spec layer and distill one for every major component, fixing several accuracy bugs (V9938 sprite collision, FDC) found along the way. Also add save-state schemas, a memory dispatch cache, and JIS keyboard bindings.
-- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the scanline loop, fixing a one-frame tear on titles that update VRAM and a display register in the same VBlank ISR. Also speeds up the debugger's per-instruction loop by ~9%.
-- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml` with `slot2`/`mapper2` and `frame_skip` config keys, and a `keyboard_joystick.buttons` section for rebinding Joy1's keyboard-emulation keys.
-- **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (128 KB ROM + 8 KB battery-backed SRAM); reconcile `--mapper` accepted names with the loader's supported set.
-- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`) and `KoeiSRAM32`.
-- **v2.4.4** (2026-08-04) — Add MSX mouse emulation (`--mouse[=1|2]`), reproducing the real pin-8-clocked nibble protocol via the host mouse.
-- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers with a flat mirror rebuilt only on bank switch, instead of resolving the active window on every read.
-- **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
-- **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file; switch `--benchmark` to a frame count.
-- **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
-- **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
-- **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.
-- **v2.3.4** (2026-07-19) — Add per-line banding for the display-adjust register.
-- **v2.3.3** (2026-07-19) — Fix handling of filenames with spaces.
-- **v2.3.2** (2026-07-19) — Fix V9938 line-interrupt handling.
-- **v2.3.1** (2026-07-19) — Refactor the socket RPC and MCP server.
-- **v2.3.0** (2026-07-19) — Add a socket RPC interface and MCP server.
-- **v2.2.1** (2026-07-15) — Add cycle-accurate CPU timing and PSG PCM playback.
-- **v2.2.0** (2026-07-13) — Add support for the Sony HB-F1XD (FDD + RTC).
-- **v2.1.0** (2026-07-13) — Improve MSX2 emulation performance.
-- **v2.0.0** (2026-07-06) — Add MSX2 CBIOS support.
-- **v1.0.0** (2026-06-07) — Initial release.
+Full version history: [CHANGELOG.md](CHANGELOG.md).

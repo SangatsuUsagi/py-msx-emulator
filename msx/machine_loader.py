@@ -1114,8 +1114,12 @@ _EXTENSION_DEVICES_REQUIRING_ROM = frozenset({"fmpac"})
 # (build_machine's expanded-overlay dispatch knows how to construct each) --
 # a separate namespace from _KNOWN_EXTENSION_DEVICES above (flat-overlay-only
 # device names), which happens to share no members with it today.
-_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset({"halnote", "flat_rom", "ram_mapper"})
-_EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM = frozenset({"halnote", "flat_rom"})
+_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset(
+    {"halnote", "flat_rom", "ram_mapper", "ascii8", "ascii16"}
+)
+_EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM = frozenset(
+    {"halnote", "flat_rom", "ascii8", "ascii16"}
+)
 # ram_mapper carries no ROM -- it's configured by size instead (see
 # _ExpandedSubslotDevice.size_kb).
 _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE = frozenset({"ram_mapper"})
@@ -1433,15 +1437,22 @@ def _wire_expanded_overlay(
     overlay-declared Kanji ROM can be detected.
 
     Raises:
-        MachineLoadError: If the overlay declares a 'ram_mapper' sub-slot on
-            a machine that already has a slot-3 memory mapper, if a
-            machine-declared and an overlay-declared `io_device` both
-            resolve to a Kanji-ROM device (ports 0xD8-0xDB cannot serve
-            two), or if a sub-slot names a device kind that passed
-            load-time validation but has no construction case here (an
-            internal consistency error between `_KNOWN_EXPANDED_SUBSLOT_DEVICES`
-            and this function).
+        MachineLoadError: If applied to an MSX1 machine, if the overlay
+            declares a 'ram_mapper' sub-slot on a machine that already has a
+            slot-3 memory mapper, if a machine-declared and an
+            overlay-declared `io_device` both resolve to a Kanji-ROM device
+            (ports 0xD8-0xDB cannot serve two), or if a sub-slot names a
+            device kind that passed load-time validation but has no
+            construction case here (an internal consistency error between
+            `_KNOWN_EXPANDED_SUBSLOT_DEVICES` and this function).
     """
+    if spec.generation == "msx1":
+        raise MachineLoadError(
+            f"{spec.machine_id}: an expanded extension overlay has no MSX1 "
+            "counterpart (a memory-mapper sub-slot device has no MSX1-standard "
+            "hardware, and a real HBI-J1 is an MSX2-era peripheral) -- MSX1 "
+            "machines are not supported for this extension shape"
+        )
     if spec.has_ram_mapper and any(
         sub.device == "ram_mapper" for sub in extension_overlay.subslots.values()
     ):
@@ -1471,6 +1482,10 @@ def _wire_expanded_overlay(
             mapper2_subslots[index] = FixedPageMapper(
                 rom=_load_device_rom(subslot, sub_label), base=0x4000
             )
+        elif subslot.device == "ascii8":
+            mapper2_subslots[index] = Ascii8Mapper(rom=_load_device_rom(subslot, sub_label))
+        elif subslot.device == "ascii16":
+            mapper2_subslots[index] = Ascii16Mapper(rom=_load_device_rom(subslot, sub_label))
         elif subslot.device == "ram_mapper":
             assert subslot.size_kb is not None  # guaranteed by load-time validation
             mapper2_subslots[index] = RamMapper(size_kb=subslot.size_kb)
