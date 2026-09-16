@@ -301,7 +301,7 @@ MSX2 ではスロット 3 が拡張されます（`sub_slot_enabled = True`）�
 ## マシンと拡張の YAML スキーマ
 
 `msx/machine_loader.py` は 3 種類の YAML ——デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）——の唯一の正とするソースです。3 種類とも手書きで検証する `TypedDict` 形状（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml`、およびそれらのネストした形状）であり、スキーマ検証ライブラリは使っていません——本節で扱う各フィールドは、ローダのどこかにある明示的な `.get()` 呼び出しに対応しています。読まれていないキーは、YAML 側のコメントが何を主張していようと単なるドキュメントにすぎません。各プライマリスロットが何を保持できるかのユーザー向けまとめは
-[README_extension.md の「Slot model」節](../README_extension.md#slot-model)（英語）を参照してください。本節ではそれを生成する YAML 構文そのものを解説します。
+[README_extension.md の「Slot model」節](README_extension.md#slot-model)（英語）を参照してください。本節ではそれを生成する YAML 構文そのものを解説します。
 
 ### デバイス YAML（`config/devices/*.yaml`）
 

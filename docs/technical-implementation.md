@@ -461,7 +461,7 @@ their nested shapes), not schema-validated by a library — every field this
 section documents corresponds to an explicit `.get()` call somewhere in the
 loader; a key not read there is pure documentation, whatever the YAML
 comment beside it claims. See
-[README_extension.md's "Slot model" section](../README_extension.md#slot-model)
+[README_extension.md's "Slot model" section](README_extension.md#slot-model)
 for the user-facing summary of what each primary slot can hold; this
 section documents the YAML syntax that produces it.
 
