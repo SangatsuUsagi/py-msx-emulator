@@ -171,7 +171,7 @@ PSG. Two modes:
 ### SCC-I cartridge ("SCC+")
 
 A bare sound cartridge (no game ROM), enabled with `--extension scc_plus` —
-see [`README_extension.md`](README_extension.md#scc-i-cartridge-scc) for
+see [`docs/README_extension.md`](docs/README_extension.md#scc-i-cartridge-scc) for
 activation and slot mechanics. 64 KB of physical bank-switched RAM addressed
 as if 128 KB (blank — no ROM/data file is ever loaded), with bank register
 bit 3 ignored so block N mirrors block N+8 — reproducing a documented
@@ -191,14 +191,14 @@ titles that plug this cartridge in purely for its audio.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/mapper.py:SCCICart` |
-| Activation | `--extension scc_plus` (see [`README_extension.md`](README_extension.md#scc-i-cartridge-scc)) |
+| Activation | `--extension scc_plus` (see [`docs/README_extension.md`](docs/README_extension.md#scc-i-cartridge-scc)) |
 | Memory map | 4 × 8 KB bank-switched RAM windows at `0x4000-0xBFFF`; mode register at `0xBFFE`/`0xBFFF` |
 | SCC register window | `0x9800-0x9FFF` (Compatible mode) or `0xB800-0xBFFF` (Plus mode), depending on the mode register |
 
 ### FM-PAC — MSX-MUSIC cartridge (YM2413/OPLL)
 
 Optional overlay cartridge, enabled with `--extension fmpac` — see
-[`README_extension.md`](README_extension.md#fm-pac) for activation and ROM
+[`docs/README_extension.md`](docs/README_extension.md#fm-pac) for activation and ROM
 requirements. 64 KB banked ROM, 8 KB battery-backed SRAM with
 openMSX-compatible magic-value unlock, and a YM2413 (OPLL) FM sound chip —
 9-channel 2-operator melody synthesis (15 built-in instruments plus a
@@ -208,7 +208,7 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/fmpac.py` (cartridge device), `msx/opll.py` (YM2413/OPLL chip) |
-| Activation | `--extension fmpac` (see [`README_extension.md`](README_extension.md#fm-pac)); ROM at `roms/fmpac/fmpac.rom` |
+| Activation | `--extension fmpac` (see [`docs/README_extension.md`](docs/README_extension.md#fm-pac)); ROM at `roms/fmpac/fmpac.rom` |
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`; 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`); memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`), enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by the enable register's bit 0 |
 | SRAM persistence | `saves/sram/fmpac.sram`, loaded on start and saved on exit |
@@ -218,7 +218,7 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 ### Sony HBI-J1 — Kanji-ROM + MSX-JE word processor
 
 Optional overlay cartridge, enabled with `--extension hbi_j1` — see
-[`README_extension.md`](README_extension.md#sony-hbi-j1) for activation, ROM
+[`docs/README_extension.md`](docs/README_extension.md#sony-hbi-j1) for activation, ROM
 requirements, and licensing. A JIS Kanji font ROM I/O device (ports
 `0xD8-0xDB`, no slot location of its own) plus an *expanded* primary slot 2
 hosting two sub-slot devices — a Halnote-mapped MSX-JE word-processor ROM
@@ -233,7 +233,7 @@ hardware, not just documentation.
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/kanji.py` (Kanji-ROM device), `msx/mapper.py:HalnoteMapper` (MSX-JE cartridge), `msx/machine_loader.py` (expanded overlay wiring) |
-| Activation | `--extension hbi_j1` (see [`README_extension.md`](README_extension.md#sony-hbi-j1)); ROMs at `roms/hbi_j1/` |
+| Activation | `--extension hbi_j1` (see [`docs/README_extension.md`](docs/README_extension.md#sony-hbi-j1)); ROMs at `roms/hbi_j1/` |
 | Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read; a 5-bit read counter auto-increments per read, wrapping to byte 0 of the same glyph every 32 reads |
 | Sub-slot 0 | `HalnoteMapper` — 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper shadowing `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`; `0x0000-0x3FFF`/`0xC000-0xFFFF` open bus |
@@ -264,7 +264,7 @@ an optional second cartridge in slot 2, and 32 KB RAM in slot 3. On MSX2, primar
 slot 3 is expanded into 4 secondary slots, with the sub-ROM in sub-slot 3-0 and
 the 128 KB RAM mapper in sub-slot 3-2. Primary slot 2 can independently also be
 expanded via `--extension` — see
-[`README_extension.md`'s "Slot model" section](README_extension.md#slot-model)
+[`docs/README_extension.md`'s "Slot model" section](docs/README_extension.md#slot-model)
 for what each slot can hold and which extensions expand slot 2 — coexisting
 with slot 3's own expansion on the same machine, each with its own secondary
 slot register.
@@ -276,7 +276,7 @@ slot register.
 | Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
 | Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; declared in the machine YAML as a `pages: [2]` entry next to the BIOS; returns 0xFF if absent |
 | Slot 1 | Cartridge ROM via mapper |
-| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into sub-slots under `--extension` — see [`README_extension.md`](README_extension.md#slot-model) |
+| Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into sub-slots under `--extension` — see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots; sub-ROM in 3-0, 128 KB RAM mapper in 3-2 |
 
@@ -679,7 +679,7 @@ python . --extension scc_plus --fdd1 path/to/disk.dsk
 python . --extension hbi_j1
 
 # More --extension ids (MSX-DOS2 + RAM expansion, Kanji font, View font) are
-# documented in README_extension.md
+# documented in docs/README_extension.md
 
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
@@ -720,7 +720,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | Slot 1 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper: `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi` (KonamiSCC shares the machine's single SCC chip with slot 1; rejected if slot 1 also resolves to KonamiSCC) |
-| `--extension ID` | _(none)_ | Overlay a slot 2 extension device — see [`README_extension.md`](README_extension.md) for the full list of ids and what each one is; conflicts with `--slot2`/`--mapper2`. `none` forces no extension overlay even when `py_emulator.yaml` sets one, freeing `--slot2`/`--mapper2` for CLI use |
+| `--extension ID` | _(none)_ | Overlay a slot 2 extension device — see [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is; conflicts with `--slot2`/`--mapper2`. `none` forces no extension overlay even when `py_emulator.yaml` sets one, freeing `--slot2`/`--mapper2` for CLI use |
 | `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`); writes flush back to the file on exit |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
@@ -760,7 +760,7 @@ speed: 1.0               # emulation speed multiplier
 scale: 3                 # integer window scale over the 256x212 base
 # slot2: roms/slot2.rom  # slot 2 cartridge ROM path (unset = no slot 2 cartridge)
 # mapper/mapper2 are CLI-only (--mapper / --mapper2); not configurable here
-# extension: fmpac        # overlay a slot 2 extension -- see README_extension.md
+# extension: fmpac        # overlay a slot 2 extension -- see docs/README_extension.md
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -819,6 +819,7 @@ annotated list and valid button/key-name labels.
 | Ctrl + F5 | MSX SELECT |
 | Left Alt/Option | MSX GRAPH |
 | Right Alt/Option | MSX CODE/KANA |
+| Shift + 0 | MSX "_" — types what SHIFT+"\" (a JIS-only key, absent on International keyboards) would produce |
 
 \* `<title>` is the game title from the ROM database, or `"py-msx-emulator"` if
 the cartridge is not in the database.
@@ -827,6 +828,17 @@ the cartridge is not in the database.
 system-wide shortcuts (System Settings → Keyboard → Keyboard Shortcuts →
 Keyboard, e.g. "Move focus to the menu bar" = `^F2`). If Ctrl+F1..F5 doesn't
 seem to reach the emulator, disable those shortcuts there.
+
+**Note (JIS BIOS machines):** HB-F1XD and other Japanese MSX machines run a
+Japanese BIOS ROM, and that ROM's character-decode table is always the JIS
+one, regardless of the `keyboard_type` setting in the machine config —
+`keyboard_type` only controls which host key maps to which MSX keyboard
+matrix cell, not what character the BIOS assigns to that cell. Running the
+emulator with an International host keyboard on one of these machines
+therefore means the keytop and the character actually typed won't always
+match. `"_"` is the only character with no key at all on an International
+keyboard, hence the Shift+0 assignment above; every other key still types,
+just not necessarily the character printed on its keytop.
 
 **Keyboard joystick emulation (Joy 1):** these are the built-in defaults; each
 function's key is overridable via `keyboard_joystick.buttons` in

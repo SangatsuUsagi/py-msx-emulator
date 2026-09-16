@@ -107,17 +107,23 @@ _K_APOSTROPHE_KEY = 1073741876   # 0x40000000 | SDL_SCANCODE_APOSTROPHE (52)
 # key_down/key_up instead of the ambiguous sym, exactly as SDLK_JIS_YEN does.
 SDLK_HOST_APOSTROPHE_KEY: int = _K_APOSTROPHE_KEY
 
-_K_EQUALS_KEY = 1073741870   # 0x40000000 | SDL_SCANCODE_EQUALS (46)
+_K_RO = 1073741959   # 0x40000000 | SDL_SCANCODE_INTERNATIONAL1 (135)
 
-# Public sentinel for the host's dedicated "="/"+" key, identified by
-# scancode rather than sym. Unlike SDLK_HOST_APOSTROPHE_KEY this key is not
-# ambiguous with anything -- it reports keysym.sym == SDLK_EQUALS regardless
-# of SHIFT (pinned by a probe: scancode 46, sym 61, both SHIFT states) -- but
-# on a JIS input source this key has no JIS role at all (JIS "=" is SHIFT +
-# the "-" key's own cell; see _JP_SYMBOLS), so it is deliberately repurposed
-# there rather than left dead. A frontend must detect this key by scancode
-# and pass this constant to key_down/key_up, exactly as SDLK_JIS_YEN does.
-SDLK_HOST_EQUALS_KEY: int = _K_EQUALS_KEY
+# Public sentinel for the JIS "\"/"_" key (to the right of "/", left of
+# right-Shift on a 106-key board), identified by scancode rather than sym --
+# like SDLK_JIS_YEN, this key's sym is unreliable (probe-confirmed against
+# real JIS hardware: keysym.sym == 0, constant across SHIFT), so a frontend
+# must detect it via scancode and pass this constant to key_down/key_up
+# instead of the raw sym. JIS only: an International/US host never reports
+# this scancode, since it has no key at that position.
+SDLK_JIS_RO: int = _K_RO
+
+# Internal-only sentinel for InputState's SHIFT+"0" -> "_" escape hatch (see
+# InputState.key_down). Not a real SDL keycode -- every real SDL key
+# constant is non-negative -- so it cannot collide with any host key.
+# Callers never pass this value directly; InputState substitutes it
+# internally, never exported.
+_K_ZERO_SHIFT = -1
 
 # MSX keyboard matrix: maps an SDL2 key constant to a (row, bit) cell.
 # Active-low: a cleared bit = key pressed.
@@ -145,6 +151,14 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     # Row 0: digits 0-7
     _K_0: (0, 0), _K_1: (0, 1), _K_2: (0, 2), _K_3: (0, 3),
     _K_4: (0, 4), _K_5: (0, 5), _K_6: (0, 6), _K_7: (0, 7),
+    # Host-only escape hatch: InputState.key_down redirects "0" to this
+    # synthetic key instead of _K_0 when SHIFT is held. Row 2 bit 5 is the
+    # JIS "_" key's own cell (see _JP_SYMBOLS' SDLK_JIS_RO entry) -- not a
+    # real MSX key combination on either layout, confirmed against openMSX's
+    # unicodemap.int and unicodemap.jp_jis: row 0 bit 0 (digit "0") has no
+    # plain-SHIFT entry in either map, so SHIFT+"0" produces no character on
+    # real hardware and cannot collide with a genuine keystroke.
+    _K_ZERO_SHIFT: (2, 5),
     # Row 1: 8, 9 and the symbols common to both layouts
     _K_8: (1, 0),
     _K_9: (1, 1),
@@ -198,13 +212,11 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
 # character on any host layout, unlike every other cell here, so there is
 # no SDL keycode to bind it to.
 #
-# SDLK_HOST_APOSTROPHE_KEY and SDLK_HOST_EQUALS_KEY (scancode-based, see
-# above) are each bound to the same cell as the plain sym they duplicate, as
-# a defensive fallback -- both name the same physical key here, so it is
-# harmless if either arrives.
+# SDLK_HOST_APOSTROPHE_KEY (scancode-based, see above) is bound to the same
+# cell as the plain _K_QUOTE sym it duplicates, as a defensive fallback --
+# both name the same physical key here, so it is harmless if either arrives.
 _INT_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_EQUALS: (1, 3),           # =
-    _K_EQUALS_KEY: (1, 3),       # = (scancode fallback, see SDLK_HOST_EQUALS_KEY)
     _K_LEFTBRACKET: (1, 5),      # [
     _K_RIGHTBRACKET: (1, 6),     # ]
     _K_QUOTE: (2, 0),            # '
@@ -223,35 +235,48 @@ _INT_SYMBOLS: dict[int, tuple[int, int]] = {
 # change under SHIFT, so _COMMON_MATRIX's plain _K_MINUS entry combined with
 # a real SHIFT keypress already reaches the row-1 bit-2 cell correctly.
 #
-# Apostrophe is reported to work the same way on real JIS hardware (SHIFT
-# plus the row-0 bit-7 cell, "7") but that specific claim is informally
-# reported, not independently probed the way "-" was above -- see the Open
-# Question in allium/ppi.allium. The _K_QUOTE alias below is a harmless
-# belt-and-braces entry either way: if SHIFT+"7" really does replay plain
-# "7" under SHIFT, _COMMON_MATRIX's _K_7 entry already reaches this cell and
-# the alias is simply never hit; if it instead collapses to a distinct sym
-# the way the host's dedicated apostrophe key does (see next paragraph),
-# the alias is what makes it work.
+# Apostrophe works the same way on real JIS hardware (SHIFT plus the
+# row-0 bit-7 cell, "7") -- probe-confirmed. The _K_QUOTE alias below is a
+# harmless belt-and-braces entry either way: if SHIFT+"7" replays plain "7"
+# under SHIFT on some host, _COMMON_MATRIX's _K_7 entry already reaches this
+# cell and the alias is simply never hit; on a host where it instead
+# collapses to a distinct sym the way the host's dedicated apostrophe key
+# does (see next paragraph), the alias is what makes it work.
 #
 # The host's dedicated apostrophe/quote key (SDLK_HOST_APOSTROPHE_KEY,
 # scancode-based, see above) reports keysym.sym == SDLK_QUOTE regardless of
-# SHIFT, which collides with the informally-reported SHIFT+"7" behaviour
-# above -- so it can't also be bound to the row-0 bit-7 cell without risking
-# swallowing that path; only scancode tells the two apart. Likewise the
-# host's dedicated "="/"+" key (SDLK_HOST_EQUALS_KEY, scancode-based, see
-# above) reports keysym.sym == SDLK_EQUALS regardless of SHIFT (this one IS
-# probe-confirmed), and the host's "`"/"~" key. JIS has no keyboard key of
-# its own at any of these three host positions, so all three are
+# SHIFT, which collides with SHIFT+"7"'s own sym on a JIS input source -- so
+# it can't also be bound to the row-0 bit-7 cell without risking swallowing
+# that path; only scancode tells the two apart. Likewise the host's "`"/"~"
+# key has no JIS keyboard key of its own at that host position, so it is
 # deliberately repurposed below rather than left dead: the apostrophe key
 # onto ":"/"*" (row 2 bit 0, next to ";" the way "'"/'"' sits next to ";" on
 # an International host keyboard), "`"/"~" onto "^" (row 1 bit 3, JIS's own
 # unicode-real cell that a plain International/US keyboard has no dedicated
-# key for), and "="/"+" onto "_" (row 2 bit 5) -- which happens to reproduce
-# real JIS underscore-key behaviour for free: unshifted asserts the cell
-# alone (JIS BIOS renders nothing, matching the real key), SHIFT+cell
-# renders "_". Keytop label mismatch is accepted here in exchange for every
-# JIS BASIC/DOS character being reachable from a plain International/US host
-# keyboard.
+# key for). Keytop label mismatch is accepted here in exchange for the
+# character being reachable at all.
+#
+# "^" is also reachable directly through the real JIS "^"/"~" key's own sym
+# (_K_CARET, 94, SHIFT-invariant -- probe-confirmed against real JIS
+# hardware) with no scancode involvement -- but this cannot be relied on as
+# the only path: on a real macOS/SDL2 quirk (see README's Known
+# limitations), the host keyboard layout can be misdetected, in which case
+# this same key instead reports SDLK_EQUALS (61), same as an International
+# keyboard's dead "=" key, and "^" becomes unreachable through it entirely
+# until the user works around the misdetection (e.g. switching input source
+# away and back). This table's "`" repurposing was briefly removed for
+# readability (git history), then reinstated once real-hardware testing hit
+# exactly that failure mode -- it stays as the only reliable fallback for a
+# host that hasn't (yet) correctly recognized the keyboard layout.
+#
+# "_" is instead reached via the JIS "\"/"_" key itself (SDLK_JIS_RO,
+# scancode-based like SDLK_JIS_YEN -- its sym is unreliable) bound directly
+# to row 2 bit 5: unshifted asserts the cell alone (JIS BIOS renders
+# nothing, matching the real key), SHIFT+cell renders "_", exactly
+# reproducing real JIS underscore-key behaviour. For a host with no such
+# key at all (an International/US keyboard, possibly under a JIS input
+# source), InputState's SHIFT+"0" escape hatch reaches the same cell --
+# see InputState.key_down's own comment.
 #
 # The ¥ key is different: on real JIS hardware it is a dedicated key with its
 # own scancode (SDL_SCANCODE_INTERNATIONAL3), not an alternate character on
@@ -268,7 +293,7 @@ _JP_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_QUOTE: (0, 7),            # ' (belt-and-braces; see above)
     _K_APOSTROPHE_KEY: (2, 0),   # : / * (repurposed host apostrophe key; see above)
     _K_BACKQUOTE: (1, 3),        # ^ / ~ (repurposed host `/~ key; see above)
-    _K_EQUALS_KEY: (2, 5),       # _ (repurposed host =/+ key; see above)
+    _K_RO: (2, 5),               # \ / _ (real JIS key, scancode fallback; see above)
 }
 
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}
@@ -371,6 +396,10 @@ class InputState:
     # Currently held matrix keys, so shared cells (LSHIFT/RSHIFT → (6,0),
     # LCTRL/RCTRL → (6,1)) only release when every mapped key is released.
     _held_keys: set[int] = field(default_factory=set, init=False, repr=False)
+    # True while a "0" key_down was redirected to _K_ZERO_SHIFT (see
+    # key_down below), so the matching key_up releases the same cell even if
+    # SHIFT was released first.
+    _zero_shift_redirect: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._matrix_map = KEY_MATRIX_JP if self.keyboard_type == "jp" else KEY_MATRIX_INT
@@ -383,10 +412,22 @@ class InputState:
     def joy2(self) -> int:
         return self._joy2_kbd & self._joy2_hw
 
+    def _shift_held(self) -> bool:
+        return _K_LSHIFT in self._held_keys or _K_RSHIFT in self._held_keys
+
     def key_down(self, key: int) -> None:
-        if key in self._matrix_map:
-            self._held_keys.add(key)
-            row, bit = self._matrix_map[key]
+        # SHIFT+"0" escape hatch (see _K_ZERO_SHIFT): redirected here rather
+        # than in _matrix_map, since a static key→cell table can't express a
+        # binding that depends on another key's current state. Latched into
+        # _zero_shift_redirect so the matching key_up releases the same cell
+        # regardless of what SHIFT is doing by then.
+        matrix_key = key
+        if key == _K_0 and self._shift_held():
+            matrix_key = _K_ZERO_SHIFT
+            self._zero_shift_redirect = True
+        if matrix_key in self._matrix_map:
+            self._held_keys.add(matrix_key)
+            row, bit = self._matrix_map[matrix_key]
             self.matrix[row] &= ~(1 << bit) & 0xFF
         if key in self.joy_map:
             port, bit = self.joy_map[key]
@@ -396,9 +437,13 @@ class InputState:
                 self._joy2_kbd &= ~(1 << bit) & 0x3F
 
     def key_up(self, key: int) -> None:
-        if key in self._matrix_map:
-            self._held_keys.discard(key)
-            row, bit = self._matrix_map[key]
+        matrix_key = key
+        if key == _K_0 and self._zero_shift_redirect:
+            matrix_key = _K_ZERO_SHIFT
+            self._zero_shift_redirect = False
+        if matrix_key in self._matrix_map:
+            self._held_keys.discard(matrix_key)
+            row, bit = self._matrix_map[matrix_key]
             # Only release the matrix bit when no other held key shares this
             # cell (LSHIFT/RSHIFT and LCTRL/RCTRL each share one cell).
             cell = (row, bit)

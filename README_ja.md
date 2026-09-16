@@ -108,25 +108,25 @@
 
 ### SCC-I カートリッジ（「SCC+」）
 
-`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`README_extension_ja.md`](README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
+`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
 
 > **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/mapper.py:SCCICart` |
-| 有効化 | `--extension scc_plus`（[`README_extension_ja.md`](README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
+| 有効化 | `--extension scc_plus`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
 | メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
 | SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
 ### FM-PAC — MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`README_extension_ja.md`](README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
+`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/fmpac.py`（カートリッジデバイス）、`msx/opll.py`（YM2413/OPLL チップ） |
-| 有効化 | `--extension fmpac`（[`README_extension_ja.md`](README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
+| 有効化 | `--extension fmpac`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）；8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）；メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
 | SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
@@ -135,14 +135,14 @@
 
 ### Sony HBI-J1 — 漢字ROM + MSX-JEワードプロセッサ
 
-`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`README_extension_ja.md`](README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
+`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
 
 著者はこの実機を物理的に所有しており、そのROMをダンプ済みです（openMSXの `Sony_HBI-J1.xml` に対してSHA1で検証済み）。そのため、この実装は資料ベースではなく実機を対象としています。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/kanji.py`（漢字ROMデバイス）、`msx/mapper.py:HalnoteMapper`（MSX-JEカートリッジ）、`msx/machine_loader.py`（拡張オーバーレイの配線） |
-| 有効化 | `--extension hbi_j1`（[`README_extension_ja.md`](README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
+| 有効化 | `--extension hbi_j1`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
 | 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別；5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
 | サブスロット0 | `HalnoteMapper` — 1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM；`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
@@ -164,7 +164,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も `--extension` によって独立に拡張可能です — 各スロットが何を保持できるか、どの拡張がスロット2を拡張するかは[`README_extension_ja.md`の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も `--extension` によって独立に拡張可能です — 各スロットが何を保持できるか、どの拡張がスロット2を拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -173,7 +173,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
 | スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension` によりサブスロットに拡張 — 詳細は[`README_extension_ja.md`](README_extension_ja.md#スロットモデル)を参照 |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
@@ -467,7 +467,7 @@ python . --extension scc_plus --fdd1 path/to/disk.dsk
 python . --extension hbi_j1
 
 # 他の --extension id（MSX-DOS2 + RAM 拡張、漢字フォント、View フォント）は
-# README_extension_ja.md に記載
+# docs/README_extension_ja.md に記載
 
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
@@ -508,7 +508,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`（KonamiSCC はスロット 1 とマシン単一の SCC チップを共有；スロット 1 も KonamiSCC に解決される場合は拒否） |
-| `--extension ID` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`README_extension_ja.md`](README_extension_ja.md)を参照。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
+| `--extension ID` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -548,7 +548,7 @@ speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-# extension: fmpac        # スロット 2 の拡張を重ねる -- 詳細は README_extension_ja.md
+# extension: fmpac        # スロット 2 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -606,6 +606,7 @@ mouse:
 | Ctrl + F5 | MSX SELECT |
 | 左 Alt/Option | MSX GRAPH |
 | 右 Alt/Option | MSX CODE/KANA |
+| Shift + 0 | MSX "_" — International キーボードには無い SHIFT+"\"（JIS専用キー）が入力する文字を入力する |
 
 \* `<title>` は ROM データベースから取得したゲームタイトルです。データベースにない場合は `"py-msx-emulator"` が使われます。
 
@@ -614,6 +615,16 @@ mouse:
 「メニューバーにフォーカスを移動」= `^F2`）として予約されている場合がありま
 す。Ctrl+F1〜F5 がエミュレータに届かないようであれば、そちらを無効化してくだ
 さい。
+
+**注記（JIS BIOS機種）:** HB-F1XD など日本の MSX 機は日本語 BIOS ROM を使用し
+ており、config の `keyboard_type` の設定に関係なく、BIOS の文字デコードテー
+ブルは常に JIS 版のままです。`keyboard_type` はホストキーと MSX キーボードマ
+トリクスのセルの対応を制御するだけで、BIOS がそのセルにどの文字を割り当てる
+かは変えません。そのため International キーボードを使用した環境で本エミュ
+レータを実行すると、キートップと実際に入力される文字は一致しません。
+International キーボードに存在しないキーは `"_"` のみで、これは上表の
+Shift+0 に割り当ててあります。その他のキーはキートップの文字とは異なります
+が、入力自体は可能です。
 
 **キーボードによるジョイスティックエミュレーション（Joy 1）:** 以下は組み込みの
 デフォルトです。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons`
