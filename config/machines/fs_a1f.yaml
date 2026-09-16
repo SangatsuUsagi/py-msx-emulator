@@ -7,7 +7,7 @@ rom_base: roms/fs_a1f
 cpu:
   type: z80a
   clock_mhz: 3.579545
-  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
 # Panasonic FS-A1F. Slot 3 now matches real hardware's actual layout
 # (openMSX's references/openMSX/share/machines/Panasonic_FS-A1F.xml): four
@@ -49,8 +49,8 @@ slots:
             file: fs-a1f_basic-bios2.rom
             size_kb: 32
             pages: [0, 1]
-    1: {type: cartridge}
-    2: {type: cartridge}
+    1: { type: cartridge }
+    2: { type: cartridge }
     3:
       expanded: true
       secondary:
@@ -76,9 +76,9 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
-    overrides: {keyboard_type: jp}
+    overrides: { keyboard_type: jp }
   - ref: vdp_v9938
-    overrides: {vram_kb: 128}
+    overrides: { vram_kb: 128 }
   - ref: psg_ay8910
   - ref: rtc_rp5c01
 

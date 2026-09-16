@@ -7,7 +7,7 @@ rom_base: roms/hb_f1xd
 cpu:
   type: z80a
   clock_mhz: 3.579545
-  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
 # Hypothetical Sony HB-F1XD variant: BIOS+BASIC, SUB ROM, and WD2793 floppy
 # interface are identical to hb_f1xd.yaml (same ROM files under roms/hb_f1xd/,
@@ -30,8 +30,8 @@ slots:
             size_kb: 32
             pages: [0, 1]
             sha1: 4ce41fcc1a603411ec4e99556409c442078f0ecf
-    1: {type: cartridge}
-    2: {type: cartridge}
+    1: { type: cartridge }
+    2: { type: cartridge }
     3:
       expanded: true
       secondary:
@@ -59,9 +59,9 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
-    overrides: {keyboard_type: jp}
+    overrides: { keyboard_type: jp }
   - ref: vdp_v9938
-    overrides: {vram_kb: 128}
+    overrides: { vram_kb: 128 }
   - ref: psg_ay8910
   - ref: rtc_rp5c01
   - ref: memory_mapper_standard
