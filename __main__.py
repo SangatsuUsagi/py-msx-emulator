@@ -4,12 +4,20 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, TextIO, TypeVar
 
 from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
 
 if TYPE_CHECKING:
-    from msx.machine_loader import _ExpandedExtensionOverlay, _ExtensionOverlay
+    from msx.app_config import AppConfig
+    from msx.diagnostics.logger import DebugLogger
+    from msx.machine import Machine
+    from msx.machine_loader import (
+        MachineSpec,
+        _ExpandedExtensionOverlay,
+        _ExtensionOverlay,
+    )
+    from msx.rpc_server import DebugServer
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -200,7 +208,9 @@ def _resolve_paths(
     return cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2
 
 
-def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str | None) -> str:
+def _resolve_machine_id(
+    args: argparse.Namespace, app_cfg: "AppConfig", db_system: str | None
+) -> str:
     """Pick the machine ID: --machine > config file > ROM DB (MSX1) > MSX2 default."""
     if args.machine is not None:
         return str(args.machine)
@@ -212,7 +222,7 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 
 def _print_startup_summary(
-    spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    spec: "MachineSpec", display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
@@ -259,7 +269,7 @@ def _print_startup_summary(
         print(f"benchmark: {args.benchmark} frames (headless)")
 
 
-def _run_headless_frames(machine: Any, count_frame: int, resume: str | None) -> None:
+def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
     """Run exactly `count_frame` frames headlessly (no SDL window)."""
     if resume is not None:
         from msx.state import load_state
@@ -268,7 +278,7 @@ def _run_headless_frames(machine: Any, count_frame: int, resume: str | None) -> 
         machine.run_frame()
 
 
-def _run_benchmark(machine: Any, frames: int, resume: str | None) -> None:
+def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
 
@@ -287,7 +297,8 @@ def _run_benchmark(machine: Any, frames: int, resume: str | None) -> None:
 
 
 def _cleanup(
-    machine: Any, rpc_server: Any, logger: Any, trace_file: Any, mapper_trace_file: Any,
+    machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
+    trace_file: TextIO | None, mapper_trace_file: TextIO | None,
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -344,7 +355,9 @@ class _EffectiveOptions(NamedTuple):
     frame_skip: str
 
 
-def _resolve_effective_options(args: argparse.Namespace, app_cfg: Any) -> _EffectiveOptions:
+def _resolve_effective_options(
+    args: argparse.Namespace, app_cfg: "AppConfig"
+) -> _EffectiveOptions:
     """Merge CLI arguments with py_emulator.yaml at built-in default < config
     file < CLI argument precedence. A CLI flag left unset is None (see the
     sentinel defaults in _build_arg_parser), so it never masks a config value.
