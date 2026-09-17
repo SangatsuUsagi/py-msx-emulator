@@ -57,6 +57,7 @@ through the internals.
 - [BIOS setup](#bios-setup)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Tools](#tools)
 - [Remote control (Socket RPC & MCP)](#remote-control-socket-rpc--mcp)
 - [Machine configuration](#machine-configuration)
 - [Running tests](#running-tests)
@@ -855,74 +856,31 @@ function's key is overridable via `keyboard_joystick.buttons` in
 
 ---
 
+## Tools
+
+Standalone command-line utilities under `tools/`: disk image management
+(an interactive ftp-style shell, a blank-image creator, a raw-sector copier
+for a physical USB floppy drive), plus the RPC/MCP client tools used by
+[Remote control](#remote-control-socket-rpc--mcp) below.
+
+Full usage, options, and examples for every script:
+[`tools/README_tools.md`](tools/README_tools.md) /
+[`tools/README_tools_ja.md`](tools/README_tools_ja.md).
+
+---
+
 ## Remote control (Socket RPC & MCP)
 
-The emulator can expose a small local control surface so external tools — shell
-scripts, a test harness, or an AI coding agent — can pause, inspect, and drive a
-running instance. There are two layers:
+The emulator can expose a small local control surface — a Unix-socket
+JSON-RPC server built into the emulator (`--rpc`) plus an MCP server that
+wraps it (`tools/mcp_server.py`) — so external tools, a test harness, or an
+AI coding agent such as Claude Code can pause, inspect, and drive a running
+instance.
 
-- **Socket RPC** — a Unix-domain-socket JSON-RPC server embedded in the emulator
-  process (`msx/rpc_server.py`). It is **off by default**; enable it with `--rpc`.
-- **MCP server** — a standalone stdio server (`tools/mcp_server.py`) that wraps the
-  socket RPC as [Model Context Protocol](https://modelcontextprotocol.io) tools, so a
-  client like Claude Code can call emulator functions as native tools (and receive
-  screenshots as inline images).
-
-```
-MCP client  ──stdio/MCP──▶  tools/mcp_server.py  ──Unix socket──▶  emulator (--rpc)
-```
-
-### Enabling the RPC server
-
-```bash
-# Start the emulator with the control socket enabled
-python . path/to/cartridge.rom --rpc
-
-# Optional: use a custom socket path (e.g. for multiple instances)
-python . path/to/cartridge.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
-```
-
-The RPC methods cover debugger pause/step/continue, breakpoints and watchpoints,
-memory and VRAM read/write, disassembly, VDP registers, keyboard/joystick
-injection, screenshot capture, save-state, and disk swap. The wire protocol and
-full method reference are documented in
-[`docs/socket-rpc-mcp.md`](docs/socket-rpc-mcp.md).
-
-Quick manual test with the bundled client:
-
-```bash
-python tools/rpc_client.py debugger.status
-python tools/rpc_client.py memory.read address=0xC000 length=16
-```
-
-### Registering the MCP server
-
-The MCP server needs the optional `mcp` dependency:
-
-```bash
-pip install -e '.[mcp]'      # or: pip install 'mcp[cli]>=1.0,<2.0'
-```
-
-Register it once with Claude Code (writes `.mcp.json`):
-
-```bash
-claude mcp add --transport stdio --scope project msx-emulator \
-    -- python tools/mcp_server.py
-claude mcp list        # msx-emulator  ●  connected
-```
-
-Point the MCP server at a non-default socket via the `MSX_RPC_SOCKET` environment
-variable (settable in the `.mcp.json` `env` block).
-
-### Security notes
-
-- The Unix socket is reachable only by local processes running as the same user.
-- `memory.write` and `cpu.step` mutate machine state and are **paused-only**.
-- There is no authentication; on a shared host, restrict the socket with
-  `chmod 600` — otherwise any other local user can connect and drive
-  `memory.write`/`cpu.step` to alter the running machine's state at will. The
-  server is opt-in (`--rpc`) precisely because it is a control surface — no
-  socket exists unless you ask for one.
+Architecture, enabling the RPC server, registering the MCP server, the RPC
+method reference, and security notes:
+[`tools/README_tools.md`](tools/README_tools.md#remote-control-socket-rpc--mcp)
+/ [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp).
 
 ---
 
@@ -1117,7 +1075,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── tools/                 # Blank-disk maker, RPC client, MCP server
+├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server — see tools/README_tools.md
 ├── docs/                  # Debugger guide, socket RPC / MCP reference
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/

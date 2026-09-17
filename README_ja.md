@@ -44,6 +44,7 @@
 - [BIOS のセットアップ](#bios-のセットアップ)
 - [インストール](#インストール)
 - [使い方](#使い方)
+- [ツール](#ツール)
 - [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp)
 - [マシン設定](#マシン設定)
 - [テストの実行](#テストの実行)
@@ -641,76 +642,31 @@ Shift+0 に割り当ててあります。その他のキーはキートップの
 
 ---
 
+## ツール
+
+`tools/` 以下のスタンドアロンなコマンドラインツール群: ディスクイメージ管理
+（ftp 風の対話シェル、空イメージ作成、物理USBフロッピードライブ向けの生セクタ
+コピー）に加え、[リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP
+クライアントツールも含まれます。
+
+全スクリプトの詳しい使い方・オプション・実行例:
+[`tools/README_tools.md`](tools/README_tools.md) /
+[`tools/README_tools_ja.md`](tools/README_tools_ja.md)。
+
+---
+
 ## リモート制御（Socket RPC & MCP）
 
-エミュレータは小さなローカル制御インターフェースを公開でき、外部ツール（シェル
-スクリプト、テストハーネス、AI コーディングエージェントなど）から実行中のインス
-タンスを一時停止・検査・操作できます。2 つの層があります。
+エミュレータは小さなローカル制御インターフェースを公開でき —
+エミュレータに組み込まれた Unix ソケット JSON-RPC サーバ（`--rpc`）と、それを
+ラップする MCP サーバ（`tools/mcp_server.py`）の2層構成 — 外部ツール、テスト
+ハーネス、Claude Code のような AI コーディングエージェントから実行中のインス
+タンスを一時停止・検査・操作できます。
 
-- **Socket RPC** — エミュレータプロセスに組み込まれた Unix ドメインソケットの
-  JSON-RPC サーバ（`msx/rpc_server.py`）。**既定では無効**で、`--rpc` で有効化します。
-- **MCP サーバ** — Socket RPC を [Model Context Protocol](https://modelcontextprotocol.io)
-  ツールとしてラップするスタンドアロンの stdio サーバ（`tools/mcp_server.py`）。
-  Claude Code のようなクライアントがエミュレータ機能をネイティブツールとして呼び出せ
-  （スクリーンショットはインライン画像として受け取れ）ます。
-
-```
-MCP クライアント ──stdio/MCP──▶ tools/mcp_server.py ──Unix ソケット──▶ エミュレータ (--rpc)
-```
-
-### RPC サーバの有効化
-
-```bash
-# 制御ソケットを有効にして起動
-python . path/to/cartridge.rom --rpc
-
-# 任意：ソケットパスを指定（複数インスタンス運用時など）
-python . path/to/cartridge.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
-```
-
-RPC メソッドは、デバッガの一時停止/ステップ/継続、ブレークポイントとウォッチポイ
-ント、メモリ・VRAM の読み書き、逆アセンブル、VDP レジスタ、キーボード/ジョイス
-ティック入力、スクリーンショット取得、ステートセーブ、ディスク入れ替えを網羅しま
-す。ワイヤプロトコルと全メソッドの一覧は
-[`docs/socket-rpc-mcp_ja.md`](docs/socket-rpc-mcp_ja.md) を参照してくだ
-さい。
-
-同梱クライアントによる簡単な動作確認:
-
-```bash
-python tools/rpc_client.py debugger.status
-python tools/rpc_client.py memory.read address=0xC000 length=16
-```
-
-### MCP サーバの登録
-
-MCP サーバにはオプションの `mcp` 依存が必要です。
-
-```bash
-pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0,<2.0'
-```
-
-Claude Code に一度だけ登録します（`.mcp.json` に書き込まれます）。
-
-```bash
-claude mcp add --transport stdio --scope project msx-emulator \
-    -- python tools/mcp_server.py
-claude mcp list        # msx-emulator  ●  connected
-```
-
-既定以外のソケットを使う場合は、環境変数 `MSX_RPC_SOCKET`（`.mcp.json` の `env`
-ブロックで設定可能）で指定します。
-
-### セキュリティ上の注意
-
-- Unix ソケットは、同一ユーザで動作するローカルプロセスからのみ到達可能です。
-- `memory.write` と `cpu.step` はマシン状態を変更するため、**一時停止中のみ**実行
-  できます。
-- 認証はありません。共有ホストでは `chmod 600` でソケットを保護してください
-  ——保護しないと、同一ホストの他のユーザーが接続して `memory.write`/`cpu.step`
-  を呼び出し、実行中のマシンの状態を自由に書き換えられてしまいます。制御
-  インターフェースであるため、サーバは明示的なオプトイン（`--rpc`）方式で、指定し
-  ない限りソケットは作成されません。
+アーキテクチャ、RPC サーバの有効化、MCP サーバの登録、RPC メソッドリファレン
+ス、セキュリティ上の注意点:
+[`tools/README_tools.md`](tools/README_tools.md#remote-control-socket-rpc--mcp)
+/ [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp)。
 
 ---
 
@@ -876,7 +832,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
-├── tools/                 # 空ディスク作成、RPC クライアント、MCP サーバ
+├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、RPC クライアント、MCP サーバ — 詳細は tools/README_tools_ja.md
 ├── docs/                  # デバッガガイド、ソケット RPC / MCP リファレンス
 ├── assets/                # この README が参照するベンチマーク履歴グラフ
 ├── roms/
