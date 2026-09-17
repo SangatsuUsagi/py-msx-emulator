@@ -804,19 +804,6 @@ class Opll:
         c_bit5 = (pg_cym >> (_PG_BITS - 5)) & 1
         self._short_noise = (h_bit2 ^ h_bit7) | (h_bit3 ^ c_bit5) | (c_bit3 ^ c_bit5)
 
-    def _calc_phase(self, slot: _Slot, reset: int) -> None:
-        if slot.patch.PM:
-            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7]
-        else:
-            pm = 0
-        if reset:
-            slot.pg_phase = 0
-        slot.pg_phase = (
-            slot.pg_phase
-            + ((((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[slot.patch.ML]) << slot.blk >> 2)
-        ) & (_DP_WIDTH - 1)
-        slot.pg_out = slot.pg_phase >> _DP_BASE_BITS
-
     def _lookup_attack_step(self, slot: _Slot, counter: int) -> int:
         # rh (eg_rate_h) >= 12 clamps to the chip's fixed near-instant attack
         # timings rather than the normal per-tick step table; rh 0/15 never
@@ -862,68 +849,81 @@ class Opll:
             slot.eg_state = _ATTACK
         self._request_update(slot, _UPDATE_EG)
 
-    def _calc_envelope(  # emu2413: calc_envelope
-        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int
-    ) -> None:
-        mask = self._step_envelope_rate(slot, eg_counter)
-        self._transition_envelope_state(slot, buddy, eg_counter, mask)
-        if test:
-            slot.eg_out = 0
+    def _update_slots(self) -> None:  # emu2413: calc_envelope + calc_phase, fused per slot
+        """Advance every slot's envelope (Damp/Attack/Decay/Sustain/Release
+        state machine + eg_out level) and phase generator by one chip tick.
 
-    def _step_envelope_rate(self, slot: _Slot, eg_counter: int) -> int:
-        """Advance eg_out by one attack/decay step if this tick is due for
-        one (per the slot's own rate). Returns the rate mask (shared with
-        _transition_envelope_state's DAMP-completion check below), since
-        both are gated by the same eg_shift-derived tick cadence.
+        Runs 18 times per sample tick (~49.7 kHz native rate), so the former
+        per-slot _calc_envelope/_step_envelope_rate/_transition_envelope_state/
+        _calc_phase call chain is folded into one loop body here with each
+        slot's touched fields hoisted to locals, matching the hot-path
+        inlining PSG._render/SCC.generate_samples already apply -- this is
+        the CLAUDE.md "keep functions short" exception for hot-path code.
         """
-        mask = (1 << slot.eg_shift) - 1
-        if slot.eg_state == _ATTACK:
-            if 0 < slot.eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
-                s = self._lookup_attack_step(slot, eg_counter)
-                if s > 0:
-                    slot.eg_out = max(0, slot.eg_out - (slot.eg_out >> s) - 1)
-        else:
-            if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
-                step = slot.eg_out + self._lookup_decay_step(slot, eg_counter)
-                slot.eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
-        return mask
-
-    def _transition_envelope_state(
-        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, mask: int
-    ) -> None:
-        """Advance the Damp/Attack/Decay/Sustain/Release state machine based
-        on the eg_out level _step_envelope_rate just produced.
-        """
-        st = slot.eg_state
-        if st == _DAMP:
-            if slot.eg_out >= _EG_MAX and (eg_counter & mask) == 0:
-                self._start_envelope(slot)
-                if slot.type & 1:
-                    if not slot.pg_keep:
-                        slot.pg_phase = 0
-                    if buddy is not None and not buddy.pg_keep:
-                        buddy.pg_phase = 0
-        elif st == _ATTACK:
-            if slot.eg_out == 0:
-                slot.eg_state = _DECAY
-                self._request_update(slot, _UPDATE_EG)
-        elif st == _DECAY:
-            if (slot.eg_out >> 3) == slot.patch.SL:
-                slot.eg_state = _SUSTAIN
-                self._request_update(slot, _UPDATE_EG)
-
-    def _update_slots(self) -> None:
         self._eg_counter += 1
         eg_counter = self._eg_counter
         test = self._test_flag
+        test_eg = test & 1
+        test_reset = test & 4
         slots = self._slot
+        lookup_attack_step = self._lookup_attack_step
+        lookup_decay_step = self._lookup_decay_step
+        start_envelope = self._start_envelope
+        request_update = self._request_update
+        commit_slot_update = self._commit_slot_update
         for i in range(18):
             slot = slots[i]
             buddy: _Slot | None = slots[slot.buddy_index] if slot.buddy_index is not None else None
             if slot.update_requests:
-                self._commit_slot_update(slot)
-            self._calc_envelope(slot, buddy, eg_counter, test & 1)
-            self._calc_phase(slot, test & 4)
+                commit_slot_update(slot)
+
+            # --- envelope: step the rate, then run the state transition ---
+            eg_state = slot.eg_state
+            eg_out = slot.eg_out
+            mask = (1 << slot.eg_shift) - 1
+            if eg_state == _ATTACK:
+                if 0 < eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
+                    s = lookup_attack_step(slot, eg_counter)
+                    if s > 0:
+                        eg_out = max(0, eg_out - (eg_out >> s) - 1)
+            else:
+                if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
+                    step = eg_out + lookup_decay_step(slot, eg_counter)
+                    eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
+
+            if eg_state == _DAMP:
+                if eg_out >= _EG_MAX and (eg_counter & mask) == 0:
+                    start_envelope(slot)  # mutates slot.eg_state/eg_out directly
+                    eg_state = slot.eg_state
+                    eg_out = slot.eg_out
+                    if slot.type & 1:
+                        if not slot.pg_keep:
+                            slot.pg_phase = 0
+                        if buddy is not None and not buddy.pg_keep:
+                            buddy.pg_phase = 0
+            elif eg_state == _ATTACK:
+                if eg_out == 0:
+                    eg_state = _DECAY
+                    request_update(slot, _UPDATE_EG)
+            elif eg_state == _DECAY:
+                if (eg_out >> 3) == slot.patch.SL:
+                    eg_state = _SUSTAIN
+                    request_update(slot, _UPDATE_EG)
+
+            if test_eg:
+                eg_out = 0
+
+            slot.eg_state = eg_state
+            slot.eg_out = eg_out
+
+            # --- phase generator ---
+            patch = slot.patch
+            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7] if patch.PM else 0
+            pg_phase = 0 if test_reset else slot.pg_phase
+            pg_delta = ((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[patch.ML]
+            pg_phase = (pg_phase + (pg_delta << slot.blk >> 2)) & (_DP_WIDTH - 1)
+            slot.pg_phase = pg_phase
+            slot.pg_out = pg_phase >> _DP_BASE_BITS
 
     def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
         # emu2413: to_linear + lookup_exp_table, folded together — this runs once
