@@ -288,6 +288,26 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
     sprite_touched = bytearray(_W * _H)
     coincidence = False
 
+    # Shared per-pixel plot: identical body for the scale==1 fast path and the
+    # general-scale loop below (only how `px` is computed differs), so it's
+    # factored into one closure instead of two copies -- defined once per
+    # function call, not per pixel/line/sprite, since Python resolves `row`/
+    # `color` (both reassigned in the loop below) at call time via the
+    # closure cell, not at def time. Mirrors _render_sprites_mode2's own
+    # `_plot` closure in v9938_renderer.py.
+    def _plot(px: int) -> None:
+        nonlocal coincidence
+        if px < 0 or px >= _W:  # clip off-screen, no wrap
+            return
+        coord = row + px
+        if sprite_touched[coord]:
+            coincidence = True
+        else:
+            sprite_touched[coord] = 1
+        if color and not sprite_painted[coord]:
+            sprite_painted[coord] = 1
+            buf[coord] = color
+
     for i in range(32):
         y_byte = vram[(sat_base + i * 4) & 0x3FFF]
         if y_byte == 0xD0:
@@ -331,35 +351,14 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
             if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                 for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    px = x_byte + bit_i
-                    if px < 0 or px >= _W:
-                        continue
-                    coord = row + px
-                    if sprite_touched[coord]:
-                        coincidence = True
-                    else:
-                        sprite_touched[coord] = 1
-                    if color and not sprite_painted[coord]:
-                        sprite_painted[coord] = 1
-                        buf[coord] = color
+                    if pixel:
+                        _plot(x_byte + bit_i)
             else:
                 for bit_i, pixel in enumerate(pixels):
                     if not pixel:
                         continue
                     for s in range(scale):
-                        px = x_byte + bit_i * scale + s
-                        if px < 0 or px >= _W:
-                            continue
-                        coord = row + px
-                        if sprite_touched[coord]:
-                            coincidence = True
-                        else:
-                            sprite_touched[coord] = 1
-                        if color and not sprite_painted[coord]:
-                            sprite_painted[coord] = 1
-                            buf[coord] = color
+                        _plot(x_byte + bit_i * scale + s)
 
     if coincidence:
         vdp.status |= 0x20
