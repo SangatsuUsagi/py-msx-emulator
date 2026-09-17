@@ -320,6 +320,33 @@ class _WindowedRomMapperMixin:
     switchable windows via per-window register zones, not ASCII8/16's shared
     zone) that sharing only the 3-method trio was judged not worth the added
     MRO indirection for a class outside this review's actual scope.
+
+    PORT-NOTE: this mixin, `Ascii8Mapper`/`Ascii16Mapper` (which combine it
+      with `BankTracingMapper` via multiple inheritance), and their
+      `*Sram2`/`*Sram8`/`KoeiSRAM32Mapper` subclasses (which override
+      `_sync_window` and call `super()._sync_window(window)` for the
+      non-SRAM-bank case, e.g. `Ascii8Sram2Mapper._sync_window`) rely on
+      Python multiple inheritance and `super()`, neither of which Rust or
+      C++ has a direct equivalent for. Everything here resolves statically
+      (no call site ever needs runtime polymorphic dispatch across these
+      types), so nothing is functionally hard to port -- only the
+      inheritance *shape* has no 1:1 target. Two options at port time:
+      (a) composition -- a plain data struct (`rom`/`banks`/`flat`) plus
+      free functions `windowed_num_pages(&self)`, `windowed_select_page`,
+      `windowed_sync_window(&mut self, window)`, called explicitly by each
+      concrete mapper's own `read`/`write` (no trait, no override; an SRAM
+      variant's `_sync_window` becomes "check the SRAM-bank case first,
+      else call `windowed_sync_window` directly" in one function body,
+      replacing the override-then-`super()` idiom); or (b) a Rust trait
+      with default methods (the closer structural analogue to this mixin),
+      keeping in mind Rust's trait defaults cannot be called from an
+      overriding impl the way `super()` can -- an SRAM variant's override
+      would need its own full re-implementation, or the shared logic
+      factored into a plain function the default method AND the override
+      both call. Every other structural decision in this file (see the
+      save-state tagged-union note near `Mapper.snapshot`) already states
+      its intended Rust/C++ target; this note gives this one the same
+      treatment.
     """
 
     _MAPPER_PAGE_SIZE: ClassVar[int]
