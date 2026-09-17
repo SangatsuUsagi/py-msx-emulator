@@ -850,7 +850,19 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
         result.ram_mapper_size_kb = int(slot3.get("size_kb", 128))
         _check_ram_mapper_size_kb(f"machine '{machine_id}' slot 3", result.ram_mapper_size_kb)
 
-    context = f"machine '{machine_id}' slot 3"
+    _validate_slot3(f"machine '{machine_id}' slot 3", result)
+    return result
+
+
+def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
+    """Enforce sub-slot index bounds and MSX2 slot 3's mutual-exclusivity
+    rules on an already-parsed _Slot3Msx2: RAM mapper vs. flat RAM, and flat
+    RAM vs. SUB ROM/fdc sharing the same sub-slot.
+
+    Raises:
+        MachineLoadError: on any violation -- see _parse_slot3_msx2's
+            docstring for the rules this enforces.
+    """
     if result.sub_rom is not None:
         _check_subslot_index(context, "SUB ROM", result.sub_rom_subslot)
     if result.fdc is not None:
@@ -877,7 +889,6 @@ def _parse_slot3_msx2(slot3: Slot3Msx2Yaml, machine_id: str) -> _Slot3Msx2:
             f"{result.flat_ram_subslot} -- Memory's write path has no FDC "
             "guard, so a write to that page would silently land in the flat RAM"
         )
-    return result
 
 
 # ---------------------------------------------------------------------------
