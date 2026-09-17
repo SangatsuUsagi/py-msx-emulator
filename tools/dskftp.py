@@ -43,7 +43,7 @@ import shlex
 import sys
 import unicodedata
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import BinaryIO, Callable, Iterator
 
 try:
     import readline
@@ -258,6 +258,9 @@ class MsxDisk:
         self.path = os.path.abspath(path)
         with open(self.path, "rb") as f:
             self.data = bytearray(f.read())
+        # Opened on the first flush, not here: browsing a read-only image stays
+        # possible, and the write permission error surfaces on the first write.
+        self._handle: BinaryIO | None = None
         self._parse_bpb()
 
     # ---------------- BPB / geometry ----------------
@@ -615,14 +618,27 @@ class MsxDisk:
     # ---------------- persistence ----------------
 
     def flush(self) -> None:
-        with open(self.path, "r+b") as f:
-            f.write(self.data)
+        """Write the image back. The handle stays open across commands: measured
+        against this file's own workload, a flush costs far more in opening and
+        closing the image than in the bytes it writes, so a multi-file transfer
+        is dominated by the reopen rather than by the transfer itself."""
+        if self._handle is None:
+            self._handle = open(self.path, "r+b")
+        self._handle.seek(0)
+        self._handle.write(self.data)
+        # Push to the OS so rollback()'s separate read sees these bytes.
+        self._handle.flush()
 
     def rollback(self) -> None:
         """Drop unflushed changes. A command flushes only once it has fully
         succeeded, so re-reading the file undoes a half-applied operation."""
         with open(self.path, "rb") as f:
             self.data = bytearray(f.read())
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
 
 
 # -------------------- formatting --------------------
@@ -807,7 +823,11 @@ class DskFtpShell(cmd.Cmd):
         self.open_image(args[0])
 
     def open_image(self, path: str) -> None:
+        # Construct first: if the new image will not open, the old one stays
+        # connected rather than being closed out from under the user.
         disk = MsxDisk(path)
+        if self.disk is not None:
+            self.disk.close()
         self.disk = disk
         self.cwd = []
         self._update_prompt()
@@ -1137,6 +1157,8 @@ def main() -> None:
                 print()
                 intro = ""
     finally:
+        if shell.disk is not None:
+            shell.disk.close()
         _save_history()
 
 
