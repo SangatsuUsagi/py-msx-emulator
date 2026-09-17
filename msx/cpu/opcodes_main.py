@@ -1736,6 +1736,23 @@ def _op_prefix_ed(cpu: Z80) -> int:
 #   function-call overhead on every one of the ~3.5M emulated instructions/sec
 #   this path executes; CPython's list-index + bound-method-call is already
 #   close to the fastest shape available in pure Python.
+#
+# One caveat on the "static [fn; 256] function-pointer array" option above:
+#   several groups of entries below (_make_ld_r_r, _make_alu_r, _make_alu_imm,
+#   _make_inc_r, _make_dec_r, _make_jp_cc, _make_jr_cc, _make_call_cc,
+#   _make_ret_cc, _make_rst) are built by a closure factory -- each entry
+#   captures its own per-opcode parameter (dst/src/cond/idx/grp/n) from its
+#   factory call. Plain Rust/C++ `fn` pointers cannot capture state, so those
+#   entries specifically do NOT translate to a flat function-pointer array
+#   without boxing every one (`Box<dyn Fn(&mut Z80) -> u8>` or a C++
+#   std::function), which reintroduces the vtable/heap dispatch cost this
+#   note's array option exists to avoid. For those groups, prefer the
+#   `match`-on-opcode-byte option instead, decoding dst/src/grp/cond from the
+#   opcode's bit fields inline in each match arm and calling one generic
+#   per-group handler (e.g. `0x40..=0x7F => ld_r_r(cpu, (op >> 3) & 7, op & 7)`)
+#   -- the closure-factory shape itself is Python-only scaffolding for
+#   avoiding 256 hand-written near-duplicate entries, not something to
+#   reproduce structurally at port time.
 # ---------------------------------------------------------------------------
 
 _DISPATCH: list[Callable[[Z80], int]] = [_op_illegal] * 256
