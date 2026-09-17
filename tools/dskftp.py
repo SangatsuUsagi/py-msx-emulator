@@ -68,38 +68,38 @@ HISTORY_LENGTH = 1000
 # as fallback geometry when a raw MSX-DOS1 dump carries only the media ID byte
 # instead of a full BPB, and as the layout `format` writes.
 MEDIA_FORMATS = {
-    0xF8: dict(
-        sectors_per_fat=2,
-        sectors_per_cluster=2,
-        root_entries=112,
-        total_sectors=720,
-        sectors_per_track=9,
-        sides=1,
-    ),  # 1DD 360KB
-    0xF9: dict(
-        sectors_per_fat=3,
-        sectors_per_cluster=2,
-        root_entries=112,
-        total_sectors=1440,
-        sectors_per_track=9,
-        sides=2,
-    ),  # 2DD 720KB
-    0xFA: dict(
-        sectors_per_fat=1,
-        sectors_per_cluster=2,
-        root_entries=112,
-        total_sectors=640,
-        sectors_per_track=8,
-        sides=1,
-    ),  # 1DD 320KB
-    0xFB: dict(
-        sectors_per_fat=2,
-        sectors_per_cluster=2,
-        root_entries=112,
-        total_sectors=1280,
-        sectors_per_track=8,
-        sides=2,
-    ),  # 2DD 640KB
+    0xF8: {
+        "sectors_per_fat": 2,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "total_sectors": 720,
+        "sectors_per_track": 9,
+        "sides": 1,
+    },  # 1DD 360KB
+    0xF9: {
+        "sectors_per_fat": 3,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "total_sectors": 1440,
+        "sectors_per_track": 9,
+        "sides": 2,
+    },  # 2DD 720KB
+    0xFA: {
+        "sectors_per_fat": 1,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "total_sectors": 640,
+        "sectors_per_track": 8,
+        "sides": 1,
+    },  # 1DD 320KB
+    0xFB: {
+        "sectors_per_fat": 2,
+        "sectors_per_cluster": 2,
+        "root_entries": 112,
+        "total_sectors": 1280,
+        "sectors_per_track": 8,
+        "sides": 2,
+    },  # 2DD 640KB
 }
 
 # What the operator types after `format`: capacity in KB -> media descriptor.
@@ -125,162 +125,17 @@ BOOT_CODE_OFFSET = 0x1E
 # instead of falling back to BASIC. Captured byte-for-byte from a boot sector
 # written by MSX BASIC's CALL FORMAT (real hardware, not openMSX) -- it is
 # fixed DOS boilerplate, independent of disk capacity.
-BOOT_LOADER_STUB = bytes(
-    [
-        0xD0,
-        0xED,
-        0x53,
-        0x59,
-        0xC0,
-        0x32,
-        0xD0,
-        0xC0,
-        0x36,
-        0x56,
-        0x23,
-        0x36,
-        0xC0,
-        0x31,
-        0x1F,
-        0xF5,
-        0x11,
-        0xAB,
-        0xC0,
-        0x0E,
-        0x0F,
-        0xCD,
-        0x7D,
-        0xF3,
-        0x3C,
-        0xCA,
-        0x63,
-        0xC0,
-        0x11,
-        0x00,
-        0x01,
-        0x0E,
-        0x1A,
-        0xCD,
-        0x7D,
-        0xF3,
-        0x21,
-        0x01,
-        0x00,
-        0x22,
-        0xB9,
-        0xC0,
-        0x21,
-        0x00,
-        0x3F,
-        0x11,
-        0xAB,
-        0xC0,
-        0x0E,
-        0x27,
-        0xCD,
-        0x7D,
-        0xF3,
-        0xC3,
-        0x00,
-        0x01,
-        0x58,
-        0xC0,
-        0xCD,
-        0x00,
-        0x00,
-        0x79,
-        0xE6,
-        0xFE,
-        0xFE,
-        0x02,
-        0xC2,
-        0x6A,
-        0xC0,
-        0x3A,
-        0xD0,
-        0xC0,
-        0xA7,
-        0xCA,
-        0x22,
-        0x40,
-        0x11,
-        0x85,
-        0xC0,
-        0xCD,
-        0x77,
-        0xC0,
-        0x0E,
-        0x07,
-        0xCD,
-        0x7D,
-        0xF3,
-        0x18,
-        0xB4,
-        0x1A,
-        0xB7,
-        0xC8,
-        0xD5,
-        0x5F,
-        0x0E,
-        0x06,
-        0xCD,
-        0x7D,
-        0xF3,
-        0xD1,
-        0x13,
-        0x18,
-        0xF2,
-        0x42,
-        0x6F,
-        0x6F,
-        0x74,
-        0x20,
-        0x65,
-        0x72,
-        0x72,
-        0x6F,
-        0x72,
-        0x0D,
-        0x0A,  # "Boot error\r\n"
-        0x50,
-        0x72,
-        0x65,
-        0x73,
-        0x73,
-        0x20,
-        0x61,
-        0x6E,
-        0x79,
-        0x20,
-        0x6B,
-        0x65,  # "Press any ke"
-        0x79,
-        0x20,
-        0x66,
-        0x6F,
-        0x72,
-        0x20,
-        0x72,
-        0x65,
-        0x74,
-        0x72,
-        0x79,  # "y for retry"
-        0x0D,
-        0x0A,
-        0x00,
-        0x00,
-        0x4D,
-        0x53,
-        0x58,
-        0x44,
-        0x4F,
-        0x53,
-        0x20,
-        0x20,
-        0x53,
-        0x59,
-        0x53,  # "MSXDOS  SYS"
-    ]
+BOOT_LOADER_STUB = (
+    bytes.fromhex(
+        "d0ed5359c032d0c036562336c0311ff511abc00e0fcd7df33cca63c01100010e"
+        "1acd7df321010022b9c021003f11abc00e27cd7df3c3000158c0cd000079e6fe"
+        "fe02c26ac03ad0c0a7ca22401185c0cd77c00e07cd7df318b41ab7c8d55f0e06"
+        "cd7df3d11318f2"
+    )
+    + b"Boot error\r\n"
+    + b"Press any key for retry\r\n"
+    + b"\x00\x00"
+    + b"MSXDOS  SYS"
 )
 
 ATTR_READONLY = 0x01
@@ -301,7 +156,7 @@ ROOT_CLUSTER = 0  # sentinel: the fixed-size root directory region
 
 
 class Fat12Error(Exception):
-    pass
+    """A FAT12/MSX-DOS image or path error the shell should report and recover from."""
 
 
 @dataclass
@@ -337,6 +192,9 @@ def name83_bytes(name: str) -> bytes:
     for ch in base + ext:
         if ch in ILLEGAL_NAME_CHARS or ord(ch) < 0x20:
             raise Fat12Error(f"Character {ch!r} not allowed in an MSX filename: {name!r}")
+
+    # Encode to the on-disk charset, then escape the one byte value (0xE5) that
+    # would otherwise collide with the deleted-slot marker.
     try:
         base_b = base.encode(MSX_ENCODING)[:8]
         ext_b = ext.encode(MSX_ENCODING)[:3]
@@ -407,18 +265,18 @@ class MsxDisk:
     def _parse_bpb(self) -> None:
         # These byte offsets mirror format_image()'s BPB field writes below --
         # keep the two in step if either changes.
-        b = self.data
-        if len(b) < SECTOR_SIZE:
+        raw = self.data
+        if len(raw) < SECTOR_SIZE:
             raise Fat12Error("File too small to be a disk image")
 
-        bytes_per_sector = int.from_bytes(b[0x0B:0x0D], "little")
-        sectors_per_cluster = b[0x0D]
-        reserved_sectors = int.from_bytes(b[0x0E:0x10], "little")
-        num_fats = b[0x10]
-        root_entries = int.from_bytes(b[0x11:0x13], "little")
-        total_sectors_16 = int.from_bytes(b[0x13:0x15], "little")
-        media = b[0x15]
-        sectors_per_fat = int.from_bytes(b[0x16:0x18], "little")
+        bytes_per_sector = int.from_bytes(raw[0x0B:0x0D], "little")
+        sectors_per_cluster = raw[0x0D]
+        reserved_sectors = int.from_bytes(raw[0x0E:0x10], "little")
+        num_fats = raw[0x10]
+        root_entries = int.from_bytes(raw[0x11:0x13], "little")
+        total_sectors_16 = int.from_bytes(raw[0x13:0x15], "little")
+        media = raw[0x15]
+        sectors_per_fat = int.from_bytes(raw[0x16:0x18], "little")
 
         bpb_valid = (
             bytes_per_sector == SECTOR_SIZE
@@ -442,6 +300,7 @@ class MsxDisk:
             if media not in MEDIA_FORMATS:
                 media = 0xF9
 
+        # Adopt whichever field set won above (parsed BPB or synthesized defaults).
         self.bytes_per_sector = bytes_per_sector
         self.sectors_per_cluster = sectors_per_cluster
         self.reserved_sectors = reserved_sectors
@@ -451,6 +310,7 @@ class MsxDisk:
         self.media = media
         self.sectors_per_fat = sectors_per_fat
 
+        # Derive section boundaries and geometry from the settled field values.
         self.fat_start = reserved_sectors * SECTOR_SIZE
         self.fat_size_bytes = sectors_per_fat * SECTOR_SIZE
         self.root_start = self.fat_start + num_fats * self.fat_size_bytes
@@ -483,26 +343,26 @@ class MsxDisk:
 
     # ---------------- FAT12 ----------------
 
-    def _fat_offset(self, n: int, fat_index: int) -> int:
-        if not 0 <= n < self.total_clusters + 2:
-            raise Fat12Error(f"Cluster {n} out of range")
-        return self.fat_start + fat_index * self.fat_size_bytes + (n * 3) // 2
+    def _fat_offset(self, cluster: int, fat_index: int) -> int:
+        if not 0 <= cluster < self.total_clusters + 2:
+            raise Fat12Error(f"Cluster {cluster} out of range")
+        return self.fat_start + fat_index * self.fat_size_bytes + (cluster * 3) // 2
 
-    def _read_fat(self, n: int, fat_index: int) -> int:
-        off = self._fat_offset(n, fat_index)
-        if n % 2 == 0:
+    def _read_fat(self, cluster: int, fat_index: int) -> int:
+        off = self._fat_offset(cluster, fat_index)
+        if cluster % 2 == 0:
             return self.data[off] | ((self.data[off + 1] & 0x0F) << 8)
         return (self.data[off] >> 4) | (self.data[off + 1] << 4)
 
-    def get_fat(self, n: int) -> int:
+    def get_fat(self, cluster: int) -> int:
         """FAT entry as MSX-DOS sees it: the first copy is the authoritative one."""
-        return self._read_fat(n, 0)
+        return self._read_fat(cluster, 0)
 
-    def is_free(self, n: int) -> bool:
+    def is_free(self, cluster: int) -> bool:
         """Free only when every FAT copy agrees; a diverging copy may still hold
         live data, and on a damaged image that is the data worth not overwriting."""
         for i in range(self.num_fats):
-            if self._read_fat(n, i) != 0:
+            if self._read_fat(cluster, i) != 0:
                 return False
         return True
 
@@ -517,11 +377,11 @@ class MsxDisk:
                     break
         return count
 
-    def set_fat(self, n: int, value: int) -> None:
+    def set_fat(self, cluster: int, value: int) -> None:
         value &= 0xFFF
         for i in range(self.num_fats):
-            off = self._fat_offset(n, i)
-            if n % 2 == 0:
+            off = self._fat_offset(cluster, i)
+            if cluster % 2 == 0:
                 self.data[off] = value & 0xFF
                 self.data[off + 1] = (self.data[off + 1] & 0xF0) | (value >> 8)
             else:
@@ -823,6 +683,7 @@ def split_args(line: str) -> list[str]:
     tokens = shlex.split(line, posix=False)
     out: list[str] = []
     for tok in tokens:
+        # posix=False keeps backslashes but leaves quote chars in the token; strip them by hand.
         if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
             tok = tok[1:-1]
         out.append(tok)
@@ -1037,19 +898,19 @@ class DskFtpShell(cmd.Cmd):
 
     # ---------------- listing ----------------
 
-    def _listing_target(self, path: str) -> tuple[list[str], str]:
-        """Resolve a dir/ls argument into (directory components, glob pattern)."""
+    def _listing_target(self, path: str) -> tuple[list[str], int, str]:
+        """Resolve a dir/ls argument into (directory components, cluster, glob pattern)."""
         disk = self._require_disk()
         if not path:
-            return self.cwd, "*"
+            return self.cwd, disk.resolve_dir(self.cwd), "*"
         components = normalize_path(path, self.cwd)
         try:
-            disk.resolve_dir(components)
-            return components, "*"
+            cluster = disk.resolve_dir(components)
+            return components, cluster, "*"
         except Fat12Error:
             parent, name = split_remote(path, self.cwd)
-            disk.resolve_dir(parent)
-            return parent, name.upper()
+            cluster = disk.resolve_dir(parent)
+            return parent, cluster, name.upper()
 
     def do_dir(self, arg: str) -> None:
         """dir [path] - list a remote directory (a path may end in a wildcard)."""
@@ -1057,8 +918,7 @@ class DskFtpShell(cmd.Cmd):
         args = split_args(arg)
         if len(args) > 1:
             raise Fat12Error("Usage: dir [path]")
-        components, pattern = self._listing_target(args[0] if args else "")
-        cluster = disk.resolve_dir(components)
+        components, cluster, pattern = self._listing_target(args[0] if args else "")
 
         entries = [
             e for e in disk.list_dir(cluster) if fnmatch.fnmatchcase(e.name.upper(), pattern)
@@ -1125,6 +985,16 @@ class DskFtpShell(cmd.Cmd):
             summary += f", {failed} failed"
         print(summary)
 
+    def _run_batch_transfer(
+        self, action: Callable[[str, str], None], items: list[tuple[str, str]]
+    ) -> None:
+        """Run action(source, target) for each item, then report the batch outcome."""
+        transferred = 0
+        for source, target in items:
+            if self._transfer(action, source, target):
+                transferred += 1
+        self._report_transfers(transferred, len(items))
+
     def do_get(self, arg: str) -> None:
         """get <remote> [local] - download a file."""
         self._require_disk()
@@ -1155,8 +1025,7 @@ class DskFtpShell(cmd.Cmd):
         args = split_args(arg)
         if len(args) != 1:
             raise Fat12Error("Usage: mget <pattern>")
-        components, pattern = self._listing_target(args[0])
-        cluster = disk.resolve_dir(components)
+        components, cluster, pattern = self._listing_target(args[0])
         matched = [
             e
             for e in disk.list_dir(cluster)
@@ -1165,12 +1034,8 @@ class DskFtpShell(cmd.Cmd):
         if not matched:
             print(f"No remote file matches {args[0]}")
             return
-        transferred = 0
-        for entry in matched:
-            remote = format_path(components + [entry.name])
-            if self._transfer(self._get_one, remote, entry.name):
-                transferred += 1
-        self._report_transfers(transferred, len(matched))
+        items = [(format_path(components + [e.name]), e.name) for e in matched]
+        self._run_batch_transfer(self._get_one, items)
 
     def do_mput(self, arg: str) -> None:
         """mput <pattern> - upload every matching local file into the remote directory."""
@@ -1182,11 +1047,8 @@ class DskFtpShell(cmd.Cmd):
         if not matched:
             print(f"No local file matches {args[0]}")
             return
-        transferred = 0
-        for local in matched:
-            if self._transfer(self._put_one, local, os.path.basename(local)):
-                transferred += 1
-        self._report_transfers(transferred, len(matched))
+        items = [(local, os.path.basename(local)) for local in matched]
+        self._run_batch_transfer(self._put_one, items)
 
     # ---------------- remote mutation ----------------
 
