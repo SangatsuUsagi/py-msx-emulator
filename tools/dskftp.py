@@ -89,6 +89,33 @@ RESERVED_SECTORS = 1
 # openMSX's formatter, so a fresh image looks like freshly formatted media.
 FORMAT_FILL = 0xE5
 
+# Offset of the boot sector's executable region: bytes 0-2 are the jump
+# placeholder, 3-0x1D are the OEM name and BPB, and the disk BIOS starts
+# executing at 0x1E once it recognises that jump.
+BOOT_CODE_OFFSET = 0x1E
+
+# The stock MSX-DOS boot loader: checks for MSXDOS.SYS in the root directory
+# and, since a freshly formatted disk never has one, prints "Boot error /
+# Press any key for retry" and loops. Without this, the boot sector's
+# executable region is left as 0x00 (NOP) and the CPU runs off the end of it
+# instead of falling back to BASIC. Captured byte-for-byte from a boot sector
+# written by MSX BASIC's CALL FORMAT (real hardware, not openMSX) -- it is
+# fixed DOS boilerplate, independent of disk capacity.
+BOOT_LOADER_STUB = bytes([
+    0xD0, 0xED, 0x53, 0x59, 0xC0, 0x32, 0xD0, 0xC0, 0x36, 0x56, 0x23, 0x36, 0xC0, 0x31, 0x1F, 0xF5,
+    0x11, 0xAB, 0xC0, 0x0E, 0x0F, 0xCD, 0x7D, 0xF3, 0x3C, 0xCA, 0x63, 0xC0, 0x11, 0x00, 0x01, 0x0E,
+    0x1A, 0xCD, 0x7D, 0xF3, 0x21, 0x01, 0x00, 0x22, 0xB9, 0xC0, 0x21, 0x00, 0x3F, 0x11, 0xAB, 0xC0,
+    0x0E, 0x27, 0xCD, 0x7D, 0xF3, 0xC3, 0x00, 0x01, 0x58, 0xC0, 0xCD, 0x00, 0x00, 0x79, 0xE6, 0xFE,
+    0xFE, 0x02, 0xC2, 0x6A, 0xC0, 0x3A, 0xD0, 0xC0, 0xA7, 0xCA, 0x22, 0x40, 0x11, 0x85, 0xC0, 0xCD,
+    0x77, 0xC0, 0x0E, 0x07, 0xCD, 0x7D, 0xF3, 0x18, 0xB4, 0x1A, 0xB7, 0xC8, 0xD5, 0x5F, 0x0E, 0x06,
+    0xCD, 0x7D, 0xF3, 0xD1, 0x13, 0x18, 0xF2,
+    0x42, 0x6F, 0x6F, 0x74, 0x20, 0x65, 0x72, 0x72, 0x6F, 0x72, 0x0D, 0x0A,  # "Boot error\r\n"
+    0x50, 0x72, 0x65, 0x73, 0x73, 0x20, 0x61, 0x6E, 0x79, 0x20, 0x6B, 0x65,  # "Press any ke"
+    0x79, 0x20, 0x66, 0x6F, 0x72, 0x20, 0x72, 0x65, 0x74, 0x72, 0x79,  # "y for retry"
+    0x0D, 0x0A, 0x00, 0x00,
+    0x4D, 0x53, 0x58, 0x44, 0x4F, 0x53, 0x20, 0x20, 0x53, 0x59, 0x53,  # "MSXDOS  SYS"
+])
+
 ATTR_READONLY = 0x01
 ATTR_HIDDEN = 0x02
 ATTR_SYSTEM = 0x04
@@ -569,8 +596,11 @@ def format_image(path: str, media: int) -> None:
     empty root directory, and a data area filled the way a physical format
     leaves it.
 
-    No boot loader is written, so the result is a data disk: MSX-DOS reads and
-    writes it normally, but it cannot be booted from."""
+    The boot sector carries the standard MSX-DOS loader stub, so booting this
+    disk shows "Boot error / Press any key for retry" instead of running off
+    unwritten (0x00) boot code -- but MSXDOS.SYS itself is never installed, so
+    the result is a data disk MSX-DOS reads and writes normally, not one that
+    can actually load DOS."""
     geometry = MEDIA_FORMATS[media]
     total_sectors = geometry["total_sectors"]
     sectors_per_fat = geometry["sectors_per_fat"]
@@ -596,6 +626,7 @@ def format_image(path: str, media: int) -> None:
     image[0x16:0x18] = sectors_per_fat.to_bytes(2, "little")
     image[0x18:0x1A] = geometry["sectors_per_track"].to_bytes(2, "little")
     image[0x1A:0x1C] = geometry["sides"].to_bytes(2, "little")
+    image[BOOT_CODE_OFFSET:BOOT_CODE_OFFSET + len(BOOT_LOADER_STUB)] = BOOT_LOADER_STUB
 
     # Clusters 0 and 1 have no data sectors; their entries carry the media
     # descriptor and an end-of-chain marker instead, in every FAT copy.
@@ -750,8 +781,8 @@ class DskFtpShell(cmd.Cmd):
 
     def do_format(self, arg: str) -> None:
         """format <image.dsk> [720|640|360|320] - create an empty image (capacity
-        in KB, default 720) and connect to it. The image is a data disk: it holds
-        no boot loader."""
+        in KB, default 720) and connect to it. The image is a data disk: no
+        MSXDOS.SYS is installed, so it cannot load DOS."""
         args = split_args(arg)
         if not 1 <= len(args) <= 2:
             raise Fat12Error("Usage: format <image.dsk> [720|640|360|320]")
