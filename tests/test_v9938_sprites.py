@@ -1119,6 +1119,72 @@ def test_high_y_sprite_pulled_up_by_vscroll_renders_full_height() -> None:
         assert buf[y * 256 + 0] == 7, f"row {y} of the pulled-up sprite is missing"
 
 
+def test_sprite_mode2_wraps_past_line_255_to_top_of_screen() -> None:
+    """A sprite whose screen-line band itself crosses the 255->0 wrap (not
+    just its VRAM-Y position, as in the test above) must show only the
+    wrapped remainder at the top of the screen. base_line = (y_top - vscroll)
+    & 0xFF = 250 here, so the sprite's unwrapped band would be screen lines
+    250-257; the display is well under 250 lines tall, so only the two rows
+    that wrap past 256 (screen lines 0-1, sprite pattern rows 6-7) are
+    visible -- the other six rows have no on-screen line to appear at. A
+    naive range(max(lo, base_line), min(hi, end)) without the wraparound
+    chain() would show nothing here at all."""
+    vdp = V9938()
+    _set_screen5(vdp)             # SI=0 -> 8x8 sprites (render_size 8)
+    vdp.regs[5] = _SAT_R5
+    vdp.regs[6] = 0x00
+    vdp.regs[23] = 0              # no vertical scroll (whole frame, non-banded)
+    vdp.vram[6] = 0xFF            # pattern row 6: opaque pixel at x=0
+    vdp.vram[7] = 0xFF            # pattern row 7: opaque pixel at x=0
+    _write_sat_entry(vdp, 0, y=249, x=0, pat=0)   # y_top = 250
+    for line_idx in range(8):
+        _write_col_entry(vdp, sprite_idx=0, line_idx=line_idx, color=7)
+    _terminate_sat(vdp, after_idx=1)
+
+    buf = _active(vdp)
+
+    assert buf[0 * 256 + 0] == 7, "wrapped sprite row 6 must appear at screen line 0"
+    assert buf[1 * 256 + 0] == 7, "wrapped sprite row 7 must appear at screen line 1"
+    assert buf[2 * 256 + 0] == 0, "no further wrap beyond the two overflowing rows"
+
+
+def test_sprite_mode1_visible_in_both_vscroll_regions() -> None:
+    """Sprite mode 1 (_render_sprites) shares the same per-scanline
+    vscroll/SPD run scan as sprite mode 2 -- a sprite whose VRAM band maps
+    into both regions of a banded split, under each region's own R#23, must
+    render in both places here too, mirroring
+    test_sprite_visible_in_both_vscroll_regions's sprite mode 2 case."""
+    vdp = V9938()
+    _enable(vdp)                  # GRAPHIC1: sprite mode 1
+    vdp.regs[5] = 0x0E            # SAT at 0x0700
+    vdp.regs[6] = 0x00            # sprite patterns at 0x0000
+    sat_base = (vdp.regs[5] & 0x7F) << 7
+    vdp.vram[0] = 0x80            # pattern 0, row 0: pixel at x=0
+
+    # Sprite 0, y_top = 45. Top region vscroll 0x28 -> screen line 5; bottom
+    # region vscroll 0 -> screen line 45 (same geometry as the sprite mode 2
+    # version of this test above).
+    base = sat_base & 0x3FFF
+    vdp.vram[base] = 44            # Y=44 -> y_top=45
+    vdp.vram[base + 1] = 0         # X=0
+    vdp.vram[base + 2] = 0         # pattern 0
+    vdp.vram[base + 3] = 6         # colour 6
+    vdp.vram[(sat_base + 4) & 0x3FFF] = 0xD0   # terminator (sprite mode 1: Y=0xD0)
+
+    # Top region lines 0-30 use vscroll 0x28; R#23 -> 0 from line 31 on.
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_regs[23] = 0x28
+    vdp.regs[23] = 0x00
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp._reg_write_log = [_RegChange(30, 23, 0x00)]   # effective line 31
+
+    buf = _active(vdp)
+
+    assert buf[5 * 256 + 0] == 6, "sprite shows in top region under top vscroll"
+    assert buf[45 * 256 + 0] == 6, "same sprite shows in bottom region under its vscroll"
+    assert buf[20 * 256 + 0] == 0, "not visible between the two mapped bands"
+
+
 # ---------------------------------------------------------------------------
 # SCREEN 4 (GRAPHIC 3): G2-style tile background + sprite mode 2 composited
 # on top. Guards that sprites are drawn OVER the background plane in SCREEN 4.
