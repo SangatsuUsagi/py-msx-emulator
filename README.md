@@ -663,7 +663,7 @@ python . path/to/game1.rom --slot2 path/to/game2.rom
 python . --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 # Create a blank 720 KB disk to format with CALL FORMAT
-python tools/make_blank_dsk.py blank.dsk
+python tools/dskblank.py blank.dsk
 
 # Force a specific mapper type
 python . path/to/game.rom --mapper KonamiSCC

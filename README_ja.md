@@ -451,7 +451,7 @@ python . path/to/game1.rom --slot2 path/to/game2.rom
 python . --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 # CALL FORMAT でフォーマットするための空ディスク（720 KB）を作成
-python tools/make_blank_dsk.py blank.dsk
+python tools/dskblank.py blank.dsk
 
 # マッパーを明示指定
 python . path/to/game.rom --mapper KonamiSCC
