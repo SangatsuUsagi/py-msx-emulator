@@ -214,8 +214,10 @@ class SCC:
         across a buffer (the CPU only writes SCC registers between buffers), so
         the per-channel period / volume / enable / waveform bank are precomputed
         once, and the phase state is bound to locals — mirroring PSG.generate_
-        samples. Phase still advances for every channel each sample (even
-        disabled ones); only the accumulation is gated by enable. Behaviour is
+        samples, including that function's own per-channel loop unrolling
+        ("channels 1 and 2: identical integration, unrolled for the hot loop").
+        Phase still advances for every channel each sample (even disabled
+        ones); only the accumulation is gated by enable. Behaviour is
         identical to the straightforward per-sample form.
         """
         out = bytearray(n * 2)
@@ -232,10 +234,14 @@ class SCC:
         # no mode branch is needed here.
         wave = [waves[ch] for ch in range(NUM_CHANNELS)]
         wave_mask = WAVE_LEN - 1  # hoisted out of the hot loop below
-        # --- bind phase state to locals (lists mutated in place; scalar clk written back) ---
-        pc = self._phase_cnt
-        pi = self._phase_idx
+        # --- bind phase state to locals (scalars written back after the loop) ---
         clk = self._clk_frac
+        period0, period1, period2, period3, period4 = period
+        volsc0, volsc1, volsc2, volsc3, volsc4 = volsc
+        en0, en1, en2, en3, en4 = en
+        wave0, wave1, wave2, wave3, wave4 = wave
+        pc0, pc1, pc2, pc3, pc4 = self._phase_cnt
+        pi0, pi1, pi2, pi3, pi4 = self._phase_idx
 
         for i in range(n):
             clk += SCC_CLOCK
@@ -243,14 +249,41 @@ class SCC:
             clk %= SAMPLE_RATE
 
             sample = 0
-            for ch in range(NUM_CHANNELS):
-                steps, pc[ch] = divmod(pc[ch] + ticks, period[ch])
-                idx = (pi[ch] + steps) & wave_mask  # wraps within one waveform
-                pi[ch] = idx
-                if en[ch]:
-                    raw = wave[ch][idx]
-                    signed = raw if raw < 128 else raw - 256  # unsigned byte -> signed 8-bit
-                    sample += signed * volsc[ch]
+
+            steps, pc0 = divmod(pc0 + ticks, period0)
+            pi0 = (pi0 + steps) & wave_mask  # wraps within one waveform
+            if en0:
+                raw = wave0[pi0]
+                signed = raw if raw < 128 else raw - 256  # unsigned byte -> signed 8-bit
+                sample += signed * volsc0
+
+            steps, pc1 = divmod(pc1 + ticks, period1)
+            pi1 = (pi1 + steps) & wave_mask
+            if en1:
+                raw = wave1[pi1]
+                signed = raw if raw < 128 else raw - 256
+                sample += signed * volsc1
+
+            steps, pc2 = divmod(pc2 + ticks, period2)
+            pi2 = (pi2 + steps) & wave_mask
+            if en2:
+                raw = wave2[pi2]
+                signed = raw if raw < 128 else raw - 256
+                sample += signed * volsc2
+
+            steps, pc3 = divmod(pc3 + ticks, period3)
+            pi3 = (pi3 + steps) & wave_mask
+            if en3:
+                raw = wave3[pi3]
+                signed = raw if raw < 128 else raw - 256
+                sample += signed * volsc3
+
+            steps, pc4 = divmod(pc4 + ticks, period4)
+            pi4 = (pi4 + steps) & wave_mask
+            if en4:
+                raw = wave4[pi4]
+                signed = raw if raw < 128 else raw - 256
+                sample += signed * volsc4
 
             if sample > 32767:
                 sample = 32767
@@ -262,4 +295,8 @@ class SCC:
             out[i * 2 + 1] = (sample >> 8) & 0xFF
 
         self._clk_frac = clk
+        self._phase_cnt[0], self._phase_cnt[1], self._phase_cnt[2] = pc0, pc1, pc2
+        self._phase_cnt[3], self._phase_cnt[4] = pc3, pc4
+        self._phase_idx[0], self._phase_idx[1], self._phase_idx[2] = pi0, pi1, pi2
+        self._phase_idx[3], self._phase_idx[4] = pi3, pi4
         return out
