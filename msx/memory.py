@@ -12,6 +12,13 @@ if TYPE_CHECKING:
 from msx.mapper import FlatMapper, mapper_kind_display_name
 
 
+def _rom_display(name: str | None) -> str:
+    """Format a ROM's debug-display name: "ROM {name}" when named, else the
+    bare "ROM" (used by debug_slot_content for both main and SUB ROM)."""
+    name = name or "ROM"
+    return f"ROM {name}" if name != "ROM" else "ROM"
+
+
 @dataclass(slots=True)
 class Memory:
     """MSX address-space slot/sub-slot decode and read/write dispatch.
@@ -476,8 +483,7 @@ class Memory:
     ) -> str:
         """Human-readable description of what a slot/sub-slot contains."""
         if primary == 0:
-            name = self.rom_name or "ROM"
-            return f"ROM {name}" if name != "ROM" else "ROM"
+            return _rom_display(self.rom_name)
         if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
             sub_mapper = self._mapper2_subslots[secondary]
             if sub_mapper is None:
@@ -503,8 +509,7 @@ class Memory:
                     and self.sub0_rom is not None
                     and page in (0, None)
                 ):
-                    name = self.sub0_rom_name or "ROM"
-                    return f"ROM {name}" if name != "ROM" else "ROM"
+                    return _rom_display(self.sub0_rom_name)
                 if (
                     secondary == self.fdc_subslot
                     and self.fdc is not None
@@ -515,8 +520,7 @@ class Memory:
                     return "RAM"
                 return "empty"
             if secondary == 0:
-                name = self.sub0_rom_name or "ROM"
-                return f"ROM {name}" if name != "ROM" else "ROM"
+                return _rom_display(self.sub0_rom_name)
             if secondary == 1:
                 return "empty"
             if secondary in (2, 3):
