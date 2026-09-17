@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2654%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2659%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -44,6 +44,7 @@
 - [BIOS のセットアップ](#bios-のセットアップ)
 - [インストール](#インストール)
 - [使い方](#使い方)
+- [ツール](#ツール)
 - [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp)
 - [マシン設定](#マシン設定)
 - [テストの実行](#テストの実行)
@@ -108,25 +109,25 @@
 
 ### SCC-I カートリッジ（「SCC+」）
 
-`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`README_extension_ja.md`](README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
+`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
 
 > **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/mapper.py:SCCICart` |
-| 有効化 | `--extension scc_plus`（[`README_extension_ja.md`](README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
+| 有効化 | `--extension scc_plus`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
 | メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
 | SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
 ### FM-PAC — MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`README_extension_ja.md`](README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
+`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/fmpac.py`（カートリッジデバイス）、`msx/opll.py`（YM2413/OPLL チップ） |
-| 有効化 | `--extension fmpac`（[`README_extension_ja.md`](README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
+| 有効化 | `--extension fmpac`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）；8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）；メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
 | SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
@@ -135,14 +136,14 @@
 
 ### Sony HBI-J1 — 漢字ROM + MSX-JEワードプロセッサ
 
-`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`README_extension_ja.md`](README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
+`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
 
 著者はこの実機を物理的に所有しており、そのROMをダンプ済みです（openMSXの `Sony_HBI-J1.xml` に対してSHA1で検証済み）。そのため、この実装は資料ベースではなく実機を対象としています。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/kanji.py`（漢字ROMデバイス）、`msx/mapper.py:HalnoteMapper`（MSX-JEカートリッジ）、`msx/machine_loader.py`（拡張オーバーレイの配線） |
-| 有効化 | `--extension hbi_j1`（[`README_extension_ja.md`](README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
+| 有効化 | `--extension hbi_j1`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
 | 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別；5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
 | サブスロット0 | `HalnoteMapper` — 1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM；`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
@@ -164,7 +165,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も `--extension` によって独立に拡張可能です — 各スロットが何を保持できるか、どの拡張がスロット2を拡張するかは[`README_extension_ja.md`の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も `--extension` によって独立に拡張可能です — 各スロットが何を保持できるか、どの拡張がスロット2を拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -173,7 +174,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
 | スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension` によりサブスロットに拡張 — 詳細は[`README_extension_ja.md`](README_extension_ja.md#スロットモデル)を参照 |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
@@ -451,7 +452,7 @@ python . path/to/game1.rom --slot2 path/to/game2.rom
 python . --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 # CALL FORMAT でフォーマットするための空ディスク（720 KB）を作成
-python tools/make_blank_dsk.py blank.dsk
+python tools/dskblank.py blank.dsk
 
 # マッパーを明示指定
 python . path/to/game.rom --mapper KonamiSCC
@@ -467,7 +468,7 @@ python . --extension scc_plus --fdd1 path/to/disk.dsk
 python . --extension hbi_j1
 
 # 他の --extension id（MSX-DOS2 + RAM 拡張、漢字フォント、View フォント）は
-# README_extension_ja.md に記載
+# docs/README_extension_ja.md に記載
 
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
@@ -508,7 +509,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`（KonamiSCC はスロット 1 とマシン単一の SCC チップを共有；スロット 1 も KonamiSCC に解決される場合は拒否） |
-| `--extension ID` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`README_extension_ja.md`](README_extension_ja.md)を参照。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
+| `--extension ID` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -548,7 +549,7 @@ speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
 # mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-# extension: fmpac        # スロット 2 の拡張を重ねる -- 詳細は README_extension_ja.md
+# extension: fmpac        # スロット 2 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -606,6 +607,7 @@ mouse:
 | Ctrl + F5 | MSX SELECT |
 | 左 Alt/Option | MSX GRAPH |
 | 右 Alt/Option | MSX CODE/KANA |
+| Shift + 0 | MSX "_" — International キーボードには無い SHIFT+"\"（JIS専用キー）が入力する文字を入力する |
 
 \* `<title>` は ROM データベースから取得したゲームタイトルです。データベースにない場合は `"py-msx-emulator"` が使われます。
 
@@ -614,6 +616,16 @@ mouse:
 「メニューバーにフォーカスを移動」= `^F2`）として予約されている場合がありま
 す。Ctrl+F1〜F5 がエミュレータに届かないようであれば、そちらを無効化してくだ
 さい。
+
+**注記（JIS BIOS機種）:** HB-F1XD など日本の MSX 機は日本語 BIOS ROM を使用し
+ており、config の `keyboard_type` の設定に関係なく、BIOS の文字デコードテー
+ブルは常に JIS 版のままです。`keyboard_type` はホストキーと MSX キーボードマ
+トリクスのセルの対応を制御するだけで、BIOS がそのセルにどの文字を割り当てる
+かは変えません。そのため International キーボードを使用した環境で本エミュ
+レータを実行すると、キートップと実際に入力される文字は一致しません。
+International キーボードに存在しないキーは `"_"` のみで、これは上表の
+Shift+0 に割り当ててあります。その他のキーはキートップの文字とは異なります
+が、入力自体は可能です。
 
 **キーボードによるジョイスティックエミュレーション（Joy 1）:** 以下は組み込みの
 デフォルトです。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons`
@@ -630,76 +642,31 @@ mouse:
 
 ---
 
+## ツール
+
+`tools/` 以下のスタンドアロンなコマンドラインツール群: ディスクイメージ管理
+（ftp 風の対話シェル、空イメージ作成、物理USBフロッピードライブ向けの生セクタ
+コピー）に加え、[リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP
+クライアントツールも含まれます。
+
+全スクリプトの詳しい使い方・オプション・実行例:
+[`tools/README_tools.md`](tools/README_tools.md) /
+[`tools/README_tools_ja.md`](tools/README_tools_ja.md)。
+
+---
+
 ## リモート制御（Socket RPC & MCP）
 
-エミュレータは小さなローカル制御インターフェースを公開でき、外部ツール（シェル
-スクリプト、テストハーネス、AI コーディングエージェントなど）から実行中のインス
-タンスを一時停止・検査・操作できます。2 つの層があります。
+エミュレータは小さなローカル制御インターフェースを公開でき —
+エミュレータに組み込まれた Unix ソケット JSON-RPC サーバ（`--rpc`）と、それを
+ラップする MCP サーバ（`tools/mcp_server.py`）の2層構成 — 外部ツール、テスト
+ハーネス、Claude Code のような AI コーディングエージェントから実行中のインス
+タンスを一時停止・検査・操作できます。
 
-- **Socket RPC** — エミュレータプロセスに組み込まれた Unix ドメインソケットの
-  JSON-RPC サーバ（`msx/rpc_server.py`）。**既定では無効**で、`--rpc` で有効化します。
-- **MCP サーバ** — Socket RPC を [Model Context Protocol](https://modelcontextprotocol.io)
-  ツールとしてラップするスタンドアロンの stdio サーバ（`tools/mcp_server.py`）。
-  Claude Code のようなクライアントがエミュレータ機能をネイティブツールとして呼び出せ
-  （スクリーンショットはインライン画像として受け取れ）ます。
-
-```
-MCP クライアント ──stdio/MCP──▶ tools/mcp_server.py ──Unix ソケット──▶ エミュレータ (--rpc)
-```
-
-### RPC サーバの有効化
-
-```bash
-# 制御ソケットを有効にして起動
-python . path/to/cartridge.rom --rpc
-
-# 任意：ソケットパスを指定（複数インスタンス運用時など）
-python . path/to/cartridge.rom --rpc --rpc-socket /tmp/py_msx_alt.sock
-```
-
-RPC メソッドは、デバッガの一時停止/ステップ/継続、ブレークポイントとウォッチポイ
-ント、メモリ・VRAM の読み書き、逆アセンブル、VDP レジスタ、キーボード/ジョイス
-ティック入力、スクリーンショット取得、ステートセーブ、ディスク入れ替えを網羅しま
-す。ワイヤプロトコルと全メソッドの一覧は
-[`docs/socket-rpc-mcp_ja.md`](docs/socket-rpc-mcp_ja.md) を参照してくだ
-さい。
-
-同梱クライアントによる簡単な動作確認:
-
-```bash
-python tools/rpc_client.py debugger.status
-python tools/rpc_client.py memory.read address=0xC000 length=16
-```
-
-### MCP サーバの登録
-
-MCP サーバにはオプションの `mcp` 依存が必要です。
-
-```bash
-pip install -e '.[mcp]'      # または: pip install 'mcp[cli]>=1.0,<2.0'
-```
-
-Claude Code に一度だけ登録します（`.mcp.json` に書き込まれます）。
-
-```bash
-claude mcp add --transport stdio --scope project msx-emulator \
-    -- python tools/mcp_server.py
-claude mcp list        # msx-emulator  ●  connected
-```
-
-既定以外のソケットを使う場合は、環境変数 `MSX_RPC_SOCKET`（`.mcp.json` の `env`
-ブロックで設定可能）で指定します。
-
-### セキュリティ上の注意
-
-- Unix ソケットは、同一ユーザで動作するローカルプロセスからのみ到達可能です。
-- `memory.write` と `cpu.step` はマシン状態を変更するため、**一時停止中のみ**実行
-  できます。
-- 認証はありません。共有ホストでは `chmod 600` でソケットを保護してください
-  ——保護しないと、同一ホストの他のユーザーが接続して `memory.write`/`cpu.step`
-  を呼び出し、実行中のマシンの状態を自由に書き換えられてしまいます。制御
-  インターフェースであるため、サーバは明示的なオプトイン（`--rpc`）方式で、指定し
-  ない限りソケットは作成されません。
+アーキテクチャ、RPC サーバの有効化、MCP サーバの登録、RPC メソッドリファレン
+ス、セキュリティ上の注意点:
+[`tools/README_tools.md`](tools/README_tools.md#remote-control-socket-rpc--mcp)
+/ [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp)。
 
 ---
 
@@ -807,7 +774,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2654 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2659 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -865,7 +832,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
-├── tools/                 # 空ディスク作成、RPC クライアント、MCP サーバ
+├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、RPC クライアント、MCP サーバ — 詳細は tools/README_tools_ja.md
 ├── docs/                  # デバッガガイド、ソケット RPC / MCP リファレンス
 ├── assets/                # この README が参照するベンチマーク履歴グラフ
 ├── roms/
@@ -874,7 +841,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2654 テスト
+├── tests/                 # テストスイート — 2659 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定

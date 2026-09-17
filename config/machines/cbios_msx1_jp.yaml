@@ -7,7 +7,7 @@ rom_base: roms/cbios
 cpu:
   type: z80a
   clock_mhz: 3.579545
-  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
 slots:
   primary:
@@ -23,8 +23,8 @@ slots:
             size_kb: 16
             pages: [2]
             sha1: null
-    1: {type: cartridge}
-    2: {type: cartridge}
+    1: { type: cartridge }
+    2: { type: cartridge }
     3:
       type: ram
       size_kb: 32
@@ -32,7 +32,7 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
-    overrides: {keyboard_type: jp}
+    overrides: { keyboard_type: jp }
   - ref: vdp_tms9918a
   - ref: psg_ay8910
 

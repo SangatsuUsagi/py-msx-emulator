@@ -13,7 +13,7 @@ from msx.frame_timer import FrameTimer
 from msx.input import (
     KEY_NAME_TO_CELL,
     SDLK_HOST_APOSTROPHE_KEY,
-    SDLK_HOST_EQUALS_KEY,
+    SDLK_JIS_RO,
     SDLK_JIS_YEN,
     InputState,
 )
@@ -256,9 +256,10 @@ class _EventApi(Protocol):
     # input source this key's sym collides with SHIFT+"7", so only scancode
     # tells the two apart.
     SDL_SCANCODE_APOSTROPHE: int
-    # Host "="/"+" key detection (see `_resolve_key_sym`): has no JIS role at
-    # all, so it is identified by scancode and repurposed for "_".
-    SDL_SCANCODE_EQUALS: int
+    # JIS "\"/"_" key detection (see `_resolve_key_sym`): its keysym.sym is
+    # unreliable, same as SDL_SCANCODE_INTERNATIONAL3 above, so this is the
+    # only stable signal.
+    SDL_SCANCODE_INTERNATIONAL1: int
 
     def SDL_GetError(self) -> bytes: ...
     def SDL_PollEvent(self, event: object) -> int: ...
@@ -424,11 +425,17 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     This substitutes that sentinel whenever SDL_SCANCODE_APOSTROPHE is seen,
     so _JP_SYMBOLS can bind the two separately regardless.
 
-    The host's dedicated "="/"+" key has a sym (SDLK_EQUALS) that stays
-    constant across SHIFT states too (probe-confirmed), but on a JIS input
-    source it has no JIS role at all -- see msx/input.py's
-    SDLK_HOST_EQUALS_KEY for why it is repurposed rather than left dead. This
-    substitutes that sentinel whenever SDL_SCANCODE_EQUALS is seen.
+    The JIS "\"/"_" key has the same unreliable-sym problem as the ¥ key
+    above (probe-confirmed: keysym.sym == 0, constant across SHIFT). This
+    substitutes the SDLK_JIS_RO sentinel (see msx/input.py) whenever
+    SDL_SCANCODE_INTERNATIONAL1 is seen.
+
+    The host's dedicated "="/"+" key and a real JIS "^"/"~" key sit at the
+    same physical position and were once suspected of being indistinguishable
+    (both reporting scancode 46) -- probe-confirmed since to be false: their
+    syms differ (SDLK_EQUALS vs SDLK_CARET) and neither changes under SHIFT,
+    so no scancode interception is needed here at all; both `sym` values
+    already resolve correctly through their own layout's plain matrix entry.
 
     Every other key passes through unchanged.
     """
@@ -436,8 +443,8 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
         return SDLK_JIS_YEN
     if keysym.scancode == sdl2.SDL_SCANCODE_APOSTROPHE:
         return SDLK_HOST_APOSTROPHE_KEY
-    if keysym.scancode == sdl2.SDL_SCANCODE_EQUALS:
-        return SDLK_HOST_EQUALS_KEY
+    if keysym.scancode == sdl2.SDL_SCANCODE_INTERNATIONAL1:
+        return SDLK_JIS_RO
     return keysym.sym
 
 

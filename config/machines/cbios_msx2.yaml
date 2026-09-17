@@ -7,7 +7,7 @@ rom_base: roms/cbios
 cpu:
   type: z80a
   clock_mhz: 3.579545
-  m1_wait_states: 1  # MSX inserts 1 wait per M1 (opcode fetch)
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
 
 slots:
   primary:
@@ -23,8 +23,8 @@ slots:
             size_kb: 16
             pages: [2]
             sha1: null
-    1: {type: cartridge}
-    2: {type: cartridge}
+    1: { type: cartridge }
+    2: { type: cartridge }
     3:
       expanded: true
       secondary:
@@ -43,7 +43,7 @@ slots:
 builtin_devices:
   - ref: ppi8255
   - ref: vdp_v9938
-    overrides: {vram_kb: 128}
+    overrides: { vram_kb: 128 }
   - ref: psg_ay8910
   - ref: rtc_rp5c01
   - ref: memory_mapper_standard

@@ -59,6 +59,7 @@ class Failure(Exception):
 
 # ---------------- device inspection ----------------
 
+
 def get_block_device_size(fd: int) -> int:
     buf = fcntl.ioctl(fd, BLKGETSIZE64, struct.pack("L", 0))
     return int(struct.unpack("L", buf)[0])
@@ -119,13 +120,11 @@ def describe_device(device_path: str, size: int) -> str:
     vendor = read_sys_attr(name, "device/vendor")
     model = read_sys_attr(name, "device/model")
     removable = read_sys_attr(name, "removable")
-    return (
-        f"{device_path}  ({size} bytes, vendor={vendor}, model={model}, "
-        f"removable={removable})"
-    )
+    return f"{device_path}  ({size} bytes, vendor={vendor}, model={model}, removable={removable})"
 
 
 # ---------------- transfer ----------------
+
 
 def show_progress(done: int, total: int) -> None:
     print(f"\r  {done}/{total} bytes", end="", flush=True)
@@ -160,9 +159,7 @@ def read_disk(fd: int, sectors: int, retries: int, out: BinaryIO) -> list[int]:
     done = 0
     while done < sectors:
         count = min(READ_CHUNK_SECTORS, sectors - done)
-        data: bytes | bytearray | None = read_sectors(
-            fd, done * SECTOR_SIZE, count * SECTOR_SIZE
-        )
+        data: bytes | bytearray | None = read_sectors(fd, done * SECTOR_SIZE, count * SECTOR_SIZE)
         if data is None:
             data = bytearray()
             for i in range(count):
@@ -236,6 +233,7 @@ def format_sector_ranges(sectors: list[int]) -> str:
 
 
 # ---------------- commands ----------------
+
 
 def cmd_read(args: argparse.Namespace) -> int:
     device_size = validate_device(args.device, args.force)

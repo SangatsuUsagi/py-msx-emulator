@@ -1,4 +1,5 @@
 from msx.input import (
+    _K_0,
     _K_AT,
     _K_BACKQUOTE,
     _K_CARET,
@@ -27,7 +28,7 @@ from msx.input import (
     KEY_NAME_TO_CELL,
     KEY_NAME_TO_SDLKEY,
     SDLK_HOST_APOSTROPHE_KEY,
-    SDLK_HOST_EQUALS_KEY,
+    SDLK_JIS_RO,
     InputState,
     _K_a,
     _K_j,
@@ -316,8 +317,9 @@ def test_jp_equals_reachable_via_minus_cell_no_alias_needed() -> None:
     # JIS "=" is SHIFT+"-" (row-1 bit-2) on real hardware. Probe-confirmed:
     # the "-" key's own sym does not change under SHIFT, so plain SHIFT +
     # _K_MINUS already reaches this cell -- no _K_EQUALS alias needed (and
-    # none is present: the physical "=" key is repurposed for "_" instead,
-    # see test_jp_host_equals_key_repurposed_as_underscore_cell).
+    # none is present: on JIS, scancode 46 is left alone entirely -- a real
+    # JIS "^"/"~" key reports that same scancode, see
+    # test_jp_host_equals_key_not_bound).
     assert _K_EQUALS not in KEY_MATRIX_JP
     kjp = InputState(keyboard_type="jp")
     kjp.key_down(_K_LSHIFT)
@@ -329,7 +331,8 @@ def test_jp_equals_reachable_via_minus_cell_no_alias_needed() -> None:
 def test_jp_backquote_repurposed_as_caret_cell() -> None:
     # JIS has no keyboard key at the host's "`"/"~" position; it is
     # deliberately repurposed onto "^"'s cell (row-1 bit-3) so the character
-    # is reachable at all, keytop label mismatch accepted.
+    # is reachable even when the host misdetects the keyboard layout and the
+    # real JIS "^" key's own sym isn't SDLK_CARET (see allium/ppi.allium).
     assert KEY_MATRIX_JP[_K_BACKQUOTE] == KEY_MATRIX_JP[_K_CARET] == (1, 3)
     kjp = InputState(keyboard_type="jp")
     kjp.key_down(_K_BACKQUOTE)
@@ -357,26 +360,75 @@ def test_int_host_apostrophe_key_shares_quote_cell() -> None:
     assert KEY_MATRIX_INT[SDLK_HOST_APOSTROPHE_KEY] == KEY_MATRIX_INT[_K_QUOTE] == (2, 0)
 
 
-def test_jp_host_equals_key_repurposed_as_underscore_cell() -> None:
-    # The host's dedicated "="/"+" key has no JIS role at all (JIS "=" is
-    # reached via the "-" cell instead, see
-    # test_jp_equals_reachable_via_minus_cell_no_alias_needed), so it is
-    # identified by scancode (SDLK_HOST_EQUALS_KEY) and repurposed onto "_"'s
-    # cell (row-2 bit-5) -- which reproduces real JIS underscore-key
-    # behaviour for free: unshifted asserts the cell alone (BIOS renders
-    # nothing), SHIFT+cell renders "_".
-    assert KEY_MATRIX_JP[SDLK_HOST_EQUALS_KEY] == KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)
+def test_jp_caret_key_reaches_caret_cell_via_plain_sym() -> None:
+    # The real JIS "^"/"~" key and the International "="/"+" key sit at the
+    # same host physical position (scancode 46) but report different syms
+    # (SDLK_CARET vs SDLK_EQUALS, probe-confirmed against real JIS
+    # hardware), so no scancode interception is needed to tell them apart --
+    # the plain sym alone already resolves each to its own layout's cell.
+    assert KEY_MATRIX_JP[_K_CARET] == (1, 3)
+    assert _K_EQUALS not in KEY_MATRIX_JP
     kjp = InputState(keyboard_type="jp")
-    kjp.key_down(SDLK_HOST_EQUALS_KEY)
+    kjp.key_down(_K_CARET)
+    assert kjp.matrix[1] & (1 << 3) == 0
+    kjp.key_up(_K_CARET)
+    assert kjp.matrix[1] & (1 << 3) != 0
+
+
+def test_jp_ro_key_reaches_underscore_cell() -> None:
+    # The real JIS "\"/"_" key (to the right of "/") is identified by
+    # scancode (SDLK_JIS_RO, its sym is unreliable) and bound directly to
+    # the "_" cell (row-2 bit-5) -- same cell as _K_UNDERSCORE. An
+    # International/US host never reports this scancode, so it has no
+    # KEY_MATRIX_INT entry.
+    assert KEY_MATRIX_JP[SDLK_JIS_RO] == KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)
+    assert SDLK_JIS_RO not in KEY_MATRIX_INT
+    kjp = InputState(keyboard_type="jp")
+    kjp.key_down(SDLK_JIS_RO)
     assert kjp.matrix[2] & (1 << 5) == 0
-    kjp.key_up(SDLK_HOST_EQUALS_KEY)
+    kjp.key_up(SDLK_JIS_RO)
     assert kjp.matrix[2] & (1 << 5) != 0
 
 
-def test_int_host_equals_key_shares_equals_cell() -> None:
-    # On International layout, the scancode sentinel is a defensive
-    # duplicate of the plain _K_EQUALS sym -- both name the same key here.
-    assert KEY_MATRIX_INT[SDLK_HOST_EQUALS_KEY] == KEY_MATRIX_INT[_K_EQUALS] == (1, 3)
+def test_shift_zero_reaches_underscore_cell() -> None:
+    # Host-only escape hatch, independent of keyboard_type: SHIFT+"0"
+    # asserts the "_" cell (row-2 bit-5) instead of "0"'s own cell (row-0
+    # bit-0). Confirmed safe against openMSX's unicodemap.int/jp_jis: row-0
+    # bit-0 has no plain-SHIFT entry in either map.
+    for keyboard_type in ("int", "jp"):
+        state = InputState(keyboard_type=keyboard_type)
+        state.key_down(_K_LSHIFT)
+        state.key_down(_K_0)
+        assert state.matrix[2] & (1 << 5) == 0    # "_" cell asserted
+        assert state.matrix[0] & (1 << 0) != 0    # "0" cell NOT asserted
+        state.key_up(_K_0)
+        assert state.matrix[2] & (1 << 5) != 0    # "_" cell released
+        state.key_up(_K_LSHIFT)
+
+
+def test_shift_zero_release_after_shift_released_still_hits_underscore_cell() -> None:
+    # The redirect decision is latched at key_down time, so releasing SHIFT
+    # before "0" must still release the "_" cell, not silently reassert "0".
+    state = InputState(keyboard_type="jp")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[2] & (1 << 5) == 0        # "_" cell still asserted
+    state.key_up(_K_0)
+    assert state.matrix[2] & (1 << 5) != 0        # "_" cell released
+    assert state.matrix[0] & (1 << 0) != 0        # "0" cell was never touched
+
+
+def test_zero_without_shift_still_asserts_zero_cell() -> None:
+    # Regression check: plain "0" (no SHIFT) is unaffected by the escape
+    # hatch on both layouts.
+    for keyboard_type in ("int", "jp"):
+        state = InputState(keyboard_type=keyboard_type)
+        state.key_down(_K_0)
+        assert state.matrix[0] & (1 << 0) == 0
+        assert state.matrix[2] & (1 << 5) != 0
+        state.key_up(_K_0)
+        assert state.matrix[0] & (1 << 0) != 0
 
 
 def test_jp_at_caret_colon_underscore_cells() -> None:

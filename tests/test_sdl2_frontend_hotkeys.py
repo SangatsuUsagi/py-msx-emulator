@@ -68,6 +68,9 @@ class _FakeSDL:
     # Host "="/"+" key scancode (see `_resolve_key_sym`), same
     # real-value-pinning rationale as SDL_SCANCODE_INTERNATIONAL3 above.
     SDL_SCANCODE_EQUALS = 46
+    # JIS "\"/"_" key scancode (see `_resolve_key_sym`), same
+    # real-value-pinning rationale as SDL_SCANCODE_INTERNATIONAL3 above.
+    SDL_SCANCODE_INTERNATIONAL1 = 135
 
     def __init__(self, script: list[tuple[int, int, int, int]], event: _Event) -> None:
         self._script = list(script)
@@ -432,40 +435,71 @@ def test_host_apostrophe_key_reaches_colon_cell_via_scancode() -> None:
 def test_equals_scancode_matches_real_sdl2_constant() -> None:
     # Same rationale as test_jis_yen_scancode_matches_real_sdl2_constant:
     # pins _FakeSDL.SDL_SCANCODE_EQUALS against the real pysdl2 library so it
-    # can't silently drift.
+    # can't silently drift. This scancode is no longer given any special
+    # handling by `_resolve_key_sym` -- it's the shared host physical
+    # position of the International "="/"+" key and the real JIS "^"/"~"
+    # key, told apart by plain sym alone (see the two tests below).
     import sdl2
 
     assert sdl2.SDL_SCANCODE_EQUALS == _FakeSDL.SDL_SCANCODE_EQUALS == 46
 
 
-def test_host_equals_key_reaches_underscore_cell_via_scancode() -> None:
-    # The host's dedicated "="/"+" key has no JIS role at all -- unlike the
-    # apostrophe key it isn't sym-ambiguous with anything (probe-confirmed:
-    # sym stays SDLK_EQUALS regardless of SHIFT), but `_handle_events` still
-    # identifies it by scancode so it can be repurposed onto "_"'s cell
-    # (row 2 bit 5) rather than left dead.
-    from msx.input import _K_EQUALS, KEY_MATRIX_JP, SDLK_HOST_EQUALS_KEY
+def test_jis_caret_key_reaches_caret_cell_via_plain_sym() -> None:
+    # The real JIS "^"/"~" key reports scancode 46 (same host physical
+    # position as the International "="/"+" key) but its own sym
+    # (SDLK_CARET, 94, probe-confirmed constant across SHIFT) -- no scancode
+    # interception needed, `_handle_events` passes the sym straight through
+    # to _K_CARET's cell.
+    from msx.input import _K_CARET, KEY_MATRIX_JP
 
-    underscore_cell = KEY_MATRIX_JP[SDLK_HOST_EQUALS_KEY]
-    assert _K_EQUALS not in KEY_MATRIX_JP
+    caret_cell = KEY_MATRIX_JP[_K_CARET]
 
     h = _Harness()
     h.machine.input.keyboard_type = "jp"
     h.machine.input._matrix_map = KEY_MATRIX_JP
 
-    h.keydown(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    h.keydown(_K_CARET, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert _asserted(h.matrix, caret_cell)
+    h.keyup(_K_CARET, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    assert not _asserted(h.matrix, caret_cell)
+
+
+def test_international1_scancode_matches_real_sdl2_constant() -> None:
+    # Same rationale as test_jis_yen_scancode_matches_real_sdl2_constant:
+    # pins _FakeSDL.SDL_SCANCODE_INTERNATIONAL1 against the real pysdl2
+    # library so it can't silently drift.
+    import sdl2
+
+    assert sdl2.SDL_SCANCODE_INTERNATIONAL1 == _FakeSDL.SDL_SCANCODE_INTERNATIONAL1 == 135
+
+
+def test_host_ro_key_reaches_underscore_cell_via_scancode() -> None:
+    # The real JIS "\"/"_" key has an unreliable sym (observed as 0,
+    # constant across SHIFT -- same class of problem as the JIS ¥ key), so
+    # `_handle_events` must identify it by scancode and route it to
+    # SDLK_JIS_RO's cell ("_", row 2 bit 5).
+    from msx.input import KEY_MATRIX_JP, SDLK_JIS_RO
+
+    underscore_cell = KEY_MATRIX_JP[SDLK_JIS_RO]
+
+    h = _Harness()
+    h.machine.input.keyboard_type = "jp"
+    h.machine.input._matrix_map = KEY_MATRIX_JP
+
+    h.keydown(0, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL1)
     assert _asserted(h.matrix, underscore_cell)
-    h.keyup(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
+    h.keyup(0, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL1)
     assert not _asserted(h.matrix, underscore_cell)
 
 
-def test_host_equals_key_reaches_equals_cell_on_international_via_scancode() -> None:
-    # On International layout the same scancode routes to the plain "="
-    # cell -- the defensive duplicate in _INT_SYMBOLS.
-    from msx.input import _K_EQUALS, KEY_MATRIX_INT, SDLK_HOST_EQUALS_KEY
+def test_international_equals_key_reaches_equals_cell_via_plain_sym() -> None:
+    # On International layout, the same host physical position (scancode
+    # 46) reports SDLK_EQUALS instead -- reaches the plain "=" cell with no
+    # scancode assist needed, regression check against the removed
+    # SDLK_HOST_EQUALS_KEY scancode interception.
+    from msx.input import _K_EQUALS, KEY_MATRIX_INT
 
-    equals_cell = KEY_MATRIX_INT[SDLK_HOST_EQUALS_KEY]
-    assert equals_cell == KEY_MATRIX_INT[_K_EQUALS]
+    equals_cell = KEY_MATRIX_INT[_K_EQUALS]
 
     h = _Harness()
     h.keydown(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
