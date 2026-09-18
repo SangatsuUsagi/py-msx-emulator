@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, TextIO, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, Protocol, TextIO, TypeVar
 
 from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
 
@@ -296,6 +296,17 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     print(f"avg fps : {frames / elapsed:.2f}")
 
 
+class _SramSource(Protocol):
+    def save_sram(self, path: Path) -> None: ...
+
+
+def _save_sram_if_present(source: "_SramSource | None", save_path: "Path | None") -> None:
+    """Save `source`'s SRAM to `save_path` on exit, if both are present."""
+    if source is not None and save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        source.save_sram(save_path)
+
+
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
@@ -309,35 +320,15 @@ def _cleanup(
         trace_file.close()
     if mapper_trace_file is not None:
         mapper_trace_file.close()
-    if machine is not None and machine.sram_save_path is not None:
+    if machine is not None:
         mapper = machine.memory._mapper
-        if mapper.has_sram:
-            machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-            mapper.save_sram(machine.sram_save_path)
-    if (
-        machine is not None
-        and machine.fmpac is not None
-        and machine.fmpac_sram_save_path is not None
-    ):
-        machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.fmpac.save_sram(machine.fmpac_sram_save_path)
-    if (
-        machine is not None
-        and machine.halnote_cart is not None
-        and machine.halnote_sram_save_path is not None
-    ):
-        machine.halnote_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.halnote_cart.save_sram(machine.halnote_sram_save_path)
-    if (
-        machine is not None
-        and machine.rtc is not None
-        and machine.rtc_sram_save_path is not None
-    ):
-        machine.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.rtc.save_sram(machine.rtc_sram_save_path)
-    # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
-    if machine is not None and machine.fdc is not None:
-        machine.fdc.flush()
+        _save_sram_if_present(mapper if mapper.has_sram else None, machine.sram_save_path)
+        _save_sram_if_present(machine.fmpac, machine.fmpac_sram_save_path)
+        _save_sram_if_present(machine.halnote_cart, machine.halnote_sram_save_path)
+        _save_sram_if_present(machine.rtc, machine.rtc_sram_save_path)
+        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
+        if machine.fdc is not None:
+            machine.fdc.flush()
 
 
 class _EffectiveOptions(NamedTuple):
