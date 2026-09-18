@@ -1507,8 +1507,10 @@ def _wire_expanded_overlay(
                 f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
                 "construction case"
             )
-    if extension_overlay.io_device is not None and extension_overlay.io_device.device \
-            == "kanji_rom":
+    if (
+        extension_overlay.io_device is not None
+        and extension_overlay.io_device.device == "kanji_rom"
+    ):
         if kanji_device is not None:
             raise MachineLoadError(
                 f"{spec.machine_id}: a machine-declared io_device and an extension "
