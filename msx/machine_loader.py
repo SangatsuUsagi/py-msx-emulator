@@ -1652,6 +1652,93 @@ def _wire_extension_overlay(
     )
 
 
+@dataclass
+class _Slot1Setup:
+    """Main/logo ROM bytes and slot-1's resolved cartridge mapper (including
+    any loaded SRAM), for `build_machine` to unpack before slot-2 resolution
+    and dispatching into `_build_msx1`/`_build_msx2`."""
+
+    main_bytes: bytes
+    logo_bytes: bytes | None
+    mapper_instance: Mapper
+    scc: SCC | None
+    sram_save_path: Path | None
+
+
+def _load_and_resolve_slot1(
+    spec: MachineSpec,
+    bios_override: bytes | None,
+    logo_override: bytes | None,
+    mapper: str,
+    cartridge: bytes | None,
+) -> _Slot1Setup:
+    """Load the main/logo ROMs and resolve slot 1's cartridge mapper
+    (including SRAM load), independent of slot 2 / extension-overlay
+    wiring."""
+    # --- ROM loading ---
+    if bios_override is not None:
+        main_bytes: bytes = bios_override
+    else:
+        loaded = _load_rom(spec.rom_base_dir, spec.main_rom_entry.file, required=True)
+        assert loaded is not None
+        main_bytes = loaded
+
+    if logo_override is not None:
+        logo_bytes: bytes | None = logo_override
+    elif spec.logo_rom_entry is not None:
+        logo_bytes = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
+    else:
+        logo_bytes = None
+
+    # --- Cartridge mapper resolution ---
+    sram_save_path: Path | None = None
+    resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
+    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
+
+    # SRAM: load existing save file if mapper supports it
+    sram_data: bytearray | None = None
+    if resolved in _SRAM_SIZES and cartridge is not None:
+        # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not
+        # None here, so cart_sha1 is set).
+        assert cart_sha1 is not None
+        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
+        sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
+
+    mapper_instance: Mapper = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
+    return _Slot1Setup(main_bytes, logo_bytes, mapper_instance, scc, sram_save_path)
+
+
+def _wire_post_construction_attrs(
+    machine: "Machine",
+    io: IOBus,
+    dac: MajutsushiMapper | None,
+    sram_save_path: Path | None,
+    wiring: _ExtensionWiring,
+    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
+) -> None:
+    """Wire closures and device/save-path attributes onto an already-built
+    Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
+    Majutsushi DAC needs, and the SRAM/FM-PAC/Halnote/Kanji attributes
+    `build_machine`'s slot-1/extension-overlay resolution produced."""
+    io._get_pc = lambda: machine.cpu.registers.PC
+    if dac is not None:
+        dac._get_cycle = lambda: machine.cycle_count
+    # PSG software PCM: timestamp register writes so generate_samples can place
+    # them at their sub-frame sample positions (mirrors the DAC wiring).
+    machine.psg._machine = machine
+    machine.sram_save_path = sram_save_path
+    machine.fmpac = wiring.fmpac_device
+    machine.halnote_cart = wiring.halnote_device
+    machine.kanji = wiring.kanji_device
+    machine.fmpac_sram_save_path = (
+        extension_overlay.sram_save_path
+        if wiring.fmpac_device is not None and extension_overlay is not None
+        and not isinstance(extension_overlay, _ExpandedExtensionOverlay)
+        else None
+    )
+    machine.halnote_sram_save_path = wiring.halnote_sram_save_path
+
+
 def build_machine(
     spec: MachineSpec,
     cartridge: bytes | None = None,
@@ -1703,36 +1790,12 @@ def build_machine(
     """
     from msx.machine import Machine  # local import to avoid circular dependency
 
-    # --- ROM loading ---
-    if bios_override is not None:
-        main_bytes: bytes = bios_override
-    else:
-        loaded = _load_rom(spec.rom_base_dir, spec.main_rom_entry.file, required=True)
-        assert loaded is not None
-        main_bytes = loaded
-
-    if logo_override is not None:
-        logo_bytes: bytes | None = logo_override
-    elif spec.logo_rom_entry is not None:
-        logo_bytes = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
-    else:
-        logo_bytes = None
-
-    # --- Cartridge mapper resolution ---
-    sram_save_path: Path | None = None
-    resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
-    scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
-
-    # SRAM: load existing save file if mapper supports it
-    sram_data: bytearray | None = None
-    if resolved in _SRAM_SIZES and cartridge is not None:
-        # Reuse the sha1 computed in _resolve_mapper_type (cartridge is not
-        # None here, so cart_sha1 is set).
-        assert cart_sha1 is not None
-        sram_save_path = Path("saves") / "sram" / f"{cart_sha1}.sram"
-        sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
-
-    mapper_instance: Mapper = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
+    slot1 = _load_and_resolve_slot1(spec, bios_override, logo_override, mapper, cartridge)
+    main_bytes = slot1.main_bytes
+    logo_bytes = slot1.logo_bytes
+    mapper_instance = slot1.mapper_instance
+    scc = slot1.scc
+    sram_save_path = slot1.sram_save_path
 
     resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
     if resolved2 == "KonamiSCC":
@@ -1819,23 +1882,7 @@ def build_machine(
             mapper2_subslots=mapper2_subslots,
         )
 
-    io._get_pc = lambda: machine.cpu.registers.PC
-    if dac is not None:
-        dac._get_cycle = lambda: machine.cycle_count
-    # PSG software PCM: timestamp register writes so generate_samples can place
-    # them at their sub-frame sample positions (mirrors the DAC wiring).
-    machine.psg._machine = machine
-    machine.sram_save_path = sram_save_path
-    machine.fmpac = wiring.fmpac_device
-    machine.halnote_cart = wiring.halnote_device
-    machine.kanji = wiring.kanji_device
-    machine.fmpac_sram_save_path = (
-        extension_overlay.sram_save_path
-        if wiring.fmpac_device is not None and extension_overlay is not None
-        and not isinstance(extension_overlay, _ExpandedExtensionOverlay)
-        else None
-    )
-    machine.halnote_sram_save_path = wiring.halnote_sram_save_path
+    _wire_post_construction_attrs(machine, io, dac, sram_save_path, wiring, extension_overlay)
     return machine
 
 
