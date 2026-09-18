@@ -434,8 +434,11 @@ def main() -> None:
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
-    (cart_path, slot2_path, fdd1_path, fdd2_path,
-     cartridge, cartridge2) = _resolve_paths(args, opts.slot2)
+    paths = _resolve_paths(args, opts.slot2)
+    fdd1_path = paths.fdd1_path
+    fdd2_path = paths.fdd2_path
+    cartridge = paths.cartridge
+    cartridge2 = paths.cartridge2
 
     db_system = lookup_system(cartridge) if cartridge else None
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
