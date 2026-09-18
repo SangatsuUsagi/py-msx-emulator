@@ -22,6 +22,7 @@ except ImportError:  # stock Windows CPython has no readline module
 if TYPE_CHECKING:
     from msx.machine import Machine
     from msx.vdp.v9938 import V9938
+    from msx.vdp.vdp import VdpDevice
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -908,9 +909,9 @@ def _print_vdp_status(vdp: V9938) -> None:
     print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
 
 
-def _print_vdp_tms(vdp: object) -> None:
-    r = vdp.regs  # type: ignore[attr-defined]
-    s0 = vdp.status  # type: ignore[attr-defined]
+def _print_vdp_tms(vdp: "VdpDevice") -> None:
+    r = vdp.regs
+    s0 = vdp.status
 
     print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
 
