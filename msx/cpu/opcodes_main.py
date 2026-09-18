@@ -1165,9 +1165,11 @@ def _cc(cpu: Z80, cond: int) -> bool:
 
 
 def _make_ld_r_r(dst: int, src: int) -> Callable[[Z80], int]:
+    cycles = 7 if (dst == 6 or src == 6) else 4
+
     def _h(cpu: Z80) -> int:
         _set_r(cpu, dst, _get_r(cpu, src))
-        return 7 if 6 in (dst, src) else 4
+        return cycles
 
     return _h
 
