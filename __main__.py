@@ -179,13 +179,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_paths(
-    args: argparse.Namespace, slot2: str | None,
-) -> tuple[Path | None, Path | None, Path | None, Path | None, bytes | None, bytes | None]:
+class _ResolvedPaths(NamedTuple):
+    cart_path: Path | None
+    slot2_path: Path | None
+    fdd1_path: Path | None
+    fdd2_path: Path | None
+    cartridge: bytes | None
+    cartridge2: bytes | None
+
+
+def _resolve_paths(args: argparse.Namespace, slot2: str | None) -> _ResolvedPaths:
     """Validate the cartridge/slot-2/floppy paths and read the ROM bytes.
 
-    Exits the process with an error if any given path does not exist. Returns
-    (cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2).
+    Exits the process with an error if any given path does not exist.
     """
     cart_path = Path(args.cartridge) if args.cartridge else None
     slot2_path = Path(slot2) if slot2 else None
@@ -205,7 +211,7 @@ def _resolve_paths(
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2
+    return _ResolvedPaths(cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2)
 
 
 def _resolve_machine_id(
