@@ -21,6 +21,7 @@ except ImportError:  # stock Windows CPython has no readline module
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+    from msx.memory import Memory
     from msx.vdp.v9938 import V9938
     from msx.vdp.vdp import VdpDevice
 
@@ -688,31 +689,9 @@ class Debugger:
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
             if mem.sub_slot_enabled and prim == 3:
-                raw = mem.sub_slot_reg
-                print(f"  Primary 3 [EXPANDED]  secondary-select(raw)={raw:02X}h")
-                parts = []
-                for pg in range(4):
-                    s = (raw >> (pg * 2)) & 0x03
-                    parts.append(f"P{pg}->3-{s}")
-                print(f"    page-map: {'  '.join(parts)}")
-                for sec in range(4):
-                    content = mem.debug_slot_content(prim, sec, None)
-                    size = mem.debug_slot_size_kb(prim, sec)
-                    suffix = f"  {size}" if size else ""
-                    print(f"    3-{sec}  {content}{suffix}")
+                _print_expanded_slot(mem, prim, mem.sub_slot_reg)
             elif mem.slot2_sub_slot_enabled and prim == 2:
-                raw2 = mem.slot2_sub_slot_reg
-                print(f"  Primary 2 [EXPANDED]  secondary-select(raw)={raw2:02X}h")
-                parts2 = []
-                for pg in range(4):
-                    s = (raw2 >> (pg * 2)) & 0x03
-                    parts2.append(f"P{pg}->2-{s}")
-                print(f"    page-map: {'  '.join(parts2)}")
-                for sec in range(4):
-                    content = mem.debug_slot_content(prim, sec, None)
-                    size = mem.debug_slot_size_kb(prim, sec)
-                    suffix = f"  {size}" if size else ""
-                    print(f"    2-{sec}  {content}{suffix}")
+                _print_expanded_slot(mem, prim, mem.slot2_sub_slot_reg)
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
@@ -810,6 +789,20 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
     if transparent:
         log += "/T"
     return cmd, log
+
+
+def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
+    print(f"  Primary {prim} [EXPANDED]  secondary-select(raw)={raw:02X}h")
+    parts = []
+    for pg in range(4):
+        s = (raw >> (pg * 2)) & 0x03
+        parts.append(f"P{pg}->{prim}-{s}")
+    print(f"    page-map: {'  '.join(parts)}")
+    for sec in range(4):
+        content = mem.debug_slot_content(prim, sec, None)
+        size = mem.debug_slot_size_kb(prim, sec)
+        suffix = f"  {size}" if size else ""
+        print(f"    {prim}-{sec}  {content}{suffix}")
 
 
 def _print_vdp_fancy(vdp: object) -> None:
