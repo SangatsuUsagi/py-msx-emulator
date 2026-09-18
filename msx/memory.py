@@ -478,56 +478,62 @@ class Memory:
     # from outside this class -- see openspec/changes/archive/
     # *-debugger-slot-mapper-interface.
 
+    def _describe_slot12(self, primary: int, secondary: int | None) -> str:
+        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
+            sub_mapper = self._mapper2_subslots[secondary]
+            if sub_mapper is None:
+                return "Cartridge (empty)"
+            return f"Cartridge {mapper_kind_display_name(sub_mapper.kind)}"
+        mapper = self._mapper if primary == 1 else self._mapper2
+        if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
+            return "Cartridge (empty)"
+        return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
+
+    def _describe_slot3(self, secondary: int | None, page: int | None) -> str:
+        flat_sub = self.flat_ram_subslot
+        if flat_sub is not None:
+            # Data-driven layout (e.g. FS-A1F): mirror
+            # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
+            # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
+            # RAM in flat_sub, open bus elsewhere. `page is None` (the
+            # `st` tree view, one line per sub-slot) matches the
+            # page-0/fdc_page role regardless of page, same as the
+            # legacy branch below always describing sub-slot 0 as ROM.
+            if (
+                secondary == self.sub_rom_subslot
+                and self.sub0_rom is not None
+                and page in (0, None)
+            ):
+                return _rom_display(self.sub0_rom_name)
+            if (
+                secondary == self.fdc_subslot
+                and self.fdc is not None
+                and page in (self.fdc_page, None)
+            ):
+                return "FDC"
+            if secondary == flat_sub:
+                return "RAM"
+            return "empty"
+        if secondary == 0:
+            return _rom_display(self.sub0_rom_name)
+        if secondary == 1:
+            return "empty"
+        if secondary in (2, 3):
+            if self.ram_mapper is not None:
+                return "RAM (mapper:standard)"
+            return "RAM"
+        return "empty"
+
     def debug_slot_content(
         self, primary: int, secondary: int | None, page: int | None
     ) -> str:
         """Human-readable description of what a slot/sub-slot contains."""
         if primary == 0:
             return _rom_display(self.rom_name)
-        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
-            sub_mapper = self._mapper2_subslots[secondary]
-            if sub_mapper is None:
-                return "Cartridge (empty)"
-            return f"Cartridge {mapper_kind_display_name(sub_mapper.kind)}"
         if primary in (1, 2):
-            mapper = self._mapper if primary == 1 else self._mapper2
-            if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
-                return "Cartridge (empty)"
-            return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
+            return self._describe_slot12(primary, secondary)
         if primary == 3:
-            flat_sub = self.flat_ram_subslot
-            if flat_sub is not None:
-                # Data-driven layout (e.g. FS-A1F): mirror
-                # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
-                # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
-                # RAM in flat_sub, open bus elsewhere. `page is None` (the
-                # `st` tree view, one line per sub-slot) matches the
-                # page-0/fdc_page role regardless of page, same as the
-                # legacy branch below always describing sub-slot 0 as ROM.
-                if (
-                    secondary == self.sub_rom_subslot
-                    and self.sub0_rom is not None
-                    and page in (0, None)
-                ):
-                    return _rom_display(self.sub0_rom_name)
-                if (
-                    secondary == self.fdc_subslot
-                    and self.fdc is not None
-                    and page in (self.fdc_page, None)
-                ):
-                    return "FDC"
-                if secondary == flat_sub:
-                    return "RAM"
-                return "empty"
-            if secondary == 0:
-                return _rom_display(self.sub0_rom_name)
-            if secondary == 1:
-                return "empty"
-            if secondary in (2, 3):
-                if self.ram_mapper is not None:
-                    return "RAM (mapper:standard)"
-                return "RAM"
-            return "empty"
+            return self._describe_slot3(secondary, page)
         return "empty"
 
     def debug_slot_bank(
