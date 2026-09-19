@@ -94,6 +94,12 @@ class Machine:
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
+    # Slot 2's cartridge-mapper SRAM path, symmetric to sram_save_path (slot
+    # 1). This and sram_save_path/fmpac_sram_save_path/
+    # halnote_sram_save_path/rtc_sram_save_path are candidates for the
+    # generic (has_sram source, path) list design.md's D2 proposes -- not
+    # yet migrated (a later phase of slot1-slot2-symmetrization).
+    sram_save_path2: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
     halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
     rtc_sram_save_path: "Path | None" = field(default=None, repr=False)

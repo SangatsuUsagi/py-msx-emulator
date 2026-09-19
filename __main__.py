@@ -264,8 +264,39 @@ def _resolve_machine_id(
     return "cbios_msx2_jp"
 
 
+def _print_extension_summary_line(
+    slot_num: int,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_id: str | None,
+) -> None:
+    if extension_overlay is None:
+        return
+    from msx.machine_loader import _ExpandedExtensionOverlay
+    if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+        print(
+            f"extension: {extension_id} (expanded slot {slot_num}: "
+            f"{len(extension_overlay.subslots)} sub-slot(s)"
+            + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
+            + ")"
+        )
+    elif extension_overlay.rom_entry is not None:
+        # rom_base_dir is always set together with rom_entry (see
+        # _ExtensionOverlay's docstring: both are None only for a device
+        # with no ROM file, e.g. scc_i_cart) -- asserted here only to
+        # narrow the type for mypy, not a runtime possibility.
+        assert extension_overlay.rom_base_dir is not None
+        print(
+            f"extension: {extension_overlay.device} "
+            f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, "
+            f"slot {slot_num})"
+        )
+    else:
+        print(f"extension: {extension_overlay.device} (slot {slot_num})")
+
+
 def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
@@ -278,27 +309,8 @@ def _print_startup_summary(
         print(f"fdd1    : {fdd1_path}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
-    if extension_overlay is not None:
-        from msx.machine_loader import _ExpandedExtensionOverlay
-        if isinstance(extension_overlay, _ExpandedExtensionOverlay):
-            print(
-                f"extension: {args.extension2} (expanded slot 2: "
-                f"{len(extension_overlay.subslots)} sub-slot(s)"
-                + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
-                + ")"
-            )
-        elif extension_overlay.rom_entry is not None:
-            # rom_base_dir is always set together with rom_entry (see
-            # _ExtensionOverlay's docstring: both are None only for a
-            # device with no ROM file, e.g. scc_i_cart) -- asserted here
-            # only to narrow the type for mypy, not a runtime possibility.
-            assert extension_overlay.rom_base_dir is not None
-            print(
-                f"extension: {extension_overlay.device} "
-                f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"
-            )
-        else:
-            print(f"extension: {extension_overlay.device} (slot 2)")
+    _print_extension_summary_line(1, extension_overlay1, args.extension1)
+    _print_extension_summary_line(2, extension_overlay, args.extension2)
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -365,7 +377,9 @@ def _cleanup(
         mapper_trace_file.close()
     if machine is not None:
         mapper = machine.memory._mapper
+        mapper2 = machine.memory._mapper2
         _save_sram_if_present(mapper if mapper.has_sram else None, machine.sram_save_path)
+        _save_sram_if_present(mapper2 if mapper2.has_sram else None, machine.sram_save_path2)
         _save_sram_if_present(machine.fmpac, machine.fmpac_sram_save_path)
         _save_sram_if_present(machine.halnote_cart, machine.halnote_sram_save_path)
         _save_sram_if_present(machine.rtc, machine.rtc_sram_save_path)
@@ -486,16 +500,23 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
               f"{opts.extension1!r} -- the identical extension on both "
               "slots is not supported", file=sys.stderr)
         sys.exit(1)
-    # PHASE-2-TEMPORARY (openspec/changes/slot1-slot2-symmetrization): the
-    # CLI/config layer for --extension1 lands here (phase 2), but
-    # build_machine still only ever places an extension overlay in slot 2
-    # (machine_loader's own slot placement lands in phases 3/5). Rather than
-    # silently mis-place a slot-1 extension into slot 2, refuse it here
-    # until those phases land. Remove this block (and this comment) once
-    # build_machine accepts an independent slot-1 extension overlay.
-    if opts.extension1 is not None:
-        print("error: --extension1 device placement is not implemented yet "
-              "(lands in a later phase of the slot1-slot2-symmetrization "
+    # PHASE-3-TEMPORARY (openspec/changes/slot1-slot2-symmetrization):
+    # build_machine's extension_overlay1 now wires a *flat* overlay
+    # (fmpac/scc_plus) onto slot 1 correctly, but an *expanded* overlay
+    # (hbi_j1/memory_512k/msxdos2_512k*) on slot 1 needs Memory's slot-1
+    # sub-slot expansion, which lands in a later phase. Refuse the
+    # expanded-shape ids on slot 1 here rather than letting
+    # build_machine's own (correct, but less CLI-friendly) MachineLoadError
+    # surface. Remove this set (and this comment) once every id is
+    # symmetric on slot 1.
+    _EXPANDED_SHAPE_EXTENSION_IDS = frozenset({
+        "hbi_j1", "memory_512k", "msxdos2_512k",
+        "msxdos2_512k_kanjirom", "msxdos2_512k_viewfont",
+    })
+    if opts.extension1 in _EXPANDED_SHAPE_EXTENSION_IDS:
+        print(f"error: --extension1 {opts.extension1} is not implemented yet "
+              "(expanded-shape extensions on slot 1 need Memory support "
+              "landing in a later phase of the slot1-slot2-symmetrization "
               "change); use --extension2 for now", file=sys.stderr)
         sys.exit(1)
 
@@ -536,8 +557,13 @@ def main() -> None:
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        # opts.extension1 is always None here -- _validate_options rejects it
-        # (PHASE-2-TEMPORARY) before main() reaches this point.
+        # opts.extension1, if set, is always a flat-shape id here --
+        # _validate_options's PHASE-3-TEMPORARY guard rejects the
+        # expanded-shape ids before main() reaches this point.
+        extension_overlay1 = (
+            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension1 is not None else None
+        )
         extension_overlay = (
             load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension2 is not None else None
@@ -565,7 +591,8 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, opts.mouse_port, args,
+        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay1, extension_overlay,
+        opts.mouse_port, args,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -597,6 +624,7 @@ def main() -> None:
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
                 extension_overlay=extension_overlay,
+                extension_overlay1=extension_overlay1,
                 joy_map=app_cfg.keyboard_joy_map(),
             )
         except MachineLoadError as exc:

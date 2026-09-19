@@ -357,6 +357,51 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 
 
 # ---------------------------------------------------------------------------
+# Either slot's KonamiSCC mapper vs. either slot's scc_plus extension --
+# the 4-way single-scc-field conflict (openspec/changes/
+# slot1-slot2-symmetrization, design.md Decision D1/D5)
+# ---------------------------------------------------------------------------
+
+def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    cart1 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM, cartridge=cart1, mapper="KonamiSCC",
+            extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_scc_plus_rejected_when_mapper2_is_konamiscc() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    cart2 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM, cartridge2=cart2, mapper2="KonamiSCC",
+            extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_and_extension2_both_scc_plus_rejected() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM,
+            extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
+            extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_scc_plus_alone_builds_real_scc_chip() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    from msx.mapper import SCCICart
+    m = make_machine(rom=_NOP_ROM, extension_overlay1=_ExtensionOverlay(device="scc_i_cart"))
+    assert isinstance(m.memory._mapper, SCCICart)
+    assert m.scc is not None
+    assert m.scc is m.memory._mapper.scc
+
+
+# ---------------------------------------------------------------------------
 # cycle_count
 
 def test_cycle_count_starts_at_zero() -> None:
