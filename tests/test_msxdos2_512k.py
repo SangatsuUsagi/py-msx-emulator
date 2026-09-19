@@ -80,7 +80,7 @@ def test_extension_msxdos2_512k_alone_boots() -> None:
     # the default cbios_msx2_jp), so it doesn't hit the has_ram_mapper
     # conflict rejection this extension's ram_mapper sub-slot also enforces.
     code, out, _err = _run_main(
-        ["--machine", "hb_f1xd", "--extension", "msxdos2_512k", "--count-frame", "1"]
+        ["--machine", "hb_f1xd", "--extension2", "msxdos2_512k", "--count-frame", "1"]
     )
     assert code == 0
     assert "msxdos2_512k" in out

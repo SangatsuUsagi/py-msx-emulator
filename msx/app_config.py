@@ -43,23 +43,16 @@ VALID_MAPPERS: tuple[str, ...] = (
     "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
 )
 
-# Accepted slot 2 cartridge mapper names for --mapper2 (CLI-only, see above).
-# Slot 2 has no SRAM persistence path, hence the narrower list than
-# VALID_MAPPERS: the SRAM-backed types (ASCII8SRAM2/8, ASCII16SRAM2/8,
-# KoeiSRAM32, GameMaster2) are excluded. R-Type and the fixed-page types
-# (Page2/0x4000/0x8000) touch neither SRAM nor the SCC/DAC audio path -- only
-# ROM bytes through a bank register -- so they ARE included here (see the
-# app-cli spec's "--mapper2 accepts SRAM-free slot 1 mapper types"
-# Requirement). KonamiSCC IS supported (a genuine Konami-SCC cartridge can
-# physically occupy slot 2, e.g. behind a Konami slot-converter cartridge in
-# slot 1) but shares Machine's single scc field with slot 1 -- rejected at
-# build_machine time if slot 1's own mapper also resolves to KonamiSCC (see
-# machine-loader's "Slot 2 KonamiSCC mapper shares the machine's single SCC
-# chip" spec Requirement).
-VALID_MAPPERS2: tuple[str, ...] = (
-    "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
-    "KonamiSCC", "R-Type", "Page2", "0x4000", "0x8000",
-)
+# --mapper1/--mapper2 both accept the identical VALID_MAPPERS list (slot 2
+# gained the same SRAM load-on-start/save-on-exit persistence slot 1 already
+# had -- see cart-sram-mapper's "machine_loader SRAM load/save integration"
+# Requirement, generalized to both slots by openspec/changes/
+# slot1-slot2-symmetrization). KonamiSCC in either slot shares Machine's
+# single scc field with the other slot -- rejected at build_machine time if
+# both slots' mappers resolve to KonamiSCC, or one slot's mapper resolves to
+# KonamiSCC while the other slot's --extensionN is scc_plus (see
+# machine-loader's "Either slot's KonamiSCC mapper shares the machine's
+# single SCC chip" spec Requirement).
 
 # Accepted --extension ids (see the cart-extension-overlay spec). Each maps to
 # a config/extensions/<id>.yaml overlay fragment placed in primary slot 2.
@@ -104,7 +97,8 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
 }
 
 _KNOWN_TOP_KEYS = frozenset({
-    "machine", "speed", "scale", "extension", "slot2",
+    "machine", "speed", "scale", "extension", "extension1", "extension2",
+    "slot1", "slot2",
     "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
@@ -128,7 +122,14 @@ class AppConfig:
     machine: str | None = None
     speed: float | None = None
     scale: int | None = None
-    extension: str | None = None
+    # `extension2` is slot 2's extension id; the pre-existing `extension` key
+    # (unqualified, historically meant slot 2 -- see app-cli's "CLI startup
+    # option config-file fallback" Requirement) keeps working as an alias for
+    # it, resolved in `_opt_extension2` below. `extension1` has no legacy
+    # alias -- it did not exist before slot 1 gained its own extension flag.
+    extension1: str | None = None
+    extension2: str | None = None
+    slot1: str | None = None
     slot2: str | None = None
     frame_skip: bool | None = None
     rpc_enabled: bool | None = None
@@ -261,8 +262,10 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.machine = _opt_str(raw, "machine")
     cfg.speed = _opt_positive_float(raw, "speed")
     cfg.scale = _opt_positive_int(raw, "scale")
-    cfg.extension = _opt_extension(raw)
-    cfg.slot2 = _opt_slot2(raw, root)
+    cfg.extension1 = _opt_extension(raw, "extension1")
+    cfg.extension2 = _opt_extension(raw, "extension2", legacy_alias="extension")
+    cfg.slot1 = _opt_rom_path(raw, "slot1", root)
+    cfg.slot2 = _opt_rom_path(raw, "slot2", root)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
@@ -311,19 +314,26 @@ def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
     return value
 
 
-def _opt_extension(raw: dict[str, Any]) -> str | None:
-    value = _opt_str(raw, "extension")
+def _opt_extension(
+    raw: dict[str, Any], key: str, legacy_alias: str | None = None
+) -> str | None:
+    """Resolve an extensionN key, falling back to `legacy_alias` (the
+    pre-existing unqualified `extension` key, kept as slot 2's alias for
+    backward compatibility) when `key` itself is absent."""
+    value = _opt_str(raw, key)
+    if value is None and legacy_alias is not None:
+        value = _opt_str(raw, legacy_alias)
     if value is not None and value not in VALID_EXTENSIONS:
         raise AppConfigError(
-            f"{CONFIG_FILENAME}: extension: {value!r} is not one of {VALID_EXTENSIONS}"
+            f"{CONFIG_FILENAME}: {key}: {value!r} is not one of {VALID_EXTENSIONS}"
         )
     return value
 
 
-def _opt_slot2(raw: dict[str, Any], root: Path) -> str | None:
-    value = _opt_str(raw, "slot2")
+def _opt_rom_path(raw: dict[str, Any], key: str, root: Path) -> str | None:
+    value = _opt_str(raw, key)
     if value is not None and not (root / value).exists():
-        raise AppConfigError(f"{CONFIG_FILENAME}: slot2: file not found: {value}")
+        raise AppConfigError(f"{CONFIG_FILENAME}: {key}: file not found: {value}")
     return value
 
 
