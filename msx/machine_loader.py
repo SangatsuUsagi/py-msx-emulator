@@ -1269,10 +1269,16 @@ def load_extension_overlay(
             f"{path}: unsupported schema_version {schema_version!r} (expected 1)"
         )
 
+    # `slot:` documents which primary slot this overlay YAML's author
+    # targeted/tested -- both slots 1 and 2 are supported placements now
+    # (openspec/changes/slot1-slot2-symmetrization); it does NOT itself
+    # route the overlay to a slot -- build_machine's caller decides that via
+    # which of extension_overlay1/extension_overlay2 it passes the resolved
+    # overlay through as.
     slot = int(raw.get("slot", 2))
-    if slot != 2:
+    if slot not in (1, 2):
         raise MachineLoadError(
-            f"{path}: unsupported extension slot {slot!r} (only slot 2 is supported)"
+            f"{path}: unsupported extension slot {slot!r} (must be 1 or 2)"
         )
 
     shape = raw.get("shape", "flat")
@@ -1403,10 +1409,13 @@ def _empty_mapper2_subslots() -> list[Mapper | None]:
 @dataclass
 class _ExtensionWiring:
     """Every device/flag `_wire_extension_overlay` can produce from a
-    machine-declared `io_device` and/or a `--extension` overlay, bundled
-    for `build_machine` to unpack into `Memory` constructor arguments and
-    `Machine` attributes."""
+    machine-declared `io_device` and/or a `--extension1`/`--extension2`
+    overlay, bundled for `build_machine` to unpack into `Memory` constructor
+    arguments and `Machine` attributes. `mapper_instance`/`mapper2_instance`
+    are each independently either unchanged (no overlay on that slot) or
+    replaced by that slot's flat overlay's device."""
 
+    mapper_instance: Mapper
     mapper2_instance: Mapper
     scc: SCC | None
     slot2_sub_slot_enabled: bool
@@ -1531,9 +1540,12 @@ def _wire_expanded_overlay(
 @dataclass
 class _FlatOverlayWiring:
     """Every device/flag a *flat* --extension overlay (fmpac / scc_i_cart,
-    replacing slot 2's cartridge mapper wholesale) produces."""
+    replacing a cartridge slot's mapper wholesale) produces. `mapper_instance`
+    is generic -- the caller decides whether it replaces slot 1's or slot
+    2's mapper, since a flat overlay's device construction is identical
+    regardless of which slot it targets."""
 
-    mapper2_instance: Mapper
+    mapper_instance: Mapper
     scc: SCC | None
     fmpac_device: FmPac | None
 
@@ -1543,19 +1555,20 @@ def _wire_flat_overlay(
     extension_overlay: _ExtensionOverlay,
     scc: SCC | None,
 ) -> _FlatOverlayWiring:
-    """Resolve a flat --extension overlay's device, which unconditionally
-    replaces slot 2's `mapper2_instance` (and, for scc_i_cart, `scc` --
-    rejected instead when the incoming `scc` is already set, i.e. a cartridge
-    mapper in either slot already resolved its own KonamiSCC chip: real
-    hardware never has two SCC chips attached at once, and `Machine` has a
-    single `scc` field).
+    """Resolve a flat --extension overlay's device. The caller places the
+    returned `mapper_instance` into whichever slot's overlay this is --
+    (and, for scc_i_cart, `scc` -- rejected instead when the incoming `scc`
+    is already set, i.e. a cartridge mapper or another extension in either
+    slot already resolved its own KonamiSCC chip: real hardware never has
+    two SCC chips attached at once, and `Machine` has a single `scc` field).
 
     Raises:
         MachineLoadError: If `extension_overlay.device` passed load-time
             validation (`_KNOWN_EXTENSION_DEVICES`) but has no construction
             case here (an internal consistency error between the two), or
             if `scc_i_cart` is selected while a KonamiSCC cartridge mapper
-            already resolved a chip (see above).
+            or another slot's `scc_i_cart` already resolved a chip (see
+            above).
     """
     fmpac_device: FmPac | None = None
     if extension_overlay.device == "fmpac":
@@ -1568,7 +1581,7 @@ def _wire_flat_overlay(
             sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
         )
         return _FlatOverlayWiring(
-            mapper2_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device
+            mapper_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device
         )
     if extension_overlay.device == "scc_i_cart":
         # is_052539=True: the SCC-I cartridge carries a genuine
@@ -1576,22 +1589,23 @@ def _wire_flat_overlay(
         # docstring). This chip becomes machine.scc -- rejected below when
         # one already exists, since real hardware never has two SCC chips
         # attached at once and this Machine has a single `scc` field. The
-        # incoming `scc` param is non-None only for that reason, but either
-        # slot can be its source: both build_machine's slot-1 and its slot-2
-        # mapper resolution create one for the KonamiSCC family, and both
-        # run before this call. Only the slot-1 case is reachable from the
-        # command line, where --extension and --mapper2 are mutually
-        # exclusive (__main__.py), so the message stays slot-agnostic rather
-        # than naming a slot it cannot always identify.
+        # incoming `scc` param reflects whatever either cartridge slot's
+        # mapper resolution and/or the other slot's extension overlay
+        # already produced -- all four sources are threaded through the
+        # same `scc` variable by build_machine before either overlay is
+        # wired (see build_machine's "Either slot's KonamiSCC mapper shares
+        # the machine's single SCC chip" handling), so this single check
+        # covers every combination.
         if scc is not None:
             raise MachineLoadError(
-                f"{spec.machine_id}: cannot combine a KonamiSCC cartridge mapper with "
-                "--extension scc_plus: real hardware never has two SCC chips "
-                "attached at once, and Machine has a single scc field"
+                f"{spec.machine_id}: cannot combine a KonamiSCC cartridge mapper "
+                "(or another slot's scc_plus extension) with --extension scc_plus: "
+                "real hardware never has two SCC chips attached at once, and "
+                "Machine has a single scc field"
             )
         scc = SCC(is_052539=True)
         return _FlatOverlayWiring(
-            mapper2_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None
+            mapper_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None
         )
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- extension overlay device "
@@ -1602,23 +1616,33 @@ def _wire_flat_overlay(
 
 def _wire_extension_overlay(
     spec: MachineSpec,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
+    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
+    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
+    mapper_instance: Mapper,
     mapper2_instance: Mapper,
     scc: SCC | None,
 ) -> _ExtensionWiring:
-    """Resolve every device a machine-declared `io_device` and/or a
-    `--extension` overlay contribute, and how they change slot 2's
-    dispatch. `mapper2_instance`/`scc` are the values `build_machine`
-    already resolved from `cartridge2`/`mapper2`/the slot-1 cartridge --
-    a flat overlay's device (fmpac/scc_i_cart) unconditionally replaces
-    `mapper2_instance`, and `scc_i_cart` also replaces `scc`; an expanded
-    overlay leaves both alone and populates the returned `mapper2_subslots`
+    """Resolve every device a machine-declared `io_device` and/or either
+    slot's `--extensionN` overlay contribute, and how they change that
+    slot's dispatch. `mapper_instance`/`mapper2_instance`/`scc` are the
+    values `build_machine` already resolved from `cartridge`/`mapper`/
+    `cartridge2`/`mapper2` -- a flat overlay's device (fmpac/scc_i_cart)
+    unconditionally replaces its slot's mapper instance, and `scc_i_cart`
+    also replaces `scc`; an expanded overlay (slot 2 only, in this phase --
+    see `_wire_expanded_overlay`'s slot-1 rejection below) leaves its slot's
+    mapper instance alone and populates the returned `mapper2_subslots`
     array instead. See `_wire_machine_io_device`, `_wire_expanded_overlay`,
-    and `_wire_flat_overlay` for the three independent pieces this
-    assembles.
+    and `_wire_flat_overlay` for the independent pieces this assembles.
+    `scc` is threaded through slot 1's overlay before slot 2's, so a
+    conflict between any combination of the four possible KonamiSCC
+    sources (either slot's cartridge mapper, either slot's `scc_plus`
+    extension) is caught by `_wire_flat_overlay`'s own check, run at most
+    twice.
 
     Raises:
-        MachineLoadError: see `_wire_expanded_overlay`/`_wire_flat_overlay`.
+        MachineLoadError: see `_wire_expanded_overlay`/`_wire_flat_overlay`,
+            or if `extension_overlay1` is an expanded-shape overlay (not yet
+            supported on slot 1 -- see `_wire_expanded_overlay`).
     """
     kanji_device = _wire_machine_io_device(spec)
     slot2_sub_slot_enabled = False
@@ -1627,22 +1651,41 @@ def _wire_extension_overlay(
     halnote_sram_save_path: Path | None = None
     fmpac_device: FmPac | None = None
 
-    # Extension overlay: unconditionally occupies primary slot 2, replacing
-    # whatever slot-2 cartridge mapper was resolved above.
-    if isinstance(extension_overlay, _ExpandedExtensionOverlay):
-        expanded = _wire_expanded_overlay(spec, extension_overlay, kanji_device)
+    # Slot 1's overlay, if any: unconditionally occupies primary slot 1,
+    # replacing whatever slot-1 cartridge mapper was resolved above. Only a
+    # flat-shape overlay is supported here in this phase -- an expanded
+    # overlay on slot 1 needs Memory's slot-1 sub-slot expansion, which
+    # lands in a later phase of slot1-slot2-symmetrization.
+    if isinstance(extension_overlay1, _ExpandedExtensionOverlay):
+        raise MachineLoadError(
+            f"{spec.machine_id}: an expanded extension overlay on slot 1 "
+            "is not yet supported (Memory's slot-1 sub-slot expansion "
+            "lands in a later phase of the slot1-slot2-symmetrization "
+            "change) -- use slot 2 for this extension for now"
+        )
+    elif extension_overlay1 is not None:
+        flat1 = _wire_flat_overlay(spec, extension_overlay1, scc)
+        mapper_instance = flat1.mapper_instance
+        scc = flat1.scc
+        fmpac_device = flat1.fmpac_device
+
+    # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
+    # replacing whatever slot-2 cartridge mapper was resolved above.
+    if isinstance(extension_overlay2, _ExpandedExtensionOverlay):
+        expanded = _wire_expanded_overlay(spec, extension_overlay2, kanji_device)
         slot2_sub_slot_enabled = True
         mapper2_subslots = expanded.mapper2_subslots
         halnote_device = expanded.halnote_device
         halnote_sram_save_path = expanded.halnote_sram_save_path
         kanji_device = expanded.kanji_device
-    elif extension_overlay is not None:
-        flat = _wire_flat_overlay(spec, extension_overlay, scc)
-        mapper2_instance = flat.mapper2_instance
-        scc = flat.scc
-        fmpac_device = flat.fmpac_device
+    elif extension_overlay2 is not None:
+        flat2 = _wire_flat_overlay(spec, extension_overlay2, scc)
+        mapper2_instance = flat2.mapper_instance
+        scc = flat2.scc
+        fmpac_device = flat2.fmpac_device
 
     return _ExtensionWiring(
+        mapper_instance=mapper_instance,
         mapper2_instance=mapper2_instance,
         scc=scc,
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
@@ -1655,29 +1698,22 @@ def _wire_extension_overlay(
 
 
 @dataclass
-class _Slot1Setup:
-    """Main/logo ROM bytes and slot-1's resolved cartridge mapper (including
-    any loaded SRAM), for `build_machine` to unpack before slot-2 resolution
-    and dispatching into `_build_msx1`/`_build_msx2`."""
+class _BiosRoms:
+    """Slot 0's main/logo ROM bytes, resolved once (independent of either
+    cartridge slot) for `build_machine` to unpack before cartridge-slot
+    resolution and dispatching into `_build_msx1`/`_build_msx2`."""
 
     main_bytes: bytes
     logo_bytes: bytes | None
-    mapper_instance: Mapper
-    scc: SCC | None
-    sram_save_path: Path | None
 
 
-def _load_and_resolve_slot1(
+def _load_bios_roms(
     spec: MachineSpec,
     bios_override: bytes | None,
     logo_override: bytes | None,
-    mapper: str,
-    cartridge: bytes | None,
-) -> _Slot1Setup:
-    """Load the main/logo ROMs and resolve slot 1's cartridge mapper
-    (including SRAM load), independent of slot 2 / extension-overlay
-    wiring."""
-    # --- ROM loading ---
+) -> _BiosRoms:
+    """Load slot 0's main/logo ROMs -- unrelated to which cartridge (if any)
+    occupies slot 1 or slot 2."""
     if bios_override is not None:
         main_bytes: bytes = bios_override
     else:
@@ -1692,7 +1728,26 @@ def _load_and_resolve_slot1(
     else:
         logo_bytes = None
 
-    # --- Cartridge mapper resolution ---
+    return _BiosRoms(main_bytes, logo_bytes)
+
+
+@dataclass
+class _CartridgeSlotSetup:
+    """One cartridge slot's resolved mapper (including any loaded SRAM),
+    independent of which primary slot (1 or 2) it occupies -- for
+    `build_machine` to call once per slot before extension-overlay wiring
+    and the cross-slot KonamiSCC-sharing check (see `_resolve_shared_scc`)."""
+
+    mapper_instance: Mapper
+    scc: SCC | None
+    sram_save_path: Path | None
+
+
+def _resolve_cartridge_slot(mapper: str, cartridge: bytes | None) -> _CartridgeSlotSetup:
+    """Resolve one cartridge slot's mapper (including SRAM load). Each
+    slot's `KonamiSCC` resolution (if any) builds its own fresh `SCC`
+    instance here -- `build_machine` reconciles the two via
+    `_resolve_shared_scc`, since `Machine` has a single `scc` field."""
     sram_save_path: Path | None = None
     resolved, cart_sha1 = _resolve_mapper_type(mapper, cartridge)
     scc: SCC | None = SCC() if resolved == "KonamiSCC" else None
@@ -1707,7 +1762,26 @@ def _load_and_resolve_slot1(
         sram_data = _load_sram_or_warn(sram_save_path, _SRAM_SIZES[resolved])
 
     mapper_instance: Mapper = _make_mapper(resolved, cartridge, scc=scc, sram=sram_data)
-    return _Slot1Setup(main_bytes, logo_bytes, mapper_instance, scc, sram_save_path)
+    return _CartridgeSlotSetup(mapper_instance, scc, sram_save_path)
+
+
+def _resolve_shared_scc(
+    spec: MachineSpec, slot1_scc: SCC | None, slot2_scc: SCC | None
+) -> SCC | None:
+    """Cross-slot KonamiSCC-sharing check between the two cartridge slots'
+    own mapper resolutions (`_resolve_cartridge_slot`'s independent `scc`
+    results) -- `Machine` has a single `scc` field and real hardware never
+    has two SCC chips attached at once. `--extensionN scc_plus`'s own
+    conflict against whichever chip this returns is checked separately, in
+    `_wire_flat_overlay` (see `_wire_extension_overlay`'s docstring for how
+    all four possible sources compose)."""
+    if slot1_scc is not None and slot2_scc is not None:
+        raise MachineLoadError(
+            f"{spec.machine_id}: cannot use the KonamiSCC mapper in both slot 1 "
+            "and slot 2: real hardware never has two SCC chips attached at "
+            "once, and Machine has a single scc field"
+        )
+    return slot1_scc if slot1_scc is not None else slot2_scc
 
 
 def _wire_post_construction_attrs(
@@ -1715,13 +1789,18 @@ def _wire_post_construction_attrs(
     io: IOBus,
     dac: MajutsushiMapper | None,
     sram_save_path: Path | None,
+    sram_save_path2: Path | None,
     wiring: _ExtensionWiring,
     extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
 ) -> None:
     """Wire closures and device/save-path attributes onto an already-built
     Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
     Majutsushi DAC needs, and the SRAM/FM-PAC/Halnote/Kanji attributes
-    `build_machine`'s slot-1/extension-overlay resolution produced."""
+    `build_machine`'s cartridge-slot/extension-overlay resolution produced.
+    `extension_overlay` is slot 2's overlay specifically (`fmpac_sram_save_path`
+    only ever applies to an FM-PAC device, and slot 1's FM-PAC placement --
+    should it ever carry persisted SRAM -- is not yet distinguished here;
+    see design.md D2, folded into the SRAM-path list refactor)."""
     io._get_pc = lambda: machine.cpu.registers.PC
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
@@ -1729,6 +1808,7 @@ def _wire_post_construction_attrs(
     # them at their sub-frame sample positions (mirrors the DAC wiring).
     machine.psg._machine = machine
     machine.sram_save_path = sram_save_path
+    machine.sram_save_path2 = sram_save_path2
     machine.fmpac = wiring.fmpac_device
     machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
@@ -1756,6 +1836,7 @@ def build_machine(
     fdd1: Path | None = None,
     fdd2: Path | None = None,
     extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
@@ -1776,52 +1857,65 @@ def build_machine(
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
         joy_map: Optional Joy1 keyboard key map override for InputState
             (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
-        extension_overlay: Resolved --extension overlay (see
-            load_extension_overlay), or None for no extension. A flat
-            (_ExtensionOverlay) overlay unconditionally occupies primary
-            slot 2, overriding whatever `cartridge2`/`mapper2` resolved to.
-            An expanded (_ExpandedExtensionOverlay) overlay instead expands
-            slot 2 into per-sub-slot devices (see the `hbi_j1` extension) --
-            `cartridge2`/`mapper2` are likewise overridden.
+        extension_overlay: Resolved --extension2 overlay (see
+            load_extension_overlay), or None for no extension on slot 2. A
+            flat (_ExtensionOverlay) overlay unconditionally occupies
+            primary slot 2, overriding whatever `cartridge2`/`mapper2`
+            resolved to. An expanded (_ExpandedExtensionOverlay) overlay
+            instead expands slot 2 into per-sub-slot devices (see the
+            `hbi_j1` extension) -- `cartridge2`/`mapper2` are likewise
+            overridden.
+        extension_overlay1: Resolved --extension1 overlay, or None for no
+            extension on slot 1. Only a flat (_ExtensionOverlay) overlay is
+            supported here -- an expanded overlay on slot 1 raises
+            MachineLoadError (Memory's slot-1 sub-slot expansion lands in a
+            later phase of the slot1-slot2-symmetrization change). A flat
+            overlay unconditionally occupies primary slot 1, overriding
+            whatever `cartridge`/`mapper` resolved to, mirroring
+            `extension_overlay`'s slot-2 placement exactly.
 
     Returns:
         A fully-wired Machine ready for emulation.
 
     Raises:
-        MachineLoadError: If a required ROM file is missing and no override is given.
+        MachineLoadError: If a required ROM file is missing and no override
+            is given, if both slots' mappers/extensions resolve to
+            KonamiSCC-family SCC chips, or if `extension_overlay1` is an
+            expanded-shape overlay (see above).
     """
     from msx.machine import Machine  # local import to avoid circular dependency
 
-    slot1 = _load_and_resolve_slot1(spec, bios_override, logo_override, mapper, cartridge)
-    main_bytes = slot1.main_bytes
-    logo_bytes = slot1.logo_bytes
+    bios = _load_bios_roms(spec, bios_override, logo_override)
+    main_bytes = bios.main_bytes
+    logo_bytes = bios.logo_bytes
+
+    slot1 = _resolve_cartridge_slot(mapper, cartridge)
+    slot2 = _resolve_cartridge_slot(mapper2, cartridge2)
     mapper_instance = slot1.mapper_instance
-    scc = slot1.scc
+    mapper2_instance = slot2.mapper_instance
     sram_save_path = slot1.sram_save_path
+    sram_save_path2 = slot2.sram_save_path
+    scc = _resolve_shared_scc(spec, slot1.scc, slot2.scc)
 
-    resolved2, _ = _resolve_mapper_type(mapper2, cartridge2)
-    if resolved2 == "KonamiSCC":
-        if scc is not None:
-            raise MachineLoadError(
-                "cannot use the KonamiSCC mapper in both slot 1 and slot 2: real "
-                "hardware never has two SCC chips attached at once, and Machine has "
-                "a single scc field"
-            )
-        scc = SCC()
-    mapper2_instance = _make_mapper(resolved2, cartridge2, scc=scc)
-    dac: MajutsushiMapper | None = (
-        mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
+    # Machine-declared io_device and either slot's --extensionN overlay:
+    # resolved together (an overlay's io_device conflicts with a
+    # machine-declared one) and, when present, unconditionally occupy their
+    # target slot, replacing whatever cartridge mapper was resolved above --
+    # see _wire_extension_overlay.
+    wiring = _wire_extension_overlay(
+        spec, extension_overlay1, extension_overlay, mapper_instance, mapper2_instance, scc
     )
-
-    # Machine-declared io_device and --extension overlay: resolved together
-    # (an overlay's io_device conflicts with a machine-declared one) and
-    # unconditionally occupy primary slot 2, replacing whatever slot-2
-    # cartridge mapper was resolved above -- see _wire_extension_overlay.
-    wiring = _wire_extension_overlay(spec, extension_overlay, mapper2_instance, scc)
+    mapper_instance = wiring.mapper_instance
     mapper2_instance = wiring.mapper2_instance
     scc = wiring.scc
     slot2_sub_slot_enabled = wiring.slot2_sub_slot_enabled
     mapper2_subslots = wiring.mapper2_subslots
+    # Resolved after extension-overlay wiring: an extension overlay
+    # replacing slot 1's mapper (e.g. --extension1 fmpac over a Majutsushi
+    # cartridge) removes that cartridge's own DAC along with it.
+    dac: MajutsushiMapper | None = (
+        mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
+    )
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     if joy_map is not None:
@@ -1884,7 +1978,9 @@ def build_machine(
             mapper2_subslots=mapper2_subslots,
         )
 
-    _wire_post_construction_attrs(machine, io, dac, sram_save_path, wiring, extension_overlay)
+    _wire_post_construction_attrs(
+        machine, io, dac, sram_save_path, sram_save_path2, wiring, extension_overlay
+    )
     return machine
 
 

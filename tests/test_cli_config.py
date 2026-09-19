@@ -235,23 +235,41 @@ def test_extension2_none_without_config_extension_is_a_no_op() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extension1 (PHASE-2-TEMPORARY: device placement not implemented until a
-# later phase of openspec/changes/slot1-slot2-symmetrization -- see
-# __main__.py's PHASE-2-TEMPORARY guard in _validate_options)
+# extension1 -- flat-shape ids (fmpac, scc_plus) place correctly on slot 1;
+# expanded-shape ids are PHASE-3-TEMPORARY rejected (Memory's slot-1
+# sub-slot expansion lands in a later phase of openspec/changes/
+# slot1-slot2-symmetrization -- see __main__.py's PHASE-3-TEMPORARY guard)
 # ---------------------------------------------------------------------------
 
-def test_extension1_rejected_as_not_yet_implemented() -> None:
+def test_extension1_flat_shape_accepted() -> None:
     code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
         ["--machine", "cbios_msx1", "--extension1", "fmpac"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+    assert extension_mock.call_args_list[0].args[0] == "fmpac"
+
+
+def test_config_extension1_flat_shape_accepted() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension1="fmpac"))
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+
+
+def test_extension1_expanded_shape_rejected_as_not_yet_implemented() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "hbi_j1"], app_cfg=AppConfig())
     assert code != 0
     assert "--extension1" in err
     build_mock.assert_not_called()
     extension_mock.assert_not_called()
 
 
-def test_config_extension1_rejected_as_not_yet_implemented() -> None:
+def test_config_extension1_expanded_shape_rejected_as_not_yet_implemented() -> None:
     code, _o, err, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension1="fmpac"))
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension1="memory_512k"))
     assert code != 0
     assert "--extension1" in err
     build_mock.assert_not_called()

@@ -99,6 +99,18 @@ def test_extension_hbi_j1_and_mapper2_conflict_exits_nonzero() -> None:
     assert "--extension2" in err and "--mapper2" in err
 
 
+def test_extension1_fmpac_and_extension2_hbi_j1_wire_independently() -> None:
+    # openspec/changes/slot1-slot2-symmetrization Decision D5: two
+    # different extensions, one per slot, is a natural consequence of the
+    # --extension1/--extension2 split -- no separate mechanism needed.
+    code, out, _err = _run_main(
+        ["--extension1", "fmpac", "--extension2", "hbi_j1", "--count-frame", "1"]
+    )
+    assert code == 0
+    assert "extension: fmpac" in out and "slot 1" in out
+    assert "extension: hbi_j1" in out and "expanded slot 2" in out
+
+
 # ---------------------------------------------------------------------------
 # load_extension_overlay: expanded-shape parsing of the real hbi_j1.yaml
 # ---------------------------------------------------------------------------
