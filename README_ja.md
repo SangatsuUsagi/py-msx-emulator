@@ -515,14 +515,14 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
 | `cartridge` | _（なし）_ | スロット 1 カートリッジ ROM のパス — `--slot1 cartridge --mapper1 auto` の省略形；`--slot1`/`--extension1` と併用不可 |
-| `--slot1 ROM1` | _（なし）_ | スロット 1 カートリッジ ROM のパス（位置引数 `cartridge` の代替；それ自体、および `--extension1` と併用不可） |
+| `--slot1 ROM1`、`--slot ROM1` | _（なし）_ | スロット 1 カートリッジ ROM のパス（位置引数 `cartridge` の代替；それ自体、および `--extension1` と併用不可）。`--slot` は `--slot1` の別名として使える（`--mapper` の `--mapper1` に対する別名と対称） |
 | `--machine MACHINE_ID` | _（自動）_ | マシン設定 ID（例：`cbios_msx2_jp`）；省略時は ROM データベースから自動判定 |
 | `--speed FLOAT` | `1.0` | エミュレーション速度の倍率 |
 | `--scale N` | `3` | 256×212 ベース解像度に対する整数の拡大率（例：小さいディスプレイなら `2`、大きいディスプレイなら `4`） |
 | `--mapper TYPE`、`--mapper1 TYPE` | `auto` | スロット 1 マッパー（`--mapper` は `--mapper1` の別名）：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス；`--extension2` と併用不可 |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー — `--mapper1` と同一のタイプ一覧（KonamiSCC・SRAM 搭載タイプすべて含む；スロット 2 の SRAM もスロット 1 と同様に永続化される）。KonamiSCC はスロット 1 とマシン単一の SCC チップを共有：スロット 1 も KonamiSCC に解決される場合、またはスロット 1 が `--extension1 scc_plus` を選択している場合は拒否 |
-| `--extension1 ID`、`--extension2 ID` | _（なし）_ | スロット 1/スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--extension1` は位置引数 `cartridge`/`--slot1`/`--mapper1` と、`--extension2` は `--slot2`/`--mapper2` と併用不可。同じ拡張 id（`--slot1`/`--slot2` の場合は同じ ROM）を両スロットに同時指定することはできない — 起動時にエラー。`none` は `py_emulator.yaml` がそのスロットに拡張を設定していても強制的に拡張なしにし、そのスロットの `--slotN`/`--mapperN` を CLI で使えるようにする。**v2.5.18 で `--extension` から改名** — 旧フラグは常にスロット 2 を意味していたが、現在は `--extension2` と表記する |
+| `--extension1 ID`、`--extension2 ID`、`--extension ID` | _（なし）_ | スロット 1/スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--extension1` は位置引数 `cartridge`/`--slot1`/`--mapper1` と、`--extension2` は `--slot2`/`--mapper2` と併用不可。同じ拡張 id（`--slot1`/`--slot2` の場合は同じ ROM）を両スロットに同時指定することはできない — 起動時にエラー。`none` は `py_emulator.yaml` がそのスロットに拡張を設定していても強制的に拡張なしにし、そのスロットの `--slotN`/`--mapperN` を CLI で使えるようにする。`--extension` は `--extension2` の別名として使える（`--extension1`/`--extension2` が登場する以前の意味そのまま） |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |

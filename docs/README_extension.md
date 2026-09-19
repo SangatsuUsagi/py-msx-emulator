@@ -12,9 +12,11 @@ other) are otherwise independent and can be combined freely — except that the
 same `id` cannot be selected on both slots at once (rejected at startup; see
 [the "Slot model" section](#slot-model) below for why). The same ids can be
 set via the `extension1:`/`extension2:` keys in `py_emulator.yaml` (the older
-bare `extension:` key still works, as a legacy alias for `extension2:`);
-`--extension1 none`/`--extension2 none` overrides that config-file setting
-for a single run, on that slot only. See
+bare `extension:` key still works, as a legacy alias for `extension2:`), and
+the bare `--extension` CLI flag likewise still works, as an alias for
+`--extension2` — its exact meaning before `--extension1`/`--extension2`
+existed; `--extension1 none`/`--extension2 none` overrides that config-file
+setting for a single run, on that slot only. See
 [`README.md`'s "Emulated hardware" section](README.md#emulated-hardware) for
 the FM-PAC/SCC-I/HBI-J1 implementation detail (memory maps, I/O ports, known
 limitations) — this document focuses on what each extension is for and what

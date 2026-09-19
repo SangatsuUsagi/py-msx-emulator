@@ -164,6 +164,16 @@ def test_config_extension_enables_overlay() -> None:
     extension_mock.assert_called_once()
 
 
+def test_cli_bare_extension_is_an_alias_for_extension2() -> None:
+    # '--extension' meant slot 2 before --extension1/--extension2 existed;
+    # kept as a lower-priority alias for --extension2 (not --extension1) so
+    # existing usage keeps its exact prior meaning.
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "fmpac"], app_cfg=AppConfig())
+    extension_mock.assert_called_once()
+    assert extension_mock.call_args_list[0].args[0] == "fmpac"
+
+
 def test_config_legacy_extension_key_enables_slot2_overlay() -> None:
     # The pre-existing unqualified `extension` key keeps working as an
     # `extension2` alias -- see AppConfig.extension2's docstring.
@@ -343,6 +353,14 @@ def test_no_slot2_cartridge_when_neither_set() -> None:
 def test_cli_slot1_used_when_given() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot1", "game.rom"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge"] is not None
+
+
+def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
+    # '--slot' never existed before --slot1/--slot2; added purely for CLI
+    # naming symmetry with --mapper's alias for --mapper1.
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--slot", "game.rom"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["cartridge"] is not None
 
 

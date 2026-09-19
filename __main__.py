@@ -118,9 +118,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         default=None,
                         help="Slot 1 cartridge mapper type (default: auto — detect from ROM "
                              "database). '--mapper' is accepted as an alias for '--mapper1'")
-    parser.add_argument("--slot1", default=None, metavar="ROM1",
+    parser.add_argument("--slot", "--slot1", dest="slot1", default=None, metavar="ROM1",
                         help="Slot 1 cartridge ROM path (an alternative to the positional "
-                             "cartridge argument; conflicts with it)")
+                             "cartridge argument; conflicts with it). '--slot' is accepted as "
+                             "an alias for '--slot1'")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
     parser.add_argument("--extension1", choices=[*VALID_EXTENSIONS, "none"], default=None,
@@ -128,7 +129,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "conflicts with the positional cartridge argument/--slot1/"
                              "--mapper1). 'none' forces no extension overlay even when "
                              "py_emulator.yaml sets one, freeing --slot1/--mapper1 for CLI use")
-    parser.add_argument("--extension2", choices=[*VALID_EXTENSIONS, "none"], default=None,
+    parser.add_argument("--extension", "--extension2", dest="extension2",
+                        choices=[*VALID_EXTENSIONS, "none"], default=None,
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
                              "SRAM), 'scc_plus' (an SCC-I / SCC+ cartridge), 'hbi_j1' "
                              "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
@@ -136,7 +138,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "RAM-mapper memory-expansion cartridge; requires a machine with "
                              "no existing slot-3 memory mapper) (conflicts with "
                              "--slot2/--mapper2). 'none' forces no extension overlay even when "
-                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use")
+                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use. "
+                             "'--extension' is accepted as an alias for '--extension2', "
+                             "matching its pre-symmetrization meaning")
     parser.add_argument("--mapper2",
                         choices=list(VALID_MAPPERS),
                         default=None,
