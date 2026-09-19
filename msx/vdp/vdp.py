@@ -39,6 +39,16 @@ class VdpDevice(Protocol):
     by msx/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
+
+    Several callers (msx/machine.py, msx/screenshot.py, msx/state.py,
+    msx/rpc_server.py, msx/debugger/prompt.py, msx/machine_loader.py)
+    narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
+    they need MSX2-only state (command engine, 128 KB VRAM, palette,
+    `_reg_write_log`). For the Rust/C++ target of that narrowing pattern
+    (tag/`VdpKind`-dispatch, aliasing-borrow caveat included), see
+    `Machine._run_lines`'s PORT-NOTE (msx/machine.py) -- that's the one
+    place the rationale is written out; the other call sites just repeat
+    the shape.
     """
 
     vram: bytearray

@@ -786,14 +786,6 @@ class Opll:
             self._am_phase = (self._am_phase + (64 if self._test_flag & 8 else 1)) & 0xFFFFFFFF
         self._lfo_am = _AM_TABLE[(self._am_phase >> 6) % _AM_TABLE_LEN]
 
-    def _update_noise(self, cycle: int) -> None:
-        noise = self._noise
-        for _ in range(cycle):
-            if noise & 1:
-                noise ^= 0x800200
-            noise >>= 1
-        self._noise = noise
-
     def _update_short_noise(self) -> None:
         pg_hh = self._slot[_SLOT_HH].pg_out
         pg_cym = self._slot[_SLOT_CYM].pg_out
@@ -803,19 +795,6 @@ class Opll:
         c_bit3 = (pg_cym >> (_PG_BITS - 7)) & 1
         c_bit5 = (pg_cym >> (_PG_BITS - 5)) & 1
         self._short_noise = (h_bit2 ^ h_bit7) | (h_bit3 ^ c_bit5) | (c_bit3 ^ c_bit5)
-
-    def _calc_phase(self, slot: _Slot, reset: int) -> None:
-        if slot.patch.PM:
-            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7]
-        else:
-            pm = 0
-        if reset:
-            slot.pg_phase = 0
-        slot.pg_phase = (
-            slot.pg_phase
-            + ((((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[slot.patch.ML]) << slot.blk >> 2)
-        ) & (_DP_WIDTH - 1)
-        slot.pg_out = slot.pg_phase >> _DP_BASE_BITS
 
     def _lookup_attack_step(self, slot: _Slot, counter: int) -> int:
         # rh (eg_rate_h) >= 12 clamps to the chip's fixed near-instant attack
@@ -862,180 +841,242 @@ class Opll:
             slot.eg_state = _ATTACK
         self._request_update(slot, _UPDATE_EG)
 
-    def _calc_envelope(  # emu2413: calc_envelope
-        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, test: int
-    ) -> None:
-        mask = self._step_envelope_rate(slot, eg_counter)
-        self._transition_envelope_state(slot, buddy, eg_counter, mask)
-        if test:
-            slot.eg_out = 0
+    def _update_slots(self) -> None:  # emu2413: calc_envelope + calc_phase, fused per slot
+        """Advance every slot's envelope (Damp/Attack/Decay/Sustain/Release
+        state machine + eg_out level) and phase generator by one chip tick.
 
-    def _step_envelope_rate(self, slot: _Slot, eg_counter: int) -> int:
-        """Advance eg_out by one attack/decay step if this tick is due for
-        one (per the slot's own rate). Returns the rate mask (shared with
-        _transition_envelope_state's DAMP-completion check below), since
-        both are gated by the same eg_shift-derived tick cadence.
+        Runs 18 times per sample tick (~49.7 kHz native rate), so the former
+        per-slot _calc_envelope/_step_envelope_rate/_transition_envelope_state/
+        _calc_phase call chain is folded into one loop body here with each
+        slot's touched fields hoisted to locals, matching the hot-path
+        inlining PSG._render/SCC.generate_samples already apply -- this is
+        the CLAUDE.md "keep functions short" exception for hot-path code.
         """
-        mask = (1 << slot.eg_shift) - 1
-        if slot.eg_state == _ATTACK:
-            if 0 < slot.eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
-                s = self._lookup_attack_step(slot, eg_counter)
-                if s > 0:
-                    slot.eg_out = max(0, slot.eg_out - (slot.eg_out >> s) - 1)
-        else:
-            if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
-                step = slot.eg_out + self._lookup_decay_step(slot, eg_counter)
-                slot.eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
-        return mask
-
-    def _transition_envelope_state(
-        self, slot: _Slot, buddy: _Slot | None, eg_counter: int, mask: int
-    ) -> None:
-        """Advance the Damp/Attack/Decay/Sustain/Release state machine based
-        on the eg_out level _step_envelope_rate just produced.
-        """
-        st = slot.eg_state
-        if st == _DAMP:
-            if slot.eg_out >= _EG_MAX and (eg_counter & mask) == 0:
-                self._start_envelope(slot)
-                if slot.type & 1:
-                    if not slot.pg_keep:
-                        slot.pg_phase = 0
-                    if buddy is not None and not buddy.pg_keep:
-                        buddy.pg_phase = 0
-        elif st == _ATTACK:
-            if slot.eg_out == 0:
-                slot.eg_state = _DECAY
-                self._request_update(slot, _UPDATE_EG)
-        elif st == _DECAY:
-            if (slot.eg_out >> 3) == slot.patch.SL:
-                slot.eg_state = _SUSTAIN
-                self._request_update(slot, _UPDATE_EG)
-
-    def _update_slots(self) -> None:
         self._eg_counter += 1
         eg_counter = self._eg_counter
         test = self._test_flag
+        test_eg = test & 1
+        test_reset = test & 4
         slots = self._slot
+        lookup_attack_step = self._lookup_attack_step
+        lookup_decay_step = self._lookup_decay_step
+        start_envelope = self._start_envelope
+        request_update = self._request_update
+        commit_slot_update = self._commit_slot_update
         for i in range(18):
             slot = slots[i]
             buddy: _Slot | None = slots[slot.buddy_index] if slot.buddy_index is not None else None
             if slot.update_requests:
-                self._commit_slot_update(slot)
-            self._calc_envelope(slot, buddy, eg_counter, test & 1)
-            self._calc_phase(slot, test & 4)
+                commit_slot_update(slot)
 
-    def _to_linear(self, h: int, slot: _Slot, am: int) -> int:
-        # emu2413: to_linear + lookup_exp_table, folded together — this runs once
-        # per operator per chip tick (the hottest site), so min() and the exp
-        # lookup are inlined rather than kept as separate calls. h = the
-        # log-sin wave-table value at the current phase; i = the combined
-        # log-domain exponent index (h plus envelope/tll/am attenuation,
-        # scaled) fed into the exp table lookup below.
-        if slot.eg_out > _EG_MAX:
-            return 0
-        s = slot.eg_out + slot.tll + am
-        i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
-        t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
-        res = t >> ((i & 0x7F00) >> 8)
-        if i & 0x8000:
-            # ~res on the int16 intermediate, matching emu2413's int16_t arithmetic
-            # (exp-table max ~2042 keeps res << 1 within int16 range).
-            res = ~res
-        return res << 1
+            # --- envelope: step the rate, then run the state transition ---
+            eg_state = slot.eg_state
+            eg_out = slot.eg_out
+            mask = (1 << slot.eg_shift) - 1
+            if eg_state == _ATTACK:
+                if 0 < eg_out and 0 < slot.eg_rate_h and (eg_counter & mask & ~3) == 0:
+                    s = lookup_attack_step(slot, eg_counter)
+                    if s > 0:
+                        eg_out = max(0, eg_out - (eg_out >> s) - 1)
+            else:
+                if slot.eg_rate_h > 0 and (eg_counter & mask) == 0:
+                    step = eg_out + lookup_decay_step(slot, eg_counter)
+                    eg_out = _EG_MUTE if step > _EG_MUTE else step  # inlined min (hot path)
 
-    def _calc_slot_car(self, slot: _Slot, fm: int) -> int:
-        am = self._lfo_am if slot.patch.AM else 0
-        slot.output[1] = slot.output[0]
-        idx = (slot.pg_out + 2 * (fm >> 1)) & (_PG_WIDTH - 1)
-        slot.output[0] = self._to_linear(slot.wave_table[idx], slot, am)
-        return slot.output[0]
+            if eg_state == _DAMP:
+                if eg_out >= _EG_MAX and (eg_counter & mask) == 0:
+                    start_envelope(slot)  # mutates slot.eg_state/eg_out directly
+                    eg_state = slot.eg_state
+                    eg_out = slot.eg_out
+                    if slot.type & 1:
+                        if not slot.pg_keep:
+                            slot.pg_phase = 0
+                        if buddy is not None and not buddy.pg_keep:
+                            buddy.pg_phase = 0
+            elif eg_state == _ATTACK:
+                if eg_out == 0:
+                    eg_state = _DECAY
+                    request_update(slot, _UPDATE_EG)
+            elif eg_state == _DECAY:
+                if (eg_out >> 3) == slot.patch.SL:
+                    eg_state = _SUSTAIN
+                    request_update(slot, _UPDATE_EG)
 
-    def _calc_slot_mod(self, slot: _Slot) -> int:
-        if slot.patch.FB > 0:
-            fm = (slot.output[1] + slot.output[0]) >> (9 - slot.patch.FB)
-        else:
-            fm = 0
-        am = self._lfo_am if slot.patch.AM else 0
-        slot.output[1] = slot.output[0]
-        idx = (slot.pg_out + fm) & (_PG_WIDTH - 1)
-        slot.output[0] = self._to_linear(slot.wave_table[idx], slot, am)
-        return slot.output[0]
+            if test_eg:
+                eg_out = 0
 
-    def _calc_slot_tom(self) -> int:
-        # Tom-tom behaves like an ordinary FM operator (its own phase, no
-        # noise involvement) -- emu2413: calc_slot_tom. Direct slot index,
-        # matching _update_output's own hot-path inlining convention.
-        slot = self._slot[_SLOT_TOM]
-        return self._to_linear(slot.wave_table[slot.pg_out], slot, 0)
+            slot.eg_state = eg_state
+            slot.eg_out = eg_out
 
-    def _calc_slot_snare(self) -> int:
-        # Fixed rhythm-mode phase taps (emu2413: calc_slot_snare) -- 0x0/
-        # 0x100/0x200/0x300 select between the sine table's four quadrants,
-        # chosen by the slot's own phase bit and the shared noise bit; not
-        # independently meaningful constants beyond that table index.
-        slot = self._slot[_SLOT_SD]
-        if (slot.pg_out >> (_PG_BITS - 2)) & 1:
-            phase = 0x300 if (self._noise & 1) else 0x200
-        else:
-            phase = 0x0 if (self._noise & 1) else 0x100
-        return self._to_linear(slot.wave_table[phase], slot, 0)
+            # --- phase generator ---
+            patch = slot.patch
+            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7] if patch.PM else 0
+            pg_phase = 0 if test_reset else slot.pg_phase
+            pg_delta = ((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[patch.ML]
+            pg_phase = (pg_phase + (pg_delta << slot.blk >> 2)) & (_DP_WIDTH - 1)
+            slot.pg_phase = pg_phase
+            slot.pg_out = pg_phase >> _DP_BASE_BITS
 
-    def _calc_slot_cym(self) -> int:
-        # Fixed rhythm-mode phase taps (emu2413: calc_slot_cym), chosen by
-        # the shared short-noise signal -- see _update_short_noise.
-        slot = self._slot[_SLOT_CYM]
-        phase = 0x300 if self._short_noise else 0x100
-        return self._to_linear(slot.wave_table[phase], slot, 0)
+    def _update_output(self) -> int:  # emu2413: update_output, fused with mix/noise per tick
+        """Advance one chip tick's LFOs, short-noise signal, envelope/phase
+        generators (via `_update_slots`), then synthesize and mix all 14
+        channel-output slots. Returns the summed output (formerly a separate
+        `_mix()` call).
 
-    def _calc_slot_hat(self) -> int:
-        # Fixed rhythm-mode phase taps (emu2413: calc_slot_hat), chosen by
-        # the shared short-noise signal and the shared noise bit -- see
-        # _update_short_noise.
-        slot = self._slot[_SLOT_HH]
-        if self._short_noise:
-            phase = 0x2D0 if (self._noise & 1) else 0x234
-        else:
-            phase = 0x34 if (self._noise & 1) else 0xD0
-        return self._to_linear(slot.wave_table[phase], slot, 0)
-
-    def _update_output(self) -> None:
+        Runs once per native tick (~49.7 kHz), so the former per-channel
+        `_calc_slot_mod`/`_calc_slot_car`/`_to_linear` call chain (up to 3
+        bound-method calls per channel pair, ~18/tick) is folded into two
+        local closures here -- `_pair` for an ordinary 2-operator FM
+        voice (melodic channels, and Bass Drum which stays a true mod/car
+        pair in rhythm mode), `_voice` for a rhythm single-operator voice
+        (Hi-Hat/Snare/Tom-tom/Top Cymbal, which take no feedback and no
+        tremolo) -- rather than 9 duplicated inline copies, matching the
+        `_plot`-closure convention `msx/vdp/renderer.py`/
+        `msx/vdp/v9938_renderer.py` already establish for a per-item
+        computation reused from several call sites within one function.
+        `_update_noise`'s LFSR step is likewise inlined at its 3 fixed
+        points (14/2/2 cycles) rather than called, but that specific
+        14/2/2 split and interleaving with the rhythm-voice calculations is
+        NOT collapsed -- it is load-bearing (see
+        test_noise_lfsr_advances_18_shifts_per_native_tick).
+        """
         self._update_ampm()
         self._update_short_noise()
         self._update_slots()
         out = self._ch_out
         slots = self._slot  # resolve mod/car by index inline (hot path)
+        lfo_am = self._lfo_am
+        short_noise = self._short_noise
+        noise = self._noise
 
+        def _pair(mod: _Slot, car: _Slot) -> int:
+            # emu2413: calc_slot_mod + calc_slot_car + to_linear (x2), fused.
+            if mod.patch.FB > 0:
+                fm = (mod.output[1] + mod.output[0]) >> (9 - mod.patch.FB)
+            else:
+                fm = 0
+            mod_am = lfo_am if mod.patch.AM else 0
+            mod.output[1] = mod.output[0]
+            idx = (mod.pg_out + fm) & (_PG_WIDTH - 1)
+            h = mod.wave_table[idx]
+            if mod.eg_out > _EG_MAX:
+                mod.output[0] = 0
+            else:
+                s = mod.eg_out + mod.tll + mod_am
+                i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+                t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+                res = t >> ((i & 0x7F00) >> 8)
+                if i & 0x8000:
+                    res = ~res  # matches emu2413's int16_t arithmetic
+                mod.output[0] = res << 1
+
+            car_am = lfo_am if car.patch.AM else 0
+            car.output[1] = car.output[0]
+            idx = (car.pg_out + 2 * (mod.output[0] >> 1)) & (_PG_WIDTH - 1)
+            h = car.wave_table[idx]
+            if car.eg_out > _EG_MAX:
+                car.output[0] = 0
+            else:
+                s = car.eg_out + car.tll + car_am
+                i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+                t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+                res = t >> ((i & 0x7F00) >> 8)
+                if i & 0x8000:
+                    res = ~res
+                car.output[0] = res << 1
+            return car.output[0]
+
+        def _voice(slot: _Slot, h: int) -> int:
+            # emu2413: calc_slot_{tom,snare,cym,hat} + to_linear, fused --
+            # a rhythm voice's single operator, no feedback, am always 0.
+            if slot.eg_out > _EG_MAX:
+                return 0
+            s = slot.eg_out + slot.tll
+            i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+            t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+            res = t >> ((i & 0x7F00) >> 8)
+            if i & 0x8000:
+                res = ~res
+            return res << 1
+
+        total = 0
         for i in range(6):
-            mod = slots[i << 1]
-            car = slots[(i << 1) | 1]
-            out[i] = -(self._calc_slot_car(car, self._calc_slot_mod(mod))) >> 1
+            val = -_pair(slots[i << 1], slots[(i << 1) | 1]) >> 1
+            out[i] = val
+            total += val
 
         mod6, car6 = slots[12], slots[13]
         if not self._rhythm_mode:
-            out[6] = -(self._calc_slot_car(car6, self._calc_slot_mod(mod6))) >> 1
+            val = -_pair(mod6, car6) >> 1
+            out[6] = val
         else:
-            out[9] = self._calc_slot_car(car6, self._calc_slot_mod(mod6))
-        self._update_noise(14)
+            val = _pair(mod6, car6)
+            out[9] = val
+        total += val
+        for _ in range(14):  # inlined _update_noise(14)
+            if noise & 1:
+                noise ^= 0x800200
+            noise >>= 1
 
         if not self._rhythm_mode:
-            mod7, car7 = slots[14], slots[15]
-            out[7] = -(self._calc_slot_car(car7, self._calc_slot_mod(mod7))) >> 1
+            val = -_pair(slots[14], slots[15]) >> 1
+            out[7] = val
+            total += val
         else:
-            out[10] = self._calc_slot_hat()
-            out[11] = self._calc_slot_snare()
-        self._update_noise(2)
+            hh = slots[_SLOT_HH]
+            # Fixed rhythm-mode phase taps (emu2413: calc_slot_hat), chosen
+            # by the shared short-noise signal and the shared noise bit.
+            if short_noise:
+                phase = 0x2D0 if (noise & 1) else 0x234
+            else:
+                phase = 0x34 if (noise & 1) else 0xD0
+            val = _voice(hh, hh.wave_table[phase])
+            out[10] = val
+            total += val
+
+            sd = slots[_SLOT_SD]
+            # Fixed rhythm-mode phase taps (emu2413: calc_slot_snare) --
+            # 0x0/0x100/0x200/0x300 select between the sine table's four
+            # quadrants, chosen by the slot's own phase bit and the shared
+            # noise bit; not independently meaningful constants otherwise.
+            if (sd.pg_out >> (_PG_BITS - 2)) & 1:
+                phase = 0x300 if (noise & 1) else 0x200
+            else:
+                phase = 0x0 if (noise & 1) else 0x100
+            val = _voice(sd, sd.wave_table[phase])
+            out[11] = val
+            total += val
+        for _ in range(2):  # inlined _update_noise(2)
+            if noise & 1:
+                noise ^= 0x800200
+            noise >>= 1
 
         if not self._rhythm_mode:
-            mod8, car8 = slots[16], slots[17]
-            out[8] = -(self._calc_slot_car(car8, self._calc_slot_mod(mod8))) >> 1
+            val = -_pair(slots[16], slots[17]) >> 1
+            out[8] = val
+            total += val
         else:
-            out[12] = self._calc_slot_tom()
-            out[13] = self._calc_slot_cym()
-        self._update_noise(2)
+            # Tom-tom behaves like an ordinary FM operator (its own phase,
+            # no noise involvement) -- emu2413: calc_slot_tom.
+            tom = slots[_SLOT_TOM]
+            val = _voice(tom, tom.wave_table[tom.pg_out])
+            out[12] = val
+            total += val
 
-    def _mix(self) -> int:
-        return sum(self._ch_out)
+            # Fixed rhythm-mode phase taps (emu2413: calc_slot_cym), chosen
+            # by the shared short-noise signal -- see _update_short_noise.
+            cym = slots[_SLOT_CYM]
+            phase = 0x300 if short_noise else 0x100
+            val = _voice(cym, cym.wave_table[phase])
+            out[13] = val
+            total += val
+        for _ in range(2):  # inlined _update_noise(2)
+            if noise & 1:
+                noise ^= 0x800200
+            noise >>= 1
+
+        self._noise = noise
+        return total
 
     # ------------------------------------------------------- sample generation
 
@@ -1056,8 +1097,7 @@ class Opll:
             cnt = 0
             while out_step > out_time:
                 out_time += inp_step
-                self._update_output()
-                acc += self._mix()
+                acc += self._update_output()
                 cnt += 1
             out_time -= out_step
             raw = (acc // cnt) if cnt else 0

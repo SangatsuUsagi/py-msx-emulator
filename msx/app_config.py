@@ -44,15 +44,21 @@ VALID_MAPPERS: tuple[str, ...] = (
 )
 
 # Accepted slot 2 cartridge mapper names for --mapper2 (CLI-only, see above).
-# Slot 2 has no SRAM/DAC support, hence the narrower list than VALID_MAPPERS.
-# KonamiSCC IS supported (a genuine Konami-SCC cartridge can physically occupy
-# slot 2, e.g. behind a Konami slot-converter cartridge in slot 1) but shares
-# Machine's single scc field with slot 1 -- rejected at build_machine time if
-# slot 1's own mapper also resolves to KonamiSCC (see machine-loader's "Slot 2
-# KonamiSCC mapper shares the machine's single SCC chip" spec Requirement).
+# Slot 2 has no SRAM persistence path, hence the narrower list than
+# VALID_MAPPERS: the SRAM-backed types (ASCII8SRAM2/8, ASCII16SRAM2/8,
+# KoeiSRAM32, GameMaster2) are excluded. R-Type and the fixed-page types
+# (Page2/0x4000/0x8000) touch neither SRAM nor the SCC/DAC audio path -- only
+# ROM bytes through a bank register -- so they ARE included here (see the
+# app-cli spec's "--mapper2 accepts SRAM-free slot 1 mapper types"
+# Requirement). KonamiSCC IS supported (a genuine Konami-SCC cartridge can
+# physically occupy slot 2, e.g. behind a Konami slot-converter cartridge in
+# slot 1) but shares Machine's single scc field with slot 1 -- rejected at
+# build_machine time if slot 1's own mapper also resolves to KonamiSCC (see
+# machine-loader's "Slot 2 KonamiSCC mapper shares the machine's single SCC
+# chip" spec Requirement).
 VALID_MAPPERS2: tuple[str, ...] = (
     "auto", "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "Majutsushi",
-    "KonamiSCC",
+    "KonamiSCC", "R-Type", "Page2", "0x4000", "0x8000",
 )
 
 # Accepted --extension ids (see the cart-extension-overlay spec). Each maps to

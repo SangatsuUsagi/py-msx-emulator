@@ -968,57 +968,37 @@ def _render_sprites(
         y_top = (y_byte + 1) & 0xFF
 
         # Scan only the sprite's visible band per constant-vscroll run, as
-        # sprite mode 2 does: sprite Y is in VRAM space, so within a run the
-        # screen-line band starts at (y_top - vsc) & 0xFF and spans
-        # render_size lines; the wrapped band is taken only when it crosses
-        # line 255. Per-sprite line order does not affect line_count / 5S /
-        # coincidence, and the runs partition the scanlines, so this matches
-        # a single-vscroll full scan when there is no per-line schedule.
-        for run in sprite_runs:
-            if not run.enabled:  # SPD set over this run: sprites blanked here
+        # sprite mode 2 does -- see _sprite_scanlines. Per-sprite line order
+        # does not affect line_count / 5S / coincidence, and the runs
+        # partition the scanlines, so this matches a single-vscroll full
+        # scan when there is no per-line schedule.
+        for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
+            if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
+                if not fifth_set:
+                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    fifth_set = True
                 continue
-            vsc = run.vscroll
-            base_line = (y_top - vsc) & 0xFF
-            end = base_line + render_size
-            lines: Iterable[int]
-            if end <= 256:
-                lines = range(max(run.lo, base_line), min(run.hi, end))
+
+            line_count[line] += 1
+
+            if color == 0 and not can0collide:
+                continue
+
+            src_row = sprite_row // 2 if mag else sprite_row
+            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
+            scale = 2 if mag else 1
+            row = line * _W
+
+            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                for bit_i, pixel in enumerate(pixels):
+                    if pixel:
+                        _plot(x_byte + bit_i)
             else:
-                lines = chain(
-                    range(run.lo, min(run.hi, end - 256)), range(max(run.lo, base_line), run.hi)
-                )
-
-            for line in lines:
-                # Sprite Y is in VRAM coordinate space; account for vertical scroll.
-                vram_line = (line + vsc) & 0xFF
-                sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < render_size
-
-                if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
-                    if not fifth_set:
-                        vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
-                        fifth_set = True
-                    continue
-
-                line_count[line] += 1
-
-                if color == 0 and not can0collide:
-                    continue
-
-                src_row = sprite_row // 2 if mag else sprite_row
-                pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-                scale = 2 if mag else 1
-                row = line * _W
-
-                if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                    for bit_i, pixel in enumerate(pixels):
-                        if pixel:
-                            _plot(x_byte + bit_i)
-                else:
-                    for bit_i, pixel in enumerate(pixels):
-                        if not pixel:
-                            continue
-                        for s in range(scale):
-                            _plot(x_byte + bit_i * scale + s)
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
+                        continue
+                    for s in range(scale):
+                        _plot(x_byte + bit_i * scale + s)
 
     if coincidence:
         vdp.status |= 0x20
@@ -1069,6 +1049,40 @@ def _sprite_runs(
             cur_spd = spd
     runs.append(_SpriteRun(lo, scan_hi, cur_vsc, not cur_spd))
     return runs
+
+
+def _sprite_scanlines(
+    sprite_runs: list[_SpriteRun], y_top: int, render_size: int
+) -> Iterable[tuple[int, int]]:
+    """Yield (line, sprite_row) for every visible scanline of a sprite whose
+    pattern starts at VRAM row y_top and spans render_size rows, across all
+    per-scanline vscroll/SPD runs.
+
+    Shared by _render_sprites and _render_sprites_mode2 -- previously each
+    duplicated this exact scan (see _render_sprites's own docstring: a
+    per-scanline vscroll/SPD fix once landed in _render_sprites_mode2 but
+    not in _render_sprites, since nothing forced the two to be kept in
+    sync). Extracting it here means a future scan fix lands once.
+    """
+    for run in sprite_runs:
+        if not run.enabled:  # SPD set over this run: sprites blanked here
+            continue
+        vsc = run.vscroll
+        base_line = (y_top - vsc) & 0xFF
+        end = base_line + render_size
+        lines: Iterable[int]
+        if end <= 256:
+            lines = range(max(run.lo, base_line), min(run.hi, end))
+        else:
+            lines = chain(
+                range(run.lo, min(run.hi, end - 256)), range(max(run.lo, base_line), run.hi)
+            )
+
+        for line in lines:
+            # Sprite Y is in VRAM coordinate space; account for vertical scroll.
+            vram_line = (line + vsc) & 0xFF
+            sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < render_size
+            yield line, sprite_row
 
 
 def _composite_sprite_buf(
@@ -1230,90 +1244,69 @@ def _render_sprites_mode2(
         # A sprite spans render_size rows in VRAM-Y space, wrapping row 255→0, and
         # is positioned on screen at (y_top - vsc); openMSX applies no VRAM-row clip
         # (it tests (line - y) & 0xFF < magSize per line). The screen-line wrap is
-        # handled below by the end > 256 branch. An earlier build clipped to
-        # 256 - y_top, but that is in VRAM-Y space, so with vertical scroll it
+        # handled by _sprite_scanlines's end > 256 branch. An earlier build clipped
+        # to 256 - y_top, but that is in VRAM-Y space, so with vertical scroll it
         # wrongly truncated a sprite whose screen band is nowhere near the bottom
         # (a high-Y sprite pulled up by R#23) — e.g. y_top=251, vsc=62 → screen
         # line 189, clipped to 5 rows. The terminator (y==0xD8) already stops the
         # scan, so no clip is needed.
-        max_sprite_rows = render_size
 
-        # Scan only the sprite's visible band, per constant-vscroll run. Sprite Y
-        # is in VRAM space, so within a run the screen-line band starts at
-        # (y_top - vsc) & 0xFF and spans max_sprite_rows lines; the wrapped band is
-        # taken only when it crosses line 255. Per-sprite line order is immaterial
-        # to the accumulated line_count / 9S / cc0 / coincidence state, and the
-        # runs partition the scanlines, so this matches the old single-vscroll scan.
-        for run in sprite_runs:
-            if not run.enabled:  # SPD set over this run: sprites blanked here
+        # Scan only the sprite's visible band, per constant-vscroll run -- see
+        # _sprite_scanlines. Per-sprite line order is immaterial to the
+        # accumulated line_count / 9S / cc0 / coincidence state, and the runs
+        # partition the scanlines, so this matches the old single-vscroll scan.
+        for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
+            if line_count[line] >= 8:
+                if not ninth_set:
+                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    ninth_set = True
                 continue
-            vsc = run.vscroll  # bound locally: read per line in the inner loop
-            base_line = (y_top - vsc) & 0xFF
-            end = base_line + max_sprite_rows
-            lines2: Iterable[int]
-            if end <= 256:
-                lines2 = range(max(run.lo, base_line), min(run.hi, end))
-            else:
-                lines2 = chain(
-                    range(run.lo, min(run.hi, end - 256)), range(max(run.lo, base_line), run.hi)
-                )
 
-            for line in lines2:
-                # Sprite Y is in VRAM coordinate space; account for vertical scroll.
-                vram_line = (line + vsc) & 0xFF
-                sprite_row = (vram_line - y_top) & 0xFF  # guaranteed < max_sprite_rows
+            line_count[line] += 1
 
-                if line_count[line] >= 8:
-                    if not ninth_set:
-                        vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
-                        ninth_set = True
+            src_row = sprite_row // 2 if mag else sprite_row
+            # Per-line colour byte: EC(7) | CC(6) | IC(5) | 0 | colour(3:0).
+            col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
+            color = col_entry & 0x0F
+            or_mode = bool(col_entry & 0x40)  # CC: OR-combine with same-priority sprite
+            x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
+            # Collision eligibility, per sprite line: neither CC nor IC set,
+            # and a displayed colour (colour 0 only counts once TP makes it
+            # opaque). openMSX skips a sprite whose colourAttrib & 0x60 is
+            # set on both sides of every pair it tests, and the Handbook
+            # (Sec. 5.3.3) words the rule as "a conflict occurs when the
+            # display colour of a sprite is not transparent and '1' bits on
+            # the line whose CC bit is 0 overlap each other".
+            collides = (col_entry & 0x60) == 0 and (color != 0 or can0collide)
+
+            # CC=1 sprites are only visible once a higher-priority CC=0 sprite
+            # has appeared on this line; a CC=0 sprite enables them (counted even
+            # when its own colour is transparent).
+            if or_mode:
+                if not cc0_seen[line]:
                     continue
+            else:
+                cc0_seen[line] = 1
 
-                line_count[line] += 1
+            if color == 0 and not can0collide:
+                continue  # transparent regardless of OR mode
 
-                src_row = sprite_row // 2 if mag else sprite_row
-                # Per-line colour byte: EC(7) | CC(6) | IC(5) | 0 | colour(3:0).
-                col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
-                color = col_entry & 0x0F
-                or_mode = bool(col_entry & 0x40)  # CC: OR-combine with same-priority sprite
-                x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
-                # Collision eligibility, per sprite line: neither CC nor IC set,
-                # and a displayed colour (colour 0 only counts once TP makes it
-                # opaque). openMSX skips a sprite whose colourAttrib & 0x60 is
-                # set on both sides of every pair it tests, and the Handbook
-                # (Sec. 5.3.3) words the rule as "a conflict occurs when the
-                # display colour of a sprite is not transparent and '1' bits on
-                # the line whose CC bit is 0 overlap each other".
-                collides = (col_entry & 0x60) == 0 and (color != 0 or can0collide)
+            pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
+            scale = 2 if mag else 1
+            line_off = line * width
+            claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
+            ss_offsets = _SS_OFFSETS[screen_scale]
 
-                # CC=1 sprites are only visible once a higher-priority CC=0 sprite
-                # has appeared on this line; a CC=0 sprite enables them (counted even
-                # when its own colour is transparent).
-                if or_mode:
-                    if not cc0_seen[line]:
+            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
+                for bit_i, pixel in enumerate(pixels):
+                    if pixel:  # position in the 256-dot sprite plane
+                        _plot(x_pos + bit_i)
+            else:
+                for bit_i, pixel in enumerate(pixels):
+                    if not pixel:
                         continue
-                else:
-                    cc0_seen[line] = 1
-
-                if color == 0 and not can0collide:
-                    continue  # transparent regardless of OR mode
-
-                pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-                scale = 2 if mag else 1
-                line_off = line * width
-                claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
-                ss_offsets = _SS_OFFSETS[screen_scale]
-
-                if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                    for bit_i, pixel in enumerate(pixels):
-                        if pixel:  # position in the 256-dot sprite plane
-                            _plot(x_pos + bit_i)
-                else:
-                    for bit_i, pixel in enumerate(pixels):
-                        if not pixel:
-                            continue
-                        for s in range(scale):
-                            _plot(x_pos + bit_i * scale + s)  # position in the sprite plane
+                    for s in range(scale):
+                        _plot(x_pos + bit_i * scale + s)  # position in the sprite plane
 
     _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 

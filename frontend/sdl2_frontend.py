@@ -719,36 +719,48 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     def SDL_CloseAudioDevice(self, dev: int) -> None: ...
 
 
+@dataclass
+class _LoopState:
+    """`run()`'s per-iteration loop-local state, read and updated in place by
+    `_run_frame` across calls to `run()`'s main loop. Bundles what used to be
+    7 separate loop-local variables threaded through `_run_frame`'s parameter
+    list and an 8-element return tuple repeated at every early return."""
+    running: bool
+    fullscreen: bool
+    texture: object
+    tex_w: int
+    tex_h: int
+    rgb_buf: bytes
+    skip_counter: int
+
+
 def _run_frame(
-    sdl2: SDL2Api, machine: Machine, window: object, renderer: object, texture: object,
-    joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
+    sdl2: SDL2Api, machine: Machine, window: object, renderer: object,
+    state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
-    rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
     mouse_device: MouseDevice | None, event: _EventLike,
     rpc_server: "DebugServer | None", frame_timer: FrameTimer,
-    skip_counter: int, frame_skip: str, audio_dev: int,
-    audio_filter: BiquadLowPass, scale: int,
-) -> tuple[bool, bool, object, int, int, bytes, int, bool]:
+    frame_skip: str, audio_dev: int, audio_filter: BiquadLowPass, scale: int,
+) -> bool:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
     RPC pause gate, advance emulation one frame (or redisplay under
-    frame-skip), mix/queue audio, and present.
+    frame-skip), mix/queue audio, and present. Updates `state` in place with
+    whatever this iteration changed.
 
-    Returns (running, fullscreen, texture, tex_w, tex_h, rgb_buf, skip_counter,
-    frame_completed) -- the subset of `run()`'s loop-local state this
-    iteration may have changed. `frame_completed` is False for every early
-    return (quit requested, RPC-paused, texture resize failed) and True only
-    when this iteration ran a full frame through to frame pacing -- `run()`
-    uses it to skip the window-title update on an iteration that never
-    actually advanced emulation, matching the original inline loop's
-    `continue`/`break` short-circuits exactly.
+    Returns `frame_completed`: False for every early return (quit requested,
+    RPC-paused, texture resize failed) and True only when this iteration ran
+    a full frame through to frame pacing -- `run()` uses it to skip the
+    window-title update on an iteration that never actually advanced
+    emulation, matching the original inline loop's `continue`/`break`
+    short-circuits exactly.
     """
     # Process events (input + hotkeys); updates running/fullscreen.
-    running, fullscreen = _handle_events(
+    state.running, state.fullscreen = _handle_events(
         sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, rgb_buf, tex_w, tex_h, fullscreen, mouse_device,
+        game_title, state.rgb_buf, state.tex_w, state.tex_h, state.fullscreen, mouse_device,
     )
-    if not running:
-        return running, fullscreen, texture, tex_w, tex_h, rgb_buf, skip_counter, False
+    if not state.running:
+        return False
 
     joy_manager.tick()
 
@@ -759,27 +771,27 @@ def _run_frame(
         rpc_server.drain()
         if rpc_server.pause_state.paused:
             sdl2.SDL_RenderClear(renderer)
-            sdl2.SDL_RenderCopy(renderer, texture, None, None)
+            sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
             sdl2.SDL_RenderPresent(renderer)
             frame_timer.tick()
-            return running, fullscreen, texture, tex_w, tex_h, rgb_buf, skip_counter, False
+            return False
 
     # Run one frame (skip VDP pixel rendering when behind schedule)
-    skip_this_frame = skip_counter > 0
+    skip_this_frame = state.skip_counter > 0
     frame_start_cycle = machine.cycle_count
     index_buf = machine.run_frame(skip_render=skip_this_frame)
     frame_end_cycle = machine.cycle_count
     if not skip_this_frame:
-        rgb_buf = machine.vdp.to_rgb24(index_buf)
+        state.rgb_buf = machine.vdp.to_rgb24(index_buf)
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
         # 512-wide). Recreate the texture / resize the window on a width
         # change before uploading, or the texture copy would overflow.
-        texture, tex_w, tex_h, running = _resize_texture_if_needed(
-            sdl2, renderer, window, texture, index_buf, tex_w, tex_h, scale
+        state.texture, state.tex_w, state.tex_h, state.running = _resize_texture_if_needed(
+            sdl2, renderer, window, state.texture, index_buf, state.tex_w, state.tex_h, scale
         )
-        if not running:
-            return running, fullscreen, texture, tex_w, tex_h, rgb_buf, skip_counter, False
+        if not state.running:
+            return False
 
     # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
     if audio_dev > 0:
@@ -790,21 +802,21 @@ def _run_frame(
 
     # Upload to texture only when frame was rendered
     if not skip_this_frame:
-        _upload_to_texture(sdl2, texture, rgb_buf, tex_w, tex_h)
+        _upload_to_texture(sdl2, state.texture, state.rgb_buf, state.tex_w, state.tex_h)
 
     # Render (always — redisplays previous texture on skipped frames)
     sdl2.SDL_RenderClear(renderer)
-    sdl2.SDL_RenderCopy(renderer, texture, None, None)
+    sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
     sdl2.SDL_RenderPresent(renderer)
 
     # Frame pacing + skip counter update
     elapsed = frame_timer.tick()
     if frame_skip == "auto":
-        skip_counter = _update_skip_counter(
-            skip_counter, elapsed, frame_timer.frame_interval
+        state.skip_counter = _update_skip_counter(
+            state.skip_counter, elapsed, frame_timer.frame_interval
         )
 
-    return running, fullscreen, texture, tex_w, tex_h, rgb_buf, skip_counter, True
+    return True
 
 
 def run(
@@ -914,25 +926,20 @@ def run(
 
     frame_timer = FrameTimer(fps=_TARGET_FPS, speed=speed)
     event = sdl2.SDL_Event()
-    running = True
-    fullscreen = False
-    rgb_buf: bytes = bytes(_SCREEN_WIDTH * screen_h * 3)
-    skip_counter: int = 0
+    state = _LoopState(
+        running=True, fullscreen=False, texture=texture, tex_w=tex_w, tex_h=tex_h,
+        rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
+    )
     last_title: str | None = None
 
     try:
-        while running:
+        while state.running:
             try:
-                frame_result = _run_frame(
-                    sdl2, machine, window, renderer, texture, joy_manager, ctrl_combo,
-                    ctrl_fkey_cells, game_title, rgb_buf, tex_w, tex_h, fullscreen,
-                    mouse_device, event, rpc_server, frame_timer, skip_counter,
-                    frame_skip, audio_dev, audio_filter, scale,
+                frame_completed = _run_frame(
+                    sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
+                    ctrl_fkey_cells, game_title, mouse_device, event, rpc_server,
+                    frame_timer, frame_skip, audio_dev, audio_filter, scale,
                 )
-                (
-                    running, fullscreen, texture, tex_w, tex_h, rgb_buf,
-                    skip_counter, frame_completed,
-                ) = frame_result
 
                 if frame_completed and frame_timer.fps_measured > 0:
                     new_title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]"
@@ -942,7 +949,7 @@ def run(
 
             except KeyboardInterrupt:
                 if not machine.enter_debugger_if_attached():
-                    running = False
+                    state.running = False
 
     finally:
         joy_manager.close_all()
@@ -950,8 +957,8 @@ def run(
             sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_FALSE)
         if audio_dev > 0:
             sdl2.SDL_CloseAudioDevice(audio_dev)
-        if texture:
-            sdl2.SDL_DestroyTexture(texture)
+        if state.texture:
+            sdl2.SDL_DestroyTexture(state.texture)
         if renderer:
             sdl2.SDL_DestroyRenderer(renderer)
         if window:

@@ -4,12 +4,20 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, Protocol, TextIO, TypeVar
 
 from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
 
 if TYPE_CHECKING:
-    from msx.machine_loader import _ExpandedExtensionOverlay, _ExtensionOverlay
+    from msx.app_config import AppConfig
+    from msx.diagnostics.logger import DebugLogger
+    from msx.machine import Machine
+    from msx.machine_loader import (
+        MachineSpec,
+        _ExpandedExtensionOverlay,
+        _ExtensionOverlay,
+    )
+    from msx.rpc_server import DebugServer
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -171,13 +179,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_paths(
-    args: argparse.Namespace, slot2: str | None,
-) -> tuple[Path | None, Path | None, Path | None, Path | None, bytes | None, bytes | None]:
+class _ResolvedPaths(NamedTuple):
+    cart_path: Path | None
+    slot2_path: Path | None
+    fdd1_path: Path | None
+    fdd2_path: Path | None
+    cartridge: bytes | None
+    cartridge2: bytes | None
+
+
+def _resolve_paths(args: argparse.Namespace, slot2: str | None) -> _ResolvedPaths:
     """Validate the cartridge/slot-2/floppy paths and read the ROM bytes.
 
-    Exits the process with an error if any given path does not exist. Returns
-    (cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2).
+    Exits the process with an error if any given path does not exist.
     """
     cart_path = Path(args.cartridge) if args.cartridge else None
     slot2_path = Path(slot2) if slot2 else None
@@ -197,10 +211,12 @@ def _resolve_paths(
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2
+    return _ResolvedPaths(cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2)
 
 
-def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str | None) -> str:
+def _resolve_machine_id(
+    args: argparse.Namespace, app_cfg: "AppConfig", db_system: str | None
+) -> str:
     """Pick the machine ID: --machine > config file > ROM DB (MSX1) > MSX2 default."""
     if args.machine is not None:
         return str(args.machine)
@@ -212,7 +228,7 @@ def _resolve_machine_id(args: argparse.Namespace, app_cfg: Any, db_system: str |
 
 
 def _print_startup_summary(
-    spec: Any, display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    spec: "MachineSpec", display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
@@ -259,7 +275,7 @@ def _print_startup_summary(
         print(f"benchmark: {args.benchmark} frames (headless)")
 
 
-def _run_headless_frames(machine: Any, count_frame: int, resume: str | None) -> None:
+def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
     """Run exactly `count_frame` frames headlessly (no SDL window)."""
     if resume is not None:
         from msx.state import load_state
@@ -268,7 +284,7 @@ def _run_headless_frames(machine: Any, count_frame: int, resume: str | None) -> 
         machine.run_frame()
 
 
-def _run_benchmark(machine: Any, frames: int, resume: str | None) -> None:
+def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
 
@@ -286,8 +302,20 @@ def _run_benchmark(machine: Any, frames: int, resume: str | None) -> None:
     print(f"avg fps : {frames / elapsed:.2f}")
 
 
+class _SramSource(Protocol):
+    def save_sram(self, path: Path) -> None: ...
+
+
+def _save_sram_if_present(source: "_SramSource | None", save_path: "Path | None") -> None:
+    """Save `source`'s SRAM to `save_path` on exit, if both are present."""
+    if source is not None and save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        source.save_sram(save_path)
+
+
 def _cleanup(
-    machine: Any, rpc_server: Any, logger: Any, trace_file: Any, mapper_trace_file: Any,
+    machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
+    trace_file: TextIO | None, mapper_trace_file: TextIO | None,
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -298,59 +326,41 @@ def _cleanup(
         trace_file.close()
     if mapper_trace_file is not None:
         mapper_trace_file.close()
-    if machine is not None and machine.sram_save_path is not None:
+    if machine is not None:
         mapper = machine.memory._mapper
-        if mapper.has_sram:
-            machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-            mapper.save_sram(machine.sram_save_path)
-    if (
-        machine is not None
-        and machine.fmpac is not None
-        and machine.fmpac_sram_save_path is not None
-    ):
-        machine.fmpac_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.fmpac.save_sram(machine.fmpac_sram_save_path)
-    if (
-        machine is not None
-        and machine.halnote_cart is not None
-        and machine.halnote_sram_save_path is not None
-    ):
-        machine.halnote_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.halnote_cart.save_sram(machine.halnote_sram_save_path)
-    if (
-        machine is not None
-        and machine.rtc is not None
-        and machine.rtc_sram_save_path is not None
-    ):
-        machine.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-        machine.rtc.save_sram(machine.rtc_sram_save_path)
-    # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
-    if machine is not None and machine.fdc is not None:
-        machine.fdc.flush()
+        _save_sram_if_present(mapper if mapper.has_sram else None, machine.sram_save_path)
+        _save_sram_if_present(machine.fmpac, machine.fmpac_sram_save_path)
+        _save_sram_if_present(machine.halnote_cart, machine.halnote_sram_save_path)
+        _save_sram_if_present(machine.rtc, machine.rtc_sram_save_path)
+        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
+        if machine.fdc is not None:
+            machine.fdc.flush()
 
 
-def main() -> None:
-    args = _build_arg_parser().parse_args()
+class _EffectiveOptions(NamedTuple):
+    """Resolved run options, after the built-in default < config file <
+    CLI argument precedence (see _first_set)."""
 
-    # Load py_emulator.yaml and resolve effective options with the precedence
-    # built-in default < config file < CLI argument. A CLI flag left unset is
-    # None (see the sentinel defaults above), so it never masks a config value.
-    from msx.app_config import (
-        DEFAULT_MAPPER,
-        DEFAULT_SCALE,
-        DEFAULT_SPEED,
-        AppConfigError,
-        load_app_config,
-    )
-    try:
-        app_cfg = load_app_config(_PROJECT_ROOT)
-    except AppConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    speed: float
+    scale: int
+    mapper: str
+    extension: str | None
+    rpc_enabled: bool
+    mouse_port: int | None
+    slot2: str | None
+    mapper2: str
+    frame_skip: str
 
-    speed_eff = _first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED)
-    scale_eff = _first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE)
-    mapper_eff = _first_set(args.mapper, default=DEFAULT_MAPPER)
+
+def _resolve_effective_options(
+    args: argparse.Namespace, app_cfg: "AppConfig"
+) -> _EffectiveOptions:
+    """Merge CLI arguments with py_emulator.yaml at built-in default < config
+    file < CLI argument precedence. A CLI flag left unset is None (see the
+    sentinel defaults in _build_arg_parser), so it never masks a config value.
+    """
+    from msx.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
+
     # "none" is a CLI-only sentinel (not in VALID_EXTENSIONS, never valid in
     # py_emulator.yaml): it forces no extension overlay even when the config
     # file sets one, since a plain omitted --extension can't be told apart
@@ -360,44 +370,75 @@ def main() -> None:
         None if args.extension == "none"
         else _first_set(args.extension, app_cfg.extension, default=None)
     )
-    rpc_enabled_eff = _first_set(args.rpc, app_cfg.rpc_enabled, default=False)
-    mouse_port_eff = int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index()
-    # slot2's built-in default is "no cartridge" (None), unlike the concrete
-    # defaults above — _first_set's keyword-only `default` accepts that directly.
-    slot2_eff = _first_set(args.slot2, app_cfg.slot2, default=None)
-    mapper2_eff = _first_set(args.mapper2, default="auto")
     if app_cfg.frame_skip is None:
         frame_skip_cfg = None
     elif app_cfg.frame_skip:
         frame_skip_cfg = "auto"
     else:
         frame_skip_cfg = "none"
-    frame_skip_eff = _first_set(args.frame_skip, frame_skip_cfg, default="auto")
 
+    return _EffectiveOptions(
+        speed=_first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED),
+        scale=_first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE),
+        mapper=_first_set(args.mapper, default=DEFAULT_MAPPER),
+        extension=extension_eff,
+        rpc_enabled=_first_set(args.rpc, app_cfg.rpc_enabled, default=False),
+        mouse_port=int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index(),
+        # slot2's built-in default is "no cartridge" (None), unlike the
+        # concrete defaults above -- _first_set's keyword-only `default`
+        # accepts that directly.
+        slot2=_first_set(args.slot2, app_cfg.slot2, default=None),
+        mapper2=_first_set(args.mapper2, default="auto"),
+        frame_skip=_first_set(args.frame_skip, frame_skip_cfg, default="auto"),
+    )
+
+
+def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None:
+    """Enforce mutual-exclusivity and range constraints on resolved options.
+
+    Prints an error to stderr and exits the process (code 1) on violation.
+    """
     if args.benchmark is not None and args.count_frame is not None:
         print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
         sys.exit(1)
-    if scale_eff < 1:
+    if opts.scale < 1:
         print("error: --scale must be a positive integer", file=sys.stderr)
         sys.exit(1)
-    if extension_eff is not None and slot2_eff:
+    if opts.extension is not None and opts.slot2:
         print("error: --extension and --slot2 are mutually exclusive "
               "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
-    # Checked against args.mapper2, not mapper2_eff: mapper2_eff folds in the
+    # Checked against args.mapper2, not opts.mapper2: opts.mapper2 folds in the
     # "auto" default, so it can't distinguish an explicit --mapper2 auto from
     # --mapper2 never having been passed. --mapper2 has no config-file
     # equivalent (see app-config-file spec), so only the CLI flag needs
     # checking here.
-    if extension_eff is not None and args.mapper2 is not None:
+    if opts.extension is not None and args.mapper2 is not None:
         print("error: --extension and --mapper2 are mutually exclusive "
               "(the extension owns slot 2)", file=sys.stderr)
         sys.exit(1)
 
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
+
+    from msx.app_config import AppConfigError, load_app_config
+    try:
+        app_cfg = load_app_config(_PROJECT_ROOT)
+    except AppConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    opts = _resolve_effective_options(args, app_cfg)
+    _validate_options(args, opts)
+
     from msx.romdb import lookup, lookup_system, lookup_title
 
-    (cart_path, slot2_path, fdd1_path, fdd2_path,
-     cartridge, cartridge2) = _resolve_paths(args, slot2_eff)
+    paths = _resolve_paths(args, opts.slot2)
+    fdd1_path = paths.fdd1_path
+    fdd2_path = paths.fdd2_path
+    cartridge = paths.cartridge
+    cartridge2 = paths.cartridge2
 
     db_system = lookup_system(cartridge) if cartridge else None
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
@@ -414,8 +455,8 @@ def main() -> None:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
         extension_overlay = (
-            load_extension_overlay(extension_eff, _CONFIG_DIR, _PROJECT_ROOT)
-            if extension_eff is not None else None
+            load_extension_overlay(opts.extension, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension is not None else None
         )
     except MachineLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -429,8 +470,8 @@ def main() -> None:
         fdd2_path = None
 
     # --- Resolve display mapper for summary ---
-    if mapper_eff != "auto":
-        display_mapper = mapper_eff
+    if opts.mapper != "auto":
+        display_mapper = opts.mapper
     elif cartridge:
         display_mapper = lookup(cartridge) or "auto"
     else:
@@ -440,7 +481,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, mouse_port_eff, args,
+        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, opts.mouse_port, args,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -464,9 +505,9 @@ def main() -> None:
             machine = build_machine(
                 spec,
                 cartridge=cartridge,
-                mapper=mapper_eff,
+                mapper=opts.mapper,
                 cartridge2=cartridge2,
-                mapper2=mapper2_eff,
+                mapper2=opts.mapper2,
                 logger=logger,
                 tracer=tracer,
                 fdd1=fdd1_path,
@@ -502,7 +543,7 @@ def main() -> None:
         elif args.benchmark is not None:
             _run_benchmark(machine, args.benchmark, args.resume)
         else:
-            if rpc_enabled_eff:
+            if opts.rpc_enabled:
                 from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
                 rpc_server = DebugServer(machine, sock_path=sock_path)
@@ -510,10 +551,10 @@ def main() -> None:
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
-            run(machine, scale=scale_eff, speed=speed_eff, game_title=game_title,
-                resume=args.resume, frame_skip=frame_skip_eff, rpc_server=rpc_server,
+            run(machine, scale=opts.scale, speed=opts.speed, game_title=game_title,
+                resume=args.resume, frame_skip=opts.frame_skip, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
-                mouse_port=mouse_port_eff)
+                mouse_port=opts.mouse_port)
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
 

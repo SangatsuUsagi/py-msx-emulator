@@ -277,6 +277,31 @@ def test_cli_mapper2_accepts_konamiscc() -> None:
     assert build_mock.call_args.kwargs["mapper2"] == "KonamiSCC"
 
 
+def test_cli_mapper2_accepts_rtype_and_fixed_page_types() -> None:
+    # --mapper2 R-Type/Page2/0x4000/0x8000 are valid argparse choices
+    # (VALID_MAPPERS2): these mapper types touch neither SRAM nor the SCC/DAC
+    # audio path, unlike the still-rejected SRAM-backed types (ASCII8SRAM2/8,
+    # ASCII16SRAM2/8, KoeiSRAM32, GameMaster2). Actual construction is
+    # covered by tests/test_machine.py.
+    for mapper2_type in ("R-Type", "Page2", "0x4000", "0x8000"):
+        code, _o, err, _run, build_mock, *_ = _run_main(
+            ["--machine", "cbios_msx1", "--mapper2", mapper2_type], app_cfg=AppConfig())
+        assert code == 0
+        assert err == ""
+        assert build_mock.call_args.kwargs["mapper2"] == mapper2_type
+
+
+def test_cli_mapper2_rejects_sram_backed_type() -> None:
+    # argparse rejects the choice (SystemExit(2)) before build_machine is
+    # ever reached -- the rejection message itself goes straight to the real
+    # sys.stderr (argparse.ArgumentParser.error), not through the patched
+    # print() this harness captures, so only the non-zero exit is asserted.
+    code, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper2", "GameMaster2"], app_cfg=AppConfig())
+    assert code != 0
+    build_mock.assert_not_called()
+
+
 def test_builtin_mapper2_auto_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
