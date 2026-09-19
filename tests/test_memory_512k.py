@@ -364,6 +364,40 @@ def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
+# (openspec/changes/slot1-slot2-symmetrization Phase 5)
+# ---------------------------------------------------------------------------
+
+def test_build_machine_wires_ram_mapper_subslot_on_slot1(tmp_path: Path) -> None:
+    spec = _no_mapper_spec(tmp_path)
+    machine = build_machine(
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+        extension_overlay1=_ram_mapper_overlay()
+    )
+    assert machine.memory.slot1_sub_slot_enabled is True
+    assert machine.memory.slot2_sub_slot_enabled is False
+    sub0 = machine.memory._mapper1_subslots[0]
+    assert isinstance(sub0, RamMapper)
+    assert len(sub0.ram) == 512 * 1024
+    machine.io.write_port(0xFF, 0x05)
+    assert sub0.banks[3] == 5
+
+
+def test_rejected_when_other_slot_already_claims_ram_mapper(tmp_path: Path) -> None:
+    """Two independent expanded overlays (one per cartridge slot) both
+    declaring a 'ram_mapper' sub-slot would register two RamMapper instances
+    on the same I/O ports (0xFC-0xFF) -- rejected regardless of which slot
+    each targets."""
+    spec = _no_mapper_spec(tmp_path)
+    with pytest.raises(MachineLoadError, match="other cartridge slot"):
+        build_machine(
+            spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
+            extension_overlay1=_ram_mapper_overlay(),
+            extension_overlay=_ram_mapper_overlay(),
+        )
+
+
+# ---------------------------------------------------------------------------
 # has_ram_mapper conflict validation (task 2.3)
 # ---------------------------------------------------------------------------
 

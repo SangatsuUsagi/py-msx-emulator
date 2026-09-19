@@ -91,6 +91,14 @@ def test_extension_msxdos2_512k_kanjirom_alone_boots() -> None:
     assert "msxdos2_512k_kanjirom" in out
 
 
+def test_extension1_msxdos2_512k_kanjirom_alone_boots() -> None:
+    code, out, _err = _run_main(
+        ["--machine", "hb_f1xd", "--extension1", "msxdos2_512k_kanjirom", "--count-frame", "1"]
+    )
+    assert code == 0
+    assert "msxdos2_512k_kanjirom" in out
+
+
 # ---------------------------------------------------------------------------
 # load_extension_overlay: expanded-shape parsing of the real
 # config/extensions/msxdos2_512k_kanjirom.yaml

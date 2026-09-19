@@ -488,25 +488,6 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
               f"{opts.extension1!r} -- the identical extension on both "
               "slots is not supported", file=sys.stderr)
         sys.exit(1)
-    # PHASE-3-TEMPORARY (openspec/changes/slot1-slot2-symmetrization):
-    # build_machine's extension_overlay1 now wires a *flat* overlay
-    # (fmpac/scc_plus) onto slot 1 correctly, but an *expanded* overlay
-    # (hbi_j1/memory_512k/msxdos2_512k*) on slot 1 needs Memory's slot-1
-    # sub-slot expansion, which lands in a later phase. Refuse the
-    # expanded-shape ids on slot 1 here rather than letting
-    # build_machine's own (correct, but less CLI-friendly) MachineLoadError
-    # surface. Remove this set (and this comment) once every id is
-    # symmetric on slot 1.
-    _EXPANDED_SHAPE_EXTENSION_IDS = frozenset({
-        "hbi_j1", "memory_512k", "msxdos2_512k",
-        "msxdos2_512k_kanjirom", "msxdos2_512k_viewfont",
-    })
-    if opts.extension1 in _EXPANDED_SHAPE_EXTENSION_IDS:
-        print(f"error: --extension1 {opts.extension1} is not implemented yet "
-              "(expanded-shape extensions on slot 1 need Memory support "
-              "landing in a later phase of the slot1-slot2-symmetrization "
-              "change); use --extension2 for now", file=sys.stderr)
-        sys.exit(1)
 
 
 def main() -> None:
@@ -545,9 +526,6 @@ def main() -> None:
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        # opts.extension1, if set, is always a flat-shape id here --
-        # _validate_options's PHASE-3-TEMPORARY guard rejects the
-        # expanded-shape ids before main() reaches this point.
         extension_overlay1 = (
             load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension1 is not None else None
