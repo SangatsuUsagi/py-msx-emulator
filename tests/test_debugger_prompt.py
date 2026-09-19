@@ -469,6 +469,9 @@ def _make_slot_memory(
     rom_name: str = "cbios_main.rom",
     sub0_rom_name: str = "",
     with_ram_mapper: bool = False,
+    slot1_sub_slot_enabled: bool = False,
+    slot1_sub_slot_reg: int = 0x00,
+    mapper1_subslots: list | None = None,
     slot2_sub_slot_enabled: bool = False,
     slot2_sub_slot_reg: int = 0x00,
     mapper2_subslots: list | None = None,
@@ -485,6 +488,10 @@ def _make_slot_memory(
         sub0_rom=b"\x00" * 16384 if sub0_rom_name else None,
         sub0_rom_name=sub0_rom_name,
         ram_mapper=RamMapper() if with_ram_mapper else None,
+        slot1_sub_slot_enabled=slot1_sub_slot_enabled,
+        slot1_sub_slot_reg=slot1_sub_slot_reg,
+        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
+        else [None, None, None, None],
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
@@ -499,6 +506,9 @@ def _make_slot_machine(
     rom_name: str = "cbios_main.rom",
     sub0_rom_name: str = "",
     with_ram_mapper: bool = False,
+    slot1_sub_slot_enabled: bool = False,
+    slot1_sub_slot_reg: int = 0x00,
+    mapper1_subslots: list | None = None,
     slot2_sub_slot_enabled: bool = False,
     slot2_sub_slot_reg: int = 0x00,
     mapper2_subslots: list | None = None,
@@ -511,6 +521,9 @@ def _make_slot_machine(
         rom_name=rom_name,
         sub0_rom_name=sub0_rom_name,
         with_ram_mapper=with_ram_mapper,
+        slot1_sub_slot_enabled=slot1_sub_slot_enabled,
+        slot1_sub_slot_reg=slot1_sub_slot_reg,
+        mapper1_subslots=mapper1_subslots,
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
         mapper2_subslots=mapper2_subslots,
@@ -585,6 +598,25 @@ class TestSlotActive:
                 assert "Cartridge (empty)" not in line
                 assert "Flat" in line
 
+    def test_sl_slot1_subslot_shows_its_own_mapper_content(self, capsys):
+        """openspec/changes/slot1-slot2-symmetrization: the identical
+        regression coverage test_sl_slot2_subslot_shows_its_own_mapper_content
+        establishes for slot 2, applied to slot 1's own expansion."""
+        from msx.mapper import FlatMapper as _FlatMapper
+
+        m = _make_slot_machine(
+            slot_register=0x01,  # 0b00_00_00_01 -> P0=1,P1=0,P2=0,P3=0
+            slot1_sub_slot_enabled=True,
+            slot1_sub_slot_reg=0x00,  # every page of slot 1 -> sub-slot 0
+            mapper1_subslots=[_FlatMapper(bytes(32768)), None, None, None],
+        )
+        Debugger(m)._cmd_slot_active()
+        out = capsys.readouterr().out
+        for line in out.splitlines():
+            if "P0" in line and "0000" in line:
+                assert "Cartridge (empty)" not in line
+                assert "Flat" in line
+
 
 class TestSlotTree:
     def test_st_msx2_shows_expanded_slot3(self, capsys):
@@ -623,6 +655,23 @@ class TestSlotTree:
         assert "Primary 2 [EXPANDED]" in out
         assert "2-0  Cartridge Flat" in out
         assert "2-1  Cartridge (empty)" in out
+
+    def test_st_shows_expanded_slot1_subslots(self, capsys):
+        """openspec/changes/slot1-slot2-symmetrization: the identical
+        regression coverage test_st_shows_expanded_slot2_subslots
+        establishes for slot 2, applied to slot 1's own expansion."""
+        from msx.mapper import FlatMapper as _FlatMapper
+
+        m = _make_slot_machine(
+            slot1_sub_slot_enabled=True,
+            slot1_sub_slot_reg=0x00,
+            mapper1_subslots=[_FlatMapper(bytes(32768)), None, None, None],
+        )
+        Debugger(m)._cmd_slot_tree()
+        out = capsys.readouterr().out
+        assert "Primary 1 [EXPANDED]" in out
+        assert "1-0  Cartridge Flat" in out
+        assert "1-1  Cartridge (empty)" in out
 
 
 # ---------------------------------------------------------------------------

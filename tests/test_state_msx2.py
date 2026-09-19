@@ -177,6 +177,70 @@ def test_slot2_sub_slot_disabled_none_in_snapshot(saves_dir):
 
 
 # ---------------------------------------------------------------------------
+# slot1_sub_slot_reg round-trip (openspec/changes/slot1-slot2-symmetrization
+# -- the identical mechanism the slot2 section above exercises, applied
+# independently to slot 1; no machine-loader wiring exists yet to build one
+# end-to-end via --extension1, so the flag/sub-slot mappers are set directly
+# for test purposes, matching the slot2 tests' own precedent)
+# ---------------------------------------------------------------------------
+
+def test_msx2_roundtrip_slot1_sub_slot_reg(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.memory.slot1_sub_slot_enabled = True
+    machine.memory.set_slot1_sub_slot_reg(0x5A)
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.memory.set_slot1_sub_slot_reg(0x00)
+    load_state(machine)
+
+    assert machine.memory.slot1_sub_slot_reg == 0x5A
+
+
+def test_slot1_sub_slot_disabled_none_in_snapshot(saves_dir):
+    """A machine without an expanded slot 1 (every machine today, since
+    --extension1 does not yet support expanded-shape overlays) stores
+    slot1_sub_slot_reg=None."""
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+
+    data = _load_state_json(state_path)
+    assert data["slot1_sub_slot_reg"] is None
+
+
+def test_msx2_roundtrip_mapper1_subslot_content(saves_dir):
+    """mapper1_subslot_kinds/mapper1_subslot_states round-trip real
+    sub-slot mapper bank-register state, not just the raw register."""
+    from msx.mapper import Ascii8Mapper
+
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.memory.slot1_sub_slot_enabled = True
+    original = Ascii8Mapper(bytes(16 * 8192))
+    original.write(0x6000, 5)
+    machine.memory._mapper1_subslots[0] = original
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16 * 8192))
+    load_state(machine)
+
+    restored = machine.memory._mapper1_subslots[0]
+    assert isinstance(restored, Ascii8Mapper)
+    assert restored._banks[0] == 5
+
+
+def test_loading_state_with_mismatched_slot1_subslot_kind_raises(saves_dir):
+    from msx.mapper import Ascii8Mapper, FlatMapper
+
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.memory.slot1_sub_slot_enabled = True
+    machine.memory._mapper1_subslots[0] = FlatMapper(bytes(32768))
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16384))
+    with pytest.raises(ValueError, match="slot 1 sub-slot 0"):
+        load_state(machine)
+
+
+# ---------------------------------------------------------------------------
 # format_version 2 rejected (version bump to 3)
 # ---------------------------------------------------------------------------
 
