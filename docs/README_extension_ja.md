@@ -1,13 +1,20 @@
 # 拡張機能
 
-`--extension <id>` は、解決済みのベースマシンの上に、`config/extensions/<id>.yaml`
-の YAML フラグメントで定義されたデバイスフラグメントをプライマリスロット 2 に
-重ね合わせます。1 回の実行で有効にできる拡張は最大 1 つで、必ずプライマリスロッ
-ト 2 を専有するため、`--slot2`/`--mapper2`（プライマリスロット 1 を対象とする
-カートリッジ ROM 引数や `--mapper` とは自由に併用可能）とは併用できません。同じ
-`id` は `py_emulator.yaml` の `extension:` キーでも設定でき、`--extension none`
-はその設定ファイルの指定を 1 回の実行に限り上書きします。FM-PAC/SCC-I/HBI-J1 の
-実装詳細（メモリマップ、I/O ポート、既知の制限）は
+`--extension1 <id>`/`--extension2 <id>` は、解決済みのベースマシンの上に、
+`config/extensions/<id>.yaml` の YAML フラグメントで定義されたデバイスフラグ
+メントを、それぞれプライマリスロット 1 またはスロット 2 に重ね合わせます。各
+カートリッジスロットは独立に最大 1 つの拡張をホストできます：`--extension1`
+は必ずプライマリスロット 1 を専有するため位置引数のカートリッジ/`--slot1`/
+`--mapper1` とは併用できません、`--extension2` は必ずプライマリスロット 2 を
+専有するため `--slot2`/`--mapper2` とは併用できません。両スロットの拡張（あ
+るいは片方が拡張、もう片方がただのカートリッジという組み合わせ）はそれ以外
+は独立で自由に組み合わせられます ── 例外は同じ `id` を両スロットに同時指定す
+ることで、これは起動時に拒否されます（理由は下記の[「スロットモデル」節](#スロットモデル)
+を参照）。同じ id は `py_emulator.yaml` の `extension1:`/`extension2:` キーで
+も設定でき（従来の裸の `extension:` キーも `extension2:` のレガシー別名とし
+て使えます）、`--extension1 none`/`--extension2 none` はそのスロットに関して
+のみ、設定ファイルの指定を 1 回の実行に限り上書きします。FM-PAC/SCC-I/HBI-J1
+の実装詳細（メモリマップ、I/O ポート、既知の制限）は
 [`README_ja.md`の「対応ハードウェア」節](README_ja.md#対応ハードウェア)を参照
 してください。このドキュメントでは、各拡張が何のためのもので、どの ROM ファイル
 を必要とするかに絞って説明します。
@@ -28,30 +35,42 @@
 
 ## スロットモデル
 
-マシン構築時に各プライマリスロットが何を保持できるか、そして `--extension` が
-実際に到達できるスロットはどれかをまとめます。
+マシン構築時に各プライマリスロットが何を保持できるか、そして `--extension1`/
+`--extension2` が実際に到達できるスロットはどれかをまとめます。
 
-| スロット | サブスロット拡張 | `--extension` で拡張可能か | 保持できるもの |
+| スロット | サブスロット拡張 | 拡張手段 | 保持できるもの |
 | --- | --- | --- | --- |
 | 0 | なし | いいえ | メイン BIOS ROM のみ（オプションでページ 2 にロゴ ROM を追加可能） |
-| 1 | なし | いいえ | カートリッジ ROM + マッパーのみ（`--mapper`） |
-| 2 | あり、0〜3（`--extension` 経由のみ ── マシン YAML 単体でスロット 2 を拡張状態にするものはない） | **はい ── `--extension` が到達できる唯一のスロット** | カートリッジ ROM + マッパー（`--slot2`/`--mapper2`）、**または**、拡張状態にした場合：任意個数の ROM サブスロット（各サブスロットは `flat_rom`、もしくはバンク切り替え型マッパー 1 種 ── `ascii8`、`ascii16`、`halnote` のいずれか）、最大 1 つの `ram_mapper` サブスロット、そして拡張全体で最大 1 つの `io_device`（現状は `kanji_rom` のみで、専用のスロット位置を持たない） |
-| 3 | あり、0〜3（マシン定義のみ） | いいえ | マシン YAML（`config/machines/*.yaml`）ごとに固定で、`--extension` では選択不可：MSX2 自体の SUB ROM、RAM マッパーまたはフラット RAM、そして実機で検証済みの 2 マシンではフロッピーディスクコントローラ（`hb_f1xd`：WD2793、`fs_a1f`：TC8566AF） |
+| 1 | あり、0〜3（`--extension1` 経由のみ ── マシン YAML 単体でスロット 1 を拡張状態にするものはない） | `--extension1` | カートリッジ ROM + マッパー（位置引数のカートリッジ/`--slot1`/`--mapper`/`--mapper1`）、**または**、拡張状態にした場合：スロット 2 と同じサブスロットデバイス形状（下記） |
+| 2 | あり、0〜3（`--extension2` 経由のみ ── マシン YAML 単体でスロット 2 を拡張状態にするものはない） | `--extension2` | カートリッジ ROM + マッパー（`--slot2`/`--mapper2`）、**または**、拡張状態にした場合：任意個数の ROM サブスロット（各サブスロットは `flat_rom`、もしくはバンク切り替え型マッパー 1 種 ── `ascii8`、`ascii16`、`halnote` のいずれか）、最大 1 つの `ram_mapper` サブスロット、そして拡張全体で最大 1 つの `io_device`（現状は `kanji_rom` のみで、専用のスロット位置を持たない） |
+| 3 | あり、0〜3（マシン定義のみ） | いいえ | マシン YAML（`config/machines/*.yaml`）ごとに固定で、`--extension1`/`--extension2` では選択不可：MSX2 自体の SUB ROM、RAM マッパーまたはフラット RAM、そして実機で検証済みの 2 マシンではフロッピーディスクコントローラ（`hb_f1xd`：WD2793、`fs_a1f`：TC8566AF） |
 
-`--extension` で拡張できるのはスロット 2 のみです。スロット 3 自身のサブスロット
-拡張は `config/machines/*.yaml` に宣言されたベースマシンのプロパティであり、その
-時点で有効な `--extension` とは独立して影響を受けません（2 つの拡張はそれぞれ
-専用のセカンダリスロットレジスタを持ち、共存します）。
+スロット 1・スロット 2 はそれぞれ独立に拡張可能で、スロットごとに拡張は 1 つ
+までです（つまり *異なる* 拡張をそれぞれのスロットに配置する組み合わせは自由
+に可能 ── 例：スロット 1 に FM-PAC、スロット 2 に HBI-J1、あるいは片方にゲー
+ムカートリッジ、もう片方に拡張）。まだサポートされていないのは *同じ* id を
+両スロットに同時指定することです：`--extension1`/`--extension2` は `Machine`
+のスロットごとのカートリッジ SRAM・セーブステートの仕組みを共有しており、実
+機でもこれを行う正当な使用例はほとんど存在しません（理論上あり得るのは
+FM-PAC/SCC-I カートリッジを 2 枚挿してより豊かな多重和音を得るケースですが、
+これは対象外です）。これは起動時に「同じ ROM/拡張 id」チェックとして拒否され、
+下記の KonamiSCC 単一チップ共有チェック（これも引き続き有効）とは独立です。
+スロット 3 自身のサブスロット拡張は `config/machines/*.yaml` に宣言されたベー
+スマシンのプロパティであり、どちらのカートリッジスロットの拡張とも独立して
+影響を受けません（すべての拡張はそれぞれ専用のセカンダリスロットレジスタを
+持ち、共存します）。
 
-同じ理由から、拡張同士を組み合わせることもできません。これにより現状、SCC-I と
-FM-PAC の同時使用、MSX-DOS2 で HBI-J1 の MSX-JE を使った日本語入力、MSX-DOS2 上
-での FM-PAC 対応アプリケーションの実行のいずれもできません。スロット 1 もスロッ
-ト 2 と同様に拡張可能にすること（将来の変更として計画中）で、この制限は解消され
-る見込みです。
+スロットごとの独立性だけでは解決しない点が 1 つあります：KonamiSCC カート
+リッジマッパーと `scc_plus` 拡張はいずれも最終的に実際の SCC 音源チップを構
+築し、`Machine` は単一の `scc` フィールドしか持ちません ── そのため、一方の
+スロットのマッパーが `KonamiSCC` でもう一方のスロットの拡張が `scc_plus`
+（あるいは両スロットのマッパーがともに `KonamiSCC`）という組み合わせは、実機
+が同時に 2 つの SCC チップを搭載することがないのと同じ「物理チップは 1 つ」
+という理由で拒否されます。
 
 ## FM-PAC
 
-`--extension fmpac` ── [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072) は実在する
+`--extension1`/`--extension2 fmpac` ── [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072) は実在する
 MSX-MUSIC カートリッジで、YM2413（OPLL）FM 音源チップ、64 KB のバンク切り替え
 ROM、8 KB の電池バックアップ SRAM を備えます。カートリッジ自体の ROM が
 `roms/fmpac/fmpac.rom` に必要です ── このプロジェクトには含まれないため、各自
@@ -59,10 +78,11 @@ ROM、8 KB の電池バックアップ SRAM を備えます。カートリッジ
 
 ## SCC-I カートリッジ (SCC+)
 
-`--extension scc_plus` ──
+`--extension1`/`--extension2 scc_plus` ──
 [Konami の SCC（052539）](https://www.msx.org/wiki/Konami_052539)サウンドチッ
-プをモデルにした、単体のサウンドカートリッジです。プライマリスロット 2 に無条
-件に接続され、64 KB の物理バンク切り替え RAM を 128 KB であるかのように扱い
+プをモデルにした、単体のサウンドカートリッジです。フラグが対象とするプライ
+マリスロットに無条件に接続され、64 KB の物理バンク切り替え RAM を 128 KB であ
+るかのように扱い
 （空 ── ROM/データファイルは一切ロードされません）、バンクレジスタの bit 3 を
 無視することでブロック N がブロック N+8 をミラーするようにしています ──
 これは実機の改造として知られる
@@ -77,7 +97,7 @@ ROM、8 KB の電池バックアップ SRAM を備えます。カートリッジ
 
 ## Sony HBI-J1
 
-`--extension hbi_j1` ──
+`--extension1`/`--extension2 hbi_j1` ──
 [Sony HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1) は実在する漢字ROM +
 MSX-JE ワードプロセッサカートリッジです。以下の 3 つの ROM ダンプが必要です。
 
@@ -95,25 +115,29 @@ roms/hbi_j1/
 
 ## memory_512k: 512 KB RAM 拡張
 
-`--extension memory_512k` は実在するカートリッジに対応するものではありません
-── MSX2 のメインメモリ向けに、プライマリスロット 2 に配置される 512 KB のバン
-ク切り替え RAM 拡張です。主な用途は、スロット 3 に RAM マッパーを持たないマ
-シンで MSX-DOS2 を動作させることです。スロット 1 に MSX-DOS2 カーネルカート
-リッジ、スロット 2 にこの拡張を配置すれば、MSX-DOS2 を動かすのに十分なバンク
-RAM を備えたマシンになります。ROM ファイルは不要です ── RAM は実行のたびに空
-の状態で開始し、セーブファイルへの永続化はありません。
+`--extension1`/`--extension2 memory_512k` は実在するカートリッジに対応するも
+のではありません ── MSX2 のメインメモリ向けに、フラグが対象とするプライマリ
+スロットに配置される 512 KB のバンク切り替え RAM 拡張です。主な用途は、スロッ
+ト 3 に RAM マッパーを持たないマシンで MSX-DOS2 を動作させることです。片方の
+スロットに MSX-DOS2 カーネルカートリッジ、もう片方にこの拡張を配置すれば、
+MSX-DOS2 を動かすのに十分なバンク RAM を備えたマシンになります。ROM ファイル
+は不要です ── RAM は実行のたびに空の状態で開始し、セーブファイルへの永続化は
+ありません。両スロットで `ram_mapper` を要求する拡張（例えばこれと、同じく
+`ram_mapper` を宣言する `msxdos2_512k`）を同時指定することは拒否されます ──
+上記の[「スロットモデル」節](#スロットモデル)を参照。
 
 ```bash
 # スロット 1 に MSX-DOS2 カーネルカートリッジ、スロット 2 にこの拡張の RAM を組み合わせる
-python . path/to/msxdos2_kernel.rom --extension memory_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
+python . path/to/msxdos2_kernel.rom --extension2 memory_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
 ```
 
 ## msxdos2_512k: 512 KB RAM + MSX-DOS2 カーネル
 
-`--extension msxdos2_512k` もまた実在するカートリッジではありません ──
-`memory_512k` の 512 KB RAM 拡張と、MSX-DOS2 カーネル ROM を同一のスロット 2
-フラグメント内に組み合わせたもので、`--extension` フラグ 1 つだけで、スロット
-1 に別途カーネルカートリッジを用意することなく MSX-DOS2 を動作させられます。
+`--extension1`/`--extension2 msxdos2_512k` もまた実在するカートリッジではあ
+りません ── `memory_512k` の 512 KB RAM 拡張と、MSX-DOS2 カーネル ROM を同一
+のスロットフラグメント内に組み合わせたもので、`--extension1`/`--extension2`
+フラグ 1 つだけで、もう片方のスロットに別途カーネルカートリッジを用意するこ
+となく MSX-DOS2 を動作させられます。
 
 この拡張が前提とするカーネル ROM は
 [`msxdos2s`](https://github.com/b3rendsh/msxdos2s)（オープンな MSX-DOS2 カー
@@ -133,12 +157,12 @@ python . path/to/msxdos2_kernel.rom --extension memory_512k --machine hb_f1xd --
 
 ```bash
 # MSX-DOS2 を直接起動 ── スロット 1 のカートリッジ不要、カーネルは拡張に内蔵済み
-python . --extension msxdos2_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
+python . --extension2 msxdos2_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
 ```
 
 ## msxdos2_512k_kanjirom: + 漢字フォント ROM
 
-`--extension msxdos2_512k_kanjirom` は、`msxdos2_512k` に MSX 標準の JIS 漢字
+`--extension1`/`--extension2 msxdos2_512k_kanjirom` は、`msxdos2_512k` に MSX 標準の JIS 漢字
 フォント ROM I/O デバイス（ポート `0xD8`〜`0xDB`）を追加し、MSX-DOS2 アプリケー
 ションが漢字を表示できるようにします。設定上は、HBI-J1 拡張自身のフォントダン
 プ `roms/hbi_j1/hbi-j1_kanjifont.rom` を再利用します ── ライセンスに関する注意
@@ -156,12 +180,12 @@ python . --extension msxdos2_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 ```bash
 # msxdos2_512k と同様、漢字表示にも対応
-python . --extension msxdos2_512k_kanjirom --machine hb_f1xd --fdd1 path/to/disk.dsk
+python . --extension2 msxdos2_512k_kanjirom --machine hb_f1xd --fdd1 path/to/disk.dsk
 ```
 
 ## msxdos2_512k_viewfont: + View フォント ROM
 
-`--extension msxdos2_512k_viewfont` は、MSX-View 付属アドオンパッケージに同梱
+`--extension1`/`--extension2 msxdos2_512k_viewfont` は、MSX-View 付属アドオンパッケージに同梱
 されるフォントカートリッジと互換性のある、ASCII8 マップ方式（8 KB バンクの
 MEGA ROM コントローラ）のフォント ROM を、`msxdos2_512k` の上（サブスロット 2、
 `msxdos2_512k` 自身の RAM マッパーおよび MSX-DOS2 カーネルと同居）に追加しま
@@ -180,7 +204,7 @@ MEGA ROM コントローラ）のフォント ROM を、`msxdos2_512k` の上（
 
 ```bash
 # msxdos2_512k と同様、View フォント互換の漢字 ROM を使用
-python . --extension msxdos2_512k_viewfont --machine hb_f1xd --fdd1 path/to/disk.dsk
+python . --extension2 msxdos2_512k_viewfont --machine hb_f1xd --fdd1 path/to/disk.dsk
 ```
 
 ## ROM ファイル配置
