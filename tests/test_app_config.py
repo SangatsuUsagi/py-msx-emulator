@@ -24,7 +24,7 @@ def _write(root: Path, text: str) -> None:
 def test_absent_file_returns_all_unset(tmp_path: Path) -> None:
     cfg = load_app_config(tmp_path)
     assert cfg == AppConfig()
-    assert cfg.machine is None and cfg.speed is None and cfg.extension is None
+    assert cfg.machine is None and cfg.speed is None and cfg.extension2 is None
 
 
 def test_empty_file_returns_all_unset(tmp_path: Path) -> None:
@@ -39,17 +39,62 @@ def test_known_scalar_keys_parsed(tmp_path: Path) -> None:
     assert cfg.machine == "cbios_msx1_jp"
     assert cfg.speed == 2.0
     assert cfg.scale == 4
-    assert cfg.extension == "fmpac"
+    assert cfg.extension2 == "fmpac"
 
 
-def test_extension_key_parsed(tmp_path: Path) -> None:
+def test_extension_key_parsed_as_slot2_alias(tmp_path: Path) -> None:
+    # The pre-existing unqualified `extension` key is a backward-compatible
+    # alias for `extension2` (slot 2), used only when `extension2` itself is
+    # absent -- see _opt_extension's legacy_alias parameter.
     _write(tmp_path, "extension: scc_plus\n")
     cfg = load_app_config(tmp_path)
-    assert cfg.extension == "scc_plus"
+    assert cfg.extension2 == "scc_plus"
+    assert cfg.extension1 is None
+
+
+def test_extension2_key_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "extension2: scc_plus\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.extension2 == "scc_plus"
+
+
+def test_extension2_key_takes_precedence_over_legacy_extension_alias(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "extension: fmpac\nextension2: scc_plus\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.extension2 == "scc_plus"
+
+
+def test_extension1_key_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "extension1: fmpac\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.extension1 == "fmpac"
+    assert cfg.extension2 is None
 
 
 def test_unknown_extension_id_rejected(tmp_path: Path) -> None:
     _write(tmp_path, "extension: bogus\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_unknown_extension1_id_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "extension1: bogus\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_slot1_key_parsed(tmp_path: Path) -> None:
+    rom = tmp_path / "game.rom"
+    rom.write_bytes(b"\x00")
+    _write(tmp_path, f"slot1: {rom.name}\n")
+    cfg = load_app_config(tmp_path)
+    assert cfg.slot1 == "game.rom"
+
+
+def test_slot1_missing_file_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "slot1: missing.rom\n")
     with pytest.raises(AppConfigError):
         load_app_config(tmp_path)
 

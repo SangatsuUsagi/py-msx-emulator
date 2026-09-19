@@ -64,19 +64,19 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 def test_extension_scc_plus_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "scc_plus", "--slot2", "game2.rom"])
+    code, _out, err = _run_main(["--extension2", "scc_plus", "--slot2", "game2.rom"])
     assert code != 0
-    assert "--extension" in err and "--slot2" in err
+    assert "--extension2" in err and "--slot2" in err
 
 
 def test_extension_scc_plus_and_mapper2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "scc_plus", "--mapper2", "Konami"])
+    code, _out, err = _run_main(["--extension2", "scc_plus", "--mapper2", "Konami"])
     assert code != 0
-    assert "--extension" in err and "--mapper2" in err
+    assert "--extension2" in err and "--mapper2" in err
 
 
 def test_extension_scc_plus_alone_boots() -> None:
-    code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
+    code, out, _err = _run_main(["--extension2", "scc_plus", "--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
 
@@ -87,7 +87,7 @@ def test_extension_scc_plus_with_cartridge_boots() -> None:
     slot 1's mapper doesn't itself need the single shared SCC chip (see
     test_extension_scc_plus_rejected_when_slot1_is_konamiscc below)."""
     code, out, _err = _run_main(
-        ["--extension", "scc_plus", "--mapper", "Konami", "game.rom", "--count-frame", "1"]
+        ["--extension2", "scc_plus", "--mapper", "Konami", "game.rom", "--count-frame", "1"]
     )
     assert code == 0
     assert "scc_i_cart" in out
@@ -98,7 +98,7 @@ def test_extension_scc_plus_rejected_when_slot1_is_konamiscc() -> None:
     scc_plus's fresh SCC-I chip can't both claim it -- real hardware never
     has two SCC chips attached at once either."""
     code, _out, err = _run_main(
-        ["--extension", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
+        ["--extension2", "scc_plus", "--mapper", "KonamiSCC", "game.rom", "--count-frame", "1"]
     )
     assert code != 0
     assert "scc" in err.lower()
@@ -118,7 +118,7 @@ def _fake_app_config(**overrides: object) -> object:
 
 def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
     with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(extension="scc_plus")):
+               return_value=_fake_app_config(extension2="scc_plus")):
         code, out, _err = _run_main(["--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
@@ -126,8 +126,8 @@ def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
 
 def test_cli_extension_overrides_config_extension() -> None:
     with patch("msx.app_config.load_app_config",
-               return_value=_fake_app_config(extension="fmpac")):
-        code, out, _err = _run_main(["--extension", "scc_plus", "--count-frame", "1"])
+               return_value=_fake_app_config(extension2="fmpac")):
+        code, out, _err = _run_main(["--extension2", "scc_plus", "--count-frame", "1"])
     assert code == 0
     assert "scc_i_cart" in out
     assert "fmpac" not in out
