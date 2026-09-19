@@ -1472,8 +1472,9 @@ def _wire_expanded_overlay(
             declares a 'ram_mapper' sub-slot on a machine that already has a
             slot-3 memory mapper or whose other cartridge slot already
             claimed one, if the overlay declares a 'halnote' sub-slot while
-            the other cartridge slot's overlay already claimed one, if a
-            machine-declared and an overlay-declared `io_device` both
+            the other cartridge slot's overlay already claimed one, if this
+            overlay's `io_device` and another source (a machine-declared
+            `io_device`, or the other cartridge slot's overlay) both
             resolve to a Kanji-ROM device (ports 0xD8-0xDB cannot serve
             two), or if a sub-slot names a device kind that passed
             load-time validation but has no construction case here (an
@@ -1551,9 +1552,10 @@ def _wire_expanded_overlay(
     ):
         if kanji_device is not None:
             raise MachineLoadError(
-                f"{spec.machine_id}: a machine-declared io_device and an extension "
-                "overlay's io_device both resolve to a Kanji-ROM device on I/O "
-                "ports 0xD8-0xDB -- these cannot coexist"
+                f"{spec.machine_id}: this extension overlay's io_device and another "
+                "source (a machine-declared io_device, or the other cartridge slot's "
+                "extension overlay) both resolve to a Kanji-ROM device on I/O ports "
+                "0xD8-0xDB -- these cannot coexist"
             )
         kanji_device = KanjiRom(
             rom=_load_device_rom(extension_overlay.io_device, "expanded overlay io_device")
@@ -1588,6 +1590,7 @@ def _wire_flat_overlay(
     spec: MachineSpec,
     extension_overlay: _ExtensionOverlay,
     scc: SCC | None,
+    existing_fmpac: FmPac | None = None,
 ) -> _FlatOverlayWiring:
     """Resolve a flat --extension overlay's device. The caller places the
     returned `mapper_instance` into whichever slot's overlay this is --
@@ -1595,17 +1598,28 @@ def _wire_flat_overlay(
     is already set, i.e. a cartridge mapper or another extension in either
     slot already resolved its own KonamiSCC chip: real hardware never has
     two SCC chips attached at once, and `Machine` has a single `scc` field).
+    `existing_fmpac` is whichever FM-PAC the *other* cartridge slot's own
+    flat overlay (wired first by `_wire_extension_overlay`) already
+    resolved, if any -- rejected instead when this overlay is also `fmpac`,
+    since `Machine` likewise has a single `fmpac` field.
 
     Raises:
         MachineLoadError: If `extension_overlay.device` passed load-time
             validation (`_KNOWN_EXTENSION_DEVICES`) but has no construction
-            case here (an internal consistency error between the two), or
-            if `scc_i_cart` is selected while a KonamiSCC cartridge mapper
-            or another slot's `scc_i_cart` already resolved a chip (see
-            above).
+            case here (an internal consistency error between the two), if
+            `scc_i_cart` is selected while a KonamiSCC cartridge mapper or
+            another slot's `scc_i_cart` already resolved a chip (see
+            above), or if `fmpac` is selected while the other cartridge
+            slot's `fmpac` extension already resolved one.
     """
     fmpac_device: FmPac | None = None
     if extension_overlay.device == "fmpac":
+        if existing_fmpac is not None:
+            raise MachineLoadError(
+                f"{spec.machine_id}: cannot use the fmpac extension on both "
+                "cartridge slots at once: real hardware has one FM-PAC "
+                "cartridge, and Machine has a single fmpac field"
+            )
         fmpac_sram = _load_sram_or_warn(
             extension_overlay.sram_save_path, FMPAC_SRAM_SIZE, label="FM-PAC "
         ) if extension_overlay.sram_save_path is not None else None
@@ -1672,10 +1686,17 @@ def _wire_extension_overlay(
     before slot 2's, so a conflict between any combination of the four
     possible KonamiSCC sources (either slot's cartridge mapper, either
     slot's `scc_plus` extension) is caught by `_wire_flat_overlay`'s own
-    check, run at most twice. Likewise, slot 1's expanded overlay (if any)
-    is wired before slot 2's, so a 'ram_mapper' sub-slot conflict between
-    the two slots' expanded overlays is caught by `_wire_expanded_overlay`'s
-    own check, run at most twice.
+    check, run at most twice. `fmpac_device` is threaded the same way (as
+    `existing_fmpac`), so both slots resolving to the `fmpac` extension is
+    likewise caught by `_wire_flat_overlay`'s own check. Both threaded
+    values are only *conditionally* copied out of each `_wire_flat_overlay`
+    call (only when that call actually produced one), so a slot whose flat
+    overlay is the other device (`scc_i_cart` when threading `fmpac`, or
+    vice versa) never clobbers what the other slot already resolved.
+    Likewise, slot 1's expanded overlay (if any) is wired before slot 2's,
+    so a 'ram_mapper'/'halnote' sub-slot conflict between the two slots'
+    expanded overlays is caught by `_wire_expanded_overlay`'s own check,
+    run at most twice.
 
     Raises:
         MachineLoadError: see `_wire_expanded_overlay`/`_wire_flat_overlay`.
@@ -1710,8 +1731,9 @@ def _wire_extension_overlay(
         flat1 = _wire_flat_overlay(spec, extension_overlay1, scc)
         mapper_instance = flat1.mapper_instance
         scc = flat1.scc
-        fmpac_device = flat1.fmpac_device
-        fmpac_sram_save_path = flat1.fmpac_sram_save_path
+        if flat1.fmpac_device is not None:
+            fmpac_device = flat1.fmpac_device
+            fmpac_sram_save_path = flat1.fmpac_sram_save_path
 
     # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
     # replacing whatever slot-2 cartridge mapper was resolved above.
@@ -1728,11 +1750,12 @@ def _wire_extension_overlay(
             halnote_sram_save_path = expanded2.halnote_sram_save_path
         kanji_device = expanded2.kanji_device
     elif extension_overlay2 is not None:
-        flat2 = _wire_flat_overlay(spec, extension_overlay2, scc)
+        flat2 = _wire_flat_overlay(spec, extension_overlay2, scc, existing_fmpac=fmpac_device)
         mapper2_instance = flat2.mapper_instance
         scc = flat2.scc
-        fmpac_device = flat2.fmpac_device
-        fmpac_sram_save_path = flat2.fmpac_sram_save_path
+        if flat2.fmpac_device is not None:
+            fmpac_device = flat2.fmpac_device
+            fmpac_sram_save_path = flat2.fmpac_sram_save_path
 
     return _ExtensionWiring(
         mapper_instance=mapper_instance,
@@ -1837,6 +1860,27 @@ def _resolve_shared_scc(
     return slot1_scc if slot1_scc is not None else slot2_scc
 
 
+def _resolve_shared_dac(
+    spec: MachineSpec, mapper_instance: Mapper, mapper2_instance: Mapper
+) -> MajutsushiMapper | None:
+    """Cross-slot Majutsushi-DAC-sharing check between the two cartridge
+    slots' final mapper instances. Takes the post-extension-overlay-wiring
+    instances specifically (not `_resolve_cartridge_slot`'s own results),
+    since an extension overlay replacing a slot's mapper (e.g. --extension1
+    fmpac over a Majutsushi cartridge) removes that slot's own DAC along
+    with it. `Machine` has a single `dac` field and real hardware never has
+    two Majutsushi-style DAC cartridges attached at once."""
+    dac1 = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
+    dac2 = mapper2_instance if isinstance(mapper2_instance, MajutsushiMapper) else None
+    if dac1 is not None and dac2 is not None:
+        raise MachineLoadError(
+            f"{spec.machine_id}: cannot use the Majutsushi mapper in both slot 1 "
+            "and slot 2: real hardware never has two DAC-equipped cartridges "
+            "attached at once, and Machine has a single dac field"
+        )
+    return dac1 if dac1 is not None else dac2
+
+
 def _wire_post_construction_attrs(
     machine: "Machine",
     io: IOBus,
@@ -1926,8 +1970,10 @@ def build_machine(
     Raises:
         MachineLoadError: If a required ROM file is missing and no override
             is given, if both slots' mappers/extensions resolve to
-            KonamiSCC-family SCC chips, or if both slots' expanded overlays
-            declare a 'ram_mapper' sub-slot.
+            KonamiSCC-family SCC chips, if both slots' mappers resolve to
+            Majutsushi, if both slots' extensions resolve to fmpac, or if
+            both slots' expanded overlays declare a 'ram_mapper' or
+            'halnote' sub-slot.
     """
     from msx.machine import Machine  # local import to avoid circular dependency
 
@@ -1958,12 +2004,11 @@ def build_machine(
     mapper1_subslots = wiring.mapper1_subslots
     slot2_sub_slot_enabled = wiring.slot2_sub_slot_enabled
     mapper2_subslots = wiring.mapper2_subslots
-    # Resolved after extension-overlay wiring: an extension overlay
-    # replacing slot 1's mapper (e.g. --extension1 fmpac over a Majutsushi
-    # cartridge) removes that cartridge's own DAC along with it.
-    dac: MajutsushiMapper | None = (
-        mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
-    )
+    # Resolved after extension-overlay wiring (see _resolve_shared_dac):
+    # an extension overlay replacing a slot's mapper (e.g. --extension1
+    # fmpac over a Majutsushi cartridge) removes that slot's own DAC along
+    # with it, and either slot's mapper can resolve to Majutsushi.
+    dac = _resolve_shared_dac(spec, mapper_instance, mapper2_instance)
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     if joy_map is not None:

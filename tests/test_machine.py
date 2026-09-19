@@ -404,6 +404,41 @@ def test_make_machine_extension1_scc_plus_alone_builds_real_scc_chip() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Either slot's Majutsushi mapper wires machine.dac -- weed-follow-up bug
+# fix: the DAC used to be detected from slot 1's mapper only, so a
+# Majutsushi cartridge in slot 2 built fine but never reached machine.dac
+# (silent DAC audio loss). Machine has a single dac field, so both slots
+# resolving to Majutsushi at once is rejected, mirroring KonamiSCC's own
+# single-scc-field check.
+# ---------------------------------------------------------------------------
+
+def test_make_machine_dac_wired_from_slot1_majutsushi() -> None:
+    from msx.mapper import MajutsushiMapper
+    cart = bytes(131072)
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="Majutsushi")
+    assert isinstance(m.dac, MajutsushiMapper)
+    assert m.dac is m.memory._mapper
+
+
+def test_make_machine_dac_wired_from_slot2_majutsushi() -> None:
+    from msx.mapper import MajutsushiMapper
+    cart2 = bytes(131072)
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Majutsushi")
+    assert isinstance(m.dac, MajutsushiMapper)
+    assert m.dac is m.memory._mapper2
+
+
+def test_make_machine_majutsushi_in_both_slots_rejected() -> None:
+    cart1 = bytes(131072)
+    cart2 = bytes([0xFF]) + bytes(131071)
+    with pytest.raises(MachineLoadError, match="dac"):
+        make_machine(
+            rom=_NOP_ROM, cartridge=cart1, mapper="Majutsushi",
+            cartridge2=cart2, mapper2="Majutsushi",
+        )
+
+
+# ---------------------------------------------------------------------------
 # cycle_count
 
 def test_cycle_count_starts_at_zero() -> None:

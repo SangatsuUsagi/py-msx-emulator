@@ -152,6 +152,97 @@ def test_two_halnote_overlays_at_once_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
+    # Two expanded overlays that each declare their own io_device: kanji_rom
+    # (hbi_j1's shape, and msxdos2_512k_kanjirom's shape) conflict on I/O
+    # ports 0xD8-0xDB even with no machine-declared io_device and no
+    # ram_mapper sub-slot involved (see the RejectMachineAndOverlayIoDevice
+    # Conflict guidance this weed pass generalized to all three sources).
+    hbi_dir = tmp_path / "hbi_j1_rom"
+    hbi_dir.mkdir()
+    (hbi_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
+    other_dir = tmp_path / "other_kanji_rom"
+    other_dir.mkdir()
+    (other_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
+    overlay1 = _ExpandedExtensionOverlay(
+        subslots={},
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=hbi_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+        ),
+    )
+    overlay2 = _ExpandedExtensionOverlay(
+        subslots={},
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=other_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+        ),
+    )
+    with pytest.raises(MachineLoadError, match="Kanji-ROM"):
+        build_machine(
+            _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+            extension_overlay1=overlay1, extension_overlay=overlay2,
+        )
+
+
+# ---------------------------------------------------------------------------
+# fmpac on one slot survives a non-fmpac flat overlay on the other slot
+# (weed-follow-up bug fix: _wire_extension_overlay used to unconditionally
+# overwrite fmpac_device/fmpac_sram_save_path from whichever slot's flat
+# overlay was wired last, even when that overlay was scc_i_cart -- silently
+# erasing the other slot's already-resolved FM-PAC, exactly the class of
+# bug the halnote_device assignment a few lines below was already guarded
+# against)
+# ---------------------------------------------------------------------------
+
+def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
+    fmpac_dir = tmp_path / "fmpac_rom"
+    fmpac_dir.mkdir()
+    fmpac_overlay = _fmpac_overlay(fmpac_dir)
+    machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=fmpac_overlay,
+        extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+    )
+    assert machine.fmpac is not None
+    assert machine.fmpac_sram_save_path == fmpac_overlay.sram_save_path
+    assert (machine.fmpac, fmpac_overlay.sram_save_path) in machine.sram_sources()
+
+
+def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
+    # The reverse placement -- exercises the slot-1 assignment's own guard,
+    # not currently reachable as a *bug* (slot 1 is wired first, so nothing
+    # to overwrite yet), but kept symmetric with the slot-2 case above.
+    fmpac_dir = tmp_path / "fmpac_rom"
+    fmpac_dir.mkdir()
+    fmpac_overlay = _fmpac_overlay(fmpac_dir)
+    machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
+        extension_overlay=fmpac_overlay,
+    )
+    assert machine.fmpac is not None
+    assert machine.fmpac_sram_save_path == fmpac_overlay.sram_save_path
+
+
+def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
+    # Two fmpac overlays (one per slot) would both claim Machine's single
+    # fmpac field -- real hardware has one FM-PAC cartridge. Not reachable
+    # through the actual CLI (the identical-extension-id check rejects
+    # --extension1 fmpac --extension2 fmpac first), but build_machine
+    # itself must still refuse it as defense in depth.
+    fmpac_dir1 = tmp_path / "fmpac_rom1"
+    fmpac_dir1.mkdir()
+    fmpac_dir2 = tmp_path / "fmpac_rom2"
+    fmpac_dir2.mkdir()
+    with pytest.raises(MachineLoadError, match="fmpac"):
+        build_machine(
+            _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+            extension_overlay1=_fmpac_overlay(fmpac_dir1),
+            extension_overlay=_fmpac_overlay(fmpac_dir2),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Cross-slot SRAM independence: an FM-PAC on slot 1 and HBI-J1's halnote
 # cartridge on slot 2, each with its own battery-backed SRAM, persisting
