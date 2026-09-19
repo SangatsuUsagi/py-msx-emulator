@@ -12,7 +12,9 @@
 ることで、これは起動時に拒否されます（理由は下記の[「スロットモデル」節](#スロットモデル)
 を参照）。同じ id は `py_emulator.yaml` の `extension1:`/`extension2:` キーで
 も設定でき（従来の裸の `extension:` キーも `extension2:` のレガシー別名とし
-て使えます）、`--extension1 none`/`--extension2 none` はそのスロットに関して
+て使えます）、裸の `--extension` CLI フラグも同様に `--extension2` の別名と
+して引き続き使えます ── `--extension1`/`--extension2` が登場する以前の意味そ
+のままです。`--extension1 none`/`--extension2 none` はそのスロットに関して
 のみ、設定ファイルの指定を 1 回の実行に限り上書きします。FM-PAC/SCC-I/HBI-J1
 の実装詳細（メモリマップ、I/O ポート、既知の制限）は
 [`README_ja.md`の「対応ハードウェア」節](README_ja.md#対応ハードウェア)を参照
