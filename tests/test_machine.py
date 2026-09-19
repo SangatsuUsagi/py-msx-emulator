@@ -296,6 +296,28 @@ def test_make_machine_cartridge2_wired_to_slot2() -> None:
     assert m.memory.read(0x4000) == 0xBB
 
 
+@pytest.mark.parametrize(
+    ("mapper2_type", "expected_base"),
+    [("Page2", 0x8000), ("0x4000", 0x4000), ("0x8000", 0x8000)],
+    ids=["Page2", "0x4000", "0x8000"],
+)
+def test_make_machine_mapper2_fixed_page_types_build_fixed_page_mapper(
+    mapper2_type: str, expected_base: int,
+) -> None:
+    from msx.mapper import FixedPageMapper
+    cart2 = bytes(16384)  # dummy 16 KB cartridge
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2=mapper2_type)
+    assert isinstance(m.memory._mapper2, FixedPageMapper)
+    assert m.memory._mapper2.base == expected_base
+
+
+def test_make_machine_mapper2_rtype_builds_rtype_mapper() -> None:
+    from msx.mapper import RTypeMapper
+    cart2 = bytes(384 * 1024)  # dummy 384 KB R-Type-sized cartridge
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="R-Type")
+    assert isinstance(m.memory._mapper2, RTypeMapper)
+
+
 def test_make_machine_mapper2_konamiscc_builds_real_scc_chip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
