@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from msx.input import InputState
@@ -467,3 +469,66 @@ def test_reset_with_no_fdc_attached_does_not_crash() -> None:
     m = _make_machine()
     assert m.fdc is None
     m.reset()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Machine.sram_sources() -- design.md Decision D2 Option B: a generic
+# (has_sram source, save path) list replacing the individually-enumerated
+# _save_sram_if_present call per device __main__.py's _cleanup used to make.
+# ---------------------------------------------------------------------------
+
+def test_sram_sources_empty_when_nothing_carries_sram() -> None:
+    m = _make_machine()
+    assert m.sram_sources() == []
+
+
+def test_sram_sources_includes_slot1_mapper_when_sram_backed() -> None:
+    m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    sources = m.sram_sources()
+    assert len(sources) == 1
+    source, path = sources[0]
+    assert source is m.memory._mapper
+    assert isinstance(path, Path)
+    assert path == m.sram_save_path
+
+
+def test_sram_sources_excludes_slot1_mapper_without_sram() -> None:
+    # A non-SRAM mapper (ASCII8) never gets a sram_save_path in the first
+    # place, but the has_sram guard is what actually excludes it here.
+    m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8")
+    assert m.sram_sources() == []
+
+
+def test_sram_sources_includes_both_slots_independently() -> None:
+    m = make_machine(
+        rom=_NOP_ROM,
+        cartridge=bytes(65536), mapper="ASCII8SRAM2",
+        cartridge2=bytes(range(256)) * 32, mapper2="GameMaster2",
+    )
+    sources = m.sram_sources()
+    assert len(sources) == 2
+    found = {id(source) for source, _path in sources}
+    assert id(m.memory._mapper) in found
+    assert id(m.memory._mapper2) in found
+
+
+def test_sram_sources_includes_fmpac_and_halnote_when_present(tmp_path: Path) -> None:
+    from msx.fmpac import FmPac
+    from msx.mapper import HalnoteMapper
+    from msx.opll import Opll
+
+    m = _make_machine()
+    m.fmpac = FmPac(rom=bytes(65536), opll=Opll())
+    m.fmpac_sram_save_path = tmp_path / "fmpac.sram"
+    m.halnote_cart = HalnoteMapper(rom=bytes(1048576))
+    m.halnote_sram_save_path = tmp_path / "halnote.sram"
+
+    sources = m.sram_sources()
+    found = {id(source): path for source, path in sources}
+    assert id(m.fmpac) in found and found[id(m.fmpac)] == m.fmpac_sram_save_path
+    assert id(m.halnote_cart) in found and found[id(m.halnote_cart)] == m.halnote_sram_save_path
+
+    m.halnote_sram_save_path = None  # unset path excludes it from the list
+    sources = m.sram_sources()
+    assert id(m.halnote_cart) not in {id(source) for source, _path in sources}
+    assert id(m.fmpac) in {id(source) for source, _path in sources}

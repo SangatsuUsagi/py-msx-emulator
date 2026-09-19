@@ -677,6 +677,9 @@ class Debugger:
             elif mem.slot2_sub_slot_enabled and prim == 2:
                 sec = (mem.slot2_sub_slot_reg >> (page * 2)) & 0x03
                 sec_str = str(sec)
+            elif mem.slot1_sub_slot_enabled and prim == 1:
+                sec = (mem.slot1_sub_slot_reg >> (page * 2)) & 0x03
+                sec_str = str(sec)
             else:
                 sec = None
                 sec_str = "-"
@@ -692,6 +695,8 @@ class Debugger:
                 _print_expanded_slot(mem, prim, mem.sub_slot_reg)
             elif mem.slot2_sub_slot_enabled and prim == 2:
                 _print_expanded_slot(mem, prim, mem.slot2_sub_slot_reg)
+            elif mem.slot1_sub_slot_enabled and prim == 1:
+                _print_expanded_slot(mem, prim, mem.slot1_sub_slot_reg)
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
