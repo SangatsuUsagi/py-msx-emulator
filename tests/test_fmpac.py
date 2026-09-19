@@ -483,6 +483,21 @@ def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     assert machine.fmpac_sram_save_path == overlay.sram_save_path
 
 
+def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
+    # openspec/changes/slot1-slot2-symmetrization Phase 6: fmpac_sram_save_path
+    # used to be resolved from build_machine's slot-2-specific
+    # extension_overlay parameter directly, so an FM-PAC placed on slot 1
+    # via --extension1 never got its SRAM save path wired at all (it built
+    # and ran, but silently never persisted) -- now resolved from
+    # _ExtensionWiring, which is slot-agnostic.
+    overlay = _make_fmpac_overlay(tmp_path)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    assert machine.fmpac is not None
+    assert machine.memory._mapper is machine.fmpac
+    assert machine.fmpac_sram_save_path == overlay.sram_save_path
+    assert (machine.fmpac, overlay.sram_save_path) in machine.sram_sources()
+
+
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
     machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)

@@ -1423,6 +1423,7 @@ class _ExtensionWiring:
     slot2_sub_slot_enabled: bool
     mapper2_subslots: list[Mapper | None]
     fmpac_device: FmPac | None
+    fmpac_sram_save_path: Path | None
     halnote_device: HalnoteMapper | None
     halnote_sram_save_path: Path | None
     kanji_device: KanjiRom | None
@@ -1453,25 +1454,30 @@ def _wire_expanded_overlay(
     extension_overlay: _ExpandedExtensionOverlay,
     kanji_device: KanjiRom | None,
     other_slot_ram_mapper_claimed: bool = False,
+    other_slot_halnote_claimed: bool = False,
 ) -> _ExpandedOverlayWiring:
     """Resolve an expanded --extension overlay's per-sub-slot devices and its
     own optional `io_device`. `kanji_device` is whatever
     `_wire_machine_io_device` already resolved, so a conflicting
-    overlay-declared Kanji ROM can be detected. `other_slot_ram_mapper_claimed`
-    is whether the *other* cartridge slot's own expanded overlay (wired
-    first by `_wire_extension_overlay`) already claimed a 'ram_mapper'
-    sub-slot -- two independent RamMapper instances would otherwise both
-    register on the same I/O ports (0xFC-0xFF).
+    overlay-declared Kanji ROM can be detected. `other_slot_ram_mapper_claimed`/
+    `other_slot_halnote_claimed` are whether the *other* cartridge slot's own
+    expanded overlay (wired first by `_wire_extension_overlay`) already
+    claimed a 'ram_mapper'/'halnote' sub-slot -- two independent RamMapper
+    instances would otherwise both register on the same I/O ports
+    (0xFC-0xFF), and two independent HalnoteMapper instances would otherwise
+    both claim `Machine`'s single `halnote_cart` field.
 
     Raises:
         MachineLoadError: If applied to an MSX1 machine, if the overlay
             declares a 'ram_mapper' sub-slot on a machine that already has a
             slot-3 memory mapper or whose other cartridge slot already
-            claimed one, if a machine-declared and an overlay-declared
-            `io_device` both resolve to a Kanji-ROM device (ports 0xD8-0xDB
-            cannot serve two), or if a sub-slot names a device kind that
-            passed load-time validation but has no construction case here
-            (an internal consistency error between
+            claimed one, if the overlay declares a 'halnote' sub-slot while
+            the other cartridge slot's overlay already claimed one, if a
+            machine-declared and an overlay-declared `io_device` both
+            resolve to a Kanji-ROM device (ports 0xD8-0xDB cannot serve
+            two), or if a sub-slot names a device kind that passed
+            load-time validation but has no construction case here (an
+            internal consistency error between
             `_KNOWN_EXPANDED_SUBSLOT_DEVICES` and this function).
     """
     if spec.generation == "msx1":
@@ -1494,6 +1500,16 @@ def _wire_expanded_overlay(
             f"with no existing slot-3 memory mapper and no ram_mapper sub-slot already "
             f"claimed elsewhere, but {reason} -- two independent memory mappers sharing "
             "the same I/O ports (0xFC-0xFF) is not supported"
+        )
+    wants_halnote = any(
+        sub.device == "halnote" for sub in extension_overlay.subslots.values()
+    )
+    if wants_halnote and other_slot_halnote_claimed:
+        raise MachineLoadError(
+            f"{spec.machine_id}: a 'halnote' extension sub-slot conflicts with the "
+            "other cartridge slot's extension overlay, which already claimed one -- "
+            "real hardware never has two HBI-J1 MSX-JE cartridges attached at once, "
+            "and Machine has a single halnote_cart field"
         )
     subslots: list[Mapper | None] = _empty_subslots()
     halnote_device: HalnoteMapper | None = None
@@ -1556,11 +1572,16 @@ class _FlatOverlayWiring:
     replacing a cartridge slot's mapper wholesale) produces. `mapper_instance`
     is generic -- the caller decides whether it replaces slot 1's or slot
     2's mapper, since a flat overlay's device construction is identical
-    regardless of which slot it targets."""
+    regardless of which slot it targets. `fmpac_sram_save_path` is likewise
+    generic (the overlay's own save path, independent of which slot the
+    caller places `fmpac_device` in) -- callers thread it through
+    unconditionally, mirroring how `_wire_expanded_overlay`'s
+    `halnote_sram_save_path` already needs no per-slot distinction."""
 
     mapper_instance: Mapper
     scc: SCC | None
     fmpac_device: FmPac | None
+    fmpac_sram_save_path: Path | None
 
 
 def _wire_flat_overlay(
@@ -1594,7 +1615,8 @@ def _wire_flat_overlay(
             sram=fmpac_sram if fmpac_sram is not None else bytearray(FMPAC_SRAM_SIZE),
         )
         return _FlatOverlayWiring(
-            mapper_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device
+            mapper_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device,
+            fmpac_sram_save_path=extension_overlay.sram_save_path,
         )
     if extension_overlay.device == "scc_i_cart":
         # is_052539=True: the SCC-I cartridge carries a genuine
@@ -1618,7 +1640,8 @@ def _wire_flat_overlay(
             )
         scc = SCC(is_052539=True)
         return _FlatOverlayWiring(
-            mapper_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None
+            mapper_instance=SCCICart(scc=scc), scc=scc, fmpac_device=None,
+            fmpac_sram_save_path=None,
         )
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- extension overlay device "
@@ -1665,7 +1688,9 @@ def _wire_extension_overlay(
     halnote_device: HalnoteMapper | None = None
     halnote_sram_save_path: Path | None = None
     fmpac_device: FmPac | None = None
+    fmpac_sram_save_path: Path | None = None
     slot1_ram_mapper_claimed = False
+    slot1_halnote_claimed = False
 
     # Slot 1's overlay, if any: unconditionally occupies primary slot 1,
     # replacing whatever slot-1 cartridge mapper was resolved above.
@@ -1673,8 +1698,10 @@ def _wire_extension_overlay(
         expanded1 = _wire_expanded_overlay(spec, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
         mapper1_subslots = expanded1.subslots
-        halnote_device = expanded1.halnote_device
-        halnote_sram_save_path = expanded1.halnote_sram_save_path
+        if expanded1.halnote_device is not None:
+            halnote_device = expanded1.halnote_device
+            halnote_sram_save_path = expanded1.halnote_sram_save_path
+            slot1_halnote_claimed = True
         kanji_device = expanded1.kanji_device
         slot1_ram_mapper_claimed = any(
             isinstance(sub, RamMapper) for sub in mapper1_subslots
@@ -1684,6 +1711,7 @@ def _wire_extension_overlay(
         mapper_instance = flat1.mapper_instance
         scc = flat1.scc
         fmpac_device = flat1.fmpac_device
+        fmpac_sram_save_path = flat1.fmpac_sram_save_path
 
     # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
     # replacing whatever slot-2 cartridge mapper was resolved above.
@@ -1691,17 +1719,20 @@ def _wire_extension_overlay(
         expanded2 = _wire_expanded_overlay(
             spec, extension_overlay2, kanji_device,
             other_slot_ram_mapper_claimed=slot1_ram_mapper_claimed,
+            other_slot_halnote_claimed=slot1_halnote_claimed,
         )
         slot2_sub_slot_enabled = True
         mapper2_subslots = expanded2.subslots
-        halnote_device = expanded2.halnote_device
-        halnote_sram_save_path = expanded2.halnote_sram_save_path
+        if expanded2.halnote_device is not None:
+            halnote_device = expanded2.halnote_device
+            halnote_sram_save_path = expanded2.halnote_sram_save_path
         kanji_device = expanded2.kanji_device
     elif extension_overlay2 is not None:
         flat2 = _wire_flat_overlay(spec, extension_overlay2, scc)
         mapper2_instance = flat2.mapper_instance
         scc = flat2.scc
         fmpac_device = flat2.fmpac_device
+        fmpac_sram_save_path = flat2.fmpac_sram_save_path
 
     return _ExtensionWiring(
         mapper_instance=mapper_instance,
@@ -1712,6 +1743,7 @@ def _wire_extension_overlay(
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         mapper2_subslots=mapper2_subslots,
         fmpac_device=fmpac_device,
+        fmpac_sram_save_path=fmpac_sram_save_path,
         halnote_device=halnote_device,
         halnote_sram_save_path=halnote_sram_save_path,
         kanji_device=kanji_device,
@@ -1812,16 +1844,15 @@ def _wire_post_construction_attrs(
     sram_save_path: Path | None,
     sram_save_path2: Path | None,
     wiring: _ExtensionWiring,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None,
 ) -> None:
     """Wire closures and device/save-path attributes onto an already-built
     Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
     Majutsushi DAC needs, and the SRAM/FM-PAC/Halnote/Kanji attributes
     `build_machine`'s cartridge-slot/extension-overlay resolution produced.
-    `extension_overlay` is slot 2's overlay specifically (`fmpac_sram_save_path`
-    only ever applies to an FM-PAC device, and slot 1's FM-PAC placement --
-    should it ever carry persisted SRAM -- is not yet distinguished here;
-    see design.md D2, folded into the SRAM-path list refactor)."""
+    `wiring.fmpac_sram_save_path`/`wiring.halnote_sram_save_path` are each
+    already slot-agnostic (`_wire_extension_overlay` resolves them from
+    whichever slot's overlay actually produced the device), so no per-slot
+    distinction is needed here."""
     io._get_pc = lambda: machine.cpu.registers.PC
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
@@ -1833,12 +1864,7 @@ def _wire_post_construction_attrs(
     machine.fmpac = wiring.fmpac_device
     machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
-    machine.fmpac_sram_save_path = (
-        extension_overlay.sram_save_path
-        if wiring.fmpac_device is not None and extension_overlay is not None
-        and not isinstance(extension_overlay, _ExpandedExtensionOverlay)
-        else None
-    )
+    machine.fmpac_sram_save_path = wiring.fmpac_sram_save_path
     machine.halnote_sram_save_path = wiring.halnote_sram_save_path
 
 
@@ -2005,9 +2031,7 @@ def build_machine(
             mapper2_subslots=mapper2_subslots,
         )
 
-    _wire_post_construction_attrs(
-        machine, io, dac, sram_save_path, sram_save_path2, wiring, extension_overlay
-    )
+    _wire_post_construction_attrs(machine, io, dac, sram_save_path, sram_save_path2, wiring)
     return machine
 
 
