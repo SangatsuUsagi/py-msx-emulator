@@ -21,15 +21,27 @@ speed: 1.0
 # modes (--benchmark / --count-frame).
 scale: 3
 
+# Slot 1 cartridge ROM path (relative to the repository root). Leave unset
+# to use the positional cartridge argument instead (default). Conflicts
+# with `extension1`. The slot 1 mapper is CLI-only (--mapper/--mapper1,
+# default auto) -- not configurable here.
+# slot1: roms/slot1.rom
+
 # Slot 2 cartridge ROM path (relative to the repository root). Leave unset
-# for no slot 2 cartridge (default). Conflicts with `extension`. The slot 2
+# for no slot 2 cartridge (default). Conflicts with `extension2`. The slot 2
 # mapper is CLI-only (--mapper2, default auto) -- not configurable here.
 # slot2: roms/slot2.rom
 
-# Overlay a slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM) or
-# "scc_plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
-# no ROM/data file is ever loaded -- plus the SCC sound chip). Conflicts
-# with a slot 2 cartridge (--slot2/--mapper2 / slot2 above).
+# Overlay a slot 1/slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM)
+# or "scc_plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
+# no ROM/data file is ever loaded -- plus the SCC sound chip), among others
+# documented in docs/README_extension.md. `extension1` conflicts with a
+# slot 1 cartridge (--slot1/--mapper1 / slot1 above); `extension2` conflicts
+# with a slot 2 cartridge (--slot2/--mapper2 / slot2 above). The same id
+# cannot be set on both slots at once. The bare `extension` key below still
+# works too, as a legacy alias for `extension2`.
+# extension1: fmpac
+# extension2: hbi_j1
 # extension: fmpac
 
 # Frame skip mode: true = auto (adapt to frame overruns, default), false =
