@@ -490,6 +490,8 @@ class Memory:
                 return (~self.sub_slot_reg) & 0xFF
             if self._page3_intercept_slot == 2:
                 return (~self.slot2_sub_slot_reg) & 0xFF
+            # _page3_intercept_slot's only remaining value here is 1 -- see
+            # _rebuild_page_cache, which never sets it to anything else.
             return (~self.slot1_sub_slot_reg) & 0xFF
         return self._page_read[page](addr)
 
@@ -507,6 +509,8 @@ class Memory:
             elif self._page3_intercept_slot == 2:
                 self.set_slot2_sub_slot_reg(value & 0xFF)
             else:
+                # _page3_intercept_slot's only remaining value here is 1 --
+                # see _rebuild_page_cache, which never sets it to anything else.
                 self.set_slot1_sub_slot_reg(value & 0xFF)
             return
         self._page_write[page](addr, value)
