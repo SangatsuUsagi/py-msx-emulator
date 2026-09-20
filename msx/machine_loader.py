@@ -1449,6 +1449,50 @@ class _ExpandedOverlayWiring:
     kanji_device: KanjiRom | None
 
 
+def _build_expanded_subslot_device(
+    spec: MachineSpec, subslot: _ExpandedSubslotDevice, index: int
+) -> tuple[Mapper, HalnoteMapper | None, Path | None]:
+    """Construct one expanded-overlay sub-slot's device. Returns
+    `(mapper_instance, halnote_device, halnote_sram_save_path)` -- the
+    latter two are populated only when `subslot.device == "halnote"` (`None`
+    otherwise), so the caller can still track `Machine`'s single
+    `halnote_cart` field without this function needing to know about that
+    Machine-level concern itself.
+
+    Raises:
+        MachineLoadError: If `subslot.device` passed load-time validation
+            (`_KNOWN_EXPANDED_SUBSLOT_DEVICES`) but has no construction case
+            here (an internal consistency error between the two).
+    """
+    sub_label = f"expanded overlay sub-slot {index}"
+    if subslot.device == "halnote":
+        halnote_sram_save_path = subslot.sram_save_path
+        halnote_sram = _load_sram_or_warn(
+            subslot.sram_save_path, HALNOTE_SRAM_SIZE, label="HBI-J1 MSX-JE "
+        ) if subslot.sram_save_path is not None else None
+        halnote_device = HalnoteMapper(
+            rom=_load_device_rom(subslot, sub_label),
+            sram=halnote_sram if halnote_sram is not None
+            else bytearray(HALNOTE_SRAM_SIZE),
+        )
+        return halnote_device, halnote_device, halnote_sram_save_path
+    if subslot.device == "flat_rom":
+        return FixedPageMapper(rom=_load_device_rom(subslot, sub_label), base=0x4000), None, None
+    if subslot.device == "ascii8":
+        return Ascii8Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+    if subslot.device == "ascii16":
+        return Ascii16Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+    if subslot.device == "ram_mapper":
+        assert subslot.size_kb is not None  # guaranteed by load-time validation
+        return RamMapper(size_kb=subslot.size_kb), None, None
+    raise MachineLoadError(
+        f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
+        f"{index} device {subslot.device!r} passed load-time validation "
+        f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
+        "construction case"
+    )
+
+
 def _wire_expanded_overlay(
     spec: MachineSpec,
     extension_overlay: _ExpandedExtensionOverlay,
@@ -1516,36 +1560,13 @@ def _wire_expanded_overlay(
     halnote_device: HalnoteMapper | None = None
     halnote_sram_save_path: Path | None = None
     for index, subslot in extension_overlay.subslots.items():
-        sub_label = f"expanded overlay sub-slot {index}"
-        if subslot.device == "halnote":
-            halnote_sram_save_path = subslot.sram_save_path
-            halnote_sram = _load_sram_or_warn(
-                subslot.sram_save_path, HALNOTE_SRAM_SIZE, label="HBI-J1 MSX-JE "
-            ) if subslot.sram_save_path is not None else None
-            halnote_device = HalnoteMapper(
-                rom=_load_device_rom(subslot, sub_label),
-                sram=halnote_sram if halnote_sram is not None
-                else bytearray(HALNOTE_SRAM_SIZE),
-            )
-            subslots[index] = halnote_device
-        elif subslot.device == "flat_rom":
-            subslots[index] = FixedPageMapper(
-                rom=_load_device_rom(subslot, sub_label), base=0x4000
-            )
-        elif subslot.device == "ascii8":
-            subslots[index] = Ascii8Mapper(rom=_load_device_rom(subslot, sub_label))
-        elif subslot.device == "ascii16":
-            subslots[index] = Ascii16Mapper(rom=_load_device_rom(subslot, sub_label))
-        elif subslot.device == "ram_mapper":
-            assert subslot.size_kb is not None  # guaranteed by load-time validation
-            subslots[index] = RamMapper(size_kb=subslot.size_kb)
-        else:
-            raise MachineLoadError(
-                f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
-                f"{index} device {subslot.device!r} passed load-time validation "
-                f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
-                "construction case"
-            )
+        mapper_instance, built_halnote, built_halnote_sram_path = (
+            _build_expanded_subslot_device(spec, subslot, index)
+        )
+        subslots[index] = mapper_instance
+        if built_halnote is not None:
+            halnote_device = built_halnote
+            halnote_sram_save_path = built_halnote_sram_path
     if (
         extension_overlay.io_device is not None
         and extension_overlay.io_device.device == "kanji_rom"
