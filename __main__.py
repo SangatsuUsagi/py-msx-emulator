@@ -249,10 +249,8 @@ def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | Non
     if hashlib.sha1(cartridge, usedforsecurity=False).digest() == hashlib.sha1(
         cartridge2, usedforsecurity=False
     ).digest():
-        print("error: slot 1 and slot 2 resolve to the identical cartridge ROM "
-              "-- loading the same cartridge into both slots is not supported",
-              file=sys.stderr)
-        sys.exit(1)
+        _fail("slot 1 and slot 2 resolve to the identical cartridge ROM -- "
+              "loading the same cartridge into both slots is not supported")
 
 
 def _resolve_machine_id(
@@ -592,8 +590,7 @@ def main() -> None:
                 joy_map=app_cfg.keyboard_joy_map(),
             )
         except MachineLoadError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            sys.exit(1)
+            _fail(str(exc))
 
         # Attach the interactive debugger for all machines so Ctrl-C drops into
         # the REPL on MSX1 too (the slot/mapper tools are most useful there).
