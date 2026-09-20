@@ -1736,7 +1736,14 @@ def _wire_extension_overlay(
     slot1_halnote_claimed = False
 
     # Slot 1's overlay, if any: unconditionally occupies primary slot 1,
-    # replacing whatever slot-1 cartridge mapper was resolved above.
+    # replacing whatever slot-1 cartridge mapper was resolved above. Keep
+    # this block and slot 2's below in sync -- they are structurally
+    # identical (each resolves its own slot's overlay, and this block
+    # additionally records slot1_ram_mapper_claimed/slot1_halnote_claimed
+    # for slot 2's block to pass in as other_slot_ram_mapper_claimed/
+    # other_slot_halnote_claimed), differing only in which slot's
+    # variables they populate. A future third cross-slot conflict type
+    # needs adding to both blocks.
     if isinstance(extension_overlay1, _ExpandedExtensionOverlay):
         expanded1 = _wire_expanded_overlay(spec, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
