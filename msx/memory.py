@@ -398,31 +398,24 @@ class Memory:
             return self.ram_mapper.write
         return self._write_msx1_flat_ram
 
-    def _resolve_slot1_subslot_read_leaf(self, page: int) -> Callable[[int], int]:
-        """Slot 1's own sub-slot dispatch -- the identical mechanism
-        `_resolve_slot2_subslot_read_leaf` provides for slot 2, applied
-        independently to slot 1: a plain Mapper-per-sub-slot array, no
-        SUB-ROM/FDC/RAM role concepts involved."""
-        sub = (self.slot1_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper1_subslots[sub]
+    def _resolve_expanded_subslot_read_leaf(
+        self, sub_slot_reg: int, subslots: list["Mapper | None"], page: int
+    ) -> Callable[[int], int]:
+        """Either cartridge slot's own sub-slot dispatch, once it is
+        expanded (`slot1_sub_slot_enabled`/`slot2_sub_slot_enabled`) -- a
+        plain Mapper-per-sub-slot array, no SUB-ROM/FDC/RAM role concepts
+        involved (unlike slot 3's role-based dispatch above). The caller
+        passes that slot's own `slot{1,2}_sub_slot_reg`/`_mapper{1,2}_
+        subslots`, so this single implementation serves both slots."""
+        sub = (sub_slot_reg >> (page * 2)) & 0x03
+        mapper = subslots[sub]
         return mapper.read if mapper is not None else self._read_open_bus
 
-    def _resolve_slot1_subslot_write_leaf(self, page: int) -> Callable[[int, int], None]:
-        sub = (self.slot1_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper1_subslots[sub]
-        return mapper.write if mapper is not None else self._write_noop
-
-    def _resolve_slot2_subslot_read_leaf(self, page: int) -> Callable[[int], int]:
-        """Slot 2's own sub-slot dispatch (independent of slot 3's
-        role-based one above) -- a plain Mapper-per-sub-slot array, no
-        SUB-ROM/FDC/RAM role concepts involved."""
-        sub = (self.slot2_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper2_subslots[sub]
-        return mapper.read if mapper is not None else self._read_open_bus
-
-    def _resolve_slot2_subslot_write_leaf(self, page: int) -> Callable[[int, int], None]:
-        sub = (self.slot2_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper2_subslots[sub]
+    def _resolve_expanded_subslot_write_leaf(
+        self, sub_slot_reg: int, subslots: list["Mapper | None"], page: int
+    ) -> Callable[[int, int], None]:
+        sub = (sub_slot_reg >> (page * 2)) & 0x03
+        mapper = subslots[sub]
         return mapper.write if mapper is not None else self._write_noop
 
     def _resolve_page_read_leaf(self, page: int) -> Callable[[int], int]:
@@ -431,11 +424,15 @@ class Memory:
             return self._read_rom
         if slot == 1:
             if self.slot1_sub_slot_enabled:
-                return self._resolve_slot1_subslot_read_leaf(page)
+                return self._resolve_expanded_subslot_read_leaf(
+                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                )
             return self._mapper.read
         if slot == 2:
             if self.slot2_sub_slot_enabled:
-                return self._resolve_slot2_subslot_read_leaf(page)
+                return self._resolve_expanded_subslot_read_leaf(
+                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                )
             return self._mapper2.read
         return self._resolve_slot3_read_leaf(page)
 
@@ -445,11 +442,15 @@ class Memory:
             return self._write_noop  # BIOS ROM is read-only
         if slot == 1:
             if self.slot1_sub_slot_enabled:
-                return self._resolve_slot1_subslot_write_leaf(page)
+                return self._resolve_expanded_subslot_write_leaf(
+                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                )
             return self._mapper.write
         if slot == 2:
             if self.slot2_sub_slot_enabled:
-                return self._resolve_slot2_subslot_write_leaf(page)
+                return self._resolve_expanded_subslot_write_leaf(
+                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                )
             return self._mapper2.write
         return self._resolve_slot3_write_leaf(page)
 
