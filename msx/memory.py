@@ -399,7 +399,7 @@ class Memory:
         return self._write_msx1_flat_ram
 
     def _resolve_expanded_subslot_read_leaf(
-        self, sub_slot_reg: int, subslots: list["Mapper | None"], page: int
+        self, sub_slot_reg: int, subslots: list[Mapper | None], page: int
     ) -> Callable[[int], int]:
         """Either cartridge slot's own sub-slot dispatch, once it is
         expanded (`slot1_sub_slot_enabled`/`slot2_sub_slot_enabled`) -- a
@@ -412,7 +412,7 @@ class Memory:
         return mapper.read if mapper is not None else self._read_open_bus
 
     def _resolve_expanded_subslot_write_leaf(
-        self, sub_slot_reg: int, subslots: list["Mapper | None"], page: int
+        self, sub_slot_reg: int, subslots: list[Mapper | None], page: int
     ) -> Callable[[int, int], None]:
         sub = (sub_slot_reg >> (page * 2)) & 0x03
         mapper = subslots[sub]
@@ -531,16 +531,21 @@ class Memory:
     # from outside this class -- see openspec/changes/archive/
     # *-debugger-slot-mapper-interface.
 
+    def _cartridge_slot_state(self, primary: int) -> tuple[bool, list[Mapper | None], Mapper]:
+        """(sub_slot_enabled, subslots, mapper) for cartridge slot 1 or 2 --
+        shared lookup so the debug helpers below don't each repeat the same
+        `primary == 1 ? slot1 : slot2` ternary independently."""
+        if primary == 1:
+            return self.slot1_sub_slot_enabled, self._mapper1_subslots, self._mapper
+        return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
+
     def _describe_slot12(self, primary: int, secondary: int | None) -> str:
-        subslots = self._mapper1_subslots if primary == 1 else self._mapper2_subslots
-        sub_slot_enabled = self.slot1_sub_slot_enabled if primary == 1 \
-            else self.slot2_sub_slot_enabled
+        sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
         if sub_slot_enabled and secondary is not None:
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return "Cartridge (empty)"
             return f"Cartridge {mapper_kind_display_name(sub_mapper.kind)}"
-        mapper = self._mapper if primary == 1 else self._mapper2
         if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
             return "Cartridge (empty)"
         return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
@@ -600,24 +605,18 @@ class Memory:
             rm = self.ram_mapper
             if rm is not None:
                 return f"seg={rm.banks[page]}"
-        if primary in (1, 2):
-            sub_slot_enabled = self.slot1_sub_slot_enabled if primary == 1 \
-                else self.slot2_sub_slot_enabled
-            if sub_slot_enabled and secondary is not None:
-                if page is not None:
-                    subslots = self._mapper1_subslots if primary == 1 \
-                        else self._mapper2_subslots
-                    sub_mapper = subslots[secondary]
-                    if sub_mapper is not None:
-                        info = sub_mapper.debug_bank_info(page)
-                        if info is not None:
-                            return info
+        if primary not in (1, 2):
+            return "-"
+        sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
+        if sub_slot_enabled and secondary is not None:
+            if page is None:
                 return "-"
-        if primary in (1, 2) and page is not None:
-            mapper = self._mapper if primary == 1 else self._mapper2
-            info = mapper.debug_bank_info(page)
-            if info is not None:
-                return info
+            sub_mapper = subslots[secondary]
+            if sub_mapper is None:
+                return "-"
+            return sub_mapper.debug_bank_info(page) or "-"
+        if page is not None:
+            return mapper.debug_bank_info(page) or "-"
         return "-"
 
     def debug_slot_size_kb(self, primary: int, secondary: int | None) -> str:
