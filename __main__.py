@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, TextIO, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, NoReturn, TextIO, TypeVar
 
 from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
@@ -445,53 +445,49 @@ def _resolve_effective_options(
     )
 
 
+def _fail(msg: str) -> NoReturn:
+    """Print a startup-validation error to stderr and exit (code 1)."""
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None:
     """Enforce mutual-exclusivity and range constraints on resolved options.
 
     Prints an error to stderr and exits the process (code 1) on violation.
     """
     if args.benchmark is not None and args.count_frame is not None:
-        print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
-        sys.exit(1)
+        _fail("--benchmark and --count-frame are mutually exclusive")
     if opts.scale < 1:
-        print("error: --scale must be a positive integer", file=sys.stderr)
-        sys.exit(1)
+        _fail("--scale must be a positive integer")
     if args.cartridge and args.slot1:
-        print("error: a positional cartridge argument and --slot1 are "
-              "mutually exclusive (the positional argument is --slot1 "
-              "shorthand)", file=sys.stderr)
-        sys.exit(1)
+        _fail("a positional cartridge argument and --slot1 are mutually "
+              "exclusive (the positional argument is --slot1 shorthand)")
     if opts.extension1 is not None and (args.slot1 or args.cartridge):
-        print("error: --extension1 and --slot1/a positional cartridge "
-              "argument are mutually exclusive (the extension owns slot 1)",
-              file=sys.stderr)
-        sys.exit(1)
+        _fail("--extension1 and --slot1/a positional cartridge argument are "
+              "mutually exclusive (the extension owns slot 1)")
     # Checked against args.mapperN, not opts.mapperN: opts.mapperN folds in
     # the "auto" default, so it can't distinguish an explicit --mapperN auto
     # from --mapperN never having been passed. --mapper1/--mapper2 have no
     # config-file equivalent (see app-config-file spec), so only the CLI
     # flag needs checking here.
     if opts.extension1 is not None and args.mapper1 is not None:
-        print("error: --extension1 and --mapper1 are mutually exclusive "
-              "(the extension owns slot 1)", file=sys.stderr)
-        sys.exit(1)
+        _fail("--extension1 and --mapper1 are mutually exclusive (the "
+              "extension owns slot 1)")
     if opts.extension2 is not None and opts.slot2:
-        print("error: --extension2 and --slot2 are mutually exclusive "
-              "(the extension owns slot 2)", file=sys.stderr)
-        sys.exit(1)
+        _fail("--extension2 and --slot2 are mutually exclusive (the "
+              "extension owns slot 2)")
     if opts.extension2 is not None and args.mapper2 is not None:
-        print("error: --extension2 and --mapper2 are mutually exclusive "
-              "(the extension owns slot 2)", file=sys.stderr)
-        sys.exit(1)
+        _fail("--extension2 and --mapper2 are mutually exclusive (the "
+              "extension owns slot 2)")
     if (
         opts.extension1 is not None
         and opts.extension2 is not None
         and opts.extension1 == opts.extension2
     ):
-        print(f"error: --extension1 and --extension2 both resolve to "
+        _fail(f"--extension1 and --extension2 both resolve to "
               f"{opts.extension1!r} -- the identical extension on both "
-              "slots is not supported", file=sys.stderr)
-        sys.exit(1)
+              "slots is not supported")
 
 
 def main() -> None:
@@ -501,8 +497,7 @@ def main() -> None:
     try:
         app_cfg = load_app_config(_PROJECT_ROOT)
     except AppConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail(str(exc))
 
     opts = _resolve_effective_options(args, app_cfg)
     _validate_options(args, opts)
@@ -539,8 +534,7 @@ def main() -> None:
             if opts.extension2 is not None else None
         )
     except MachineLoadError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail(str(exc))
 
     # --- Disk image only applies to machines with a floppy interface ---
     if (fdd1_path is not None or fdd2_path is not None) and spec.fdc is None:
