@@ -72,6 +72,7 @@ from msx.mapper import (
     KonamiSCCMapper,
     MajutsushiMapper,
     Mapper,
+    MapperKind,
     RTypeMapper,
     SCCICart,
 )
@@ -1746,7 +1747,7 @@ def _wire_extension_overlay(
             slot1_halnote_claimed = True
         kanji_device = expanded1.kanji_device
         slot1_ram_mapper_claimed = any(
-            isinstance(sub, RamMapper) for sub in mapper1_subslots
+            sub is not None and sub.kind == MapperKind.RAM_MAPPER for sub in mapper1_subslots
         )
     elif extension_overlay1 is not None:
         flat1 = _wire_flat_overlay(spec, extension_overlay1, scc)
@@ -1891,8 +1892,10 @@ def _resolve_shared_dac(
     fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     with it. `Machine` has a single `dac` field and real hardware never has
     two Majutsushi-style DAC cartridges attached at once."""
-    dac1 = mapper_instance if isinstance(mapper_instance, MajutsushiMapper) else None
-    dac2 = mapper2_instance if isinstance(mapper2_instance, MajutsushiMapper) else None
+    dac1 = cast(MajutsushiMapper, mapper_instance) \
+        if mapper_instance.kind == MapperKind.MAJUTSUSHI else None
+    dac2 = cast(MajutsushiMapper, mapper2_instance) \
+        if mapper2_instance.kind == MapperKind.MAJUTSUSHI else None
     if dac1 is not None and dac2 is not None:
         raise MachineLoadError(
             f"{spec.machine_id}: cannot use the Majutsushi mapper in both slot 1 "
@@ -2048,11 +2051,12 @@ def build_machine(
     # already rejected a RamMapper on both cartridge slots at once, and on a
     # slot alongside spec.has_ram_mapper being True.
     for sub_mapper in (*mapper1_subslots, *mapper2_subslots):
-        if isinstance(sub_mapper, RamMapper):
+        if sub_mapper is not None and sub_mapper.kind == MapperKind.RAM_MAPPER:
+            ram_mapper = cast(RamMapper, sub_mapper)
             mm_s, mm_e = _io_range(spec, "memory_mapper_standard",
                                     _DEFAULT_IO_PORTS["memory_mapper_standard"])
-            io.register_read(mm_s, mm_e, sub_mapper.read_port)
-            io.register_write(mm_s, mm_e, sub_mapper.write_port)
+            io.register_read(mm_s, mm_e, ram_mapper.read_port)
+            io.register_write(mm_s, mm_e, ram_mapper.write_port)
 
     if spec.generation == "msx2":
         machine = _build_msx2(
