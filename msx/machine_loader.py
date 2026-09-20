@@ -1450,15 +1450,25 @@ class _ExpandedOverlayWiring:
     kanji_device: KanjiRom | None
 
 
+@dataclass
+class _ExpandedSubslotDeviceWiring:
+    """One expanded-overlay sub-slot's constructed device, from
+    `_build_expanded_subslot_device`. `halnote_device`/`halnote_sram_save_path`
+    are populated only when `mapper_instance` is that sub-slot's `HalnoteMapper`
+    (`None` for every other device kind), so the caller can still track
+    `Machine`'s single `halnote_cart` field without this dataclass needing a
+    separate "which kind was this" flag -- `halnote_device is not None` already
+    says so unambiguously."""
+
+    mapper_instance: Mapper
+    halnote_device: HalnoteMapper | None
+    halnote_sram_save_path: Path | None
+
+
 def _build_expanded_subslot_device(
     spec: MachineSpec, subslot: _ExpandedSubslotDevice, index: int
-) -> tuple[Mapper, HalnoteMapper | None, Path | None]:
-    """Construct one expanded-overlay sub-slot's device. Returns
-    `(mapper_instance, halnote_device, halnote_sram_save_path)` -- the
-    latter two are populated only when `subslot.device == "halnote"` (`None`
-    otherwise), so the caller can still track `Machine`'s single
-    `halnote_cart` field without this function needing to know about that
-    Machine-level concern itself.
+) -> _ExpandedSubslotDeviceWiring:
+    """Construct one expanded-overlay sub-slot's device.
 
     Raises:
         MachineLoadError: If `subslot.device` passed load-time validation
@@ -1476,16 +1486,21 @@ def _build_expanded_subslot_device(
             sram=halnote_sram if halnote_sram is not None
             else bytearray(HALNOTE_SRAM_SIZE),
         )
-        return halnote_device, halnote_device, halnote_sram_save_path
+        return _ExpandedSubslotDeviceWiring(halnote_device, halnote_device, halnote_sram_save_path)
     if subslot.device == "flat_rom":
-        return FixedPageMapper(rom=_load_device_rom(subslot, sub_label), base=0x4000), None, None
+        mapper = FixedPageMapper(rom=_load_device_rom(subslot, sub_label), base=0x4000)
+        return _ExpandedSubslotDeviceWiring(mapper, None, None)
     if subslot.device == "ascii8":
-        return Ascii8Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+        return _ExpandedSubslotDeviceWiring(
+            Ascii8Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+        )
     if subslot.device == "ascii16":
-        return Ascii16Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+        return _ExpandedSubslotDeviceWiring(
+            Ascii16Mapper(rom=_load_device_rom(subslot, sub_label)), None, None
+        )
     if subslot.device == "ram_mapper":
         assert subslot.size_kb is not None  # guaranteed by load-time validation
-        return RamMapper(size_kb=subslot.size_kb), None, None
+        return _ExpandedSubslotDeviceWiring(RamMapper(size_kb=subslot.size_kb), None, None)
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
         f"{index} device {subslot.device!r} passed load-time validation "
@@ -1561,13 +1576,11 @@ def _wire_expanded_overlay(
     halnote_device: HalnoteMapper | None = None
     halnote_sram_save_path: Path | None = None
     for index, subslot in extension_overlay.subslots.items():
-        mapper_instance, built_halnote, built_halnote_sram_path = (
-            _build_expanded_subslot_device(spec, subslot, index)
-        )
-        subslots[index] = mapper_instance
-        if built_halnote is not None:
-            halnote_device = built_halnote
-            halnote_sram_save_path = built_halnote_sram_path
+        built = _build_expanded_subslot_device(spec, subslot, index)
+        subslots[index] = built.mapper_instance
+        if built.halnote_device is not None:
+            halnote_device = built.halnote_device
+            halnote_sram_save_path = built.halnote_sram_save_path
     if (
         extension_overlay.io_device is not None
         and extension_overlay.io_device.device == "kanji_rom"
@@ -1753,9 +1766,7 @@ def _wire_extension_overlay(
             halnote_sram_save_path = expanded1.halnote_sram_save_path
             slot1_halnote_claimed = True
         kanji_device = expanded1.kanji_device
-        slot1_ram_mapper_claimed = any(
-            sub is not None and sub.kind == MapperKind.RAM_MAPPER for sub in mapper1_subslots
-        )
+        slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
     elif extension_overlay1 is not None:
         flat1 = _wire_flat_overlay(spec, extension_overlay1, scc)
         mapper_instance = flat1.mapper_instance
@@ -1889,6 +1900,21 @@ def _resolve_shared_scc(
     return slot1_scc if slot1_scc is not None else slot2_scc
 
 
+def _is_majutsushi_mapper(mapper: Mapper) -> TypeGuard[MajutsushiMapper]:
+    """True if `mapper` is the one DAC-equipped mapper kind this codebase
+    models (Majutsushi). Narrows the concrete type from a closed `kind`
+    comparison instead of `isinstance`, matching this file's `_is_*_shape`
+    TypeGuard convention (see `_is_rom_entry_shape` and friends above) for
+    the identical "check the discriminant, then need the narrowed type"
+    shape."""
+    return mapper.kind == MapperKind.MAJUTSUSHI
+
+
+def _is_ram_mapper(mapper: Mapper | None) -> TypeGuard[RamMapper]:
+    """True if `mapper` is a `RamMapper` -- see `_is_majutsushi_mapper`."""
+    return mapper is not None and mapper.kind == MapperKind.RAM_MAPPER
+
+
 def _resolve_shared_dac(
     spec: MachineSpec, mapper_instance: Mapper, mapper2_instance: Mapper
 ) -> MajutsushiMapper | None:
@@ -1899,10 +1925,8 @@ def _resolve_shared_dac(
     fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     with it. `Machine` has a single `dac` field and real hardware never has
     two Majutsushi-style DAC cartridges attached at once."""
-    dac1 = cast(MajutsushiMapper, mapper_instance) \
-        if mapper_instance.kind == MapperKind.MAJUTSUSHI else None
-    dac2 = cast(MajutsushiMapper, mapper2_instance) \
-        if mapper2_instance.kind == MapperKind.MAJUTSUSHI else None
+    dac1 = mapper_instance if _is_majutsushi_mapper(mapper_instance) else None
+    dac2 = mapper2_instance if _is_majutsushi_mapper(mapper2_instance) else None
     if dac1 is not None and dac2 is not None:
         raise MachineLoadError(
             f"{spec.machine_id}: cannot use the Majutsushi mapper in both slot 1 "
@@ -2058,12 +2082,11 @@ def build_machine(
     # already rejected a RamMapper on both cartridge slots at once, and on a
     # slot alongside spec.has_ram_mapper being True.
     for sub_mapper in (*mapper1_subslots, *mapper2_subslots):
-        if sub_mapper is not None and sub_mapper.kind == MapperKind.RAM_MAPPER:
-            ram_mapper = cast(RamMapper, sub_mapper)
+        if _is_ram_mapper(sub_mapper):
             mm_s, mm_e = _io_range(spec, "memory_mapper_standard",
                                     _DEFAULT_IO_PORTS["memory_mapper_standard"])
-            io.register_read(mm_s, mm_e, ram_mapper.read_port)
-            io.register_write(mm_s, mm_e, ram_mapper.write_port)
+            io.register_read(mm_s, mm_e, sub_mapper.read_port)
+            io.register_write(mm_s, mm_e, sub_mapper.write_port)
 
     if spec.generation == "msx2":
         machine = _build_msx2(
