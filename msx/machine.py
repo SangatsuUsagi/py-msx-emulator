@@ -4,7 +4,7 @@ import enum
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
@@ -35,6 +35,16 @@ HANG_PC_REPEAT_THRESHOLD: int = 1000
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
 SCREEN_WIDTH: int = 256
 SCREEN_HEIGHT: int = 192
+
+
+class SramSource(Protocol):
+    """Structural type for anything Machine.sram_sources() can hand
+    __main__.py's cleanup path -- any object with a save_sram(path) method
+    (every Mapper, per cart-rom-mapper's "Mapper protocol" Requirement, plus
+    FmPac/HalnoteMapper/RTC, which duck-type the same shape without being
+    Mappers themselves)."""
+
+    def save_sram(self, path: Path) -> None: ...
 
 
 class PauseReason(str, enum.Enum):
@@ -94,6 +104,12 @@ class Machine:
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     sram_save_path: "Path | None" = field(default=None, repr=False)
+    # Slot 2's cartridge-mapper SRAM path, symmetric to sram_save_path (slot
+    # 1). This and sram_save_path/fmpac_sram_save_path/
+    # halnote_sram_save_path/rtc_sram_save_path are candidates for the
+    # generic (has_sram source, path) list design.md's D2 proposes -- not
+    # yet migrated (a later phase of slot1-slot2-symmetrization).
+    sram_save_path2: "Path | None" = field(default=None, repr=False)
     fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
     halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
     rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
@@ -185,6 +201,7 @@ class Machine:
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
+        self.memory.set_slot1_sub_slot_reg(0x00)
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
@@ -193,10 +210,33 @@ class Machine:
         # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
         # overlay's device allow-list, does not include "halnote") -- so
         # resetting it via this loop, not a separate halnote_cart branch,
-        # covers it exactly once.
-        for sub_mapper in self.memory._mapper2_subslots:
+        # covers it exactly once. Slot 1's own sub-slots (openspec/changes/
+        # slot1-slot2-symmetrization) get the identical treatment.
+        for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
+
+    def sram_sources(self) -> list[tuple[SramSource, Path]]:
+        """(has_sram source, save path) pairs to load-on-start/save-on-exit,
+        computed from this Machine's already-resolved device references and
+        paths -- replaces enumerating each device's own
+        `_save_sram_if_present` call at the __main__.py cleanup site (see
+        design.md Decision D2 Option B). A future SRAM-backed device needs
+        only its own field pair added here, not a new cleanup call site."""
+        sources: list[tuple[SramSource, Path]] = []
+        mapper = self.memory._mapper
+        if mapper.has_sram and self.sram_save_path is not None:
+            sources.append((mapper, self.sram_save_path))
+        mapper2 = self.memory._mapper2
+        if mapper2.has_sram and self.sram_save_path2 is not None:
+            sources.append((mapper2, self.sram_save_path2))
+        if self.fmpac is not None and self.fmpac_sram_save_path is not None:
+            sources.append((self.fmpac, self.fmpac_sram_save_path))
+        if self.halnote_cart is not None and self.halnote_sram_save_path is not None:
+            sources.append((self.halnote_cart, self.halnote_sram_save_path))
+        if self.rtc is not None and self.rtc_sram_save_path is not None:
+            sources.append((self.rtc, self.rtc_sram_save_path))
+        return sources
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.

@@ -44,15 +44,36 @@ class Memory:
     sub_slot_reg: int = 0x00
     sub_slot_enabled: bool = False  # True only for MSX2; enables 0xFFFF intercept
     sub0_rom: bytes | None = field(default=None, repr=False)
+    # Primary slot 1's own secondary slot register (independent of slot 3's
+    # sub_slot_reg and slot 2's slot2_sub_slot_reg below) -- set only when
+    # an extension needing an expanded slot 1 is active, so it and slots 2/3's
+    # own expansions can all coexist (matching openMSX's per-primary-slot
+    # isExpanded/subSlotRegister model, scoped here to slots {1, 2, 3} -- see
+    # openspec/specs/memory-slot-bus's "Slot 1 secondary slot register
+    # field" Requirement). Same bit layout as sub_slot_reg.
+    slot1_sub_slot_reg: int = 0x00
+    slot1_sub_slot_enabled: bool = False
     # Primary slot 2's own secondary slot register (independent of slot 3's
     # sub_slot_reg above) -- set only when an extension needing an expanded
     # slot 2 (e.g. HBI-J1) is active, so it and slot 3's own expansion can
     # coexist (matching openMSX's per-primary-slot isExpanded/
-    # subSlotRegister model, scoped here to slots {2, 3} only -- see
-    # openspec/specs/memory-slot-bus's "Slot 2 secondary slot register
-    # field" Requirement). Same bit layout as sub_slot_reg.
+    # subSlotRegister model -- see openspec/specs/memory-slot-bus's "Slot 2
+    # secondary slot register field" Requirement). Same bit layout as
+    # sub_slot_reg.
     slot2_sub_slot_reg: int = 0x00
     slot2_sub_slot_enabled: bool = False
+    # Per-sub-slot Mapper for primary slot 1 when slot1_sub_slot_enabled is
+    # True -- the identical mechanism _mapper2_subslots/slot2_sub_slot_enabled
+    # provides for slot 2 below, applied independently to slot 1. Fixed
+    # length 4, indexed by the 2-bit sub-slot decoded from
+    # slot1_sub_slot_reg; None entries read open bus. Construction-time-
+    # fixed, like _mapper/_mapper2/flat_ram_subslot -- no setter. This is a
+    # new, independent dispatch path; it does not reuse or modify slot 2's
+    # own sub-slot dispatch or slot 3's role-based sub-slot dispatch
+    # (SUB ROM/FDC/flat-RAM) below.
+    _mapper1_subslots: list[Mapper | None] = field(
+        default_factory=lambda: [None, None, None, None], repr=False
+    )
     # Per-sub-slot Mapper for primary slot 2 when slot2_sub_slot_enabled is
     # True (fixed length 4, indexed by the 2-bit sub-slot decoded from
     # slot2_sub_slot_reg; None entries read open bus). Construction-time-
@@ -174,6 +195,10 @@ class Memory:
         self.sub_slot_reg = value
         self._page_cache_valid = False
 
+    def set_slot1_sub_slot_reg(self, value: int) -> None:
+        self.slot1_sub_slot_reg = value
+        self._page_cache_valid = False
+
     def set_slot2_sub_slot_reg(self, value: int) -> None:
         self.slot2_sub_slot_reg = value
         self._page_cache_valid = False
@@ -200,6 +225,8 @@ class Memory:
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
         self._ram_len = len(self.ram)
         self._msx1_ram_base = 0x10000 - self._ram_len
+        if len(self._mapper1_subslots) != 4:
+            raise ValueError("Memory: _mapper1_subslots must have exactly 4 entries")
         if len(self._mapper2_subslots) != 4:
             raise ValueError("Memory: _mapper2_subslots must have exactly 4 entries")
         self._validate_slot3_strategy()
@@ -371,17 +398,24 @@ class Memory:
             return self.ram_mapper.write
         return self._write_msx1_flat_ram
 
-    def _resolve_slot2_subslot_read_leaf(self, page: int) -> Callable[[int], int]:
-        """Slot 2's own sub-slot dispatch (independent of slot 3's
-        role-based one above) -- a plain Mapper-per-sub-slot array, no
-        SUB-ROM/FDC/RAM role concepts involved."""
-        sub = (self.slot2_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper2_subslots[sub]
+    def _resolve_expanded_subslot_read_leaf(
+        self, sub_slot_reg: int, subslots: list[Mapper | None], page: int
+    ) -> Callable[[int], int]:
+        """Either cartridge slot's own sub-slot dispatch, once it is
+        expanded (`slot1_sub_slot_enabled`/`slot2_sub_slot_enabled`) -- a
+        plain Mapper-per-sub-slot array, no SUB-ROM/FDC/RAM role concepts
+        involved (unlike slot 3's role-based dispatch above). The caller
+        passes that slot's own `slot{1,2}_sub_slot_reg`/`_mapper{1,2}_
+        subslots`, so this single implementation serves both slots."""
+        sub = (sub_slot_reg >> (page * 2)) & 0x03
+        mapper = subslots[sub]
         return mapper.read if mapper is not None else self._read_open_bus
 
-    def _resolve_slot2_subslot_write_leaf(self, page: int) -> Callable[[int, int], None]:
-        sub = (self.slot2_sub_slot_reg >> (page * 2)) & 0x03
-        mapper = self._mapper2_subslots[sub]
+    def _resolve_expanded_subslot_write_leaf(
+        self, sub_slot_reg: int, subslots: list[Mapper | None], page: int
+    ) -> Callable[[int, int], None]:
+        sub = (sub_slot_reg >> (page * 2)) & 0x03
+        mapper = subslots[sub]
         return mapper.write if mapper is not None else self._write_noop
 
     def _resolve_page_read_leaf(self, page: int) -> Callable[[int], int]:
@@ -389,10 +423,16 @@ class Memory:
         if slot == 0:
             return self._read_rom
         if slot == 1:
+            if self.slot1_sub_slot_enabled:
+                return self._resolve_expanded_subslot_read_leaf(
+                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                )
             return self._mapper.read
         if slot == 2:
             if self.slot2_sub_slot_enabled:
-                return self._resolve_slot2_subslot_read_leaf(page)
+                return self._resolve_expanded_subslot_read_leaf(
+                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                )
             return self._mapper2.read
         return self._resolve_slot3_read_leaf(page)
 
@@ -401,10 +441,16 @@ class Memory:
         if slot == 0:
             return self._write_noop  # BIOS ROM is read-only
         if slot == 1:
+            if self.slot1_sub_slot_enabled:
+                return self._resolve_expanded_subslot_write_leaf(
+                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                )
             return self._mapper.write
         if slot == 2:
             if self.slot2_sub_slot_enabled:
-                return self._resolve_slot2_subslot_write_leaf(page)
+                return self._resolve_expanded_subslot_write_leaf(
+                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                )
             return self._mapper2.write
         return self._resolve_slot3_write_leaf(page)
 
@@ -414,17 +460,20 @@ class Memory:
         # Secondary slot register intercept at 0xFFFF only ever applies to
         # page 3 (0xC000-0xFFFF), and only when page 3's primary slot is
         # itself expanded: slot 3 via sub_slot_enabled, or independently
-        # slot 2 via slot2_sub_slot_enabled (generalizing openMSX's
-        # per-primary-slot isExpanded(ps) model, scoped to slots {2, 3} --
-        # see memory-slot-bus's "Secondary slot register intercept at
-        # 0xFFFF" Requirement). Precomputed here so read()/write() pay only
-        # a cheap int compare, not a wrapper call, on the common
-        # (non-0xFFFF) page-3 path. 0 means "no intercept".
+        # slot 1/2 via slot1_sub_slot_enabled/slot2_sub_slot_enabled
+        # (generalizing openMSX's per-primary-slot isExpanded(ps) model,
+        # scoped to slots {1, 2, 3} -- see memory-slot-bus's "Secondary
+        # slot register intercept at 0xFFFF" Requirement). Precomputed here
+        # so read()/write() pay only a cheap int compare, not a wrapper
+        # call, on the common (non-0xFFFF) page-3 path. 0 means "no
+        # intercept".
         page3_slot = (self.slot_register >> 6) & 0x03
         if page3_slot == 3 and self.sub_slot_enabled:
             self._page3_intercept_slot = 3
         elif page3_slot == 2 and self.slot2_sub_slot_enabled:
             self._page3_intercept_slot = 2
+        elif page3_slot == 1 and self.slot1_sub_slot_enabled:
+            self._page3_intercept_slot = 1
         else:
             self._page3_intercept_slot = 0
         self._page_cache_valid = True
@@ -439,7 +488,11 @@ class Memory:
         if page == 3 and addr == 0xFFFF and self._page3_intercept_slot:
             if self._page3_intercept_slot == 3:
                 return (~self.sub_slot_reg) & 0xFF
-            return (~self.slot2_sub_slot_reg) & 0xFF
+            if self._page3_intercept_slot == 2:
+                return (~self.slot2_sub_slot_reg) & 0xFF
+            # _page3_intercept_slot's only remaining value here is 1 -- see
+            # _rebuild_page_cache, which never sets it to anything else.
+            return (~self.slot1_sub_slot_reg) & 0xFF
         return self._page_read[page](addr)
 
     def write(self, addr: int, value: int) -> None:
@@ -453,8 +506,12 @@ class Memory:
         if page == 3 and addr == 0xFFFF and self._page3_intercept_slot:
             if self._page3_intercept_slot == 3:
                 self.set_sub_slot_reg(value & 0xFF)
-            else:
+            elif self._page3_intercept_slot == 2:
                 self.set_slot2_sub_slot_reg(value & 0xFF)
+            else:
+                # _page3_intercept_slot's only remaining value here is 1 --
+                # see _rebuild_page_cache, which never sets it to anything else.
+                self.set_slot1_sub_slot_reg(value & 0xFF)
             return
         self._page_write[page](addr, value)
 
@@ -478,13 +535,21 @@ class Memory:
     # from outside this class -- see openspec/changes/archive/
     # *-debugger-slot-mapper-interface.
 
+    def _cartridge_slot_state(self, primary: int) -> tuple[bool, list[Mapper | None], Mapper]:
+        """(sub_slot_enabled, subslots, mapper) for cartridge slot 1 or 2 --
+        shared lookup so the debug helpers below don't each repeat the same
+        `primary == 1 ? slot1 : slot2` ternary independently."""
+        if primary == 1:
+            return self.slot1_sub_slot_enabled, self._mapper1_subslots, self._mapper
+        return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
+
     def _describe_slot12(self, primary: int, secondary: int | None) -> str:
-        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
-            sub_mapper = self._mapper2_subslots[secondary]
+        sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
+        if sub_slot_enabled and secondary is not None:
+            sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return "Cartridge (empty)"
             return f"Cartridge {mapper_kind_display_name(sub_mapper.kind)}"
-        mapper = self._mapper if primary == 1 else self._mapper2
         if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
             return "Cartridge (empty)"
         return f"Cartridge {mapper_kind_display_name(mapper.kind)}"
@@ -544,19 +609,18 @@ class Memory:
             rm = self.ram_mapper
             if rm is not None:
                 return f"seg={rm.banks[page]}"
-        if primary == 2 and self.slot2_sub_slot_enabled and secondary is not None:
-            if page is not None:
-                sub_mapper = self._mapper2_subslots[secondary]
-                if sub_mapper is not None:
-                    info = sub_mapper.debug_bank_info(page)
-                    if info is not None:
-                        return info
+        if primary not in (1, 2):
             return "-"
-        if primary in (1, 2) and page is not None:
-            mapper = self._mapper if primary == 1 else self._mapper2
-            info = mapper.debug_bank_info(page)
-            if info is not None:
-                return info
+        sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
+        if sub_slot_enabled and secondary is not None:
+            if page is None:
+                return "-"
+            sub_mapper = subslots[secondary]
+            if sub_mapper is None:
+                return "-"
+            return sub_mapper.debug_bank_info(page) or "-"
+        if page is not None:
+            return mapper.debug_bank_info(page) or "-"
         return "-"
 
     def debug_slot_size_kb(self, primary: int, secondary: int | None) -> str:

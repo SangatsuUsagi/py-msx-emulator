@@ -82,21 +82,39 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 def test_extension_hbi_j1_alone_boots() -> None:
-    code, out, _err = _run_main(["--extension", "hbi_j1", "--count-frame", "1"])
+    code, out, _err = _run_main(["--extension2", "hbi_j1", "--count-frame", "1"])
     assert code == 0
     assert "hbi_j1" in out
 
 
 def test_extension_hbi_j1_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "hbi_j1", "--slot2", "game2.rom"])
+    code, _out, err = _run_main(["--extension2", "hbi_j1", "--slot2", "game2.rom"])
     assert code != 0
-    assert "--extension" in err and "--slot2" in err
+    assert "--extension2" in err and "--slot2" in err
 
 
 def test_extension_hbi_j1_and_mapper2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "hbi_j1", "--mapper2", "Konami"])
+    code, _out, err = _run_main(["--extension2", "hbi_j1", "--mapper2", "Konami"])
     assert code != 0
-    assert "--extension" in err and "--mapper2" in err
+    assert "--extension2" in err and "--mapper2" in err
+
+
+def test_extension_hbi_j1_alone_boots_on_slot1() -> None:
+    code, out, _err = _run_main(["--extension1", "hbi_j1", "--count-frame", "1"])
+    assert code == 0
+    assert "hbi_j1" in out
+
+
+def test_extension1_fmpac_and_extension2_hbi_j1_wire_independently() -> None:
+    # openspec/changes/slot1-slot2-symmetrization Decision D5: two
+    # different extensions, one per slot, is a natural consequence of the
+    # --extension1/--extension2 split -- no separate mechanism needed.
+    code, out, _err = _run_main(
+        ["--extension1", "fmpac", "--extension2", "hbi_j1", "--count-frame", "1"]
+    )
+    assert code == 0
+    assert "extension: fmpac" in out and "slot 1" in out
+    assert "extension: hbi_j1" in out and "expanded slot 2" in out
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +298,56 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
     assert isinstance(machine.kanji, KanjiRom)
     # Slot 3's own sub-slot dispatch (the RAM mapper) is unaffected.
     assert machine.memory.ram_mapper is not None
+
+
+# ---------------------------------------------------------------------------
+# Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
+# (openspec/changes/slot1-slot2-symmetrization Phase 5)
+# ---------------------------------------------------------------------------
+
+def _hbi_j1_machine_slot1(tmp_path: Path, name: str = "m") -> Machine:
+    rom_dir = tmp_path / f"{name}_hbi_j1_rom_slot1"
+    rom_dir.mkdir()
+    return build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=_hbi_j1_overlay(rom_dir),
+    )
+
+
+def test_build_machine_expands_slot1_with_halnote_and_flat_rom(tmp_path: Path) -> None:
+    machine = _hbi_j1_machine_slot1(tmp_path)
+    assert machine.memory.slot1_sub_slot_enabled is True
+    assert machine.memory.slot2_sub_slot_enabled is False
+    assert isinstance(machine.memory._mapper1_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory._mapper1_subslots[1], FixedPageMapper)
+    assert machine.halnote_cart is machine.memory._mapper1_subslots[0]
+    assert isinstance(machine.kanji, KanjiRom)
+
+
+def test_subslot0_dispatches_to_halnote_mapper_on_slot1(tmp_path: Path) -> None:
+    machine = _hbi_j1_machine_slot1(tmp_path)
+    mem = machine.memory
+    mem.set_slot_register(0x04)  # page1 -> primary slot 1
+    mem.set_slot1_sub_slot_reg(0b00_00_00_00)  # page1 -> sub-slot 0
+    assert mem.read(0x4000) == 0x00
+
+
+def test_kanji_io_ports_reachable_regardless_of_slot1_subslot(tmp_path: Path) -> None:
+    machine = _hbi_j1_machine_slot1(tmp_path)
+    machine.memory.set_slot_register(0x04)  # page1 -> primary slot 1
+    for subreg in (0b00_00_00_00, 0b00_00_01_00):  # sub-slot 0, then sub-slot 1
+        machine.memory.set_slot1_sub_slot_reg(subreg)
+        machine.io.write_port(0xD8, 0x05)
+        machine.io.write_port(0xD9, 0x02)
+        value = machine.io.read_port(0xD9)
+        assert value == 0x00
+
+
+def test_reset_restores_power_on_slot1_sub_slot_register(tmp_path: Path) -> None:
+    machine = _hbi_j1_machine_slot1(tmp_path)
+    machine.memory.set_slot1_sub_slot_reg(0xFF)
+    machine.reset()
+    assert machine.memory.slot1_sub_slot_reg == 0x00
 
 
 def test_reset_restores_power_on_slot2_sub_slot_register(tmp_path: Path) -> None:
@@ -611,6 +679,89 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
     )
 
     with pytest.raises(ValueError, match="slot 2 sub-slot 0 mapper mismatch") as exc_info:
+        load_state(other_machine)
+    assert "halnote" in str(exc_info.value)
+    assert "fixed_page" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# machine.halnote_cart save-state round-trip, slot 1
+# (openspec/changes/slot1-slot2-symmetrization Phase 5)
+# ---------------------------------------------------------------------------
+
+def test_roundtrip_preserves_halnote_sram_and_banks_on_slot1(
+    saves_dir: Path, tmp_path: Path
+) -> None:
+    rom_dir = tmp_path / "hbi_j1_rom_slot1"
+    rom_dir.mkdir()
+    msx_je_rom = bytearray(_HALNOTE_ROM_SIZE)
+    for page in range(128):
+        msx_je_rom[page * 8192] = page & 0xFF
+    (rom_dir / "msx-je.rom").write_bytes(bytes(msx_je_rom))
+    (rom_dir / "kanjibasic.rom").write_bytes(bytes(_KANJIBASIC_ROM_SIZE))
+    (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
+    overlay = _ExpandedExtensionOverlay(
+        subslots={
+            0: _ExpandedSubslotDevice(
+                device="halnote", rom_base_dir=rom_dir,
+                rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+            ),
+            1: _ExpandedSubslotDevice(
+                device="flat_rom", rom_base_dir=rom_dir,
+                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+            ),
+        },
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+        ),
+    )
+    machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=overlay,
+    )
+    cart = machine.halnote_cart
+    assert cart is not None
+    cart.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
+    cart.write(0x0000, 0xAB)  # SRAM byte
+    save_state(machine, _RGB, "test")
+
+    cart.write(0x0000, 0x00)
+    cart.write(0x4FFF, 0x00)
+    load_state(machine)
+
+    assert cart.read(0x0000) == 0xAB
+    assert cart.read(0x4000) == 5
+
+
+def test_loading_state_with_mismatched_slot1_subslot_kind_raises(
+    saves_dir: Path, tmp_path: Path
+) -> None:
+    hbi_machine = _hbi_j1_machine_slot1(tmp_path, name="hbi_slot1")
+    save_state(hbi_machine, _RGB, "test")
+
+    other_rom_dir = tmp_path / "other_hbi_rom_slot1"
+    other_rom_dir.mkdir()
+    (other_rom_dir / "kanjibasic.rom").write_bytes(bytes(_KANJIBASIC_ROM_SIZE))
+    (other_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
+    other_overlay = _ExpandedExtensionOverlay(
+        subslots={
+            0: _ExpandedSubslotDevice(
+                device="flat_rom", rom_base_dir=other_rom_dir,
+                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+            ),
+        },
+        io_device=_ExpandedSubslotDevice(
+            device="kanji_rom", rom_base_dir=other_rom_dir,
+            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+        ),
+    )
+    other_machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=other_overlay,
+    )
+
+    with pytest.raises(ValueError, match="slot 1 sub-slot 0 mapper mismatch") as exc_info:
         load_state(other_machine)
     assert "halnote" in str(exc_info.value)
     assert "fixed_page" in str(exc_info.value)

@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TextIO, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, NoReturn, TextIO, TypeVar
 
-from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS, VALID_MAPPERS2
+from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
     from msx.app_config import AppConfig
@@ -113,13 +113,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--scale", type=int, default=None, metavar="N",
                         help="Integer window scale over the 256x212 base (default: 3)")
-    parser.add_argument("--mapper",
+    parser.add_argument("--mapper", "--mapper1", dest="mapper1",
                         choices=list(VALID_MAPPERS),
                         default=None,
-                        help="Cartridge mapper type (default: auto — detect from ROM database)")
+                        help="Slot 1 cartridge mapper type (default: auto — detect from ROM "
+                             "database). '--mapper' is accepted as an alias for '--mapper1'")
+    parser.add_argument("--slot", "--slot1", dest="slot1", default=None, metavar="ROM1",
+                        help="Slot 1 cartridge ROM path (an alternative to the positional "
+                             "cartridge argument; conflicts with it). '--slot' is accepted as "
+                             "an alias for '--slot1'")
     parser.add_argument("--slot2", default=None, metavar="ROM2",
                         help="Slot 2 cartridge ROM path")
-    parser.add_argument("--extension", choices=[*VALID_EXTENSIONS, "none"], default=None,
+    parser.add_argument("--extension1", choices=[*VALID_EXTENSIONS, "none"], default=None,
+                        help="Overlay a slot 1 extension device (same ids as --extension2; "
+                             "conflicts with the positional cartridge argument/--slot1/"
+                             "--mapper1). 'none' forces no extension overlay even when "
+                             "py_emulator.yaml sets one, freeing --slot1/--mapper1 for CLI use")
+    parser.add_argument("--extension", "--extension2", dest="extension2",
+                        choices=[*VALID_EXTENSIONS, "none"], default=None,
                         help="Overlay a slot 2 extension device: 'fmpac' (MSX-MUSIC + 8 KB "
                              "SRAM), 'scc_plus' (an SCC-I / SCC+ cartridge), 'hbi_j1' "
                              "(Sony HBI-J1: Kanji-ROM + MSX-JE + Kanji driver/BASIC, expands "
@@ -127,13 +138,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "RAM-mapper memory-expansion cartridge; requires a machine with "
                              "no existing slot-3 memory mapper) (conflicts with "
                              "--slot2/--mapper2). 'none' forces no extension overlay even when "
-                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use")
+                             "py_emulator.yaml sets one, freeing --slot2/--mapper2 for CLI use. "
+                             "'--extension' is accepted as an alias for '--extension2', "
+                             "matching its pre-symmetrization meaning")
     parser.add_argument("--mapper2",
-                        choices=list(VALID_MAPPERS2),
+                        choices=list(VALID_MAPPERS),
                         default=None,
                         help="Slot 2 mapper type (default: auto; KonamiSCC builds its own "
-                             "SCC chip, rejected if slot 1's mapper also resolves to "
-                             "KonamiSCC or --extension scc_plus is active)")
+                             "SCC chip, rejected if the other slot also resolves to "
+                             "KonamiSCC or selects --extensionN scc_plus)")
     parser.add_argument("--fdd1", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive A")
     parser.add_argument("--fdd2", default=None, metavar="DSK",
@@ -188,12 +201,18 @@ class _ResolvedPaths(NamedTuple):
     cartridge2: bytes | None
 
 
-def _resolve_paths(args: argparse.Namespace, slot2: str | None) -> _ResolvedPaths:
-    """Validate the cartridge/slot-2/floppy paths and read the ROM bytes.
+def _resolve_paths(
+    args: argparse.Namespace, slot1: str | None, slot2: str | None
+) -> _ResolvedPaths:
+    """Validate the slot-1/slot-2/floppy paths and read the ROM bytes.
+
+    `slot1` is the already-resolved effective slot 1 path (positional
+    cartridge argument, `--slot1`, or `py_emulator.yaml`'s `slot1` key --
+    see `_resolve_effective_options`), not `args.cartridge` directly.
 
     Exits the process with an error if any given path does not exist.
     """
-    cart_path = Path(args.cartridge) if args.cartridge else None
+    cart_path = Path(slot1) if slot1 else None
     slot2_path = Path(slot2) if slot2 else None
     if cart_path is not None and not cart_path.exists():
         print(f"error: cartridge not found: {cart_path}", file=sys.stderr)
@@ -214,6 +233,26 @@ def _resolve_paths(args: argparse.Namespace, slot2: str | None) -> _ResolvedPath
     return _ResolvedPaths(cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2)
 
 
+def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | None) -> None:
+    """Reject identical (by content, not path) cartridge ROMs in both slots.
+
+    SRAM persistence and save-state identity both key off which cartridge
+    occupies a given slot, and there is no supported use case for the same
+    ROM in both slots at once -- see the app-cli spec's "Identical ROM or
+    extension across both slots is rejected" Requirement. Compares content
+    (SHA1), not path, so two different files that happen to be
+    byte-identical are treated the same as the same file given twice.
+    """
+    if cartridge is None or cartridge2 is None:
+        return
+    import hashlib
+    if hashlib.sha1(cartridge, usedforsecurity=False).digest() == hashlib.sha1(
+        cartridge2, usedforsecurity=False
+    ).digest():
+        _fail("slot 1 and slot 2 resolve to the identical cartridge ROM -- "
+              "loading the same cartridge into both slots is not supported")
+
+
 def _resolve_machine_id(
     args: argparse.Namespace, app_cfg: "AppConfig", db_system: str | None
 ) -> str:
@@ -227,8 +266,39 @@ def _resolve_machine_id(
     return "cbios_msx2_jp"
 
 
+def _print_extension_summary_line(
+    slot_num: int,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_id: str | None,
+) -> None:
+    if extension_overlay is None:
+        return
+    from msx.machine_loader import _ExpandedExtensionOverlay
+    if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+        print(
+            f"extension: {extension_id} (expanded slot {slot_num}: "
+            f"{len(extension_overlay.subslots)} sub-slot(s)"
+            + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
+            + ")"
+        )
+    elif extension_overlay.rom_entry is not None:
+        # rom_base_dir is always set together with rom_entry (see
+        # _ExtensionOverlay's docstring: both are None only for a device
+        # with no ROM file, e.g. scc_i_cart) -- asserted here only to
+        # narrow the type for mypy, not a runtime possibility.
+        assert extension_overlay.rom_base_dir is not None
+        print(
+            f"extension: {extension_overlay.device} "
+            f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, "
+            f"slot {slot_num})"
+        )
+    else:
+        print(f"extension: {extension_overlay.device} (slot {slot_num})")
+
+
 def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
@@ -241,27 +311,8 @@ def _print_startup_summary(
         print(f"fdd1    : {fdd1_path}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
-    if extension_overlay is not None:
-        from msx.machine_loader import _ExpandedExtensionOverlay
-        if isinstance(extension_overlay, _ExpandedExtensionOverlay):
-            print(
-                f"extension: {args.extension} (expanded slot 2: "
-                f"{len(extension_overlay.subslots)} sub-slot(s)"
-                + (" + Kanji-ROM I/O device" if extension_overlay.io_device is not None else "")
-                + ")"
-            )
-        elif extension_overlay.rom_entry is not None:
-            # rom_base_dir is always set together with rom_entry (see
-            # _ExtensionOverlay's docstring: both are None only for a
-            # device with no ROM file, e.g. scc_i_cart) -- asserted here
-            # only to narrow the type for mypy, not a runtime possibility.
-            assert extension_overlay.rom_base_dir is not None
-            print(
-                f"extension: {extension_overlay.device} "
-                f"({extension_overlay.rom_base_dir / extension_overlay.rom_entry.file}, slot 2)"
-            )
-        else:
-            print(f"extension: {extension_overlay.device} (slot 2)")
+    _print_extension_summary_line(1, extension_overlay1, args.extension1)
+    _print_extension_summary_line(2, extension_overlay, args.extension2)
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -302,17 +353,6 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     print(f"avg fps : {frames / elapsed:.2f}")
 
 
-class _SramSource(Protocol):
-    def save_sram(self, path: Path) -> None: ...
-
-
-def _save_sram_if_present(source: "_SramSource | None", save_path: "Path | None") -> None:
-    """Save `source`'s SRAM to `save_path` on exit, if both are present."""
-    if source is not None and save_path is not None:
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        source.save_sram(save_path)
-
-
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
@@ -327,11 +367,12 @@ def _cleanup(
     if mapper_trace_file is not None:
         mapper_trace_file.close()
     if machine is not None:
-        mapper = machine.memory._mapper
-        _save_sram_if_present(mapper if mapper.has_sram else None, machine.sram_save_path)
-        _save_sram_if_present(machine.fmpac, machine.fmpac_sram_save_path)
-        _save_sram_if_present(machine.halnote_cart, machine.halnote_sram_save_path)
-        _save_sram_if_present(machine.rtc, machine.rtc_sram_save_path)
+        # machine.sram_sources() -- one generic list instead of one
+        # _save_sram_if_present call per SRAM-backed device (see
+        # design.md Decision D2 Option B).
+        for source, save_path in machine.sram_sources():
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            source.save_sram(save_path)
         # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
         if machine.fdc is not None:
             machine.fdc.flush()
@@ -343,13 +384,27 @@ class _EffectiveOptions(NamedTuple):
 
     speed: float
     scale: int
-    mapper: str
-    extension: str | None
+    mapper1: str
+    extension1: str | None
     rpc_enabled: bool
     mouse_port: int | None
+    slot1: str | None
     slot2: str | None
     mapper2: str
+    extension2: str | None
     frame_skip: str
+
+
+def _resolve_extension(cli_value: str | None, config_value: str | None) -> str | None:
+    """Resolve one slot's extensionN option. "none" is a CLI-only sentinel
+    (not in VALID_EXTENSIONS, never valid in py_emulator.yaml): it forces no
+    extension overlay even when the config file sets one, since a plain
+    omitted --extensionN can't be told apart from "let the config file
+    decide" -- see cart-extension-overlay's "--extension1/--extension2 none
+    forces no extension overlay on that slot" Requirement."""
+    if cli_value == "none":
+        return None
+    return _first_set(cli_value, config_value, default=None)
 
 
 def _resolve_effective_options(
@@ -361,15 +416,6 @@ def _resolve_effective_options(
     """
     from msx.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
 
-    # "none" is a CLI-only sentinel (not in VALID_EXTENSIONS, never valid in
-    # py_emulator.yaml): it forces no extension overlay even when the config
-    # file sets one, since a plain omitted --extension can't be told apart
-    # from "let the config file decide" -- see cart-extension-overlay's
-    # "--extension none forces no extension overlay" Requirement.
-    extension_eff = (
-        None if args.extension == "none"
-        else _first_set(args.extension, app_cfg.extension, default=None)
-    )
     if app_cfg.frame_skip is None:
         frame_skip_cfg = None
     elif app_cfg.frame_skip:
@@ -380,17 +426,27 @@ def _resolve_effective_options(
     return _EffectiveOptions(
         speed=_first_set(args.speed, app_cfg.speed, default=DEFAULT_SPEED),
         scale=_first_set(args.scale, app_cfg.scale, default=DEFAULT_SCALE),
-        mapper=_first_set(args.mapper, default=DEFAULT_MAPPER),
-        extension=extension_eff,
+        mapper1=_first_set(args.mapper1, default=DEFAULT_MAPPER),
+        extension1=_resolve_extension(args.extension1, app_cfg.extension1),
         rpc_enabled=_first_set(args.rpc, app_cfg.rpc_enabled, default=False),
         mouse_port=int(args.mouse) - 1 if args.mouse else app_cfg.mouse_port_index(),
-        # slot2's built-in default is "no cartridge" (None), unlike the
+        # slot1/slot2's built-in default is "no cartridge" (None), unlike the
         # concrete defaults above -- _first_set's keyword-only `default`
-        # accepts that directly.
+        # accepts that directly. The positional `cartridge` argument is
+        # slot 1's third source, lowest CLI-side priority after --slot1 (the
+        # two are mutually exclusive in practice -- see _validate_options).
+        slot1=_first_set(args.slot1, args.cartridge, app_cfg.slot1, default=None),
         slot2=_first_set(args.slot2, app_cfg.slot2, default=None),
         mapper2=_first_set(args.mapper2, default="auto"),
+        extension2=_resolve_extension(args.extension2, app_cfg.extension2),
         frame_skip=_first_set(args.frame_skip, frame_skip_cfg, default="auto"),
     )
+
+
+def _fail(msg: str) -> NoReturn:
+    """Print a startup-validation error to stderr and exit (code 1)."""
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
 
 
 def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None:
@@ -399,24 +455,37 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
     Prints an error to stderr and exits the process (code 1) on violation.
     """
     if args.benchmark is not None and args.count_frame is not None:
-        print("error: --benchmark and --count-frame are mutually exclusive", file=sys.stderr)
-        sys.exit(1)
+        _fail("--benchmark and --count-frame are mutually exclusive")
     if opts.scale < 1:
-        print("error: --scale must be a positive integer", file=sys.stderr)
-        sys.exit(1)
-    if opts.extension is not None and opts.slot2:
-        print("error: --extension and --slot2 are mutually exclusive "
-              "(the extension owns slot 2)", file=sys.stderr)
-        sys.exit(1)
-    # Checked against args.mapper2, not opts.mapper2: opts.mapper2 folds in the
-    # "auto" default, so it can't distinguish an explicit --mapper2 auto from
-    # --mapper2 never having been passed. --mapper2 has no config-file
-    # equivalent (see app-config-file spec), so only the CLI flag needs
-    # checking here.
-    if opts.extension is not None and args.mapper2 is not None:
-        print("error: --extension and --mapper2 are mutually exclusive "
-              "(the extension owns slot 2)", file=sys.stderr)
-        sys.exit(1)
+        _fail("--scale must be a positive integer")
+    if args.cartridge and args.slot1:
+        _fail("a positional cartridge argument and --slot1 are mutually "
+              "exclusive (the positional argument is --slot1 shorthand)")
+    if opts.extension1 is not None and (args.slot1 or args.cartridge):
+        _fail("--extension1 and --slot1/a positional cartridge argument are "
+              "mutually exclusive (the extension owns slot 1)")
+    # Checked against args.mapperN, not opts.mapperN: opts.mapperN folds in
+    # the "auto" default, so it can't distinguish an explicit --mapperN auto
+    # from --mapperN never having been passed. --mapper1/--mapper2 have no
+    # config-file equivalent (see app-config-file spec), so only the CLI
+    # flag needs checking here.
+    if opts.extension1 is not None and args.mapper1 is not None:
+        _fail("--extension1 and --mapper1 are mutually exclusive (the "
+              "extension owns slot 1)")
+    if opts.extension2 is not None and opts.slot2:
+        _fail("--extension2 and --slot2 are mutually exclusive (the "
+              "extension owns slot 2)")
+    if opts.extension2 is not None and args.mapper2 is not None:
+        _fail("--extension2 and --mapper2 are mutually exclusive (the "
+              "extension owns slot 2)")
+    if (
+        opts.extension1 is not None
+        and opts.extension2 is not None
+        and opts.extension1 == opts.extension2
+    ):
+        _fail(f"--extension1 and --extension2 both resolve to "
+              f"{opts.extension1!r} -- the identical extension on both "
+              "slots is not supported")
 
 
 def main() -> None:
@@ -426,19 +495,19 @@ def main() -> None:
     try:
         app_cfg = load_app_config(_PROJECT_ROOT)
     except AppConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail(str(exc))
 
     opts = _resolve_effective_options(args, app_cfg)
     _validate_options(args, opts)
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
-    paths = _resolve_paths(args, opts.slot2)
+    paths = _resolve_paths(args, opts.slot1, opts.slot2)
     fdd1_path = paths.fdd1_path
     fdd2_path = paths.fdd2_path
     cartridge = paths.cartridge
     cartridge2 = paths.cartridge2
+    _check_identical_cartridges(cartridge, cartridge2)
 
     db_system = lookup_system(cartridge) if cartridge else None
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
@@ -454,13 +523,16 @@ def main() -> None:
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
+        extension_overlay1 = (
+            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension1 is not None else None
+        )
         extension_overlay = (
-            load_extension_overlay(opts.extension, _CONFIG_DIR, _PROJECT_ROOT)
-            if opts.extension is not None else None
+            load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension2 is not None else None
         )
     except MachineLoadError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail(str(exc))
 
     # --- Disk image only applies to machines with a floppy interface ---
     if (fdd1_path is not None or fdd2_path is not None) and spec.fdc is None:
@@ -470,8 +542,8 @@ def main() -> None:
         fdd2_path = None
 
     # --- Resolve display mapper for summary ---
-    if opts.mapper != "auto":
-        display_mapper = opts.mapper
+    if opts.mapper1 != "auto":
+        display_mapper = opts.mapper1
     elif cartridge:
         display_mapper = lookup(cartridge) or "auto"
     else:
@@ -481,7 +553,8 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay, opts.mouse_port, args,
+        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay1, extension_overlay,
+        opts.mouse_port, args,
     )
 
     from msx.diagnostics.logger import DebugLogger
@@ -505,7 +578,7 @@ def main() -> None:
             machine = build_machine(
                 spec,
                 cartridge=cartridge,
-                mapper=opts.mapper,
+                mapper=opts.mapper1,
                 cartridge2=cartridge2,
                 mapper2=opts.mapper2,
                 logger=logger,
@@ -513,11 +586,11 @@ def main() -> None:
                 fdd1=fdd1_path,
                 fdd2=fdd2_path,
                 extension_overlay=extension_overlay,
+                extension_overlay1=extension_overlay1,
                 joy_map=app_cfg.keyboard_joy_map(),
             )
         except MachineLoadError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            sys.exit(1)
+            _fail(str(exc))
 
         # Attach the interactive debugger for all machines so Ctrl-C drops into
         # the REPL on MSX1 too (the slot/mapper tools are most useful there).

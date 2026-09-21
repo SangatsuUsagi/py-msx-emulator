@@ -584,6 +584,74 @@ class TestMachineLoaderSramIntegration:
         machine = make_machine(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
         assert machine.memory._mapper.sram == bytearray(2048)
 
+    # -----------------------------------------------------------------------
+    # Slot 2 (openspec/changes/slot1-slot2-symmetrization, design.md D1):
+    # the identical SHA1-keyed load/save path mechanism, now run once per
+    # slot instead of slot 1 only.
+    # -----------------------------------------------------------------------
+
+    def test_sram_loaded_from_saves_dir_slot2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hashlib
+
+        from msx.machine_loader import _SRAM_SIZES
+        from tests.factories import make_machine
+
+        rom = bytes(64 * 1024)
+        cartridge2 = bytes(range(256)) * 32  # 8KB cart, distinct from slot 1's
+        sha1 = hashlib.sha1(cartridge2).hexdigest()
+        expected_size = _SRAM_SIZES["ASCII8SRAM2"]
+
+        sram_dir = tmp_path / "saves" / "sram"
+        sram_dir.mkdir(parents=True)
+        sram_file = sram_dir / f"{sha1}.sram"
+        sram_file.write_bytes(bytes([0xAB] * expected_size))
+
+        monkeypatch.chdir(tmp_path)
+        machine = make_machine(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
+        assert machine.sram_save_path2 is not None
+        assert machine.sram_save_path2.name == f"{sha1}.sram"
+        assert machine.memory._mapper2.sram[0] == 0xAB
+        # Slot 1 (empty here) must not be perturbed by slot 2's SRAM load.
+        assert machine.sram_save_path is None
+
+    def test_no_sram_file_gives_zeroed_sram_slot2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tests.factories import make_machine
+
+        rom = bytes(64 * 1024)
+        cartridge2 = bytes(range(256)) * 32
+        monkeypatch.chdir(tmp_path)
+        machine = make_machine(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
+        assert machine.memory._mapper2.sram == bytearray(2048)
+
+    def test_both_slots_persist_sram_independently(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tests.factories import make_machine
+
+        rom = bytes(64 * 1024)
+        cartridge = bytes(range(256)) * 32
+        cartridge2 = bytes(range(256))[::-1] * 32  # distinct content -> distinct SHA1
+        monkeypatch.chdir(tmp_path)
+        machine = make_machine(
+            rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2",
+            cartridge2=cartridge2, mapper2="GameMaster2",
+        )
+        assert machine.sram_save_path is not None
+        assert machine.sram_save_path2 is not None
+        assert machine.sram_save_path != machine.sram_save_path2
+        machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        machine.memory._mapper.sram[0] = 0x11
+        machine.memory._mapper2.sram[0] = 0x22
+        machine.memory._mapper.save_sram(machine.sram_save_path)
+        machine.memory._mapper2.save_sram(machine.sram_save_path2)
+        assert machine.sram_save_path.read_bytes()[0] == 0x11
+        assert machine.sram_save_path2.read_bytes()[0] == 0x22
+
 
 # ---------------------------------------------------------------------------
 # snapshot() / restore() round-trip

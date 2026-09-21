@@ -378,11 +378,25 @@ def test_extension_overlay_unsupported_schema_version_rejected(tmp_path: Path) -
         load_extension_overlay("bogus", tmp_path, tmp_path)
 
 
-def test_extension_overlay_unsupported_slot_rejected(tmp_path: Path) -> None:
+def test_extension_overlay_slot_1_accepted(tmp_path: Path) -> None:
+    # Both slots 1 and 2 are valid `slot:` declarations (openspec/changes/
+    # slot1-slot2-symmetrization) -- this field documents the overlay
+    # author's target/tested slot, it does not itself route placement (see
+    # load_extension_overlay's own comment).
     ext_dir = tmp_path / "extensions"
     ext_dir.mkdir()
     (ext_dir / "bogus.yaml").write_text(
         "schema_version: 1\nid: bogus\ndevice: scc_i_cart\nslot: 1\n", encoding="utf-8"
+    )
+    overlay = load_extension_overlay("bogus", tmp_path, tmp_path)
+    assert overlay.device == "scc_i_cart"
+
+
+def test_extension_overlay_unsupported_slot_rejected(tmp_path: Path) -> None:
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    (ext_dir / "bogus.yaml").write_text(
+        "schema_version: 1\nid: bogus\ndevice: scc_i_cart\nslot: 3\n", encoding="utf-8"
     )
     with pytest.raises(MachineLoadError, match="unsupported extension slot"):
         load_extension_overlay("bogus", tmp_path, tmp_path)
@@ -467,6 +481,21 @@ def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
     assert machine.fmpac_sram_save_path == overlay.sram_save_path
+
+
+def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
+    # openspec/changes/slot1-slot2-symmetrization Phase 6: fmpac_sram_save_path
+    # used to be resolved from build_machine's slot-2-specific
+    # extension_overlay parameter directly, so an FM-PAC placed on slot 1
+    # via --extension1 never got its SRAM save path wired at all (it built
+    # and ran, but silently never persisted) -- now resolved from
+    # _ExtensionWiring, which is slot-agnostic.
+    overlay = _make_fmpac_overlay(tmp_path)
+    machine = build_machine(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    assert machine.fmpac is not None
+    assert machine.memory._mapper is machine.fmpac
+    assert machine.fmpac_sram_save_path == overlay.sram_save_path
+    assert (machine.fmpac, overlay.sram_save_path) in machine.sram_sources()
 
 
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:

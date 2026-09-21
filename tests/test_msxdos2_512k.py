@@ -80,7 +80,15 @@ def test_extension_msxdos2_512k_alone_boots() -> None:
     # the default cbios_msx2_jp), so it doesn't hit the has_ram_mapper
     # conflict rejection this extension's ram_mapper sub-slot also enforces.
     code, out, _err = _run_main(
-        ["--machine", "hb_f1xd", "--extension", "msxdos2_512k", "--count-frame", "1"]
+        ["--machine", "hb_f1xd", "--extension2", "msxdos2_512k", "--count-frame", "1"]
+    )
+    assert code == 0
+    assert "msxdos2_512k" in out
+
+
+def test_extension1_msxdos2_512k_alone_boots() -> None:
+    code, out, _err = _run_main(
+        ["--machine", "hb_f1xd", "--extension1", "msxdos2_512k", "--count-frame", "1"]
     )
     assert code == 0
     assert "msxdos2_512k" in out
@@ -210,6 +218,47 @@ def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> N
     )
     machine.io.write_port(0xFC, 5)
     assert machine.io.read_port(0xFC) & 0x1F == 5
+
+
+# ---------------------------------------------------------------------------
+# Slot 1: the identical expanded overlay, targeting slot 1 instead of slot 2
+# (openspec/changes/slot1-slot2-symmetrization Phase 5)
+# ---------------------------------------------------------------------------
+
+def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots_on_slot1(
+    tmp_path: Path
+) -> None:
+    rom_dir = tmp_path / "msxdos2_rom"
+    rom_dir.mkdir()
+    machine = build_machine(
+        _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+        extension_overlay1=_msxdos2_512k_overlay(rom_dir),
+    )
+    assert machine.memory.slot1_sub_slot_enabled is True
+    assert machine.memory.slot2_sub_slot_enabled is False
+
+    sub0 = machine.memory._mapper1_subslots[0]
+    assert isinstance(sub0, RamMapper)
+    assert len(sub0.ram) == 512 * 1024
+
+    sub1 = machine.memory._mapper1_subslots[1]
+    assert isinstance(sub1, FixedPageMapper)
+
+
+def test_rejected_when_both_slots_claim_ram_mapper(tmp_path: Path) -> None:
+    # memory_512k and msxdos2_512k both declare a sub-slot-0 ram_mapper --
+    # using different ids on each slot (so the CLI's identical-extension-id
+    # check doesn't catch it) still collides on the shared I/O ports.
+    rom_dir1 = tmp_path / "msxdos2_rom1"
+    rom_dir1.mkdir()
+    rom_dir2 = tmp_path / "msxdos2_rom2"
+    rom_dir2.mkdir()
+    with pytest.raises(MachineLoadError, match="other cartridge slot"):
+        build_machine(
+            _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
+            extension_overlay1=_msxdos2_512k_overlay(rom_dir1),
+            extension_overlay=_msxdos2_512k_overlay(rom_dir2),
+        )
 
 
 # ---------------------------------------------------------------------------

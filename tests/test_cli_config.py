@@ -160,7 +160,25 @@ def test_default_machine_when_neither_set() -> None:
 
 def test_config_extension_enables_overlay() -> None:
     _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension="fmpac"))
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension2="fmpac"))
+    extension_mock.assert_called_once()
+
+
+def test_cli_bare_extension_is_an_alias_for_extension2() -> None:
+    # '--extension' meant slot 2 before --extension1/--extension2 existed;
+    # kept as a lower-priority alias for --extension2 (not --extension1) so
+    # existing usage keeps its exact prior meaning.
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension", "fmpac"], app_cfg=AppConfig())
+    extension_mock.assert_called_once()
+    assert extension_mock.call_args_list[0].args[0] == "fmpac"
+
+
+def test_config_legacy_extension_key_enables_slot2_overlay() -> None:
+    # The pre-existing unqualified `extension` key keeps working as an
+    # `extension2` alias -- see AppConfig.extension2's docstring.
+    _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension2="fmpac"))
     extension_mock.assert_called_once()
 
 
@@ -170,60 +188,133 @@ def test_no_extension_overlay_by_default() -> None:
     extension_mock.assert_not_called()
 
 
-def test_config_extension_conflicts_with_slot2() -> None:
+def test_config_extension2_conflicts_with_slot2() -> None:
     code, _o, err, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot2", "game2.rom"],
-        app_cfg=AppConfig(extension="fmpac"))
+        app_cfg=AppConfig(extension2="fmpac"))
     assert code != 0
-    assert "--extension" in err and "--slot2" in err
+    assert "--extension2" in err and "--slot2" in err
 
 
-def test_config_extension_conflicts_with_config_slot2() -> None:
+def test_config_extension2_conflicts_with_config_slot2() -> None:
     code, _o, err, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension="fmpac", slot2="game2.rom"))
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension2="fmpac", slot2="game2.rom"))
     assert code != 0
-    assert "--extension" in err and "--slot2" in err
+    assert "--extension2" in err and "--slot2" in err
 
 
-def test_config_extension_conflicts_with_mapper2() -> None:
+def test_config_extension2_conflicts_with_mapper2() -> None:
     code, _o, err, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "Konami"],
-        app_cfg=AppConfig(extension="scc_plus"))
+        app_cfg=AppConfig(extension2="scc_plus"))
     assert code != 0
-    assert "--extension" in err and "--mapper2" in err
+    assert "--extension2" in err and "--mapper2" in err
 
 
-def test_extension_none_overrides_config_extension() -> None:
+def test_extension2_none_overrides_config_extension() -> None:
     _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1", "--extension", "none"],
-        app_cfg=AppConfig(extension="fmpac"))
+        ["--machine", "cbios_msx1", "--extension2", "none"],
+        app_cfg=AppConfig(extension2="fmpac"))
     extension_mock.assert_not_called()
 
 
-def test_extension_none_frees_slot2_from_config_extension_conflict() -> None:
+def test_extension2_none_frees_slot2_from_config_extension_conflict() -> None:
     code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1", "--extension", "none", "--slot2", "game2.rom"],
-        app_cfg=AppConfig(extension="fmpac"))
+        ["--machine", "cbios_msx1", "--extension2", "none", "--slot2", "game2.rom"],
+        app_cfg=AppConfig(extension2="fmpac"))
     assert code == 0
     assert err == ""
     extension_mock.assert_not_called()
     assert build_mock.call_args.kwargs["cartridge2"] is not None
 
 
-def test_extension_none_frees_mapper2_from_config_extension_conflict() -> None:
+def test_extension2_none_frees_mapper2_from_config_extension_conflict() -> None:
     code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1", "--extension", "none", "--mapper2", "Konami"],
-        app_cfg=AppConfig(extension="scc_plus"))
+        ["--machine", "cbios_msx1", "--extension2", "none", "--mapper2", "Konami"],
+        app_cfg=AppConfig(extension2="scc_plus"))
     assert code == 0
     assert err == ""
     extension_mock.assert_not_called()
     assert build_mock.call_args.kwargs["mapper2"] == "Konami"
 
 
-def test_extension_none_without_config_extension_is_a_no_op() -> None:
+def test_extension2_none_without_config_extension_is_a_no_op() -> None:
     _c, _o, _e, _run, _build, extension_mock, _spy = _run_main(
-        ["--machine", "cbios_msx1", "--extension", "none"], app_cfg=AppConfig())
+        ["--machine", "cbios_msx1", "--extension2", "none"], app_cfg=AppConfig())
     extension_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# extension1 -- flat-shape ids (fmpac, scc_plus) place correctly on slot 1;
+# expanded-shape ids are PHASE-3-TEMPORARY rejected (Memory's slot-1
+# sub-slot expansion lands in a later phase of openspec/changes/
+# slot1-slot2-symmetrization -- see __main__.py's PHASE-3-TEMPORARY guard)
+# ---------------------------------------------------------------------------
+
+def test_extension1_flat_shape_accepted() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "fmpac"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+    assert extension_mock.call_args_list[0].args[0] == "fmpac"
+
+
+def test_config_extension1_flat_shape_accepted() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension1="fmpac"))
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+
+
+def test_extension1_expanded_shape_accepted() -> None:
+    code, _o, err, _run, build_mock, extension_mock, _spy = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "hbi_j1"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+    assert extension_mock.call_args_list[0].args[0] == "hbi_j1"
+
+
+def test_config_extension1_expanded_shape_accepted() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(extension1="memory_512k"))
+    assert code == 0
+    assert err == ""
+    build_mock.assert_called_once()
+
+
+def test_extension1_conflicts_with_positional_cartridge() -> None:
+    code, _o, err, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "fmpac", "game.rom"], app_cfg=AppConfig())
+    assert code != 0
+    assert "--extension1" in err
+
+
+def test_extension1_conflicts_with_slot1() -> None:
+    code, _o, err, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "fmpac", "--slot1", "game.rom"],
+        app_cfg=AppConfig())
+    assert code != 0
+    assert "--extension1" in err
+
+
+def test_extension1_conflicts_with_mapper1() -> None:
+    code, _o, err, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "fmpac", "--mapper1", "Konami"],
+        app_cfg=AppConfig())
+    assert code != 0
+    assert "--extension1" in err
+
+
+def test_identical_extension_on_both_slots_rejected() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--extension1", "fmpac", "--extension2", "fmpac"],
+        app_cfg=AppConfig())
+    assert code != 0
+    assert "--extension1" in err and "--extension2" in err
+    build_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +343,84 @@ def test_no_slot2_cartridge_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
     assert build_mock.call_args.kwargs["cartridge2"] is None
+
+
+# ---------------------------------------------------------------------------
+# slot1 / mapper1 (--slot1 mirrors --slot2; the positional cartridge argument
+# and --mapper remain accepted as --slot1/--mapper1's shorthand and alias)
+# ---------------------------------------------------------------------------
+
+def test_cli_slot1_used_when_given() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--slot1", "game.rom"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge"] is not None
+
+
+def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
+    # '--slot' never existed before --slot1/--slot2; added purely for CLI
+    # naming symmetry with --mapper's alias for --mapper1.
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--slot", "game.rom"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge"] is not None
+
+
+def test_config_slot1_used_when_cli_omitted() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1"], app_cfg=AppConfig(slot1="game.rom"))
+    assert build_mock.call_args.kwargs["cartridge"] is not None
+
+
+def test_positional_cartridge_is_slot1_mapper1_auto_shorthand() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "game.rom"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["mapper"] == "auto"
+
+
+def test_positional_cartridge_and_slot1_together_rejected() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "game.rom", "--slot1", "game.rom"], app_cfg=AppConfig())
+    assert code != 0
+    assert "--slot1" in err
+    build_mock.assert_not_called()
+
+
+def test_mapper1_alias_for_mapper() -> None:
+    _c, _o, _e, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper1", "Konami"], app_cfg=AppConfig())
+    assert build_mock.call_args.kwargs["mapper"] == "Konami"
+
+
+def test_mapper1_accepts_sram_backed_type() -> None:
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--mapper1", "GameMaster2"], app_cfg=AppConfig())
+    assert code == 0
+    assert err == ""
+    assert build_mock.call_args.kwargs["mapper"] == "GameMaster2"
+
+
+# ---------------------------------------------------------------------------
+# Identical ROM in both slots (openspec/changes/slot1-slot2-symmetrization's
+# app-cli "Identical ROM or extension across both slots is rejected")
+# ---------------------------------------------------------------------------
+
+def test_identical_cartridge_in_both_slots_rejected() -> None:
+    # _run_main's Path.read_bytes patch returns the same fixed bytes
+    # regardless of path, so any two cartridge slots both populated collide.
+    code, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "game.rom", "--slot2", "game.rom"], app_cfg=AppConfig())
+    assert code != 0
+    assert "identical" in err.lower()
+    build_mock.assert_not_called()
+
+
+def test_only_slot2_populated_is_not_an_identical_cartridge_conflict() -> None:
+    # Slot 1 empty (cartridge is None) short-circuits the identical-cartridge
+    # check regardless of what Path.read_bytes would return for slot 2.
+    _c, _o, err, _run, build_mock, *_ = _run_main(
+        ["--machine", "cbios_msx1", "--slot2", "game2.rom"], app_cfg=AppConfig())
+    assert err == ""
+    assert build_mock.call_args.kwargs["cartridge2"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -291,15 +460,15 @@ def test_cli_mapper2_accepts_rtype_and_fixed_page_types() -> None:
         assert build_mock.call_args.kwargs["mapper2"] == mapper2_type
 
 
-def test_cli_mapper2_rejects_sram_backed_type() -> None:
-    # argparse rejects the choice (SystemExit(2)) before build_machine is
-    # ever reached -- the rejection message itself goes straight to the real
-    # sys.stderr (argparse.ArgumentParser.error), not through the patched
-    # print() this harness captures, so only the non-zero exit is asserted.
-    code, _o, _e, _run, build_mock, *_ = _run_main(
+def test_cli_mapper2_accepts_sram_backed_type() -> None:
+    # --mapper1 and --mapper2 now accept an identical VALID_MAPPERS list
+    # (openspec/changes/slot1-slot2-symmetrization) -- GameMaster2 (and the
+    # other SRAM-backed types) were rejected here before that change.
+    code, _o, err, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper2", "GameMaster2"], app_cfg=AppConfig())
-    assert code != 0
-    build_mock.assert_not_called()
+    assert code == 0
+    assert err == ""
+    assert build_mock.call_args.kwargs["mapper2"] == "GameMaster2"
 
 
 def test_builtin_mapper2_auto_when_neither_set() -> None:

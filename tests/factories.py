@@ -9,7 +9,13 @@ from pathlib import Path
 
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+from msx.machine_loader import (
+    MachineSpec,
+    _ExpandedExtensionOverlay,
+    _ExtensionOverlay,
+    _RomEntry,
+    build_machine,
+)
 from msx.vdp.tracer import Tracer
 
 
@@ -53,6 +59,8 @@ def make_machine(
     mapper2: str = "auto",
     logrom: bytes | None = None,
     tracer: Tracer | None = None,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
 ) -> Machine:
     return build_machine(
         _msx1_spec(),
@@ -64,6 +72,8 @@ def make_machine(
         tracer=tracer,
         bios_override=rom,
         logo_override=logrom,
+        extension_overlay=extension_overlay,
+        extension_overlay1=extension_overlay1,
     )
 
 

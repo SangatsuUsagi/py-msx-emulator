@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2667%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2749%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -110,25 +110,25 @@
 
 ### SCC-I カートリッジ（「SCC+」）
 
-`--extension scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
+`--extension1`/`--extension2 scc_plus` で有効化する、ゲーム ROM を持たない裸のサウンドカートリッジ — 有効化とスロットの仕組みは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)を参照。物理 64 KB を 128 KB として見せかけるバンク切り替え RAM（起動時は空 — ROM/データファイルは一切ロードされません）。バンクレジスタの bit 3 は無視され、ブロック N とブロック N+8 が同じ物理ブロックをミラーします — 実機で文書化されている「[2つの64KBバンクを接続する](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)」改造を再現したものです。これにより、本プロジェクトが対象とする2タイトルは、それぞれが前提とする工場出荷時RAM配置バリアントのどちらであっても、1つの実装で動作します。搭載する SCC チップの Compatible/Plus モードを選択するモードレジスタ、ウィンドウ単位の RAM 書き込み制御も備えます。オーディオ目的のみでこのカートリッジを挿すフロッピーディスク（FDD）ベースの MSX2 タイトル向け。
 
 > **注記**：実機の SCC-I（SCC+）カートリッジおよび対応ソフトウェアを著者が所有していないため、公開されている技術資料に基づく実装であり、実機での動作確認は行っていません。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/mapper.py:SCCICart` |
-| 有効化 | `--extension scc_plus`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
+| 有効化 | `--extension1`/`--extension2 scc_plus`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#scc-i-カートリッジ-scc)参照） |
 | メモリマップ | 0x4000-0xBFFF に 4 × 8 KB のバンク切り替え RAM ウィンドウ；0xBFFE/0xBFFF にモードレジスタ |
 | SCC レジスタウィンドウ | モードレジスタに応じて `0x9800-0x9FFF`（Compatible モード）または `0xB800-0xBFFF`（Plus モード） |
 
 ### FM-PAC — MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-`--extension fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
+`--extension1`/`--extension2 fmpac` で有効化するオプションのオーバーレイカートリッジ — 有効化と必要なROMは[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)を参照。64 KB バンク切り替え ROM、openMSX 互換のマジック値アンロック方式 8 KB バッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップ（9 チャンネル 2 オペレータ FM メロディ合成［内蔵 15 音色 + ユーザー定義音色］、ADSR エンベロープ、リズムモード［バスドラム、スネア、タム、トップシンバル、ハイハット］を含む）を PSG/SCC と混合してオーディオ出力。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/fmpac.py`（カートリッジデバイス）、`msx/opll.py`（YM2413/OPLL チップ） |
-| 有効化 | `--extension fmpac`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
+| 有効化 | `--extension1`/`--extension2 fmpac`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)参照）；ROM は `roms/fmpac/fmpac.rom` |
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）；8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）；メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
 | SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
@@ -137,14 +137,14 @@
 
 ### Sony HBI-J1 — 漢字ROM + MSX-JEワードプロセッサ
 
-`--extension hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット2自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、スロット2自体の拡張は本体側のスロット3拡張と共存します。
+`--extension1`/`--extension2 hbi_j1` で有効化するオプションのオーバーレイカートリッジ — 有効化・必要なROM・ライセンスについては[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)を参照。JIS漢字フォントROM I/Oデバイス（ポート `0xD8-0xDB`、スロット位置を持たない）に加え、プライマリスロット（`--extension1`/`--extension2` が配置した側）自体を2つのサブスロットを持つ*拡張*スロットにする — Halnoteマッパー方式のMSX-JEワードプロセッサROM（16 KBバッテリーバックアップSRAM付き）と、フラットな漢字ドライバ+BASIC拡張ROM。標準的なMSX2本体に挿すものなので、その拡張スロットは本体側のスロット3拡張と共存します。
 
 著者はこの実機を物理的に所有しており、そのROMをダンプ済みです（openMSXの `Sony_HBI-J1.xml` に対してSHA1で検証済み）。そのため、この実装は資料ベースではなく実機を対象としています。
 
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `msx/kanji.py`（漢字ROMデバイス）、`msx/mapper.py:HalnoteMapper`（MSX-JEカートリッジ）、`msx/machine_loader.py`（拡張オーバーレイの配線） |
-| 有効化 | `--extension hbi_j1`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
+| 有効化 | `--extension1`/`--extension2 hbi_j1`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#sony-hbi-j1)参照）；ROM は `roms/hbi_j1/` |
 | 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別；5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
 | サブスロット0 | `HalnoteMapper` — 1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM；`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
@@ -166,7 +166,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 2 も `--extension` によって独立に拡張可能です — 各スロットが何を保持できるか、どの拡張がスロット2を拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 1・スロット 2 はそれぞれ独立に `--extension1`/`--extension2` によって拡張可能です — 各スロットが何を保持できるか、どの拡張がスロットを拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。同じ ROM・拡張 id を両カートリッジスロットに同時指定はできません（起動時にエラー）。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -174,8 +174,8 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | アドレス空間 | フラット 64 KB（0x0000–0xFFFF）、4 つの 16 KB ページ |
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
-| スロット 1 | マッパー経由のカートリッジ ROM |
-| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
+| スロット 1 | マッパー経由のカートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension1` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
+| スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension2` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
@@ -195,7 +195,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 
 ### カートリッジマッパー
 
-フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type、固定配置マッパー（Page2/0x4000/0x8000）、KoeiSRAM32、GameMaster2 を SHA1 ベースの ROM データベースから自動検出します。`--mapper` オプションで上書き可能です。
+フラット（バンク切り替えなし）、ASCII8、ASCII16、Konami、KonamiSCC、Majutsushi（DAC）、ASCII8SRAM2/8、ASCII16SRAM2/8、R-Type、固定配置マッパー（Page2/0x4000/0x8000）、KoeiSRAM32、GameMaster2 を SHA1 ベースの ROM データベースから自動検出します。`--mapper`/`--mapper1`（スロット 1）または `--mapper2`（スロット 2）で上書き可能です — 両者は同一のタイプ一覧を受け付けます。
 
 | マッパー | 説明 |
 | --- | --- |
@@ -212,7 +212,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | `KoeiSRAM32Mapper` | ASCII8 + 32 KB バッテリーバックアップ SRAM；SRAM 選択可能ウィンドウに 0x4000 を追加 |
 | `GameMaster2Mapper` | Konami 系 128 KB ROM + 8 KB バッテリーバックアップ SRAM；各バンクレジスタで ROM ページまたは 4 KB SRAM 半分（8 KB ウィンドウ内でミラー）を選択、SRAM 書き込みは 0xB000–0xBFFF |
 
-スロット 2 は `--mapper2` で独立して制御します（デフォルトは自動検出）。`KonamiSCC` はスロット 2 でも有効です — Konami のスロットコンバータカートリッジ（スロット 1 に挿し、スロット 2 の実カートリッジをスロット 1 として見せかけるパススルーカートリッジ）の背後などで、実機の KonamiSCC カートリッジが物理的にスロット 2 を占有するケースを想定しています。ただしスロット 1・スロット 2 はマシン単一の `SCC` チップを共有するため、両方のスロットが同時に `KonamiSCC` に解決された場合は `MachineLoadError` が送出されます。
+スロット 1・スロット 2 はそれぞれ独立にマッパーを解決します（`--mapper`/`--mapper1` と `--mapper2`、どちらもデフォルトは自動検出）。SRAM 搭載タイプを含め両者は完全に同一のマッパー集合をサポートし、各スロットの SRAM はそれぞれ独立に `saves/sram/<カートリッジ SHA1>.sram` へ永続化されます。`KonamiSCC` はどちらのスロットでも実際の Konami-SCC チップを構築します — Konami のスロットコンバータカートリッジの背後などで、実機の KonamiSCC カートリッジが物理的にどちらのスロットも占有できるケースを想定しています。ただしスロット 1・スロット 2 はマシン単一の `SCC` チップを共有するため、両方のスロットが同時に `KonamiSCC` に解決された場合、または一方が `KonamiSCC` でもう一方が `--extensionN scc_plus` を選択した場合は `MachineLoadError` が送出されます。
 
 ### フロッピーディスクドライブ（WD2793）
 
@@ -342,32 +342,32 @@ All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
 ## パフォーマンス
 
-`--benchmark` CLI オプションで計測しています。ヘッドレス・無制限速度（`FrameTimer` によるペーシングなし）で実行し、`--resume` により保存済みの中盤シーンから開始します（BIOS 起動時間は計測から除外）。CPU エミュレーションとオフスクリーンバッファへの VDP 描画は毎フレーム実行され、インタラクティブ再生時と同じ描画コストを負担します。ただし `--benchmark` は SDL ウィンドウの作成・オーディオサンプル生成・テクスチャアップロード/ブリットを一切行わないため、実際のインタラクティブセッションはここに示す生の数値よりもいくらか遅くなります。
+`--benchmark` CLI オプションで計測しています。ヘッドレス・無制限速度（`FrameTimer` によるペーシングなし）で実行し、コールドブートから規定フレーム数まで実行します（BIOS 起動時間も計測に含む）。CPU エミュレーションとオフスクリーンバッファへの VDP 描画は毎フレーム実行され、インタラクティブ再生時と同じ描画コストを負担します。ただし `--benchmark` は SDL ウィンドウの作成・オーディオサンプル生成・テクスチャアップロード/ブリットを一切行わないため、実際のインタラクティブセッションはここに示す生の数値よりもいくらか遅くなります。
 
 各（ランタイム、ゲーム）の組み合わせについて、10000 フレームの計測を 10 回実行し、最速・最遅を除いた残り 8 回の平均をスコアとしています。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 295.83 | 約 4.9 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 493.93 | 約 8.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 323.99 | 約 5.4 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1191.37 | 約 19.9 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1357.57 | 約 22.6 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1405.11 | 約 23.4 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 76.07 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 128.14 | 約 2.1 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 86.23 | 約 1.4 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 290.71 | 約 4.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 417.38 | 約 7.0 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 334.40 | 約 5.6 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 294.03 | 約 4.9 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 488.02 | 約 8.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 320.24 | 約 5.3 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1259.00 | 約 21.0 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1069.32 | 約 17.8 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1367.67 | 約 22.8 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 77.71 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 131.06 | 約 2.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 86.27 | 約 1.4 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 274.27 | 約 4.6 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 359.61 | 約 6.0 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 333.84 | 約 5.6 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.8 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.6 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.5.17 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.6.0 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）。すべて上記のコールドブート方式で統一して計測しています。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -453,27 +453,34 @@ python . path/to/game.rom --scale 4
 # デュアルカートリッジ（スロット 1 + スロット 2）
 python . path/to/game1.rom --slot2 path/to/game2.rom
 
+# 同じ内容を、位置引数の代わりに --slot1 を明示指定
+python . --slot1 path/to/game1.rom --slot2 path/to/game2.rom
+
 # Sony HB-F1XD にフロッピーをマウントして起動（Disk BASIC が起動）
 python . --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 # CALL FORMAT でフォーマットするための空ディスク（720 KB）を作成
 python tools/dskblank.py blank.dsk
 
-# マッパーを明示指定
+# マッパーを明示指定（--mapper2 も同一のタイプ一覧を受け付ける）
 python . path/to/game.rom --mapper KonamiSCC
 
 # スロット 1 のゲームと合わせてスロット 2 に FM-PAC（MSX-MUSIC）を追加
-python . path/to/game.rom --extension fmpac
+python . path/to/game.rom --extension2 fmpac
 
 # スロット 2 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
 # フロッピーから起動
-python . --extension scc_plus --fdd1 path/to/disk.dsk
+python . --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Sony HBI-J1（漢字ROM/MSX-JEカートリッジ、スロット2を拡張）を接続
-python . --extension hbi_j1
+python . --extension2 hbi_j1
 
-# 他の --extension id（MSX-DOS2 + RAM 拡張、漢字フォント、View フォント）は
-# docs/README_extension_ja.md に記載
+# --extension1/--extension2 は完全に対称：どちらのスロットにも任意の拡張 id を
+# 配置できる（片方はゲーム、もう片方は別の拡張、という組み合わせも可能）
+python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
+
+# 他の --extension1/--extension2 id（MSX-DOS2 + RAM 拡張、漢字フォント、
+# View フォント）は docs/README_extension_ja.md に記載
 
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
@@ -507,14 +514,15 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 
 | オプション | デフォルト | 説明 |
 | --- | --- | --- |
-| `cartridge` | _（なし）_ | カートリッジ ROM のパス |
+| `cartridge` | _（なし）_ | スロット 1 カートリッジ ROM のパス — `--slot1 cartridge --mapper1 auto` の省略形；`--slot1`/`--extension1` と併用不可 |
+| `--slot1 ROM1`、`--slot ROM1` | _（なし）_ | スロット 1 カートリッジ ROM のパス（位置引数 `cartridge` の代替；それ自体、および `--extension1` と併用不可）。`--slot` は `--slot1` の別名として使える（`--mapper` の `--mapper1` に対する別名と対称） |
 | `--machine MACHINE_ID` | _（自動）_ | マシン設定 ID（例：`cbios_msx2_jp`）；省略時は ROM データベースから自動判定 |
 | `--speed FLOAT` | `1.0` | エミュレーション速度の倍率 |
 | `--scale N` | `3` | 256×212 ベース解像度に対する整数の拡大率（例：小さいディスプレイなら `2`、大きいディスプレイなら `4`） |
-| `--mapper TYPE` | `auto` | スロット 1 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
-| `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス |
-| `--mapper2 TYPE` | `auto` | スロット 2 マッパー：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`R-Type`、`Page2`、`0x4000`、`0x8000`（KonamiSCC はスロット 1 とマシン単一の SCC チップを共有；スロット 1 も KonamiSCC に解決される場合は拒否。SRAM 搭載のマッパー種別 — `ASCII8SRAM2/8`、`ASCII16SRAM2/8`、`KoeiSRAM32`、`GameMaster2` — はスロット 2 に SRAM 永続化の経路がないため受け付けない） |
-| `--extension ID` | _（なし）_ | スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--slot2`/`--mapper2` と併用不可。`none` は `py_emulator.yaml` が拡張を設定していても強制的に拡張なしにし、`--slot2`/`--mapper2` を CLI で使えるようにする |
+| `--mapper TYPE`、`--mapper1 TYPE` | `auto` | スロット 1 マッパー（`--mapper` は `--mapper1` の別名）：`auto`、`Mirrored`、`Normal`、`ASCII8`、`ASCII16`、`Konami`、`KonamiSCC`、`Majutsushi`、`ASCII8SRAM2`、`ASCII8SRAM8`、`ASCII16SRAM2`、`ASCII16SRAM8`、`R-Type`、`Page2`、`0x4000`、`0x8000`、`KoeiSRAM32`、`GameMaster2` |
+| `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス；`--extension2` と併用不可 |
+| `--mapper2 TYPE` | `auto` | スロット 2 マッパー — `--mapper1` と同一のタイプ一覧（KonamiSCC・SRAM 搭載タイプすべて含む；スロット 2 の SRAM もスロット 1 と同様に永続化される）。KonamiSCC はスロット 1 とマシン単一の SCC チップを共有：スロット 1 も KonamiSCC に解決される場合、またはスロット 1 が `--extension1 scc_plus` を選択している場合は拒否 |
+| `--extension1 ID`、`--extension2 ID`、`--extension ID` | _（なし）_ | スロット 1/スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--extension1` は位置引数 `cartridge`/`--slot1`/`--mapper1` と、`--extension2` は `--slot2`/`--mapper2` と併用不可。同じ拡張 id（`--slot1`/`--slot2` の場合は同じ ROM）を両スロットに同時指定することはできない — 起動時にエラー。`none` は `py_emulator.yaml` がそのスロットに拡張を設定していても強制的に拡張なしにし、そのスロットの `--slotN`/`--mapperN` を CLI で使えるようにする。`--extension` は `--extension2` の別名として使える（`--extension1`/`--extension2` が登場する以前の意味そのまま） |
 | `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
@@ -552,9 +560,11 @@ cp py_emulator.example.yaml py_emulator.yaml
 machine: cbios_msx2_jp   # デフォルトのマシン ID（未設定なら自動判定）
 speed: 1.0               # エミュレーション速度倍率
 scale: 3                 # 256x212 ベースに対するウィンドウ整数拡大率
+# slot1: roms/slot1.rom  # スロット 1 カートリッジ ROM のパス（未設定なら位置引数のカートリッジを使用）
 # slot2: roms/slot2.rom  # スロット 2 カートリッジ ROM のパス（未設定ならスロット 2 なし）
-# mapper/mapper2 は CLI 専用（--mapper / --mapper2）；ここでは設定不可
-# extension: fmpac        # スロット 2 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
+# mapper1/mapper2 は CLI 専用（--mapper / --mapper1 / --mapper2）；ここでは設定不可
+# extension1: fmpac        # スロット 1 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
+# extension2: hbi_j1       # スロット 2 の拡張を重ねる（'extension' も extension2 のレガシー別名として使える）
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -587,9 +597,10 @@ mouse:
   port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
 ```
 
-設定できるのは `machine`・`speed`・`scale`・`slot2`・`extension`・
+設定できるのは `machine`・`speed`・`scale`・`slot1`・`slot2`・`extension1`・
+`extension2`（`extension` も `extension2` のレガシー別名として使えます）・
 `frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
-（`mapper`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper2` を参照）。
+（`mapper1`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper1`/`--mapper2` を参照）。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
 コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
@@ -779,7 +790,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2667 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2749 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -846,7 +857,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2667 テスト
+├── tests/                 # テストスイート — 2749 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -870,7 +881,7 @@ py-msx-emulator/
 
 ### Issue とプルリクエスト
 
-現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に GitHub Issue で議論してください。対象タイトル以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
+現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に [GitHub Issue](https://github.com/SangatsuUsagi/py-msx-emulator/issues) で議論してください。対象タイトル以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
 
 ---
 

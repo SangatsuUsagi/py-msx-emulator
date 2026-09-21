@@ -44,18 +44,27 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 
 
 def test_extension_fmpac_alone_boots() -> None:
-    code, out, _err = _run_main(["--extension", "fmpac", "--count-frame", "1"])
+    code, out, _err = _run_main(["--extension2", "fmpac", "--count-frame", "1"])
     assert code == 0
     assert "fmpac" in out
 
 
+def test_extension1_fmpac_alone_boots() -> None:
+    # openspec/changes/slot1-slot2-symmetrization: --extension1 places a
+    # flat-shape overlay (fmpac) on slot 1, real end-to-end (build_machine
+    # is not mocked here, only the filesystem/SDL2).
+    code, out, _err = _run_main(["--extension1", "fmpac", "--count-frame", "1"])
+    assert code == 0
+    assert "extension: fmpac" in out and "slot 1" in out
+
+
 def test_extension_fmpac_and_slot2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "fmpac", "--slot2", "game2.rom"])
+    code, _out, err = _run_main(["--extension2", "fmpac", "--slot2", "game2.rom"])
     assert code != 0
-    assert "--extension" in err and "--slot2" in err
+    assert "--extension2" in err and "--slot2" in err
 
 
 def test_extension_fmpac_and_mapper2_conflict_exits_nonzero() -> None:
-    code, _out, err = _run_main(["--extension", "fmpac", "--mapper2", "Konami"])
+    code, _out, err = _run_main(["--extension2", "fmpac", "--mapper2", "Konami"])
     assert code != 0
-    assert "--extension" in err and "--mapper2" in err
+    assert "--extension2" in err and "--mapper2" in err

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from msx.input import InputState
@@ -357,6 +359,86 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 
 
 # ---------------------------------------------------------------------------
+# Either slot's KonamiSCC mapper vs. either slot's scc_plus extension --
+# the 4-way single-scc-field conflict (openspec/changes/
+# slot1-slot2-symmetrization, design.md Decision D1/D5)
+# ---------------------------------------------------------------------------
+
+def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    cart1 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM, cartridge=cart1, mapper="KonamiSCC",
+            extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_scc_plus_rejected_when_mapper2_is_konamiscc() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    cart2 = bytes(65536)
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM, cartridge2=cart2, mapper2="KonamiSCC",
+            extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_and_extension2_both_scc_plus_rejected() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    with pytest.raises(MachineLoadError, match="scc"):
+        make_machine(
+            rom=_NOP_ROM,
+            extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
+            extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        )
+
+
+def test_make_machine_extension1_scc_plus_alone_builds_real_scc_chip() -> None:
+    from msx.machine_loader import _ExtensionOverlay
+    from msx.mapper import SCCICart
+    m = make_machine(rom=_NOP_ROM, extension_overlay1=_ExtensionOverlay(device="scc_i_cart"))
+    assert isinstance(m.memory._mapper, SCCICart)
+    assert m.scc is not None
+    assert m.scc is m.memory._mapper.scc
+
+
+# ---------------------------------------------------------------------------
+# Either slot's Majutsushi mapper wires machine.dac -- weed-follow-up bug
+# fix: the DAC used to be detected from slot 1's mapper only, so a
+# Majutsushi cartridge in slot 2 built fine but never reached machine.dac
+# (silent DAC audio loss). Machine has a single dac field, so both slots
+# resolving to Majutsushi at once is rejected, mirroring KonamiSCC's own
+# single-scc-field check.
+# ---------------------------------------------------------------------------
+
+def test_make_machine_dac_wired_from_slot1_majutsushi() -> None:
+    from msx.mapper import MajutsushiMapper
+    cart = bytes(131072)
+    m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="Majutsushi")
+    assert isinstance(m.dac, MajutsushiMapper)
+    assert m.dac is m.memory._mapper
+
+
+def test_make_machine_dac_wired_from_slot2_majutsushi() -> None:
+    from msx.mapper import MajutsushiMapper
+    cart2 = bytes(131072)
+    m = make_machine(rom=_NOP_ROM, cartridge2=cart2, mapper2="Majutsushi")
+    assert isinstance(m.dac, MajutsushiMapper)
+    assert m.dac is m.memory._mapper2
+
+
+def test_make_machine_majutsushi_in_both_slots_rejected() -> None:
+    cart1 = bytes(131072)
+    cart2 = bytes([0xFF]) + bytes(131071)
+    with pytest.raises(MachineLoadError, match="dac"):
+        make_machine(
+            rom=_NOP_ROM, cartridge=cart1, mapper="Majutsushi",
+            cartridge2=cart2, mapper2="Majutsushi",
+        )
+
+
+# ---------------------------------------------------------------------------
 # cycle_count
 
 def test_cycle_count_starts_at_zero() -> None:
@@ -422,3 +504,66 @@ def test_reset_with_no_fdc_attached_does_not_crash() -> None:
     m = _make_machine()
     assert m.fdc is None
     m.reset()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Machine.sram_sources() -- design.md Decision D2 Option B: a generic
+# (has_sram source, save path) list replacing the individually-enumerated
+# _save_sram_if_present call per device __main__.py's _cleanup used to make.
+# ---------------------------------------------------------------------------
+
+def test_sram_sources_empty_when_nothing_carries_sram() -> None:
+    m = _make_machine()
+    assert m.sram_sources() == []
+
+
+def test_sram_sources_includes_slot1_mapper_when_sram_backed() -> None:
+    m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    sources = m.sram_sources()
+    assert len(sources) == 1
+    source, path = sources[0]
+    assert source is m.memory._mapper
+    assert isinstance(path, Path)
+    assert path == m.sram_save_path
+
+
+def test_sram_sources_excludes_slot1_mapper_without_sram() -> None:
+    # A non-SRAM mapper (ASCII8) never gets a sram_save_path in the first
+    # place, but the has_sram guard is what actually excludes it here.
+    m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8")
+    assert m.sram_sources() == []
+
+
+def test_sram_sources_includes_both_slots_independently() -> None:
+    m = make_machine(
+        rom=_NOP_ROM,
+        cartridge=bytes(65536), mapper="ASCII8SRAM2",
+        cartridge2=bytes(range(256)) * 32, mapper2="GameMaster2",
+    )
+    sources = m.sram_sources()
+    assert len(sources) == 2
+    found = {id(source) for source, _path in sources}
+    assert id(m.memory._mapper) in found
+    assert id(m.memory._mapper2) in found
+
+
+def test_sram_sources_includes_fmpac_and_halnote_when_present(tmp_path: Path) -> None:
+    from msx.fmpac import FmPac
+    from msx.mapper import HalnoteMapper
+    from msx.opll import Opll
+
+    m = _make_machine()
+    m.fmpac = FmPac(rom=bytes(65536), opll=Opll())
+    m.fmpac_sram_save_path = tmp_path / "fmpac.sram"
+    m.halnote_cart = HalnoteMapper(rom=bytes(1048576))
+    m.halnote_sram_save_path = tmp_path / "halnote.sram"
+
+    sources = m.sram_sources()
+    found = {id(source): path for source, path in sources}
+    assert id(m.fmpac) in found and found[id(m.fmpac)] == m.fmpac_sram_save_path
+    assert id(m.halnote_cart) in found and found[id(m.halnote_cart)] == m.halnote_sram_save_path
+
+    m.halnote_sram_save_path = None  # unset path excludes it from the list
+    sources = m.sram_sources()
+    assert id(m.halnote_cart) not in {id(source) for source, _path in sources}
+    assert id(m.fmpac) in {id(source) for source, _path in sources}
