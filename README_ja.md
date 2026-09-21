@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2667%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-2749%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -166,7 +166,7 @@
 
 ### メモリバス / スロットシステム
 
-MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 1・スロット 2 はそれぞれ独立に `--extension1`/`--extension2` によって拡張可能です — 各スロットが何を保持できるか、どの拡張がスロットを拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。同じ ROM・拡張 id を両カートリッジスロットに同時指定することはできません（起動時にエラー）。
+MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に BIOS ROM、スロット 1 にカートリッジ、スロット 2 にオプションの第 2 カートリッジ、スロット 3 に 32 KB RAM。MSX2 ではプライマリスロット 3 が 4 つのセカンダリスロットに拡張され、サブスロット 3-0 にサブ ROM、3-2 に 128 KB RAM マッパーを配置します。プライマリスロット 1・スロット 2 はそれぞれ独立に `--extension1`/`--extension2` によって拡張可能です — 各スロットが何を保持できるか、どの拡張がスロットを拡張するかは[`docs/README_extension_ja.md`の「スロットモデル」節](docs/README_extension_ja.md#スロットモデル)を参照 — スロット 3 自体の拡張と共存し、それぞれが独自のセカンダリスロットレジスタを持ちます。同じ ROM・拡張 id を両カートリッジスロットに同時指定はできません（起動時にエラー）。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -342,32 +342,32 @@ All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
 ## パフォーマンス
 
-`--benchmark` CLI オプションで計測しています。ヘッドレス・無制限速度（`FrameTimer` によるペーシングなし）で実行し、`--resume` により保存済みの中盤シーンから開始します（BIOS 起動時間は計測から除外）。CPU エミュレーションとオフスクリーンバッファへの VDP 描画は毎フレーム実行され、インタラクティブ再生時と同じ描画コストを負担します。ただし `--benchmark` は SDL ウィンドウの作成・オーディオサンプル生成・テクスチャアップロード/ブリットを一切行わないため、実際のインタラクティブセッションはここに示す生の数値よりもいくらか遅くなります。
+`--benchmark` CLI オプションで計測しています。ヘッドレス・無制限速度（`FrameTimer` によるペーシングなし）で実行し、コールドブートから規定フレーム数まで実行します（BIOS 起動時間も計測に含む）。CPU エミュレーションとオフスクリーンバッファへの VDP 描画は毎フレーム実行され、インタラクティブ再生時と同じ描画コストを負担します。ただし `--benchmark` は SDL ウィンドウの作成・オーディオサンプル生成・テクスチャアップロード/ブリットを一切行わないため、実際のインタラクティブセッションはここに示す生の数値よりもいくらか遅くなります。
 
 各（ランタイム、ゲーム）の組み合わせについて、10000 フレームの計測を 10 回実行し、最速・最遅を除いた残り 8 回の平均をスコアとしています。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 295.19 | 約 4.9 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 493.71 | 約 8.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 321.14 | 約 5.4 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1272.26 | 約 21.2 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1081.10 | 約 18.0 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1395.74 | 約 23.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 75.85 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 128.38 | 約 2.1 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 86.34 | 約 1.4 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 325.80 | 約 5.4 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 288.15 | 約 4.8 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 333.62 | 約 5.6 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 294.03 | 約 4.9 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 488.02 | 約 8.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 320.24 | 約 5.3 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1259.00 | 約 21.0 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1069.32 | 約 17.8 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1367.67 | 約 22.8 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 77.71 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 131.06 | 約 2.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 86.27 | 約 1.4 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 274.27 | 約 4.6 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 359.61 | 約 6.0 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 333.84 | 約 5.6 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 5.4 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー — 対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 4.6 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.6.0 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）：
+v0.1.0 から v2.6.0 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）。すべて上記のコールドブート方式で統一して計測しています。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -790,7 +790,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 2667 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 2749 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -857,7 +857,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 2667 テスト
+├── tests/                 # テストスイート — 2749 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
@@ -881,7 +881,7 @@ py-msx-emulator/
 
 ### Issue とプルリクエスト
 
-現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に GitHub Issue で議論してください。対象タイトル以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
+現時点では正式な CONTRIBUTING.md はありません。重要な変更についてはプルリクエストを提出する前に [GitHub Issue](https://github.com/SangatsuUsagi/py-msx-emulator/issues) で議論してください。対象タイトル以外の ROM に関するバグ報告は歓迎します；特定タイトルの互換性修正はベストエフォートで対応します。
 
 ---
 

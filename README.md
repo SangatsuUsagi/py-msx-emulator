@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2667%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2749%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -525,8 +525,8 @@ This project is not published to PyPI.
 ## Performance
 
 Measured with the `--benchmark` CLI flag: a headless run, unthrottled (no
-`FrameTimer` pacing), started from a saved mid-game scene via `--resume` (BIOS
-boot time is excluded from the measurement). Every frame still runs full CPU
+`FrameTimer` pacing), from a cold boot through the full frame count (BIOS
+boot time is included in the measurement). Every frame still runs full CPU
 emulation and VDP-to-offscreen-buffer rendering, the same cost paid during
 interactive play — but `--benchmark` never opens an SDL window, generates audio
 samples, or performs texture upload/blit, so real interactive sessions run
@@ -538,23 +538,23 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 295.19 | ~4.9× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 493.71 | ~8.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 321.14 | ~5.4× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1272.26 | ~21.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1081.10 | ~18.0× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1395.74 | ~23.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 75.85 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 128.38 | ~2.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 86.34 | ~1.4× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 325.80 | ~5.4× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 288.15 | ~4.8× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 333.62 | ~5.6× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 294.03 | ~4.9× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 488.02 | ~8.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 320.24 | ~5.3× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1259.00 | ~21.0× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1069.32 | ~17.8× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1367.67 | ~22.8× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 77.71 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 131.06 | ~2.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 86.27 | ~1.4× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 274.27 | ~4.6× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 359.61 | ~6.0× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 333.84 | ~5.6× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
 heaviest rendering/audio load among the target titles) at ~1.3×; PyPy raises the
-same case to ~5.4×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+same case to ~4.6×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -570,7 +570,8 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.6.0, per platform and runtime:
+Avg FPS (`--benchmark`) from v0.1.0 through v2.6.0, per platform and runtime.
+All versions were measured uniformly with the cold-boot methodology above.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -1039,7 +1040,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2667 tests spanning unit tests
+The test suite covers all major components with 2749 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1109,7 +1110,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2667 tests
+├── tests/                 # Test suite — 2749 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1142,7 +1143,8 @@ will not be merged.
 
 ### Issues and pull requests
 
-There is no formal CONTRIBUTING.md at present. Please open a GitHub issue to
+There is no formal CONTRIBUTING.md at present. Please open a
+[GitHub issue](https://github.com/SangatsuUsagi/py-msx-emulator/issues) to
 discuss significant changes before submitting a PR. Bug reports for ROMs other
 than the listed target titles are welcome; compatibility fixes will be
 considered on a best-effort basis.
