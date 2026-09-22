@@ -79,127 +79,109 @@ def test_irq_pending_false_when_ie0_clear() -> None:
 
 # ---------------------------------------------------------------------------
 # SCREEN 1 (GRAPHIC1): tile colour from attribute table
+#
+# The core fg/bg-from-colour-table and colour-0-substitutes-to-backdrop
+# behaviour is covered, for both this renderer and TMS9918A's, by
+# tests/vdp/test_renderer_g1.py (parametrized over both backends via the
+# `flavor` fixture -- see tests/vdp/conftest.py). Only the V9938-specific
+# 128 KB-range extension stays here.
 # ---------------------------------------------------------------------------
 
-def test_screen1_foreground_colour_from_attribute_table() -> None:
+def test_screen1_name_and_pattern_tables_above_16k() -> None:
+    """GRAPHIC1's name/pattern tables use the full V9938 128 KB range (R#2 7
+    bits, R#4 6 bits), the same fix GRAPHIC2/3 already had
+    (test_screen4_name_table_above_16k / test_g3_pattern_base_uses_r4_bits_5_2)
+    -- found by an allium weed pass while investigating
+    logs/msx-21-hb-f1xd-select-screen-text-missing.md: this codebase's own
+    G1 colour table was already on the wide (R#10/&0x1FFFF) form while
+    name/pattern were still the narrow TMS9918A-only (16 KB) form."""
     vdp = V9938()
     _enable(vdp)
-    # R#0=0 (M3=0,M4=0,M5=0), R#1 BL (M1=0,M2=0) → GRAPHIC1
-    vdp.regs[2] = 0x01  # name_base: (1 & 0x0F) << 10 = 0x0400
-    vdp.regs[3] = 0x80  # col_base:  0x80 << 6 = 0x2000
-    vdp.regs[4] = 0x01  # pat_base:  (1 & 0x07) << 11 = 0x0800
+    vdp.regs[2] = 0x30   # name_base = (0x30 & 0x7F) << 10 = 0xC000
+    vdp.regs[3] = 0x80   # col_base = 0x2000
+    vdp.regs[4] = 0x11   # pat_base = (0x11 & 0x3F) << 11 = 0x8800
 
-    vdp.vram[0x0400] = 0      # name[0,0] = tile 0
+    vdp.vram[0xC000] = 0      # name[0,0] = tile 0 (read from 0xC000, not 0x0000)
     vdp.vram[0x2000] = 0x41   # colour group 0: fg=4, bg=1
-    for py in range(8):       # pattern tile 0: all foreground bits
-        vdp.vram[0x0800 + py] = 0xFF
+    for py in range(8):
+        vdp.vram[0x8800 + py] = 0xFF   # pattern tile 0 (read from 0x8800, not 0x0800)
 
     buf = _active(vdp)
-    assert buf[0] == 4  # foreground colour index 4
-
-
-def test_screen1_background_colour_from_attribute_table() -> None:
-    vdp = V9938()
-    _enable(vdp)
-    vdp.regs[2] = 0x01
-    vdp.regs[3] = 0x80
-    vdp.regs[4] = 0x01
-
-    vdp.vram[0x0400] = 0      # tile 0
-    vdp.vram[0x2000] = 0x41   # fg=4, bg=1
-    # pattern all 0x00 (background) — vram zero-initialised
-
-    buf = _active(vdp)
-    assert buf[0] == 1  # background colour index 1
-
-
-def test_screen1_colour_zero_nibbles_substitute_backdrop() -> None:
-    """Either colour-byte nibble being 0 substitutes the current backdrop
-    (R#7 low nibble), not palette entry 0 -- distinct from TEXT1's direct-use
-    rule and confirmed by using a non-zero backdrop below."""
-    vdp = V9938()
-    _enable(vdp)
-    vdp.regs[2] = 0x01  # name_base = 0x0400
-    vdp.regs[3] = 0x80  # col_base  = 0x2000
-    vdp.regs[4] = 0x01  # pat_base  = 0x0800
-    vdp.regs[7] = 0x09  # backdrop (border low nibble) = colour 9
-
-    vdp.vram[0x0400] = 0      # tile 0
-    vdp.vram[0x2000] = 0x00   # fg nibble=0, bg nibble=0 -- both substitute
-    vdp.vram[0x0800] = 0x80   # pattern row 0: bit 7 set (fg pixel), bit 6 clear (bg pixel)
-
-    buf = _active(vdp)
-    assert buf[0] == 9  # fg=0 -> backdrop
-    assert buf[1] == 9  # bg=0 -> backdrop
+    assert buf[0] == 4
 
 
 # ---------------------------------------------------------------------------
 # SCREEN 2 (GRAPHIC2): per-row per-tile colour
+#
+# The core per-row fg/bg-from-colour-table and colour-0-substitutes-to-
+# backdrop behaviour is covered, for both this renderer and TMS9918A's, by
+# tests/vdp/test_renderer_g2.py (parametrized over both backends). Only the
+# V9938-specific third-mirroring behaviour (no TMS9918A equivalent, since
+# TMS9918A lacks R#10/full-R#2/wide-R#4) stays here.
 # ---------------------------------------------------------------------------
 
-def test_screen2_per_row_colour() -> None:
+def test_screen2_band1_2_alias_band0_when_r4_r3_low_bits_clear() -> None:
+    """R#4 bits 1:0 clear (and R#3 bits 6:5 clear) collapse the 2nd/3rd-third
+    pattern/colour tables onto the 1st third (msx.org/wiki/SCREEN_2's
+    documented "reused" behaviour) -- a real-ROM regression
+    (logs/msx-21-hb-f1xd-select-screen-text-missing.md): a title/menu screen
+    defining only one 2 KB font+colour third rendered blank on tile rows
+    8-23 because the code read the (uninitialised) 2nd/3rd-third VRAM
+    directly instead of mirroring the 1st third's real data."""
     vdp = V9938()
     _enable(vdp)
-    vdp.regs[0] = 0x02  # M3=1 (bit 1) → GRAPHIC2
+    vdp.regs[0] = 0x02   # GRAPHIC2
+    vdp.regs[2] = 0x06   # name_base = 0x1800
+    vdp.regs[3] = 0x9F   # col_base = 0x2000; bits 6:5 clear -> band1/2 colour aliases band0
+    vdp.regs[4] = 0x00   # pat_base = 0x0000; bits 1:0 clear -> band1/2 pattern aliases band0
 
-    # name_base=0x0400, pat_base=0x0000, col_base=0x2000
-    vdp.regs[2] = 0x01  # (1 & 0x0F) << 10 = 0x0400
-    vdp.regs[3] = 0x80  # (0x80 & 0x80) << 6 = 0x2000
-    vdp.regs[4] = 0x00  # (0x00 & 0x04) << 11 = 0
-
-    vdp.vram[0x0400] = 0      # name[0,0] = tile 0
-    vdp.vram[0x0000] = 0xFF   # pattern tile 0, row 0: all foreground
-    vdp.vram[0x2000] = 0x65   # colour tile 0, row 0: fg=6, bg=5
+    # Only band0 (0x0000-0x07FF pattern, 0x2000-0x27FF colour) has real data,
+    # for tile 0 -- the name table's rows 8 and 16 already default to tile 0
+    # without any write, since fresh VRAM is zero-filled.
+    vdp.vram[0x0000] = 0xFF   # tile 0, row 0: solid
+    vdp.vram[0x2000] = 0x65   # tile 0, row 0 colour: fg=6, bg=5
+    # band1/2's own VRAM (0x0800.../0x1000...) is left at its zero-initialised
+    # default (no pattern bits set, colour nibbles 0 -> backdrop).
 
     buf = _active(vdp)
-    assert buf[0] == 6  # foreground colour index 6
+    assert buf[8 * 8 * 256] == 6    # band1 row (tile row 8, y=64): mirrored fg
+    assert buf[16 * 8 * 256] == 6   # band2 row (tile row 16, y=128): mirrored fg
 
 
-def test_screen2_second_row_has_independent_colour() -> None:
+def test_screen2_band1_2_independent_when_r4_r3_low_bits_set() -> None:
+    """The mirroring in the test above is conditional: with R#4 bits 1:0 and
+    R#3 bits 6:5 set, band1/2 keep their own independent pattern/colour data
+    (the normal 3-distinct-fonts SCREEN 2 layout is unaffected)."""
     vdp = V9938()
     _enable(vdp)
-    vdp.regs[0] = 0x02
+    vdp.regs[0] = 0x02   # GRAPHIC2
+    vdp.regs[2] = 0x06   # name_base = 0x1800
+    vdp.regs[3] = 0xFF   # col_base = 0x2000; bits 6:5 set -> independent bands
+    vdp.regs[4] = 0x03   # pat_base = 0x0000; bits 1:0 set -> independent bands
 
-    vdp.regs[2] = 0x01
-    vdp.regs[3] = 0x80
-    vdp.regs[4] = 0x00
-
-    vdp.vram[0x0400] = 0      # tile 0 at (row=0, col=0)
-    # Pattern: row 0 all fg, row 1 all fg
-    vdp.vram[0x0000] = 0xFF
-    vdp.vram[0x0001] = 0xFF
-    # Colour: row 0 → fg=6, row 1 → fg=3
+    # All three thirds use tile 0 (the name table's rows 0/8/16 all default to
+    # tile 0), each with its own distinct pattern+colour data.
+    vdp.vram[0x0000] = 0xFF   # band0 tile 0, row 0: solid, fg=6/bg=5
     vdp.vram[0x2000] = 0x65
-    vdp.vram[0x2001] = 0x35
+    vdp.vram[0x0800] = 0xFF   # band1 tile 0, row 0: solid, fg=3/bg=1 (different colour)
+    vdp.vram[0x2800] = 0x31
+    vdp.vram[0x1000] = 0xFF   # band2 tile 0, row 0: solid, fg=9/bg=2
+    vdp.vram[0x3000] = 0x92
 
     buf = _active(vdp)
-    assert buf[0 * 256 + 0] == 6   # line 0: fg=6
-    assert buf[1 * 256 + 0] == 3   # line 1: fg=3
-
-
-def test_screen2_colour_zero_nibbles_substitute_backdrop() -> None:
-    """Same colour-0-substitutes-to-backdrop rule as GRAPHIC1, applied per
-    tile row instead of per 8-tile group."""
-    vdp = V9938()
-    _enable(vdp)
-    vdp.regs[0] = 0x02  # GRAPHIC2
-
-    vdp.regs[2] = 0x01  # name_base = 0x0400
-    vdp.regs[3] = 0x80  # col_base  = 0x2000
-    vdp.regs[4] = 0x00  # pat_base  = 0x0000
-    vdp.regs[7] = 0x0A  # backdrop = colour 10
-
-    vdp.vram[0x0400] = 0      # tile 0
-    vdp.vram[0x0000] = 0x80   # pattern row 0: bit 7 set (fg pixel), bit 6 clear (bg pixel)
-    vdp.vram[0x2000] = 0x00   # fg nibble=0, bg nibble=0
-
-    buf = _active(vdp)
-    assert buf[0] == 10  # fg=0 -> backdrop
-    assert buf[1] == 10  # bg=0 -> backdrop
+    assert buf[8 * 8 * 256] == 3    # band1 row: its own colour, not band0's
+    assert buf[16 * 8 * 256] == 9   # band2 row: its own colour, not band0's
 
 
 # ---------------------------------------------------------------------------
 # Sprites (mode 1)
+#
+# Basic pixel placement, priority, 5th-sprite/coincidence flags, EC, and
+# colour-0-transparent-and-still-collides-on-TMS9918A are covered, for both
+# this renderer and TMS9918A's, by tests/vdp/test_sprites.py (parametrized
+# over both backends). Only the V9938-specific TP (R#8 bit 5) behaviour --
+# which has no TMS9918A equivalent (colour 0 always collides there) --
+# stays here.
 # ---------------------------------------------------------------------------
 
 def _write_sat_entry(vdp: V9938, idx: int, y: int, x: int, pat: int, color: int) -> None:
@@ -210,23 +192,6 @@ def _write_sat_entry(vdp: V9938, idx: int, y: int, x: int, pat: int, color: int)
     vdp.vram[base + 1] = x & 0xFF
     vdp.vram[base + 2] = pat & 0xFF
     vdp.vram[base + 3] = color & 0x0F
-
-
-def test_sprite_pixel_placed_at_correct_position() -> None:
-    vdp = V9938()
-    _enable(vdp)
-    vdp.regs[5] = 0x0E  # SAT at 0x0700
-    vdp.regs[6] = 0x01  # SPG at 0x0800
-
-    _write_sat_entry(vdp, 0, y=0, x=0, pat=0, color=7)
-    sat_base = (vdp.regs[5] & 0x7F) << 7
-    vdp.vram[(sat_base + 4) & 0x3FFF] = 0xD0  # terminate SAT after sprite 0
-
-    vdp.vram[0x0800] = 0x80  # pattern 0, row 0: leftmost bit set
-
-    buf = _active(vdp)
-    # y=0 → y_top=1; sprite appears at scan line 1, column 0
-    assert buf[1 * 256 + 0] == 7
 
 
 def test_sprite_colour_zero_does_not_collide_at_default_tp() -> None:
@@ -276,42 +241,15 @@ def test_sprite_colour_zero_collides_when_tp_set() -> None:
     assert buf[1 * 256 + 0] == 0  # higher-priority colour-0 sprite is opaque at TP=1
 
 
-def test_sprite_5th_line_flag() -> None:
-    """V9938 sprite mode 1 keeps the TMS 4-per-line limit; the 5th sets S#0 bit 6."""
-    vdp = V9938()
-    _enable(vdp)
-    vdp.regs[5] = 0x0E  # SAT at 0x0700
-    vdp.regs[6] = 0x00  # SPG at 0x0000
-
-    sat_base = (vdp.regs[5] & 0x7F) << 7  # 0x0700
-
-    # 5 sprites at y=0 (all visible on scan line 1), spread across x
-    for i in range(5):
-        _write_sat_entry(vdp, i, y=0, x=i * 8, pat=0, color=i + 1)
-    vdp.vram[(sat_base + 5 * 4) & 0x3FFF] = 0xD0  # terminate after sprite 4
-
-    render_frame(vdp)
-
-    assert vdp.status & 0x40           # 5th-sprite flag set
-    assert (vdp.status & 0x1F) == 4   # index of 5th sprite (0-based = 4)
-
-
 # ---------------------------------------------------------------------------
-# TEXT1 (SCREEN 0) colours come straight from R#7 (no colour-0 substitution)
+# TEXT1 (SCREEN 0): fg=0 palette behaviour
+#
+# R#7-direct colours and no-substitution are covered, for both this renderer
+# and TMS9918A's, by tests/vdp/test_renderer_text.py (parametrized over both
+# backends). Only the V9938-specific fg=0 palette-index-0 behaviour -- which
+# has no TMS9918A equivalent (fg=0 is hard-wired to colour 1 there) -- stays
+# here.
 # ---------------------------------------------------------------------------
-
-def test_text1_colours_from_r7() -> None:
-    vdp = V9938()
-    vdp.regs[1] = 0x50  # M1 (bit4) + BL (bit6) → TEXT1
-    vdp.regs[2] = 0x00  # name table at 0x0000
-    vdp.regs[4] = 0x01  # pattern gen at 0x0800
-    vdp.regs[7] = 0x32  # fg=3, bg=2
-    vdp.vram[0x0000] = 0x00     # char 0 at col 0
-    vdp.vram[0x0800] = 0xFF     # pattern row 0 all set
-
-    buf = _active(vdp)
-    assert buf[8] == 3   # col 0, first text pixel = fg=3
-
 
 def test_text1_fg_zero_uses_palette_index_0() -> None:
     """V9938 TEXT1 with fg=0 shows palette index 0 directly, NOT colour 1."""
@@ -327,44 +265,45 @@ def test_text1_fg_zero_uses_palette_index_0() -> None:
     assert buf[8] == 0   # fg=0 → index 0 (was incorrectly forced to 1)
 
 
-# ---------------------------------------------------------------------------
-# MULTICOLOR (SCREEN 3) — 4x4 block addressing (regression for the per-scanline
-# byte bug: only 2 of the 8 pattern bytes per cell are used)
-# ---------------------------------------------------------------------------
-
-def test_mc_top_bottom_half_bytes() -> None:
+def test_text1_name_and_pattern_tables_above_16k() -> None:
+    """TEXT1's name/pattern tables use the full V9938 128 KB range, the same
+    fix as GRAPHIC1/GRAPHIC2/GRAPHIC3 above -- found by the same allium weed
+    pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md)."""
     vdp = V9938()
-    vdp.regs[1] = 0x48   # M2 (bit3) → MULTICOLOR, BL (bit6) → display on
-    vdp.regs[2] = 0x0E   # name table at 0x3800
-    vdp.regs[4] = 0x00   # pattern generator at 0x0000
-    vdp.vram[0x3800] = 0x00      # tile 0 at (col 0, char row 0)
-    vdp.vram[0x0000] = 0xF7      # top half: left=15, right=7
-    vdp.vram[0x0001] = 0x3A      # bottom half: left=3, right=10
+    vdp.regs[1] = 0x50  # TEXT1
+    vdp.regs[2] = 0x30  # name_base = (0x30 & 0x7F) << 10 = 0xC000
+    vdp.regs[4] = 0x11  # pat_base  = (0x11 & 0x3F) << 11 = 0x8800
+    vdp.regs[7] = 0x32  # fg=3, bg=2
+    vdp.vram[0xC000] = 0x00
+    vdp.vram[0x8800] = 0xFF
 
     buf = _active(vdp)
-
-    for scan in range(4):        # top half → pattern byte +0
-        assert buf[scan * 256 + 0] == 15
-        assert buf[scan * 256 + 4] == 7
-    for scan in range(4, 8):     # bottom half → pattern byte +1
-        assert buf[scan * 256 + 0] == 3
-        assert buf[scan * 256 + 4] == 10
+    assert buf[8] == 3
 
 
-def test_mc_colour_zero_nibbles_substitute_backdrop() -> None:
-    """MULTICOLOUR shares GRAPHIC1/GRAPHIC2's colour-0-substitutes-to-backdrop
-    rule: a 0 nibble in the pattern byte displays the backdrop, not literal 0."""
+# ---------------------------------------------------------------------------
+# MULTICOLOR (SCREEN 3): 128 KB-range table addressing
+#
+# 4x4 block addressing and colour-0-substitutes-to-backdrop are covered, for
+# both this renderer and TMS9918A's, by tests/vdp/test_renderer_mc.py
+# (parametrized over both backends). Only the V9938-specific 128 KB-range
+# extension stays here.
+# ---------------------------------------------------------------------------
+
+def test_mc_name_and_pattern_tables_above_16k() -> None:
+    """MULTICOLOUR's name/pattern tables use the full V9938 128 KB range, the
+    same fix as GRAPHIC1/2/3 and TEXT1 above -- found by the same allium weed
+    pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md)."""
     vdp = V9938()
-    vdp.regs[1] = 0x48   # M2 -> MULTICOLOR, BL -> display on
-    vdp.regs[2] = 0x0E   # name table at 0x3800
-    vdp.regs[4] = 0x00   # pattern generator at 0x0000
-    vdp.regs[7] = 0x0B   # backdrop = colour 11
-    vdp.vram[0x3800] = 0x00      # tile 0
-    vdp.vram[0x0000] = 0x00      # left nibble=0, right nibble=0 (top half)
+    vdp.regs[1] = 0x48   # MULTICOLOR
+    vdp.regs[2] = 0x30   # name_base = (0x30 & 0x7F) << 10 = 0xC000
+    vdp.regs[4] = 0x11   # pat_base  = (0x11 & 0x3F) << 11 = 0x8800
+    vdp.vram[0xC000] = 0x00      # tile 0
+    vdp.vram[0x8800] = 0xF7      # top half: left=15, right=7
 
     buf = _active(vdp)
-    assert buf[0] == 11   # left block: 0 -> backdrop
-    assert buf[4] == 11   # right block: 0 -> backdrop
+    assert buf[0] == 15
+    assert buf[4] == 7
 
 
 # ---------------------------------------------------------------------------
