@@ -225,9 +225,11 @@ _DEFAULT_IO_PORTS: dict[str, tuple[int, int]] = {
 }
 
 
-# cycles_per_frame, lines_per_frame keyed by video standard
+# cycles_per_frame, lines_per_frame keyed by video standard. 228 T-states per
+# scanline (real TMS9918A/V99x8 raster timing) x lines_per_frame -- not a
+# "Z80 clock / refresh Hz" approximation.
 _TIMING: dict[str, tuple[int, int]] = {
-    "ntsc": (59_659, 262),
+    "ntsc": (59_736, 262),
     "pal":  (71_364, 313),
 }
 
@@ -327,7 +329,7 @@ class MachineSpec:
     io_device: _ExpandedSubslotDevice | None = None
 
     # Timing (derived from video_standard in YAML)
-    cycles_per_frame: int = 59_659   # NTSC default
+    cycles_per_frame: int = 59_736   # NTSC default
     lines_per_frame: int = 262       # NTSC default
 
     # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
