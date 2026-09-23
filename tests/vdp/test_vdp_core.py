@@ -164,6 +164,82 @@ def test_read_address_wraps_at_16kb() -> None:
     assert vdp.read_port(0x98) == 0xBB  # wraps to 0x0000
 
 
+# --- Data port access resets the control latch ---
+
+def test_data_port_write_discards_stray_control_byte() -> None:
+    vdp = make_vdp()
+    set_write_addr(vdp, 0x0100)
+    vdp.write_port(0x99, 0x55)  # stray first byte
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.vram[0x0100] == 0xAB
+    vdp.write_port(0x99, 0x0E)
+    vdp.write_port(0x99, 0x80 | 2)
+    assert vdp.regs[2] == 0x0E
+
+
+def test_data_port_read_discards_stray_control_byte() -> None:
+    vdp = make_vdp()
+    vdp.vram[0x0200] = 0x5A
+    set_read_addr(vdp, 0x0200)
+    vdp.write_port(0x99, 0x55)  # stray first byte
+    assert vdp.read_port(0x98) == 0x5A
+    vdp.write_port(0x99, 0x0E)
+    vdp.write_port(0x99, 0x80 | 2)
+    assert vdp.regs[2] == 0x0E
+
+
+def test_interrupted_address_setup_resyncs_at_next_data_access() -> None:
+    # An ISR landing between the two OUT (99h) of an address setup reads S#0
+    # (resetting the latch) and writes R#1; the stranded high byte must not
+    # shift later control pairs once the next data-port access happens.
+    vdp = make_vdp()
+    vdp.regs = [0x02, 0xE2, 0x0E, 0xFF, 0x03, 0x76, 0x03, 0x00]
+    before = list(vdp.regs)
+    vdp.write_port(0x99, 0xA8)        # address low byte
+    vdp.read_port(0x99)               # ISR: status read
+    vdp.write_port(0x99, 0xE2)        # ISR: R#1 := E2
+    vdp.write_port(0x99, 0x80 | 1)
+    vdp.write_port(0x99, 0x3A)        # stranded address high byte
+    vdp.read_port(0x98)               # next data-port access
+    vdp.write_port(0x99, 0x00)        # fresh R#7 := 00
+    vdp.write_port(0x99, 0x80 | 7)
+    set_write_addr(vdp, 0x3800)
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.regs == before
+    assert vdp.vram[0x3800] == 0xAB
+
+
+def test_data_port_read_returns_buffered_byte_not_live_vram() -> None:
+    # Read-ahead: the byte returned is the one buffered by the previous
+    # access, so a VRAM change after the buffer filled is not seen yet.
+    vdp = make_vdp()
+    vdp.vram[0x0300] = 0x11
+    vdp.vram[0x0301] = 0x22
+    set_read_addr(vdp, 0x0300)
+    vdp.vram[0x0300] = 0x99
+    assert vdp.read_port(0x98) == 0x11
+    assert vdp.read_buf == 0x22
+    assert vdp.addr == 0x0302
+
+
+def test_data_port_read_leaves_status_flags_alone() -> None:
+    vdp = make_vdp()
+    vdp.status = 0xE5
+    set_read_addr(vdp, 0x0000)
+    vdp.read_port(0x98)
+    assert vdp.status == 0xE5
+
+
+def test_status_read_resets_control_latch() -> None:
+    vdp = make_vdp()
+    vdp.write_port(0x99, 0x55)  # stray first byte
+    vdp.read_port(0x99)
+    assert vdp.latch is None
+    vdp.write_port(0x99, 0x0E)
+    vdp.write_port(0x99, 0x80 | 2)
+    assert vdp.regs[2] == 0x0E
+
+
 # --- Reset ---
 
 def test_reset_restores_registers_status_and_address_state() -> None:

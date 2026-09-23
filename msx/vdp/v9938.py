@@ -594,6 +594,9 @@ class V9938:
         if port == 0:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
+            # Any data-port access discards a half-written control pair
+            # (openMSX VDP.cc clears registerDataStored here too).
+            self._latch = None
         elif port == 1:
             self._write_control_port(value)
         elif port == 2:
@@ -688,6 +691,7 @@ class V9938:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
             self._addr = (self._addr + 1) & 0x1FFFF
+            self._latch = None
             return result
         if port == 1:
             return self._read_status_register()
