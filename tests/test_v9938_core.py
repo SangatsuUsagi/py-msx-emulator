@@ -234,7 +234,7 @@ def test_status_s0_reports_idle_sprite_number() -> None:
     # Real V9938 S#0 bits 4-0 hold the 5th/last sprite number; the idle value is
     # 31 (0x1F). MSX2 C-BIOS cartridge boot reads S#0 and feeds it into its
     # cartridge-scan loop counter, so reporting 0 there stalls boot (e.g.
-    # King's Valley II hangs on "Init ROM Slot").
+    # a Konami SCC MegaROM title hangs on "Init ROM Slot").
     vdp = V9938()
     vdp.status = 0x00
     assert vdp.read_port(0x99) & 0x1F == 0x1F
