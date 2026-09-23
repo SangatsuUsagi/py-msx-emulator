@@ -167,18 +167,6 @@ class Machine:
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
-        if not isinstance(self.vdp, V9938):
-            # TMS9918A (MSX1) has a single VBlank interrupt source per frame and
-            # no line/scanline interrupts (those are V9938+). The
-            # start-of-vertical-blanking interrupt fired once per frame via
-            # on_interrupt (from render_frame()/_finalize(), called between
-            # run_frame()'s two scanline segments) is therefore the
-            # hardware-correct MSX1 model; there is no MSX1 equivalent to the
-            # V9938 per-scanline IRQ polling done in run_frame().
-            self.vdp.on_interrupt = self._vblank_interrupt
-
-    def _vblank_interrupt(self) -> None:
-        self.cpu.int_pending = True
 
     def reset(self) -> None:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
@@ -442,6 +430,9 @@ class Machine:
         self.memory.write(addr, value)
 
     def step(self) -> int:
+        # Single-step (debugger / RPC) path: sample the VDP IRQ level the same
+        # way every run_frame() scanline loop does before each instruction.
+        self.cpu.int_pending = self.vdp.irq
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
@@ -568,6 +559,7 @@ class Machine:
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
+        vdp = self.vdp
         line_cycles = 0
         try:
             for line in range(first_line, end_line):
@@ -587,8 +579,7 @@ class Machine:
                         if self._pause_requested:
                             self.cycle_count += line_cycles
                             return total
-                    if vdp9938 is not None:
-                        cpu.int_pending = vdp9938.irq
+                    cpu.int_pending = vdp.irq
                     n = cpu_step()
                     total += n
                     line_cycles += n
@@ -675,10 +666,12 @@ class Machine:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
             else:
+                vdp = self.vdp
                 for line in range(first_line, end_line):
                     line_end = (line + 1) * cpf // lpf
                     line_cycles = 0
                     while total < line_end:
+                        cpu.int_pending = vdp.irq
                         n = cpu_step()
                         total += n
                         line_cycles += n
@@ -696,13 +689,13 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        vdp = self.vdp
         try:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
                 while total < line_end:
                     pc = cpu.registers.PC
-                    if vdp9938 is not None:
-                        cpu.int_pending = vdp9938.irq
+                    cpu.int_pending = vdp.irq
                     n = cpu_step()
                     total += n
                     self.cycle_count += n

@@ -575,3 +575,38 @@ def test_sram_sources_includes_fmpac_and_halnote_when_present(tmp_path: Path) ->
     sources = m.sram_sources()
     assert id(m.halnote_cart) not in {id(source) for source, _path in sources}
     assert id(m.fmpac) in {id(source) for source, _path in sources}
+
+
+# ---------------------------------------------------------------------------
+# Machine.step() samples the VDP IRQ level like the run_frame() loops do
+# ---------------------------------------------------------------------------
+
+def _stepping_machine() -> Machine:
+    machine = _make_machine()
+    machine.io.write_port(0xA8, 0xC0)  # page 3 -> RAM slot, so the push lands
+    machine.cpu.registers.SP = 0xF000
+    machine.cpu.iff1 = True
+    machine.cpu.iff2 = True
+    return machine
+
+
+def test_step_takes_irq_raised_while_paused() -> None:
+    machine = _stepping_machine()
+    machine.vdp.regs[1] = 0x60  # IE0=1
+    machine.vdp.status = 0x80   # F=1
+    machine.vdp._update_irq()
+    machine.cpu.int_pending = False  # nothing sampled it yet
+
+    machine.step()
+
+    assert machine.cpu.registers.PC == 0x0038
+
+
+def test_step_ignores_stale_int_pending_after_irq_dropped() -> None:
+    machine = _stepping_machine()
+    machine.cpu.int_pending = True  # left over from the last scanline sample
+    assert machine.vdp.irq is False  # e.g. S#0 already read while paused
+
+    machine.step()
+
+    assert machine.cpu.registers.PC == 0x0001

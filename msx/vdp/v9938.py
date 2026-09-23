@@ -257,17 +257,11 @@ class V9938:
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
-    # Not read by V9938 itself (interrupts are signalled via the polled `irq`
-    # property instead); kept for structural compatibility with the MSX1 VDP
-    # class, since some call sites (e.g. tests/vdp/test_renderer_g4.py) pass a
-    # V9938 instance through msx/vdp/renderer.py's (MSX1) render_frame/_finalize,
-    # which does read this field.
-    on_interrupt: Callable[[], None] | None = None
     # Observation seam for scanline timing (tests, tracing): called with the
     # raster line at the end of begin_scanline(). A field, not a monkey-patched
     # method, so the same observation is expressible in a Rust/C++ port.
     on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: these Callable hooks (on_interrupt, on_scanline, tracer,
+    # PORT-NOTE: these Callable hooks (on_scanline, tracer,
     #   _get_pc, _get_cycle) are stored as Python closures assigned at wiring
     #   time. Same shape as msx/vdp/vdp.py's equivalent VDP hooks.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields

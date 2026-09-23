@@ -65,16 +65,15 @@ OTIR/INIR 等のブロック I/O 命令はページ境界をまたぐ場合に�
 
 ## 割り込み管理
 
-### MSX1：フレームベース VBlank
+### MSX1：レベルベース VBlank IRQ
 
-MSX1 では、TMS9918A VDP の割り込み源は 1 フレームごとの VBlank のみです。`Machine.__post_init__()` でこれをコールバックとして配線します。
+MSX1 では、TMS9918A VDP の割り込み源は垂直帰線期間の開始時に立つ VBlank のみです。割り込み線は `F && IE0`（S#0 bit 7 と R#1 bit 5）のレベルで、`VDP.irq` にキャッシュされ、どちらかの入力が変わるたびに再計算されます。`Machine.run_frame()` が `display_height` のスキャンライン境界に達すると `_finalize()` が F をセットし、S#0 の読み出しで F がクリアされ、R#1 への書き込みで IE0 が変わります。そのため F が立ったまま IE0 を立てると、実機と同様に即座に割り込み線が立ちます。`Machine.run_frame()` は後述の MSX2 パスと同じく毎命令境界でこれをサンプリングします。
 
 ```python
-if not isinstance(self.vdp, V9938):
-    self.vdp.on_interrupt = self._vblank_interrupt
+cpu.int_pending = vdp.irq
 ```
 
-`_vblank_interrupt` は `cpu.int_pending = True` をセットします。割り込みは `render_frame()` が `vdp._finalize()` を呼んだ際に 1 フレームに 1 回発火します。MSX1 パスにスキャンラインごとの割り込みはありません。
+MSX1 パスにスキャンラインごとの割り込みはありません。
 
 ### MSX2：レベルベース IRQ
 
@@ -154,7 +153,7 @@ io.register_write(0x98, 0x9B, vdp.write_port)
 
 ### TMS9918A（MSX1）
 
-`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のアクティブフレームは `Machine.run_frame()` の末尾で `render_frame()` によって描画され、VBlank フラグのセットと `on_interrupt` コールバックの呼び出しも行われます。その後レンダラは、共有ヘルパー `msx/vdp/_geometry.py` を通じてこのフレームを一定の 256×212 出力（上下に 10 行ずつのボーダー行）にパディングします。これにより、VDP のアクティブライン数によらず全フレームが安定した 4:3 のジオメトリを保ちます（後述の V9938 `display_height` を参照）。
+`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のアクティブフレームは `Machine.run_frame()` の途中、垂直帰線期間の開始時に `render_frame()` によって描画され、VBlank フラグのセットと割り込み線（`VDP.irq`）の更新も行われます。その後レンダラは、共有ヘルパー `msx/vdp/_geometry.py` を通じてこのフレームを一定の 256×212 出力（上下に 10 行ずつのボーダー行）にパディングします。これにより、VDP のアクティブライン数によらず全フレームが安定した 4:3 のジオメトリを保ちます（後述の V9938 `display_height` を参照）。
 
 ### V9938（MSX2）
 
@@ -635,9 +634,9 @@ V9938 の G4/G6 および G5 スキャンラインごとのピクセル展開器
 
 `bytes.translate()` もキーごとの辞書ハッシュも、システム言語においては自然な構成要素ではありません。Rust/C++ への移植では、初期化時に固定の `[u8; 256]` 配列を事前計算します——`(tp, border)` の組み合わせは全 32 通りしかなく、ハッシュなしで直接インデックスアクセスできます。
 
-#### 割り込み・トレーサフックの Callable フィールド
+#### トレーサフックの Callable フィールド
 
-`VDP`（TMS9918A）と `V9938` はともに `on_interrupt`、`tracer`、`_get_pc`、`_get_cycle` を nullable な `Callable` フィールドとして保持します。これらは配線時に代入され、関連するイベントごとに呼び出されます。Python では `Callable[[], None] | None` として型付けできますが、静的型付けでの直接対応物はありません。
+`VDP`（TMS9918A）と `V9938` はともに `tracer`、`_get_pc`、`_get_cycle` を nullable な `Callable` フィールドとして保持します。これらは配線時に代入され、関連するイベントごとに呼び出されます。Python では `Callable[[], None] | None` として型付けできますが、静的型付けでの直接対応物はありません。
 
 Rust/C++ への移植では `Option<Box<dyn Fn()>>` トレイトオブジェクト（または同等物）としてモデル化するか、コンパイル時ジェネリクスで機能フラグを立て、リリースビルドでのコール当たりの分岐をなくします。
 

@@ -104,20 +104,22 @@ different sequence.
 
 ## Interrupt management
 
-### MSX1: frame-based VBlank
+### MSX1: level-based VBlank IRQ
 
-On MSX1, the TMS9918A VDP has a single interrupt source: VBlank at the end of
-each frame. `Machine.__post_init__()` wires this as a callback:
+On MSX1, the TMS9918A VDP has a single interrupt source: VBlank, raised at the
+start of vertical blanking. Its interrupt line is the level `F && IE0` (S#0
+bit 7 and R#1 bit 5), cached in `VDP.irq` and recomputed whenever either input
+changes: `_finalize()` sets F when `Machine.run_frame()` reaches the
+`display_height` scanline boundary, an S#0 read clears F, and an R#1 write
+changes IE0. Setting IE0 while F is still pending therefore raises the line
+immediately, as on real hardware. `Machine.run_frame()` samples it at every
+instruction boundary, exactly like the MSX2 path below:
 
 ```python
-if not isinstance(self.vdp, V9938):
-    self.vdp.on_interrupt = self._vblank_interrupt
+cpu.int_pending = vdp.irq
 ```
 
-`_vblank_interrupt` sets `cpu.int_pending = True`. The interrupt fires once per
-frame when `render_frame()` calls `vdp._finalize()`, which sets the VBlank
-status flag and invokes the callback. There are no per-scanline interrupts in
-the MSX1 path.
+There are no per-scanline interrupts in the MSX1 path.
 
 ### MSX2: level-based IRQ
 
@@ -216,9 +218,10 @@ current instruction PC.
 
 Implemented in `msx/vdp/vdp.py` with the renderer in `msx/vdp/renderer.py`. It
 has 16 KB VRAM, 8 control registers, and supports screen modes 0–3 (Text,
-Graphic 1/2, Multicolor). The 256×192 active frame is rendered at the end of
-`Machine.run_frame()` by `render_frame()`, which also calls `_finalize()` to set
-the VBlank flag and invoke `on_interrupt`. The renderer then pads that frame to
+Graphic 1/2, Multicolor). The 256×192 active frame is rendered partway through
+`Machine.run_frame()` by `render_frame()` at the start of vertical blanking,
+which also calls `_finalize()` to set the VBlank flag and update the interrupt
+line (`VDP.irq`). The renderer then pads that frame to
 a constant 256×212 output (10 border rows top and bottom) via the shared
 `msx/vdp/_geometry.py` helper, so every frame keeps a stable 4:3 geometry
 regardless of the VDP's active line count (see V9938 `display_height` below).
@@ -856,9 +859,9 @@ systems language. A Rust/C++ port keeps fixed `[u8; 256]` arrays precomputed at
 init — only 32 combinations exist across all `(tp, border)` pairs — and indexes
 them directly.
 
-#### Callable interrupt and tracer hooks
+#### Callable tracer hooks
 
-Both `VDP` (TMS9918A) and `V9938` store `on_interrupt`, `tracer`, `_get_pc`, and
+Both `VDP` (TMS9918A) and `V9938` store `tracer`, `_get_pc`, and
 `_get_cycle` as nullable `Callable` fields. These
 are assigned at wiring time and invoked on each relevant event. The fields are
 typed as `Callable[[], None] | None` in Python but have no direct static
