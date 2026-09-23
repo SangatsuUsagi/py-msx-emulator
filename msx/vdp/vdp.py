@@ -251,6 +251,9 @@ class VDP:
         if port == 0x98:
             self.vram[self.addr] = value
             self.addr = (self.addr + 1) & 0x3FFF
+            # Any data-port access discards a half-written control pair
+            # (openMSX VDP.cc clears registerDataStored here too).
+            self.latch = None
         elif port == 0x99:
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
@@ -289,6 +292,7 @@ class VDP:
             result = self.read_buf
             self.read_buf = self.vram[self.addr]
             self.addr = (self.addr + 1) & 0x3FFF
+            self.latch = None
             return result
         if port == 0x99:
             # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)

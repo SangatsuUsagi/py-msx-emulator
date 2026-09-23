@@ -152,6 +152,46 @@ def test_port_99_read_resets_latch_when_status_reg_not_zero() -> None:
     assert vdp.regs[15] == 0
 
 
+def test_port_98_write_discards_stray_control_byte() -> None:
+    vdp = V9938()
+    _set_write_addr(vdp, 0x0100)
+    vdp.write_port(0x99, 0x55)  # stray first byte
+    vdp.write_port(0x98, 0xAB)
+    vdp.write_port(0x99, 0x01)
+    vdp.write_port(0x99, 0x80 | 5)
+    assert vdp.regs[5] == 0x01
+
+
+def test_port_98_read_discards_stray_control_byte() -> None:
+    vdp = V9938()
+    _set_read_addr(vdp, 0x0100)
+    vdp.write_port(0x99, 0x55)  # stray first byte
+    vdp.read_port(0x98)
+    vdp.write_port(0x99, 0x01)
+    vdp.write_port(0x99, 0x80 | 5)
+    assert vdp.regs[5] == 0x01
+
+
+def test_port_98_read_address_wraps_at_17_bits() -> None:
+    vdp = V9938()
+    vdp.regs[14] = 0x07
+    vdp.vram[0x1FFFF] = 0xAA
+    vdp.vram[0x00000] = 0xBB
+    _set_read_addr(vdp, 0x3FFF)   # addr = 0x1FFFF (last valid)
+    assert vdp.read_port(0x98) == 0xAA
+    assert vdp.read_port(0x98) == 0xBB  # wrapped to 0x00000
+
+
+def test_port_98_read_returns_buffered_byte_not_live_vram() -> None:
+    vdp = V9938()
+    vdp.vram[0x0300] = 0x11
+    vdp.vram[0x0301] = 0x22
+    _set_read_addr(vdp, 0x0300)
+    vdp.vram[0x0300] = 0x99       # changed after the read-ahead buffer filled
+    assert vdp.read_port(0x98) == 0x11
+    assert vdp.read_buf == 0x22
+
+
 def test_port_99_17bit_address_via_r14() -> None:
     vdp = V9938()
     vdp.regs[14] = 0x04            # high bits: 4 → addr base 0x10000
