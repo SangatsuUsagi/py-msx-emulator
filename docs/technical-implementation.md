@@ -66,8 +66,11 @@ register write such as `LD R,A`.
 
 `step()` returns the number of T-states consumed. `Machine.run_frame()`
 accumulates these into a per-frame total and into `machine.cycle_count`. The
-NTSC frame budget is **59,659 T-states**, derived from the Z80A clock of
-3.579545 MHz divided by 60 Hz.
+NTSC frame budget is **59,736 T-states** (228 T-states per scanline — real
+TMS9918A/V99x8 raster timing — × 262 lines/frame; confirmed against
+openMSX's shared raster clock model for both VDP chip families). This is not
+the same as the Z80A clock (3.579545 MHz) divided by a flat 60 Hz: real MSX
+NTSC hardware's field rate is ~59.92 Hz, not exactly 60 Hz.
 
 #### MSX M1 wait state
 
@@ -84,7 +87,7 @@ instruction gets `+1` regardless of its operand length, a `CB`/`ED`/`DD`/`FD`
 instruction gets `+2`, and `DDCB`/`FDCB` gets `+2` (the displacement and final
 opcode are operand reads, not M1s). This matches openMSX (`Z80.hh`
 `WAIT_CYCLES = 1`, M1-base 5 vs datasheet 4). Because the frame budget stays
-59,659 T-states, enabling the wait means fewer instructions execute per frame —
+59,736 T-states, enabling the wait means fewer instructions execute per frame —
 so CPU-loop-paced code (e.g. software-PCM audio driven by a delay loop) runs at
 the correct hardware rate rather than ~13% fast. Interrupt cadence (VBlank) and
 PSG pitch are unaffected.
@@ -504,7 +507,7 @@ vram_kb: 128    # documentation only -- see note above
 | `generation` | string | — | `msx1` or `msx2`; anything else raises |
 | `name` | string | `id` | display name only |
 | `rom_base` | string | `roms/cbios` | directory (relative to the project root) every `rom:` block's `file` resolves against |
-| `video_standard` | string | `ntsc` | `ntsc` → 59,659 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`) |
+| `video_standard` | string | `ntsc` | `ntsc` → 59,736 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`). Also selects the SDL2 frontend's real-time pacing target (60 fps NTSC / 50 fps PAL) |
 | `cpu.m1_wait_states` | int | `0` | extra T-states per Z80 M1 cycle — see [CPU emulation](#cpu-emulation) above |
 | `slots.primary` | mapping | — | keyed `0`–`3`; only `0` and `3` are read (below) |
 | `builtin_devices` | list | `[]` | see below |
