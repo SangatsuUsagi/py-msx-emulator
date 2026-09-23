@@ -106,14 +106,12 @@ def _maybe_render_sprites(vdp: VDP, buf: bytearray) -> None:
 def _finalize(vdp: VDP) -> None:
     # The TMS9918A (MSX1) has a single VBlank interrupt source per frame and no
     # line/scanline interrupts (those are a V9938+ feature). Setting the VBlank
-    # flag and firing on_interrupt once at the start of vertical blanking
-    # (gated by R#1 bit 5, IE0) is therefore the hardware-correct MSX1
-    # interrupt model. Machine.run_frame() calls this between its two
-    # scanline segments (see that method's docstring), so "once" here means
-    # once per frame at that split point, not at end-of-frame.
+    # flag here raises the /INT level (F && IE0) that Machine samples every
+    # instruction. Machine.run_frame() calls this between its two scanline
+    # segments (see that method's docstring), so this happens once per frame
+    # at that split point, not at end-of-frame.
     vdp.status |= 0x80
-    if (vdp.regs[1] & 0x20) and vdp.on_interrupt is not None:
-        vdp.on_interrupt()
+    vdp._update_irq()
 
 
 def _backdrop(vdp: VDP) -> int:

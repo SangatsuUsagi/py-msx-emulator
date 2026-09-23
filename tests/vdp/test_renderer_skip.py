@@ -18,11 +18,9 @@ def test_skip_render_returns_empty_buffer(vdp_with_interrupt: VDP) -> None:
     assert len(buf) == 0
 
 
-def test_skip_render_fires_vblank_interrupt(vdp_with_interrupt: VDP) -> None:
-    called: list[int] = []
-    vdp_with_interrupt.on_interrupt = lambda: called.append(1)
+def test_skip_render_raises_vblank_irq(vdp_with_interrupt: VDP) -> None:
     render_frame(vdp_with_interrupt, skip_render=True)
-    assert called == [1]
+    assert vdp_with_interrupt.irq is True
 
 
 def test_skip_render_sets_vblank_status_bit(vdp_with_interrupt: VDP) -> None:
@@ -35,3 +33,11 @@ def test_normal_render_returns_full_buffer(bare_vdp: VDP) -> None:
     bare_vdp.regs[1] = 0x40  # BL=1
     buf = render_frame(bare_vdp, skip_render=False)
     assert len(buf) == 256 * 212
+
+
+def test_skip_render_leaves_irq_low_when_ie_clear() -> None:
+    vdp = VDP()
+    vdp.regs[1] = 0x40  # BL=1, IE0=0
+    render_frame(vdp, skip_render=True)
+    assert vdp.status & 0x80
+    assert vdp.irq is False

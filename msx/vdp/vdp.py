@@ -57,7 +57,7 @@ class VdpDevice(Protocol):
     latch: int | None
     addr: int
     read_buf: int
-    on_interrupt: Callable[[], None] | None
+    irq: bool
     tracer: Tracer | None
     _get_pc: Callable[[], int] | None
     _get_cycle: Callable[[], int] | None
@@ -76,6 +76,7 @@ class VdpDevice(Protocol):
     @property
     def vblank_start_line(self) -> int: ...
     def reset(self) -> None: ...
+    def _update_irq(self) -> None: ...
     def increment_frame(self) -> None: ...
     def read_port(self, port: int) -> int: ...
     def write_port(self, port: int, value: int) -> None: ...
@@ -173,11 +174,13 @@ class VDP:
     latch: int | None = None
     status: int = 0
     read_buf: int = 0
-    on_interrupt: Callable[[], None] | None = None
+    # Level of the /INT line (F && IE0), cached so Machine can sample it every
+    # instruction; kept current by _update_irq() -- mirrors V9938.irq.
+    irq: bool = False
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    # PORT-NOTE: these Callable hooks (on_interrupt above, plus the tracer /
-    #   _get_pc / _get_cycle below) are stored as Python closures assigned at
+    # PORT-NOTE: these Callable hooks (the tracer / _get_pc / _get_cycle
+    #   below) are stored as Python closures assigned at
     #   wiring time.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
     #   resolved once at construction, not per-call function pointers.
@@ -228,6 +231,14 @@ class VDP:
         self.addr = 0
         self.latch = None
         self.read_buf = 0
+        self.irq = False
+
+    def _update_irq(self) -> None:
+        """Recompute the /INT level: F (S#0 bit 7) gated by IE0 (R#1 bit 5).
+
+        Called whenever either input changes, so an IE0 0->1 write while F is
+        still pending raises the line at once (openMSX VDP.cc, R#1 write)."""
+        self.irq = bool(self.status & 0x80) and bool(self.regs[1] & 0x20)
 
     def write_port(self, port: int, value: int) -> None:
         """Dispatch a TMS9918A VDP port write.
@@ -254,6 +265,8 @@ class VDP:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
                     self.regs[reg] = low
+                    if reg == 1:
+                        self._update_irq()
                     if self._logger is not None:
                         self._logger.on_vdp_reg_write(reg, low, self._frame_count)
                 else:
@@ -302,6 +315,7 @@ class VDP:
             # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg
             # case 0, both of which clear status & 0x1F on an S#0 read.
             self.status &= 0x1F
+            self.irq = False      # F is now clear, so the /INT line drops
             self.latch = None     # reading status resets the address latch
             return result & 0xFF
         return 0xFF
