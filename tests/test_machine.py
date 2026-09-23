@@ -69,11 +69,19 @@ def test_run_frame_increments_vdp_frame_count() -> None:
 
 
 def test_run_frame_skip_render_still_fires_vblank() -> None:
+    # EI then NOP -- interrupts enabled, so int_pending is accepted and
+    # cleared by the CPU within this same run_frame() call (the VBlank flag
+    # now fires mid-frame, at the display_height boundary, with scanlines
+    # still left to run afterwards -- see machine-core's "V9938 frame is
+    # rendered at the start of vertical blanking" requirement, which also
+    # covers the TMS9918A path). The VDP status flag (S#0 bit 7), which
+    # nothing in this ROM reads back and clears, is therefore the reliable
+    # signal that VBlank still fires when skip_render=True.
     rom = bytes([0xFB] + [0x00] * 32767)  # EI then NOP — enable interrupts
     m = _make_machine(rom=rom)
     m.vdp.regs[1] = 0x60  # BL=1, IE=1
     m.run_frame(skip_render=True)
-    assert m.cpu.int_pending
+    assert m.vdp.status & 0x80
 
 
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:

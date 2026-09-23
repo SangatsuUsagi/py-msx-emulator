@@ -73,6 +73,8 @@ class VdpDevice(Protocol):
     def display_width(self) -> int: ...
     @property
     def display_height(self) -> int: ...
+    @property
+    def vblank_start_line(self) -> int: ...
     def reset(self) -> None: ...
     def increment_frame(self) -> None: ...
     def read_port(self, port: int) -> int: ...
@@ -192,6 +194,15 @@ class VDP:
     @property
     def display_height(self) -> int:
         return 192
+
+    @property
+    def vblank_start_line(self) -> int:
+        """Raster line whose scanline split raises the VBlank F flag (S#0 b7).
+
+        Single source for the vertical-blanking boundary: Machine.run_frame()
+        reads it to decide where to split the frame and render -- mirrors
+        V9938.vblank_start_line."""
+        return self.display_height
 
     @property
     def display_width(self) -> int:

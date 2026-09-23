@@ -15,6 +15,13 @@ def set_read_addr(vdp: VDP, addr: int) -> None:
     vdp.write_port(0x99, (addr >> 8) & 0x3F)
 
 
+# --- Display geometry ---
+
+def test_vblank_start_line_equals_display_height() -> None:
+    vdp = make_vdp()
+    assert vdp.vblank_start_line == vdp.display_height == 192
+
+
 # --- VRAM ---
 
 def test_vram_initialises_to_zero() -> None:
