@@ -84,6 +84,12 @@ from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
+from msx.vdp._geometry import (
+    CYCLES_PER_LINE,
+    NTSC_LINES_PER_FRAME,
+    PAL_LINES_PER_FRAME,
+    VideoStandard,
+)
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP, VdpDevice
@@ -225,12 +231,12 @@ _DEFAULT_IO_PORTS: dict[str, tuple[int, int]] = {
 }
 
 
-# cycles_per_frame, lines_per_frame keyed by video standard. 228 T-states per
-# scanline (real TMS9918A/V99x8 raster timing) x lines_per_frame -- not a
-# "Z80 clock / refresh Hz" approximation.
-_TIMING: dict[str, tuple[int, int]] = {
-    "ntsc": (59_736, 262),
-    "pal":  (71_364, 313),
+# cycles_per_frame, lines_per_frame per video standard: CYCLES_PER_LINE (real
+# TMS9918A/V99x8 raster timing) x lines -- not a "Z80 clock / refresh Hz"
+# approximation.
+_TIMING: dict[VideoStandard, tuple[int, int]] = {
+    VideoStandard.NTSC: (CYCLES_PER_LINE * NTSC_LINES_PER_FRAME, NTSC_LINES_PER_FRAME),
+    VideoStandard.PAL: (CYCLES_PER_LINE * PAL_LINES_PER_FRAME, PAL_LINES_PER_FRAME),
 }
 
 
@@ -328,9 +334,10 @@ class MachineSpec:
     # both resolve a device at once (build_machine raises MachineLoadError).
     io_device: _ExpandedSubslotDevice | None = None
 
-    # Timing (derived from video_standard in YAML)
-    cycles_per_frame: int = 59_736   # NTSC default
-    lines_per_frame: int = 262       # NTSC default
+    # Timing (derived from video_standard in YAML; NTSC defaults)
+    video_standard: VideoStandard = VideoStandard.NTSC
+    cycles_per_frame: int = CYCLES_PER_LINE * NTSC_LINES_PER_FRAME
+    lines_per_frame: int = NTSC_LINES_PER_FRAME
 
     # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
     # 0 = pure datasheet Z80; MSX machines set 1 (the MSX M1 wait state).
@@ -1012,12 +1019,14 @@ def load_machine_spec(
     rom_base: str = str(raw.get("rom_base", "roms/cbios"))
     rom_base_dir = project_root / rom_base
 
-    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
-    if video_standard not in _TIMING:
+    video_standard_name = str(raw.get("video_standard", "ntsc")).lower()
+    try:
+        video_standard = VideoStandard(video_standard_name)
+    except ValueError:
         raise MachineLoadError(
-            f"{machine_path}: unsupported video_standard {video_standard!r} "
+            f"{machine_path}: unsupported video_standard {video_standard_name!r} "
             f"(expected 'ntsc' or 'pal')"
-        )
+        ) from None
     cycles_per_frame, lines_per_frame = _TIMING[video_standard]
 
     # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
@@ -1099,6 +1108,7 @@ def load_machine_spec(
         has_rtc=has_rtc,
         keyboard_type=keyboard_type,
         device_io_ports=device_io_ports,
+        video_standard=video_standard,
         cycles_per_frame=cycles_per_frame,
         lines_per_frame=lines_per_frame,
         m1_wait_states=m1_wait_states,
@@ -2182,6 +2192,7 @@ def _build_msx1(
         input=input_state, _logger=logger,
         cycles_per_frame=spec.cycles_per_frame,
         lines_per_frame=spec.lines_per_frame,
+        video_standard=spec.video_standard,
     )
 
 
@@ -2324,6 +2335,7 @@ def _build_msx2(
         input=input_state, _logger=logger,
         cycles_per_frame=spec.cycles_per_frame,
         lines_per_frame=spec.lines_per_frame,
+        video_standard=spec.video_standard,
         fdc=fdc_device,
         rtc=rtc,
         rtc_sram_save_path=rtc_sram_save_path,

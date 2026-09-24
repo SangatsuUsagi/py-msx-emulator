@@ -179,7 +179,7 @@ def test_status_read_before_ei_drops_the_pending_irq() -> None:
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x80
-    vdp._update_irq()
+    vdp.update_irq()
     assert vdp.irq is True
 
     with _Acceptances(machine) as acc:
@@ -197,7 +197,7 @@ def test_line_still_asserted_after_acceptance_retriggers() -> None:
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x80
-    vdp._update_irq()
+    vdp.update_irq()
 
     with _Acceptances(machine) as acc:
         machine.run_frame(skip_render=True)
@@ -282,7 +282,7 @@ def test_status_read_drops_irq_on_debug_and_logged_arms(arm: str) -> None:
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x80
-    vdp._update_irq()
+    vdp.update_irq()
 
     with _Acceptances(machine) as acc:
         machine.run_frame(skip_render=True)

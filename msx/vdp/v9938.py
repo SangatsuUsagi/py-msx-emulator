@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.vdp._geometry import CYCLES_PER_LINE
 from msx.vdp.vdp import FramebufferFormat
 
 if TYPE_CHECKING:
@@ -21,11 +22,13 @@ _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
 # Implemented bits of control registers R#0-R#23 (V9938 data book register
 # layouts show the rest as 0; same values as openMSX's V99x8 masks). Stored
-# register values are ANDed with these; R#24-R#27 are not V9938 registers.
+# register values are ANDed with these. R#24-R#27 are not V9938 registers
+# and are stored as written (0xFF).
 _REG_VALUE_MASKS = (
     0x7E, 0x7F, 0x7F, 0xFF, 0x3F, 0xFF, 0x3F, 0xFF,
     0xFB, 0xBF, 0x07, 0x03, 0xFF, 0xFF, 0x07, 0x0F,
     0x0F, 0xBF, 0xFF, 0xFF, 0x3F, 0x3F, 0x3F, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF,
 )
 
 
@@ -215,12 +218,11 @@ _S2_HR = 0x20  # horizontal retrace (set during horizontal blanking)
 _S2_VR = 0x40  # vertical retrace (set during vertical blanking)
 _S2_RESERVED = 0x0C  # bits 2,3 read as 1 on the V9938 (matches openMSX reset 0x0C)
 
-# Horizontal-retrace timing. One NTSC scanline is ~227 Z80 T-states; the active
-# display occupies ~1024/1368 of the line (openMSX ratio), so HR reads as 1 for
-# the remainder of the line (the blanking/retrace tail). Sub-line accurate to the
-# extent the scanline-stepped CPU advances _line_cycle via tick().
-_TSTATES_PER_LINE: int = 227
-_HBLANK_START: int = _TSTATES_PER_LINE * 1024 // 1368  # ~169
+# Horizontal-retrace timing. The active display occupies 1024 of the 1368 VDP
+# clocks of a line (openMSX ratio), so HR reads as 1 for the remainder of the
+# line (the blanking/retrace tail). Sub-line accurate to the extent the
+# scanline-stepped CPU advances _line_cycle via tick().
+_HBLANK_START: int = CYCLES_PER_LINE * 1024 // 1368  # 170
 
 
 @dataclass(slots=True)
@@ -245,6 +247,79 @@ class _PaletteChange:
     line: int
     idx: int
     rgb: int
+
+
+class V9938CmdEngineState(TypedDict):
+    """The command engine's progress beyond the command registers (R#32-R#46),
+    S#2 and the timed-command countdown; part of V9938State."""
+
+    active: bool
+    transfer: bool
+    code: int
+    log: int
+    sx: int
+    sy: int
+    dx: int
+    dy: int
+    nx: int
+    ny: int
+    x: int
+    y: int
+    xstep: int
+    ystep: int
+    bpl: int
+    ppb: int
+    bpp: int
+    tr_delay: int
+
+
+class V9938State(TypedDict):
+    """Save-state schema for V9938.snapshot_state()/restore_state(): every
+    V9938-only field. VRAM, R#0-R#27, S#0, the port-0x99 pending byte, the VRAM
+    address and read-ahead buffer are shared with the TMS9918A and saved by
+    msx/state.py through the common VdpDevice fields."""
+
+    palette: list[int]
+    cmd_regs: list[int]
+    status1: int
+    status2: int
+    status8: int
+    status9: int
+    cmd_remaining: int
+    cmd_engine: V9938CmdEngineState
+    collision_x: int
+    collision_y: int
+    first_byte: int
+    palette_pending: bool
+
+
+def _state_int(state: dict[str, object], key: str, lo: int, hi: int) -> int:
+    """Read an int field of a snapshot dict, rejecting wrong types and ranges."""
+    value = state[key]
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ValueError(f"{key} must be an int in [{lo}, {hi}], got {value!r}")
+    return value
+
+
+def _state_bool(state: dict[str, object], key: str) -> bool:
+    value = state[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a bool, got {value!r}")
+    return value
+
+
+def _state_int_list(
+    state: dict[str, object], key: str, length: int, lo: int, hi: int
+) -> list[int]:
+    value = state[key]
+    if not isinstance(value, list) or len(value) != length:
+        raise ValueError(f"{key} must be a list of {length} ints, got {value!r}")
+    result: list[int] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or not lo <= item <= hi:
+            raise ValueError(f"{key} entries must be ints in [{lo}, {hi}], got {item!r}")
+        result.append(item)
+    return result
 
 
 @dataclass
@@ -328,8 +403,12 @@ class V9938:
     _cmd_bpp: int = field(default=4, init=False, repr=False)  # bits per pixel
     # Standard internals
     _addr: int = field(default=0, init=False, repr=False)
-    _latch: int | None = field(default=None, init=False, repr=False)
-    _pal_latch: int | None = field(default=None, init=False, repr=False)
+    # Ports 0x99 and 0x9A share one first-byte latch: a single stored byte
+    # plus a pending flag per port (a first byte on either port replaces the
+    # byte a pair pending on the other port will use).
+    _first_byte: int = field(default=0, init=False, repr=False)
+    _ctrl_pending: bool = field(default=False, init=False, repr=False)
+    _pal_pending: bool = field(default=False, init=False, repr=False)
     _read_buf: int = field(default=0, init=False, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
@@ -344,7 +423,7 @@ class V9938:
     # Precomputed interrupt-request line state. A plain attribute (not a
     # @property) so the per-instruction `cpu.int_pending = vdp.irq` read in the
     # machine loop is a slot load, not a descriptor call. Updated only in
-    # _update_irq()/reset(); read-only by convention for external consumers.
+    # update_irq()/reset(); read-only by convention for external consumers.
     irq: bool = field(default=False, init=False, repr=False)
     _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
@@ -368,11 +447,16 @@ class V9938:
     # code (machine, state save/load) can use the same names for both VDP types.
     @property
     def latch(self) -> int | None:
-        return self._latch
+        """Pending port-0x99 first byte, or None."""
+        return self._first_byte if self._ctrl_pending else None
 
     @latch.setter
     def latch(self, value: int | None) -> None:
-        self._latch = value
+        if value is None:
+            self._ctrl_pending = False
+        else:
+            self._first_byte = value & 0xFF
+            self._ctrl_pending = True
 
     @property
     def addr(self) -> int:
@@ -458,7 +542,7 @@ class V9938:
         fh = bool(self._status1 & _S1_FH)
         return (ie0 and f) or (ie1 and fh)
 
-    def _update_irq(self) -> None:
+    def update_irq(self) -> None:
         self.irq = self.irq_pending()
 
     def _apply_r0_write(self, new_r0: int) -> None:
@@ -481,6 +565,114 @@ class V9938:
             self._tr_delay = 0
             self._status2 &= ~_S2_CE
 
+    def _reset_cmd_progress(self) -> None:
+        """Idle the command engine's execution state (reset() and nothing else)."""
+        self._cmd_active = False
+        self._cmd_code = 0
+        self._cmd_transfer = False
+        self._tr_delay = 0
+        self._cmd_x = 0
+        self._cmd_y = 0
+
+    def snapshot_state(self) -> V9938State:
+        """Capture every V9938-only field for a save state (see V9938State)."""
+        engine: V9938CmdEngineState = {
+            "active": self._cmd_active, "transfer": self._cmd_transfer,
+            "code": self._cmd_code, "log": self._cmd_log,
+            "sx": self._cmd_sx, "sy": self._cmd_sy,
+            "dx": self._cmd_dx, "dy": self._cmd_dy,
+            "nx": self._cmd_nx, "ny": self._cmd_ny,
+            "x": self._cmd_x, "y": self._cmd_y,
+            "xstep": self._cmd_xstep, "ystep": self._cmd_ystep,
+            "bpl": self._cmd_bpl, "ppb": self._cmd_ppb, "bpp": self._cmd_bpp,
+            "tr_delay": self._tr_delay,
+        }
+        return {
+            "palette": list(self.palette),
+            "cmd_regs": list(self.cmd_regs),
+            "status1": self._status1,
+            "status2": self._status2,
+            "status8": self._status8,
+            "status9": self._status9,
+            "cmd_remaining": self._cmd_remaining,
+            "cmd_engine": engine,
+            "collision_x": self.collision_x,
+            "collision_y": self.collision_y,
+            "first_byte": self._first_byte,
+            "palette_pending": self._pal_pending,
+        }
+
+    def restore_state(self, state: dict[str, object]) -> None:
+        """Reinstate snapshot_state() output after validating every field.
+
+        Raises ValueError/KeyError/TypeError on a malformed object; nothing is
+        written until the whole object has validated. The caller re-derives the
+        interrupt level afterwards (S#1 carries FH).
+        """
+        palette = _state_int_list(state, "palette", 16, 0, 0x1FF)
+        cmd_regs = _state_int_list(state, "cmd_regs", 15, 0, 0xFF)
+        status1 = _state_int(state, "status1", 0, 0xFF)
+        status2 = _state_int(state, "status2", 0, 0xFF)
+        status8 = _state_int(state, "status8", 0, 0xFF)
+        status9 = _state_int(state, "status9", 0, 0xFF)
+        cmd_remaining = _state_int(state, "cmd_remaining", -(1 << 31), (1 << 31) - 1)
+        collision_x = _state_int(state, "collision_x", 0, 0x3FF)
+        collision_y = _state_int(state, "collision_y", 0, 0x3FF)
+        first_byte = _state_int(state, "first_byte", 0, 0xFF)
+        palette_pending = _state_bool(state, "palette_pending")
+        engine_obj = state["cmd_engine"]
+        if not isinstance(engine_obj, dict):
+            raise ValueError(f"cmd_engine must be an object, got {engine_obj!r}")
+        engine = cast(dict[str, object], engine_obj)
+        active = _state_bool(engine, "active")
+        transfer = _state_bool(engine, "transfer")
+        code = _state_int(engine, "code", 0, 0x0F)
+        log = _state_int(engine, "log", 0, 0x0F)
+        sx = _state_int(engine, "sx", 0, 0xFFFF)
+        sy = _state_int(engine, "sy", 0, 0xFFFF)
+        dx = _state_int(engine, "dx", 0, 0xFFFF)
+        dy = _state_int(engine, "dy", 0, 0xFFFF)
+        nx = _state_int(engine, "nx", 0, 0xFFFF)
+        ny = _state_int(engine, "ny", 0, 0xFFFF)
+        cx = _state_int(engine, "x", 0, 0xFFFF)
+        cy = _state_int(engine, "y", 0, 0xFFFF)
+        xstep = _state_int(engine, "xstep", -1, 1)
+        ystep = _state_int(engine, "ystep", -1, 1)
+        bpl = _state_int(engine, "bpl", 1, 256)
+        ppb = _state_int(engine, "ppb", 1, 8)
+        bpp = _state_int(engine, "bpp", 1, 8)
+        tr_delay = _state_int(engine, "tr_delay", -(1 << 31), (1 << 31) - 1)
+
+        self.palette[:] = palette
+        self.cmd_regs[:] = cmd_regs
+        self._status1 = status1
+        self._status2 = status2
+        self._status8 = status8
+        self._status9 = status9
+        self._cmd_remaining = cmd_remaining
+        self.collision_x = collision_x
+        self.collision_y = collision_y
+        self._first_byte = first_byte
+        self._pal_pending = palette_pending
+        self._cmd_active = active
+        self._cmd_transfer = transfer
+        self._cmd_code = code
+        self._cmd_log = log
+        self._cmd_sx = sx
+        self._cmd_sy = sy
+        self._cmd_dx = dx
+        self._cmd_dy = dy
+        self._cmd_nx = nx
+        self._cmd_ny = ny
+        self._cmd_x = cx
+        self._cmd_y = cy
+        self._cmd_xstep = xstep
+        self._cmd_ystep = ystep
+        self._cmd_bpl = bpl
+        self._cmd_ppb = ppb
+        self._cmd_bpp = bpp
+        self._tr_delay = tr_delay
+
     @property
     def framebuffer_format(self) -> FramebufferFormat:
         """SCREEN 8 (G7, M4+M5) stores direct GRB332 pixels; all other modes
@@ -488,6 +680,28 @@ class V9938:
         r0 = self.regs[0]
         is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)
         return FramebufferFormat.GRB332 if is_g7 else FramebufferFormat.PALETTE_INDEX4
+
+    def render_preview(self) -> bytearray:
+        """Render the current frame without changing emulated state.
+
+        A render updates the sprite status in S#0 (5S/9S, index, C), the
+        collision coordinates (S#3-S#6) and S#2's EO field bit; all are saved
+        and restored around the call (debugger / RPC screenshots and state
+        thumbnails).
+        """
+        from msx.vdp import v9938_renderer  # the renderer imports this module
+
+        saved_status = self.status
+        saved_collision_x = self.collision_x
+        saved_collision_y = self.collision_y
+        saved_status2 = self._status2
+        try:
+            return v9938_renderer.render_frame(self)
+        finally:
+            self.status = saved_status
+            self.collision_x = saved_collision_x
+            self.collision_y = saved_collision_y
+            self._status2 = saved_status2
 
     def to_rgb24(self, src: bytearray) -> bytes:
         """Convert a palette-index / SCREEN 8 framebuffer to packed RGB24
@@ -509,16 +723,12 @@ class V9938:
         self._status9 = 0
         self.collision_x = 0
         self.collision_y = 0
-        self._cmd_active = False
         self._cmd_remaining = 0
-        self._cmd_code = 0
-        self._cmd_transfer = False
-        self._tr_delay = 0
-        self._cmd_x = 0
-        self._cmd_y = 0
+        self._reset_cmd_progress()
         self._addr = 0
-        self._latch = None
-        self._pal_latch = None
+        self._first_byte = 0
+        self._ctrl_pending = False
+        self._pal_pending = False
         self._read_buf = 0
         self.irq = False
         self.display_line = 0
@@ -534,7 +744,7 @@ class V9938:
         dh = self.vblank_start_line
         if line == dh:
             self.status |= 0x80  # VBlank F
-            self._update_irq()
+            self.update_irq()
         # Line interrupt: R#19 is an 8-bit raster line that may target any line
         # in the field (0-255), including the border/vblank region — not only the
         # active display. Lines >= 256 can never match the 8-bit compare.
@@ -549,7 +759,7 @@ class V9938:
         effective = (self.regs[19] - self.regs[23]) & 0xFF
         if line == effective and (self.regs[0] & _R0_IE1):
             self._status1 |= _S1_FH
-            self._update_irq()
+            self.update_irq()
         if self.on_scanline is not None:
             self.on_scanline(line)
 
@@ -617,14 +827,16 @@ class V9938:
             self._addr = (self._addr + 1) & 0x1FFFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
-            self._latch = None
+            self._ctrl_pending = False
         elif port == 1:
             self._write_control_port(value)
         elif port == 2:
-            if self._pal_latch is None:
-                self._pal_latch = value
+            if not self._pal_pending:
+                self._first_byte = value
+                self._pal_pending = True
             else:
-                rb, self._pal_latch = self._pal_latch, None
+                rb = self._first_byte
+                self._pal_pending = False
                 r = (rb >> 4) & 0x07
                 b = rb & 0x07
                 g = value & 0x07
@@ -642,29 +854,14 @@ class V9938:
             pc = self._get_pc() if self._get_pc is not None else 0
             cy = self._get_cycle() if self._get_cycle is not None else 0
             self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
-        if self._latch is None:
-            self._latch = value
+        if not self._ctrl_pending:
+            self._first_byte = value  # shared with port 0x9A (see _first_byte)
+            self._ctrl_pending = True
         else:
-            low = self._latch
-            self._latch = None
+            low = self._first_byte
+            self._ctrl_pending = False
             if value & 0x80:
-                reg = value & 0x3F
-                if reg < _NUM_REGS:
-                    if reg < len(_REG_VALUE_MASKS):
-                        low &= _REG_VALUE_MASKS[reg]
-                    if reg == 0:
-                        self._apply_r0_write(low)
-                    self.regs[reg] = low
-                    if self._logger is not None:
-                        self._logger.on_vdp_reg_write(reg, low, self._frame_count)
-                    if reg in _DISPLAY_REGS:
-                        self._reg_write_log.append(_RegChange(self.display_line, reg, low))
-                    if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
-                        self._update_irq()
-                    elif reg == 14:
-                        self._set_addr_high(low)
-                elif 32 <= reg <= 46:
-                    self._write_command_register(reg, low)
+                self._write_register(value & 0x3F, low)
             else:
                 # Combine 14-bit address from this write with R#14 high bits.
                 self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
@@ -672,28 +869,36 @@ class V9938:
                     self._read_buf = self.vram[self._addr]
                     self._addr = (self._addr + 1) & 0x1FFFF
 
+    def _write_register(self, reg: int, value: int) -> None:
+        """Store a register write from port 0x99 or port 0x9B.
+
+        R#0-R#27 keep their implemented bits (_REG_VALUE_MASKS) and apply
+        their side effects; R#32-R#46 go to the command engine; any other
+        number is ignored.
+        """
+        if reg < _NUM_REGS:
+            value &= _REG_VALUE_MASKS[reg]
+            if reg == 0:
+                self._apply_r0_write(value)
+            self.regs[reg] = value
+            if self._logger is not None:
+                self._logger.on_vdp_reg_write(reg, value, self._frame_count)
+            if reg in _DISPLAY_REGS:
+                self._reg_write_log.append(_RegChange(self.display_line, reg, value))
+            if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
+                self.update_irq()
+            elif reg == 14:
+                self._set_addr_high(value)
+        elif 32 <= reg <= 46:
+            self._write_command_register(reg, value)
+
     def _write_indirect_register(self, value: int) -> None:
         """Port 3: the byte goes to whichever register R#17 points at.
         Streaming command data to R#44 is just this path with R#17 = 44 and
         AII set, so there is no separate data port."""
         ptr = self.regs[17] & 0x3F
         r17_before = self.regs[17]
-        if ptr < _NUM_REGS:
-            if ptr < len(_REG_VALUE_MASKS):
-                value &= _REG_VALUE_MASKS[ptr]
-            if ptr == 0:
-                self._apply_r0_write(value)
-            self.regs[ptr] = value
-            if self._logger is not None:
-                self._logger.on_vdp_reg_write(ptr, value, self._frame_count)
-            if ptr in _DISPLAY_REGS:
-                self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
-            if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
-                self._update_irq()
-            elif ptr == 14:
-                self._set_addr_high(value)
-        elif 32 <= ptr <= 46:
-            self._write_command_register(ptr, value)
+        self._write_register(ptr, value)
         if self.tracer is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             cy = self._get_cycle() if self._get_cycle is not None else 0
@@ -720,7 +925,7 @@ class V9938:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
             self._addr = (self._addr + 1) & 0x1FFFF
-            self._latch = None
+            self._ctrl_pending = False
             return result
         if port == 1:
             return self._read_status_register()
@@ -733,7 +938,7 @@ class V9938:
         for S#0 lets a latch desync (e.g. a write interrupted mid-sequence)
         persist forever, corrupting every subsequent R#nn / address write.
         """
-        self._latch = None
+        self._ctrl_pending = False
         if self.regs[15] == 2:
             # S#2 also reports the live horizontal/vertical retrace flags,
             # which software polls to time mid-screen register changes; bits
@@ -759,7 +964,7 @@ class V9938:
         if self.regs[15] == 1:
             result = self._status1
             self._status1 &= ~_S1_FH  # reading S#1 clears FH
-            self._update_irq()
+            self.update_irq()
             return result & 0xFF
         if self.regs[15] == 8:
             return self._status8
@@ -799,7 +1004,7 @@ class V9938:
         else:
             result = (self.status & 0xE0) | 0x1F
         self.status &= ~0xE0  # clear F, 5S and C flags together
-        self._update_irq()
+        self.update_irq()
         return result & 0xFF
 
     # ------------------------------------------------------------------

@@ -8,11 +8,28 @@ keeps a stable 4:3 geometry regardless of R#9 LN (192 active lines when LN=0,
 Both `msx/vdp/renderer.py` (TMS9918A) and `msx/vdp/v9938_renderer.py` (V9938)
 share these definitions so the two output paths cannot diverge; the SDL2
 frontend reads `OUTPUT_H` for its fixed window/texture height.
+
+Also the raster timing both VDPs share: `CYCLES_PER_LINE` Z80 T-states per
+scanline and the per-standard line counts, from which the machine's
+cycles-per-frame is derived.
 """
 from __future__ import annotations
 
+import enum
+
 ACTIVE_H = 192  # TMS9918A active height (also V9938 with R#9 LN=0)
 OUTPUT_H = 212  # constant emitted frame height (V9938 LN=1 native height)
+
+CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
+NTSC_LINES_PER_FRAME = 262
+PAL_LINES_PER_FRAME = 313
+
+
+class VideoStandard(enum.Enum):
+    """Video standard of a machine; values are the machine-YAML spellings."""
+
+    NTSC = "ntsc"
+    PAL = "pal"
 
 
 def pad_rows(native_h: int) -> int:
