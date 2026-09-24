@@ -39,11 +39,13 @@ _SPRITE_CLAIM = 0x10
 _COLLISION_X_OFFSET = 12
 _COLLISION_Y_OFFSET = 8
 
-# Cache constant border-fill buffers per colour so a band prefill can slice-assign
-# a memoryview instead of rebuilding bytes([border]) * n every band/frame.
+# Cache border-fill buffers per border pattern (see _border_pattern) so a band
+# prefill can slice-assign a memoryview instead of rebuilding the fill every
+# band/frame.
 #
-# PORT-NOTE: module-level mutable memoization cache keyed on border colour
-#   (0-15, so <=16 entries), grown lazily by _border_fill().
+# PORT-NOTE: module-level mutable memoization cache keyed on the border
+#   pattern (a 1-byte colour, or a 2-byte GRAPHIC5 even/odd pair), grown
+#   lazily by _border_fill().
 # Rust equivalent: precompute all 16 constant border-fill buffers once at
 #   VDP/renderer construction (or as const data), not as a runtime-grown
 #   global — Rust has no ergonomic mutable static without OnceLock/interior
@@ -54,15 +56,16 @@ _COLLISION_Y_OFFSET = 8
 #   global cache shared across VDP instances is also a latent
 #   multi-instance-safety issue this single-machine-process design doesn't
 #   currently need to think about; revisit once Rust vs. C++ is chosen.
-_BORDER_CACHE: dict[int, bytes] = {}
+_BORDER_CACHE: dict[bytes, bytes] = {}
 
 
-def _border_fill(border: int, n: int) -> memoryview:
-    """Return an n-byte view of a cached constant-`border` buffer."""
-    buf = _BORDER_CACHE.get(border)
+def _border_fill(pattern: bytes, n: int) -> memoryview:
+    """Return an n-byte view of a cached buffer repeating `pattern` (n is a
+    whole number of lines, so a 2-byte pattern starts every line on dot 0)."""
+    buf = _BORDER_CACHE.get(pattern)
     if buf is None or len(buf) < n:
-        buf = bytes((border,)) * n
-        _BORDER_CACHE[border] = buf
+        buf = pattern * (n // len(pattern))
+        _BORDER_CACHE[pattern] = buf
     return memoryview(buf)[:n]
 
 
@@ -136,18 +139,23 @@ def _g46_luts(tp: bool, border: int) -> tuple[bytes, bytes]:
 
 
 def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
-    """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion."""
+    """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion.
+
+    With TP clear, colour 0 takes R#7 bits 3:2 at even dots (p0, p2) and bits
+    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0."""
     key = (tp, border)
     if key not in _G5_LUT_CACHE:
+        even_zero = (border >> 2) & 0x03
+        odd_zero = border & 0x03
 
-        def _ch(b: int, shift: int) -> int:
+        def _ch(b: int, shift: int, zero: int) -> int:
             c = (b >> shift) & 0x03
-            return c if (tp or c) else border
+            return c if (tp or c) else zero
 
-        p0 = bytes(_ch(b, 6) for b in range(256))
-        p1 = bytes(_ch(b, 4) for b in range(256))
-        p2 = bytes(_ch(b, 2) for b in range(256))
-        p3 = bytes(_ch(b, 0) for b in range(256))
+        p0 = bytes(_ch(b, 6, even_zero) for b in range(256))
+        p1 = bytes(_ch(b, 4, odd_zero) for b in range(256))
+        p2 = bytes(_ch(b, 2, even_zero) for b in range(256))
+        p3 = bytes(_ch(b, 0, odd_zero) for b in range(256))
         _G5_LUT_CACHE[key] = (p0, p1, p2, p3)
     return _G5_LUT_CACHE[key]
 
@@ -240,7 +248,7 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
     h = vdp.display_height
     # The frame's width comes from the buffer: a mid-frame width change makes it
     # the widest band's width, not the live registers' (see _render_banded).
-    out = pad_to_output_height(buf, h, len(buf) // h, _border_color(vdp))
+    out = pad_to_output_height(buf, h, len(buf) // h, _border_pattern(vdp.regs))
     return out, st
 
 
@@ -291,16 +299,24 @@ def _r18_row_offsets(vdp: "V9938", h: int) -> tuple[list[int], int]:
     return row_h, v_off
 
 
-def _border_color(vdp: "V9938") -> int:
-    """Border-colour byte for the current mode.
+def _border_pattern(regs: list[int]) -> bytes:
+    """Border fill pattern for the mode in `regs`, repeated from dot 0.
 
-    SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour; every other
-    mode uses the low nibble of R#7 as a palette index. Shared by the R#18
-    display-adjust fill and the output-height padding so the two cannot drift.
+    SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour. SCREEN 6
+    (G5) alternates two palette indices, R#7 bits 3:2 at even dots and bits
+    1:0 at odd dots (openMSX getBorderColors). Every other mode uses the low
+    nibble of R#7. Shared by the band prefill, the R#18 display-adjust fill
+    and the output-height padding so they cannot drift.
     """
-    r0 = vdp.regs[0]
-    is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
-    return vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+    r0 = regs[0]
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    if m5 and m4:
+        return bytes((regs[7],))
+    if m5 and not m3:
+        return bytes(((regs[7] >> 2) & 0x03, regs[7] & 0x03))
+    return bytes((regs[7] & 0x0F,))
 
 
 def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
@@ -321,10 +337,10 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     if v_off == 0 and not any(row_h):
         return buf
 
-    border = _border_color(vdp)
-    scale = w // 256  # 512-wide modes shift 2 buffer px per dot
+    border = _border_pattern(vdp.regs)
+    scale = w // 256  # 512-wide modes shift 2 buffer px per dot (keeps G5's dot parity)
 
-    out = bytearray([border]) * (w * h)
+    out = bytearray(border * (w * h // len(border)))
     for sy in range(h):
         dy = sy + v_off
         if dy < 0 or dy >= h:
@@ -580,11 +596,8 @@ def _render_pass_range(
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
 
-    is_g7 = bool(m5 and m4)
-    border = regs[7] if is_g7 else (regs[7] & 0x0F)
-
     n = (y_end - y_start) * w
-    buf[y_start * w : y_end * w] = _border_fill(border, n)
+    buf[y_start * w : y_end * w] = _border_fill(_border_pattern(regs), n)
 
     if not (r1 & 0x40):  # BL clear → blank band already filled above
         return

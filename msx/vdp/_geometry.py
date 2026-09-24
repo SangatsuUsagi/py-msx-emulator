@@ -66,25 +66,27 @@ def pad_rows(native_h: int) -> int:
     return (OUTPUT_H - native_h) // 2
 
 
-def pad_to_output_height(buf: bytearray, h: int, w: int, border: int) -> bytearray:
+def pad_to_output_height(buf: bytearray, h: int, w: int, border: bytes) -> bytearray:
     """Centre a native-height frame buffer in a constant `OUTPUT_H`-row buffer.
 
     Returns `buf` unchanged when `h >= OUTPUT_H` (already full height). Otherwise
-    builds a `w × OUTPUT_H` buffer filled with `border` and copies `buf` into the
+    builds a `w × OUTPUT_H` buffer filled by repeating `border` and copies `buf` into the
     centre rows.
 
     Args:
         buf: the rendered native-height frame buffer (length `w * h`).
         h: the native active height (192 or 212).
         w: the frame width (256, or 512 for SCREEN 6/7).
-        border: the border-colour byte for the top/bottom padding rows.
+        border: the fill pattern for the top/bottom padding rows (one colour
+            byte, or SCREEN 6's two-byte even/odd pair; `w` is a multiple of
+            its length).
 
     Returns:
         A bytearray of length `w * OUTPUT_H`.
     """
     if h >= OUTPUT_H:
         return buf
-    out = bytearray([border]) * (w * OUTPUT_H)
+    out = bytearray(border * (w * OUTPUT_H // len(border)))
     top = pad_rows(h) * w
     assert len(buf) == w * h  # simple slice-assign below would silently resize otherwise
     out[top:top + w * h] = buf
