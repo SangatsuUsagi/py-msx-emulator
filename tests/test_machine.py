@@ -594,7 +594,7 @@ def test_step_takes_irq_raised_while_paused() -> None:
     machine = _stepping_machine()
     machine.vdp.regs[1] = 0x60  # IE0=1
     machine.vdp.status = 0x80   # F=1
-    machine.vdp._update_irq()
+    machine.vdp.update_irq()
     machine.cpu.int_pending = False  # nothing sampled it yet
 
     machine.step()

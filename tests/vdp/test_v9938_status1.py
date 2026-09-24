@@ -110,7 +110,7 @@ def test_irq_cache_updates_on_ie0_register_write() -> None:
     # write while F is already set must refresh the cache immediately.
     vdp = make_vdp()
     vdp.status |= 0x80          # F (VBlank) already pending
-    vdp._update_irq()
+    vdp.update_irq()
     assert not vdp.irq         # IE0 not set yet
     vdp.write_port(0x99, 0x40 | 0x20)  # data = BL|IE0
     vdp.write_port(0x99, 0x80 | 1)     # commit to R#1
@@ -120,7 +120,7 @@ def test_irq_cache_updates_on_ie0_register_write() -> None:
 def test_irq_cache_updates_on_ie1_register_write() -> None:
     vdp = make_vdp()
     vdp._status1 |= 0x01        # FH pending
-    vdp._update_irq()
+    vdp.update_irq()
     assert not vdp.irq         # IE1 not set yet
     vdp.write_port(0x99, 0x10)         # data = IE1 (R#0 bit4)
     vdp.write_port(0x99, 0x80 | 0)     # commit to R#0
@@ -155,6 +155,17 @@ def test_s2_hr_clear_early_in_scanline() -> None:
     vdp.regs[15] = 2
     vdp._line_cycle = 10  # active display region
     assert not (vdp.read_port(0x99) & 0x20)
+
+
+def test_s2_hr_threshold_derives_from_cycles_per_line() -> None:
+    # 1024 of the 1368 VDP clocks per line are active display; with 228
+    # T-states per line HR rises at T-state 170.
+    vdp = make_vdp()
+    vdp.regs[15] = 2
+    vdp._line_cycle = 169
+    assert not (vdp.read_port(0x99) & 0x20)
+    vdp._line_cycle = 170
+    assert vdp.read_port(0x99) & 0x20
 
 
 def test_s2_hr_advances_with_tick_and_resets_each_line() -> None:

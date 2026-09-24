@@ -7,6 +7,11 @@ from msx.vdp.v9938 import _MSX2_DEFAULT_PALETTE, V9938
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _pending_palette_byte(vdp: V9938) -> int | None:
+    """The first byte a pending port-0x9A pair will use, or None."""
+    return vdp._first_byte if vdp._pal_pending else None
+
+
 def _set_write_addr(vdp: V9938, addr: int) -> None:
     """Load a 14-bit write address via port 0x99 (assumes R#14=0)."""
     vdp.write_port(0x99, addr & 0xFF)
@@ -281,6 +286,151 @@ def test_palette_partial_write_not_committed() -> None:
     assert vdp.palette[0] == original
 
 
+# Ports 0x99 and 0x9A share one first-byte latch (0x9B does not touch it).
+
+def test_register_write_inside_palette_pair_replaces_palette_first_byte() -> None:
+    vdp = V9938()
+    vdp.regs[16] = 0
+    vdp.write_port(0x9A, 0x75)      # palette first byte
+    vdp.write_port(0x99, 0x02)      # ISR-style register write: R#15 := 2
+    vdp.write_port(0x99, 0x80 | 15)
+    vdp.write_port(0x9A, 0x03)      # palette second byte
+    assert vdp.regs[15] == 0x02
+    entry = vdp.palette[0]
+    assert (entry >> 6) & 7 == 0  # R from 0x02
+    assert (entry >> 3) & 7 == 3  # G
+    assert entry & 7 == 2          # B from 0x02
+    assert vdp.regs[16] == 1
+
+
+def test_palette_first_byte_inside_control_pair_replaces_low_byte() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0x34)       # control first byte
+    vdp.write_port(0x9A, 0x56)       # palette first byte
+    vdp.write_port(0x99, 0x40 | 0x12)
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.vram[0x1256] == 0xAB
+    assert _pending_palette_byte(vdp) is not None  # palette pair still pending
+
+
+def test_port_9b_write_does_not_touch_shared_latch() -> None:
+    vdp = V9938()
+    vdp.regs[17] = 0x80 | 7          # R#7, no auto-increment
+    vdp.write_port(0x99, 0x34)
+    vdp.write_port(0x9B, 0x0F)
+    vdp.write_port(0x99, 0x40 | 0x12)
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.regs[7] == 0x0F
+    assert vdp.vram[0x1234] == 0xAB
+
+
+def test_port_9b_write_does_not_touch_pending_palette_pair() -> None:
+    vdp = V9938()
+    vdp.regs[16] = 0
+    vdp.regs[17] = 0x80 | 7          # R#7, no auto-increment
+    vdp.write_port(0x9A, 0x75)       # palette first byte
+    vdp.write_port(0x9B, 0x0F)
+    vdp.write_port(0x9A, 0x03)       # palette second byte
+    assert vdp.regs[7] == 0x0F
+    assert vdp.latch is None
+    entry = vdp.palette[0]
+    assert (entry >> 6) & 7 == 7  # R from 0x75
+    assert (entry >> 3) & 7 == 3  # G
+    assert entry & 7 == 5          # B from 0x75
+
+
+def test_palette_first_byte_without_control_pair_leaves_control_latch_empty() -> None:
+    vdp = V9938()
+    vdp.write_port(0x9A, 0x75)
+    assert vdp.latch is None
+    vdp.write_port(0x99, 0x01)
+    vdp.write_port(0x99, 0x80 | 5)
+    assert vdp.regs[5] == 0x01
+
+
+def test_control_first_byte_without_palette_pair_leaves_palette_latch_empty() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0x34)
+    assert _pending_palette_byte(vdp) is None
+
+
+def test_first_control_byte_leaves_vram_address_unchanged() -> None:
+    # Unlike the TMS9918A, the V9938 moves the pointer only when an address
+    # setup completes.
+    vdp = V9938()
+    _set_write_addr(vdp, 0x1234)
+    vdp.write_port(0x99, 0x56)
+    assert vdp.addr == 0x1234
+    vdp.read_port(0x99)              # drop the stray byte
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.vram[0x1234] == 0xAB
+
+
+def _pend_control_and_palette_pairs(vdp: V9938) -> None:
+    """Leave both a port-0x99 pair and a port-0x9A pair half-written (0x75)."""
+    vdp.regs[16] = 0
+    vdp.write_port(0x99, 0x34)       # control first byte
+    vdp.write_port(0x9A, 0x75)       # palette first byte, replaces 0x34
+    assert vdp.latch == 0x75
+    assert _pending_palette_byte(vdp) == 0x75
+
+
+def _assert_palette_pair_completes_from_0x75(vdp: V9938) -> None:
+    vdp.write_port(0x9A, 0x03)       # palette second byte
+    entry = vdp.palette[0]
+    assert (entry >> 6) & 7 == 7  # R
+    assert (entry >> 3) & 7 == 3  # G
+    assert entry & 7 == 5          # B
+    assert vdp.regs[16] == 1
+
+
+def test_status_read_clears_control_pair_but_keeps_palette_pair_pending() -> None:
+    vdp = V9938()
+    _pend_control_and_palette_pairs(vdp)
+    vdp.read_port(0x99)
+    assert vdp.latch is None
+    assert _pending_palette_byte(vdp) == 0x75
+    _assert_palette_pair_completes_from_0x75(vdp)
+    vdp.write_port(0x99, 0x01)       # fresh pair after the palette completes
+    vdp.write_port(0x99, 0x80 | 5)
+    assert vdp.regs[5] == 0x01
+
+
+def test_port_98_write_clears_control_pair_but_keeps_palette_pair_pending() -> None:
+    vdp = V9938()
+    _pend_control_and_palette_pairs(vdp)
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.latch is None
+    assert _pending_palette_byte(vdp) == 0x75
+    _assert_palette_pair_completes_from_0x75(vdp)
+
+
+def test_port_98_read_clears_control_pair_but_keeps_palette_pair_pending() -> None:
+    vdp = V9938()
+    _pend_control_and_palette_pairs(vdp)
+    vdp.read_port(0x98)
+    assert vdp.latch is None
+    assert _pending_palette_byte(vdp) == 0x75
+    _assert_palette_pair_completes_from_0x75(vdp)
+
+
+def test_palette_second_byte_leaves_pending_control_pair_intact() -> None:
+    vdp = V9938()
+    vdp.regs[16] = 0
+    vdp.write_port(0x9A, 0x75)       # palette first byte
+    vdp.write_port(0x99, 0x34)       # control first byte, replaces 0x75
+    vdp.write_port(0x9A, 0x03)       # palette second byte completes the pair
+    assert _pending_palette_byte(vdp) is None
+    assert vdp.latch == 0x34
+    entry = vdp.palette[0]
+    assert (entry >> 6) & 7 == 3  # R from 0x34
+    assert (entry >> 3) & 7 == 3  # G
+    assert entry & 7 == 4          # B from 0x34
+    vdp.write_port(0x99, 0x40 | 0x12)
+    vdp.write_port(0x98, 0xAB)
+    assert vdp.vram[0x1234] == 0xAB
+
+
 # ---------------------------------------------------------------------------
 # Initial palette
 # ---------------------------------------------------------------------------
@@ -486,7 +636,8 @@ def test_reset_restores_registers_status_palette_and_address_state() -> None:
     vdp.palette = [0x1FF] * 16
     vdp.addr = 0x12345
     vdp.latch = 0x55
-    vdp._pal_latch = 0x33
+    vdp._first_byte = 0x33
+    vdp._pal_pending = True
     vdp.read_buf = 0x99
     vdp.irq = True
     vdp.display_line = 100
@@ -502,7 +653,7 @@ def test_reset_restores_registers_status_palette_and_address_state() -> None:
     assert vdp.palette == list(_MSX2_DEFAULT_PALETTE)
     assert vdp.addr == 0
     assert vdp.latch is None
-    assert vdp._pal_latch is None
+    assert _pending_palette_byte(vdp) is None
     assert vdp.read_buf == 0
     assert vdp.irq is False
     assert vdp.display_line == 0
@@ -603,3 +754,20 @@ def test_colour_burst_registers_power_on_and_reset_values() -> None:
     vdp.regs = [0xFF] * 28
     vdp.reset()
     assert vdp.regs == expected
+
+
+def test_port_9b_tracer_records_the_byte_written_not_the_stored_value() -> None:
+    from msx.vdp.tracer import Tracer
+
+    seen: list[int] = []
+
+    class _Rec(Tracer):
+        def port9b_write(self, pc, cycle, value, r17, frame):  # type: ignore[override]
+            seen.append(value)
+
+    vdp = V9938()
+    vdp.tracer = _Rec.__new__(_Rec)
+    vdp.regs[17] = 0x80 | 10           # R#10 (mask 0x07), no auto-increment
+    vdp.write_port(0x9B, 0xFF)
+    assert vdp.regs[10] == 0x07
+    assert seen == [0xFF]

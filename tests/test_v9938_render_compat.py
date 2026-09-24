@@ -425,7 +425,7 @@ def test_mc_name_and_pattern_tables_above_16k() -> None:
 
 # ---------------------------------------------------------------------------
 # GRAPHIC 2/3 pattern-generator base uses R#4 bits 5:2 (A16-A13), not just bit2.
-# Regression for Ultima III (SCREEN 4): R#4=0x13 → pattern base 0x8000; the old
+# Regression for an MSX2 SCREEN 4 title: R#4=0x13 → pattern base 0x8000; the old
 # (R#4 & 0x04) << 11 form gave 0x0000 and garbled the background.
 # ---------------------------------------------------------------------------
 

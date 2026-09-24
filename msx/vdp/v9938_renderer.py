@@ -537,6 +537,76 @@ def _render_pass_range(
         _render_sprites_for_mode(vdp, buf, y_start, y_end)
 
 
+def _plot_mode1_pixel(
+    buf: bytearray, painted: bytearray, touched: bytearray, row: int, px: int, color: int
+) -> bool:
+    """Plot one sprite-mode-1 pixel at screen x `px` of the line at `row`.
+
+    Off-screen x is clipped (no wrap). Returns True on coincidence. Colour 0
+    only reaches here when TP makes it opaque, and is displayed as palette
+    entry 0.
+    """
+    if px < 0 or px >= _W:
+        return False
+    coord = row + px
+    collided = bool(touched[coord])
+    touched[coord] = 1
+    if not painted[coord]:
+        painted[coord] = 1
+        buf[coord] = color
+    return collided
+
+
+def _plot_mode2_row(
+    sprite_buf: bytearray,
+    touched: bytearray,
+    drawn: list[int],
+    pixels: bytes,
+    x_pos: int,
+    scale: int,
+    line_off: int,
+    screen_scale: int,
+    ss_offsets: tuple[int, ...],
+    collides: bool,
+    or_mode: bool,
+    color: int,
+    claim: int,
+) -> int:
+    """Plot one sprite-mode-2 pattern row into the sprite plane.
+
+    `x_pos` is the row's first dot in the 256-dot sprite plane, `scale` the
+    MAG factor; dots off-screen are clipped (no wrap), and each dot covers
+    `ss_offsets` output pixels in 512-wide modes. A CC (OR) sprite ORs its
+    colour into an already-claimed pixel; otherwise the first claim wins.
+    Returns the sprite-plane x of the first colliding dot, or -1.
+    """
+    hit_x = -1
+    for bit_i, pixel in enumerate(pixels):
+        if not pixel:
+            continue
+        first = x_pos + bit_i * scale
+        for sx in range(first, first + scale):
+            if sx < 0 or sx >= _W:
+                continue
+            base = line_off + sx * screen_scale
+            for ss in ss_offsets:
+                coord = base + ss
+                if collides:
+                    if touched[coord]:
+                        if hit_x < 0:
+                            hit_x = sx
+                    else:
+                        touched[coord] = 1
+                if sprite_buf[coord]:
+                    if or_mode:
+                        sprite_buf[coord] |= color
+                else:
+                    sprite_buf[coord] = claim
+                    drawn.append(coord)
+    return hit_x
+
+
+
 def _render_sprites_for_mode(
     vdp: "V9938",
     buf: bytearray,
@@ -627,13 +697,11 @@ def _colour0(vdp: "V9938") -> int:
 
 
 def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    # Name/pattern use the full V9938 128 KB range (R#2 7 bits, R#4 6 bits),
-    # matching openMSX's VDP::updateNameBase/updatePatternBase for GRAPHIC1:
-    # both tables' index fits entirely within the base register's own
-    # "unused bits set to 1" filler width (10 bits for name, 11 for pattern),
-    # so unlike GRAPHIC2/3 there is no per-third gating to reproduce here --
-    # only the register/mask width was previously left at the TMS9918A-only
-    # (16 KB) form. Colour table was already on the wide (R#10/&0x1FFFF) form.
+    # V9938 pattern-mode table bases span the full 128 KB: name = R#2 bits 6:0,
+    # pattern = R#4 bits 5:0, colour = R#10 + R#3. In GRAPHIC1 the table
+    # indices fit inside the base's own low bits, so (unlike GRAPHIC2/3) no
+    # per-third gating applies. The other pattern and text modes use the same
+    # bases.
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3F) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
@@ -643,7 +711,7 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
     # not a hardware fact.
     vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    colour0 = _colour0(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
@@ -668,9 +736,9 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
                 cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
                 row_tiles[col] = tile
                 hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-                row_fg[col] = hi_nib if hi_nib else bd
+                row_fg[col] = hi_nib if hi_nib else colour0
                 lo_nib = cb & 0x0F
-                row_bg[col] = lo_nib if lo_nib else bd
+                row_bg[col] = lo_nib if lo_nib else colour0
             cached_row = row
         scan_w = scan * _W
         for col in range(32):
@@ -694,24 +762,21 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     #   colour table      = ((R#10 << 14) | (R#3 << 6)) & ~0x1FFF
     #                     = (R#10 & 0x07) << 14 | (R#3 & 0x80) << 6
     #   name table        = R#2 << 10 (A16-A10)
-    # Using only R#4 bit2 for the pattern base (the TMS9918 form) put the
-    # generator at 0x0000 for e.g. Ultima III (R#4=0x13 → 0x8000), garbling the
-    # background; R#4 bits 5:2 are the real A16-A13 base bits.
+    # R#4 bits 5:2 are the A16-A13 pattern base bits (R#4 bit 2 alone is only
+    # the TMS9918A form; an MSX2 title with R#4 = 0x13 puts its generator at
+    # 0x8000).
     #
-    # R#4 bits 1:0 (colour: R#3 bits 6:5) separately gate the 2nd/3rd-third
-    # offset bits (0x800/0x1000) before they're added to pat_base/col_base --
-    # a documented VDP behaviour (msx.org/wiki/SCREEN_2), not a TMS9918A-only
-    # quirk. A bit clear collapses that third's reads onto the 1st third's
-    # table. msx/vdp/renderer.py's TMS9918A _render_g2 already applies this
-    # (its pat_mask/col_mask); ported here unchanged in shape, just against
-    # the wider 128 KB (& 0x1FFFF) address space.
+    # R#4 bits 1:0 (colour: R#3 bits 6:5) gate the 2nd/3rd-third offset bits
+    # (0x800/0x1000) before they are added to the base -- documented VDP
+    # behaviour (msx.org/wiki/SCREEN_2), as in the TMS9918A renderer; a clear
+    # bit collapses that third's reads onto the 1st third's table.
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3C) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
     pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
     col_mask = ((vdp.regs[3] & 0x7F) << 6) | 0x3F
     vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    colour0 = _colour0(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
     for scan in range(y_start, ye):
@@ -727,9 +792,9 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             pat = vdp.vram[(pat_base + (off & pat_mask)) & 0x1FFFF]
             cb = vdp.vram[(col_base + (off & col_mask)) & 0x1FFFF]
             hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-            fg = hi_nib if hi_nib else bd
+            fg = hi_nib if hi_nib else colour0
             lo_nib = cb & 0x0F
-            bg = lo_nib if lo_nib else bd
+            bg = lo_nib if lo_nib else colour0
             bx = col * 8
             buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -740,11 +805,7 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 
 
 def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    # Full V9938 128 KB range (R#2 7 bits, R#4 6 bits) -- see _render_g1's
-    # comment; TEXT1's own name-table caller in openMSX (CharacterConverter's
-    # getNamePtr-equivalent) explicitly widens its index's filler bits to
-    # expose the same full R#2 range despite TEXT1's narrower native index
-    # width, so this is not TEXT-mode-specific.
+    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1).
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
@@ -789,9 +850,8 @@ def _render_text2(
     renders in its plain (non-blinking) colour.
     """
     name_base = (vdp.regs[2] & 0x7C) << 10
-    # Pattern generator: full V9938 128 KB range (R#4 6 bits) -- see
-    # _render_g1's comment. name_base above is already on the wide form
-    # (its own 4 KB-aligned R#2 formula, unrelated to this).
+    # Pattern generator: full-width R#4 base (see _render_g1); the name table
+    # is 4 KB-aligned in TEXT2.
     pat_base = (vdp.regs[4] & 0x3F) << 11
     fg = (vdp.regs[7] >> 4) & 0x0F
     if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
@@ -831,7 +891,7 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # _render_g1's comment (openMSX PixelRenderer::draw treats every
     # non-text mode alike).
     vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    colour0 = _colour0(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile` only depends on `row`, constant across the 8 scanlines sharing a
@@ -861,9 +921,9 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             bx = col * 8
             pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x1FFFF]
             hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-            lc = hi_nib if hi_nib else bd
+            lc = hi_nib if hi_nib else colour0
             lo_nib = pat & 0x0F
-            rc = lo_nib if lo_nib else bd
+            rc = lo_nib if lo_nib else colour0
             buf[scan_w + bx : scan_w + bx + 4] = _COLOR4[lc]
             buf[scan_w + bx + 4 : scan_w + bx + 8] = _COLOR4[rc]
 
@@ -964,30 +1024,6 @@ def _render_sprites(
     # case is unaffected.
     sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
 
-    # Shared per-pixel plot: identical body for the scale==1 fast path and the
-    # general-scale loop below (only how `px` is computed differs), so it's
-    # factored into one closure instead of two copies -- defined once per
-    # function call, not per pixel/line/sprite, since Python resolves `row`/
-    # `line`/`color` (all reassigned in the loops below) at call time via the
-    # closure cell, not at def time.
-    def _plot(px: int) -> None:
-        nonlocal coincidence, col_line, col_x
-        if px < 0 or px >= _W:  # clip off-screen, no wrap
-            return
-        coord = row + px
-        if sprite_touched[coord]:
-            coincidence = True
-            if line < col_line or (line == col_line and px < col_x):
-                col_line = line
-                col_x = px
-        else:
-            sprite_touched[coord] = 1
-        # Colour 0 only reaches here when TP makes it opaque, and an
-        # opaque colour-0 pixel is displayed as palette entry 0.
-        if not sprite_painted[coord]:
-            sprite_painted[coord] = 1
-            buf[coord] = color
-
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
         if y_byte == 0xD0:
@@ -1026,14 +1062,28 @@ def _render_sprites(
 
             if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                 for bit_i, pixel in enumerate(pixels):
-                    if pixel:
-                        _plot(x_byte + bit_i)
+                    if not pixel:
+                        continue
+                    px = x_byte + bit_i
+                    if _plot_mode1_pixel(buf, sprite_painted, sprite_touched, row, px, color):
+                        coincidence = True
+                        # First collision in raster order wins (openMSX).
+                        if line < col_line or (line == col_line and px < col_x):
+                            col_line = line
+                            col_x = px
             else:
                 for bit_i, pixel in enumerate(pixels):
                     if not pixel:
                         continue
                     for s in range(scale):
-                        _plot(x_byte + bit_i * scale + s)
+                        px = x_byte + bit_i * scale + s
+                        if _plot_mode1_pixel(
+                            buf, sprite_painted, sprite_touched, row, px, color
+                        ):
+                            coincidence = True
+                            if line < col_line or (line == col_line and px < col_x):
+                                col_line = line
+                                col_x = px
 
     if coincidence:
         vdp.status |= 0x20
@@ -1093,11 +1143,8 @@ def _sprite_scanlines(
     pattern starts at VRAM row y_top and spans render_size rows, across all
     per-scanline vscroll/SPD runs.
 
-    Shared by _render_sprites and _render_sprites_mode2 -- previously each
-    duplicated this exact scan (see _render_sprites's own docstring: a
-    per-scanline vscroll/SPD fix once landed in _render_sprites_mode2 but
-    not in _render_sprites, since nothing forced the two to be kept in
-    sync). Extracting it here means a future scan fix lands once.
+    Shared by _render_sprites and _render_sprites_mode2 so a scan fix lands
+    in both sprite modes at once.
     """
     for run in sprite_runs:
         if not run.enabled:  # SPD set over this run: sprites blanked here
@@ -1193,24 +1240,12 @@ def _render_sprites_mode2(
     render_size = pat_size * (2 if mag else 1)
     screen_scale = width // _W  # 1 (256-wide modes) or 2 (512-wide G5/G6)
 
-    # R#5/R#11 specify the SAT base (512-byte aligned): attr_reg & ~0x1FF, per
-    # openMSX VDP::updateSpriteAttributeBase (baseMask = (R#11<<15)|(R#5<<7)|
-    # 0x7F, indexMask = ~0u<<10 for sprite mode 2) combined with the SAT's own
-    # getReadArea<32*4>(512) call -- clearing attr_reg's low 9 bits reproduces
-    # that AND exactly.
-    #
-    # The per-sprite colour table shares the SAME base register window as the
-    # SAT (SpriteChecker::checkSprites2 reads it via the same
-    # `spriteAttribTable`, not a separate table), but at a DIFFERENT index
-    # expression: `readNP((~0u<<10) | (sprite*16+line))`. Because that index's
-    # bits 7:0 carry sprite*16+line's own real value (not forced to 1 the way
-    # the SAT's bit 9 is via its `| 0x200`), R#5 bits 1:0 (base bits 8:7) GATE
-    # -- rather than simply relocate -- the low bits of the per-sprite offset,
-    # and base bit 9 (R#5 bit 2) always reads as 0 there. col_base + i*16 +
-    # src_row (simple addition, no gating) is therefore only an approximation
-    # that happens to match when R#5's low bits are already 1 (the BIOS/every
-    # real ROM's convention, e.g. R#5=0xF7) -- NOT the hardware-accurate
-    # formula in general.
+    # SAT base = the R#11/R#5 attribute address with bits 8:0 cleared
+    # (512-byte aligned). The per-sprite colour table uses the same base with
+    # bits 9:0 cleared; there R#5 bits 1:0 gate offset bits 8:7 and bit 9
+    # reads as 0, so the sprite*16 + line offset is ANDed, not added
+    # (matches openMSX's sprite-mode-2 colour addressing). With R#5 bits 2:0
+    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset".
     attr_reg = ((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)
     sat_base = attr_reg & ~0x1FF & 0x1FFFF
     col_base_high = attr_reg & ~0x3FF & 0x1FFFF
@@ -1255,33 +1290,6 @@ def _render_sprites_mode2(
     # the usual single R#23/R#8; more only when a split changes either). Runs
     # whose SPD is set are skipped, so a band that blanks its sprites draws none.
     sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
-
-    # Shared per-pixel plot: identical body for the scale==1 fast path and the
-    # general-scale loop below (only how `sx` is computed differs), so it's
-    # factored into one closure instead of two copies -- defined once per
-    # function call, not per pixel/line/sprite, since Python resolves `line`/
-    # `line_off`/`collides`/`or_mode`/`color`/`claim` (all reassigned in the
-    # loops below) at call time via the closure cell, not at def time.
-    def _plot(sx: int) -> None:
-        nonlocal coincidence, col_line, col_x
-        if sx < 0 or sx >= _W:  # clip off-screen, no wrap
-            return
-        for ss in ss_offsets:  # horizontal doubling in 512-wide modes
-            coord = line_off + sx * screen_scale + ss
-            if collides:
-                if sprite_touched[coord]:
-                    coincidence = True
-                    if line < col_line or (line == col_line and sx < col_x):
-                        col_line = line
-                        col_x = sx
-                else:
-                    sprite_touched[coord] = 1
-            if sprite_buf[coord]:
-                if or_mode:
-                    sprite_buf[coord] |= color
-            else:
-                sprite_buf[coord] = claim
-                drawn.append(coord)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -1351,16 +1359,16 @@ def _render_sprites_mode2(
             claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
             ss_offsets = _SS_OFFSETS[screen_scale]
 
-            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                for bit_i, pixel in enumerate(pixels):
-                    if pixel:  # position in the 256-dot sprite plane
-                        _plot(x_pos + bit_i)
-            else:
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    for s in range(scale):
-                        _plot(x_pos + bit_i * scale + s)  # position in the sprite plane
+            hit_x = _plot_mode2_row(
+                sprite_buf, sprite_touched, drawn, pixels, x_pos, scale,
+                line_off, screen_scale, ss_offsets, collides, or_mode, color, claim,
+            )
+            if hit_x >= 0:
+                coincidence = True
+                # First collision in raster order wins (openMSX).
+                if line < col_line or (line == col_line and hit_x < col_x):
+                    col_line = line
+                    col_x = hit_x
 
     _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 

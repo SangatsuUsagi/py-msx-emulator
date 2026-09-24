@@ -797,7 +797,7 @@ These patterns translate cleanly to any statically-typed target:
   `@dataclass(slots=True)`. All fields are explicitly declared with types; no
   `__getattr__`/`__setattr__` magic. `slots=True` avoids the `__dict__` per
   instance and makes the field layout explicit.
-- **Timing constants** — `CYCLES_PER_FRAME`, `_TSTATES_PER_LINE`,
+- **Timing constants** — `CYCLES_PER_FRAME`, `CYCLES_PER_LINE`,
   `_HBLANK_START`, `_CYCLES_PER_BYTE` etc. are module-level integer constants,
   not derived at runtime.
 

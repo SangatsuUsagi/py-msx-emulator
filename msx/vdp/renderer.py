@@ -44,18 +44,16 @@ _SPRITE_BITS: list[bytes] = [
 ]
 
 
-def render_frame(vdp: VDP, skip_render: bool = False, vblank: bool = True) -> bytearray:
+def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     """Render one TMS9918A frame to a border-padded palette-index buffer.
 
     Dispatches on the M1-M3 mode bits (R#1/R#0, TMS9918A datasheet naming) to
-    pick a screen-mode renderer, or only finalizes if `skip_render` (frame
-    skipped for a headless benchmark run). `vblank=False` renders without
-    raising the VBlank flag/interrupt, for a frame Machine.run_frame cut short
-    before the raster reached vertical blanking.
+    pick a screen-mode renderer; `skip_render` (frame skipped for a headless
+    benchmark run) returns an empty buffer. The only VDP state a render
+    changes is the sprite status in S#0 (5S / index / C); VBlank is raised by
+    VDP.begin_vblank(), which Machine.run_frame calls.
     """
     if skip_render:
-        if vblank:
-            _finalize(vdp)
         return bytearray(0)
 
     r0 = vdp.regs[0]
@@ -65,10 +63,7 @@ def render_frame(vdp: VDP, skip_render: bool = False, vblank: bool = True) -> by
     if not (r1 & 0x40):  # BL (Blank) bit clear → blank display
         # bytearray([b]) * n is a single C-level fill; [b] * n would first build
         # an n-element Python list (≈48× slower on this per-frame path).
-        buf = bytearray([border]) * (_W * OUTPUT_H)
-        if vblank:
-            _finalize(vdp)
-        return buf
+        return bytearray([border]) * (_W * OUTPUT_H)
 
     # M1/M2 (R#1 bits 4/3), M3 (R#0 bit 1): TMS9918A screen-mode select. R#0
     # has no M4 on this chip (TI data manual §2.2.1). M1=1: Text (SCREEN 0).
@@ -93,8 +88,6 @@ def render_frame(vdp: VDP, skip_render: bool = False, vblank: bool = True) -> by
         _render_g1(vdp, buf)
         _maybe_render_sprites(vdp, buf)
 
-    if vblank:
-        _finalize(vdp)
     # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
     return pad_to_output_height(buf, h, _W, border)
@@ -103,17 +96,6 @@ def render_frame(vdp: VDP, skip_render: bool = False, vblank: bool = True) -> by
 def _maybe_render_sprites(vdp: VDP, buf: bytearray) -> None:
     if not vdp.debug_disable_sprites:
         _render_sprites(vdp, buf)
-
-
-def _finalize(vdp: VDP) -> None:
-    # The TMS9918A (MSX1) has a single VBlank interrupt source per frame and no
-    # line/scanline interrupts (those are a V9938+ feature). Setting the VBlank
-    # flag here raises the /INT level (F && IE0) that Machine samples every
-    # instruction. Machine.run_frame() calls this between its two scanline
-    # segments (see that method's docstring), so this happens once per frame
-    # at that split point, not at end-of-frame.
-    vdp.status |= 0x80
-    vdp._update_irq()
 
 
 def _backdrop(vdp: VDP) -> int:
@@ -277,26 +259,6 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
     sprite_touched = bytearray(_W * _H)
     coincidence = False
 
-    # Shared per-pixel plot: identical body for the scale==1 fast path and the
-    # general-scale loop below (only how `px` is computed differs), so it's
-    # factored into one closure instead of two copies -- defined once per
-    # function call, not per pixel/line/sprite, since Python resolves `row`/
-    # `color` (both reassigned in the loop below) at call time via the
-    # closure cell, not at def time. Mirrors _render_sprites_mode2's own
-    # `_plot` closure in v9938_renderer.py.
-    def _plot(px: int) -> None:
-        nonlocal coincidence
-        if px < 0 or px >= _W:  # clip off-screen, no wrap
-            return
-        coord = row + px
-        if sprite_touched[coord]:
-            coincidence = True
-        else:
-            sprite_touched[coord] = 1
-        if color and not sprite_painted[coord]:
-            sprite_painted[coord] = 1
-            buf[coord] = color
-
     for i in range(32):
         y_byte = vram[(sat_base + i * 4) & 0x3FFF]
         if y_byte == 0xD0:
@@ -340,17 +302,44 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
             if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
                 for bit_i, pixel in enumerate(pixels):
-                    if pixel:
-                        _plot(x_byte + bit_i)
+                    if pixel and _plot_sprite_pixel(
+                        buf, sprite_painted, sprite_touched, row, x_byte + bit_i, color
+                    ):
+                        coincidence = True
             else:
                 for bit_i, pixel in enumerate(pixels):
                     if not pixel:
                         continue
                     for s in range(scale):
-                        _plot(x_byte + bit_i * scale + s)
+                        if _plot_sprite_pixel(
+                            buf, sprite_painted, sprite_touched, row,
+                            x_byte + bit_i * scale + s, color,
+                        ):
+                            coincidence = True
 
     if coincidence:
         vdp.status |= 0x20
+
+
+def _plot_sprite_pixel(
+    buf: bytearray, painted: bytearray, touched: bytearray, row: int, px: int, color: int
+) -> bool:
+    """Plot one sprite pixel at screen x `px` of the line starting at `row`.
+
+    Off-screen x is clipped (no wrap). Returns True on coincidence (another
+    sprite's pattern bit already touched this pixel). Only an opaque colour
+    claims the pixel, so a transparent higher-priority sprite does not block
+    a lower-priority one showing through.
+    """
+    if px < 0 or px >= _W:
+        return False
+    coord = row + px
+    collided = bool(touched[coord])
+    touched[coord] = 1
+    if color and not painted[coord]:
+        painted[coord] = 1
+        buf[coord] = color
+    return collided
 
 
 def _sprite_row_pixels(
