@@ -25,7 +25,7 @@ from msx.joystick import (
 )
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
-from msx.psg import SAMPLES_PER_FRAME, JoystickPort
+from msx.psg import JoystickPort
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
 from msx.vdp._geometry import OUTPUT_H
@@ -40,8 +40,8 @@ _SCREEN_WIDTH = 256
 _SCREEN_HEIGHT = OUTPUT_H
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format. The sample rate must match what msx.psg's
-# SAMPLES_PER_FRAME assumes (samples generated per emulated frame).
+# Audio output format. Each emulated frame generates _AUDIO_SAMPLE_RATE /
+# target_fps samples (see _samples_per_frame_for).
 _AUDIO_SAMPLE_RATE: int = 44100
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
@@ -51,6 +51,13 @@ _S16_MIN: int = -32768
 # Auto frame-skip: bump the skip counter when a frame overruns its budget by
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
+
+def _samples_per_frame_for(machine: Machine) -> int:
+    """Audio samples to generate per emulated frame: the device rate over the
+    pacing rate, so the stream advances as fast as frames are paced (735 at
+    60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
+    return int(_AUDIO_SAMPLE_RATE // machine.video_standard.target_fps)
+
 
 def _target_fps_for(machine: Machine) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
@@ -514,18 +521,17 @@ def _mix_audio(
     present, mixed and clamped to signed 16-bit. When `audio_filter` is given,
     the final mixed buffer is passed through it (modelling the analog output
     low-pass) before being returned. Returns the PCM bytes to queue."""
-    psg_buf = machine.psg.generate_samples(
-        SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle
-    )
+    samples = _samples_per_frame_for(machine)
+    psg_buf = machine.psg.generate_samples(samples, frame_start_cycle, frame_end_cycle)
     extra_bufs = []
     if machine.scc is not None:
-        extra_bufs.append(machine.scc.generate_samples(SAMPLES_PER_FRAME))
+        extra_bufs.append(machine.scc.generate_samples(samples))
     if machine.dac is not None:
         extra_bufs.append(
-            machine.dac.generate_samples(SAMPLES_PER_FRAME, frame_start_cycle, frame_end_cycle)
+            machine.dac.generate_samples(samples, frame_start_cycle, frame_end_cycle)
         )
     if machine.fmpac is not None:
-        extra_bufs.append(machine.fmpac.opll.generate_samples(SAMPLES_PER_FRAME))
+        extra_bufs.append(machine.fmpac.opll.generate_samples(samples))
     if not extra_bufs:
         return audio_filter.filter(bytes(psg_buf)) if audio_filter else bytes(psg_buf)
 
@@ -549,8 +555,8 @@ def _mix_audio(
         chan_arr = array("h")
         chan_arr.frombytes(buf)
         extra_arrs.append(chan_arr)
-    out_arr = array("h", bytes(2 * SAMPLES_PER_FRAME))
-    for i in range(SAMPLES_PER_FRAME):
+    out_arr = array("h", bytes(2 * samples))
+    for i in range(samples):
         total = psg_arr[i]
         for chan_arr in extra_arrs:
             total += chan_arr[i]
