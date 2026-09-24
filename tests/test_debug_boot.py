@@ -5,6 +5,7 @@ import pytest
 from msx.diagnostics.logger import DebugLogger
 from msx.mapper import FlatMapper
 from msx.memory import Memory
+from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
 # ---------------------------------------------------------------------------
@@ -52,3 +53,38 @@ def test_vdp_no_log_without_logger(capsys: pytest.CaptureFixture[str]) -> None:
     vdp.write_port(0x99, 0x81)
     captured = capsys.readouterr()
     assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# V9938: the same [BOOT] lines, from both register-write paths
+# ---------------------------------------------------------------------------
+
+def test_v9938_display_enable_logged_via_port_99(capsys: pytest.CaptureFixture[str]) -> None:
+    vdp = V9938(_logger=DebugLogger())
+    vdp.write_port(0x99, 0x40)  # R#1 := BL
+    vdp.write_port(0x99, 0x81)
+    captured = capsys.readouterr()
+    assert "[BOOT]" in captured.err
+    assert "display enabled" in captured.err
+
+
+def test_v9938_display_enable_logged_via_port_9b(capsys: pytest.CaptureFixture[str]) -> None:
+    vdp = V9938(_logger=DebugLogger())
+    vdp.regs[17] = 0x80 | 1     # R#1, no auto-increment
+    vdp.write_port(0x9B, 0x40)
+    captured = capsys.readouterr()
+    assert "display enabled" in captured.err
+
+
+def test_build_machine_passes_logger_to_v9938() -> None:
+    from pathlib import Path
+
+    from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+
+    root = Path(__file__).resolve().parent.parent
+    registry = load_device_registry(root / "config")
+    spec = load_machine_spec("cbios_msx2_jp", root / "config", registry, root)
+    logger = DebugLogger()
+    machine = build_machine(spec, logger=logger)
+    assert isinstance(machine.vdp, V9938)
+    assert machine.vdp._logger is logger

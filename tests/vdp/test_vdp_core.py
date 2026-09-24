@@ -65,8 +65,8 @@ def test_registers_initialise_to_zero() -> None:
 def test_register_write_via_control_port() -> None:
     vdp = make_vdp()
     vdp.write_port(0x99, 0x42)        # data byte
-    vdp.write_port(0x99, 0x80 | 2)    # register select: reg 2
-    assert vdp.regs[2] == 0x42
+    vdp.write_port(0x99, 0x80 | 3)    # register select: reg 3 (all 8 bits)
+    assert vdp.regs[3] == 0x42
 
 
 def test_register_write_all_eight() -> None:
@@ -74,8 +74,18 @@ def test_register_write_all_eight() -> None:
     for reg in range(8):
         vdp.write_port(0x99, reg * 10)
         vdp.write_port(0x99, 0x80 | reg)
+    masks = (0x03, 0xFB, 0x0F, 0xFF, 0x07, 0x7F, 0x07, 0xFF)  # implemented bits
     for reg in range(8):
-        assert vdp.regs[reg] == reg * 10
+        assert vdp.regs[reg] == (reg * 10) & masks[reg]
+
+
+def test_register_write_ignores_bit6_of_second_byte() -> None:
+    # Unlike the V9938, a 0xC0-0xFF second byte is still a register write.
+    vdp = make_vdp()
+    vdp.write_port(0x99, 0x42)
+    vdp.write_port(0x99, 0xC0 | 3)
+    assert vdp.regs[3] == 0x42
+
 
 
 # --- Status register ---
@@ -266,3 +276,23 @@ def test_reset_retains_vram() -> None:
     vdp.reset()
 
     assert vdp.vram[0x1000] == 0xAB
+
+
+# --- Register value masks (TI data manual §2.2.1: undefined bits don't exist) ---
+
+def _write_reg(vdp: VDP, reg: int, value: int) -> None:
+    vdp.write_port(0x99, value)
+    vdp.write_port(0x99, 0x80 | reg)
+
+
+def test_r0_bit2_is_not_stored() -> None:
+    vdp = make_vdp()
+    _write_reg(vdp, 0, 0x06)
+    assert vdp.regs[0] == 0x02
+
+
+def test_each_register_keeps_only_implemented_bits() -> None:
+    vdp = make_vdp()
+    for reg in range(8):
+        _write_reg(vdp, reg, 0xFF)
+    assert vdp.regs == [0x03, 0xFB, 0x0F, 0xFF, 0x07, 0x7F, 0x07, 0xFF]

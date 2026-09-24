@@ -612,8 +612,13 @@ def _finalize(vdp: "V9938") -> None:
         vdp._status2 &= ~_S2_EO
 
 
-def _backdrop(vdp: "V9938") -> int:
-    return vdp.regs[7] & 0x0F
+def _colour0(vdp: "V9938") -> int:
+    """Palette index drawn for colour code 0 in the pattern and text modes.
+
+    TP=0 (R#8 bit 5): colour 0 is invisible, so the backdrop shows; TP=1: it
+    is palette entry 0 (V9938 data book, R#8 TP).
+    """
+    return 0 if vdp.regs[8] & 0x20 else vdp.regs[7] & 0x0F
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +643,7 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
     # not a hardware fact.
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
@@ -706,7 +711,7 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
     col_mask = ((vdp.regs[3] & 0x7F) << 6) | 0x3F
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     for scan in range(y_start, ye):
@@ -742,10 +747,11 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
     # width, so this is not TEXT-mode-specific.
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3F) << 11
-    # TEXT1: R#7 high nibble = text colour, low nibble = background; both are
-    # palette indices used directly (the V9938 maps them through the programmable
-    # palette — no colour-0 substitution).
+    # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
+    # colour code 0 follows TP like every other colour code 0 (see _colour0).
     fg = (vdp.regs[7] >> 4) & 0x0F
+    if fg == 0:
+        fg = _colour0(vdp)
     bg = vdp.regs[7] & 0x0F
     # No mode-specific 192-line cap: VDP::getNumberOfLines() (real hardware)
     # is mode-independent, so TEXT1's active display period at R#9 LN=1
@@ -788,6 +794,8 @@ def _render_text2(
     # (its own 4 KB-aligned R#2 formula, unrelated to this).
     pat_base = (vdp.regs[4] & 0x3F) << 11
     fg = (vdp.regs[7] >> 4) & 0x0F
+    if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
+        fg = _colour0(vdp)
     bg = vdp.regs[7] & 0x0F
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
@@ -823,7 +831,7 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # _render_g1's comment (openMSX PixelRenderer::draw treats every
     # non-text mode alike).
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile` only depends on `row`, constant across the 8 scanlines sharing a
