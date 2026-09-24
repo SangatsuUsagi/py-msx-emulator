@@ -178,3 +178,33 @@ def test_interrupt_not_taken_during_ei_itself() -> None:
     assert cpu.registers.PC == 1
     assert cpu.iff1 is True
     assert cpu.int_pending is True  # still pending, not consumed
+
+
+# --- R refresh on interrupt acceptance and HALT (openMSX incR per M1) -------
+
+def test_maskable_interrupt_acceptance_increments_r() -> None:
+    for im in (1, 2):
+        cpu = make_cpu([0x00])
+        cpu.im = im
+        cpu.iff1 = True
+        cpu.int_pending = True
+        cpu.registers.R = 0x7F
+        cpu.step()
+        assert cpu.registers.R == 0x00, f"IM {im}"  # bit 7 kept, low 7 bits wrap
+
+
+def test_nmi_acceptance_increments_r() -> None:
+    cpu = make_cpu([0x00])
+    cpu.nmi_pending = True
+    cpu.registers.R = 0x80
+    cpu.step()
+    assert cpu.registers.R == 0x81
+
+
+def test_each_halted_nop_increments_r() -> None:
+    cpu = make_cpu([0x76])  # HALT
+    cpu.step()
+    cpu.registers.R = 0x10
+    for _ in range(3):
+        cpu.step()
+    assert cpu.registers.R == 0x13

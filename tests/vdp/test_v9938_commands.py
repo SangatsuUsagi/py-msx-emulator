@@ -587,6 +587,18 @@ def test_srch_stop_on_not_equal() -> None:
     assert vdp.read_port(0x99) == 2  # first pixel ≠ 0xA is at x=2
 
 
+def test_new_command_clears_a_pending_transfer_delay() -> None:
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=4)  # HMMC
+    _write_data(vdp, 0x11)  # first byte taken: TR cleared, delay pending
+    assert vdp._tr_delay > 0
+    _dispatch_cmd(vdp, cmd_code=0x4, sx=0, sy=0)  # POINT overrides the HMMC
+    _dispatch_cmd(vdp, cmd_code=0x8, dx=0, dy=0, nx=64, ny=64, clr=0x3)  # LMMV
+    vdp._status2 &= ~0x80
+    vdp.tick(200)
+    assert vdp._status2 & 0x80 == 0  # no stale TR re-assert
+
+
 # ---------------------------------------------------------------------------
 # LINE — Bresenham line draw
 # ---------------------------------------------------------------------------
