@@ -1,11 +1,13 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
 from msx.cpu.z80 import Z80
-from msx.machine import CYCLES_PER_FRAME, Machine
+from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, pad_rows
+from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
 from msx.vdp.v9938 import V9938
 from tests.factories import make_machine_msx2
+
+NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
 
 _DUMMY_ROM = bytes(32768)
 _DUMMY_EXTROM = bytes(16384)
@@ -52,7 +54,7 @@ def test_vblank_irq_not_pending_when_ie0_clear() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T-states per frame: approximately CYCLES_PER_FRAME
+# T-states per frame: approximately NTSC_CYCLES
 # ---------------------------------------------------------------------------
 
 def test_total_tstates_approximately_cycles_per_frame() -> None:
@@ -61,7 +63,7 @@ def test_total_tstates_approximately_cycles_per_frame() -> None:
     machine.run_frame(skip_render=True)
     elapsed = machine.cycle_count - before
     # Allow small overshoot due to instruction granularity (max 22 T-states)
-    assert CYCLES_PER_FRAME <= elapsed <= CYCLES_PER_FRAME + 22
+    assert NTSC_CYCLES <= elapsed <= NTSC_CYCLES + 22
 
 
 # ---------------------------------------------------------------------------

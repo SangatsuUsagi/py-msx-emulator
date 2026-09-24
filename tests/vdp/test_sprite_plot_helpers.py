@@ -57,7 +57,7 @@ def _row1(
     planes: tuple[bytearray, bytearray, bytearray] | None = None,
 ) -> tuple[int, bytearray, bytearray, bytearray]:
     buf, painted, touched = planes if planes is not None else _planes(lines=1)
-    hit = _plot_mode1_row(buf, painted, touched, pixels, x_pos, scale, 0, color)
+    hit = _plot_mode1_row(buf, painted, touched, pixels, x_pos, scale, 0, color=color)
     return hit, buf, painted, touched
 
 

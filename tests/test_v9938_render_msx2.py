@@ -567,7 +567,7 @@ def test_midframe_ln_toggle_still_212_rows() -> None:
     _set_screen5(vdp)
     vdp.begin_scanline(0)
     # Toggle LN=1 partway down the frame; live regs end at 212-line mode.
-    from msx.vdp.v9938 import _RegChange
+    from msx.vdp._v9938_defs import _RegChange
     vdp._reg_write_log.append(_RegChange(96, 9, 0x80))
     vdp.regs[9] = 0x80
     buf = render_frame(vdp)
@@ -722,7 +722,7 @@ def test_eo_page_toggle_applies_per_band_with_frame_wide_parity() -> None:
     frame-wide parity bit to each band's own page selection: R#2 is banded
     per-region, but the EO toggle key (frame_count parity) is frame-wide, not
     re-read per band."""
-    from msx.vdp.v9938 import _RegChange
+    from msx.vdp._v9938_defs import _RegChange
 
     vdp = V9938()
     _set_screen5(vdp)

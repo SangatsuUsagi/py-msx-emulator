@@ -1,5 +1,6 @@
 """Tests for V9938 band-split renderer."""
-from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import _PaletteChange, _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import _build_bands, render_frame
 
 _W = 256

@@ -1,5 +1,6 @@
 """Tests for R#18 display adjust (screen position correction)."""
-from msx.vdp.v9938 import V9938, _RegChange
+from msx.vdp._v9938_defs import _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import _apply_display_adjust, render_frame
 
 

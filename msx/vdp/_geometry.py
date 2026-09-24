@@ -32,15 +32,33 @@ class VideoStandard(enum.Enum):
     NTSC = "ntsc"
     PAL = "pal"
 
+    # Each property names every member (a port's exhaustive `match`), so a
+    # new standard fails loudly instead of silently taking NTSC values.
+
     @property
     def lines_per_frame(self) -> int:
+        """Scanlines per frame."""
+        if self is VideoStandard.NTSC:
+            return NTSC_LINES_PER_FRAME
         if self is VideoStandard.PAL:
             return PAL_LINES_PER_FRAME
-        return NTSC_LINES_PER_FRAME
+        raise AssertionError(f"unhandled video standard {self!r}")
 
     @property
     def cycles_per_frame(self) -> int:
+        """Z80 T-states per frame."""
         return CYCLES_PER_LINE * self.lines_per_frame
+
+    @property
+    def target_fps(self) -> float:
+        """Real-time pacing target: a round, host-vsync-friendly rate, not the
+        exact field rate (NTSC 59.92 Hz / PAL 50.16 Hz) -- see
+        openspec/specs/app-frame-timer/spec.md's Purpose."""
+        if self is VideoStandard.NTSC:
+            return 60.0
+        if self is VideoStandard.PAL:
+            return 50.0
+        raise AssertionError(f"unhandled video standard {self!r}")
 
 
 def pad_rows(native_h: int) -> int:

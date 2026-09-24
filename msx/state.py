@@ -19,7 +19,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from msx.mapper import MapperKind
-from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
+from msx.vdp.v9938 import (
+    V9938,
+    V9938State,
+    V9938StateError,
+    check_state_int,
+    parse_v9938_state,
+)
 from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
@@ -467,10 +473,10 @@ def _check_vdp_latch(vdp_latch: object) -> None:
     """Reject a common `vdp_latch` that is neither None nor a byte."""
     if vdp_latch is None:
         return
-    if isinstance(vdp_latch, bool) or not isinstance(vdp_latch, int) or not 0 <= vdp_latch <= 0xFF:
-        raise StateLoadError(
-            "vdp", ValueError(f"vdp_latch must be None or an int in [0, 255], got {vdp_latch!r}")
-        )
+    try:
+        check_state_int(vdp_latch, "vdp_latch", 0, 0xFF)
+    except V9938StateError as exc:
+        raise StateLoadError("vdp", exc) from exc
 
 
 def _check_v9938_latch_agrees(vdp_latch: int | None, state: V9938State) -> None:
@@ -504,7 +510,11 @@ def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
         )
 
 
-def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+    """Every check that must pass before _restore_snapshot writes anything:
+    format version, machine type, VDP port latch, V9938 state presence and
+    latch agreement, and the slot 1/2 mapper kinds. (load_state has already
+    checked the file layout and parsed the vdp9938 object.)"""
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {snap.format_version}, "
@@ -517,7 +527,6 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
-    # The latch checks run before anything is restored, like the other shape checks.
     _check_vdp_latch(snap.vdp_latch)
     if vdp9938 is not None:
         if snap.vdp9938 is None:
@@ -535,6 +544,13 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"slot 2 mapper mismatch: running {mapper2.kind.value!r}, "
             f"saved {snap.mapper2_kind.value!r}"
         )
+
+
+def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+    _validate_snapshot(machine, snap)
+    vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
+    mapper = machine.memory._mapper
+    mapper2 = machine.memory._mapper2
 
     _restore_cpu_regs(machine, snap.cpu_regs)
     machine.cpu.halted = snap.cpu_halted
@@ -561,10 +577,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     # V9938's port latch is restored with the rest of its own state.
     machine.vdp.addr = snap.vdp_addr
     machine.vdp.read_buf = snap.vdp_read_buf
-    if isinstance(machine.vdp, VDP):
+    if vdp9938 is None:
+        assert isinstance(machine.vdp, VDP)
         machine.vdp.latch = snap.vdp_latch
-    if vdp9938 is not None:
-        assert snap.vdp9938 is not None  # checked above, before any restore
+    else:
+        assert snap.vdp9938 is not None  # checked by _validate_snapshot
         vdp9938.restore_state(snap.vdp9938)
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
@@ -721,6 +738,7 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
         )
+    _check_snapshot_keys(fields, resolved)
     # JSON round-trips mapper_kind/mapper2_kind (and each entry of
     # mapper2_subslot_kinds) as plain str/None (MapperKind's own str-Enum
     # values serialize directly, see save_state); convert them back to
@@ -740,12 +758,11 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
         fields["mapper1_subslot_kinds"] = [
             MapperKind(k) if k is not None else None for k in subslot1_kinds
         ]
-    _check_snapshot_keys(fields, resolved)
     raw_vdp9938 = fields.get("vdp9938")
     if raw_vdp9938 is not None:
         try:
             fields["vdp9938"] = parse_v9938_state(raw_vdp9938)
-        except (KeyError, TypeError, ValueError) as exc:
+        except V9938StateError as exc:
             raise StateLoadError("vdp9938", exc) from exc
     typed_fields = cast(_MachineSnapshotFields, fields)
     snap = MachineSnapshot(**typed_fields)

@@ -11,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, TypedDict, cast
 
+from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
+from msx.vdp._v9938_defs import _PaletteChange, _RegChange
 from msx.vdp.vdp import FramebufferFormat
 
 if TYPE_CHECKING:
@@ -176,10 +178,7 @@ _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
 # S2 status bits
-_S2_CE = 0x01  # command executing
-# Written from v9938_renderer._finalize (once per render_frame() call), not
-# locally -- the renderer owns frame-parity tracking for interlace mode.
-_S2_EO = 0x02  # current field (even/odd), toggles once per frame
+_S2_CE = 0x01  # command executing (S#2 bit 1, EO, lives in msx/vdp/_v9938_defs.py)
 _S2_BD = 0x10  # border/colour detected (SRCH result)
 _S2_TR = 0x80  # transfer ready (CPU may send next byte)
 
@@ -223,30 +222,6 @@ _S2_RESERVED = 0x0C  # bits 2,3 read as 1 on the V9938 (matches openMSX reset 0x
 # line (the blanking/retrace tail). Sub-line accurate to the extent the
 # scanline-stepped CPU advances _line_cycle via tick().
 _HBLANK_START: int = CYCLES_PER_LINE * 1024 // 1368  # 170
-
-
-@dataclass(slots=True)
-class _RegChange:
-    """A tracked register write, logged per scanline for banded rendering.
-
-    Tagged-union alternative to the old (line, reg, int | tuple) log entry:
-    a _RegChange sets regs[reg] = value; a _PaletteChange sets palette[idx] = rgb.
-    Consumers dispatch by type (isinstance) rather than a reg == -1 sentinel,
-    which maps directly to a Rust enum / C++ variant.
-    """
-
-    line: int
-    reg: int
-    value: int
-
-
-@dataclass(slots=True)
-class _PaletteChange:
-    """A palette write, logged per scanline for banded rendering (see _RegChange)."""
-
-    line: int
-    idx: int
-    rgb: int
 
 
 class V9938CmdEngineState(TypedDict):
@@ -296,31 +271,42 @@ class V9938State(TypedDict):
     palette_pending: bool
 
 
+class V9938StateError(ValueError):
+    """A `vdp9938` save-state object that parse_v9938_state() rejects."""
+
+
 # The timed-command countdowns are i32 in a port; a saved value must fit.
 _I32_MIN: int = -(1 << 31)
 _I32_MAX: int = (1 << 31) - 1
 
+# PORT-NOTE: the key sets are read from the TypedDicts at import time, so they
+#   cannot drift from the schema.
+# Rust equivalent: serde `#[serde(deny_unknown_fields)]` on the struct.
+# C++ equivalent: a hand-written constexpr array of key names per struct.
+# Kept as-is here because: Python-only mechanism with no runtime cost; mypy
+#   ties parse_v9938_state's literals to the same TypedDicts.
 _STATE_KEYS: frozenset[str] = frozenset(V9938State.__annotations__)
 _CMD_ENGINE_KEYS: frozenset[str] = frozenset(V9938CmdEngineState.__annotations__)
 
 
-def _check_int(value: object, label: str, lo: int, hi: int) -> int:
-    """Return `value` if it is an int (not a bool) in [lo, hi], else raise."""
+def check_state_int(value: object, label: str, lo: int, hi: int) -> int:
+    """Return `value` if it is an int (not a bool) in [lo, hi], else raise
+    V9938StateError. Also used by msx/state.py for the common VDP fields."""
     if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
-        raise ValueError(f"{label} must be an int in [{lo}, {hi}], got {value!r}")
+        raise V9938StateError(f"{label} must be an int in [{lo}, {hi}], got {value!r}")
     return value
 
 
 def _state_int(state: dict[str, object], key: str, lo: int, hi: int) -> int:
     """Read an int field of a snapshot dict, rejecting wrong types and ranges."""
-    return _check_int(state[key], key, lo, hi)
+    return check_state_int(state[key], key, lo, hi)
 
 
 def _state_bool(state: dict[str, object], key: str) -> bool:
     """Read a bool field of a snapshot dict, rejecting any other type."""
     value = state[key]
     if not isinstance(value, bool):
-        raise ValueError(f"{key} must be a bool, got {value!r}")
+        raise V9938StateError(f"{key} must be a bool, got {value!r}")
     return value
 
 
@@ -330,33 +316,39 @@ def _state_int_list(
     """Read a fixed-length list of ints of a snapshot dict."""
     value = state[key]
     if not isinstance(value, list) or len(value) != length:
-        raise ValueError(f"{key} must be a list of {length} ints, got {value!r}")
+        raise V9938StateError(f"{key} must be a list of {length} ints, got {value!r}")
     result: list[int] = []
     for item in value:
-        result.append(_check_int(item, f"{key} entry", lo, hi))
+        result.append(check_state_int(item, f"{key} entry", lo, hi))
     return result
 
 
 def _state_object(value: object, label: str, keys: frozenset[str]) -> dict[str, object]:
     """Return `value` as a snapshot dict holding exactly `keys`, else raise."""
     if not isinstance(value, dict):
-        raise ValueError(f"{label} must be an object, got {value!r}")
+        raise V9938StateError(f"{label} must be an object, got {value!r}")
     unknown: list[str] = []
     for key in value:
         if key not in keys:
             unknown.append(str(key))
     if unknown:
-        raise ValueError(f"{label} has unknown keys {sorted(unknown)}")
+        raise V9938StateError(f"{label} has unknown keys {sorted(unknown)}")
+    missing: list[str] = []
+    for key in keys:
+        if key not in value:
+            missing.append(key)
+    if missing:
+        raise V9938StateError(f"{label} is missing keys {sorted(missing)}")
     return cast(dict[str, object], value)
 
 
 def parse_v9938_state(obj: object) -> V9938State:
     """Validate a JSON-decoded `vdp9938` object into a V9938State.
 
-    Every value's type and range is checked, missing keys raise KeyError and
-    unknown keys ValueError. The ranges are the widths the chip and command
-    engine produce (coordinates: SX/DX 9 bits, SY/DY 10 bits; clipped counts
-    NX <= 512 dots, NY <= 1024 lines).
+    Every value's type and range is checked, and a missing or unknown key is
+    rejected; every rejection raises V9938StateError. The ranges are the
+    widths the chip and command engine produce (coordinates: SX/DX 9 bits,
+    SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024 lines).
     """
     state = _state_object(obj, "vdp9938", _STATE_KEYS)
     engine = _state_object(state["cmd_engine"], "cmd_engine", _CMD_ENGINE_KEYS)
@@ -411,7 +403,7 @@ class V9938:
       the Bresenham error terms); the command T-state countdowns
       ``_cmd_remaining`` / ``_tr_delay``, decremented below zero and tested
       ``<= 0``. The command engine's origins, clipped counts and ``_cmd_x`` /
-      ``_cmd_y`` cursors never go negative (at most 10 bits + 1; see
+      ``_cmd_y`` cursors never go negative (at most 1024, so they fit u16; see
       parse_v9938_state's ranges).
     Rust equivalent: u8 fields per above; _addr as u32 masked to 17 bits;
       command origins/counts/cursors as u16; signed coordinates/error terms as
@@ -710,20 +702,30 @@ class V9938:
         is_g7 = bool((r0 >> 2) & 1) and bool((r0 >> 3) & 1)
         return FramebufferFormat.GRB332 if is_g7 else FramebufferFormat.PALETTE_INDEX4
 
+    @property
+    def status2(self) -> int:
+        """S#2 as stored; a status read adds HR, VR and the reserved bits."""
+        return self._status2
+
+    def commit_render_status(
+        self, status: int, collision_x: int, collision_y: int, status2: int
+    ) -> None:
+        """Apply the status a frame render produced: S#0, the collision
+        coordinates (S#3-S#6) and S#2 (v9938_renderer.render_frame)."""
+        self.status = status
+        self.collision_x = collision_x
+        self.collision_y = collision_y
+        self._status2 = status2
+
     def render_preview(self) -> bytearray:
         """Render the current frame without changing emulated state: the
         sprite status, collision coordinates and S#2 EO a render produces are
         discarded (debugger / RPC screenshots and state thumbnails)."""
-        from msx.vdp import v9938_renderer  # the renderer imports this module
-
         return v9938_renderer.render_preview(self)
 
     def to_rgb24(self, src: bytearray) -> bytes:
         """Convert a palette-index / SCREEN 8 framebuffer to packed RGB24
         (programmable palette, GRB332, and mid-frame banded paths)."""
-        # Lazy import: v9938_renderer imports this module at load time, so the
-        # dependency is one-directional at import and resolved here at call time.
-        from msx.vdp import v9938_renderer
         return v9938_renderer.to_rgb24(self, src)
 
     def reset(self) -> None:

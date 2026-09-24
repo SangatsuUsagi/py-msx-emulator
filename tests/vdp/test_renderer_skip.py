@@ -63,3 +63,17 @@ def test_blanked_render_leaves_f_clear() -> None:
     assert len(buf) == 256 * 212
     assert not (vdp.status & 0x80)
     assert vdp.irq is False
+
+
+def test_v9938_skip_render_still_updates_the_eo_field_bit() -> None:
+    # vdp-renderer "V9938 render_frame skip_render parameter".
+    from msx.vdp.v9938 import V9938
+    from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
+
+    vdp = V9938()
+    vdp.frame_count = 1
+    assert render_frame_v9938(vdp, skip_render=True) == bytearray(0)
+    assert vdp._status2 & 0x02
+    vdp.frame_count = 2
+    render_frame_v9938(vdp, skip_render=True)
+    assert not vdp._status2 & 0x02
