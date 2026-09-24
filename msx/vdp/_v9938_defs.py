@@ -16,6 +16,35 @@ from dataclasses import dataclass
 _S2_EO = 0x02
 
 
+# Register-derived geometry, as functions of a register list so the renderer
+# can evaluate them for a band's snapshot as well as the live registers (the
+# V9938 properties of the same names call these).
+
+
+def display_height_of(regs: list[int]) -> int:
+    """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
+    return 212 if (regs[9] & 0x80) else 192
+
+
+def display_width_of(regs: list[int]) -> int:
+    """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
+    SCREEN 7 (G6) (M5 set, M4 clear; SCREEN 8/G7, M5+M4, is 256), and for
+    TEXT2 (M1 and M4 set, M3 clear)."""
+    r0 = regs[0]
+    r1 = regs[1]
+    m1 = (r1 >> 4) & 1
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    is_text2 = bool(m4 and m1 and not m3)
+    return 512 if ((m5 and not m4) or is_text2) else 256
+
+
+def even_odd_enabled_of(regs: list[int]) -> bool:
+    """R#9 bit 2 (EO): automatic even/odd page alternation enable."""
+    return bool(regs[9] & 0x04)
+
+
 @dataclass(slots=True)
 class _RegChange:
     """A tracked register write, logged per scanline for banded rendering.
