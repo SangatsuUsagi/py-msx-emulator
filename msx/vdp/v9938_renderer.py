@@ -12,7 +12,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
 from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
-from msx.vdp.v9938 import _S2_EO, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import _S2_EO, _PaletteChange, _RegChange
 from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
 
 if TYPE_CHECKING:
@@ -187,8 +187,9 @@ _TEXT6_BYTES: list[list[list[bytes]]] = [
 class _RenderStatus:
     """The chip status a render produces: S#0 (5S/9S, sprite index, C), the
     collision coordinates (S#3-S#6) and S#2 (EO). Seeded from the chip,
-    updated by every sprite pass of the frame, and written back to the chip
-    only by render_frame -- render_preview discards it."""
+    updated by the frame's sprite passes (S#0, collision) and by
+    _update_field_parity (S#2 EO), and written back to the chip only by
+    render_frame -- render_preview discards it."""
 
     status: int
     collision_x: int
@@ -204,13 +205,12 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     and TEXT2). A 192-line frame (R#9 LN=0) is centred with border rows above
     and below so the displayed image keeps a stable geometry regardless of LN.
 
-    Frame counting is owned by the caller (Machine.run_frame), not the renderer.
+    Commits the render's _RenderStatus (S#0 sprite bits, S#3-S#6, S#2 EO) to
+    the chip; render_preview discards it. Frame counting is owned by the
+    caller (Machine.run_frame), not the renderer.
     """
     buf, st = _render(vdp, skip_render)
-    vdp.status = st.status
-    vdp.collision_x = st.collision_x
-    vdp.collision_y = st.collision_y
-    vdp._status2 = st.status2
+    vdp.commit_render_status(st.status, st.collision_x, st.collision_y, st.status2)
     return buf
 
 
@@ -220,9 +220,10 @@ def render_preview(vdp: "V9938") -> bytearray:
 
 
 def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
-    st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp._status2)
+    """Render a frame; return it with the status the render produces."""
+    st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp.status2)
     if skip_render:
-        _finalize(vdp, st)
+        _update_field_parity(vdp, st)
         return bytearray(0), st
 
     log = vdp._reg_write_log
@@ -471,7 +472,7 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
                     vdp, st, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
                 )
 
-        _finalize(vdp, st)
+        _update_field_parity(vdp, st)
     finally:
         # PORT-NOTE: the band passes above temporarily rebind vdp.regs /
         #   vdp.palette to per-band snapshots (shared list objects held in
@@ -501,7 +502,7 @@ def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
     w = vdp.display_width
     buf = bytearray(w * h)
     _render_pass_range(vdp, st, buf, 0, h)
-    _finalize(vdp, st)
+    _update_field_parity(vdp, st)
     return buf
 
 
@@ -574,16 +575,18 @@ def _plot_mode1_row(
     pixels: bytes,
     x_pos: int,
     scale: int,
-    row: int,
+    line_off: int,
+    *,
     color: int,
 ) -> int:
-    """Plot one sprite-mode-1 pattern row onto the line starting at `row`.
+    """Plot one sprite-mode-1 pattern row onto the line starting at `line_off`.
 
     `x_pos` is the row's first dot and `scale` the MAG factor; off-screen dots
     are clipped (no wrap). Colour 0 only reaches here when TP makes it opaque,
     and is displayed as palette entry 0. Returns the x of the first colliding
     dot, or -1 for none (an Option<u16> in a port). The TMS9918A counterpart
-    is renderer._plot_sprite_pixel, which also skips colour 0.
+    is renderer._plot_sprite_pixel (per pixel), which skips colour 0 itself
+    since that chip has no TP.
     """
     hit_x = -1
     for bit_i, pixel in enumerate(pixels):
@@ -593,7 +596,7 @@ def _plot_mode1_row(
         last = px + scale
         while px < last:
             if 0 <= px < _W:
-                coord = row + px
+                coord = line_off + px
                 if touched[coord]:
                     if hit_x < 0:
                         hit_x = px
@@ -727,11 +730,10 @@ def _render_sprites_for_mode(
         )
 
 
-def _finalize(vdp: "V9938", st: _RenderStatus) -> None:
-    # VBlank flag is set by begin_scanline() in the scanline loop (machine.py);
-    # no interrupt generation here. S#2 bit 1 (current field) toggles once per
-    # frame, in step with the EO page-alternation parity (frame_count is stable
-    # for the whole render, and this runs exactly once per render on every path).
+def _update_field_parity(vdp: "V9938", st: _RenderStatus) -> None:
+    # S#2 bit 1 (current field) toggles once per frame, in step with the EO
+    # page-alternation parity (frame_count is stable for the whole render, and
+    # this runs exactly once per render on every path).
     if vdp.frame_count & 1:
         st.status2 |= _S2_EO
     else:
@@ -1113,7 +1115,7 @@ def _render_sprites(
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
             hit_x = _plot_mode1_row(
                 buf, sprite_painted, sprite_touched, pixels, x_byte, 2 if mag else 1,
-                line * _W, color,
+                line * _W, color=color,
             )
             if hit_x >= 0:
                 coincidence = True

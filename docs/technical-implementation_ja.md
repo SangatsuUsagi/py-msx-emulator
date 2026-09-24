@@ -605,7 +605,7 @@ SUB ROM、FDC の DISK ROM でも使われる——ローダ内の ROM を扱う
 - **VRAM と RAM** — サイズ固定の `bytearray` オブジェクト（V9938 は `_VRAM_SIZE = 131072`、TMS9918A は 16384、RAM マッパーはセグメント配列）を使用し、全体的にスライス・インデックスアクセスで操作します。リストや辞書ベースのストレージは使いません。
 - **I/O バスディスパッチ**（`msx/io.py`）— `list[tuple[int, int, Callable]]` に対する線形スキャンです。辞書検索もリフレクションも使いません。登録ハンドラ数はマシン設定ごとに少数で固定されています。
 - **コンポーネント構造体** — すべてのハードウェアコンポーネントは `@dataclass(slots=True)` です。フィールドはすべて型付きで明示的に宣言されており、`__getattr__`/`__setattr__` のマジックはありません。`slots=True` によりインスタンスごとの `__dict__` が排除され、フィールドレイアウトが明示的になります。
-- **タイミング定数** — `CYCLES_PER_FRAME`、`CYCLES_PER_LINE`、`_HBLANK_START`、`_CYCLES_PER_BYTE` 等はモジュールレベルの整数定数であり、実行時に導出されません。
+- **タイミング定数** — `CYCLES_PER_LINE`、`NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME`（`msx/vdp/_geometry.py`）、`_HBLANK_START`、`_CYCLES_PER_BYTE` 等はモジュールレベルの整数定数です。1 フレームあたりのサイクル数は `VideoStandard` 列挙型のプロパティから得られ、移植時は `match` / `const fn` として書けます。
 
 ### 移植時に対応が必要な Python 固有パターン
 

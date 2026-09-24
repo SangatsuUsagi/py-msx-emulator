@@ -7,7 +7,8 @@ banded split screen), its sprite-pattern-table read was truncated to 16 KB
 GRAPHIC1/MULTICOLOR background tile planes ignored R#23 while GRAPHIC2 (which
 shares this file's rendering with GRAPHIC3) already honoured it.
 """
-from msx.vdp.v9938 import V9938, _RegChange
+from msx.vdp._v9938_defs import _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
 from tests.render_geometry import active_region
 

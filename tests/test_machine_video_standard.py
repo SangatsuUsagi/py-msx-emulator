@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from frontend.sdl2_frontend import _target_fps_for
-from msx import machine as machine_mod
 from msx.machine import Machine
 from msx.machine_loader import (
     MachineLoadError,
@@ -36,8 +35,8 @@ def test_timing_constants_keep_the_hardware_values() -> None:
     assert CYCLES_PER_LINE == 228
     assert CYCLES_PER_LINE * NTSC_LINES_PER_FRAME == 59_736
     assert CYCLES_PER_LINE * PAL_LINES_PER_FRAME == 71_364
-    assert machine_mod.CYCLES_PER_FRAME == 59_736
-    assert machine_mod.LINES_PER_FRAME == 262
+    assert VideoStandard.NTSC.cycles_per_frame == 59_736
+    assert VideoStandard.NTSC.lines_per_frame == 262
 
 
 def test_video_standard_values_are_the_yaml_spellings() -> None:
@@ -145,3 +144,15 @@ def test_pal_tms9918a_run_frame_executes_the_pal_budget() -> None:
     machine.run_frame(skip_render=True)
     assert 71_364 <= machine.cycle_count <= 71_364 + 22
     assert machine.vdp.status & 0x80                  # VBlank raised within the frame
+
+
+def test_directly_constructed_pal_machine_runs_the_pal_budget() -> None:
+    # machine-core "PAL timing is respected in run_frame".
+    parts = make_machine(b"\x00" * 0x8000)
+    machine = Machine(
+        cpu=parts.cpu, vdp=parts.vdp, memory=parts.memory, io=parts.io, psg=parts.psg,
+        video_standard=VideoStandard.PAL,
+    )
+    assert (machine.cycles_per_frame, machine.lines_per_frame) == (71_364, 313)
+    machine.run_frame(skip_render=True)
+    assert 71_364 <= machine.cycle_count <= 71_364 + 22

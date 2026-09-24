@@ -348,10 +348,12 @@ class MachineSpec:
 
     @property
     def cycles_per_frame(self) -> int:
+        """Z80 T-states per frame, from the video standard."""
         return self.video_standard.cycles_per_frame
 
     @property
     def lines_per_frame(self) -> int:
+        """Scanlines per frame, from the video standard."""
         return self.video_standard.lines_per_frame
 
 

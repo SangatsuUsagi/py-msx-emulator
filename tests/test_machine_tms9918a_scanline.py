@@ -12,11 +12,13 @@ import pytest
 
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
-from msx.machine import CYCLES_PER_FRAME, Machine
+from msx.machine import Machine
 from msx.state import load_state, save_state
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, pad_rows
+from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
 from msx.vdp.vdp import VDP
 from tests.factories import make_machine
+
+NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
 
 _DUMMY_ROM = bytes(32768)
 _MID_DISPLAY_PC = 0x1000  # well inside the pre-render segment (all-NOP ROM)
@@ -102,7 +104,7 @@ def test_vblank_irq_taken_before_post_display_height_segment() -> None:
     assert len(acc.hits) == 1
     t, _ret, f = acc.hits[0]
     assert f == 0x80
-    assert 0.70 < t / CYCLES_PER_FRAME < 0.78
+    assert 0.70 < t / NTSC_CYCLES < 0.78
 
 
 def test_vblank_isr_vram_write_lands_on_the_next_frame() -> None:
@@ -186,7 +188,7 @@ def test_status_read_before_ei_drops_the_pending_irq() -> None:
         machine.run_frame(skip_render=True)
 
     assert len(acc.hits) == 1
-    assert acc.hits[0][0] / CYCLES_PER_FRAME > 0.70
+    assert acc.hits[0][0] / NTSC_CYCLES > 0.70
 
 
 def test_line_still_asserted_after_acceptance_retriggers() -> None:
@@ -271,7 +273,7 @@ def test_vblank_irq_taken_on_debug_and_logged_arms(arm: str) -> None:
     assert len(acc.hits) == 1
     t, _ret, f = acc.hits[0]
     assert f == 0x80
-    assert 0.70 < t / CYCLES_PER_FRAME < 0.78
+    assert 0.70 < t / NTSC_CYCLES < 0.78
 
 
 @pytest.mark.parametrize("arm", ["debug", "logged"])
@@ -288,7 +290,7 @@ def test_status_read_drops_irq_on_debug_and_logged_arms(arm: str) -> None:
         machine.run_frame(skip_render=True)
 
     assert len(acc.hits) == 1
-    assert acc.hits[0][0] / CYCLES_PER_FRAME > 0.70
+    assert acc.hits[0][0] / NTSC_CYCLES > 0.70
 
 
 @pytest.mark.parametrize("arm", ["debug", "logged"])

@@ -800,9 +800,11 @@ These patterns translate cleanly to any statically-typed target:
   `@dataclass(slots=True)`. All fields are explicitly declared with types; no
   `__getattr__`/`__setattr__` magic. `slots=True` avoids the `__dict__` per
   instance and makes the field layout explicit.
-- **Timing constants** — `CYCLES_PER_FRAME`, `CYCLES_PER_LINE`,
-  `_HBLANK_START`, `_CYCLES_PER_BYTE` etc. are module-level integer constants,
-  not derived at runtime.
+- **Timing constants** — `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
+  `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
+  `_CYCLES_PER_BYTE` etc. are module-level integer constants. The per-frame
+  budget comes from the `VideoStandard` enum's properties, which a port writes
+  as a `match` / `const fn`.
 
 ### Python-specific patterns a port must adapt
 

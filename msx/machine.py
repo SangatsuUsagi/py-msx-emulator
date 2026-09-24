@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from msx.fmpac import FmPac
     from msx.rtc import RTC
 
-LINES_PER_FRAME: int = VideoStandard.NTSC.lines_per_frame  # NTSC default
-CYCLES_PER_FRAME: int = VideoStandard.NTSC.cycles_per_frame
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
@@ -482,7 +480,7 @@ class Machine:
                 self.vdp.begin_vblank()
         # The VBlank ISR window; skipped when the first segment was cut short
         # (pause hook or handled Ctrl-C), so a paused frame stops at the break.
-        if vblank_split < lpf and not cut_short:
+        if not cut_short:
             self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()

@@ -15,7 +15,7 @@ import json
 import pytest
 
 from msx.state import StateLoadError, load_state, save_state
-from msx.vdp.v9938 import V9938, parse_v9938_state
+from msx.vdp.v9938 import V9938, V9938StateError, parse_v9938_state
 from tests.factories import make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
@@ -113,7 +113,7 @@ def _corrupt(state: dict, path: tuple[str, ...], value: object) -> dict:
 )
 def test_parse_rejects_a_malformed_object(path, value) -> None:
     bad = _corrupt(dict(_busy_vdp().snapshot_state()), path, value)
-    with pytest.raises((ValueError, KeyError)):
+    with pytest.raises(V9938StateError):
         parse_v9938_state(bad)
 
 
@@ -281,6 +281,27 @@ def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None
     [lambda d: d.__setitem__("extra_key", 1), lambda d: d.pop("vdp_regs")],
 )
 def test_other_top_level_layout_is_refused(tmp_path, monkeypatch, edit) -> None:
+    machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
+    with pytest.raises(ValueError, match="incompatible state file layout"):
+        load_state(machine, state_path)
+
+
+@pytest.mark.parametrize(("where", "key"), [((), "palette"), (("cmd_engine",), "sx")])
+def test_parse_names_a_missing_key_and_its_object(where, key) -> None:
+    bad = copy.deepcopy(dict(_busy_vdp().snapshot_state()))
+    target = bad
+    for part in where:
+        target = target[part]
+    del target[key]
+    label = where[-1] if where else "vdp9938"
+    with pytest.raises(V9938StateError, match=rf"{label} is missing keys \['{key}'\]"):
+        parse_v9938_state(bad)
+
+
+def test_layout_is_checked_before_mapper_kinds_are_decoded(tmp_path, monkeypatch) -> None:
+    def edit(d):
+        d["extra_key"] = 1
+        d["mapper_kind"] = "no-such-mapper"
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
     with pytest.raises(ValueError, match="incompatible state file layout"):
         load_state(machine, state_path)

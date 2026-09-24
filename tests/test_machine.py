@@ -3,11 +3,14 @@ from pathlib import Path
 import pytest
 
 from msx.input import InputState
-from msx.machine import CYCLES_PER_FRAME, Machine
+from msx.machine import Machine
 from msx.machine_loader import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
 from msx.romdb import RomDbEntry
+from msx.vdp._geometry import VideoStandard
 from tests.factories import make_machine
+
+NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)
@@ -85,11 +88,11 @@ def test_run_frame_skip_render_still_fires_vblank() -> None:
 
 
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:
-    # NOP ROM: each instruction is 4 T-states, so at least CYCLES_PER_FRAME // 4 NOPs
+    # NOP ROM: each instruction is 4 T-states, so at least NTSC_CYCLES // 4 NOPs
     # must execute, advancing PC by that many positions.
     m = _make_machine(rom=_NOP_ROM)
     m.run_frame()
-    assert m.cpu.registers.PC >= CYCLES_PER_FRAME // 4
+    assert m.cpu.registers.PC >= NTSC_CYCLES // 4
 
 
 def test_vblank_sets_int_pending_when_ie_set() -> None:

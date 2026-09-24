@@ -28,7 +28,7 @@ from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.psg import SAMPLES_PER_FRAME, JoystickPort
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
-from msx.vdp._geometry import OUTPUT_H, VideoStandard
+from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
     from msx.rpc_server import DebugServer
@@ -52,18 +52,10 @@ _S16_MIN: int = -32768
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
 
-# Real-time pacing target: a clean round number, not the exact hardware field
-# rate (NTSC 59.92 Hz / PAL 50.16 Hz) -- host-vsync-friendly by design, see
-# openspec/specs/app-frame-timer/spec.md's Purpose.
-_TARGET_FPS_NTSC: float = 60.0
-_TARGET_FPS_PAL: float = 50.0
-
-
 def _target_fps_for(machine: Machine) -> float:
-    """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL."""
-    if machine.video_standard is VideoStandard.PAL:
-        return _TARGET_FPS_PAL
-    return _TARGET_FPS_NTSC
+    """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
+    (VideoStandard.target_fps)."""
+    return machine.video_standard.target_fps
 
 
 class _InitSdlApi(Protocol):
