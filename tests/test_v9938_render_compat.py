@@ -1,5 +1,5 @@
 """Tests for msx.vdp.v9938_renderer: SCREEN 0–3 TMS9918A-compatible rendering."""
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, _RegChange
 from msx.vdp.v9938_renderer import render_frame
 from tests.render_geometry import active_region
 
@@ -242,27 +242,144 @@ def test_sprite_colour_zero_collides_when_tp_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TEXT1 (SCREEN 0): fg=0 palette behaviour
-#
-# R#7-direct colours and no-substitution are covered, for both this renderer
-# and TMS9918A's, by tests/vdp/test_renderer_text.py (parametrized over both
-# backends). Only the V9938-specific fg=0 palette-index-0 behaviour -- which
-# has no TMS9918A equivalent (fg=0 is hard-wired to colour 1 there) -- stays
-# here.
+# Colour code 0 follows TP (R#8 bit 5) in the pattern and text modes
+# (V9938 data book, R#8 TP): TP=0 -> the backdrop shows, TP=1 -> palette 0.
 # ---------------------------------------------------------------------------
 
-def test_text1_fg_zero_uses_palette_index_0() -> None:
-    """V9938 TEXT1 with fg=0 shows palette index 0 directly, NOT colour 1."""
+def _text_vdp(r1: int, fg_bg: int, tp: bool) -> V9938:
     vdp = V9938()
-    vdp.regs[1] = 0x50  # TEXT1
+    vdp.regs[1] = r1
     vdp.regs[2] = 0x00
     vdp.regs[4] = 0x01
-    vdp.regs[7] = 0x02  # fg=0, bg=2
+    vdp.regs[7] = fg_bg
+    vdp.regs[8] = 0x20 if tp else 0x00
     vdp.vram[0x0000] = 0x00
     vdp.vram[0x0800] = 0xFF
+    return vdp
 
+
+def test_text1_fg_zero_shows_backdrop_when_tp_clear() -> None:
+    buf = _active(_text_vdp(0x50, 0x04, tp=False))
+    assert buf[8] == 4
+
+
+def test_text1_fg_zero_is_palette_0_when_tp_set() -> None:
+    buf = _active(_text_vdp(0x50, 0x04, tp=True))
+    assert buf[8] == 0
+
+
+def test_text2_fg_zero_shows_backdrop_when_tp_clear() -> None:
+    vdp = _text_vdp(0x50, 0x04, tp=False)
+    vdp.regs[0] = 0x04                 # M4 with M1 -> TEXT2
+    vdp.regs[2] = 0x03                 # TEXT2 name table at 0x0000
+    buf = render_frame(vdp)
+    assert 4 in buf and 0 not in buf
+
+
+def _g1_vdp(tp: bool) -> V9938:
+    vdp = V9938()
+    vdp.regs[1] = 0x40                 # GRAPHIC1, display on
+    vdp.regs[2] = 0x06                 # name table 0x1800
+    vdp.regs[3] = 0x80                 # colour table 0x2000
+    vdp.regs[4] = 0x00                 # pattern generator 0x0000
+    vdp.regs[7] = 0x04                 # backdrop 4
+    vdp.regs[8] = 0x22 if tp else 0x02 # SPD set: no sprites
+    vdp.vram[0x2000] = 0x10            # fg=1, bg=0
+    return vdp                         # pattern 0 is all zero -> background
+
+
+def test_g1_colour0_is_palette_0_when_tp_set() -> None:
+    assert _active(_g1_vdp(tp=True))[0] == 0
+
+
+def test_g1_colour0_shows_backdrop_when_tp_clear() -> None:
+    assert _active(_g1_vdp(tp=False))[0] == 4
+
+
+def test_g2_and_multicolor_colour0_follow_tp() -> None:
+    g2 = _g1_vdp(tp=True)
+    g2.regs[0] = 0x02                  # GRAPHIC2
+    g2.regs[3] = 0xFF
+    g2.regs[4] = 0x03
+    assert _active(g2)[0] == 0
+    mc = _g1_vdp(tp=True)
+    mc.regs[1] = 0x48                  # MULTICOLOR
+    mc.vram[0x0000] = 0x10             # left block colour 1, right block colour 0
+    assert _active(mc)[4] == 0
+
+
+def test_text1_nonzero_fg_is_unchanged_when_tp_set() -> None:
+    buf = _active(_text_vdp(0x50, 0x94, tp=True))
+    assert buf[8] == 9
+    assert buf[0] == 4                 # left margin: background, not palette 0
+
+
+def test_text2_fg_zero_is_palette_0_when_tp_set() -> None:
+    vdp = _text_vdp(0x50, 0x04, tp=True)
+    vdp.regs[0] = 0x04                 # M4 with M1 -> TEXT2
+    vdp.regs[2] = 0x03                 # TEXT2 name table at 0x0000
+    buf = active_region(render_frame(vdp), vdp.display_height)
+    assert buf[16] == 0                # first character pixel (16 px margin)
+    assert buf[0] == 4                 # margin stays the background
+
+
+def test_g1_fg_nibble_zero_follows_tp() -> None:
+    for tp, expected in ((False, 4), (True, 0)):
+        vdp = _g1_vdp(tp)
+        vdp.vram[0x2000] = 0x01        # fg=0, bg=1
+        vdp.vram[0x0000] = 0xFF        # pattern 0 row 0: all foreground
+        assert _active(vdp)[0] == expected
+
+
+def test_g2_colour0_shows_backdrop_when_tp_clear() -> None:
+    g2 = _g1_vdp(tp=False)
+    g2.regs[0] = 0x02                  # GRAPHIC2
+    g2.regs[3] = 0xFF
+    g2.regs[4] = 0x03
+    assert _active(g2)[0] == 4
+
+
+def test_g3_colour0_follows_tp() -> None:
+    # GRAPHIC3 (SCREEN 4) shares GRAPHIC2's background renderer.
+    for tp, expected in ((False, 4), (True, 0)):
+        g3 = _g1_vdp(tp)
+        g3.regs[0] = 0x04              # M4 alone -> GRAPHIC3
+        g3.regs[3] = 0xFF
+        g3.regs[4] = 0x03
+        assert _active(g3)[0] == expected
+
+
+def test_multicolor_colour0_shows_backdrop_when_tp_clear() -> None:
+    mc = _g1_vdp(tp=False)
+    mc.regs[1] = 0x48                  # MULTICOLOR
+    mc.vram[0x0000] = 0x10             # left block colour 1, right block colour 0
+    buf = _active(mc)
+    assert buf[0] == 1
+    assert buf[4] == 4
+
+
+def test_g7_byte_zero_ignores_tp() -> None:
+    # GRAPHIC7 pixels are raw GRB332 bytes: no colour-0 substitution at all.
+    for tp in (False, True):
+        vdp = V9938()
+        vdp.regs[0] = 0x0E             # M5+M4+M3 -> GRAPHIC7
+        vdp.regs[1] = 0x40
+        vdp.regs[7] = 0x44
+        vdp.regs[8] = 0x22 if tp else 0x02
+        assert _active(vdp)[0] == 0
+
+
+def test_banded_frame_applies_tp_per_band() -> None:
+    # TP set mid-frame (effective from line 10): the top band keeps the
+    # backdrop for colour 0, the lower band shows palette 0.
+    vdp = _g1_vdp(tp=False)
+    vdp._frame_start_regs = vdp.regs[:]
+    vdp._frame_start_palette = vdp.palette[:]
+    vdp.regs[8] = 0x22
+    vdp._reg_write_log = [_RegChange(9, 8, 0x22)]
     buf = _active(vdp)
-    assert buf[8] == 0   # fg=0 → index 0 (was incorrectly forced to 1)
+    assert buf[5 * 256] == 4
+    assert buf[50 * 256] == 0
 
 
 def test_text1_name_and_pattern_tables_above_16k() -> None:
@@ -316,7 +433,7 @@ def test_g3_pattern_base_uses_r4_bits_5_2() -> None:
     vdp = V9938()
     vdp.regs[0] = 0x04          # SCREEN 4 (G3): M4=1, M3=0, M5=0
     vdp.regs[1] = 0x40          # BL on
-    vdp.regs[8] = 0x04          # SPD: disable sprites (VRAM is not a valid SAT)
+    vdp.regs[8] = 0x02          # SPD (R#8 bit 1): disable sprites (VRAM is not a valid SAT)
     vdp.regs[2] = 0x00          # name table 0x0000
     vdp.regs[4] = 0x13          # pattern base (0x13 & 0x3C) << 11 = 0x8000
     vdp.regs[3] = 0x80          # colour base (0x80 & 0x80) << 6 = 0x2000
@@ -339,7 +456,7 @@ def test_screen2_pattern_base_bit2_still_zero() -> None:
     vdp = V9938()
     vdp.regs[0] = 0x02          # SCREEN 2 (M3=1)
     vdp.regs[1] = 0x40
-    vdp.regs[8] = 0x04
+    vdp.regs[8] = 0x02          # SPD (R#8 bit 1): disable sprites
     vdp.regs[2] = 0x06          # name 0x1800
     vdp.regs[4] = 0x00          # pattern base 0x0000
     vdp.regs[3] = 0x80          # colour 0x2000

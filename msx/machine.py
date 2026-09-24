@@ -472,13 +472,17 @@ class Machine:
         vblank_split = min(self.vdp.vblank_start_line + 1, lpf)
 
         total = self._run_lines(vdp9938, first_line=0, end_line=vblank_split, total=0)
+        cut_short = self._pause_requested or self._frame_interrupted
         if vdp9938 is not None:
             result = render_frame_v9938(vdp9938, skip_render=skip_render)
         else:
             # vdp9938 is None here only because the isinstance(self.vdp, V9938)
             # check above was False, and self.vdp hasn't been reassigned since.
             assert isinstance(self.vdp, VDP)
-            result = render_frame(self.vdp, skip_render=skip_render)
+            # A first segment cut short never reached vertical blanking, so no
+            # VBlank flag/interrupt -- the V9938 likewise raises F only when
+            # begin_scanline() reaches vblank_start_line.
+            result = render_frame(self.vdp, skip_render=skip_render, vblank=not cut_short)
         # The VBlank ISR window. Skipped when the first segment stopped
         # short — a break via the pause hook (_pause_requested) or a Ctrl-C
         # handled by _on_frame_interrupt (_frame_interrupted) — so a paused
@@ -486,11 +490,7 @@ class Machine:
         # variants: the TMS9918A's render_frame() call above already raised
         # its VBlank flag/interrupt (via _finalize()), same as begin_scanline()
         # did for the V9938 inside the first segment.
-        if (
-            vblank_split < lpf
-            and not self._pause_requested
-            and not self._frame_interrupted
-        ):
+        if vblank_split < lpf and not cut_short:
             self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()

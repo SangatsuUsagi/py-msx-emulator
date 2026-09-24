@@ -247,9 +247,9 @@ def _make_v9938_with_tracer() -> tuple[V9938, io.StringIO]:
 
 def test_v9938_without_tracer_no_exception() -> None:
     vdp = V9938()
-    vdp.write_port(0x99, 0xAB)
-    vdp.write_port(0x99, 0x80)  # R#00 = 0xAB
-    assert vdp.regs[0] == 0xAB
+    vdp.write_port(0x99, 0x2A)
+    vdp.write_port(0x99, 0x80)  # R#00 = 0x2A (within R#0's implemented bits)
+    assert vdp.regs[0] == 0x2A
 
 
 def test_v9938_with_tracer_port99_emits_vdp_reg() -> None:

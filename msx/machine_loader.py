@@ -2294,7 +2294,7 @@ def _build_msx2(
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else _empty_subslots(),
     )
-    vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP(_logger=logger)
+    vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
     rtc: RTC | None = None
     rtc_sram_save_path: Path | None = None
     if spec.has_rtc:

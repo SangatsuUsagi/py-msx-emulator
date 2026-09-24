@@ -61,25 +61,52 @@ def test_text_character_width_six_pixels(flavor: RendererFlavor) -> None:
     assert buf[7] == 2  # left border still bg
 
 
-def test_text_fg_zero_uses_colour_1() -> None:
-    """TMS9918A-only: fg=0 resolves to hard-wired colour 1, not a real
-    palette entry 0. NOT shared with V9938, which has a real programmable
-    palette entry 0 and shows it directly instead
-    (tests/test_v9938_render_compat.py::test_text1_fg_zero_uses_palette_index_0) --
-    a genuine, intentional TMS9918A-vs-V9938 hardware difference, not a gap
-    in coverage."""
+def test_text_fg_zero_shows_backdrop() -> None:
+    """TMS9918A: text colour code 0 is transparent (TI data manual Table 2-3),
+    so set pattern bits show the backdrop, R#7 bits 3:0 (§2.4)."""
     vdp = VDP()
     vdp.regs[1] = 0x50   # M1=1 (bit 4), BL=1 (bit 6) → Text mode, display on
     vdp.regs[2] = 0x00   # name table at 0x0000
     vdp.regs[4] = 0x01   # pattern gen at 0x0800
-    vdp.regs[7] = 0x02   # fg=0 (transparent → colour 1), bg=2
+    vdp.regs[7] = 0x04   # fg=0 (transparent), bg/backdrop=4
     vdp.vram[_NAME + 0] = 0x00
     vdp.vram[_PAT + 0] = 0xFF
 
     buf = active_region(render_frame(vdp), vdp.display_height)
 
-    # fg=0 should resolve to colour 1 (backdrop fixed at 1 for text mode)
-    assert buf[8] == 1
+    assert buf[8] == 4
+
+
+def test_r0_bit2_write_renders_graphic2_without_error() -> None:
+    """R#0 bit 2 (M4) does not exist on the TMS9918A: a program writing
+    R#0 = 0x06 gets GRAPHIC2, not a GRAPHIC4 path over the 16 KB VRAM."""
+    vdp = VDP()
+    for reg, value in ((0, 0x06), (1, 0x60)):
+        vdp.write_port(0x99, value)
+        vdp.write_port(0x99, 0x80 | reg)
+
+    buf = render_frame(vdp)
+
+    assert len(buf) > 0
+
+
+def test_r0_bit2_write_draws_graphic2_tiles() -> None:
+    """The R#0 = 0x06 frame is drawn through GRAPHIC2's pattern/colour
+    tables, not as GRAPHIC4 nibble pixels read straight from VRAM."""
+    vdp = VDP()
+    regs = ((0, 0x06), (1, 0x40), (2, 0x06), (3, 0xFF), (4, 0x03), (5, 0x36), (7, 0x01))
+    for reg, value in regs:
+        vdp.write_port(0x99, value)
+        vdp.write_port(0x99, 0x80 | reg)
+    vdp.vram[0x0000] = 0xFF   # tile 0, row 0: all foreground
+    vdp.vram[0x2000] = 0x65   # row 0 colour: fg=6, bg=5
+    vdp.vram[0x2001] = 0x65   # row 1 colour (GRAPHIC2 colours are per row)
+    vdp.vram[0x1B00] = 0xD0   # SAT terminator: no sprites
+
+    buf = active_region(render_frame(vdp), vdp.display_height)
+
+    assert buf[0] == 6        # a GRAPHIC4 decode of VRAM byte 0xFF would give 15
+    assert buf[256] == 5      # row 1 pattern 0x00 -> background
 
 
 def test_text_no_sprites_rendered(flavor: RendererFlavor) -> None:

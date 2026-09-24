@@ -354,3 +354,65 @@ def test_ctrl_c_during_active_display_skips_the_vblank_segment() -> None:
 
     assert calls
     assert machine.cycle_count < machine.cycles_per_frame
+def test_break_during_display_does_not_raise_vblank() -> None:
+    # A frame cut short by a breakpoint never reached vertical blanking, so
+    # F and the /INT level stay clear -- the same as on the V9938.
+    machine = make_machine(b"\x00" * 0x8000)
+    machine.vdp.regs[1] = 0x60             # BL + IE0
+    machine.vdp.status = 0x00
+    machine.set_pause_hook(lambda *_: None)
+    machine.set_breakpoints([0x1000])      # reached mid-frame by the NOP sled
+
+    machine.run_frame()
+
+    assert machine.cpu.registers.PC == 0x1000
+    assert not (machine.vdp.status & 0x80)
+    assert machine.vdp.irq is False
+
+
+def test_complete_frame_still_raises_vblank() -> None:
+    machine = make_machine(b"\x00" * 0x8000)
+    machine.vdp.regs[1] = 0x40
+    machine.vdp.status = 0x00
+
+    machine.run_frame()
+
+    assert machine.vdp.status & 0x80
+
+
+def test_break_with_skip_render_does_not_raise_vblank() -> None:
+    machine = _make_msx1()
+    machine.vdp.regs[1] = 0x60             # BL + IE0
+    machine.vdp.status = 0x00
+    machine.set_pause_hook(lambda reason, pc: None)
+    machine.set_breakpoints([_MID_DISPLAY_PC])
+
+    machine.run_frame(skip_render=True)
+
+    assert machine.is_paused
+    assert not (machine.vdp.status & 0x80)
+    assert machine.vdp.irq is False
+
+
+def test_ctrl_c_during_active_display_does_not_raise_vblank() -> None:
+    machine = _make_msx1()
+    machine.vdp.regs[1] = 0x60             # BL + IE0
+    machine.vdp.status = 0x00
+    orig_step = Z80.step
+
+    def patched_step(self: Z80) -> int:
+        if self.registers.PC == _MID_DISPLAY_PC:
+            raise KeyboardInterrupt
+        return orig_step(self)
+
+    Z80.step = patched_step  # type: ignore[method-assign]
+    try:
+        machine.set_pause_hook(lambda reason, pc: None)
+        buf = machine.run_frame()
+    finally:
+        Z80.step = orig_step  # type: ignore[method-assign]
+
+    assert len(buf) == 256 * OUTPUT_H      # the cut-short frame is still rendered
+    assert machine.cycle_count < machine.cycles_per_frame
+    assert not (machine.vdp.status & 0x80)
+    assert machine.vdp.irq is False
