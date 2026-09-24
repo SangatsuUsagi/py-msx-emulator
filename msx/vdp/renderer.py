@@ -103,7 +103,7 @@ def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
 
     # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
-    return pad_to_output_height(buf, h, _W, border), status
+    return pad_to_output_height(buf, h, _W, bytes((border,))), status
 
 
 def _backdrop(vdp: VDP) -> int:
