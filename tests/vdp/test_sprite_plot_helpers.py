@@ -1,15 +1,15 @@
 """Unit tests for the explicit-argument sprite plot helpers.
 
-renderer._plot_sprite_pixel (TMS9918A), v9938_renderer._plot_mode1_pixel and
+renderer._plot_sprite_pixel (TMS9918A), v9938_renderer._plot_mode1_row and
 v9938_renderer._plot_mode2_row replaced per-call closures; these pin the
-per-pixel contract the full-frame sprite tests exercise indirectly: clipping
-at x < 0 and x >= 256 (no wrap), coincidence reporting, first-opaque-claim
-priority, MAG, 512-wide doubling, CC (OR) mode, and the first colliding x.
+contract the full-frame sprite tests exercise indirectly: clipping at x < 0
+and x >= 256 (no wrap), coincidence reporting, first-opaque-claim priority,
+MAG, 512-wide doubling, CC (OR) mode, and the first colliding x.
 """
 from __future__ import annotations
 
 from msx.vdp.renderer import _plot_sprite_pixel
-from msx.vdp.v9938_renderer import _SPRITE_CLAIM, _SS_OFFSETS, _plot_mode1_pixel, _plot_mode2_row
+from msx.vdp.v9938_renderer import _SPRITE_CLAIM, _plot_mode1_row, _plot_mode2_row
 
 _W = 256
 
@@ -49,24 +49,47 @@ def test_tms_transparent_pixel_collides_but_does_not_claim() -> None:
 
 
 # ---------------------------------------------------------------------------
-# V9938 _plot_mode1_pixel
+# V9938 _plot_mode1_row
 # ---------------------------------------------------------------------------
 
-def test_mode1_plot_clips_both_edges() -> None:
-    buf, painted, touched = _planes()
-    assert _plot_mode1_pixel(buf, painted, touched, 0, -1, 5) is False
-    assert _plot_mode1_pixel(buf, painted, touched, 0, _W, 5) is False
-    assert not any(touched)
+def _row1(
+    pixels: bytes, x_pos: int, *, scale: int = 1, color: int = 5,
+    planes: tuple[bytearray, bytearray, bytearray] | None = None,
+) -> tuple[int, bytearray, bytearray, bytearray]:
+    buf, painted, touched = planes if planes is not None else _planes(lines=1)
+    hit = _plot_mode1_row(buf, painted, touched, pixels, x_pos, scale, 0, color)
+    return hit, buf, painted, touched
 
 
-def test_mode1_colour_0_claims_the_pixel() -> None:
+def test_mode1_row_clips_both_edges_without_wrap() -> None:
+    _, buf, _, touched = _row1(bytes([1, 1, 1]), -2)
+    assert [buf[i] for i in range(2)] == [5, 0]
+    assert touched[0] and not touched[1] and not any(touched[_W - 4:])
+    _, buf, _, _ = _row1(bytes([1, 1, 1]), _W - 1)
+    assert buf[_W - 1] == 5 and not any(buf[:4])
+
+
+def test_mode1_row_mag_doubles_each_dot() -> None:
+    _, buf, _, _ = _row1(bytes([1, 0, 1]), 10, scale=2)
+    assert [i for i in range(_W) if buf[i]] == [10, 11, 14, 15]
+
+
+def test_mode1_row_colour_0_claims_the_pixel() -> None:
     # Colour 0 only reaches the helper when TP makes it opaque: it claims.
-    buf, painted, touched = _planes()
-    buf[4] = 0xEE
-    assert _plot_mode1_pixel(buf, painted, touched, 0, 4, 0) is False
-    assert buf[4] == 0 and painted[4]
-    assert _plot_mode1_pixel(buf, painted, touched, 0, 4, 9) is True
-    assert buf[4] == 0
+    planes = _planes(lines=1)
+    planes[0][4] = 0xEE
+    hit, buf, painted, _ = _row1(bytes([1]), 4, color=0, planes=planes)
+    assert hit == -1 and buf[4] == 0 and painted[4]
+    hit, buf, _, _ = _row1(bytes([1]), 4, color=9, planes=planes)
+    assert hit == 4 and buf[4] == 0
+
+
+def test_mode1_row_reports_the_first_colliding_x() -> None:
+    planes = _planes(lines=1)
+    planes[2][13] = 1
+    planes[2][15] = 1
+    hit, _, _, _ = _row1(bytes([1] * 8), 10, planes=planes)
+    assert hit == 13
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +109,7 @@ def _row(
     drawn: list[int] = []
     hit = _plot_mode2_row(
         sprite_buf, touched, drawn, pixels, x_pos, scale, 0, screen_scale,
-        _SS_OFFSETS[screen_scale], collides, or_mode, color, color | _SPRITE_CLAIM,
+        collides=collides, or_mode=or_mode, color=color,
     )
     return hit, sprite_buf, touched, drawn
 

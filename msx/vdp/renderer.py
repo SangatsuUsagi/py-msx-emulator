@@ -53,8 +53,21 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     changes is the sprite status in S#0 (5S / index / C); VBlank is raised by
     VDP.begin_vblank(), which Machine.run_frame calls.
     """
+    buf, status = _render(vdp, skip_render)
+    vdp.status = status
+    return buf
+
+
+def render_preview(vdp: VDP) -> bytearray:
+    """Render the current frame like render_frame, leaving S#0 unchanged."""
+    return _render(vdp, False)[0]
+
+
+def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
+    """Render a frame; return it with the S#0 value the render produces."""
+    status = vdp.status
     if skip_render:
-        return bytearray(0)
+        return bytearray(0), status
 
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
@@ -63,7 +76,7 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     if not (r1 & 0x40):  # BL (Blank) bit clear → blank display
         # bytearray([b]) * n is a single C-level fill; [b] * n would first build
         # an n-element Python list (≈48× slower on this per-frame path).
-        return bytearray([border]) * (_W * OUTPUT_H)
+        return bytearray([border]) * (_W * OUTPUT_H), status
 
     # M1/M2 (R#1 bits 4/3), M3 (R#0 bit 1): TMS9918A screen-mode select. R#0
     # has no M4 on this chip (TI data manual §2.2.1). M1=1: Text (SCREEN 0).
@@ -78,24 +91,19 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
 
     if m1:
         _render_text(vdp, buf)
-    elif m3:
-        _render_g2(vdp, buf)
-        _maybe_render_sprites(vdp, buf)
-    elif m2:
-        _render_mc(vdp, buf)
-        _maybe_render_sprites(vdp, buf)
     else:
-        _render_g1(vdp, buf)
-        _maybe_render_sprites(vdp, buf)
+        if m3:
+            _render_g2(vdp, buf)
+        elif m2:
+            _render_mc(vdp, buf)
+        else:
+            _render_g1(vdp, buf)
+        if not vdp.debug_disable_sprites:
+            status = _render_sprites(vdp, buf, status)
 
     # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
-    return pad_to_output_height(buf, h, _W, border)
-
-
-def _maybe_render_sprites(vdp: VDP, buf: bytearray) -> None:
-    if not vdp.debug_disable_sprites:
-        _render_sprites(vdp, buf)
+    return pad_to_output_height(buf, h, _W, border), status
 
 
 def _backdrop(vdp: VDP) -> int:
@@ -236,7 +244,9 @@ def _render_mc(vdp: VDP, buf: bytearray) -> None:
 # Sprite rendering — shared across G1, G2, MC
 # ---------------------------------------------------------------------------
 
-def _render_sprites(vdp: VDP, buf: bytearray) -> None:
+def _render_sprites(vdp: VDP, buf: bytearray, status: int) -> int:
+    """Draw the sprite plane into buf; return `status` (S#0) with the 5S /
+    sprite index / C bits this frame's sprites produce."""
     r1 = vdp.regs[1]
     si = (r1 >> 1) & 1
     mag = r1 & 1
@@ -289,7 +299,7 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
 
             if line_count[line] >= 4:  # TMS9918A: max 4 sprites per scanline
                 if not fifth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    status = (status & 0xA0) | 0x40 | (i & 0x1F)
                     fifth_set = True
                 continue
 
@@ -318,7 +328,8 @@ def _render_sprites(vdp: VDP, buf: bytearray) -> None:
                             coincidence = True
 
     if coincidence:
-        vdp.status |= 0x20
+        status |= 0x20
+    return status
 
 
 def _plot_sprite_pixel(
@@ -329,7 +340,8 @@ def _plot_sprite_pixel(
     Off-screen x is clipped (no wrap). Returns True on coincidence (another
     sprite's pattern bit already touched this pixel). Only an opaque colour
     claims the pixel, so a transparent higher-priority sprite does not block
-    a lower-priority one showing through.
+    a lower-priority one showing through. The V9938 counterpart is
+    v9938_renderer._plot_mode1_row, which lets TP make colour 0 opaque.
     """
     if px < 0 or px >= _W:
         return False

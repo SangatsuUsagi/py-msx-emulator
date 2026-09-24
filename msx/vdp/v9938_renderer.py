@@ -183,6 +183,19 @@ _TEXT6_BYTES: list[list[list[bytes]]] = [
 ]
 
 
+@dataclass(slots=True)
+class _RenderStatus:
+    """The chip status a render produces: S#0 (5S/9S, sprite index, C), the
+    collision coordinates (S#3-S#6) and S#2 (EO). Seeded from the chip,
+    updated by every sprite pass of the frame, and written back to the chip
+    only by render_frame -- render_preview discards it."""
+
+    status: int
+    collision_x: int
+    collision_y: int
+    status2: int
+
+
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
@@ -193,14 +206,30 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
 
     Frame counting is owned by the caller (Machine.run_frame), not the renderer.
     """
+    buf, st = _render(vdp, skip_render)
+    vdp.status = st.status
+    vdp.collision_x = st.collision_x
+    vdp.collision_y = st.collision_y
+    vdp._status2 = st.status2
+    return buf
+
+
+def render_preview(vdp: "V9938") -> bytearray:
+    """Render the current frame like render_frame, leaving the chip unchanged."""
+    return _render(vdp, False)[0]
+
+
+def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
+    st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp._status2)
     if skip_render:
-        _finalize(vdp)
-        return bytearray(0)
+        _finalize(vdp, st)
+        return bytearray(0), st
 
     log = vdp._reg_write_log
-    buf = _render_banded(vdp) if log else _render_pass(vdp)
+    buf = _render_banded(vdp, st) if log else _render_pass(vdp, st)
     buf = _apply_display_adjust(vdp, buf)
-    return pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    out = pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    return out, st
 
 
 def _r18_offset(reg18: int) -> tuple[int, int]:
@@ -361,11 +390,11 @@ class _SatSegment:
     height: int
 
 
-def _render_banded(vdp: "V9938") -> bytearray:
+def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     """Render with band-split: each band uses its own register/palette snapshot."""
     bands = _build_bands(vdp)
     if not bands:
-        return _render_pass(vdp)
+        return _render_pass(vdp, st)
 
     full_h = vdp.display_height
     full_w = vdp.display_width
@@ -385,7 +414,7 @@ def _render_banded(vdp: "V9938") -> bytearray:
         for y0, y1, band_regs, band_palette in bands:
             vdp.regs = band_regs
             vdp.palette = band_palette
-            _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
+            _render_pass_range(vdp, st, out, y0, min(y1, full_h), draw_sprites=False)
 
         # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
         # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
@@ -434,15 +463,15 @@ def _render_banded(vdp: "V9938") -> bytearray:
             # One SAT for the whole frame → single pass (main band regs); per-line
             # row_vscroll / row_spd handle any R#23 / SPD split within it.
             vdp.regs = main_regs
-            _render_sprites_for_mode(vdp, out, 0, full_h, row_vscroll, row_spd)
+            _render_sprites_for_mode(vdp, st, out, 0, full_h, row_vscroll, row_spd)
         else:
             for seg in sat_segments:
                 vdp.regs = seg.regs
                 _render_sprites_for_mode(
-                    vdp, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
+                    vdp, st, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
                 )
 
-        _finalize(vdp)
+        _finalize(vdp, st)
     finally:
         # PORT-NOTE: the band passes above temporarily rebind vdp.regs /
         #   vdp.palette to per-band snapshots (shared list objects held in
@@ -466,18 +495,19 @@ def _render_banded(vdp: "V9938") -> bytearray:
     return out
 
 
-def _render_pass(vdp: "V9938") -> bytearray:
+def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
     """Single-pass render using current vdp register/palette state."""
     h = vdp.display_height
     w = vdp.display_width
     buf = bytearray(w * h)
-    _render_pass_range(vdp, buf, 0, h)
-    _finalize(vdp)
+    _render_pass_range(vdp, st, buf, 0, h)
+    _finalize(vdp, st)
     return buf
 
 
 def _render_pass_range(
     vdp: "V9938",
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int,
     y_end: int,
@@ -534,27 +564,46 @@ def _render_pass_range(
         _render_g1(vdp, buf, y_start, y_end)
 
     if draw_sprites:
-        _render_sprites_for_mode(vdp, buf, y_start, y_end)
+        _render_sprites_for_mode(vdp, st, buf, y_start, y_end)
 
 
-def _plot_mode1_pixel(
-    buf: bytearray, painted: bytearray, touched: bytearray, row: int, px: int, color: int
-) -> bool:
-    """Plot one sprite-mode-1 pixel at screen x `px` of the line at `row`.
+def _plot_mode1_row(
+    buf: bytearray,
+    painted: bytearray,
+    touched: bytearray,
+    pixels: bytes,
+    x_pos: int,
+    scale: int,
+    row: int,
+    color: int,
+) -> int:
+    """Plot one sprite-mode-1 pattern row onto the line starting at `row`.
 
-    Off-screen x is clipped (no wrap). Returns True on coincidence. Colour 0
-    only reaches here when TP makes it opaque, and is displayed as palette
-    entry 0.
+    `x_pos` is the row's first dot and `scale` the MAG factor; off-screen dots
+    are clipped (no wrap). Colour 0 only reaches here when TP makes it opaque,
+    and is displayed as palette entry 0. Returns the x of the first colliding
+    dot, or -1 for none (an Option<u16> in a port). The TMS9918A counterpart
+    is renderer._plot_sprite_pixel, which also skips colour 0.
     """
-    if px < 0 or px >= _W:
-        return False
-    coord = row + px
-    collided = bool(touched[coord])
-    touched[coord] = 1
-    if not painted[coord]:
-        painted[coord] = 1
-        buf[coord] = color
-    return collided
+    hit_x = -1
+    for bit_i, pixel in enumerate(pixels):
+        if not pixel:
+            continue
+        px = x_pos + bit_i * scale
+        last = px + scale
+        while px < last:
+            if 0 <= px < _W:
+                coord = row + px
+                if touched[coord]:
+                    if hit_x < 0:
+                        hit_x = px
+                else:
+                    touched[coord] = 1
+                if not painted[coord]:
+                    painted[coord] = 1
+                    buf[coord] = color
+            px += 1
+    return hit_x
 
 
 def _plot_mode2_row(
@@ -566,49 +615,53 @@ def _plot_mode2_row(
     scale: int,
     line_off: int,
     screen_scale: int,
-    ss_offsets: tuple[int, ...],
+    *,
     collides: bool,
     or_mode: bool,
     color: int,
-    claim: int,
 ) -> int:
     """Plot one sprite-mode-2 pattern row into the sprite plane.
 
     `x_pos` is the row's first dot in the 256-dot sprite plane, `scale` the
     MAG factor; dots off-screen are clipped (no wrap), and each dot covers
-    `ss_offsets` output pixels in 512-wide modes. A CC (OR) sprite ORs its
-    colour into an already-claimed pixel; otherwise the first claim wins.
-    Returns the sprite-plane x of the first colliding dot, or -1.
+    `screen_scale` output pixels (2 in 512-wide modes). A CC (OR) sprite ORs
+    its colour into an already-claimed pixel; otherwise the first claim wins.
+    Returns the sprite-plane x of the first colliding dot, or -1 for none (an
+    Option<u16> in a port).
     """
+    claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
+    ss_offsets = _SS_OFFSETS[screen_scale]
     hit_x = -1
     for bit_i, pixel in enumerate(pixels):
         if not pixel:
             continue
-        first = x_pos + bit_i * scale
-        for sx in range(first, first + scale):
-            if sx < 0 or sx >= _W:
-                continue
-            base = line_off + sx * screen_scale
-            for ss in ss_offsets:
-                coord = base + ss
-                if collides:
-                    if touched[coord]:
-                        if hit_x < 0:
-                            hit_x = sx
+        sx = x_pos + bit_i * scale
+        last = sx + scale
+        while sx < last:
+            if 0 <= sx < _W:
+                base = line_off + sx * screen_scale
+                for ss in ss_offsets:
+                    coord = base + ss
+                    if collides:
+                        if touched[coord]:
+                            if hit_x < 0:
+                                hit_x = sx
+                        else:
+                            touched[coord] = 1
+                    if sprite_buf[coord]:
+                        if or_mode:
+                            sprite_buf[coord] |= color
                     else:
-                        touched[coord] = 1
-                if sprite_buf[coord]:
-                    if or_mode:
-                        sprite_buf[coord] |= color
-                else:
-                    sprite_buf[coord] = claim
-                    drawn.append(coord)
+                        sprite_buf[coord] = claim
+                        drawn.append(coord)
+            sx += 1
     return hit_x
 
 
 
 def _render_sprites_for_mode(
     vdp: "V9938",
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int,
     y_end: int,
@@ -638,6 +691,7 @@ def _render_sprites_for_mode(
         if m4:
             _render_sprites_mode2(
                 vdp,
+                st,
                 buf,
                 h,
                 y_start,
@@ -649,6 +703,7 @@ def _render_sprites_for_mode(
         else:  # G5 and G6 both render sprites onto a 512-wide buffer
             _render_sprites_mode2(
                 vdp,
+                st,
                 buf,
                 h,
                 y_start,
@@ -662,24 +717,25 @@ def _render_sprites_for_mode(
         pass  # TEXT2: no sprites
     elif m4:
         _render_sprites_mode2(
-            vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
+            vdp, st, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
         )
     elif m1:
         pass  # TEXT1: no sprites
     else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1
-        _render_sprites(vdp, buf, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd)
+        _render_sprites(
+            vdp, st, buf, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
+        )
 
 
-def _finalize(vdp: "V9938") -> None:
-    # VBlank flag is now set by begin_scanline() in the scanline loop (machine.py).
-    # _finalize only handles frame-buffer finalisation; no interrupt generation here.
-    # S#2 bit 1 (current field) toggles once per frame, in step with the EO
-    # page-alternation parity (frame_count is stable for the whole render, and
-    # this runs exactly once per render_frame() call on every path).
+def _finalize(vdp: "V9938", st: _RenderStatus) -> None:
+    # VBlank flag is set by begin_scanline() in the scanline loop (machine.py);
+    # no interrupt generation here. S#2 bit 1 (current field) toggles once per
+    # frame, in step with the EO page-alternation parity (frame_count is stable
+    # for the whole render, and this runs exactly once per render on every path).
     if vdp.frame_count & 1:
-        vdp._status2 |= _S2_EO
+        st.status2 |= _S2_EO
     else:
-        vdp._status2 &= ~_S2_EO
+        st.status2 &= ~_S2_EO
 
 
 def _colour0(vdp: "V9938") -> int:
@@ -700,26 +756,23 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # V9938 pattern-mode table bases span the full 128 KB: name = R#2 bits 6:0,
     # pattern = R#4 bits 5:0, colour = R#10 + R#3. In GRAPHIC1 the table
     # indices fit inside the base's own low bits, so (unlike GRAPHIC2/3) no
-    # per-third gating applies. The other pattern and text modes use the same
-    # bases.
+    # per-third gating applies. TEXT1 and MULTICOLOR use the same bases;
+    # GRAPHIC2/3 and TEXT2 narrow them (see those functions).
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3F) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
     # R#23 vertical scroll: openMSX applies it to every non-text mode alike
     # (PixelRenderer::draw: "if (!isTextMode()) displayY += getVerticalScroll()",
-    # with no GRAPHIC1-vs-GRAPHIC2 distinction), and this codebase's own
-    # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
-    # not a hardware fact.
+    # with no GRAPHIC1-vs-GRAPHIC2 distinction), as _render_g2 does.
     vscroll = vdp.regs[23]
     colour0 = _colour0(vdp)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
     # scanlines sharing a tile row -- cached here and re-fetched from VRAM
-    # only when `row` changes, so the per-scanline vscroll loop below doesn't
-    # pay for 8x as many name/colour-table reads as the pre-vscroll per-row
-    # loop did. `pat` still depends on `py` too, so it's re-fetched every
-    # scanline regardless.
+    # only when `row` changes, so the per-scanline vscroll loop below reads
+    # the name/colour tables once per tile row, not once per scanline. `pat`
+    # still depends on `py` too, so it's re-fetched every scanline.
     row_tiles = [0] * 32
     row_fg = [0] * 32
     row_bg = [0] * 32
@@ -936,6 +989,7 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 
 def _render_sprites(
     vdp: "V9938",
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int = 0,
     y_end: int | None = None,
@@ -1016,7 +1070,7 @@ def _render_sprites(
     # the first colliding line and stops there).
     col_line = 999
     col_x = 999
-    had_collision = bool(vdp.status & 0x20)  # C set since last cleared by an S#0 read
+    had_collision = bool(st.status & 0x20)  # C set since last cleared by an S#0 read
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
     # does (see _sprite_runs). With no per-line schedule this is one run over
@@ -1046,7 +1100,7 @@ def _render_sprites(
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
                 if not fifth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
                     fifth_set = True
                 continue
 
@@ -1057,39 +1111,22 @@ def _render_sprites(
 
             src_row = sprite_row // 2 if mag else sprite_row
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-            scale = 2 if mag else 1
-            row = line * _W
-
-            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    px = x_byte + bit_i
-                    if _plot_mode1_pixel(buf, sprite_painted, sprite_touched, row, px, color):
-                        coincidence = True
-                        # First collision in raster order wins (openMSX).
-                        if line < col_line or (line == col_line and px < col_x):
-                            col_line = line
-                            col_x = px
-            else:
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    for s in range(scale):
-                        px = x_byte + bit_i * scale + s
-                        if _plot_mode1_pixel(
-                            buf, sprite_painted, sprite_touched, row, px, color
-                        ):
-                            coincidence = True
-                            if line < col_line or (line == col_line and px < col_x):
-                                col_line = line
-                                col_x = px
+            hit_x = _plot_mode1_row(
+                buf, sprite_painted, sprite_touched, pixels, x_byte, 2 if mag else 1,
+                line * _W, color,
+            )
+            if hit_x >= 0:
+                coincidence = True
+                # First collision in raster order wins (openMSX).
+                if line < col_line or (line == col_line and hit_x < col_x):
+                    col_line = line
+                    col_x = hit_x
 
     if coincidence:
-        vdp.status |= 0x20
+        st.status |= 0x20
         if not had_collision:  # first collision since C was last cleared wins (openMSX)
-            vdp.collision_x = col_x + _COLLISION_X_OFFSET
-            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
+            st.collision_x = col_x + _COLLISION_X_OFFSET
+            st.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 class _SpriteRun(NamedTuple):
@@ -1195,6 +1232,7 @@ def _composite_sprite_buf(
 
 def _render_sprites_mode2(
     vdp: "V9938",
+    st: _RenderStatus,
     buf: bytearray,
     h: int,
     y_start: int = 0,
@@ -1284,7 +1322,7 @@ def _render_sprites_mode2(
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
     col_line = 999
     col_x = 999
-    had_collision = bool(vdp.status & 0x20)
+    had_collision = bool(st.status & 0x20)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for
     # the usual single R#23/R#8; more only when a split changes either). Runs
@@ -1315,11 +1353,11 @@ def _render_sprites_mode2(
         # Scan only the sprite's visible band, per constant-vscroll run -- see
         # _sprite_scanlines. Per-sprite line order is immaterial to the
         # accumulated line_count / 9S / cc0 / coincidence state, and the runs
-        # partition the scanlines, so this matches the old single-vscroll scan.
+        # partition the scanlines, so this equals a full scan at one vscroll.
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 8:
                 if not ninth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
                     ninth_set = True
                 continue
 
@@ -1354,14 +1392,9 @@ def _render_sprites_mode2(
                 continue  # transparent regardless of OR mode
 
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-            scale = 2 if mag else 1
-            line_off = line * width
-            claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
-            ss_offsets = _SS_OFFSETS[screen_scale]
-
             hit_x = _plot_mode2_row(
-                sprite_buf, sprite_touched, drawn, pixels, x_pos, scale,
-                line_off, screen_scale, ss_offsets, collides, or_mode, color, claim,
+                sprite_buf, sprite_touched, drawn, pixels, x_pos, 2 if mag else 1,
+                line * width, screen_scale, collides=collides, or_mode=or_mode, color=color,
             )
             if hit_x >= 0:
                 coincidence = True
@@ -1373,10 +1406,10 @@ def _render_sprites_mode2(
     _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 
     if coincidence:
-        vdp.status |= 0x20
+        st.status |= 0x20
         if not had_collision:  # first collision since C was last cleared wins (openMSX)
-            vdp.collision_x = col_x + _COLLISION_X_OFFSET
-            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
+            st.collision_x = col_x + _COLLISION_X_OFFSET
+            st.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 def _sprite_row_pixels(

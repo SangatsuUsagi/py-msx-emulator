@@ -67,7 +67,7 @@ OTIR/INIR 等のブロック I/O 命令はページ境界をまたぐ場合に�
 
 ### MSX1：レベルベース VBlank IRQ
 
-MSX1 では、TMS9918A VDP の割り込み源は垂直帰線期間の開始時に立つ VBlank のみです。割り込み線は `F && IE0`（S#0 bit 7 と R#1 bit 5）のレベルで、`VDP.irq` にキャッシュされ、どちらかの入力が変わるたびに再計算されます。`Machine.run_frame()` が `display_height` のスキャンライン境界に達すると `_finalize()` が F をセットし、S#0 の読み出しで F がクリアされ、R#1 への書き込みで IE0 が変わります。そのため F が立ったまま IE0 を立てると、実機と同様に即座に割り込み線が立ちます。`Machine.run_frame()` は後述の MSX2 パスと同じく毎命令境界でこれをサンプリングします。
+MSX1 では、TMS9918A VDP の割り込み源は垂直帰線期間の開始時に立つ VBlank のみです。割り込み線は `F && IE0`（S#0 bit 7 と R#1 bit 5）のレベルで、`VDP.irq` にキャッシュされ、どちらかの入力が変わるたびに再計算されます。`Machine.run_frame()` が `display_height` のスキャンライン境界でフレームを描画した後に `VDP.begin_vblank()` が F をセットし（ブレークや一時停止で途中で打ち切られたフレームではセットしません）、S#0 の読み出しで F がクリアされ、R#1 への書き込みで IE0 が変わります。そのため F が立ったまま IE0 を立てると、実機と同様に即座に割り込み線が立ちます。`Machine.run_frame()` は後述の MSX2 パスと同じく毎命令境界でこれをサンプリングします。
 
 ```python
 cpu.int_pending = vdp.irq
@@ -77,10 +77,10 @@ MSX1 パスにスキャンラインごとの割り込みはありません。
 
 ### MSX2：レベルベース IRQ
 
-MSX2（V9938）では割り込みはレベルベースです。`Machine.run_frame()` の内部ループが毎命令境界で `vdp9938.irq` をサンプリングします。
+MSX2（V9938）では割り込みはレベルベースです。`Machine.run_frame()` の内部ループが、前述の MSX1 パスと同じく毎命令境界で VDP の `irq` をサンプリングします。
 
 ```python
-cpu.int_pending = vdp9938.irq
+cpu.int_pending = vdp.irq
 ```
 
 `V9938.irq` は `irq_pending()` の値を反映します。
@@ -108,10 +108,11 @@ for L in range(lpf):               # lpf = 262（NTSC ライン数）
         n = cpu_step()
         ...
     vdp9938.begin_scanline(L)
-    cpu.int_pending = vdp9938.irq
 ```
 
-`begin_scanline(line)` は有効 IRQ ラインを `(R#19 − R#23) & 0xFF` として計算し、`line == effective_irq_line` かつアクティブ表示域内であれば S#1 ビット 0（FH）をセットします。IE1（R#0 ビット 4）は FH が `irq` をアサートするかどうかを制御します。FH は IE1 に関わらずセットされるため、ソフトウェアは割り込みを有効にせずに S#1 をポーリングできます。
+`begin_scanline` による割り込みレベルの変化は、CPU が次の命令境界で取り込みます。
+
+`begin_scanline(line)` は有効 IRQ ラインを `(R#19 − R#23) & 0xFF` として計算し、`line == effective_irq_line` かつ IE1（R#0 ビット 4）がセットされていれば S#1 ビット 0（FH）をセットします。比較対象はボーダーや垂直帰線期間を含む 0–255 の任意のラインです。IE1 がクリアの間は FH をラッチしないため、後から IE1 を立てても通過済みのラインの割り込みは発生しません。
 
 FH は S#1 が読まれるまで保持されます。読み出しで FH はクリアされ、`irq` が再評価されます。
 
@@ -153,7 +154,7 @@ io.register_write(0x98, 0x9B, vdp.write_port)
 
 ### TMS9918A（MSX1）
 
-`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のアクティブフレームは `Machine.run_frame()` の途中、垂直帰線期間の開始時に `render_frame()` によって描画され、VBlank フラグのセットと割り込み線（`VDP.irq`）の更新も行われます。その後レンダラは、共有ヘルパー `msx/vdp/_geometry.py` を通じてこのフレームを一定の 256×212 出力（上下に 10 行ずつのボーダー行）にパディングします。これにより、VDP のアクティブライン数によらず全フレームが安定した 4:3 のジオメトリを保ちます（後述の V9938 `display_height` を参照）。
+`msx/vdp/vdp.py` に実装され、レンダラは `msx/vdp/renderer.py` にあります。16 KB VRAM、8 個のコントロールレジスタ、スクリーンモード 0–3（テキスト、グラフィック 1/2、マルチカラー）をサポートします。256×192 のアクティブフレームは `Machine.run_frame()` の途中、垂直帰線期間の開始時に `render_frame()` によって描画され、続いて `Machine.run_frame()` が `VDP.begin_vblank()` を呼んで VBlank フラグのセットと割り込み線（`VDP.irq`）の更新を行います。レンダラは共有ヘルパー `msx/vdp/_geometry.py` を通じてこのフレームを一定の 256×212 出力（上下に 10 行ずつのボーダー行）にパディングします。これにより、VDP のアクティブライン数によらず全フレームが安定した 4:3 のジオメトリを保ちます（後述の V9938 `display_height` を参照）。
 
 ### V9938（MSX2）
 
@@ -341,7 +342,7 @@ vram_kb: 128    # ドキュメント目的のみ -- 上記の注記を参照
 | `generation` | string | — | `msx1` または `msx2`。それ以外はエラー |
 | `name` | string | `id` | 表示名のみ |
 | `rom_base` | string | `roms/cbios` | すべての `rom:` ブロックの `file` を解決する基準ディレクトリ（プロジェクトルート相対） |
-| `video_standard` | string | `ntsc` | `ntsc` → 1 フレーム 59,736 T ステート/262 ライン、`pal` → 71,364/313（`cbios_msx1_eu` が使用）。SDL2フロントエンドの実時間ペーシング目標（NTSC 60fps / PAL 50fps）もこれで決まる |
+| `video_standard` | string | `ntsc` | `ntsc` → 1 フレーム 59,736 T ステート/262 ライン、`pal` → 71,364/313（`cbios_msx1_eu` と `cbios_msx2_eu` が使用）。SDL2フロントエンドの実時間ペーシング目標（NTSC 60fps / PAL 50fps）もこれで決まる |
 | `cpu.m1_wait_states` | int | `0` | Z80 の M1 サイクルごとに追加される T ステート数 — 前述の[CPU エミュレーション](#cpu-エミュレーション)を参照 |
 | `slots.primary` | マッピング | — | `0`〜`3` をキーとする。読まれるのは `0` と `3` のみ（後述） |
 | `builtin_devices` | リスト | `[]` | 後述 |

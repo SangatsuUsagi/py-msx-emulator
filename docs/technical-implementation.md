@@ -109,9 +109,9 @@ different sequence.
 On MSX1, the TMS9918A VDP has a single interrupt source: VBlank, raised at the
 start of vertical blanking. Its interrupt line is the level `F && IE0` (S#0
 bit 7 and R#1 bit 5), cached in `VDP.irq` and recomputed whenever either input
-changes: `_finalize()` sets F when `Machine.run_frame()` reaches the
-`display_height` scanline boundary, an S#0 read clears F, and an R#1 write
-changes IE0. Setting IE0 while F is still pending therefore raises the line
+changes: `VDP.begin_vblank()` sets F when `Machine.run_frame()` has rendered
+the frame at the `display_height` scanline boundary (not for a frame cut short
+by a break or pause), an S#0 read clears F, and an R#1 write changes IE0. Setting IE0 while F is still pending therefore raises the line
 immediately, as on real hardware. `Machine.run_frame()` samples it at every
 instruction boundary, exactly like the MSX2 path below:
 
@@ -124,10 +124,11 @@ There are no per-scanline interrupts in the MSX1 path.
 ### MSX2: level-based IRQ
 
 On MSX2 (V9938), interrupts are level-based. The inner loop of
-`Machine.run_frame()` samples `vdp9938.irq` at every instruction boundary:
+`Machine.run_frame()` samples the VDP's `irq` at every instruction boundary,
+the same line as the MSX1 path above:
 
 ```python
-cpu.int_pending = vdp9938.irq
+cpu.int_pending = vdp.irq
 ```
 
 `V9938.irq` reflects `irq_pending()`:
@@ -158,14 +159,16 @@ for L in range(lpf):               # lpf = 262 NTSC lines
         n = cpu_step()
         ...
     vdp9938.begin_scanline(L)
-    cpu.int_pending = vdp9938.irq
 ```
 
+The CPU picks up a level change made by `begin_scanline` at its next
+instruction boundary.
+
 `begin_scanline(line)` computes the effective IRQ line as `(R#19 − R#23) & 0xFF`
-and sets S#1 bit 0 (FH) when `line == effective_irq_line` and
-`0 <= line < display_height`. IE1 (R#0 bit 4) gates whether a matching FH
-asserts `irq`; FH is set regardless of IE1, so software can poll S#1 without
-enabling the interrupt.
+and sets S#1 bit 0 (FH) when `line == effective_irq_line` and IE1 (R#0 bit 4)
+is set. The compare may target any line 0–255, including the border and
+vertical-blanking lines. FH is not latched while IE1 is clear, so enabling IE1
+later does not fire an interrupt for a line that has already passed.
 
 FH persists until S#1 is read; reading it clears FH and re-evaluates `irq`.
 
@@ -219,9 +222,9 @@ current instruction PC.
 Implemented in `msx/vdp/vdp.py` with the renderer in `msx/vdp/renderer.py`. It
 has 16 KB VRAM, 8 control registers, and supports screen modes 0–3 (Text,
 Graphic 1/2, Multicolor). The 256×192 active frame is rendered partway through
-`Machine.run_frame()` by `render_frame()` at the start of vertical blanking,
-which also calls `_finalize()` to set the VBlank flag and update the interrupt
-line (`VDP.irq`). The renderer then pads that frame to
+`Machine.run_frame()` by `render_frame()` at the start of vertical blanking;
+`Machine.run_frame()` then calls `VDP.begin_vblank()` to set the VBlank flag
+and update the interrupt line (`VDP.irq`). The renderer pads that frame to
 a constant 256×212 output (10 border rows top and bottom) via the shared
 `msx/vdp/_geometry.py` helper, so every frame keeps a stable 4:3 geometry
 regardless of the VDP's active line count (see V9938 `display_height` below).
@@ -510,7 +513,7 @@ vram_kb: 128    # documentation only -- see note above
 | `generation` | string | — | `msx1` or `msx2`; anything else raises |
 | `name` | string | `id` | display name only |
 | `rom_base` | string | `roms/cbios` | directory (relative to the project root) every `rom:` block's `file` resolves against |
-| `video_standard` | string | `ntsc` | `ntsc` → 59,736 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`). Also selects the SDL2 frontend's real-time pacing target (60 fps NTSC / 50 fps PAL) |
+| `video_standard` | string | `ntsc` | `ntsc` → 59,736 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu` and `cbios_msx2_eu`). Also selects the SDL2 frontend's real-time pacing target (60 fps NTSC / 50 fps PAL) |
 | `cpu.m1_wait_states` | int | `0` | extra T-states per Z80 M1 cycle — see [CPU emulation](#cpu-emulation) above |
 | `slots.primary` | mapping | — | keyed `0`–`3`; only `0` and `3` are read (below) |
 | `builtin_devices` | list | `[]` | see below |

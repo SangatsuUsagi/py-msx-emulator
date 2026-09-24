@@ -42,12 +42,10 @@ def test_empty_log_identical_to_single_pass() -> None:
     vdp2 = make_g4_vdp()
     vdp2.vram[0] = 0x12
     vdp2.vram[128] = 0x34
-    from msx.vdp.v9938_renderer import _render_pass
-    expected = _render_pass(vdp2)
+    # vdp2 has an empty write log, so this is the single-pass render.
+    expected = vdp2.render_preview()
 
-    # render_frame pads the 192-line frame to the constant 212-line output; the
-    # active picture (rows 10..201) must match the single-pass render.
-    assert result[10 * 256:(10 + 192) * 256] == expected
+    assert result == expected
 
 
 # ---------------------------------------------------------------------------
