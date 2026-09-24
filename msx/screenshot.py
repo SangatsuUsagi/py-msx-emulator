@@ -27,7 +27,10 @@ def render_current_rgb24(vdp: "VdpDevice") -> tuple[bytes, int, int]:
     """
     from msx.vdp._geometry import OUTPUT_H
 
-    return vdp.to_rgb24(vdp.render_preview()), vdp.display_width, OUTPUT_H
+    rgb = vdp.to_rgb24(vdp.render_preview())
+    # The frame's width, which a mid-frame width change can make differ from the
+    # live registers' display_width.
+    return rgb, len(rgb) // (3 * OUTPUT_H), OUTPUT_H
 
 
 def scale_rgb24(
