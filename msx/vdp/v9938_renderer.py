@@ -208,8 +208,9 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
     The returned buffer always has the constant output height (length
-    display_width × OUTPUT_H, i.e. 256×212 normally, or 512×212 for SCREEN 6/7
-    and TEXT2). A 192-line frame (R#9 LN=0) is centred with border rows above
+    width × OUTPUT_H: 256×212 normally, 512×212 for SCREEN 6/7 and TEXT2, and
+    512×212 for a frame that mixes a 512-dot band with a 256-dot one). A
+    192-line frame (R#9 LN=0) is centred with border rows above
     and below so the displayed image keeps a stable geometry regardless of LN.
 
     Commits the render's _RenderStatus (S#0 sprite bits, S#3-S#6, S#2 EO) to
@@ -236,7 +237,10 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
     log = vdp._reg_write_log
     buf = _render_banded(vdp, st) if log else _render_pass(vdp, st)
     buf = _apply_display_adjust(vdp, buf)
-    out = pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    h = vdp.display_height
+    # The frame's width comes from the buffer: a mid-frame width change makes it
+    # the widest band's width, not the live registers' (see _render_banded).
+    out = pad_to_output_height(buf, h, len(buf) // h, _border_color(vdp))
     return out, st
 
 
@@ -309,7 +313,7 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     matching openMSX where both derive from getLeftSprites.
     """
     h = vdp.display_height
-    w = vdp.display_width
+    w = len(buf) // h  # the rendered frame's width (see _render_banded)
 
     row_h, v_off = _r18_row_offsets(vdp, h)
     # Nothing to do when there is no vertical shift and every scanline offset is
@@ -399,29 +403,22 @@ class _SatSegment:
 
 
 def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
-    """Render with band-split: each band uses its own register snapshot."""
+    """Render with band-split: each band uses its own register snapshot.
+
+    The frame is as wide as its widest band. Consecutive bands of one width form
+    a run; with a mid-frame width change each run renders at its own width and a
+    narrower run's rows are widened by doubling every pixel (openMSX likewise
+    keeps a width per line and scales each line to the output width).
+    """
     bands = _build_bands(vdp)
     if not bands:
         return _render_pass(vdp, st)
 
     full_h = vdp.display_height
-    full_w = vdp.display_width
-
-    # Sprites are evaluated in as few passes as possible: one per distinct sprite
-    # attribute table (R#5/R#11), using the registers of the largest band sharing
-    # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to
-    # split; it is applied per scanline within a pass (see row_vscroll below).
-    main_regs = max(bands, key=lambda b: b[1] - b[0])[2]
-
-    out = bytearray(full_w * full_h)
-
-    # Each pass is handed its band's (or SAT segment's) registers; the chip's own
-    # registers and palette are never swapped. The palette needs no per-band
-    # handling here at all: the renderers emit palette indices, and to_rgb24
-    # applies each band's palette from the register-write log.
-    # Background: one pass per band with that band's registers (no sprites).
-    for y0, y1, band_regs, _ in bands:
-        _render_pass_range(vdp, band_regs, st, out, y0, min(y1, full_h), draw_sprites=False)
+    runs = _width_runs(bands)
+    frame_w = 0
+    for run in runs:
+        frame_w = max(frame_w, display_width_of(run[0][2]))
 
     # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
     # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
@@ -430,15 +427,6 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # region's sprites with its own vscroll without redrawing them. The band
     # snapshots already carry each region's R#23; row_vscroll[y] flattens that
     # into a per-line value that the sprite pass reads instead of its registers' R#23.
-    #
-    # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
-    # regions read *different* SAT buffers, used for sprite multiplexing /
-    # "sprite doubler" (a second set of 32 sprites in the lower half). There
-    # one sprite pass per SAT region — each clipped to its scanline span — is
-    # required. Consecutive bands sharing a SAT base are merged so an ordinary
-    # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
-    # only changed mid-active-display for this purpose, so keying on it does
-    # not affect non-multiplexed games.
     # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
     # sprites over just its status band (SPD=1 there, 0 in the play area). Build
     # it alongside row_vscroll so the sprite pass reads both per line.
@@ -451,11 +439,86 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
             row_vscroll[y] = v
             row_spd[y] = spd
 
-    def _sat_key(regs: list[int]) -> tuple[int, int]:
-        return (regs[5], regs[11] & 0x03)
+    out = bytearray(frame_w * full_h)
+    if len(runs) == 1:
+        _render_band_run(vdp, st, out, runs[0], full_h, row_vscroll, row_spd, True)
+    else:
+        for run in runs:
+            run_w = display_width_of(run[0][2])
+            if run_w == frame_w:
+                _render_band_run(vdp, st, out, run, full_h, row_vscroll, row_spd, False)
+            else:
+                narrow = bytearray(run_w * full_h)
+                _render_band_run(vdp, st, narrow, run, full_h, row_vscroll, row_spd, False)
+                _widen_rows(out, frame_w, narrow, run_w, run[0][0], min(run[-1][1], full_h))
+    _update_field_parity(vdp, st)
+    return out
 
+
+_Band = tuple[int, int, list[int], list[int]]
+
+
+def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
+    """Split the bands into maximal runs of consecutive bands of one display width."""
+    runs: list[list[_Band]] = []
+    run_w = -1
+    for band in bands:
+        w = display_width_of(band[2])
+        if runs and w == run_w:
+            runs[-1].append(band)
+        else:
+            runs.append([band])
+            run_w = w
+    return runs
+
+
+def _widen_rows(
+    out: bytearray, out_w: int, src: bytearray, src_w: int, y0: int, y1: int
+) -> None:
+    """Copy rows [y0, y1) of `src` into `out`, doubling every pixel (256 → 512)."""
+    for y in range(y0, y1):
+        row = src[y * src_w:(y + 1) * src_w]
+        d = y * out_w
+        out[d:d + out_w:2] = row
+        out[d + 1:d + out_w:2] = row
+
+
+def _render_band_run(
+    vdp: "V9938",
+    st: _RenderStatus,
+    buf: bytearray,
+    run: list[_Band],
+    full_h: int,
+    row_vscroll: list[int],
+    row_spd: list[bool],
+    whole_frame: bool,
+) -> None:
+    """Render one width run's bands into `buf` (the run's own width): the
+    background per band, then its sprite passes. `whole_frame` means the run is
+    the whole frame, whose single sprite pass then covers every scanline."""
+    # Each pass is handed its band's (or SAT segment's) registers; the chip's own
+    # registers and palette are never swapped. The palette needs no per-band
+    # handling here at all: the renderers emit palette indices, and to_rgb24
+    # applies each band's palette from the register-write log.
+    for y0, y1, band_regs, _ in run:
+        _render_pass_range(vdp, band_regs, st, buf, y0, min(y1, full_h), draw_sprites=False)
+
+    # Sprites are evaluated in as few passes as possible: one per distinct sprite
+    # attribute table (R#5/R#11), using the registers of the largest band sharing
+    # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to
+    # split; it is applied per scanline within a pass (row_vscroll).
+    #
+    # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
+    # regions read *different* SAT buffers, used for sprite multiplexing /
+    # "sprite doubler" (a second set of 32 sprites in the lower half). There
+    # one sprite pass per SAT region — each clipped to its scanline span — is
+    # required. Consecutive bands sharing a SAT base are merged so an ordinary
+    # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
+    # only changed mid-active-display for this purpose, so keying on it does
+    # not affect non-multiplexed games. The merge runs within one width run, so a
+    # pass never spans a width change.
     sat_segments: list[_SatSegment] = []
-    for y0, y1, band_regs, _ in bands:
+    for y0, y1, band_regs, _ in run:
         bh = y1 - y0
         if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
             seg = sat_segments[-1]
@@ -466,18 +529,21 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
         else:
             sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
 
-    if len(sat_segments) <= 1:
+    if len(sat_segments) == 1 and whole_frame:
         # One SAT for the whole frame → single pass (main band regs); per-line
         # row_vscroll / row_spd handle any R#23 / SPD split within it.
-        _render_sprites_for_mode(vdp, main_regs, st, out, 0, full_h, row_vscroll, row_spd)
+        _render_sprites_for_mode(
+            vdp, sat_segments[0].regs, st, buf, 0, full_h, row_vscroll, row_spd
+        )
     else:
         for seg in sat_segments:
             _render_sprites_for_mode(
-                vdp, seg.regs, st, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
+                vdp, seg.regs, st, buf, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
             )
 
-    _update_field_parity(vdp, st)
-    return out
+
+def _sat_key(regs: list[int]) -> tuple[int, int]:
+    return (regs[5], regs[11] & 0x03)
 
 
 def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
