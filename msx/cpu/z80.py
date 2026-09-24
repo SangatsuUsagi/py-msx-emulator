@@ -90,6 +90,12 @@ class Z80:
         self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
         return b
 
+    def _inc_r(self) -> None:
+        """Refresh R for an M1 cycle with no opcode fetch (interrupt
+        acknowledge, halted NOP): low 7 bits increment, bit 7 kept."""
+        r = self.registers.R
+        self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
+
     def _fetch_word(self) -> int:
         lo = self._fetch()
         hi = self._fetch()
@@ -118,6 +124,7 @@ class Z80:
             # can restore it; only IFF1 is cleared during the handler.
             self.iff2 = self.iff1
             self.iff1 = False
+            self._inc_r()
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
             return 11
@@ -132,6 +139,8 @@ class Z80:
             self.halted = False
             self.iff1 = False
             self.iff2 = False
+            # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).
+            self._inc_r()
             if self.im == 0 or self.im == 1:
                 # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
@@ -150,7 +159,9 @@ class Z80:
         self.ei_pending = False
 
         if self.halted:
-            # A halted CPU keeps executing internal NOPs, each an M1 cycle.
+            # A halted CPU keeps executing internal NOPs, each an M1 cycle
+            # that refreshes R.
+            self._inc_r()
             return 4 + self.m1_wait_states
 
         r = self.registers

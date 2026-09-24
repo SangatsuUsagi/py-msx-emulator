@@ -885,6 +885,9 @@ class V9938:
         dst_ext = bool(arg & _ARG_MXD)  # destination in (absent) expansion RAM
 
         self._cmd_active = False
+        # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
+        # middle of this command (tick() only runs while a command is active).
+        self._tr_delay = 0
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
         # Commands are only defined in the bitmap modes; anywhere else the
@@ -893,7 +896,6 @@ class V9938:
         if cmd == _CMD_ABRT or cmd < _CMD_POINT or not _is_command_mode(self.regs[0]):
             self._cmd_code = _CMD_ABRT
             self._cmd_remaining = 0
-            self._tr_delay = 0
             return
 
         if cmd == _CMD_POINT:
