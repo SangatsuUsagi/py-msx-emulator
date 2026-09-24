@@ -55,15 +55,23 @@ def test_directly_constructed_machine_defaults_to_ntsc() -> None:
     assert _target_fps_for(machine) == 60.0
 
 
-def test_machine_spec_defaults_to_ntsc_timing() -> None:
-    # Dataclass field defaults (a spec built without a machine YAML).
-    defaults = {f: getattr(MachineSpec, f) for f in
-                ("video_standard", "cycles_per_frame", "lines_per_frame")}
-    assert defaults == {
-        "video_standard": VideoStandard.NTSC,
-        "cycles_per_frame": 59_736,
-        "lines_per_frame": 262,
-    }
+def test_machine_spec_defaults_to_ntsc() -> None:
+    # Dataclass field default (a spec built without a machine YAML).
+    assert MachineSpec.video_standard is VideoStandard.NTSC
+
+
+@pytest.mark.parametrize(
+    ("standard", "cycles", "lines"),
+    [(VideoStandard.NTSC, 59_736, 262), (VideoStandard.PAL, 71_364, 313)],
+)
+def test_timing_derives_from_the_video_standard(standard, cycles, lines) -> None:
+    assert (standard.cycles_per_frame, standard.lines_per_frame) == (cycles, lines)
+    parts = make_machine(b"\x00" * 0x8000)
+    machine = Machine(
+        cpu=parts.cpu, vdp=parts.vdp, memory=parts.memory, io=parts.io, psg=parts.psg,
+        video_standard=standard,
+    )
+    assert (machine.cycles_per_frame, machine.lines_per_frame) == (cycles, lines)
 
 
 @pytest.mark.parametrize("factory", ["msx1", "msx2"])

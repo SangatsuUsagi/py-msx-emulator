@@ -635,8 +635,8 @@ def test_reset_restores_registers_status_palette_and_address_state() -> None:
     vdp.status = 0xFF
     vdp.palette = [0x1FF] * 16
     vdp.addr = 0x12345
-    vdp.latch = 0x55
     vdp._first_byte = 0x33
+    vdp._ctrl_pending = True
     vdp._pal_pending = True
     vdp.read_buf = 0x99
     vdp.irq = True

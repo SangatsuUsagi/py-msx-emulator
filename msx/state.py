@@ -13,12 +13,14 @@ import os
 import re
 import sys
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from msx.mapper import MapperKind
-from msx.vdp.v9938 import V9938
+from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
+from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -160,7 +162,7 @@ class MachineSnapshot:
     # SCC (None when absent)
     scc_state: dict[str, object] | None
     # MSX2-only (None for MSX1)
-    vdp9938: dict[str, object] | None = None  # V9938.snapshot_state()
+    vdp9938: V9938State | None = None  # V9938.snapshot_state()
     ram_mapper_ram: bytearray | None = None
     ram_mapper_banks: list[int] | None = None
     sub_slot_reg: int | None = None
@@ -220,7 +222,7 @@ class _MachineSnapshotFields(TypedDict):
     psg_latch: int
     psg_synth: dict[str, object]
     scc_state: dict[str, object] | None
-    vdp9938: dict[str, object] | None
+    vdp9938: V9938State | None
     ram_mapper_ram: bytearray | None
     ram_mapper_banks: list[int] | None
     sub_slot_reg: int | None
@@ -398,10 +400,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     vdp_addr = machine.vdp.addr
     vdp_read_buf = machine.vdp.read_buf
     if vdp9938 is not None:
-        # Plain JSON-able dict; V9938.restore_state() validates it on load.
-        vdp9938_state: dict[str, object] | None = cast(
-            dict[str, object], vdp9938.snapshot_state()
-        )
+        # Plain JSON-able dict; load_state validates it with parse_v9938_state().
+        vdp9938_state: V9938State | None = vdp9938.snapshot_state()
         # An MSX2 machine may have no RAM mapper; skip those fields when absent.
         rm = machine.memory.ram_mapper
         ram_mapper_ram: bytearray | None = bytearray(rm.ram) if rm is not None else None
@@ -463,6 +463,47 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     )
 
 
+def _check_vdp_latch(vdp_latch: object) -> None:
+    """Reject a common `vdp_latch` that is neither None nor a byte."""
+    if vdp_latch is None:
+        return
+    if isinstance(vdp_latch, bool) or not isinstance(vdp_latch, int) or not 0 <= vdp_latch <= 0xFF:
+        raise StateLoadError(
+            "vdp", ValueError(f"vdp_latch must be None or an int in [0, 255], got {vdp_latch!r}")
+        )
+
+
+def _check_v9938_latch_agrees(vdp_latch: int | None, state: V9938State) -> None:
+    """The common `vdp_latch` is the V9938 latch's port-0x99 view; reject a
+    file where the two disagree instead of letting restore order pick one."""
+    expected = state["first_byte"] if state["control_pending"] else None
+    if vdp_latch != expected:
+        raise StateLoadError(
+            "vdp9938",
+            ValueError(f"vdp_latch {vdp_latch!r} disagrees with the V9938 latch ({expected!r})"),
+        )
+
+
+def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
+    """Refuse a file whose top-level keys are not MachineSnapshot's: an
+    unknown key, or a missing key that has no default."""
+    known: set[str] = set()
+    missing: list[str] = []
+    for f in dataclass_fields(MachineSnapshot):
+        known.add(f.name)
+        if f.name not in data and f.default is MISSING and f.default_factory is MISSING:
+            missing.append(f.name)
+    unknown: list[str] = []
+    for key in data:
+        if key not in known:
+            unknown.append(key)
+    if unknown or missing:
+        raise ValueError(
+            f"incompatible state file layout ({resolved}): "
+            f"unknown keys {sorted(unknown)}, missing keys {sorted(missing)}"
+        )
+
+
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
@@ -476,9 +517,12 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
-    if vdp9938 is not None and snap.vdp9938 is None:
-        # Checked before anything is restored, like the other shape checks.
-        raise StateLoadError("vdp9938", ValueError("MSX2 snapshot has no vdp9938 state"))
+    # The latch checks run before anything is restored, like the other shape checks.
+    _check_vdp_latch(snap.vdp_latch)
+    if vdp9938 is not None:
+        if snap.vdp9938 is None:
+            raise StateLoadError("vdp9938", ValueError("MSX2 snapshot has no vdp9938 state"))
+        _check_v9938_latch_agrees(snap.vdp_latch, snap.vdp9938)
     mapper = machine.memory._mapper
     if mapper.kind != snap.mapper_kind:
         raise ValueError(
@@ -513,14 +557,15 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.regs[:] = snap.vdp_regs
     machine.vdp.status = snap.vdp_status
     machine.vdp.frame_count = snap.vdp_frame_count
-    # Common VDP address/latch state — identical field names on both VDP types.
-    machine.vdp.latch = snap.vdp_latch
+    # Common VDP address state — identical field names on both VDP types. The
+    # V9938's port latch is restored with the rest of its own state.
     machine.vdp.addr = snap.vdp_addr
     machine.vdp.read_buf = snap.vdp_read_buf
+    if isinstance(machine.vdp, VDP):
+        machine.vdp.latch = snap.vdp_latch
     if vdp9938 is not None:
-        vdp9938_state = snap.vdp9938
-        assert vdp9938_state is not None  # checked above, before any restore
-        _restore_producer("vdp9938", lambda: vdp9938.restore_state(vdp9938_state))
+        assert snap.vdp9938 is not None  # checked above, before any restore
+        vdp9938.restore_state(snap.vdp9938)
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
             rm.ram[:] = snap.ram_mapper_ram
@@ -664,10 +709,13 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
 
-    fields = _from_jsonable(data)
-    # Validate the version before expanding fields into MachineSnapshot, so a
-    # mismatch yields a clear error rather than a TypeError on unexpected keys.
-    version = fields.get("format_version") if isinstance(fields, dict) else None
+    decoded = _from_jsonable(data)
+    if not isinstance(decoded, dict):
+        raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
+    fields = cast(dict[str, object], decoded)
+    # Validate the version before checking the layout, so a file of another
+    # version is reported as such rather than as unknown/missing keys.
+    version = fields.get("format_version")
     if version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {version}, "
@@ -678,27 +726,28 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
     # values serialize directly, see save_state); convert them back to
     # MapperKind members here so _restore_snapshot's identity checks and
     # any later `.value` access see real enum members, not bare strings.
-    if isinstance(fields, dict):
-        if "mapper_kind" in fields:
-            fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
-        if "mapper2_kind" in fields:
-            fields["mapper2_kind"] = MapperKind(fields["mapper2_kind"])
-        subslot_kinds = fields.get("mapper2_subslot_kinds")
-        if isinstance(subslot_kinds, list):
-            fields["mapper2_subslot_kinds"] = [
-                MapperKind(k) if k is not None else None for k in subslot_kinds
-            ]
-        subslot1_kinds = fields.get("mapper1_subslot_kinds")
-        if isinstance(subslot1_kinds, list):
-            fields["mapper1_subslot_kinds"] = [
-                MapperKind(k) if k is not None else None for k in subslot1_kinds
-            ]
+    if "mapper_kind" in fields:
+        fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
+    if "mapper2_kind" in fields:
+        fields["mapper2_kind"] = MapperKind(fields["mapper2_kind"])
+    subslot_kinds = fields.get("mapper2_subslot_kinds")
+    if isinstance(subslot_kinds, list):
+        fields["mapper2_subslot_kinds"] = [
+            MapperKind(k) if k is not None else None for k in subslot_kinds
+        ]
+    subslot1_kinds = fields.get("mapper1_subslot_kinds")
+    if isinstance(subslot1_kinds, list):
+        fields["mapper1_subslot_kinds"] = [
+            MapperKind(k) if k is not None else None for k in subslot1_kinds
+        ]
+    _check_snapshot_keys(fields, resolved)
+    raw_vdp9938 = fields.get("vdp9938")
+    if raw_vdp9938 is not None:
+        try:
+            fields["vdp9938"] = parse_v9938_state(raw_vdp9938)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StateLoadError("vdp9938", exc) from exc
     typed_fields = cast(_MachineSnapshotFields, fields)
-    try:
-        snap = MachineSnapshot(**typed_fields)
-    except TypeError as exc:
-        # Same version, unknown or missing keys: an earlier layout of this
-        # version (e.g. the flat pre-vdp9938 version-14 fields).
-        raise ValueError(f"incompatible state file layout ({resolved}): {exc}") from exc
+    snap = MachineSnapshot(**typed_fields)
     _restore_snapshot(machine, snap)
     print(f"state loaded: {resolved}")

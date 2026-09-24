@@ -341,12 +341,12 @@ def test_msx1_roundtrip_unaffected(saves_dir):
 
 def test_msx2_roundtrip_vdp_port_state(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
-    machine.vdp.latch = 0x56
+    machine.vdp.write_port(0x99, 0x56)  # control pair pending
     machine.vdp.addr = 0x1A256          # 17-bit pointer
     machine.vdp.read_buf = 0xAB
     save_state(machine, _RGB_MSX2, "test")
 
-    machine.vdp.latch = None
+    machine.vdp.read_port(0x99)         # drops the pending pair
     machine.vdp.addr = 0
     machine.vdp.read_buf = 0
     load_state(machine)
@@ -620,12 +620,12 @@ def test_malformed_vdp9938_state_leaves_vdp_untouched(saves_dir):
     assert machine.vdp._status1 == 0x01            # validated before any write
 
 
-def test_earlier_v14_flat_layout_is_rejected_cleanly(saves_dir):
+def test_other_layout_of_the_same_version_is_rejected_cleanly(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
     data = _load_state_json(state_path)
     del data["vdp9938"]
-    data["vdp_status1"] = 0                       # a key from the earlier layout
+    data["vdp_status1"] = 0                       # a key this layout does not define
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -682,8 +682,8 @@ def test_msx2_roundtrip_without_ram_mapper(saves_dir):
 
 
 def test_load_wrong_format_version_raises_before_expand(saves_dir):
-    # A wrong format_version must raise ValueError (validated before the fields
-    # are expanded into MachineSnapshot, so no TypeError on unexpected keys).
+    # A wrong format_version is reported as such (validated before the layout
+    # check, so it is not reported as unknown/missing keys).
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
     _rewrite_state_version(state_path, 999)

@@ -26,10 +26,21 @@ PAL_LINES_PER_FRAME = 313
 
 
 class VideoStandard(enum.Enum):
-    """Video standard of a machine; values are the machine-YAML spellings."""
+    """Video standard of a machine; values are the machine-YAML spellings.
+    The frame timing is derived from it, so the two cannot disagree."""
 
     NTSC = "ntsc"
     PAL = "pal"
+
+    @property
+    def lines_per_frame(self) -> int:
+        if self is VideoStandard.PAL:
+            return PAL_LINES_PER_FRAME
+        return NTSC_LINES_PER_FRAME
+
+    @property
+    def cycles_per_frame(self) -> int:
+        return CYCLES_PER_LINE * self.lines_per_frame
 
 
 def pad_rows(native_h: int) -> int:

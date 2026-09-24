@@ -16,7 +16,7 @@ from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
-from msx.vdp._geometry import CYCLES_PER_LINE, NTSC_LINES_PER_FRAME, VideoStandard
+from msx.vdp._geometry import VideoStandard
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from msx.fmpac import FmPac
     from msx.rtc import RTC
 
-LINES_PER_FRAME: int = NTSC_LINES_PER_FRAME  # NTSC default
-CYCLES_PER_FRAME: int = CYCLES_PER_LINE * LINES_PER_FRAME
+LINES_PER_FRAME: int = VideoStandard.NTSC.lines_per_frame  # NTSC default
+CYCLES_PER_FRAME: int = VideoStandard.NTSC.cycles_per_frame
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
@@ -92,8 +92,6 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
-    cycles_per_frame: int = CYCLES_PER_FRAME
-    lines_per_frame: int = LINES_PER_FRAME
     video_standard: VideoStandard = VideoStandard.NTSC
     # Free-running T-state clock, never reset.
     #
@@ -148,6 +146,16 @@ class Machine:
     # One-shot run-to-frame breakpoint (debugger 'gf'); checked once per
     # run_frame() call, not per instruction — see set_frame_breakpoint.
     _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
+
+    @property
+    def cycles_per_frame(self) -> int:
+        """Z80 T-states per frame, from the video standard."""
+        return self.video_standard.cycles_per_frame
+
+    @property
+    def lines_per_frame(self) -> int:
+        """Scanlines per frame, from the video standard."""
+        return self.video_standard.lines_per_frame
 
     def __post_init__(self) -> None:
         # PORT-NOTE: this wires the CPU's memory/IO bus by reassigning bound
@@ -461,9 +469,7 @@ class Machine:
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
         # begin_scanline(line) runs *after* that line's cycles, so the
         # pre-render segment is the half-open range [0, vblank_start_line + 1).
-        # min() guards a lines_per_frame shorter than the display (synthetic
-        # timings).
-        vblank_split = min(self.vdp.vblank_start_line + 1, lpf)
+        vblank_split = self.vdp.vblank_start_line + 1
 
         total = self._run_lines(vdp9938, first_line=0, end_line=vblank_split, total=0)
         cut_short = self._pause_requested or self._frame_interrupted
@@ -545,7 +551,10 @@ class Machine:
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
-        vdp = self.vdp  # either chip; hot-loop local for the per-instruction .irq read
+        # Either chip; hot-loop local for the per-instruction .irq read. When
+        # vdp9938 is not None it is this same object, passed only to gate the
+        # V9938 per-scanline hooks.
+        vdp = self.vdp
         line_cycles = 0
         try:
             for line in range(first_line, end_line):
@@ -673,7 +682,10 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
-        vdp = self.vdp  # either chip; hot-loop local for the per-instruction .irq read
+        # Either chip; hot-loop local for the per-instruction .irq read. When
+        # vdp9938 is not None it is this same object, passed only to gate the
+        # V9938 per-scanline hooks.
+        vdp = self.vdp
         try:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf

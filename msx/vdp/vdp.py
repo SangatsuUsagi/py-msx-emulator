@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Protocol
 
+from msx.vdp import renderer
+
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -32,6 +34,8 @@ class VdpDevice(Protocol):
     surface to translate rather than reverse-engineering it from every call
     site. `latch`/`addr`/`read_buf`/`frame_count` are plain fields on `VDP`
     and properties on `V9938`; both satisfy this Protocol identically.
+    `latch` is read-only here: the V9938's latch is one byte plus two
+    pending flags, so it is restored through `V9938.restore_state()`.
 
     Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
     `debug_disable_sprites`) too -- both classes declare these identically
@@ -60,7 +64,6 @@ class VdpDevice(Protocol):
     vram: bytearray
     regs: list[int]
     status: int
-    latch: int | None
     addr: int
     read_buf: int
     irq: bool
@@ -69,6 +72,8 @@ class VdpDevice(Protocol):
     _get_cycle: Callable[[], int] | None
     debug_disable_sprites: bool
 
+    @property
+    def latch(self) -> int | None: ...
     @property
     def frame_count(self) -> int: ...
     @frame_count.setter
@@ -192,16 +197,15 @@ class VDP:
     irq: bool = False
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    # PORT-NOTE: these Callable hooks (the tracer / _get_pc / _get_cycle
-    #   below) are stored as Python closures assigned at
-    #   wiring time.
+    # PORT-NOTE: these diagnostic hooks (the tracer object and the
+    #   _get_pc / _get_cycle closures below) are assigned at wiring time.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
     #   resolved once at construction, not per-call function pointers.
     # C++ equivalent: std::function members or a virtual interface pointer,
     #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called at
-    #   most once per interrupt/frame, not per VRAM access; the closure
-    #   indirection costs nothing measurable here.
+    # Kept as-is here because: resolved once at wiring time and called only
+    #   while tracing is enabled (once per control-port write), never on the
+    #   data-port path; the indirection costs nothing when tracing is off.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
@@ -264,18 +268,10 @@ class VDP:
         self.update_irq()
 
     def render_preview(self) -> bytearray:
-        """Render the current frame without changing emulated state.
-
-        A render updates the sprite status in S#0, so it is saved and restored
-        around the call (debugger / RPC screenshots and state thumbnails).
-        """
-        from msx.vdp.renderer import render_frame  # renderer imports this module
-
-        saved_status = self.status
-        try:
-            return render_frame(self)
-        finally:
-            self.status = saved_status
+        """Render the current frame without changing emulated state: the
+        sprite status a render produces is discarded (debugger / RPC
+        screenshots and state thumbnails)."""
+        return renderer.render_preview(self)
 
     def write_port(self, port: int, value: int) -> None:
         """Dispatch a TMS9918A VDP port write.

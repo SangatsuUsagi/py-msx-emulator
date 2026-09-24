@@ -275,9 +275,11 @@ class V9938CmdEngineState(TypedDict):
 
 class V9938State(TypedDict):
     """Save-state schema for V9938.snapshot_state()/restore_state(): every
-    V9938-only field. VRAM, R#0-R#27, S#0, the port-0x99 pending byte, the VRAM
-    address and read-ahead buffer are shared with the TMS9918A and saved by
-    msx/state.py through the common VdpDevice fields."""
+    V9938-only field. VRAM, R#0-R#27, S#0, the VRAM address and read-ahead
+    buffer are shared with the TMS9918A and saved by msx/state.py through the
+    common VdpDevice fields. The port latch (`first_byte` and both pending
+    flags) is complete here; the common `vdp_latch` is only its port-0x99
+    view, and msx/state.py checks the two agree."""
 
     palette: list[int]
     cmd_regs: list[int]
@@ -290,18 +292,32 @@ class V9938State(TypedDict):
     collision_x: int
     collision_y: int
     first_byte: int
+    control_pending: bool
     palette_pending: bool
+
+
+# The timed-command countdowns are i32 in a port; a saved value must fit.
+_I32_MIN: int = -(1 << 31)
+_I32_MAX: int = (1 << 31) - 1
+
+_STATE_KEYS: frozenset[str] = frozenset(V9938State.__annotations__)
+_CMD_ENGINE_KEYS: frozenset[str] = frozenset(V9938CmdEngineState.__annotations__)
+
+
+def _check_int(value: object, label: str, lo: int, hi: int) -> int:
+    """Return `value` if it is an int (not a bool) in [lo, hi], else raise."""
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ValueError(f"{label} must be an int in [{lo}, {hi}], got {value!r}")
+    return value
 
 
 def _state_int(state: dict[str, object], key: str, lo: int, hi: int) -> int:
     """Read an int field of a snapshot dict, rejecting wrong types and ranges."""
-    value = state[key]
-    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
-        raise ValueError(f"{key} must be an int in [{lo}, {hi}], got {value!r}")
-    return value
+    return _check_int(state[key], key, lo, hi)
 
 
 def _state_bool(state: dict[str, object], key: str) -> bool:
+    """Read a bool field of a snapshot dict, rejecting any other type."""
     value = state[key]
     if not isinstance(value, bool):
         raise ValueError(f"{key} must be a bool, got {value!r}")
@@ -311,15 +327,74 @@ def _state_bool(state: dict[str, object], key: str) -> bool:
 def _state_int_list(
     state: dict[str, object], key: str, length: int, lo: int, hi: int
 ) -> list[int]:
+    """Read a fixed-length list of ints of a snapshot dict."""
     value = state[key]
     if not isinstance(value, list) or len(value) != length:
         raise ValueError(f"{key} must be a list of {length} ints, got {value!r}")
     result: list[int] = []
     for item in value:
-        if isinstance(item, bool) or not isinstance(item, int) or not lo <= item <= hi:
-            raise ValueError(f"{key} entries must be ints in [{lo}, {hi}], got {item!r}")
-        result.append(item)
+        result.append(_check_int(item, f"{key} entry", lo, hi))
     return result
+
+
+def _state_object(value: object, label: str, keys: frozenset[str]) -> dict[str, object]:
+    """Return `value` as a snapshot dict holding exactly `keys`, else raise."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object, got {value!r}")
+    unknown: list[str] = []
+    for key in value:
+        if key not in keys:
+            unknown.append(str(key))
+    if unknown:
+        raise ValueError(f"{label} has unknown keys {sorted(unknown)}")
+    return cast(dict[str, object], value)
+
+
+def parse_v9938_state(obj: object) -> V9938State:
+    """Validate a JSON-decoded `vdp9938` object into a V9938State.
+
+    Every value's type and range is checked, missing keys raise KeyError and
+    unknown keys ValueError. The ranges are the widths the chip and command
+    engine produce (coordinates: SX/DX 9 bits, SY/DY 10 bits; clipped counts
+    NX <= 512 dots, NY <= 1024 lines).
+    """
+    state = _state_object(obj, "vdp9938", _STATE_KEYS)
+    engine = _state_object(state["cmd_engine"], "cmd_engine", _CMD_ENGINE_KEYS)
+    cmd_engine: V9938CmdEngineState = {
+        "active": _state_bool(engine, "active"),
+        "transfer": _state_bool(engine, "transfer"),
+        "code": _state_int(engine, "code", 0, 0x0F),
+        "log": _state_int(engine, "log", 0, 0x0F),
+        "sx": _state_int(engine, "sx", 0, 0x1FF),
+        "sy": _state_int(engine, "sy", 0, 0x3FF),
+        "dx": _state_int(engine, "dx", 0, 0x1FF),
+        "dy": _state_int(engine, "dy", 0, 0x3FF),
+        "nx": _state_int(engine, "nx", 0, 0x200),
+        "ny": _state_int(engine, "ny", 0, 0x400),
+        "x": _state_int(engine, "x", 0, 0x200),
+        "y": _state_int(engine, "y", 0, 0x400),
+        "xstep": _state_int(engine, "xstep", -1, 1),
+        "ystep": _state_int(engine, "ystep", -1, 1),
+        "bpl": _state_int(engine, "bpl", 1, 256),
+        "ppb": _state_int(engine, "ppb", 1, 8),
+        "bpp": _state_int(engine, "bpp", 1, 8),
+        "tr_delay": _state_int(engine, "tr_delay", _I32_MIN, _I32_MAX),
+    }
+    return {
+        "palette": _state_int_list(state, "palette", 16, 0, 0x1FF),
+        "cmd_regs": _state_int_list(state, "cmd_regs", 15, 0, 0xFF),
+        "status1": _state_int(state, "status1", 0, 0xFF),
+        "status2": _state_int(state, "status2", 0, 0xFF),
+        "status8": _state_int(state, "status8", 0, 0xFF),
+        "status9": _state_int(state, "status9", 0, 0xFF),
+        "cmd_remaining": _state_int(state, "cmd_remaining", _I32_MIN, _I32_MAX),
+        "cmd_engine": cmd_engine,
+        "collision_x": _state_int(state, "collision_x", 0, 0x3FF),
+        "collision_y": _state_int(state, "collision_y", 0, 0x3FF),
+        "first_byte": _state_int(state, "first_byte", 0, 0xFF),
+        "control_pending": _state_bool(state, "control_pending"),
+        "palette_pending": _state_bool(state, "palette_pending"),
+    }
 
 
 @dataclass
@@ -333,13 +408,17 @@ class V9938:
       (``(r << 6) | (g << 3) | b``). Values that are NOT a hardware-register
       width and must be typed signed in a port: screen / sprite / command
       coordinates that can go negative before clipping (e.g. ``x_byte -= 32``,
-      ``_cmd_x`` / ``_cmd_y``, the Bresenham error terms); the command T-state
-      countdown ``_cmd_remaining``, decremented below zero and tested ``<= 0``.
+      the Bresenham error terms); the command T-state countdowns
+      ``_cmd_remaining`` / ``_tr_delay``, decremented below zero and tested
+      ``<= 0``. The command engine's origins, clipped counts and ``_cmd_x`` /
+      ``_cmd_y`` cursors never go negative (at most 10 bits + 1; see
+      parse_v9938_state's ranges).
     Rust equivalent: u8 fields per above; _addr as u32 masked to 17 bits;
-      signed coordinates/error terms as i16; _cmd_remaining as i32.
+      command origins/counts/cursors as u16; signed coordinates/error terms as
+      i16; the countdowns as i32.
     C++ equivalent: uint8_t fields per above; _addr as uint32_t masked to 17
-      bits; signed coordinates/error terms as int16_t; _cmd_remaining as
-      int32_t.
+      bits; command origins/counts/cursors as uint16_t; signed
+      coordinates/error terms as int16_t; the countdowns as int32_t.
     Kept as-is here because: semantic necessity, not performance — consistent
       with the CPU Registers width contract (msx/cpu/registers.py); a port
       must type each field per this contract since Python's plain int hides
@@ -447,16 +526,9 @@ class V9938:
     # code (machine, state save/load) can use the same names for both VDP types.
     @property
     def latch(self) -> int | None:
-        """Pending port-0x99 first byte, or None."""
+        """Pending port-0x99 first byte, or None. Read-only: the latch is
+        written by the ports and by restore_state()."""
         return self._first_byte if self._ctrl_pending else None
-
-    @latch.setter
-    def latch(self, value: int | None) -> None:
-        if value is None:
-            self._ctrl_pending = False
-        else:
-            self._first_byte = value & 0xFF
-            self._ctrl_pending = True
 
     @property
     def addr(self) -> int:
@@ -565,15 +637,6 @@ class V9938:
             self._tr_delay = 0
             self._status2 &= ~_S2_CE
 
-    def _reset_cmd_progress(self) -> None:
-        """Idle the command engine's execution state (reset() and nothing else)."""
-        self._cmd_active = False
-        self._cmd_code = 0
-        self._cmd_transfer = False
-        self._tr_delay = 0
-        self._cmd_x = 0
-        self._cmd_y = 0
-
     def snapshot_state(self) -> V9938State:
         """Capture every V9938-only field for a save state (see V9938State)."""
         engine: V9938CmdEngineState = {
@@ -599,79 +662,45 @@ class V9938:
             "collision_x": self.collision_x,
             "collision_y": self.collision_y,
             "first_byte": self._first_byte,
+            "control_pending": self._ctrl_pending,
             "palette_pending": self._pal_pending,
         }
 
-    def restore_state(self, state: dict[str, object]) -> None:
-        """Reinstate snapshot_state() output after validating every field.
-
-        Raises ValueError/KeyError/TypeError on a malformed object; nothing is
-        written until the whole object has validated. The caller re-derives the
-        interrupt level afterwards (S#1 carries FH).
-        """
-        palette = _state_int_list(state, "palette", 16, 0, 0x1FF)
-        cmd_regs = _state_int_list(state, "cmd_regs", 15, 0, 0xFF)
-        status1 = _state_int(state, "status1", 0, 0xFF)
-        status2 = _state_int(state, "status2", 0, 0xFF)
-        status8 = _state_int(state, "status8", 0, 0xFF)
-        status9 = _state_int(state, "status9", 0, 0xFF)
-        cmd_remaining = _state_int(state, "cmd_remaining", -(1 << 31), (1 << 31) - 1)
-        collision_x = _state_int(state, "collision_x", 0, 0x3FF)
-        collision_y = _state_int(state, "collision_y", 0, 0x3FF)
-        first_byte = _state_int(state, "first_byte", 0, 0xFF)
-        palette_pending = _state_bool(state, "palette_pending")
-        engine_obj = state["cmd_engine"]
-        if not isinstance(engine_obj, dict):
-            raise ValueError(f"cmd_engine must be an object, got {engine_obj!r}")
-        engine = cast(dict[str, object], engine_obj)
-        active = _state_bool(engine, "active")
-        transfer = _state_bool(engine, "transfer")
-        code = _state_int(engine, "code", 0, 0x0F)
-        log = _state_int(engine, "log", 0, 0x0F)
-        sx = _state_int(engine, "sx", 0, 0xFFFF)
-        sy = _state_int(engine, "sy", 0, 0xFFFF)
-        dx = _state_int(engine, "dx", 0, 0xFFFF)
-        dy = _state_int(engine, "dy", 0, 0xFFFF)
-        nx = _state_int(engine, "nx", 0, 0xFFFF)
-        ny = _state_int(engine, "ny", 0, 0xFFFF)
-        cx = _state_int(engine, "x", 0, 0xFFFF)
-        cy = _state_int(engine, "y", 0, 0xFFFF)
-        xstep = _state_int(engine, "xstep", -1, 1)
-        ystep = _state_int(engine, "ystep", -1, 1)
-        bpl = _state_int(engine, "bpl", 1, 256)
-        ppb = _state_int(engine, "ppb", 1, 8)
-        bpp = _state_int(engine, "bpp", 1, 8)
-        tr_delay = _state_int(engine, "tr_delay", -(1 << 31), (1 << 31) - 1)
-
-        self.palette[:] = palette
-        self.cmd_regs[:] = cmd_regs
-        self._status1 = status1
-        self._status2 = status2
-        self._status8 = status8
-        self._status9 = status9
-        self._cmd_remaining = cmd_remaining
-        self.collision_x = collision_x
-        self.collision_y = collision_y
-        self._first_byte = first_byte
-        self._pal_pending = palette_pending
-        self._cmd_active = active
-        self._cmd_transfer = transfer
-        self._cmd_code = code
-        self._cmd_log = log
-        self._cmd_sx = sx
-        self._cmd_sy = sy
-        self._cmd_dx = dx
-        self._cmd_dy = dy
-        self._cmd_nx = nx
-        self._cmd_ny = ny
-        self._cmd_x = cx
-        self._cmd_y = cy
-        self._cmd_xstep = xstep
-        self._cmd_ystep = ystep
-        self._cmd_bpl = bpl
-        self._cmd_ppb = ppb
-        self._cmd_bpp = bpp
-        self._tr_delay = tr_delay
+    def restore_state(self, state: V9938State) -> None:
+        """Reinstate snapshot_state() output (validate a file's object with
+        parse_v9938_state() first). The caller re-derives the interrupt level
+        afterwards (S#1 carries FH)."""
+        engine = state["cmd_engine"]
+        self.palette[:] = state["palette"]
+        self.cmd_regs[:] = state["cmd_regs"]
+        self._status1 = state["status1"]
+        self._status2 = state["status2"]
+        self._status8 = state["status8"]
+        self._status9 = state["status9"]
+        self._cmd_remaining = state["cmd_remaining"]
+        self.collision_x = state["collision_x"]
+        self.collision_y = state["collision_y"]
+        self._first_byte = state["first_byte"]
+        self._ctrl_pending = state["control_pending"]
+        self._pal_pending = state["palette_pending"]
+        self._cmd_active = engine["active"]
+        self._cmd_transfer = engine["transfer"]
+        self._cmd_code = engine["code"]
+        self._cmd_log = engine["log"]
+        self._cmd_sx = engine["sx"]
+        self._cmd_sy = engine["sy"]
+        self._cmd_dx = engine["dx"]
+        self._cmd_dy = engine["dy"]
+        self._cmd_nx = engine["nx"]
+        self._cmd_ny = engine["ny"]
+        self._cmd_x = engine["x"]
+        self._cmd_y = engine["y"]
+        self._cmd_xstep = engine["xstep"]
+        self._cmd_ystep = engine["ystep"]
+        self._cmd_bpl = engine["bpl"]
+        self._cmd_ppb = engine["ppb"]
+        self._cmd_bpp = engine["bpp"]
+        self._tr_delay = engine["tr_delay"]
 
     @property
     def framebuffer_format(self) -> FramebufferFormat:
@@ -682,26 +711,12 @@ class V9938:
         return FramebufferFormat.GRB332 if is_g7 else FramebufferFormat.PALETTE_INDEX4
 
     def render_preview(self) -> bytearray:
-        """Render the current frame without changing emulated state.
-
-        A render updates the sprite status in S#0 (5S/9S, index, C), the
-        collision coordinates (S#3-S#6) and S#2's EO field bit; all are saved
-        and restored around the call (debugger / RPC screenshots and state
-        thumbnails).
-        """
+        """Render the current frame without changing emulated state: the
+        sprite status, collision coordinates and S#2 EO a render produces are
+        discarded (debugger / RPC screenshots and state thumbnails)."""
         from msx.vdp import v9938_renderer  # the renderer imports this module
 
-        saved_status = self.status
-        saved_collision_x = self.collision_x
-        saved_collision_y = self.collision_y
-        saved_status2 = self._status2
-        try:
-            return v9938_renderer.render_frame(self)
-        finally:
-            self.status = saved_status
-            self.collision_x = saved_collision_x
-            self.collision_y = saved_collision_y
-            self._status2 = saved_status2
+        return v9938_renderer.render_preview(self)
 
     def to_rgb24(self, src: bytearray) -> bytes:
         """Convert a palette-index / SCREEN 8 framebuffer to packed RGB24
@@ -724,7 +739,12 @@ class V9938:
         self.collision_x = 0
         self.collision_y = 0
         self._cmd_remaining = 0
-        self._reset_cmd_progress()
+        self._cmd_active = False
+        self._cmd_code = 0
+        self._cmd_transfer = False
+        self._tr_delay = 0
+        self._cmd_x = 0
+        self._cmd_y = 0
         self._addr = 0
         self._first_byte = 0
         self._ctrl_pending = False
