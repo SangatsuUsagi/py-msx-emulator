@@ -152,6 +152,12 @@ _TMS_CHANNELS: tuple[bytes, bytes, bytes] = _channel_tables_indexed(
 )
 
 
+
+# Implemented bits of R#0-R#7 (TI TMS9918A data manual §2.2: R#0 has only M3
+# and EXTVID, R#1 bit 2 is reserved, R#2/R#4/R#6 hold 4/3/3 address bits, R#5
+# 7); stored values are ANDed with these, as openMSX does for MSX1 VDPs.
+_REG_VALUE_MASKS = (0x03, 0xFB, 0x0F, 0xFF, 0x07, 0x7F, 0x07, 0xFF)
+
 @dataclass
 class VDP:
     """TMS9918A VDP for MSX1: 16 KB VRAM, 8 registers.
@@ -267,7 +273,7 @@ class VDP:
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
-                    self.regs[reg] = low
+                    self.regs[reg] = low & _REG_VALUE_MASKS[reg]
                     if reg == 1:
                         self._update_irq()
                     if self._logger is not None:

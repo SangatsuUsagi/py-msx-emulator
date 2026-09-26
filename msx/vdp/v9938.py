@@ -14,10 +14,28 @@ from typing import TYPE_CHECKING, Callable
 from msx.vdp.vdp import FramebufferFormat
 
 if TYPE_CHECKING:
+    from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
 
 _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
+# Implemented bits of control registers R#0-R#23 (V9938 data book register
+# layouts show the rest as 0; same values as openMSX's V99x8 masks). Stored
+# register values are ANDed with these; R#24-R#27 are not V9938 registers.
+_REG_VALUE_MASKS = (
+    0x7E, 0x7F, 0x7F, 0xFF, 0x3F, 0xFF, 0x3F, 0xFF,
+    0xFB, 0xBF, 0x07, 0x03, 0xFF, 0xFF, 0x07, 0x0F,
+    0x0F, 0xBF, 0xFF, 0xFF, 0x3F, 0x3F, 0x3F, 0xFF,
+)
+
+
+def _power_on_regs() -> list[int]:
+    """Control registers at power-on: all 0 except the colour-burst presets
+    R#21 = 0x3B and R#22 = 0x05 (V9938 data book, R#20-R#22)."""
+    regs = [0] * _NUM_REGS
+    regs[21] = 0x3B
+    regs[22] = 0x05
+    return regs
 
 
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
@@ -254,7 +272,7 @@ class V9938:
     """
 
     vram: bytearray = field(default_factory=lambda: bytearray(_VRAM_SIZE))
-    regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
+    regs: list[int] = field(default_factory=_power_on_regs)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
     # Observation seam for scanline timing (tests, tracing): called with the
@@ -272,6 +290,9 @@ class V9938:
     #   most once per interrupt/scanline, not per VRAM/command-engine access;
     #   the closure indirection costs nothing measurable here.
     tracer: Tracer | None = field(default=None, repr=False)
+    # --debug milestone logging (display enable / mode change), as on the
+    # TMS9918A; fed from both the port-0x99 and port-0x9B register paths.
+    _logger: DebugLogger | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     # Command engine
@@ -329,7 +350,7 @@ class V9938:
         default_factory=list, init=False, repr=False
     )
     _frame_start_regs: list[int] = field(
-        default_factory=lambda: [0] * _NUM_REGS, init=False, repr=False
+        default_factory=_power_on_regs, init=False, repr=False
     )
     _frame_start_palette: list[int] = field(
         default_factory=lambda: list(_MSX2_DEFAULT_PALETTE), init=False, repr=False
@@ -478,7 +499,7 @@ class V9938:
 
     def reset(self) -> None:
         """Restore power-on register/status/command-engine state (VRAM retained)."""
-        self.regs = [0] * _NUM_REGS
+        self.regs = _power_on_regs()
         self.status = 0
         self.palette = list(_MSX2_DEFAULT_PALETTE)
         self.cmd_regs = [0] * 15
@@ -629,9 +650,13 @@ class V9938:
             if value & 0x80:
                 reg = value & 0x3F
                 if reg < _NUM_REGS:
+                    if reg < len(_REG_VALUE_MASKS):
+                        low &= _REG_VALUE_MASKS[reg]
                     if reg == 0:
                         self._apply_r0_write(low)
                     self.regs[reg] = low
+                    if self._logger is not None:
+                        self._logger.on_vdp_reg_write(reg, low, self._frame_count)
                     if reg in _DISPLAY_REGS:
                         self._reg_write_log.append(_RegChange(self.display_line, reg, low))
                     if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
@@ -654,9 +679,13 @@ class V9938:
         ptr = self.regs[17] & 0x3F
         r17_before = self.regs[17]
         if ptr < _NUM_REGS:
+            if ptr < len(_REG_VALUE_MASKS):
+                value &= _REG_VALUE_MASKS[ptr]
             if ptr == 0:
                 self._apply_r0_write(value)
             self.regs[ptr] = value
+            if self._logger is not None:
+                self._logger.on_vdp_reg_write(ptr, value, self._frame_count)
             if ptr in _DISPLAY_REGS:
                 self._reg_write_log.append(_RegChange(self.display_line, ptr, value))
             if ptr <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line

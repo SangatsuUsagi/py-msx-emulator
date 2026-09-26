@@ -31,11 +31,18 @@ def _set_screen4(vdp: V9938) -> None:
     vdp.regs[0] = 0x04  # M4=bit2 only
 
 
-# R#5=0x70, R#11=0 → attr_reg = 0x70 << 7 = 0x3800.
-# V9938 sprite mode 2: R#5/R#11 → SAT base (512-byte aligned) = 0x3800;
-# colour table at SAT - 0x200 = 0x3600.
-_SAT_R5 = 0x70
-_SAT_BASE = 0x3800
+# R#5=0x77, R#11=0 -> SAT base (512-byte aligned, (R#5 & 0xFC) << 7) = 0x3A00.
+# The per-sprite colour table shares the SAT's own base-register window (see
+# _render_sprites_mode2's comment) at a colour-index expression whose bits
+# 9:7 are gated by R#5 bits 2:0 rather than simply relocated -- "colour table
+# = SAT - 0x200" is only hardware-accurate when R#5 bit 2 is 1 (so SAT's own
+# bit 9 is 1 and the subtraction doesn't borrow) and bits 1:0 are 1 (so sprite
+# indices 8-31 don't alias sprites 0-7's colour data via the low 7-8 bits of
+# sprite_idx*16). 0x77 sets all three -- the BIOS/every real ROM's convention
+# (this project's own real-ROM ports use e.g. R#5=0xF7) -- so every test in
+# this file using _SAT_R5/_SAT_BASE/_COL_BASE stays on the simple relationship.
+_SAT_R5 = 0x77
+_SAT_BASE = 0x3A00
 _COL_BASE = _SAT_BASE - 0x200
 
 
@@ -90,6 +97,39 @@ def test_sprite_mode2_colour_from_colour_table() -> None:
     buf = _active(vdp)
     # y=0 → y_top=1; sprite at scan line 1, col 0
     assert buf[1 * 256 + 0] == 6
+
+
+def test_sprite_mode2_colour_table_r5_low_bits_gate_not_relocate() -> None:
+    """R#5 bits 1:0 (base bits 8:7) GATE, not simply relocate, the low bits
+    of the per-sprite colour offset (sprite_idx*16 + line) -- found by an
+    allium weed pass (logs/msx-21-hb-f1xd-select-screen-text-missing.md).
+    With R#5 = 0x74 (bits 1:0 clear), sprite 8's offset (8*16=128, bit 7 set)
+    has that bit masked to 0 by the colour-table read, so sprite 8 reads the
+    SAME colour byte as sprite 0 (bit 7 already 0 there) -- not a distinct,
+    merely-relocated byte the way `col_base + i*16 + line` (no gating) would
+    give. Confirmed against openMSX's exact VDPVRAM addressing algorithm by a
+    200000-case brute-force simulation during development of this fix."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    # R#5 bits 7:2 = 0x77's own bits 7:2 (same sat_base = _SAT_BASE = 0x3A00
+    # as every other test here), but bits 1:0 cleared instead of set.
+    vdp.regs[5] = 0x74   # colour-table "high" part = 0x3800
+    vdp.regs[6] = 0x00   # SPG at 0x0000
+    vdp.vram[0] = 0x80   # pattern 0, row 0: leftmost bit set
+
+    _write_sat_entry(vdp, 0, y=0, x=0, pat=0)    # y_top=1
+    _write_sat_entry(vdp, 8, y=50, x=0, pat=0)   # y_top=51
+    _terminate_sat(vdp, after_idx=9)
+
+    # Sprite 0's colour entry (sprite_idx*16+line=0) lives at 0x3800.
+    vdp.vram[0x3800] = 6
+
+    buf = _active(vdp)
+    assert buf[1 * 256 + 0] == 6, "sprite 0 shows its own colour entry"
+    assert buf[51 * 256 + 0] == 6, (
+        "sprite 8 aliases sprite 0's colour entry (bit 7 gated to 0), "
+        "not left transparent by reading an uninitialised relocated byte"
+    )
 
 
 def test_screen4_graphic3_still_uses_sprite_mode2() -> None:
@@ -964,8 +1004,11 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
     vdp.regs[6] = 0x00       # sprite pattern generator at 0x0000
     vdp.vram[0] = 0xFF       # pattern 0, row 0: 8 opaque pixels
 
-    sat_a = 0x3800           # R#5 = 0x70
-    sat_b = 0x3C00           # R#5 = 0x78
+    # R#5 bit 2 set (and bits 1:0, harmless here with only sprite 0 in use) on
+    # both SATs, same reasoning as _SAT_R5 above -- "colour table = SAT -
+    # 0x200" only holds when R#5 bit 2 is 1.
+    sat_a = 0x3A00           # R#5 = 0x77
+    sat_b = 0x3E00           # R#5 = 0x7F
 
     def put_sprite(base: int, y: int, color: int) -> None:
         vdp.vram[base] = y          # sprite 0 Y
@@ -980,10 +1023,10 @@ def test_sprite_doubler_mid_screen_sat_switch() -> None:
 
     # Banded frame: start with SAT-A, switch R#5 to SAT-B at line 96 (mid screen).
     vdp._frame_start_regs = vdp.regs[:]
-    vdp._frame_start_regs[5] = 0x70
-    vdp.regs[5] = 0x78
+    vdp._frame_start_regs[5] = 0x77
+    vdp.regs[5] = 0x7F
     vdp._frame_start_palette = vdp.palette[:]
-    vdp._reg_write_log = [_RegChange(95, 5, 0x78)]   # effective line 96
+    vdp._reg_write_log = [_RegChange(95, 5, 0x7F)]   # effective line 96
 
     buf = _active(vdp)
 
@@ -1194,7 +1237,7 @@ def test_screen4_sprite_drawn_over_g3_background() -> None:
     vdp = V9938()
     _enable(vdp)
     vdp.regs[0] = 0x04            # SCREEN 4 (G3): M4=1, M3=0, M5=0
-    vdp.regs[5] = _SAT_R5         # SAT 0x3800, colour table 0x3600
+    vdp.regs[5] = _SAT_R5         # SAT 0x3A00, colour table 0x3800
     vdp.regs[6] = 0x00            # sprite pattern generator at 0x0000
     # G2/G3 background tables (kept clear of SAT/colour/SPG regions)
     vdp.regs[2] = 0x04            # name base 0x1000
