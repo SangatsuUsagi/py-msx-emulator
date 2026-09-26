@@ -1,5 +1,6 @@
 """Tests for V9938 sprite mode 2 (SCREEN 4–8)."""
-from msx.vdp.v9938 import V9938, _RegChange
+from msx.vdp._v9938_defs import _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
 from tests.render_geometry import active_region
 

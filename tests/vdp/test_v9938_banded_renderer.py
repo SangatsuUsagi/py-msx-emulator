@@ -1,5 +1,6 @@
 """Tests for V9938 band-split renderer."""
-from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import _PaletteChange, _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import _build_bands, render_frame
 
 _W = 256
@@ -42,12 +43,10 @@ def test_empty_log_identical_to_single_pass() -> None:
     vdp2 = make_g4_vdp()
     vdp2.vram[0] = 0x12
     vdp2.vram[128] = 0x34
-    from msx.vdp.v9938_renderer import _render_pass
-    expected = _render_pass(vdp2)
+    # vdp2 has an empty write log, so this is the single-pass render.
+    expected = vdp2.render_preview()
 
-    # render_frame pads the 192-line frame to the constant 212-line output; the
-    # active picture (rows 10..201) must match the single-pass render.
-    assert result[10 * 256:(10 + 192) * 256] == expected
+    assert result == expected
 
 
 # ---------------------------------------------------------------------------
@@ -236,3 +235,50 @@ def test_r18_change_alongside_other_reg_still_splits_on_the_other_reg_only() -> 
     assert bands[0][2][7] == 0x05
     assert bands[1][0] == 97 and bands[1][1] == 192
     assert bands[1][2][7] == 0x09
+
+
+# ---------------------------------------------------------------------------
+# Rendering leaves the chip's registers and palette untouched
+# ---------------------------------------------------------------------------
+
+def _split_frame_vdp() -> V9938:
+    vdp = make_g4_vdp()
+    vdp.regs[7] = 0x05
+    vdp.begin_scanline(0)
+    vdp.regs[7] = 0x09
+    vdp._reg_write_log.append(_RegChange(64, 7, 0x09))
+    vdp.palette[3] = 0x1C7
+    vdp._reg_write_log.append(_PaletteChange(100, 3, 0x1C7))
+    return vdp
+
+
+def test_banded_render_keeps_register_and_palette_objects() -> None:
+    from msx.vdp import v9938_renderer
+
+    for render in (render_frame, v9938_renderer.render_preview):
+        vdp = _split_frame_vdp()
+        regs, palette = vdp.regs, vdp.palette
+        regs_before, palette_before = list(regs), list(palette)
+        render(vdp)
+        assert vdp.regs is regs and vdp.regs == regs_before
+        assert vdp.palette is palette and vdp.palette == palette_before
+
+
+def test_each_band_renderer_gets_that_bands_registers(monkeypatch) -> None:
+    from msx.vdp import v9938_renderer
+
+    vdp = _split_frame_vdp()
+    live = vdp.regs
+    calls: list[tuple[int, int, bool, int]] = []
+    real = v9938_renderer._render_g4
+
+    def spy(vdp_arg, regs, buf, h, y_start, y_end):
+        calls.append((y_start, regs[7], vdp_arg.regs is live, vdp_arg.regs[7]))
+        real(vdp_arg, regs, buf, h, y_start, y_end)
+
+    monkeypatch.setattr(v9938_renderer, "_render_g4", spy)
+    render_frame(vdp)
+
+    # The palette change at line 100 opens a third band (same registers).
+    assert [(y, r7) for y, r7, _, _ in calls] == [(0, 0x05), (65, 0x09), (101, 0x09)]
+    assert all(is_live and live_r7 == 0x09 for _, _, is_live, live_r7 in calls)

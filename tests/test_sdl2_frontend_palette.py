@@ -1,5 +1,6 @@
 """Tests for VDP.to_rgb24 palette-index → RGB24 conversion."""
-from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import _PaletteChange, _RegChange
+from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import TMS9918A_PALETTE, VDP
 
 

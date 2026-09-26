@@ -88,3 +88,16 @@ def test_build_machine_passes_logger_to_v9938() -> None:
     machine = build_machine(spec, logger=logger)
     assert isinstance(machine.vdp, V9938)
     assert machine.vdp._logger is logger
+
+
+def test_tms9918a_logger_sees_the_stored_register_value() -> None:
+    seen: list[tuple[int, int]] = []
+
+    class _Rec(DebugLogger):
+        def on_vdp_reg_write(self, reg: int, value: int, frame: int) -> None:
+            seen.append((reg, value))
+
+    vdp = VDP(_logger=_Rec())
+    vdp.write_port(0x99, 0x06)          # R#0 := 0x06 -> stored 0x02
+    vdp.write_port(0x99, 0x80)
+    assert seen == [(0, 0x02)]

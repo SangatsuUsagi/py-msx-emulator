@@ -8,11 +8,57 @@ keeps a stable 4:3 geometry regardless of R#9 LN (192 active lines when LN=0,
 Both `msx/vdp/renderer.py` (TMS9918A) and `msx/vdp/v9938_renderer.py` (V9938)
 share these definitions so the two output paths cannot diverge; the SDL2
 frontend reads `OUTPUT_H` for its fixed window/texture height.
+
+Also the raster timing both VDPs share: `CYCLES_PER_LINE` Z80 T-states per
+scanline and the per-standard line counts, from which the machine's
+cycles-per-frame is derived.
 """
 from __future__ import annotations
 
+import enum
+
 ACTIVE_H = 192  # TMS9918A active height (also V9938 with R#9 LN=0)
 OUTPUT_H = 212  # constant emitted frame height (V9938 LN=1 native height)
+
+CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
+NTSC_LINES_PER_FRAME = 262
+PAL_LINES_PER_FRAME = 313
+
+
+class VideoStandard(enum.Enum):
+    """Video standard of a machine; values are the machine-YAML spellings.
+    The frame timing is derived from it, so the two cannot disagree."""
+
+    NTSC = "ntsc"
+    PAL = "pal"
+
+    # Each property names every member (a port's exhaustive `match`), so a
+    # new standard fails loudly instead of silently taking NTSC values.
+
+    @property
+    def lines_per_frame(self) -> int:
+        """Scanlines per frame."""
+        if self is VideoStandard.NTSC:
+            return NTSC_LINES_PER_FRAME
+        if self is VideoStandard.PAL:
+            return PAL_LINES_PER_FRAME
+        raise AssertionError(f"unhandled video standard {self!r}")
+
+    @property
+    def cycles_per_frame(self) -> int:
+        """Z80 T-states per frame."""
+        return CYCLES_PER_LINE * self.lines_per_frame
+
+    @property
+    def target_fps(self) -> float:
+        """Real-time pacing target: a round, host-vsync-friendly rate, not the
+        exact field rate (NTSC 59.92 Hz / PAL 50.16 Hz) -- see
+        openspec/specs/app-frame-timer/spec.md's Purpose."""
+        if self is VideoStandard.NTSC:
+            return 60.0
+        if self is VideoStandard.PAL:
+            return 50.0
+        raise AssertionError(f"unhandled video standard {self!r}")
 
 
 def pad_rows(native_h: int) -> int:

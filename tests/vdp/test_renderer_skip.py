@@ -18,15 +18,11 @@ def test_skip_render_returns_empty_buffer(vdp_with_interrupt: VDP) -> None:
     assert len(buf) == 0
 
 
-def test_skip_render_raises_vblank_irq(vdp_with_interrupt: VDP) -> None:
-    render_frame(vdp_with_interrupt, skip_render=True)
-    assert vdp_with_interrupt.irq is True
-
-
-def test_skip_render_sets_vblank_status_bit(vdp_with_interrupt: VDP) -> None:
+def test_skip_render_leaves_f_and_irq_alone(vdp_with_interrupt: VDP) -> None:
     vdp_with_interrupt.status = 0
     render_frame(vdp_with_interrupt, skip_render=True)
-    assert vdp_with_interrupt.status & 0x80
+    assert not (vdp_with_interrupt.status & 0x80)
+    assert vdp_with_interrupt.irq is False
 
 
 def test_normal_render_returns_full_buffer(bare_vdp: VDP) -> None:
@@ -35,35 +31,49 @@ def test_normal_render_returns_full_buffer(bare_vdp: VDP) -> None:
     assert len(buf) == 256 * 212
 
 
-def test_skip_render_leaves_irq_low_when_ie_clear() -> None:
+def test_begin_vblank_raises_f_and_irq(vdp_with_interrupt: VDP) -> None:
+    vdp_with_interrupt.status = 0
+    vdp_with_interrupt.begin_vblank()
+    assert vdp_with_interrupt.status & 0x80
+    assert vdp_with_interrupt.irq is True
+
+
+def test_begin_vblank_leaves_irq_low_when_ie_clear() -> None:
     vdp = VDP()
     vdp.regs[1] = 0x40  # BL=1, IE0=0
-    render_frame(vdp, skip_render=True)
+    vdp.begin_vblank()
     assert vdp.status & 0x80
     assert vdp.irq is False
 
 
-# --- vblank=False: a frame Machine.run_frame cut short before vertical blanking ---
+# --- The renderer never raises VBlank: Machine.run_frame calls begin_vblank ---
 
-def test_skip_render_without_vblank_leaves_f_and_irq_clear(vdp_with_interrupt: VDP) -> None:
+def test_render_leaves_f_and_irq_alone(vdp_with_interrupt: VDP) -> None:
     vdp_with_interrupt.status = 0
-    render_frame(vdp_with_interrupt, skip_render=True, vblank=False)
-    assert not (vdp_with_interrupt.status & 0x80)
-    assert vdp_with_interrupt.irq is False
-
-
-def test_render_without_vblank_still_renders_the_frame(vdp_with_interrupt: VDP) -> None:
-    vdp_with_interrupt.status = 0
-    buf = render_frame(vdp_with_interrupt, vblank=False)
+    buf = render_frame(vdp_with_interrupt)
     assert len(buf) == 256 * 212
     assert not (vdp_with_interrupt.status & 0x80)
     assert vdp_with_interrupt.irq is False
 
 
-def test_blanked_render_without_vblank_leaves_f_clear() -> None:
+def test_blanked_render_leaves_f_clear() -> None:
     vdp = VDP()
     vdp.regs[1] = 0x20  # BL=0 (display off), IE0=1
-    buf = render_frame(vdp, vblank=False)
+    buf = render_frame(vdp)
     assert len(buf) == 256 * 212
     assert not (vdp.status & 0x80)
     assert vdp.irq is False
+
+
+def test_v9938_skip_render_still_updates_the_eo_field_bit() -> None:
+    # vdp-renderer "V9938 render_frame skip_render parameter".
+    from msx.vdp.v9938 import V9938
+    from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
+
+    vdp = V9938()
+    vdp.frame_count = 1
+    assert render_frame_v9938(vdp, skip_render=True) == bytearray(0)
+    assert vdp._status2 & 0x02
+    vdp.frame_count = 2
+    render_frame_v9938(vdp, skip_render=True)
+    assert not vdp._status2 & 0x02

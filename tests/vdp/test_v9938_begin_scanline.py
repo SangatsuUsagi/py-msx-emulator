@@ -1,5 +1,6 @@
 """Tests for V9938 begin_scanline() and line-interrupt match."""
-from msx.vdp.v9938 import V9938, _RegChange
+from msx.vdp._v9938_defs import _RegChange
+from msx.vdp.v9938 import V9938
 
 
 def make_vdp() -> V9938:

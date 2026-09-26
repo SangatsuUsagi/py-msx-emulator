@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from msx.state import load_state, save_state
+from msx.state import StateLoadError, load_state, save_state
 from tests.factories import make_machine, make_machine_msx2
 
 
@@ -300,14 +300,11 @@ def test_msx2_roundtrip_status2(saves_dir):
     assert machine.vdp._status2 == 0x81
 
 
-def test_msx1_cmd_regs_none_in_snapshot(saves_dir):
+def test_msx1_snapshot_has_no_vdp9938_object(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    data = _load_state_json(state_path)
-    assert data["cmd_regs"] is None
-    assert data["status2"] is None
-    assert data["cmd_remaining"] is None
+    assert _load_state_json(state_path)["vdp9938"] is None
 
 
 def test_msx2_roundtrip_cmd_remaining(saves_dir):
@@ -340,6 +337,300 @@ def test_msx1_roundtrip_unaffected(saves_dir):
 
     assert machine.cpu.registers.A == 0x55
     assert machine.memory.ram[10] == 0x99
+
+
+def test_msx2_roundtrip_vdp_port_state(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.vdp.write_port(0x99, 0x56)  # control pair pending
+    machine.vdp.addr = 0x1A256          # 17-bit pointer
+    machine.vdp.read_buf = 0xAB
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp.read_port(0x99)         # drops the pending pair
+    machine.vdp.addr = 0
+    machine.vdp.read_buf = 0
+    load_state(machine)
+
+    assert machine.vdp.latch == 0x56
+    assert machine.vdp.addr == 0x1A256
+    assert machine.vdp.read_buf == 0xAB
+
+def test_msx2_roundtrip_pending_palette_byte(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.vdp.regs[16] = 0
+    machine.vdp.write_port(0x9A, 0x75)  # palette first byte pending
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp._first_byte = 0x11
+    machine.vdp._pal_pending = False
+    load_state(machine)
+
+    assert machine.vdp._pal_pending and machine.vdp._first_byte == 0x75
+    machine.vdp.write_port(0x9A, 0x03)
+    entry = machine.vdp.palette[0]
+    assert ((entry >> 6) & 7, (entry >> 3) & 7, entry & 7) == (7, 3, 5)
+
+
+def test_msx2_load_clears_stale_pending_palette_byte(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    save_state(machine, _RGB_MSX2, "test")  # no palette pair pending
+
+    machine.vdp.write_port(0x9A, 0x75)
+    load_state(machine)
+
+    assert machine.vdp._pal_pending is False
+
+
+def test_msx2_v9938_state_is_one_object(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    data = _load_state_json(save_state(machine, _RGB_MSX2, "test"))
+
+    assert isinstance(data["vdp9938"], dict)
+    for key in ("vdp_palette", "cmd_regs", "status2", "cmd_remaining", "vdp_pal_latch",
+                "vdp_collision_x", "vdp_status1", "vdp_cmd_engine"):
+        assert key not in data
+
+
+def test_new_save_uses_format_version_14(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+
+    assert _load_state_json(state_path)["format_version"] == 14
+
+
+def test_format_version_13_rejected(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+
+    _rewrite_state_version(state_path, 13)
+
+    with pytest.raises(ValueError, match="version"):
+        load_state(machine, state_path)
+
+
+def test_msx2_roundtrip_collision_coordinates(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    machine.vdp.collision_x = 0x123      # 9-bit X
+    machine.vdp.collision_y = 0x2AB      # 10-bit Y
+    save_state(machine, _RGB_MSX2, "test")
+
+    machine.vdp.collision_x = 0
+    machine.vdp.collision_y = 0
+    load_state(machine)
+
+    assert (machine.vdp.collision_x, machine.vdp.collision_y) == (0x123, 0x2AB)
+    machine.vdp.regs[15] = 3
+    assert machine.vdp.read_port(0x99) == 0x23   # S#3: X low
+
+
+def _start_hmmc_8x1(vdp) -> None:
+    """HMMC to (0,0), 8x1 dots in GRAPHIC4 = 4 CPU bytes, no CLR preload."""
+    vdp.regs[0] = 0x06
+    vdp.regs[1] = 0x40
+    vdp.cmd_regs[4:12] = [0, 0, 0, 0, 8, 0, 1, 0]   # DX, DY, NX, NY
+    vdp.cmd_regs[13] = 0                               # ARG
+    vdp.write_port(0x99, 0xF0)                         # R#46 := HMMC
+    vdp.write_port(0x99, 0x80 | 46)
+
+
+def _hmmc_byte(vdp, value: int) -> None:
+    vdp.write_port(0x99, value)                        # R#44 := value
+    vdp.write_port(0x99, 0x80 | 44)
+    vdp.tick(8)                                        # engine re-asserts TR
+
+
+def test_msx2_hmmc_transfer_resumes_after_save_load(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    vdp = machine.vdp
+    _start_hmmc_8x1(vdp)
+    _hmmc_byte(vdp, 0x11)
+    _hmmc_byte(vdp, 0x22)
+    save_state(machine, _RGB_MSX2, "test")
+
+    vdp.reset()                                        # disturb the live engine
+    load_state(machine)
+    assert vdp._status2 & 0x81 == 0x81                 # CE and TR still set
+    _hmmc_byte(vdp, 0x33)
+    assert vdp._status2 & 0x80, "TR must come back between bytes"
+    _hmmc_byte(vdp, 0x44)
+
+    assert bytes(vdp.vram[0:4]) == b"\x11\x22\x33\x44"
+    assert not (vdp._status2 & 0x01), "CE clears after the last byte"
+
+
+def test_msx2_roundtrip_status1_and_srch_result(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    vdp = machine.vdp
+    vdp.regs[0] = 0x10                                 # IE1
+    vdp._status1 = 0x01                                # FH pending
+    vdp._status8 = 0x34
+    vdp._status9 = 0xFF
+    save_state(machine, _RGB_MSX2, "test")
+
+    vdp._status1 = 0
+    vdp._status8 = 0
+    vdp._status9 = 0
+    vdp.irq = False
+    load_state(machine)
+
+    assert vdp.irq is True
+    vdp.regs[15] = 8
+    assert vdp.read_port(0x99) == 0x34
+    vdp.regs[15] = 9
+    assert vdp.read_port(0x99) == 0xFF
+    vdp.regs[15] = 1
+    assert vdp.read_port(0x99) & 0x01
+
+
+def test_msx2_lmmc_transfer_resumes_with_saved_logop_and_bpp(saves_dir):
+    # GRAPHIC5 (2 bpp, 4 dots per byte), LMMC 4x1 at (0,0) with LOG = OR.
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    vdp = machine.vdp
+    vdp.regs[0] = 0x08
+    vdp.regs[1] = 0x40
+    vdp.vram[0] = 0x55                                 # every dot = 1
+    vdp.cmd_regs[4:12] = [0, 0, 0, 0, 4, 0, 1, 0]      # DX, DY, NX, NY
+    vdp.cmd_regs[13] = 0
+    vdp.write_port(0x99, 0xB2)                         # R#46 := LMMC | OR
+    vdp.write_port(0x99, 0x80 | 46)
+    _hmmc_byte(vdp, 0xFE)                              # 0xFE & 3 = 2; 2 OR 1 = 3
+    _hmmc_byte(vdp, 0xFE)
+    save_state(machine, _RGB_MSX2, "test")
+
+    vdp.reset()
+    vdp._cmd_log = 0                                   # IMP
+    vdp._cmd_bpl, vdp._cmd_ppb, vdp._cmd_bpp = 256, 1, 8  # GRAPHIC7 geometry
+    vdp._cmd_nx = 1
+    load_state(machine)
+    assert vdp._status2 & 0x81 == 0x81
+    _hmmc_byte(vdp, 0xFE)
+    _hmmc_byte(vdp, 0xFE)
+
+    assert vdp.vram[0] == 0xFF, "OR and the 2-bpp mask must survive the load"
+    assert vdp.vram[1] == 0x00
+    assert not (vdp._status2 & 0x01), "CE clears after the last dot"
+
+
+def test_msx2_lmcm_transfer_resumes_from_saved_source_cursor(saves_dir):
+    # GRAPHIC4, LMCM 2x2 from (2,1): dots 1, 2 on row 1 and 3, 4 on row 2.
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    vdp = machine.vdp
+    vdp.regs[0] = 0x06
+    vdp.regs[1] = 0x40
+    vdp.vram[128 + 1] = 0x12
+    vdp.vram[256 + 1] = 0x34
+    vdp.cmd_regs[0:4] = [2, 0, 1, 0]                   # SX, SY
+    vdp.cmd_regs[8:12] = [2, 0, 2, 0]                  # NX, NY
+    vdp.cmd_regs[13] = 0
+    vdp.write_port(0x99, 0xA0)                         # R#46 := LMCM
+    vdp.write_port(0x99, 0x80 | 46)
+    vdp.regs[15] = 7
+    assert vdp.read_port(0x99) == 1
+    save_state(machine, _RGB_MSX2, "test")
+
+    vdp.reset()
+    vdp._cmd_sx = 0
+    vdp._cmd_sy = 0
+    vdp._cmd_nx = 1
+    vdp._cmd_ny = 1
+    load_state(machine)
+    assert vdp.regs[15] == 7
+    assert vdp._status2 & 0x01
+
+    assert [vdp.read_port(0x99) for _ in range(3)] == [2, 3, 4]
+    assert not (vdp._status2 & 0x01), "CE clears after the last dot"
+    assert vdp._cmd_active is False
+
+
+def _start_hmmv_g4(vdp) -> None:
+    """HMMV 8x2 dots (4 byte columns x 2 rows) at (0,0) in GRAPHIC4."""
+    vdp.regs[0] = 0x06
+    vdp.regs[1] = 0x40
+    vdp.cmd_regs[4:12] = [0, 0, 0, 0, 8, 0, 2, 0]
+    vdp.cmd_regs[12] = 0x77
+    vdp.cmd_regs[13] = 0
+    vdp.write_port(0x99, 0xC0)                         # R#46 := HMMV
+    vdp.write_port(0x99, 0x80 | 46)
+
+
+def test_msx2_timed_command_mid_countdown_keeps_ce_until_expiry(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    vdp = machine.vdp
+    _start_hmmv_g4(vdp)
+    vdp.tick(4)
+    remaining = vdp._cmd_remaining
+    assert remaining > 1
+    save_state(machine, _RGB_MSX2, "test")
+
+    vdp.reset()
+    load_state(machine)
+
+    assert vdp._cmd_remaining == remaining
+    assert vdp._cmd_active is True
+    assert vdp._status2 & 0x01
+    vdp.tick(remaining - 1)
+    assert vdp._status2 & 0x01, "CE holds until the saved countdown runs out"
+    vdp.tick(1)
+    assert not (vdp._status2 & 0x01)
+    assert vdp._cmd_active is False
+
+
+def _corrupt_vdp9938(state_path, corrupt: str) -> None:
+    data = _load_state_json(state_path)
+    v = data["vdp9938"]
+    if corrupt == "missing_key":
+        del v["status1"]
+    elif corrupt == "engine_missing_key":
+        del v["cmd_engine"]["sx"]
+    elif corrupt == "engine_not_a_dict":
+        v["cmd_engine"] = 5
+    elif corrupt == "wrong_type":
+        v["status2"] = "3"
+    elif corrupt == "out_of_range":
+        v["palette"][0] = 0x200
+    else:  # bool where an int is expected
+        v["cmd_engine"]["code"] = True
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    ["missing_key", "engine_missing_key", "engine_not_a_dict", "wrong_type",
+     "out_of_range", "bool_for_int"],
+)
+def test_malformed_vdp9938_state_raises_state_load_error(saves_dir, corrupt):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+    _corrupt_vdp9938(state_path, corrupt)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+    assert "vdp9938" in str(exc_info.value)
+
+
+def test_malformed_vdp9938_state_leaves_vdp_untouched(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+    _corrupt_vdp9938(state_path, "out_of_range")
+    machine.vdp._status1 = 0x01
+
+    with pytest.raises(StateLoadError):
+        load_state(machine, state_path)
+    assert machine.vdp._status1 == 0x01            # validated before any write
+
+
+def test_other_layout_of_the_same_version_is_rejected_cleanly(saves_dir):
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+    data = _load_state_json(state_path)
+    del data["vdp9938"]
+    data["vdp_status1"] = 0                       # a key this layout does not define
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(ValueError, match="layout"):
+        load_state(machine, state_path)
 
 
 def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
@@ -391,10 +682,26 @@ def test_msx2_roundtrip_without_ram_mapper(saves_dir):
 
 
 def test_load_wrong_format_version_raises_before_expand(saves_dir):
-    # A wrong format_version must raise ValueError (validated before the fields
-    # are expanded into MachineSnapshot, so no TypeError on unexpected keys).
+    # A wrong format_version is reported as such (validated before the layout
+    # check, so it is not reported as unknown/missing keys).
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
     _rewrite_state_version(state_path, 999)
     with pytest.raises(ValueError, match="version"):
         load_state(machine, state_path)
+
+
+def test_msx2_snapshot_without_vdp9938_is_rejected_before_restoring(saves_dir):
+    from msx.state import StateLoadError
+
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+    data = _load_state_json(state_path)
+    data["vdp9938"] = None
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    machine.memory.ram[0] = 0x5A           # must survive the rejected load
+
+    with pytest.raises(StateLoadError, match="vdp9938"):
+        load_state(machine, state_path)
+    assert machine.memory.ram[0] == 0x5A

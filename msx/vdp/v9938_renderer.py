@@ -12,7 +12,14 @@ from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
 from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
-from msx.vdp.v9938 import _S2_EO, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import (
+    _S2_EO,
+    _PaletteChange,
+    _RegChange,
+    display_height_of,
+    display_width_of,
+    even_odd_enabled_of,
+)
 from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
 
 if TYPE_CHECKING:
@@ -183,6 +190,20 @@ _TEXT6_BYTES: list[list[list[bytes]]] = [
 ]
 
 
+@dataclass(slots=True)
+class _RenderStatus:
+    """The chip status a render produces: S#0 (5S/9S, sprite index, C), the
+    collision coordinates (S#3-S#6) and S#2 (EO). Seeded from the chip,
+    updated by the frame's sprite passes (S#0, collision) and by
+    _update_field_parity (S#2 EO), and written back to the chip only by
+    render_frame -- render_preview discards it."""
+
+    status: int
+    collision_x: int
+    collision_y: int
+    status2: int
+
+
 def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
@@ -191,16 +212,32 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     and TEXT2). A 192-line frame (R#9 LN=0) is centred with border rows above
     and below so the displayed image keeps a stable geometry regardless of LN.
 
-    Frame counting is owned by the caller (Machine.run_frame), not the renderer.
+    Commits the render's _RenderStatus (S#0 sprite bits, S#3-S#6, S#2 EO) to
+    the chip; render_preview discards it. Frame counting is owned by the
+    caller (Machine.run_frame), not the renderer.
     """
+    buf, st = _render(vdp, skip_render)
+    vdp.commit_render_status(st.status, st.collision_x, st.collision_y, st.status2)
+    return buf
+
+
+def render_preview(vdp: "V9938") -> bytearray:
+    """Render the current frame like render_frame, leaving the chip unchanged."""
+    return _render(vdp, False)[0]
+
+
+def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
+    """Render a frame; return it with the status the render produces."""
+    st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp.status2)
     if skip_render:
-        _finalize(vdp)
-        return bytearray(0)
+        _update_field_parity(vdp, st)
+        return bytearray(0), st
 
     log = vdp._reg_write_log
-    buf = _render_banded(vdp) if log else _render_pass(vdp)
+    buf = _render_banded(vdp, st) if log else _render_pass(vdp, st)
     buf = _apply_display_adjust(vdp, buf)
-    return pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    out = pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    return out, st
 
 
 def _r18_offset(reg18: int) -> tuple[int, int]:
@@ -361,11 +398,11 @@ class _SatSegment:
     height: int
 
 
-def _render_banded(vdp: "V9938") -> bytearray:
-    """Render with band-split: each band uses its own register/palette snapshot."""
+def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
+    """Render with band-split: each band uses its own register snapshot."""
     bands = _build_bands(vdp)
     if not bands:
-        return _render_pass(vdp)
+        return _render_pass(vdp, st)
 
     full_h = vdp.display_height
     full_w = vdp.display_width
@@ -378,127 +415,107 @@ def _render_banded(vdp: "V9938") -> bytearray:
 
     out = bytearray(full_w * full_h)
 
-    saved_regs = vdp.regs[:]
-    saved_palette = vdp.palette[:]
-    try:
-        # Background: one pass per band with that band's registers/palette (no sprites).
-        for y0, y1, band_regs, band_palette in bands:
-            vdp.regs = band_regs
-            vdp.palette = band_palette
-            _render_pass_range(vdp, out, y0, min(y1, full_h), draw_sprites=False)
+    # Each pass is handed its band's (or SAT segment's) registers; the chip's own
+    # registers and palette are never swapped. The palette needs no per-band
+    # handling here at all: the renderers emit palette indices, and to_rgb24
+    # applies each band's palette from the register-write log.
+    # Background: one pass per band with that band's registers (no sprites).
+    for y0, y1, band_regs, _ in bands:
+        _render_pass_range(vdp, band_regs, st, out, y0, min(y1, full_h), draw_sprites=False)
 
-        # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
-        # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
-        # with NO syncAtNextLine) and tests each sprite's Y against that line's
-        # vscroll, so a split screen that changes R#23 mid-frame positions each
-        # region's sprites with its own vscroll without redrawing them. The band
-        # snapshots already carry each region's R#23; row_vscroll[y] flattens that
-        # into a per-line value that the sprite pass reads instead of vdp.regs[23].
-        #
-        # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
-        # regions read *different* SAT buffers, used for sprite multiplexing /
-        # "sprite doubler" (a second set of 32 sprites in the lower half). There
-        # one sprite pass per SAT region — each clipped to its scanline span — is
-        # required. Consecutive bands sharing a SAT base are merged so an ordinary
-        # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
-        # only changed mid-active-display for this purpose, so keying on it does
-        # not affect non-multiplexed games.
-        # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
-        # sprites over just its status band (SPD=1 there, 0 in the play area). Build
-        # it alongside row_vscroll so the sprite pass reads both per line.
-        row_vscroll = [0] * full_h
-        row_spd = [False] * full_h
-        for y0, y1, band_regs, _ in bands:
-            v = band_regs[23]
-            spd = bool(band_regs[8] & 0x02)
-            for y in range(y0, min(y1, full_h)):
-                row_vscroll[y] = v
-                row_spd[y] = spd
+    # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
+    # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
+    # with NO syncAtNextLine) and tests each sprite's Y against that line's
+    # vscroll, so a split screen that changes R#23 mid-frame positions each
+    # region's sprites with its own vscroll without redrawing them. The band
+    # snapshots already carry each region's R#23; row_vscroll[y] flattens that
+    # into a per-line value that the sprite pass reads instead of its registers' R#23.
+    #
+    # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
+    # regions read *different* SAT buffers, used for sprite multiplexing /
+    # "sprite doubler" (a second set of 32 sprites in the lower half). There
+    # one sprite pass per SAT region — each clipped to its scanline span — is
+    # required. Consecutive bands sharing a SAT base are merged so an ordinary
+    # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
+    # only changed mid-active-display for this purpose, so keying on it does
+    # not affect non-multiplexed games.
+    # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
+    # sprites over just its status band (SPD=1 there, 0 in the play area). Build
+    # it alongside row_vscroll so the sprite pass reads both per line.
+    row_vscroll = [0] * full_h
+    row_spd = [False] * full_h
+    for y0, y1, band_regs, _ in bands:
+        v = band_regs[23]
+        spd = bool(band_regs[8] & 0x02)
+        for y in range(y0, min(y1, full_h)):
+            row_vscroll[y] = v
+            row_spd[y] = spd
 
-        def _sat_key(regs: list[int]) -> tuple[int, int]:
-            return (regs[5], regs[11] & 0x03)
+    def _sat_key(regs: list[int]) -> tuple[int, int]:
+        return (regs[5], regs[11] & 0x03)
 
-        sat_segments: list[_SatSegment] = []
-        for y0, y1, band_regs, _ in bands:
-            bh = y1 - y0
-            if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
-                seg = sat_segments[-1]
-                seg.y1 = y1
-                if bh > seg.height:
-                    seg.regs = band_regs
-                    seg.height = bh
-            else:
-                sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
-
-        if len(sat_segments) <= 1:
-            # One SAT for the whole frame → single pass (main band regs); per-line
-            # row_vscroll / row_spd handle any R#23 / SPD split within it.
-            vdp.regs = main_regs
-            _render_sprites_for_mode(vdp, out, 0, full_h, row_vscroll, row_spd)
+    sat_segments: list[_SatSegment] = []
+    for y0, y1, band_regs, _ in bands:
+        bh = y1 - y0
+        if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
+            seg = sat_segments[-1]
+            seg.y1 = y1
+            if bh > seg.height:
+                seg.regs = band_regs
+                seg.height = bh
         else:
-            for seg in sat_segments:
-                vdp.regs = seg.regs
-                _render_sprites_for_mode(
-                    vdp, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
-                )
+            sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
 
-        _finalize(vdp)
-    finally:
-        # PORT-NOTE: the band passes above temporarily rebind vdp.regs /
-        #   vdp.palette to per-band snapshots (shared list objects held in
-        #   `bands`) via plain attribute reassignment.
-        # Rust equivalent: thread the band registers/palette as explicit
-        #   parameters to the per-band renderers instead of swapping a shared
-        #   owned field — Rust's borrow checker won't allow the same
-        #   temporary-rebind-then-restore pattern on a struct field this
-        #   loosely.
-        # C++ equivalent: same — pass band registers/palette as explicit
-        #   function parameters (or a small RAII guard that restores on scope
-        #   exit, the closest analogue to this try/finally) rather than
-        #   mutating a shared member and restoring it after.
-        # Kept as-is here because: port target/shape not decided yet — this
-        #   reference-swap is a Python convenience with no ownership-model
-        #   equivalent; the try/finally guarantees the live registers are
-        #   restored even if a renderer raises mid-frame (the invariant is
-        #   otherwise implicit). Revisit once Rust vs. C++ is chosen.
-        vdp.regs = saved_regs
-        vdp.palette = saved_palette
+    if len(sat_segments) <= 1:
+        # One SAT for the whole frame → single pass (main band regs); per-line
+        # row_vscroll / row_spd handle any R#23 / SPD split within it.
+        _render_sprites_for_mode(vdp, main_regs, st, out, 0, full_h, row_vscroll, row_spd)
+    else:
+        for seg in sat_segments:
+            _render_sprites_for_mode(
+                vdp, seg.regs, st, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
+            )
+
+    _update_field_parity(vdp, st)
     return out
 
 
-def _render_pass(vdp: "V9938") -> bytearray:
-    """Single-pass render using current vdp register/palette state."""
-    h = vdp.display_height
-    w = vdp.display_width
+def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
+    """Single-pass render with the live registers."""
+    regs = vdp.regs
+    h = display_height_of(regs)
+    w = display_width_of(regs)
     buf = bytearray(w * h)
-    _render_pass_range(vdp, buf, 0, h)
-    _finalize(vdp)
+    _render_pass_range(vdp, regs, st, buf, 0, h)
+    _update_field_parity(vdp, st)
     return buf
 
 
 def _render_pass_range(
     vdp: "V9938",
+    regs: list[int],
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int,
     y_end: int,
     draw_sprites: bool = True,
 ) -> None:
-    """Render scanlines [y_start, y_end) into buf using current vdp register/palette state.
+    """Render scanlines [y_start, y_end) into buf with the registers `regs`.
 
     Pre-fills the scanline range with border colour, then writes content pixels.
     draw_sprites=False renders the background only (banded mode draws sprites once
     per frame afterwards, so a sprite is not re-evaluated in every band).
     """
-    w = vdp.display_width
-    h = vdp.display_height
-    r0 = vdp.regs[0]
-    r1 = vdp.regs[1]
+    w = display_width_of(regs)
+    h = display_height_of(regs)
+    r0 = regs[0]
+    r1 = regs[1]
     m3 = (r0 >> 1) & 1
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
 
     is_g7 = bool(m5 and m4)
-    border = vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+    border = regs[7] if is_g7 else (regs[7] & 0x0F)
 
     n = (y_end - y_start) * w
     buf[y_start * w : y_end * w] = _border_fill(border, n)
@@ -512,33 +529,129 @@ def _render_pass_range(
     # Background plane only — sprites are dispatched separately (see _render_sprites_for_mode).
     if m5:
         if m4:
-            _render_g7(vdp, buf, h, y_start, y_end)
+            _render_g7(vdp, regs, buf, h, y_start, y_end)
         elif m3:
-            _render_g6(vdp, buf, h, y_start, y_end)
+            _render_g6(vdp, regs, buf, h, y_start, y_end)
         else:
-            _render_g5(vdp, buf, h, y_start, y_end)
+            _render_g5(vdp, regs, buf, h, y_start, y_end)
     elif m4:
         if m3:
-            _render_g4(vdp, buf, h, y_start, y_end)
+            _render_g4(vdp, regs, buf, h, y_start, y_end)
         elif m1:
-            _render_text2(vdp, buf, y_start, y_end)
+            _render_text2(vdp, regs, buf, y_start, y_end)
         else:
-            _render_g2(vdp, buf, y_start, y_end)
+            _render_g2(vdp, regs, buf, y_start, y_end)
     elif m1:
-        _render_text(vdp, buf, y_start, y_end)
+        _render_text(vdp, regs, buf, y_start, y_end)
     elif m3:
-        _render_g2(vdp, buf, y_start, y_end)
+        _render_g2(vdp, regs, buf, y_start, y_end)
     elif m2:
-        _render_mc(vdp, buf, y_start, y_end)
+        _render_mc(vdp, regs, buf, y_start, y_end)
     else:
-        _render_g1(vdp, buf, y_start, y_end)
+        _render_g1(vdp, regs, buf, y_start, y_end)
 
     if draw_sprites:
-        _render_sprites_for_mode(vdp, buf, y_start, y_end)
+        _render_sprites_for_mode(vdp, regs, st, buf, y_start, y_end)
+
+
+def _plot_mode1_row(
+    buf: bytearray,
+    painted: bytearray,
+    touched: bytearray,
+    pixels: bytes,
+    x_pos: int,
+    scale: int,
+    line_off: int,
+    *,
+    color: int,
+) -> int:
+    """Plot one sprite-mode-1 pattern row onto the line starting at `line_off`.
+
+    `x_pos` is the row's first dot and `scale` the MAG factor; off-screen dots
+    are clipped (no wrap). Colour 0 only reaches here when TP makes it opaque,
+    and is displayed as palette entry 0. Returns the x of the first colliding
+    dot, or -1 for none (an Option<u16> in a port). The TMS9918A counterpart
+    is renderer._plot_sprite_pixel (per pixel), which skips colour 0 itself
+    since that chip has no TP.
+    """
+    hit_x = -1
+    for bit_i, pixel in enumerate(pixels):
+        if not pixel:
+            continue
+        px = x_pos + bit_i * scale
+        last = px + scale
+        while px < last:
+            if 0 <= px < _W:
+                coord = line_off + px
+                if touched[coord]:
+                    if hit_x < 0:
+                        hit_x = px
+                else:
+                    touched[coord] = 1
+                if not painted[coord]:
+                    painted[coord] = 1
+                    buf[coord] = color
+            px += 1
+    return hit_x
+
+
+def _plot_mode2_row(
+    sprite_buf: bytearray,
+    touched: bytearray,
+    drawn: list[int],
+    pixels: bytes,
+    x_pos: int,
+    scale: int,
+    line_off: int,
+    screen_scale: int,
+    *,
+    collides: bool,
+    or_mode: bool,
+    color: int,
+) -> int:
+    """Plot one sprite-mode-2 pattern row into the sprite plane.
+
+    `x_pos` is the row's first dot in the 256-dot sprite plane, `scale` the
+    MAG factor; dots off-screen are clipped (no wrap), and each dot covers
+    `screen_scale` output pixels (2 in 512-wide modes). A CC (OR) sprite ORs
+    its colour into an already-claimed pixel; otherwise the first claim wins.
+    Returns the sprite-plane x of the first colliding dot, or -1 for none (an
+    Option<u16> in a port).
+    """
+    claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
+    ss_offsets = _SS_OFFSETS[screen_scale]
+    hit_x = -1
+    for bit_i, pixel in enumerate(pixels):
+        if not pixel:
+            continue
+        sx = x_pos + bit_i * scale
+        last = sx + scale
+        while sx < last:
+            if 0 <= sx < _W:
+                base = line_off + sx * screen_scale
+                for ss in ss_offsets:
+                    coord = base + ss
+                    if collides:
+                        if touched[coord]:
+                            if hit_x < 0:
+                                hit_x = sx
+                        else:
+                            touched[coord] = 1
+                    if sprite_buf[coord]:
+                        if or_mode:
+                            sprite_buf[coord] |= color
+                    else:
+                        sprite_buf[coord] = claim
+                        drawn.append(coord)
+            sx += 1
+    return hit_x
+
 
 
 def _render_sprites_for_mode(
     vdp: "V9938",
+    regs: list[int],
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int,
     y_end: int,
@@ -549,25 +662,27 @@ def _render_sprites_for_mode(
 
     Sprite Y uses R#23 (vscroll) as on real hardware, in both sprite modes.
     row_vscroll, when given, supplies the per-scanline vscroll (banded mode,
-    where R#23 may change mid-frame); otherwise the scalar vdp.regs[23] is
+    where R#23 may change mid-frame); otherwise the scalar regs[23] is
     used. row_spd likewise carries the per-scanline SPD (R#8 sprite-disable)
     so a split screen can blank sprites over just one band. TEXT1 (M1) and
     TEXT2 (M1+M4) draw no sprites, nor does a blanked display (BL=0).
     """
-    r0 = vdp.regs[0]
-    r1 = vdp.regs[1]
+    r0 = regs[0]
+    r1 = regs[1]
     if not (r1 & 0x40):  # BL clear → display blanked
         return
     m1 = (r1 >> 4) & 1
     m3 = (r0 >> 1) & 1
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
-    h = vdp.display_height
+    h = display_height_of(regs)
 
     if m5:
         if m4:
             _render_sprites_mode2(
                 vdp,
+                regs,
+                st,
                 buf,
                 h,
                 y_start,
@@ -579,6 +694,8 @@ def _render_sprites_for_mode(
         else:  # G5 and G6 both render sprites onto a 512-wide buffer
             _render_sprites_mode2(
                 vdp,
+                regs,
+                st,
                 buf,
                 h,
                 y_start,
@@ -592,33 +709,33 @@ def _render_sprites_for_mode(
         pass  # TEXT2: no sprites
     elif m4:
         _render_sprites_mode2(
-            vdp, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
+            vdp, regs, st, buf, h, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
         )
     elif m1:
         pass  # TEXT1: no sprites
     else:  # G1 / G2(M3) / MULTICOLOR(M2): sprite mode 1
-        _render_sprites(vdp, buf, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd)
+        _render_sprites(
+            vdp, regs, st, buf, y_start, y_end, row_vscroll=row_vscroll, row_spd=row_spd
+        )
 
 
-def _finalize(vdp: "V9938") -> None:
-    # VBlank flag is now set by begin_scanline() in the scanline loop (machine.py).
-    # _finalize only handles frame-buffer finalisation; no interrupt generation here.
+def _update_field_parity(vdp: "V9938", st: _RenderStatus) -> None:
     # S#2 bit 1 (current field) toggles once per frame, in step with the EO
     # page-alternation parity (frame_count is stable for the whole render, and
-    # this runs exactly once per render_frame() call on every path).
+    # this runs exactly once per render on every path).
     if vdp.frame_count & 1:
-        vdp._status2 |= _S2_EO
+        st.status2 |= _S2_EO
     else:
-        vdp._status2 &= ~_S2_EO
+        st.status2 &= ~_S2_EO
 
 
-def _colour0(vdp: "V9938") -> int:
+def _colour0(vdp: "V9938", regs: list[int]) -> int:
     """Palette index drawn for colour code 0 in the pattern and text modes.
 
     TP=0 (R#8 bit 5): colour 0 is invisible, so the backdrop shows; TP=1: it
     is palette entry 0 (V9938 data book, R#8 TP).
     """
-    return 0 if vdp.regs[8] & 0x20 else vdp.regs[7] & 0x0F
+    return 0 if regs[8] & 0x20 else regs[7] & 0x0F
 
 
 # ---------------------------------------------------------------------------
@@ -626,32 +743,29 @@ def _colour0(vdp: "V9938") -> int:
 # ---------------------------------------------------------------------------
 
 
-def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    # Name/pattern use the full V9938 128 KB range (R#2 7 bits, R#4 6 bits),
-    # matching openMSX's VDP::updateNameBase/updatePatternBase for GRAPHIC1:
-    # both tables' index fits entirely within the base register's own
-    # "unused bits set to 1" filler width (10 bits for name, 11 for pattern),
-    # so unlike GRAPHIC2/3 there is no per-third gating to reproduce here --
-    # only the register/mask width was previously left at the TMS9918A-only
-    # (16 KB) form. Colour table was already on the wide (R#10/&0x1FFFF) form.
-    name_base = (vdp.regs[2] & 0x7F) << 10
-    pat_base = (vdp.regs[4] & 0x3F) << 11
-    col_base = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
+def _render_g1(
+    vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
+    # V9938 pattern-mode table bases span the full 128 KB: name = R#2 bits 6:0,
+    # pattern = R#4 bits 5:0, colour = R#10 + R#3. In GRAPHIC1 the table
+    # indices fit inside the base's own low bits, so (unlike GRAPHIC2/3) no
+    # per-third gating applies. TEXT1 and MULTICOLOR use the same bases;
+    # GRAPHIC2/3 and TEXT2 narrow them (see those functions).
+    name_base = (regs[2] & 0x7F) << 10
+    pat_base = (regs[4] & 0x3F) << 11
+    col_base = ((regs[10] & 0x07) << 14) | (regs[3] << 6)
     # R#23 vertical scroll: openMSX applies it to every non-text mode alike
     # (PixelRenderer::draw: "if (!isTextMode()) displayY += getVerticalScroll()",
-    # with no GRAPHIC1-vs-GRAPHIC2 distinction), and this codebase's own
-    # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
-    # not a hardware fact.
-    vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    # with no GRAPHIC1-vs-GRAPHIC2 distinction), as _render_g2 does.
+    vscroll = regs[23]
+    colour0 = _colour0(vdp, regs)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
     # scanlines sharing a tile row -- cached here and re-fetched from VRAM
-    # only when `row` changes, so the per-scanline vscroll loop below doesn't
-    # pay for 8x as many name/colour-table reads as the pre-vscroll per-row
-    # loop did. `pat` still depends on `py` too, so it's re-fetched every
-    # scanline regardless.
+    # only when `row` changes, so the per-scanline vscroll loop below reads
+    # the name/colour tables once per tile row, not once per scanline. `pat`
+    # still depends on `py` too, so it's re-fetched every scanline.
     row_tiles = [0] * 32
     row_fg = [0] * 32
     row_bg = [0] * 32
@@ -668,9 +782,9 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
                 cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
                 row_tiles[col] = tile
                 hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-                row_fg[col] = hi_nib if hi_nib else bd
+                row_fg[col] = hi_nib if hi_nib else colour0
                 lo_nib = cb & 0x0F
-                row_bg[col] = lo_nib if lo_nib else bd
+                row_bg[col] = lo_nib if lo_nib else colour0
             cached_row = row
         scan_w = scan * _W
         for col in range(32):
@@ -685,7 +799,9 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # ---------------------------------------------------------------------------
 
 
-def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_g2(
+    vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
     # GRAPHIC 2 (SCREEN 2) and GRAPHIC 3 (SCREEN 4) share this tile plane. Table
     # bases follow the V9938 (per openMSX VDP::update*Base): the pattern and
     # colour tables are 8 KB-aligned (the low 13 index bits come from the
@@ -694,24 +810,21 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     #   colour table      = ((R#10 << 14) | (R#3 << 6)) & ~0x1FFF
     #                     = (R#10 & 0x07) << 14 | (R#3 & 0x80) << 6
     #   name table        = R#2 << 10 (A16-A10)
-    # Using only R#4 bit2 for the pattern base (the TMS9918 form) put the
-    # generator at 0x0000 for e.g. Ultima III (R#4=0x13 → 0x8000), garbling the
-    # background; R#4 bits 5:2 are the real A16-A13 base bits.
+    # R#4 bits 5:2 are the A16-A13 pattern base bits (R#4 bit 2 alone is only
+    # the TMS9918A form; an MSX2 title with R#4 = 0x13 puts its generator at
+    # 0x8000).
     #
-    # R#4 bits 1:0 (colour: R#3 bits 6:5) separately gate the 2nd/3rd-third
-    # offset bits (0x800/0x1000) before they're added to pat_base/col_base --
-    # a documented VDP behaviour (msx.org/wiki/SCREEN_2), not a TMS9918A-only
-    # quirk. A bit clear collapses that third's reads onto the 1st third's
-    # table. msx/vdp/renderer.py's TMS9918A _render_g2 already applies this
-    # (its pat_mask/col_mask); ported here unchanged in shape, just against
-    # the wider 128 KB (& 0x1FFFF) address space.
-    name_base = (vdp.regs[2] & 0x7F) << 10
-    pat_base = (vdp.regs[4] & 0x3C) << 11
-    col_base = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
-    pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
-    col_mask = ((vdp.regs[3] & 0x7F) << 6) | 0x3F
-    vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    # R#4 bits 1:0 (colour: R#3 bits 6:5) gate the 2nd/3rd-third offset bits
+    # (0x800/0x1000) before they are added to the base -- documented VDP
+    # behaviour (msx.org/wiki/SCREEN_2), as in the TMS9918A renderer; a clear
+    # bit collapses that third's reads onto the 1st third's table.
+    name_base = (regs[2] & 0x7F) << 10
+    pat_base = (regs[4] & 0x3C) << 11
+    col_base = ((regs[10] & 0x07) << 14) | ((regs[3] & 0x80) << 6)
+    pat_mask = ((regs[4] & 0x03) << 11) | 0x7FF
+    col_mask = ((regs[3] & 0x7F) << 6) | 0x3F
+    vscroll = regs[23]
+    colour0 = _colour0(vdp, regs)
     ye = y_end if y_end is not None else _TILE_H
 
     for scan in range(y_start, ye):
@@ -727,9 +840,9 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             pat = vdp.vram[(pat_base + (off & pat_mask)) & 0x1FFFF]
             cb = vdp.vram[(col_base + (off & col_mask)) & 0x1FFFF]
             hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-            fg = hi_nib if hi_nib else bd
+            fg = hi_nib if hi_nib else colour0
             lo_nib = cb & 0x0F
-            bg = lo_nib if lo_nib else bd
+            bg = lo_nib if lo_nib else colour0
             bx = col * 8
             buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][fg][bg]
 
@@ -739,20 +852,18 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 # ---------------------------------------------------------------------------
 
 
-def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    # Full V9938 128 KB range (R#2 7 bits, R#4 6 bits) -- see _render_g1's
-    # comment; TEXT1's own name-table caller in openMSX (CharacterConverter's
-    # getNamePtr-equivalent) explicitly widens its index's filler bits to
-    # expose the same full R#2 range despite TEXT1's narrower native index
-    # width, so this is not TEXT-mode-specific.
-    name_base = (vdp.regs[2] & 0x7F) << 10
-    pat_base = (vdp.regs[4] & 0x3F) << 11
+def _render_text(
+    vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
+    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1).
+    name_base = (regs[2] & 0x7F) << 10
+    pat_base = (regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
     # colour code 0 follows TP like every other colour code 0 (see _colour0).
-    fg = (vdp.regs[7] >> 4) & 0x0F
+    fg = (regs[7] >> 4) & 0x0F
     if fg == 0:
-        fg = _colour0(vdp)
-    bg = vdp.regs[7] & 0x0F
+        fg = _colour0(vdp, regs)
+    bg = regs[7] & 0x0F
     # No mode-specific 192-line cap: VDP::getNumberOfLines() (real hardware)
     # is mode-independent, so TEXT1's active display period at R#9 LN=1
     # extends to 212 lines exactly like every other mode -- see this file's
@@ -779,7 +890,7 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
 
 
 def _render_text2(
-    vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
 ) -> None:
     """TEXT2: same pattern generator table and R#7 colours as TEXT1 (MSX2
     Technical Handbook 3.2.2), but 80 columns into a 512-wide buffer and a
@@ -788,15 +899,14 @@ def _render_text2(
     1. Blink (R#12/R#13/blink table) is not implemented; every character
     renders in its plain (non-blinking) colour.
     """
-    name_base = (vdp.regs[2] & 0x7C) << 10
-    # Pattern generator: full V9938 128 KB range (R#4 6 bits) -- see
-    # _render_g1's comment. name_base above is already on the wide form
-    # (its own 4 KB-aligned R#2 formula, unrelated to this).
-    pat_base = (vdp.regs[4] & 0x3F) << 11
-    fg = (vdp.regs[7] >> 4) & 0x0F
+    name_base = (regs[2] & 0x7C) << 10
+    # Pattern generator: full-width R#4 base (see _render_g1); the name table
+    # is 4 KB-aligned in TEXT2.
+    pat_base = (regs[4] & 0x3F) << 11
+    fg = (regs[7] >> 4) & 0x0F
     if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
-        fg = _colour0(vdp)
-    bg = vdp.regs[7] & 0x0F
+        fg = _colour0(vdp, regs)
+    bg = regs[7] & 0x0F
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
     row_end = (ye + 7) // 8
@@ -822,16 +932,18 @@ def _render_text2(
 # ---------------------------------------------------------------------------
 
 
-def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
+def _render_mc(
+    vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
+) -> None:
     # Full V9938 128 KB range (R#2 7 bits, R#4 6 bits) -- see _render_g1's
     # comment.
-    name_base = (vdp.regs[2] & 0x7F) << 10
-    pat_base = (vdp.regs[4] & 0x3F) << 11
+    name_base = (regs[2] & 0x7F) << 10
+    pat_base = (regs[4] & 0x3F) << 11
     # R#23 vertical scroll: applies here exactly as it does to G1/G2 -- see
     # _render_g1's comment (openMSX PixelRenderer::draw treats every
     # non-text mode alike).
-    vscroll = vdp.regs[23]
-    bd = _colour0(vdp)  # colour code 0 (TP-aware)
+    vscroll = regs[23]
+    colour0 = _colour0(vdp, regs)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile` only depends on `row`, constant across the 8 scanlines sharing a
@@ -861,9 +973,9 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
             bx = col * 8
             pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x1FFFF]
             hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
-            lc = hi_nib if hi_nib else bd
+            lc = hi_nib if hi_nib else colour0
             lo_nib = pat & 0x0F
-            rc = lo_nib if lo_nib else bd
+            rc = lo_nib if lo_nib else colour0
             buf[scan_w + bx : scan_w + bx + 4] = _COLOR4[lc]
             buf[scan_w + bx + 4 : scan_w + bx + 8] = _COLOR4[rc]
 
@@ -876,6 +988,8 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 
 def _render_sprites(
     vdp: "V9938",
+    regs: list[int],
+    st: _RenderStatus,
     buf: bytearray,
     y_start: int = 0,
     y_end: int | None = None,
@@ -891,16 +1005,16 @@ def _render_sprites(
     - getLineZero(), same construction as checkSprites2's); there is no
     hardware basis for sprite mode 1 ignoring vscroll or a banded pass's
     per-line SPD schedule, and prior to this fix this function silently used
-    only the scalar vdp.regs[8]/vdp.regs[23], so a banded split-screen band
+    only the scalar regs[8]/regs[23], so a banded split-screen band
     boundary (row_spd/row_vscroll) had no effect here even though the sprite
     mode 2 path already handled it correctly.
     """
     if vdp.debug_disable_sprites:  # debug: render background only
         return
-    spd_scalar = bool(vdp.regs[8] & 0x02)  # SPD: sprite disable (R#8 bit 1)
+    spd_scalar = bool(regs[8] & 0x02)  # SPD: sprite disable (R#8 bit 1)
     if row_spd is None and spd_scalar:
         return  # sprites disabled for the whole pass (no per-line schedule)
-    r1 = vdp.regs[1]
+    r1 = regs[1]
     si = (r1 >> 1) & 1
     mag = r1 & 1
     pat_size = 16 if si else 8
@@ -915,25 +1029,25 @@ def _render_sprites(
     # unconditionally (only indexMask/alignment differs by mode: 7-bit for
     # mode 1, 10-bit for mode 2), so V9938 extends sprite mode 1's SAT into
     # the full 128 KB VRAM via R#11 exactly as it does for mode 2.
-    sat_base = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
-    spt_base = (vdp.regs[6] & 0x3F) << 11
+    sat_base = (((regs[11] & 3) << 15) | (regs[5] << 7)) & 0x1FFFF
+    spt_base = (regs[6] & 0x3F) << 11
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
     # !getTransparency()). At the default TP=0, colour-0 sprites are fully
     # transparent and take no part in coincidence, same as before.
-    can0collide = bool(vdp.regs[8] & 0x20)
+    can0collide = bool(regs[8] & 0x20)
 
     # No mode-specific 192-line cap: sprite mode 1's active display period is
     # exactly as long as any other mode's (VDP::getNumberOfLines() is mode-
     # independent on real hardware -- see the GRAPHIC1/MULTICOLOUR fix above
     # and this file's Open Questions). h mirrors sprite mode 2's own `h`
     # parameter (_render_sprites_mode2, which _render_sprites_for_mode
-    # computes once as vdp.display_height and passes down) -- both sprite
+    # computes once as display_height_of(regs) and passes down) -- both sprite
     # renderers size their per-line/per-pixel state to the display's actual
     # height, not a fixed constant, so a 192-line frame does not allocate
     # (or bound-check against) 212 lines' worth of unused state.
-    h = vdp.display_height
+    h = display_height_of(regs)
     # scan_hi caps how far this pass's line index ever reaches (< scan_hi
     # always), so sizing the per-line/per-pixel state below to scan_hi rather
     # than the full h avoids over-allocating for a banded pass covering only
@@ -956,37 +1070,13 @@ def _render_sprites(
     # the first colliding line and stops there).
     col_line = 999
     col_x = 999
-    had_collision = bool(vdp.status & 0x20)  # C set since last cleared by an S#0 read
+    had_collision = bool(st.status & 0x20)  # C set since last cleared by an S#0 read
     # Vertical scroll and SPD are both per scanline: split the range into runs
     # of constant vscroll AND constant sprite-enable, exactly as sprite mode 2
     # does (see _sprite_runs). With no per-line schedule this is one run over
-    # the whole range using the scalar vdp.regs[23], so the common non-banded
+    # the whole range using the scalar regs[23], so the common non-banded
     # case is unaffected.
-    sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
-
-    # Shared per-pixel plot: identical body for the scale==1 fast path and the
-    # general-scale loop below (only how `px` is computed differs), so it's
-    # factored into one closure instead of two copies -- defined once per
-    # function call, not per pixel/line/sprite, since Python resolves `row`/
-    # `line`/`color` (all reassigned in the loops below) at call time via the
-    # closure cell, not at def time.
-    def _plot(px: int) -> None:
-        nonlocal coincidence, col_line, col_x
-        if px < 0 or px >= _W:  # clip off-screen, no wrap
-            return
-        coord = row + px
-        if sprite_touched[coord]:
-            coincidence = True
-            if line < col_line or (line == col_line and px < col_x):
-                col_line = line
-                col_x = px
-        else:
-            sprite_touched[coord] = 1
-        # Colour 0 only reaches here when TP makes it opaque, and an
-        # opaque colour-0 pixel is displayed as palette entry 0.
-        if not sprite_painted[coord]:
-            sprite_painted[coord] = 1
-            buf[coord] = color
+    sprite_runs = _sprite_runs(row_vscroll, regs[23], y_start, scan_hi, row_spd)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -1010,7 +1100,7 @@ def _render_sprites(
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 4:  # V9938 sprite mode 1: 4 sprites per line
                 if not fifth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
                     fifth_set = True
                 continue
 
@@ -1021,25 +1111,22 @@ def _render_sprites(
 
             src_row = sprite_row // 2 if mag else sprite_row
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-            scale = 2 if mag else 1
-            row = line * _W
-
-            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                for bit_i, pixel in enumerate(pixels):
-                    if pixel:
-                        _plot(x_byte + bit_i)
-            else:
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    for s in range(scale):
-                        _plot(x_byte + bit_i * scale + s)
+            hit_x = _plot_mode1_row(
+                buf, sprite_painted, sprite_touched, pixels, x_byte, 2 if mag else 1,
+                line * _W, color=color,
+            )
+            if hit_x >= 0:
+                coincidence = True
+                # First collision in raster order wins (openMSX).
+                if line < col_line or (line == col_line and hit_x < col_x):
+                    col_line = line
+                    col_x = hit_x
 
     if coincidence:
-        vdp.status |= 0x20
+        st.status |= 0x20
         if not had_collision:  # first collision since C was last cleared wins (openMSX)
-            vdp.collision_x = col_x + _COLLISION_X_OFFSET
-            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
+            st.collision_x = col_x + _COLLISION_X_OFFSET
+            st.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 class _SpriteRun(NamedTuple):
@@ -1093,11 +1180,8 @@ def _sprite_scanlines(
     pattern starts at VRAM row y_top and spans render_size rows, across all
     per-scanline vscroll/SPD runs.
 
-    Shared by _render_sprites and _render_sprites_mode2 -- previously each
-    duplicated this exact scan (see _render_sprites's own docstring: a
-    per-scanline vscroll/SPD fix once landed in _render_sprites_mode2 but
-    not in _render_sprites, since nothing forced the two to be kept in
-    sync). Extracting it here means a future scan fix lands once.
+    Shared by _render_sprites and _render_sprites_mode2 so a scan fix lands
+    in both sprite modes at once.
     """
     for run in sprite_runs:
         if not run.enabled:  # SPD set over this run: sprites blanked here
@@ -1148,6 +1232,8 @@ def _composite_sprite_buf(
 
 def _render_sprites_mode2(
     vdp: "V9938",
+    regs: list[int],
+    st: _RenderStatus,
     buf: bytearray,
     h: int,
     y_start: int = 0,
@@ -1173,55 +1259,43 @@ def _render_sprites_mode2(
 
     Sprite Y is evaluated against R#23 vertical scroll per scanline (as on real
     hardware, which re-reads R#23 each line): row_vscroll gives the per-line value
-    when R#23 changes mid-frame, else the scalar vdp.regs[23] is used. Each sprite
+    when R#23 changes mid-frame, else the scalar regs[23] is used. Each sprite
     is positioned in a single pass regardless.
 
     SPD (R#8 bit 1) disables sprites, also per scanline: row_spd, when given,
     supplies the per-line sprite-disable flag (a split screen may blank sprites
     over just its status band, as real hardware does), else the scalar
-    vdp.regs[8] is used. Disabled scanline runs are skipped entirely.
+    regs[8] is used. Disabled scanline runs are skipped entirely.
     """
     if vdp.debug_disable_sprites:  # debug: render background only
         return
-    spd_scalar = bool(vdp.regs[8] & 0x02)  # SPD: sprite disable (R#8 bit 1)
+    spd_scalar = bool(regs[8] & 0x02)  # SPD: sprite disable (R#8 bit 1)
     if row_spd is None and spd_scalar:
         return  # sprites disabled for the whole pass (no per-line schedule)
-    r1 = vdp.regs[1]
+    r1 = regs[1]
     si = (r1 >> 1) & 1
     mag = r1 & 1
     pat_size = 16 if si else 8
     render_size = pat_size * (2 if mag else 1)
     screen_scale = width // _W  # 1 (256-wide modes) or 2 (512-wide G5/G6)
 
-    # R#5/R#11 specify the SAT base (512-byte aligned): attr_reg & ~0x1FF, per
-    # openMSX VDP::updateSpriteAttributeBase (baseMask = (R#11<<15)|(R#5<<7)|
-    # 0x7F, indexMask = ~0u<<10 for sprite mode 2) combined with the SAT's own
-    # getReadArea<32*4>(512) call -- clearing attr_reg's low 9 bits reproduces
-    # that AND exactly.
-    #
-    # The per-sprite colour table shares the SAME base register window as the
-    # SAT (SpriteChecker::checkSprites2 reads it via the same
-    # `spriteAttribTable`, not a separate table), but at a DIFFERENT index
-    # expression: `readNP((~0u<<10) | (sprite*16+line))`. Because that index's
-    # bits 7:0 carry sprite*16+line's own real value (not forced to 1 the way
-    # the SAT's bit 9 is via its `| 0x200`), R#5 bits 1:0 (base bits 8:7) GATE
-    # -- rather than simply relocate -- the low bits of the per-sprite offset,
-    # and base bit 9 (R#5 bit 2) always reads as 0 there. col_base + i*16 +
-    # src_row (simple addition, no gating) is therefore only an approximation
-    # that happens to match when R#5's low bits are already 1 (the BIOS/every
-    # real ROM's convention, e.g. R#5=0xF7) -- NOT the hardware-accurate
-    # formula in general.
-    attr_reg = ((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)
+    # SAT base = the R#11/R#5 attribute address with bits 8:0 cleared
+    # (512-byte aligned). The per-sprite colour table uses the same base with
+    # bits 9:0 cleared; there R#5 bits 1:0 gate offset bits 8:7 and bit 9
+    # reads as 0, so the sprite*16 + line offset is ANDed, not added
+    # (matches openMSX's sprite-mode-2 colour addressing). With R#5 bits 2:0
+    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset".
+    attr_reg = ((regs[11] & 3) << 15) | (regs[5] << 7)
     sat_base = attr_reg & ~0x1FF & 0x1FFFF
     col_base_high = attr_reg & ~0x3FF & 0x1FFFF
-    col_offset_mask = 0x7F | ((vdp.regs[5] & 3) << 7)
-    spt_base = (vdp.regs[6] & 0x3F) << 11
+    col_offset_mask = 0x7F | ((regs[5] & 3) << 7)
+    spt_base = (regs[6] & 0x3F) << 11
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
     # !getTransparency()). At the default TP=0, colour-0 sprites are fully
     # transparent and take no part in coincidence, same as sprite mode 1.
-    can0collide = bool(vdp.regs[8] & 0x20)
+    can0collide = bool(regs[8] & 0x20)
 
     # scan_hi caps how far this pass's line index ever reaches (< scan_hi
     # always), so sizing the per-line/per-pixel state below to scan_hi rather
@@ -1249,39 +1323,12 @@ def _render_sprites_mode2(
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
     col_line = 999
     col_x = 999
-    had_collision = bool(vdp.status & 0x20)
+    had_collision = bool(st.status & 0x20)
     # Vertical scroll and SPD (sprite disable) are both per scanline: split the
     # range into runs of constant vscroll AND constant sprite-enable (one run for
     # the usual single R#23/R#8; more only when a split changes either). Runs
     # whose SPD is set are skipped, so a band that blanks its sprites draws none.
-    sprite_runs = _sprite_runs(row_vscroll, vdp.regs[23], y_start, scan_hi, row_spd)
-
-    # Shared per-pixel plot: identical body for the scale==1 fast path and the
-    # general-scale loop below (only how `sx` is computed differs), so it's
-    # factored into one closure instead of two copies -- defined once per
-    # function call, not per pixel/line/sprite, since Python resolves `line`/
-    # `line_off`/`collides`/`or_mode`/`color`/`claim` (all reassigned in the
-    # loops below) at call time via the closure cell, not at def time.
-    def _plot(sx: int) -> None:
-        nonlocal coincidence, col_line, col_x
-        if sx < 0 or sx >= _W:  # clip off-screen, no wrap
-            return
-        for ss in ss_offsets:  # horizontal doubling in 512-wide modes
-            coord = line_off + sx * screen_scale + ss
-            if collides:
-                if sprite_touched[coord]:
-                    coincidence = True
-                    if line < col_line or (line == col_line and sx < col_x):
-                        col_line = line
-                        col_x = sx
-                else:
-                    sprite_touched[coord] = 1
-            if sprite_buf[coord]:
-                if or_mode:
-                    sprite_buf[coord] |= color
-            else:
-                sprite_buf[coord] = claim
-                drawn.append(coord)
+    sprite_runs = _sprite_runs(row_vscroll, regs[23], y_start, scan_hi, row_spd)
 
     for i in range(32):
         y_byte = vdp.vram[(sat_base + i * 4) & 0x1FFFF]
@@ -1307,11 +1354,11 @@ def _render_sprites_mode2(
         # Scan only the sprite's visible band, per constant-vscroll run -- see
         # _sprite_scanlines. Per-sprite line order is immaterial to the
         # accumulated line_count / 9S / cc0 / coincidence state, and the runs
-        # partition the scanlines, so this matches the old single-vscroll scan.
+        # partition the scanlines, so this equals a full scan at one vscroll.
         for line, sprite_row in _sprite_scanlines(sprite_runs, y_top, render_size):
             if line_count[line] >= 8:
                 if not ninth_set:
-                    vdp.status = (vdp.status & 0xA0) | 0x40 | (i & 0x1F)
+                    st.status = (st.status & 0xA0) | 0x40 | (i & 0x1F)
                     ninth_set = True
                 continue
 
@@ -1346,29 +1393,24 @@ def _render_sprites_mode2(
                 continue  # transparent regardless of OR mode
 
             pixels = _sprite_row_pixels(vdp, spt_base, pat_idx, si, src_row, mask=0x1FFFF)
-            scale = 2 if mag else 1
-            line_off = line * width
-            claim = color | _SPRITE_CLAIM  # marks the pixel even for colour 0
-            ss_offsets = _SS_OFFSETS[screen_scale]
-
-            if scale == 1:  # MAG=0 fast path: skip the range(1) magnification loop
-                for bit_i, pixel in enumerate(pixels):
-                    if pixel:  # position in the 256-dot sprite plane
-                        _plot(x_pos + bit_i)
-            else:
-                for bit_i, pixel in enumerate(pixels):
-                    if not pixel:
-                        continue
-                    for s in range(scale):
-                        _plot(x_pos + bit_i * scale + s)  # position in the sprite plane
+            hit_x = _plot_mode2_row(
+                sprite_buf, sprite_touched, drawn, pixels, x_pos, 2 if mag else 1,
+                line * width, screen_scale, collides=collides, or_mode=or_mode, color=color,
+            )
+            if hit_x >= 0:
+                coincidence = True
+                # First collision in raster order wins (openMSX).
+                if line < col_line or (line == col_line and hit_x < col_x):
+                    col_line = line
+                    col_x = hit_x
 
     _composite_sprite_buf(buf, sprite_buf, drawn, grb_mode, split_colour)
 
     if coincidence:
-        vdp.status |= 0x20
+        st.status |= 0x20
         if not had_collision:  # first collision since C was last cleared wins (openMSX)
-            vdp.collision_x = col_x + _COLLISION_X_OFFSET
-            vdp.collision_y = col_line + _COLLISION_Y_OFFSET
+            st.collision_x = col_x + _COLLISION_X_OFFSET
+            st.collision_y = col_line + _COLLISION_Y_OFFSET
 
 
 def _sprite_row_pixels(
@@ -1395,7 +1437,7 @@ def _sprite_row_pixels(
     return _UNPACK8[left] + _UNPACK8[right]
 
 
-def _display_page_bits(vdp: "V9938", mask: int) -> int:
+def _display_page_bits(vdp: "V9938", regs: list[int], mask: int) -> int:
     """R#2 display-page bits, LSB-toggled by frame parity when EO (R#9 bit 2)
     is enabled -- the automatic even/odd page alternation used for interlace
     in GRAPHIC4-7. `mask` is the page-select bits within R#2 (0x60 for the
@@ -1403,8 +1445,8 @@ def _display_page_bits(vdp: "V9938", mask: int) -> int:
     the toggled bit is the mask's lowest set bit, so one implementation
     serves both mask shapes.
     """
-    bits = vdp.regs[2] & mask
-    if vdp.even_odd_enabled and (vdp.frame_count & 1):
+    bits = regs[2] & mask
+    if even_odd_enabled_of(regs) and (vdp.frame_count & 1):
         # Lowest set bit of `mask`, via explicit 8-bit-truncated negation
         # (PORT-NOTE: mask & -mask relies on Python's unbounded int width;
         # `-mask & 0xFF` pins the two's-complement negation to a u8 so the
@@ -1419,13 +1461,18 @@ def _display_page_bits(vdp: "V9938", mask: int) -> int:
 
 
 def _render_g4(
-    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938",
+    regs: list[int],
+    buf: bytearray,
+    h: int,
+    y_start: int = 0,
+    y_end: int | None = None,
 ) -> None:
     """SCREEN 5: 4-bpp, palette index per half-byte (high nibble = left pixel)."""
-    base = _display_page_bits(vdp, 0x60) << 10
-    tp = bool(vdp.regs[8] & 0x20)  # R#8 bit5: 1=col0 solid, 0=col0 transparent→backdrop
-    border = vdp.regs[7] & 0x0F
-    vscroll = vdp.regs[23]
+    base = _display_page_bits(vdp, regs, 0x60) << 10
+    tp = bool(regs[8] & 0x20)  # R#8 bit5: 1=col0 solid, 0=col0 transparent→backdrop
+    border = regs[7] & 0x0F
+    vscroll = regs[23]
     vram = vdp.vram
     # C-level expansion: two translate tables (hi/lo nibble) + strided slice assignment.
     lut_hi, lut_lo = _g46_luts(tp, border)
@@ -1444,13 +1491,18 @@ def _render_g4(
 
 
 def _render_g5(
-    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938",
+    regs: list[int],
+    buf: bytearray,
+    h: int,
+    y_start: int = 0,
+    y_end: int | None = None,
 ) -> None:
     """SCREEN 6: 2-bpp, 4 pixels per byte, full 512-pixel width."""
-    base = _display_page_bits(vdp, 0x60) << 10
-    tp = bool(vdp.regs[8] & 0x20)
-    border = vdp.regs[7] & 0x0F
-    vscroll = vdp.regs[23]
+    base = _display_page_bits(vdp, regs, 0x60) << 10
+    tp = bool(regs[8] & 0x20)
+    border = regs[7] & 0x0F
+    vscroll = regs[23]
     vram = vdp.vram
     w = 512
     # C-level expansion: four translate tables (bit-pairs 7:6, 5:4, 3:2, 1:0) + stride-4.
@@ -1472,13 +1524,18 @@ def _render_g5(
 
 
 def _render_g6(
-    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938",
+    regs: list[int],
+    buf: bytearray,
+    h: int,
+    y_start: int = 0,
+    y_end: int | None = None,
 ) -> None:
     """SCREEN 7: 4-bpp, 2 pixels per byte, full 512-pixel width."""
-    base = _display_page_bits(vdp, 0x40) << 10  # G6: 64KB pages, bit6 only
-    tp = bool(vdp.regs[8] & 0x20)
-    border = vdp.regs[7] & 0x0F
-    vscroll = vdp.regs[23]
+    base = _display_page_bits(vdp, regs, 0x40) << 10  # G6: 64KB pages, bit6 only
+    tp = bool(regs[8] & 0x20)
+    border = regs[7] & 0x0F
+    vscroll = regs[23]
     vram = vdp.vram
     w = 512
     # Same hi/lo translate approach as G4 but 256 VRAM bytes → 512 output pixels.
@@ -1516,11 +1573,16 @@ def grb332_to_rgb(byte: int) -> tuple[int, int, int]:
 
 
 def _render_g7(
-    vdp: "V9938", buf: bytearray, h: int, y_start: int = 0, y_end: int | None = None
+    vdp: "V9938",
+    regs: list[int],
+    buf: bytearray,
+    h: int,
+    y_start: int = 0,
+    y_end: int | None = None,
 ) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
-    base = _display_page_bits(vdp, 0x40) << 10  # G7: 64KB pages, bit6 only
-    vscroll = vdp.regs[23]
+    base = _display_page_bits(vdp, regs, 0x40) << 10  # G7: 64KB pages, bit6 only
+    vscroll = regs[23]
     vram = vdp.vram
     ye = y_end if y_end is not None else h
     for y in range(y_start, ye):
@@ -1609,6 +1671,13 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     the programmable 16-colour palette. When the register-write log records a
     mid-frame palette change, conversion is done per band. The 16-colour channel
     tables are cached on the VDP instance, keyed on the palette snapshot.
+
+    PORT-NOTE: the channel-table cache (`_rgb_lut_key` / `_rgb_channels`) is
+      the only chip field this conversion writes, and it is not emulated state.
+    Rust equivalent: a `RefCell` (or `Cell` of an owned table) inside the chip,
+      so `to_rgb24(&self)` stays a shared borrow.
+    C++ equivalent: a `mutable` member.
+    Kept as-is here because: Python has no borrow distinction to keep.
     """
     if vdp.framebuffer_format is FramebufferFormat.GRB332:
         return _translate_rgb24(src, _GRB332_CHANNELS)

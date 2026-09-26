@@ -1,5 +1,6 @@
 """Tests for V9938 _reg_write_log (banded renderer register tracking)."""
-from msx.vdp.v9938 import V9938, _PaletteChange, _RegChange
+from msx.vdp._v9938_defs import _PaletteChange, _RegChange
+from msx.vdp.v9938 import V9938
 
 
 def make_vdp() -> V9938:

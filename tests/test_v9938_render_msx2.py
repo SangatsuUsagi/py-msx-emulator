@@ -567,7 +567,7 @@ def test_midframe_ln_toggle_still_212_rows() -> None:
     _set_screen5(vdp)
     vdp.begin_scanline(0)
     # Toggle LN=1 partway down the frame; live regs end at 212-line mode.
-    from msx.vdp.v9938 import _RegChange
+    from msx.vdp._v9938_defs import _RegChange
     vdp._reg_write_log.append(_RegChange(96, 9, 0x80))
     vdp.regs[9] = 0x80
     buf = render_frame(vdp)
@@ -587,10 +587,10 @@ def test_display_page_bits_toggles_lsb_when_eo_and_odd_frame() -> None:
     vdp.regs[2] = 0x20  # G4/G5: page 1 selected (bit 5 set)
     vdp.regs[9] = 0x04  # EO
     vdp.frame_count = 0
-    assert _display_page_bits(vdp, 0x60) == 0x20  # even frame: page 1 as selected
+    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x20  # even frame: page 1 as selected
 
     vdp.frame_count = 1
-    assert _display_page_bits(vdp, 0x60) == 0x00  # odd frame: page 0 (LSB toggled)
+    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x00  # odd frame: page 0 (LSB toggled)
 
 
 def test_display_page_bits_no_toggle_when_eo_disabled() -> None:
@@ -600,7 +600,7 @@ def test_display_page_bits_no_toggle_when_eo_disabled() -> None:
     vdp.regs[2] = 0x20
     vdp.regs[9] = 0x00  # EO clear
     vdp.frame_count = 1
-    assert _display_page_bits(vdp, 0x60) == 0x20  # unaffected by frame parity
+    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x20  # unaffected by frame parity
 
 
 def test_screen5_page_alternates_by_frame_parity_when_eo_enabled() -> None:
@@ -722,7 +722,7 @@ def test_eo_page_toggle_applies_per_band_with_frame_wide_parity() -> None:
     frame-wide parity bit to each band's own page selection: R#2 is banded
     per-region, but the EO toggle key (frame_count parity) is frame-wide, not
     re-read per band."""
-    from msx.vdp.v9938 import _RegChange
+    from msx.vdp._v9938_defs import _RegChange
 
     vdp = V9938()
     _set_screen5(vdp)
