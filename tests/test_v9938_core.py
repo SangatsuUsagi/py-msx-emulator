@@ -1,4 +1,6 @@
 """Tests for msx.vdp.v9938.V9938 core: VRAM, ports, registers, palette."""
+import pytest
+
 from msx.vdp.v9938 import _MSX2_DEFAULT_PALETTE, V9938
 
 # ---------------------------------------------------------------------------
@@ -102,7 +104,8 @@ def test_port_99_register_write_all_28() -> None:
     for reg in range(28):
         vdp.write_port(0x99, reg)
         vdp.write_port(0x99, 0x80 | reg)
-        assert vdp.regs[reg] == reg
+        mask = _V9938_REG_MASKS[reg] if reg < len(_V9938_REG_MASKS) else 0xFF
+        assert vdp.regs[reg] == reg & mask
 
 
 def test_port_99_register_write_ignores_28_to_31() -> None:
@@ -491,7 +494,10 @@ def test_reset_restores_registers_status_palette_and_address_state() -> None:
 
     vdp.reset()
 
-    assert vdp.regs == [0] * 28
+    power_on = [0] * 28
+    power_on[21] = 0x3B                # colour-burst presets (V9938 data book)
+    power_on[22] = 0x05
+    assert vdp.regs == power_on
     assert vdp.status == 0
     assert vdp.palette == list(_MSX2_DEFAULT_PALETTE)
     assert vdp.addr == 0
@@ -526,3 +532,74 @@ def test_reset_clears_current_field_but_preserves_frame_count() -> None:
     vdp.regs[15] = 2  # select S#2 for port 0x99 reads
     assert vdp.read_port(0x99) & 0x02 == 0  # current_field cleared
     assert vdp.frame_count == 5  # NOT reset
+def test_r15_upper_bits_are_dropped_via_port_99() -> None:
+    vdp = V9938()
+    vdp.status = 0x80                  # F set
+    vdp.write_port(0x99, 0x10)
+    vdp.write_port(0x99, 0x80 | 15)
+    assert vdp.regs[15] == 0x00
+    assert vdp.read_port(0x99) & 0x80  # S#0 read returns F ...
+    assert not (vdp.status & 0x80)     # ... and clears it
+
+
+def test_r15_upper_bits_are_dropped_via_port_9b() -> None:
+    vdp = V9938()
+    vdp.regs[17] = 0x80 | 15           # R#15, no auto-increment
+    vdp.write_port(0x9B, 0x12)
+    assert vdp.regs[15] == 0x02
+
+
+@pytest.mark.parametrize("value", range(0x0A, 0x10))
+def test_r15_nonexistent_status_registers_read_ff(value: int) -> None:
+    vdp = V9938()
+    vdp.status = 0x80
+    vdp.write_port(0x99, value)
+    vdp.write_port(0x99, 0x80 | 15)
+    assert vdp.read_port(0x99) == 0xFF
+    assert vdp.status & 0x80           # S#0 was not read
+
+
+def test_r15_masked_value_still_selects_status_register() -> None:
+    vdp = V9938()
+    vdp.status = 0x80
+    vdp.write_port(0x99, 0x1A)         # & 0x0F -> S#10
+    vdp.write_port(0x99, 0x80 | 15)
+    assert vdp.regs[15] == 0x0A
+    assert vdp.read_port(0x99) == 0xFF
+    assert vdp.status & 0x80
+
+
+# Control registers R#0-R#23 keep only their implemented bits (the data book
+# shows the rest as 0); R#21/R#22 are preset to the colour-burst defaults.
+
+_V9938_REG_MASKS = (
+    0x7E, 0x7F, 0x7F, 0xFF, 0x3F, 0xFF, 0x3F, 0xFF,
+    0xFB, 0xBF, 0x07, 0x03, 0xFF, 0xFF, 0x07, 0x0F,
+    0x0F, 0xBF, 0xFF, 0xFF, 0x3F, 0x3F, 0x3F, 0xFF,
+)
+
+
+def test_every_control_register_keeps_only_implemented_bits() -> None:
+    for reg in range(24):
+        vdp = V9938()
+        vdp.write_port(0x99, 0xFF)
+        vdp.write_port(0x99, 0x80 | reg)
+        assert vdp.regs[reg] == _V9938_REG_MASKS[reg], f"R#{reg}"
+
+
+def test_port_9b_masks_register_values_the_same_way() -> None:
+    vdp = V9938()
+    vdp.regs[17] = 0x80 | 10           # R#10, no auto-increment
+    vdp.write_port(0x9B, 0xFF)
+    assert vdp.regs[10] == 0x07
+
+
+def test_colour_burst_registers_power_on_and_reset_values() -> None:
+    vdp = V9938()
+    expected = [0] * 28
+    expected[21] = 0x3B
+    expected[22] = 0x05
+    assert vdp.regs == expected
+    vdp.regs = [0xFF] * 28
+    vdp.reset()
+    assert vdp.regs == expected

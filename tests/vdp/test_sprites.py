@@ -1,12 +1,13 @@
 from msx.vdp.renderer import render_frame
 from msx.vdp.vdp import VDP
 from tests.render_geometry import active_region
+from tests.vdp.conftest import RendererFlavor
 
 
-def _active(vdp: VDP) -> bytearray:
+def _active(vdp: object, flavor: RendererFlavor) -> bytearray:
     """render_frame() output with the constant output-height border padding
     stripped, so pixel-position assertions use native scanline coordinates."""
-    return active_region(render_frame(vdp), vdp.display_height)
+    return active_region(flavor.render_frame(vdp), vdp.display_height)
 
 
 # Sprite attribute table at 0x1000  (R5=0x20, (0x20&0x7F)<<7=0x1000)
@@ -15,9 +16,9 @@ _SAT = 0x1000
 _SPT = 0x0000
 
 
-def make_sprite_vdp() -> VDP:
+def make_sprite_vdp(flavor: RendererFlavor) -> object:
     """G1 mode VDP with sprites configured."""
-    vdp = VDP()
+    vdp = flavor.make_vdp()
     vdp.regs[1] = 0x40   # BL=1, G1, SI=0, MAG=0
     vdp.regs[2] = 0x0E   # name table at 0x3800
     vdp.regs[4] = 0x07   # pattern gen at 0x3800 (won't conflict)
@@ -28,7 +29,7 @@ def make_sprite_vdp() -> VDP:
     return vdp
 
 
-def _sat_entry(vdp: VDP, idx: int, y: int, x: int, pat: int, attr: int) -> None:
+def _sat_entry(vdp: object, idx: int, y: int, x: int, pat: int, attr: int) -> None:
     vdp.vram[_SAT + idx * 4 + 0] = y & 0xFF
     vdp.vram[_SAT + idx * 4 + 1] = x & 0xFF
     vdp.vram[_SAT + idx * 4 + 2] = pat & 0xFF
@@ -39,15 +40,15 @@ def _sat_entry(vdp: VDP, idx: int, y: int, x: int, pat: int, attr: int) -> None:
 # Terminator
 # ---------------------------------------------------------------------------
 
-def test_terminator_stops_sprite_processing() -> None:
-    vdp = make_sprite_vdp()
+def test_terminator_stops_sprite_processing(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Sprite 0: Y=0xD0 (terminator)
     _sat_entry(vdp, 0, 0xD0, 0, 0, 0x0F)
     # Sprite 1 (after terminator): would paint pixel (0,1)
     _sat_entry(vdp, 1, 0x00, 0, 0, 0x0F)   # y_top=1, colour=15
     vdp.vram[_SPT + 0] = 0xFF               # pattern all set
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 0] != 15, "sprite after terminator must not be rendered"
 
@@ -56,8 +57,8 @@ def test_terminator_stops_sprite_processing() -> None:
 # 8×8 sprite pixel rendering
 # ---------------------------------------------------------------------------
 
-def test_8x8_sprite_renders_pixels() -> None:
-    vdp = make_sprite_vdp()
+def test_8x8_sprite_renders_pixels(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Sprite 0: Y=0 (y_top=1), X=0, pattern 0, colour=15
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
     # Pattern 0, row 0: only bit 7 set → pixel at x=0
@@ -65,19 +66,19 @@ def test_8x8_sprite_renders_pixels() -> None:
     # Terminator for remaining sprites
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 0] == 15   # y=1 (y_top), x=0 → pixel set
     assert buf[1 * 256 + 1] == 1    # bit 6 clear → backdrop
 
 
-def test_8x8_colour_zero_transparent() -> None:
-    vdp = make_sprite_vdp()
+def test_8x8_colour_zero_transparent(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     _sat_entry(vdp, 0, 0, 0, 0, 0x00)   # colour=0 (transparent)
     vdp.vram[_SPT + 0] = 0xFF
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 0] == 1   # transparent → backdrop, not painted
 
@@ -86,14 +87,14 @@ def test_8x8_colour_zero_transparent() -> None:
 # Y off-by-one
 # ---------------------------------------------------------------------------
 
-def test_y_off_by_one() -> None:
-    vdp = make_sprite_vdp()
+def test_y_off_by_one(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Y=5 → sprite appears at screen line 6
     _sat_entry(vdp, 0, 5, 0, 0, 0x0F)
     vdp.vram[_SPT + 0] = 0x80
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[6 * 256 + 0] == 15   # appears at line 6
     assert buf[5 * 256 + 0] != 15   # not at line 5
@@ -103,8 +104,8 @@ def test_y_off_by_one() -> None:
 # 16×16 sprite pattern layout
 # ---------------------------------------------------------------------------
 
-def test_16x16_top_row_uses_pattern_pair() -> None:
-    vdp = make_sprite_vdp()
+def test_16x16_top_row_uses_pattern_pair(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     vdp.regs[1] = 0x42   # SI=1 (bit 1), BL=1 → 16×16 sprites
     # Sprite 0: Y=0 (y_top=1), X=0, pattern 0, colour=15
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
@@ -114,15 +115,15 @@ def test_16x16_top_row_uses_pattern_pair() -> None:
     vdp.vram[_SPT + 2 * 8 + 0] = 0x01   # upper-right: pixel 7 (=15 in 16px) set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 0] == 15    # upper-left pixel 0
     assert buf[1 * 256 + 15] == 15   # upper-right pixel 15
     assert buf[1 * 256 + 8] == 1     # upper-right pixel 8 (bit 7 of upper-right = 0)
 
 
-def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
-    vdp = make_sprite_vdp()
+def test_16x16_bottom_row_uses_second_pattern_pair(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     vdp.regs[1] = 0x42   # SI=1
     # Y=0 → top=1; rows 0–7 = top half, rows 8–15 = bottom half
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
@@ -130,7 +131,7 @@ def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80   # lower-left: pixel 0 set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[9 * 256 + 0] == 15   # line 9 = y_top+8 = bottom half row 0
 
@@ -139,8 +140,8 @@ def test_16x16_bottom_row_uses_second_pattern_pair() -> None:
 # Sprite priority
 # ---------------------------------------------------------------------------
 
-def test_lower_index_sprite_wins() -> None:
-    vdp = make_sprite_vdp()
+def test_lower_index_sprite_wins(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Sprite 0: colour=5; Sprite 1: colour=10; both paint pixel (0,1)
     _sat_entry(vdp, 0, 0, 0, 0, 0x05)
     _sat_entry(vdp, 1, 0, 0, 1, 0x0A)
@@ -148,7 +149,7 @@ def test_lower_index_sprite_wins() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80   # pattern 1, pixel 0 set
     _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 0] == 5   # sprite 0 (lower index) wins
 
@@ -157,28 +158,28 @@ def test_lower_index_sprite_wins() -> None:
 # 5th-sprite detection
 # ---------------------------------------------------------------------------
 
-def test_fifth_sprite_sets_status_flag() -> None:
-    vdp = make_sprite_vdp()
+def test_fifth_sprite_sets_status_flag(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Put 5 sprites on line 1 (Y=0 → y_top=1)
     for i in range(5):
         _sat_entry(vdp, i, 0, i * 8, i, 0x0F)
         vdp.vram[_SPT + i * 8 + 0] = 0xFF
     _sat_entry(vdp, 5, 0xD0, 0, 0, 0)
 
-    render_frame(vdp)
+    flavor.render_frame(vdp)
 
     assert vdp.status & 0x40, "5th-sprite flag (bit 6) must be set"
     assert (vdp.status & 0x1F) == 4, "bits 4:0 should hold the 5th sprite index (4)"
 
 
-def test_four_sprites_no_fifth_flag() -> None:
-    vdp = make_sprite_vdp()
+def test_four_sprites_no_fifth_flag(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     for i in range(4):
         _sat_entry(vdp, i, 0, i * 8, i, 0x0F)
         vdp.vram[_SPT + i * 8 + 0] = 0xFF
     _sat_entry(vdp, 4, 0xD0, 0, 0, 0)
 
-    render_frame(vdp)
+    flavor.render_frame(vdp)
 
     assert not (vdp.status & 0x40), "5th-sprite flag must not be set with only 4 sprites"
 
@@ -187,8 +188,8 @@ def test_four_sprites_no_fifth_flag() -> None:
 # Coincidence flag
 # ---------------------------------------------------------------------------
 
-def test_coincidence_flag_set_when_sprites_overlap() -> None:
-    vdp = make_sprite_vdp()
+def test_coincidence_flag_set_when_sprites_overlap(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Two sprites with non-transparent colour both covering pixel (0,1)
     _sat_entry(vdp, 0, 0, 0, 0, 0x05)
     _sat_entry(vdp, 1, 0, 0, 1, 0x0A)
@@ -196,31 +197,45 @@ def test_coincidence_flag_set_when_sprites_overlap() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80
     _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
 
-    render_frame(vdp)
+    flavor.render_frame(vdp)
 
     assert vdp.status & 0x20, "coincidence flag (bit 5) must be set"
 
 
 def test_coincidence_flag_set_when_colour_zero_sprite_overlaps() -> None:
-    # On real TMS9918A/TMS9129 hardware, a colour-0 (transparent) sprite
-    # still occupies its pattern's "1" bits for coincidence purposes
-    # (openMSX VDP.hh canSpriteColor0Collide(): unconditionally true for
-    # MSX1-class VDPs). Colour 0 must not be painted, but must still collide.
-    vdp = make_sprite_vdp()
+    """TMS9918A-only: on real TMS9918A/TMS9129 hardware, a colour-0
+    (transparent) sprite still occupies its pattern's "1" bits for
+    coincidence purposes (openMSX VDP.hh canSpriteColor0Collide():
+    unconditionally true for MSX1-class VDPs). Colour 0 must not be
+    painted, but must still collide.
+
+    NOT shared with V9938, which gates colour-0 collision on R#8's TP bit
+    (defaulting to NOT colliding at TP=0) --
+    tests/test_v9938_render_compat.py::test_sprite_colour_zero_does_not_collide_at_default_tp
+    / ::test_sprite_colour_zero_collides_when_tp_set. A genuine, intentional
+    TMS9918A-vs-V9938 hardware difference, not a gap in coverage."""
+    vdp = VDP()
+    vdp.regs[1] = 0x40
+    vdp.regs[2] = 0x0E
+    vdp.regs[4] = 0x07
+    vdp.regs[3] = 0x20
+    vdp.regs[5] = 0x20
+    vdp.regs[6] = 0x00
+    vdp.regs[7] = 0x01
     _sat_entry(vdp, 0, 0, 0, 0, 0x00)    # colour=0 (transparent)
     _sat_entry(vdp, 1, 0, 0, 1, 0x0A)    # colour=10, overlapping
     vdp.vram[_SPT + 0 * 8 + 0] = 0x80
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80
     _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = active_region(render_frame(vdp), vdp.display_height)
 
     assert vdp.status & 0x20, "coincidence flag must be set even with a colour-0 sprite"
     assert buf[1 * 256 + 0] == 10, "colour-0 sprite itself is still not painted"
 
 
-def test_no_coincidence_when_no_overlap() -> None:
-    vdp = make_sprite_vdp()
+def test_no_coincidence_when_no_overlap(flavor: RendererFlavor) -> None:
+    vdp = make_sprite_vdp(flavor)
     # Two sprites at different X positions
     _sat_entry(vdp, 0, 0, 0, 0, 0x05)    # X=0
     _sat_entry(vdp, 1, 0, 16, 1, 0x0A)   # X=16 (no overlap)
@@ -228,24 +243,24 @@ def test_no_coincidence_when_no_overlap() -> None:
     vdp.vram[_SPT + 1 * 8 + 0] = 0x80    # only pixel 0 of its own space
     _sat_entry(vdp, 2, 0xD0, 0, 0, 0)
 
-    render_frame(vdp)
+    flavor.render_frame(vdp)
 
     assert not (vdp.status & 0x20), "coincidence flag must not be set"
 
 
-def test_5s_and_c_persist_across_frames_until_s0_read() -> None:
+def test_5s_and_c_persist_across_frames_until_s0_read(flavor: RendererFlavor) -> None:
     """5S/C are cleared only by a port-0x99 read of S#0 -- never reset at
     frame start. A frame that sets them, followed by a frame with no
     5th-sprite/collision and no intervening S#0 read, must leave them set
     (matches real TMS9918A hardware and openMSX's unified VDP model)."""
-    vdp = make_sprite_vdp()
+    vdp = make_sprite_vdp(flavor)
     # 5 sprites all at X=0 -> triggers both 5S (more than 4 on the line)
     # and C (all 5 fully overlap at pixel (0, 1)).
     for i in range(5):
         _sat_entry(vdp, i, 0, 0, i, 0x0F)
         vdp.vram[_SPT + i * 8 + 0] = 0x80
     _sat_entry(vdp, 5, 0xD0, 0, 0, 0)
-    render_frame(vdp)
+    flavor.render_frame(vdp)
     assert vdp.status & 0x40  # 5S set this frame
     assert vdp.status & 0x20  # C set this frame
 
@@ -254,7 +269,7 @@ def test_5s_and_c_persist_across_frames_until_s0_read() -> None:
         _sat_entry(vdp, i, 0xD0, 0, 0, 0)
     _sat_entry(vdp, 0, 0, 0, 0, 0x0F)
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
-    render_frame(vdp)
+    flavor.render_frame(vdp)
 
     assert vdp.status & 0x40, "5S must persist across frames without an S#0 read"
     assert vdp.status & 0x20, "C must persist across frames without an S#0 read"
@@ -264,28 +279,28 @@ def test_5s_and_c_persist_across_frames_until_s0_read() -> None:
 # EC (Early Clock) bit — X shift left by 32
 # ---------------------------------------------------------------------------
 
-def test_ec_bit_shifts_sprite_left_32() -> None:
+def test_ec_bit_shifts_sprite_left_32(flavor: RendererFlavor) -> None:
     """EC bit shifts sprite 32 pixels left; X=40 with EC → appears at X=8."""
-    vdp = make_sprite_vdp()
+    vdp = make_sprite_vdp(flavor)
     # EC=1 (bit7 of attr), X=40 → effective x=8
     _sat_entry(vdp, 0, 0, 40, 0, 0x8F)   # attr=0x8F: EC=1, colour=15
     vdp.vram[_SPT + 0] = 0x80             # bit 7 only → pixel at x_pos+0
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     assert buf[1 * 256 + 8] == 15, "EC bit: sprite at X=40 should appear at X=8"
     assert buf[1 * 256 + 40] == 1, "no sprite at X=40 (un-shifted position)"
 
 
-def test_ec_bit_x0_clips_off_left_edge() -> None:
+def test_ec_bit_x0_clips_off_left_edge(flavor: RendererFlavor) -> None:
     """EC bit with X=0 → effective x=-32, all pixels clipped, not wrapped to right."""
-    vdp = make_sprite_vdp()
+    vdp = make_sprite_vdp(flavor)
     _sat_entry(vdp, 0, 0, 0, 0, 0x8F)    # EC=1, X=0 → effective x=-32
     vdp.vram[_SPT + 0] = 0xFF             # all 8 pixels set
     _sat_entry(vdp, 1, 0xD0, 0, 0, 0)
 
-    buf = _active(vdp)
+    buf = _active(vdp, flavor)
 
     # No pixels should appear anywhere — all clipped off left edge
     assert all(buf[1 * 256 + x] == 1 for x in range(256)), \

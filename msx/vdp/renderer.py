@@ -44,15 +44,18 @@ _SPRITE_BITS: list[bytes] = [
 ]
 
 
-def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
+def render_frame(vdp: VDP, skip_render: bool = False, vblank: bool = True) -> bytearray:
     """Render one TMS9918A frame to a border-padded palette-index buffer.
 
-    Dispatches on the M1-M4 mode bits (R#1/R#0, TMS9918A datasheet naming) to
-    pick a screen-mode renderer, or just fires the VBlank interrupt via
-    `_finalize` if `skip_render` (frame skipped for a headless benchmark run).
+    Dispatches on the M1-M3 mode bits (R#1/R#0, TMS9918A datasheet naming) to
+    pick a screen-mode renderer, or only finalizes if `skip_render` (frame
+    skipped for a headless benchmark run). `vblank=False` renders without
+    raising the VBlank flag/interrupt, for a frame Machine.run_frame cut short
+    before the raster reached vertical blanking.
     """
     if skip_render:
-        _finalize(vdp)
+        if vblank:
+            _finalize(vdp)
         return bytearray(0)
 
     r0 = vdp.regs[0]
@@ -63,25 +66,23 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
         # bytearray([b]) * n is a single C-level fill; [b] * n would first build
         # an n-element Python list (≈48× slower on this per-frame path).
         buf = bytearray([border]) * (_W * OUTPUT_H)
-        _finalize(vdp)
+        if vblank:
+            _finalize(vdp)
         return buf
 
-    # M1/M2 (R#1 bits 4/3), M3/M4 (R#0 bits 1/2): TMS9918A screen-mode select.
-    # M1=1: Text (SCREEN 0). M3,M4=1,1: Graphic 4 (SCREEN 5, no sprites).
-    # M3=1 alone: Graphic 2 (SCREEN 2). M2=1 alone: Multicolor (SCREEN 3).
-    # All clear: Graphic 1 (SCREEN 1).
+    # M1/M2 (R#1 bits 4/3), M3 (R#0 bit 1): TMS9918A screen-mode select. R#0
+    # has no M4 on this chip (TI data manual §2.2.1). M1=1: Text (SCREEN 0).
+    # M3=1: Graphic 2 (SCREEN 2). M2=1: Multicolor (SCREEN 3). All clear:
+    # Graphic 1 (SCREEN 1).
     m1 = (r1 >> 4) & 1
     m2 = (r1 >> 3) & 1
     m3 = (r0 >> 1) & 1
-    m4 = (r0 >> 2) & 1
 
     h = vdp.display_height
     buf = bytearray(_W * h)
 
     if m1:
         _render_text(vdp, buf)
-    elif m3 and m4:
-        _render_g4(vdp, buf)
     elif m3:
         _render_g2(vdp, buf)
         _maybe_render_sprites(vdp, buf)
@@ -92,7 +93,8 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
         _render_g1(vdp, buf)
         _maybe_render_sprites(vdp, buf)
 
-    _finalize(vdp)
+    if vblank:
+        _finalize(vdp)
     # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
     return pad_to_output_height(buf, h, _W, border)
@@ -201,8 +203,10 @@ def _render_g2(vdp: VDP, buf: bytearray) -> None:
 def _render_text(vdp: VDP, buf: bytearray) -> None:
     name_base = (vdp.regs[2] & 0x0F) << 10
     pat_base = (vdp.regs[4] & 0x07) << 11
-    fg = _color((vdp.regs[7] >> 4) & 0x0F, 1)
     bg = vdp.regs[7] & 0x0F
+    # Text colour 0 is transparent: the backdrop (R#7 low nibble) shows
+    # through (TI data manual Table 2-3, §2.4).
+    fg = _color((vdp.regs[7] >> 4) & 0x0F, bg)
     border = bg
 
     buf[:] = bytes([border]) * (_W * _H)
@@ -244,22 +248,6 @@ def _render_mc(vdp: VDP, buf: bytearray) -> None:
                     buf[y * _W + bx + px] = lc
                 for px in range(4, 8):
                     buf[y * _W + bx + px] = rc
-
-
-# ---------------------------------------------------------------------------
-# Graphic 4 / SCREEN 5 — 256×(192 or 212) bitmap, 4-bit packed pixels
-# ---------------------------------------------------------------------------
-
-def _render_g4(vdp: VDP, buf: bytearray) -> None:
-    display_base = (vdp.regs[2] >> 4 & 3) << 15
-    h = vdp.display_height
-    for y in range(h):
-        row_start = y * _W
-        vram_row = display_base + y * 128
-        for x in range(0, _W, 2):
-            byte = vdp.vram[(vram_row + x // 2) & 0x1FFFF]
-            buf[row_start + x] = (byte >> 4) & 0xF
-            buf[row_start + x + 1] = byte & 0xF
 
 
 # ---------------------------------------------------------------------------

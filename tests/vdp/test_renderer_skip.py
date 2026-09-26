@@ -41,3 +41,29 @@ def test_skip_render_leaves_irq_low_when_ie_clear() -> None:
     render_frame(vdp, skip_render=True)
     assert vdp.status & 0x80
     assert vdp.irq is False
+
+
+# --- vblank=False: a frame Machine.run_frame cut short before vertical blanking ---
+
+def test_skip_render_without_vblank_leaves_f_and_irq_clear(vdp_with_interrupt: VDP) -> None:
+    vdp_with_interrupt.status = 0
+    render_frame(vdp_with_interrupt, skip_render=True, vblank=False)
+    assert not (vdp_with_interrupt.status & 0x80)
+    assert vdp_with_interrupt.irq is False
+
+
+def test_render_without_vblank_still_renders_the_frame(vdp_with_interrupt: VDP) -> None:
+    vdp_with_interrupt.status = 0
+    buf = render_frame(vdp_with_interrupt, vblank=False)
+    assert len(buf) == 256 * 212
+    assert not (vdp_with_interrupt.status & 0x80)
+    assert vdp_with_interrupt.irq is False
+
+
+def test_blanked_render_without_vblank_leaves_f_clear() -> None:
+    vdp = VDP()
+    vdp.regs[1] = 0x20  # BL=0 (display off), IE0=1
+    buf = render_frame(vdp, vblank=False)
+    assert len(buf) == 256 * 212
+    assert not (vdp.status & 0x80)
+    assert vdp.irq is False

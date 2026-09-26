@@ -612,8 +612,13 @@ def _finalize(vdp: "V9938") -> None:
         vdp._status2 &= ~_S2_EO
 
 
-def _backdrop(vdp: "V9938") -> int:
-    return vdp.regs[7] & 0x0F
+def _colour0(vdp: "V9938") -> int:
+    """Palette index drawn for colour code 0 in the pattern and text modes.
+
+    TP=0 (R#8 bit 5): colour 0 is invisible, so the backdrop shows; TP=1: it
+    is palette entry 0 (V9938 data book, R#8 TP).
+    """
+    return 0 if vdp.regs[8] & 0x20 else vdp.regs[7] & 0x0F
 
 
 # ---------------------------------------------------------------------------
@@ -622,8 +627,15 @@ def _backdrop(vdp: "V9938") -> int:
 
 
 def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    name_base = (vdp.regs[2] & 0x0F) << 10
-    pat_base = (vdp.regs[4] & 0x07) << 11
+    # Name/pattern use the full V9938 128 KB range (R#2 7 bits, R#4 6 bits),
+    # matching openMSX's VDP::updateNameBase/updatePatternBase for GRAPHIC1:
+    # both tables' index fits entirely within the base register's own
+    # "unused bits set to 1" filler width (10 bits for name, 11 for pattern),
+    # so unlike GRAPHIC2/3 there is no per-third gating to reproduce here --
+    # only the register/mask width was previously left at the TMS9918A-only
+    # (16 KB) form. Colour table was already on the wide (R#10/&0x1FFFF) form.
+    name_base = (vdp.regs[2] & 0x7F) << 10
+    pat_base = (vdp.regs[4] & 0x3F) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | (vdp.regs[3] << 6)
     # R#23 vertical scroll: openMSX applies it to every non-text mode alike
     # (PixelRenderer::draw: "if (!isTextMode()) displayY += getVerticalScroll()",
@@ -631,7 +643,7 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # _render_g2 already honours it -- GRAPHIC1 lacking it was an omission,
     # not a hardware fact.
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
@@ -652,7 +664,7 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         if row != cached_row:
             name_row = name_base + row * 32
             for col in range(32):
-                tile = vdp.vram[(name_row + col) & 0x3FFF]
+                tile = vdp.vram[(name_row + col) & 0x1FFFF]
                 cb = vdp.vram[(col_base + tile // 8) & 0x1FFFF]
                 row_tiles[col] = tile
                 hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
@@ -663,7 +675,7 @@ def _render_g1(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         scan_w = scan * _W
         for col in range(32):
             tile = row_tiles[col]
-            pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+            pat = vdp.vram[(pat_base + tile * 8 + py) & 0x1FFFF]
             bx = col * 8
             buf[scan_w + bx : scan_w + bx + 8] = _ROW_BYTES[pat][row_fg[col]][row_bg[col]]
 
@@ -685,11 +697,21 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
     # Using only R#4 bit2 for the pattern base (the TMS9918 form) put the
     # generator at 0x0000 for e.g. Ultima III (R#4=0x13 → 0x8000), garbling the
     # background; R#4 bits 5:2 are the real A16-A13 base bits.
+    #
+    # R#4 bits 1:0 (colour: R#3 bits 6:5) separately gate the 2nd/3rd-third
+    # offset bits (0x800/0x1000) before they're added to pat_base/col_base --
+    # a documented VDP behaviour (msx.org/wiki/SCREEN_2), not a TMS9918A-only
+    # quirk. A bit clear collapses that third's reads onto the 1st third's
+    # table. msx/vdp/renderer.py's TMS9918A _render_g2 already applies this
+    # (its pat_mask/col_mask); ported here unchanged in shape, just against
+    # the wider 128 KB (& 0x1FFFF) address space.
     name_base = (vdp.regs[2] & 0x7F) << 10
     pat_base = (vdp.regs[4] & 0x3C) << 11
     col_base = ((vdp.regs[10] & 0x07) << 14) | ((vdp.regs[3] & 0x80) << 6)
+    pat_mask = ((vdp.regs[4] & 0x03) << 11) | 0x7FF
+    col_mask = ((vdp.regs[3] & 0x7F) << 6) | 0x3F
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     for scan in range(y_start, ye):
@@ -702,8 +724,8 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = vdp.vram[(name_row + col) & 0x1FFFF]
             off = band_offset + tile * 8 + py
-            pat = vdp.vram[(pat_base + off) & 0x1FFFF]
-            cb = vdp.vram[(col_base + off) & 0x1FFFF]
+            pat = vdp.vram[(pat_base + (off & pat_mask)) & 0x1FFFF]
+            cb = vdp.vram[(col_base + (off & col_mask)) & 0x1FFFF]
             hi_nib = (cb >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
             fg = hi_nib if hi_nib else bd
             lo_nib = cb & 0x0F
@@ -718,12 +740,18 @@ def _render_g2(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
 
 
 def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    name_base = (vdp.regs[2] & 0x0F) << 10
-    pat_base = (vdp.regs[4] & 0x07) << 11
-    # TEXT1: R#7 high nibble = text colour, low nibble = background; both are
-    # palette indices used directly (the V9938 maps them through the programmable
-    # palette — no colour-0 substitution).
+    # Full V9938 128 KB range (R#2 7 bits, R#4 6 bits) -- see _render_g1's
+    # comment; TEXT1's own name-table caller in openMSX (CharacterConverter's
+    # getNamePtr-equivalent) explicitly widens its index's filler bits to
+    # expose the same full R#2 range despite TEXT1's narrower native index
+    # width, so this is not TEXT-mode-specific.
+    name_base = (vdp.regs[2] & 0x7F) << 10
+    pat_base = (vdp.regs[4] & 0x3F) << 11
+    # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
+    # colour code 0 follows TP like every other colour code 0 (see _colour0).
     fg = (vdp.regs[7] >> 4) & 0x0F
+    if fg == 0:
+        fg = _colour0(vdp)
     bg = vdp.regs[7] & 0x0F
     # No mode-specific 192-line cap: VDP::getNumberOfLines() (real hardware)
     # is mode-independent, so TEXT1's active display period at R#9 LN=1
@@ -735,12 +763,12 @@ def _render_text(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | No
 
     for row in range(row_start, row_end):
         for col in range(40):
-            tile = vdp.vram[(name_base + row * 40 + col) & 0x3FFF]
+            tile = vdp.vram[(name_base + row * 40 + col) & 0x1FFFF]
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
                     continue
-                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x3FFF]
+                pat = vdp.vram[(pat_base + tile * 8 + py) & 0x1FFFF]
                 off = scan * _W + 8 + col * 6
                 buf[off : off + 6] = _TEXT6_BYTES[pat][fg][bg]
 
@@ -761,8 +789,13 @@ def _render_text2(
     renders in its plain (non-blinking) colour.
     """
     name_base = (vdp.regs[2] & 0x7C) << 10
-    pat_base = (vdp.regs[4] & 0x07) << 11
+    # Pattern generator: full V9938 128 KB range (R#4 6 bits) -- see
+    # _render_g1's comment. name_base above is already on the wide form
+    # (its own 4 KB-aligned R#2 formula, unrelated to this).
+    pat_base = (vdp.regs[4] & 0x3F) << 11
     fg = (vdp.regs[7] >> 4) & 0x0F
+    if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
+        fg = _colour0(vdp)
     bg = vdp.regs[7] & 0x0F
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
@@ -790,13 +823,15 @@ def _render_text2(
 
 
 def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None = None) -> None:
-    name_base = (vdp.regs[2] & 0x0F) << 10
-    pat_base = (vdp.regs[4] & 0x07) << 11
+    # Full V9938 128 KB range (R#2 7 bits, R#4 6 bits) -- see _render_g1's
+    # comment.
+    name_base = (vdp.regs[2] & 0x7F) << 10
+    pat_base = (vdp.regs[4] & 0x3F) << 11
     # R#23 vertical scroll: applies here exactly as it does to G1/G2 -- see
     # _render_g1's comment (openMSX PixelRenderer::draw treats every
     # non-text mode alike).
     vscroll = vdp.regs[23]
-    bd = _backdrop(vdp)
+    bd = _colour0(vdp)  # colour code 0 (TP-aware)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile` only depends on `row`, constant across the 8 scanlines sharing a
@@ -813,7 +848,7 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         if row != cached_row:
             name_row = name_base + row * 32
             for col in range(32):
-                row_tiles[col] = vdp.vram[(name_row + col) & 0x3FFF]
+                row_tiles[col] = vdp.vram[(name_row + col) & 0x1FFFF]
             cached_row = row
         # MULTICOLOR uses only 2 of the 8 pattern bytes per cell: the byte
         # pair is selected by the character row (row & 3)*2, and the top vs
@@ -824,7 +859,7 @@ def _render_mc(vdp: "V9938", buf: bytearray, y_start: int = 0, y_end: int | None
         for col in range(32):
             tile = row_tiles[col]
             bx = col * 8
-            pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x3FFF]
+            pat = vdp.vram[(pat_base + tile * 8 + seg + (py >> 2)) & 0x1FFFF]
             hi_nib = (pat >> 4) & 0x0F  # inline _color() to avoid a per-pixel call
             lc = hi_nib if hi_nib else bd
             lo_nib = pat & 0x0F
@@ -1158,10 +1193,28 @@ def _render_sprites_mode2(
     render_size = pat_size * (2 if mag else 1)
     screen_scale = width // _W  # 1 (256-wide modes) or 2 (512-wide G5/G6)
 
-    # R#5/R#11 specify the SAT base (512-byte aligned). Color table is 0x200 before SAT.
-    attr_reg = (((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)) & 0x1FFFF
+    # R#5/R#11 specify the SAT base (512-byte aligned): attr_reg & ~0x1FF, per
+    # openMSX VDP::updateSpriteAttributeBase (baseMask = (R#11<<15)|(R#5<<7)|
+    # 0x7F, indexMask = ~0u<<10 for sprite mode 2) combined with the SAT's own
+    # getReadArea<32*4>(512) call -- clearing attr_reg's low 9 bits reproduces
+    # that AND exactly.
+    #
+    # The per-sprite colour table shares the SAME base register window as the
+    # SAT (SpriteChecker::checkSprites2 reads it via the same
+    # `spriteAttribTable`, not a separate table), but at a DIFFERENT index
+    # expression: `readNP((~0u<<10) | (sprite*16+line))`. Because that index's
+    # bits 7:0 carry sprite*16+line's own real value (not forced to 1 the way
+    # the SAT's bit 9 is via its `| 0x200`), R#5 bits 1:0 (base bits 8:7) GATE
+    # -- rather than simply relocate -- the low bits of the per-sprite offset,
+    # and base bit 9 (R#5 bit 2) always reads as 0 there. col_base + i*16 +
+    # src_row (simple addition, no gating) is therefore only an approximation
+    # that happens to match when R#5's low bits are already 1 (the BIOS/every
+    # real ROM's convention, e.g. R#5=0xF7) -- NOT the hardware-accurate
+    # formula in general.
+    attr_reg = ((vdp.regs[11] & 3) << 15) | (vdp.regs[5] << 7)
     sat_base = attr_reg & ~0x1FF & 0x1FFFF
-    col_base = (sat_base - 0x200) & 0x1FFFF
+    col_base_high = attr_reg & ~0x3FF & 0x1FFFF
+    col_offset_mask = 0x7F | ((vdp.regs[5] & 3) << 7)
     spt_base = (vdp.regs[6] & 0x3F) << 11
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
@@ -1266,7 +1319,8 @@ def _render_sprites_mode2(
 
             src_row = sprite_row // 2 if mag else sprite_row
             # Per-line colour byte: EC(7) | CC(6) | IC(5) | 0 | colour(3:0).
-            col_entry = vdp.vram[(col_base + i * 16 + src_row) & 0x1FFFF]
+            col_addr = col_base_high | ((i * 16 + src_row) & col_offset_mask)
+            col_entry = vdp.vram[col_addr & 0x1FFFF]
             color = col_entry & 0x0F
             or_mode = bool(col_entry & 0x40)  # CC: OR-combine with same-priority sprite
             x_pos = x_byte - 32 if (col_entry & 0x80) else x_byte  # EC: per-line shift
