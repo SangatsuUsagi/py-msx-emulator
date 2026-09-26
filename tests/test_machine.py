@@ -69,11 +69,19 @@ def test_run_frame_increments_vdp_frame_count() -> None:
 
 
 def test_run_frame_skip_render_still_fires_vblank() -> None:
+    # EI then NOP -- interrupts enabled, so int_pending is accepted and
+    # cleared by the CPU within this same run_frame() call (the VBlank flag
+    # now fires mid-frame, at the display_height boundary, with scanlines
+    # still left to run afterwards -- see machine-core's "V9938 frame is
+    # rendered at the start of vertical blanking" requirement, which also
+    # covers the TMS9918A path). The VDP status flag (S#0 bit 7), which
+    # nothing in this ROM reads back and clears, is therefore the reliable
+    # signal that VBlank still fires when skip_render=True.
     rom = bytes([0xFB] + [0x00] * 32767)  # EI then NOP — enable interrupts
     m = _make_machine(rom=rom)
     m.vdp.regs[1] = 0x60  # BL=1, IE=1
     m.run_frame(skip_render=True)
-    assert m.cpu.int_pending
+    assert m.vdp.status & 0x80
 
 
 def test_run_frame_executes_at_least_cycles_per_frame() -> None:
@@ -567,3 +575,38 @@ def test_sram_sources_includes_fmpac_and_halnote_when_present(tmp_path: Path) ->
     sources = m.sram_sources()
     assert id(m.halnote_cart) not in {id(source) for source, _path in sources}
     assert id(m.fmpac) in {id(source) for source, _path in sources}
+
+
+# ---------------------------------------------------------------------------
+# Machine.step() samples the VDP IRQ level like the run_frame() loops do
+# ---------------------------------------------------------------------------
+
+def _stepping_machine() -> Machine:
+    machine = _make_machine()
+    machine.io.write_port(0xA8, 0xC0)  # page 3 -> RAM slot, so the push lands
+    machine.cpu.registers.SP = 0xF000
+    machine.cpu.iff1 = True
+    machine.cpu.iff2 = True
+    return machine
+
+
+def test_step_takes_irq_raised_while_paused() -> None:
+    machine = _stepping_machine()
+    machine.vdp.regs[1] = 0x60  # IE0=1
+    machine.vdp.status = 0x80   # F=1
+    machine.vdp._update_irq()
+    machine.cpu.int_pending = False  # nothing sampled it yet
+
+    machine.step()
+
+    assert machine.cpu.registers.PC == 0x0038
+
+
+def test_step_ignores_stale_int_pending_after_irq_dropped() -> None:
+    machine = _stepping_machine()
+    machine.cpu.int_pending = True  # left over from the last scanline sample
+    assert machine.vdp.irq is False  # e.g. S#0 already read while paused
+
+    machine.step()
+
+    assert machine.cpu.registers.PC == 0x0001

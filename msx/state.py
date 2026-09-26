@@ -521,6 +521,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.vdp.latch = snap.vdp_latch
     machine.vdp.addr = snap.vdp_addr
     machine.vdp.read_buf = snap.vdp_read_buf
+    # The VDP's cached /INT level is what the scanline loop feeds the CPU, so
+    # it must follow the restored status/registers, not a pre-restore value.
+    machine.vdp._update_irq()
     if vdp9938 is not None:
         if snap.vdp_palette is not None:
             vdp9938.palette[:] = snap.vdp_palette

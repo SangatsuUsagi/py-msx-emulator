@@ -842,8 +842,9 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
     handler = _DD_FD_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, use_iy, op)
-    # prefix absorbed — delegate to normal dispatch (real Z80 behavior)
-    return _DISPATCH[op](cpu)
+    # Prefix absorbed: the byte runs as its unprefixed instruction, and the
+    # prefix was its own 4-T-state M1 cycle (openMSX CC_DD).
+    return _DISPATCH[op](cpu) + 4
 
 
 # ---------------------------------------------------------------------------
@@ -852,7 +853,15 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
 
 
 def _ed_im(cpu: Z80, op: int) -> int:
-    cpu.im = 0 if op == 0x46 else (1 if op == 0x56 else 2)
+    # Opcode bits 4:3 select the mode for the canonical encodings and their
+    # undocumented mirrors alike: 0/1 -> IM 0, 2 -> IM 1, 3 -> IM 2.
+    sel = (op >> 3) & 0x03
+    if sel == 3:
+        cpu.im = 2
+    elif sel == 2:
+        cpu.im = 1
+    else:
+        cpu.im = 0
     return 8
 
 
@@ -1088,16 +1097,18 @@ _ED_DISPATCH: dict[int, Callable[[Z80, int], int]] = {}
 
 def _build_ed_dispatch() -> None:
     d = _ED_DISPATCH
-    d[0x46] = _ed_im
-    d[0x56] = _ed_im
-    d[0x5E] = _ed_im
+    # IM / NEG / RETN each have undocumented mirrors that run as the canonical
+    # instruction (openMSX's ED table, the Z80 reference core).
+    for op in (0x46, 0x4E, 0x56, 0x5E, 0x66, 0x6E, 0x76, 0x7E):
+        d[op] = _ed_im
     d[0x47] = _ed_ld_i_a
     d[0x4F] = _ed_ld_r_a
     d[0x57] = _ed_ld_a_ir
     d[0x5F] = _ed_ld_a_ir
-    d[0x44] = _ed_neg
-    d[0x45] = _ed_retn_reti
-    d[0x4D] = _ed_retn_reti
+    for op in (0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74, 0x7C):
+        d[op] = _ed_neg
+    for op in (0x45, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75, 0x7D):
+        d[op] = _ed_retn_reti
     for op in (0x4A, 0x5A, 0x6A, 0x7A):
         d[op] = _ed_adc_hl_rr
     for op in (0x42, 0x52, 0x62, 0x72):

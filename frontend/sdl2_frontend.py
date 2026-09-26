@@ -52,7 +52,20 @@ _S16_MIN: int = -32768
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
 
-_TARGET_FPS: float = 60.0
+# Real-time pacing target: a clean round number, not the exact hardware field
+# rate (NTSC 59.92 Hz / PAL 50.16 Hz) -- host-vsync-friendly by design, see
+# openspec/specs/app-frame-timer/spec.md's Purpose. `Machine` carries no
+# video_standard field, only the derived cycles_per_frame/lines_per_frame;
+# lines_per_frame already has a strict 1:1 correspondence with video standard
+# (populated from msx/machine_loader.py's _TIMING table, keyed by
+# video_standard), so branching on it here needs no new Machine field.
+_TARGET_FPS_NTSC: float = 60.0
+_TARGET_FPS_PAL: float = 50.0
+
+
+def _target_fps_for(machine: Machine) -> float:
+    """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL."""
+    return _TARGET_FPS_NTSC if machine.lines_per_frame == 262 else _TARGET_FPS_PAL
 
 
 class _InitSdlApi(Protocol):
@@ -924,7 +937,7 @@ def run(
         except Exception as exc:
             print(f"resume failed: {exc}", file=sys.stderr)
 
-    frame_timer = FrameTimer(fps=_TARGET_FPS, speed=speed)
+    frame_timer = FrameTimer(fps=_target_fps_for(machine), speed=speed)
     event = sdl2.SDL_Event()
     state = _LoopState(
         running=True, fullscreen=False, texture=texture, tex_w=tex_w, tex_h=tex_h,

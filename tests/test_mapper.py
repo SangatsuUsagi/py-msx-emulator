@@ -578,7 +578,7 @@ def test_majutsushi_generate_samples_min() -> None:
 
 def test_majutsushi_generate_samples_length() -> None:
     m = _maj()
-    assert len(m.generate_samples(735, 0, 59659)) == 735 * 2
+    assert len(m.generate_samples(735, 0, 59736)) == 735 * 2
 
 
 def test_majutsushi_generate_samples_events_cleared() -> None:

@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from msx.fmpac import FmPac
     from msx.rtc import RTC
 
-# NTSC: 3.579545 MHz / 60 Hz ≈ 59,659 T-states per frame
-CYCLES_PER_FRAME: int = 59_659
+# NTSC: 228 T-states/scanline (real TMS9918A/V99x8 raster timing) x 262 lines
+CYCLES_PER_FRAME: int = 59_736
 LINES_PER_FRAME: int = 262
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
@@ -167,16 +167,6 @@ class Machine:
         self.cpu.write_byte = self.memory.write
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
-        if not isinstance(self.vdp, V9938):
-            # TMS9918A (MSX1) has a single VBlank interrupt source per frame and
-            # no line/scanline interrupts (those are V9938+). The frame-end
-            # interrupt fired once per frame via on_interrupt is therefore the
-            # hardware-correct MSX1 model; there is no MSX1 equivalent to the
-            # V9938 per-scanline IRQ polling done in run_frame().
-            self.vdp.on_interrupt = self._vblank_interrupt
-
-    def _vblank_interrupt(self) -> None:
-        self.cpu.int_pending = True
 
     def reset(self) -> None:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
@@ -440,6 +430,9 @@ class Machine:
         self.memory.write(addr, value)
 
     def step(self) -> int:
+        # Single-step (debugger / RPC) path: sample the VDP IRQ level the same
+        # way every run_frame() scanline loop does before each instruction.
+        self.cpu.int_pending = self.vdp.irq
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
@@ -450,49 +443,55 @@ class Machine:
         (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
         is still rendered and counted, and the next call restarts at line 0.
 
-        A V9938 frame is rendered at the start of vertical blanking, not at
-        the end of the scanline loop: begin_scanline(vblank_start_line) raises
-        the VBlank IRQ, so rendering after the whole loop would show the VRAM
-        the game's VBlank ISR left behind — sprite attributes and name tables
-        one frame early, while the display registers correctly come from the
+        Both VDP variants render at the start of vertical blanking, not at the
+        end of the scanline loop, and both raise their VBlank flag/interrupt at
+        that same point: rendering after the whole loop would show the VRAM the
+        game's VBlank ISR left behind — sprite attributes and name tables one
+        frame early, while the display registers correctly come from the
         frame-start snapshot. Splitting the loop there renders the frame the
-        ISR has not touched yet, and lets the renderer's sprite-collision /
-        5S scan finish before the ISR reads S#0.
-        The TMS9918A has no per-scanline hook and raises its frame-end IRQ
-        from render_frame() itself, so its ISR already runs after the render.
+        ISR has not touched yet, and lets the renderer's sprite-collision / 5S
+        scan finish before the ISR reads S#0.
+        On the V9938, begin_scanline(vblank_start_line) (called from inside the
+        first scanline segment) raises the VBlank IRQ. The TMS9918A has no
+        per-scanline hook; render_frame()/_finalize() plays that role instead,
+        called between the two scanline segments below rather than from within
+        one, so its ISR runs after the render exactly like the V9938's does.
         """
         self._frame_interrupted = False
         lpf = self.lines_per_frame
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
-        # The scanline loops call begin_scanline(line) *after* running that
-        # line's cycles, so the pre-render segment is the half-open range
+        # The V9938 scanline loop calls begin_scanline(line) *after* running
+        # that line's cycles, so the pre-render segment is the half-open range
         # [0, vblank_start_line + 1): its last iteration is the one whose
-        # begin_scanline() raises the VBlank F flag. min() guards a
-        # lines_per_frame shorter than the display (synthetic timings).
-        vblank_split = (
-            min(vdp9938.vblank_start_line + 1, lpf) if vdp9938 is not None else lpf
-        )
+        # begin_scanline() raises the VBlank F flag. The TMS9918A has no
+        # per-line hook, but uses the same boundary (display_height) so its
+        # own flag/interrupt -- raised below, between the two segments --
+        # fires at the same point in the frame's cycle budget as the V9938's.
+        # min() guards a lines_per_frame shorter than the display (synthetic
+        # timings).
+        vblank_split = min(self.vdp.vblank_start_line + 1, lpf)
 
         total = self._run_lines(vdp9938, first_line=0, end_line=vblank_split, total=0)
         if vdp9938 is not None:
             result = render_frame_v9938(vdp9938, skip_render=skip_render)
-            # The VBlank ISR window. Skipped when the first segment stopped
-            # short — a break via the pause hook (_pause_requested) or a Ctrl-C
-            # handled by _on_frame_interrupt (_frame_interrupted) — so a paused
-            # frame does not run on past the break point.
-            if (
-                vblank_split < lpf
-                and not self._pause_requested
-                and not self._frame_interrupted
-            ):
-                self._run_lines(
-                    vdp9938, first_line=vblank_split, end_line=lpf, total=total
-                )
         else:
             # vdp9938 is None here only because the isinstance(self.vdp, V9938)
             # check above was False, and self.vdp hasn't been reassigned since.
             assert isinstance(self.vdp, VDP)
             result = render_frame(self.vdp, skip_render=skip_render)
+        # The VBlank ISR window. Skipped when the first segment stopped
+        # short — a break via the pause hook (_pause_requested) or a Ctrl-C
+        # handled by _on_frame_interrupt (_frame_interrupted) — so a paused
+        # frame does not run on past the break point. Shared by both VDP
+        # variants: the TMS9918A's render_frame() call above already raised
+        # its VBlank flag/interrupt (via _finalize()), same as begin_scanline()
+        # did for the V9938 inside the first segment.
+        if (
+            vblank_split < lpf
+            and not self._pause_requested
+            and not self._frame_interrupted
+        ):
+            self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
         # Frame breakpoint (debugger 'gf'): checked once per frame, after the
@@ -560,6 +559,7 @@ class Machine:
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
+        vdp = self.vdp
         line_cycles = 0
         try:
             for line in range(first_line, end_line):
@@ -579,8 +579,7 @@ class Machine:
                         if self._pause_requested:
                             self.cycle_count += line_cycles
                             return total
-                    if vdp9938 is not None:
-                        cpu.int_pending = vdp9938.irq
+                    cpu.int_pending = vdp.irq
                     n = cpu_step()
                     total += n
                     line_cycles += n
@@ -667,10 +666,12 @@ class Machine:
                     vdp9938.begin_scanline(line)
                     cpu.int_pending = vdp9938.irq
             else:
+                vdp = self.vdp
                 for line in range(first_line, end_line):
                     line_end = (line + 1) * cpf // lpf
                     line_cycles = 0
                     while total < line_end:
+                        cpu.int_pending = vdp.irq
                         n = cpu_step()
                         total += n
                         line_cycles += n
@@ -688,13 +689,13 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        vdp = self.vdp
         try:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
                 while total < line_end:
                     pc = cpu.registers.PC
-                    if vdp9938 is not None:
-                        cpu.int_pending = vdp9938.irq
+                    cpu.int_pending = vdp.irq
                     n = cpu_step()
                     total += n
                     self.cycle_count += n
