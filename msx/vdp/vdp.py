@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Protocol
 
+from msx.vdp import renderer
+
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
     from msx.vdp.tracer import Tracer
@@ -32,6 +34,8 @@ class VdpDevice(Protocol):
     surface to translate rather than reverse-engineering it from every call
     site. `latch`/`addr`/`read_buf`/`frame_count` are plain fields on `VDP`
     and properties on `V9938`; both satisfy this Protocol identically.
+    `latch` is read-only here: the V9938's latch is one byte plus two
+    pending flags, so it is restored through `V9938.restore_state()`.
 
     Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
     `debug_disable_sprites`) too -- both classes declare these identically
@@ -40,7 +44,7 @@ class VdpDevice(Protocol):
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
-    Several callers (msx/machine.py, msx/screenshot.py, msx/state.py,
+    Several callers (msx/machine.py, msx/state.py,
     msx/rpc_server.py, msx/debugger/prompt.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
@@ -49,12 +53,17 @@ class VdpDevice(Protocol):
     `Machine._run_lines`'s PORT-NOTE (msx/machine.py) -- that's the one
     place the rationale is written out; the other call sites just repeat
     the shape.
+
+    PORT-NOTE: the data members here (`irq`, `status`, `regs`, ...) are plain
+    fields for speed -- `Machine` reads `vdp.irq` every instruction -- so the
+    intended port shape is an `enum Vdp { Tms(Vdp), V9938(V9938) }` with
+    inherent accessors, not a `dyn` trait (traits cannot declare fields and
+    would put a vtable call on that per-instruction read).
     """
 
     vram: bytearray
     regs: list[int]
     status: int
-    latch: int | None
     addr: int
     read_buf: int
     irq: bool
@@ -63,6 +72,8 @@ class VdpDevice(Protocol):
     _get_cycle: Callable[[], int] | None
     debug_disable_sprites: bool
 
+    @property
+    def latch(self) -> int | None: ...
     @property
     def frame_count(self) -> int: ...
     @frame_count.setter
@@ -76,7 +87,8 @@ class VdpDevice(Protocol):
     @property
     def vblank_start_line(self) -> int: ...
     def reset(self) -> None: ...
-    def _update_irq(self) -> None: ...
+    def update_irq(self) -> None: ...
+    def render_preview(self) -> bytearray: ...
     def increment_frame(self) -> None: ...
     def read_port(self, port: int) -> int: ...
     def write_port(self, port: int, value: int) -> None: ...
@@ -152,11 +164,11 @@ _TMS_CHANNELS: tuple[bytes, bytes, bytes] = _channel_tables_indexed(
 )
 
 
-
 # Implemented bits of R#0-R#7 (TI TMS9918A data manual §2.2: R#0 has only M3
 # and EXTVID, R#1 bit 2 is reserved, R#2/R#4/R#6 hold 4/3/3 address bits, R#5
 # 7); stored values are ANDed with these, as openMSX does for MSX1 VDPs.
 _REG_VALUE_MASKS = (0x03, 0xFB, 0x0F, 0xFF, 0x07, 0x7F, 0x07, 0xFF)
+
 
 @dataclass
 class VDP:
@@ -181,20 +193,19 @@ class VDP:
     status: int = 0
     read_buf: int = 0
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
-    # instruction; kept current by _update_irq() -- mirrors V9938.irq.
+    # instruction; kept current by update_irq() -- mirrors V9938.irq.
     irq: bool = False
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    # PORT-NOTE: these Callable hooks (the tracer / _get_pc / _get_cycle
-    #   below) are stored as Python closures assigned at
-    #   wiring time.
+    # PORT-NOTE: these diagnostic hooks (the tracer object and the
+    #   _get_pc / _get_cycle closures below) are assigned at wiring time.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
     #   resolved once at construction, not per-call function pointers.
     # C++ equivalent: std::function members or a virtual interface pointer,
     #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called at
-    #   most once per interrupt/frame, not per VRAM access; the closure
-    #   indirection costs nothing measurable here.
+    # Kept as-is here because: resolved once at wiring time and called only
+    #   while tracing is enabled (once per control-port write), never on the
+    #   data-port path; the indirection costs nothing when tracing is off.
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
@@ -239,12 +250,28 @@ class VDP:
         self.read_buf = 0
         self.irq = False
 
-    def _update_irq(self) -> None:
+    def update_irq(self) -> None:
         """Recompute the /INT level: F (S#0 bit 7) gated by IE0 (R#1 bit 5).
 
         Called whenever either input changes, so an IE0 0->1 write while F is
         still pending raises the line at once (openMSX VDP.cc, R#1 write)."""
         self.irq = bool(self.status & 0x80) and bool(self.regs[1] & 0x20)
+
+    def begin_vblank(self) -> None:
+        """Start of vertical blanking: raise F and re-derive the /INT level.
+
+        The TMS9918A's only interrupt source. Machine.run_frame calls this at
+        the vblank split (the role V9938.begin_scanline(vblank_start_line)
+        plays), and not for a frame cut short before it.
+        """
+        self.status |= 0x80
+        self.update_irq()
+
+    def render_preview(self) -> bytearray:
+        """Render the current frame without changing emulated state: the
+        sprite status a render produces is discarded (debugger / RPC
+        screenshots and state thumbnails)."""
+        return renderer.render_preview(self)
 
     def write_port(self, port: int, value: int) -> None:
         """Dispatch a TMS9918A VDP port write.
@@ -273,11 +300,12 @@ class VDP:
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
-                    self.regs[reg] = low & _REG_VALUE_MASKS[reg]
+                    stored = low & _REG_VALUE_MASKS[reg]
+                    self.regs[reg] = stored
                     if reg == 1:
-                        self._update_irq()
+                        self.update_irq()
                     if self._logger is not None:
-                        self._logger.on_vdp_reg_write(reg, low, self._frame_count)
+                        self._logger.on_vdp_reg_write(reg, stored, self._frame_count)
                 else:
                     # VRAM address setup
                     self.addr = ((value & 0x3F) << 8) | low
@@ -325,7 +353,7 @@ class VDP:
             # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg
             # case 0, both of which clear status & 0x1F on an S#0 read.
             self.status &= 0x1F
-            self.irq = False      # F is now clear, so the /INT line drops
+            self.update_irq()     # F is now clear, so the /INT line drops
             self.latch = None     # reading status resets the address latch
             return result & 0xFF
         return 0xFF

@@ -267,3 +267,49 @@ def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
     rgb = bytearray(256 * 192 * 3)
     save_state(machine, rgb, "test")
     load_state(machine)  # must not raise
+
+
+def test_load_state_restores_vdp_port_state(machine, saves_dir):
+    """A half-written control pair, the VRAM pointer and the read-ahead byte
+    survive a save/load round trip."""
+    machine.vdp.latch = 0x56
+    machine.vdp.addr = 0x1256
+    machine.vdp.read_buf = 0xAB
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+
+    machine.vdp.latch = None
+    machine.vdp.addr = 0
+    machine.vdp.read_buf = 0
+    load_state(machine)
+
+    assert machine.vdp.latch == 0x56
+    assert machine.vdp.addr == 0x1256
+    assert machine.vdp.read_buf == 0xAB
+
+
+@pytest.mark.parametrize("value", [0x100, -1, "x"])
+def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
+    import json
+
+    rgb = bytearray(256 * 192 * 3)
+    state_path = save_state(machine, rgb, "test")
+    with open(state_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["vdp_latch"] = value
+    with open(state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    with pytest.raises(StateLoadError, match="vdp"):
+        load_state(machine, state_path)
+
+
+def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
+    machine.vdp.latch = None
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+
+    machine.vdp.latch = 0x55
+    load_state(machine)
+
+    assert machine.vdp.latch is None

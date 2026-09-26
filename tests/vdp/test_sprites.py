@@ -184,6 +184,22 @@ def test_four_sprites_no_fifth_flag(flavor: RendererFlavor) -> None:
     assert not (vdp.status & 0x40), "5th-sprite flag must not be set with only 4 sprites"
 
 
+def test_tms9918a_overflow_latch_then_vblank_sets_f() -> None:
+    # The TMS9918A render latches 5S, then Machine.run_frame's begin_vblank()
+    # raises F, so a frame that starts with S#0 clear ends with all three set.
+    vdp = VDP()
+    vdp.regs[1] = 0x40
+    vdp.regs[5] = 0x20
+    for k in range(5):
+        _sat_entry(vdp, k, 0, k * 16, 0, 0x0F)
+    _sat_entry(vdp, 5, 0xD0, 0, 0, 0)
+
+    render_frame(vdp)
+    vdp.begin_vblank()
+
+    assert vdp.status == 0x80 | 0x40 | 4
+
+
 # ---------------------------------------------------------------------------
 # Coincidence flag
 # ---------------------------------------------------------------------------

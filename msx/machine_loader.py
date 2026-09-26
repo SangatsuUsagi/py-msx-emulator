@@ -84,6 +84,7 @@ from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
+from msx.vdp._geometry import VideoStandard
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP, VdpDevice
@@ -225,15 +226,6 @@ _DEFAULT_IO_PORTS: dict[str, tuple[int, int]] = {
 }
 
 
-# cycles_per_frame, lines_per_frame keyed by video standard. 228 T-states per
-# scanline (real TMS9918A/V99x8 raster timing) x lines_per_frame -- not a
-# "Z80 clock / refresh Hz" approximation.
-_TIMING: dict[str, tuple[int, int]] = {
-    "ntsc": (59_736, 262),
-    "pal":  (71_364, 313),
-}
-
-
 class MachineLoadError(Exception):
     """Raised when a device or machine YAML fails validation."""
 
@@ -328,9 +320,9 @@ class MachineSpec:
     # both resolve a device at once (build_machine raises MachineLoadError).
     io_device: _ExpandedSubslotDevice | None = None
 
-    # Timing (derived from video_standard in YAML)
-    cycles_per_frame: int = 59_736   # NTSC default
-    lines_per_frame: int = 262       # NTSC default
+    # Video standard from the YAML (NTSC default); the frame timing derives
+    # from it (VideoStandard.cycles_per_frame / lines_per_frame).
+    video_standard: VideoStandard = VideoStandard.NTSC
 
     # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
     # 0 = pure datasheet Z80; MSX machines set 1 (the MSX M1 wait state).
@@ -353,6 +345,16 @@ class MachineSpec:
     # hardware layout).
     fdc: _FdcDef | None = None
     fdc_subslot: int = 0
+
+    @property
+    def cycles_per_frame(self) -> int:
+        """Z80 T-states per frame, from the video standard."""
+        return self.video_standard.cycles_per_frame
+
+    @property
+    def lines_per_frame(self) -> int:
+        """Scanlines per frame, from the video standard."""
+        return self.video_standard.lines_per_frame
 
 
 @dataclass
@@ -1012,13 +1014,17 @@ def load_machine_spec(
     rom_base: str = str(raw.get("rom_base", "roms/cbios"))
     rom_base_dir = project_root / rom_base
 
-    video_standard: str = str(raw.get("video_standard", "ntsc")).lower()
-    if video_standard not in _TIMING:
+    video_standard_name = str(raw.get("video_standard", "ntsc")).lower()
+    try:
+        video_standard = VideoStandard(video_standard_name)
+    except ValueError:
+        expected: list[str] = []
+        for member in VideoStandard:
+            expected.append(repr(member.value))
         raise MachineLoadError(
-            f"{machine_path}: unsupported video_standard {video_standard!r} "
-            f"(expected 'ntsc' or 'pal')"
-        )
-    cycles_per_frame, lines_per_frame = _TIMING[video_standard]
+            f"{machine_path}: unsupported video_standard {video_standard_name!r} "
+            f"(expected one of {', '.join(expected)})"
+        ) from None
 
     # CPU timing: extra T-states per M1 (opcode fetch). Absent → 0 (pure Z80).
     cpu_block: CpuBlockYaml = raw.get("cpu", {}) or {}
@@ -1099,8 +1105,7 @@ def load_machine_spec(
         has_rtc=has_rtc,
         keyboard_type=keyboard_type,
         device_io_ports=device_io_ports,
-        cycles_per_frame=cycles_per_frame,
-        lines_per_frame=lines_per_frame,
+        video_standard=video_standard,
         m1_wait_states=m1_wait_states,
         flat_ram_subslot=flat_ram_subslot,
         flat_ram_size_kb=flat_ram_size_kb,
@@ -2180,8 +2185,7 @@ def _build_msx1(
     return machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
-        cycles_per_frame=spec.cycles_per_frame,
-        lines_per_frame=spec.lines_per_frame,
+        video_standard=spec.video_standard,
     )
 
 
@@ -2322,8 +2326,7 @@ def _build_msx2(
     machine = machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
-        cycles_per_frame=spec.cycles_per_frame,
-        lines_per_frame=spec.lines_per_frame,
+        video_standard=spec.video_standard,
         fdc=fdc_device,
         rtc=rtc,
         rtc_sram_save_path=rtc_sram_save_path,
