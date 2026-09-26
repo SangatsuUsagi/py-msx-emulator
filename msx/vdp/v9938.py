@@ -9,7 +9,7 @@ the block more coarsely mirrors these four).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, TypedDict, cast
 
 from msx.vdp._geometry import CYCLES_PER_LINE
 from msx.vdp.vdp import FramebufferFormat
