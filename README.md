@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-2749%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-2807%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -1040,7 +1040,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 2749 tests spanning unit tests
+The test suite covers all major components with 2807 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1110,7 +1110,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 2749 tests
+├── tests/                 # Test suite — 2807 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration

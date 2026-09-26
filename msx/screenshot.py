@@ -19,10 +19,15 @@ if TYPE_CHECKING:
 def render_current_rgb24(vdp: "VdpDevice") -> tuple[bytes, int, int]:
     """Render the *current* VDP state to RGB24 without perturbing frame state.
 
-    Picks the V9938 or TMS renderer, saves and restores `vdp.frame_count` so the
-    render reflects the paused instant without advancing the frame counter, and
-    returns (rgb_bytes, width, height). Shared by the debugger REPL and the RPC
-    adapter so both capture the frame identically.
+    Picks the V9938 or TMS renderer and returns (rgb_bytes, width, height).
+    A render re-runs the sprite scan (S#0 5S/C/index, V9938 collision
+    coordinates), and on the TMS9918A raises F and the /INT level, on the
+    V9938 recomputes S#2's EO bit; all of that is saved and restored so a
+    capture never changes what the program reads next. frame_count (and irq
+    on the V9938) are not written by a render and are restored only as a
+    guard.
+    Shared by the debugger REPL and the RPC adapter so both capture the frame
+    identically.
 
     Both renderers always emit a constant OUTPUT_H-row frame (a native height
     shorter than OUTPUT_H is centred with border padding — see _geometry.py),
@@ -35,14 +40,27 @@ def render_current_rgb24(vdp: "VdpDevice") -> tuple[bytes, int, int]:
     from msx.vdp.vdp import VDP
 
     saved_fc = vdp.frame_count
-    try:
-        if isinstance(vdp, V9938):
+    saved_status = vdp.status
+    saved_irq = vdp.irq
+    if isinstance(vdp, V9938):
+        saved_col = (vdp.collision_x, vdp.collision_y)
+        saved_s2 = vdp._status2
+        try:
             idx = render_frame_v9938(vdp)
-        else:
-            assert isinstance(vdp, VDP)
+        finally:
+            vdp.collision_x, vdp.collision_y = saved_col
+            vdp._status2 = saved_s2
+            vdp.frame_count = saved_fc
+            vdp.status = saved_status
+            vdp.irq = saved_irq
+    else:
+        assert isinstance(vdp, VDP)
+        try:
             idx = render_frame(vdp)
-    finally:
-        vdp.frame_count = saved_fc
+        finally:
+            vdp.frame_count = saved_fc
+            vdp.status = saved_status
+            vdp.irq = saved_irq
     return vdp.to_rgb24(idx), vdp.display_width, OUTPUT_H
 
 

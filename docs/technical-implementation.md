@@ -66,8 +66,11 @@ register write such as `LD R,A`.
 
 `step()` returns the number of T-states consumed. `Machine.run_frame()`
 accumulates these into a per-frame total and into `machine.cycle_count`. The
-NTSC frame budget is **59,659 T-states**, derived from the Z80A clock of
-3.579545 MHz divided by 60 Hz.
+NTSC frame budget is **59,736 T-states** (228 T-states per scanline — real
+TMS9918A/V99x8 raster timing — × 262 lines/frame; confirmed against
+openMSX's shared raster clock model for both VDP chip families). This is not
+the same as the Z80A clock (3.579545 MHz) divided by a flat 60 Hz: real MSX
+NTSC hardware's field rate is ~59.92 Hz, not exactly 60 Hz.
 
 #### MSX M1 wait state
 
@@ -84,7 +87,7 @@ instruction gets `+1` regardless of its operand length, a `CB`/`ED`/`DD`/`FD`
 instruction gets `+2`, and `DDCB`/`FDCB` gets `+2` (the displacement and final
 opcode are operand reads, not M1s). This matches openMSX (`Z80.hh`
 `WAIT_CYCLES = 1`, M1-base 5 vs datasheet 4). Because the frame budget stays
-59,659 T-states, enabling the wait means fewer instructions execute per frame —
+59,736 T-states, enabling the wait means fewer instructions execute per frame —
 so CPU-loop-paced code (e.g. software-PCM audio driven by a delay loop) runs at
 the correct hardware rate rather than ~13% fast. Interrupt cadence (VBlank) and
 PSG pitch are unaffected.
@@ -101,20 +104,22 @@ different sequence.
 
 ## Interrupt management
 
-### MSX1: frame-based VBlank
+### MSX1: level-based VBlank IRQ
 
-On MSX1, the TMS9918A VDP has a single interrupt source: VBlank at the end of
-each frame. `Machine.__post_init__()` wires this as a callback:
+On MSX1, the TMS9918A VDP has a single interrupt source: VBlank, raised at the
+start of vertical blanking. Its interrupt line is the level `F && IE0` (S#0
+bit 7 and R#1 bit 5), cached in `VDP.irq` and recomputed whenever either input
+changes: `_finalize()` sets F when `Machine.run_frame()` reaches the
+`display_height` scanline boundary, an S#0 read clears F, and an R#1 write
+changes IE0. Setting IE0 while F is still pending therefore raises the line
+immediately, as on real hardware. `Machine.run_frame()` samples it at every
+instruction boundary, exactly like the MSX2 path below:
 
 ```python
-if not isinstance(self.vdp, V9938):
-    self.vdp.on_interrupt = self._vblank_interrupt
+cpu.int_pending = vdp.irq
 ```
 
-`_vblank_interrupt` sets `cpu.int_pending = True`. The interrupt fires once per
-frame when `render_frame()` calls `vdp._finalize()`, which sets the VBlank
-status flag and invokes the callback. There are no per-scanline interrupts in
-the MSX1 path.
+There are no per-scanline interrupts in the MSX1 path.
 
 ### MSX2: level-based IRQ
 
@@ -213,9 +218,10 @@ current instruction PC.
 
 Implemented in `msx/vdp/vdp.py` with the renderer in `msx/vdp/renderer.py`. It
 has 16 KB VRAM, 8 control registers, and supports screen modes 0–3 (Text,
-Graphic 1/2, Multicolor). The 256×192 active frame is rendered at the end of
-`Machine.run_frame()` by `render_frame()`, which also calls `_finalize()` to set
-the VBlank flag and invoke `on_interrupt`. The renderer then pads that frame to
+Graphic 1/2, Multicolor). The 256×192 active frame is rendered partway through
+`Machine.run_frame()` by `render_frame()` at the start of vertical blanking,
+which also calls `_finalize()` to set the VBlank flag and update the interrupt
+line (`VDP.irq`). The renderer then pads that frame to
 a constant 256×212 output (10 border rows top and bottom) via the shared
 `msx/vdp/_geometry.py` helper, so every frame keeps a stable 4:3 geometry
 regardless of the VDP's active line count (see V9938 `display_height` below).
@@ -504,7 +510,7 @@ vram_kb: 128    # documentation only -- see note above
 | `generation` | string | — | `msx1` or `msx2`; anything else raises |
 | `name` | string | `id` | display name only |
 | `rom_base` | string | `roms/cbios` | directory (relative to the project root) every `rom:` block's `file` resolves against |
-| `video_standard` | string | `ntsc` | `ntsc` → 59,659 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`) |
+| `video_standard` | string | `ntsc` | `ntsc` → 59,736 T-states / 262 lines per frame; `pal` → 71,364 / 313 (used by `cbios_msx1_eu`). Also selects the SDL2 frontend's real-time pacing target (60 fps NTSC / 50 fps PAL) |
 | `cpu.m1_wait_states` | int | `0` | extra T-states per Z80 M1 cycle — see [CPU emulation](#cpu-emulation) above |
 | `slots.primary` | mapping | — | keyed `0`–`3`; only `0` and `3` are read (below) |
 | `builtin_devices` | list | `[]` | see below |
@@ -853,9 +859,9 @@ systems language. A Rust/C++ port keeps fixed `[u8; 256]` arrays precomputed at
 init — only 32 combinations exist across all `(tp, border)` pairs — and indexes
 them directly.
 
-#### Callable interrupt and tracer hooks
+#### Callable tracer hooks
 
-Both `VDP` (TMS9918A) and `V9938` store `on_interrupt`, `tracer`, `_get_pc`, and
+Both `VDP` (TMS9918A) and `V9938` store `tracer`, `_get_pc`, and
 `_get_cycle` as nullable `Callable` fields. These
 are assigned at wiring time and invoked on each relevant event. The fields are
 typed as `Callable[[], None] | None` in Python but have no direct static

@@ -257,17 +257,11 @@ class V9938:
     regs: list[int] = field(default_factory=lambda: [0] * _NUM_REGS)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
-    # Not read by V9938 itself (interrupts are signalled via the polled `irq`
-    # property instead); kept for structural compatibility with the MSX1 VDP
-    # class, since some call sites (e.g. tests/vdp/test_renderer_g4.py) pass a
-    # V9938 instance through msx/vdp/renderer.py's (MSX1) render_frame/_finalize,
-    # which does read this field.
-    on_interrupt: Callable[[], None] | None = None
     # Observation seam for scanline timing (tests, tracing): called with the
     # raster line at the end of begin_scanline(). A field, not a monkey-patched
     # method, so the same observation is expressible in a Rust/C++ port.
     on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: these Callable hooks (on_interrupt, on_scanline, tracer,
+    # PORT-NOTE: these Callable hooks (on_scanline, tracer,
     #   _get_pc, _get_cycle) are stored as Python closures assigned at wiring
     #   time. Same shape as msx/vdp/vdp.py's equivalent VDP hooks.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
@@ -600,6 +594,9 @@ class V9938:
         if port == 0:
             self.vram[self._addr] = value
             self._addr = (self._addr + 1) & 0x1FFFF
+            # Any data-port access discards a half-written control pair
+            # (openMSX VDP.cc clears registerDataStored here too).
+            self._latch = None
         elif port == 1:
             self._write_control_port(value)
         elif port == 2:
@@ -694,6 +691,7 @@ class V9938:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
             self._addr = (self._addr + 1) & 0x1FFFF
+            self._latch = None
             return result
         if port == 1:
             return self._read_status_register()
@@ -887,6 +885,9 @@ class V9938:
         dst_ext = bool(arg & _ARG_MXD)  # destination in (absent) expansion RAM
 
         self._cmd_active = False
+        # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
+        # middle of this command (tick() only runs while a command is active).
+        self._tr_delay = 0
         self._status2 &= ~_S2_CE  # completion leaves TR alone (openMSX commandDone)
 
         # Commands are only defined in the bitmap modes; anywhere else the
@@ -895,7 +896,6 @@ class V9938:
         if cmd == _CMD_ABRT or cmd < _CMD_POINT or not _is_command_mode(self.regs[0]):
             self._cmd_code = _CMD_ABRT
             self._cmd_remaining = 0
-            self._tr_delay = 0
             return
 
         if cmd == _CMD_POINT:

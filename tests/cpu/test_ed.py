@@ -645,15 +645,34 @@ def test_outi_sets_pv_without_carry_or_half() -> None:
     assert cpu.registers.F == (F.FLAG_PV | F.FLAG_N)
 
 
-# --- Undocumented IM-mirror opcodes fall through to undefined -------------
+# --- Undocumented ED mirror opcodes run as the canonical instruction -----
 
-def test_im_mirror_opcodes_do_not_set_interrupt_mode() -> None:
-    # Documented hardware treats 0x4E/0x66/0x6E/0x76/0x7E as duplicates of
-    # 0x46/0x56/0x5E, but opcodes_main.py's dispatch table only registers
-    # the canonical three -- these five fall through to _ed_undefined
-    # instead. Regression guard for that narrow, deliberate divergence.
-    for op in (0x4E, 0x66, 0x6E, 0x76, 0x7E):
+def test_im_mirror_opcodes_set_the_interrupt_mode() -> None:
+    # openMSX / the Z80 reference core: mode from opcode bits 4:3.
+    for op, mode in ((0x4E, 0), (0x66, 0), (0x6E, 0), (0x76, 1), (0x7E, 2)):
         cpu = make_cpu([0xED, op])
-        cpu.im = 9  # sentinel unreachable via SetInterruptMode (0/1/2 only)
+        cpu.im = 9
+        assert cpu.step() == 8
+        assert cpu.im == mode, f"opcode 0x{op:02X}"
+
+
+def test_neg_mirror_opcodes_negate_a() -> None:
+    ref = make_cpu([0xED, 0x44])
+    ref.registers.A = 0x01
+    ref.step()
+    for op in (0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74, 0x7C):
+        cpu = make_cpu([0xED, op])
+        cpu.registers.A = 0x01
         cpu.step()
-        assert cpu.im == 9, f"opcode 0x{op:02X} unexpectedly touched cpu.im"
+        assert (cpu.registers.A, cpu.registers.F) == (ref.registers.A, ref.registers.F)
+
+
+def test_retn_mirror_opcodes_return_and_restore_iff1() -> None:
+    for op in (0x55, 0x5D, 0x65, 0x6D, 0x75, 0x7D):
+        cpu = make_cpu([0xED, op])
+        cpu.registers.SP = 0xC000
+        cpu.write_byte(0xC000, 0x34)
+        cpu.write_byte(0xC001, 0x12)
+        cpu.iff1, cpu.iff2 = False, True
+        assert cpu.step() == 14
+        assert cpu.registers.PC == 0x1234 and cpu.iff1

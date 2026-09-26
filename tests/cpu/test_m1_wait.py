@@ -68,7 +68,12 @@ def test_dd_chain_one_wait_per_prefix() -> None:
     # DD DD NOP: three M1 fetches (DD, DD, NOP).
     base, extra = _delta([0xDD, 0xDD, 0x00])
     assert extra == 3
-    assert base == 4        # NOP datasheet timing; the DDs are absorbed
+    assert base == 12       # each absorbed DD is its own 4-T-state M1 (openMSX CC_DD)
+
+
+def test_absorbed_dd_prefix_costs_a_full_m1_cycle() -> None:
+    base, extra = _delta([0xDD, 0x00])  # DD NOP
+    assert (base, extra) == (8, 2)
 
 
 def test_halt_gets_one_wait() -> None:
