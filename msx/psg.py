@@ -254,7 +254,7 @@ class PSG:
             "_clk_frac": self._clk_frac,
         }
 
-    def parse_synth_state(self, obj: object, label: str = "psg_synth") -> PsgSynthState:
+    def parse_synth_state(self, obj: object, label: str) -> PsgSynthState:
         """Validate a snapshot_synth() object without touching the PSG.
 
         Ranges are what the generators themselves produce: counters reload
@@ -279,19 +279,25 @@ class PSG:
         }
 
     def restore_synth(self, state: dict[str, object]) -> None:
-        """Restore internal generator state produced by snapshot_synth()."""
-        parsed = self.parse_synth_state(state)
-        self._tone_cnt = parsed["_tone_cnt"]
-        self._tone_out = parsed["_tone_out"]
-        self._noise_cnt = parsed["_noise_cnt"]
-        self._lfsr = parsed["_lfsr"]
-        self._env_cnt = parsed["_env_cnt"]
-        self._env_step = parsed["_env_step"]
-        self._env_attack = parsed["_env_attack"]
-        self._env_alternate = parsed["_env_alternate"]
-        self._env_hold_flag = parsed["_env_hold_flag"]
-        self._env_holding = parsed["_env_holding"]
-        self._clk_frac = parsed["_clk_frac"]
+        """Restore internal generator state produced by snapshot_synth().
+        Parses the whole object first, so a rejected state leaves the PSG
+        unchanged.
+        """
+        self.apply_synth_state(self.parse_synth_state(state, "psg_synth"))
+
+    def apply_synth_state(self, state: PsgSynthState) -> None:
+        """Assign an already-parsed PsgSynthState (see parse_synth_state)."""
+        self._tone_cnt = list(state["_tone_cnt"])
+        self._tone_out = list(state["_tone_out"])
+        self._noise_cnt = state["_noise_cnt"]
+        self._lfsr = state["_lfsr"]
+        self._env_cnt = state["_env_cnt"]
+        self._env_step = state["_env_step"]
+        self._env_attack = state["_env_attack"]
+        self._env_alternate = state["_env_alternate"]
+        self._env_hold_flag = state["_env_hold_flag"]
+        self._env_holding = state["_env_holding"]
+        self._clk_frac = state["_clk_frac"]
 
     # --------------------------------------------------------- envelope reset
 

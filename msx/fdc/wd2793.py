@@ -12,10 +12,9 @@ BUSY (bit 0) is common to both.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.snapshot_schema import check_bool, check_bytes, check_choice, check_int, check_object
@@ -389,20 +388,18 @@ class WD2793:
 
     def restore(self, state: dict[str, object]) -> None:
         """Restore register/phase/buffer state produced by snapshot()."""
-        self.restore_parsed(self.parse_state(state, "wd2793"))
+        self.apply_state(self.parse_state(state, "wd2793"))
 
-    def restore_parsed(self, state: Mapping[str, object]) -> None:
-        """Assign a state returned by this class's parse_state() (typed as
-        Mapping to satisfy FdcController; the cast restores its schema)."""
-        typed_state = cast(WD2793State, state)
-        self.command_reg = typed_state["command_reg"]
-        self.track_reg = typed_state["track_reg"]
-        self.sector_reg = typed_state["sector_reg"]
-        self.data_reg = typed_state["data_reg"]
-        self.status_reg = typed_state["status_reg"]
-        self._intrq = typed_state["intrq"]
-        self._drq = typed_state["drq"]
-        self._mode = Mode(typed_state["mode"])
-        self._buffer = bytearray(typed_state["buffer"])
-        self._index = typed_state["index"]
-        self._step_dir = typed_state["step_dir"]
+    def apply_state(self, state: WD2793State) -> None:
+        """Assign a state returned by parse_state()."""
+        self.command_reg = state["command_reg"]
+        self.track_reg = state["track_reg"]
+        self.sector_reg = state["sector_reg"]
+        self.data_reg = state["data_reg"]
+        self.status_reg = state["status_reg"]
+        self._intrq = state["intrq"]
+        self._drq = state["drq"]
+        self._mode = Mode(state["mode"])
+        self._buffer = bytearray(state["buffer"])
+        self._index = state["index"]
+        self._step_dir = state["step_dir"]

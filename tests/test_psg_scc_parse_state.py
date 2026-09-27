@@ -45,20 +45,20 @@ def _active_scc() -> SCC:
 def test_psg_own_snapshot_parses_and_equals_snapshot() -> None:
     psg = _active_psg()
     snap = psg.snapshot_synth()
-    assert psg.parse_synth_state(snap) == snap
+    assert psg.parse_synth_state(snap, "psg_synth") == snap
     assert psg.snapshot_synth() == snap  # parse is pure
 
 
 def test_psg_default_snapshot_parses() -> None:
     psg = PSG()
     snap = psg.snapshot_synth()
-    assert psg.parse_synth_state(snap) == snap
+    assert psg.parse_synth_state(snap, "psg_synth") == snap
 
 
 def test_psg_parse_returns_fresh_lists() -> None:
     psg = _active_psg()
     snap = psg.snapshot_synth()
-    parsed = psg.parse_synth_state(snap)
+    parsed = psg.parse_synth_state(snap, "psg_synth")
     assert parsed["_tone_cnt"] is not snap["_tone_cnt"]
 
 
@@ -106,7 +106,7 @@ def test_psg_malformed_field_rejected_and_restore_leaves_psg_unchanged(
     pre = copy.deepcopy(psg.snapshot_synth())
     bad = _psg_bad(field, value)
     with pytest.raises(ValueError, match=f"psg_synth.{field}"):
-        psg.parse_synth_state(bad)
+        psg.parse_synth_state(bad, "psg_synth")
     with pytest.raises(ValueError):
         psg.restore_synth(bad)
     assert psg.snapshot_synth() == pre
@@ -116,7 +116,7 @@ def test_psg_env_cnt_small_negative_accepted() -> None:
     psg = PSG()
     snap: dict[str, object] = dict(psg.snapshot_synth())
     snap["_env_cnt"] = -16
-    assert psg.parse_synth_state(snap)["_env_cnt"] == -16
+    assert psg.parse_synth_state(snap, "psg_synth")["_env_cnt"] == -16
 
 
 def test_psg_missing_and_unknown_keys_rejected() -> None:
@@ -161,14 +161,14 @@ def test_psg_restore_after_parse_round_trips_and_generates() -> None:
 def test_scc_own_snapshot_parses_and_equals_snapshot() -> None:
     scc = _active_scc()
     snap = scc.snapshot()
-    assert scc.parse_state(snap) == snap
+    assert scc.parse_state(snap, "scc_state") == snap
     assert scc.snapshot() == snap  # parse is pure
 
 
 def test_scc_default_snapshot_parses() -> None:
     scc = SCC()
     snap = scc.snapshot()
-    assert scc.parse_state(snap) == snap
+    assert scc.parse_state(snap, "scc_state") == snap
 
 
 def _scc_bad(field: str, value: object) -> dict[str, object]:
@@ -215,7 +215,7 @@ def test_scc_malformed_field_rejected_and_restore_leaves_scc_unchanged(
     pre = copy.deepcopy(scc.snapshot())
     bad = _scc_bad(field, value)
     with pytest.raises(ValueError, match=f"scc_state.{field}"):
-        scc.parse_state(bad)
+        scc.parse_state(bad, "scc_state")
     with pytest.raises(ValueError):
         scc.restore(bad)
     assert scc.snapshot() == pre
@@ -247,4 +247,25 @@ def test_scc_restore_does_not_alias_the_input_lists() -> None:
     assert isinstance(waves, list)
     waves[0][0] = 0x99 if waves[0][0] != 0x99 else 0x98
     assert dst.snapshot() == src.snapshot()
+    assert dst.generate_samples(100) == src.generate_samples(100)
+
+
+# ---------------------------------------------------------- apply(parse(...))
+
+def test_psg_apply_parsed_snapshot_reproduces_state() -> None:
+    src = _active_psg()
+    snap = src.snapshot_synth()
+    dst = PSG()
+    dst.regs = list(src.regs)
+    dst.apply_synth_state(dst.parse_synth_state(snap, "psg_synth"))
+    assert dst.snapshot_synth() == snap
+    assert dst.generate_samples(100) == src.generate_samples(100)
+
+
+def test_scc_apply_parsed_snapshot_reproduces_state() -> None:
+    src = _active_scc()
+    snap = src.snapshot()
+    dst = SCC()
+    dst.apply_state(dst.parse_state(snap, "scc_state"))
+    assert dst.snapshot() == snap
     assert dst.generate_samples(100) == src.generate_samples(100)

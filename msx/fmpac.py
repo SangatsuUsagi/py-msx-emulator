@@ -7,9 +7,10 @@ read 0xFF and ignore writes.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, TypedDict
+from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
@@ -203,22 +204,19 @@ class FmPac:
             "opll": self.opll.snapshot(),
         }
 
-    def parse_state(self, obj: object, label: str = "state") -> FmPacState:
+    def parse_state(self, obj: object, label: str) -> FmPacState:
         """Validate a snapshot() object, including the nested OPLL state,
         and return it as a FmPacState without touching the device. Raises
         SchemaError naming the field path.
         """
         d = check_object(obj, label, _STATE_KEYS)
-        sram = d["sram"]
-        if isinstance(sram, bytes):  # snapshot() itself returns bytes
-            sram = bytearray(sram)
         bank = check_int(d["bank"], f"{label}.bank", 0, 0x03)
         if (bank + 1) * _BANK_SIZE > len(self.rom):
             raise SchemaError(
                 f"{label}.bank {bank} is past the end of the {len(self.rom)}-byte ROM"
             )
         return {
-            "sram": bytes(check_bytes(sram, f"{label}.sram", SRAM_SIZE)),
+            "sram": bytes(check_bytes(d["sram"], f"{label}.sram", SRAM_SIZE)),
             "bank": bank,
             "enable": check_choice(d["enable"], f"{label}.enable", _ENABLE_VALUES),
             "r1ffe": check_int(d["r1ffe"], f"{label}.r1ffe", 0, 0xFF),
@@ -231,7 +229,14 @@ class FmPac:
         carried OPLL's own state. Parses the whole object first, so a
         rejected state leaves the device and its OPLL unchanged.
         """
-        parsed = self.parse_state(state)
+        self.apply_state(self.parse_state(state, "state"))
+
+    def apply_state(self, state: Mapping[str, object]) -> None:
+        """Assign an already-parsed FmPacState (see parse_state), including
+        the carried OPLL's own state. Typed as Mapping to satisfy the Mapper
+        Protocol; the value must come from this device's parse_state.
+        """
+        parsed = cast(FmPacState, state)
         self.sram[:] = parsed["sram"]
         self._bank = parsed["bank"]
         self._enable = parsed["enable"]

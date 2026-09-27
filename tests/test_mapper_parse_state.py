@@ -1,6 +1,7 @@
-"""Mapper and RamMapper `parse_state()`: every producer validates its own
-save-state object (exact key set, types, ranges, lengths) before `restore()`
-assigns anything, so a malformed object is rejected with the mapper unchanged.
+"""Mapper and RamMapper `parse_state()` / `apply_state()`: every producer validates its
+own save-state object (exact key set, types, ranges, lengths) in `parse_state()`, and
+`apply_state()` assigns the parsed result, so `restore()` (= apply(parse)) rejects a
+malformed object with the mapper unchanged.
 """
 from __future__ import annotations
 
@@ -196,6 +197,38 @@ def _malformed_states(snap: dict[str, object]) -> list[tuple[str, dict[str, obje
     return cases
 
 
+def _other_values(value: object) -> list[object]:
+    """Well-typed replacements for a snapshot field value, differing from it."""
+    if isinstance(value, bool):
+        return [not value]
+    if isinstance(value, int):
+        return [c for c in (0, 1, 0x1000) if c != value]
+    if isinstance(value, bytearray):
+        return [c for c in (bytearray(len(value)), bytearray(b"\x11" * len(value))) if c != value]
+    if isinstance(value, list):
+        candidates = ([0] * len(value), [1] * len(value), [0x1000] * len(value))
+        return [c for c in candidates if c != value]
+    raise AssertionError(f"unhandled snapshot value {value!r}")
+
+
+def _perturbed(m: Any, snap: dict[str, object]) -> dict[str, object]:
+    """A state `m` accepts in which every field differs from `snap`."""
+    out = dict(snap)
+    for key in snap:
+        for candidate in _other_values(snap[key]):
+            trial = dict(out)
+            trial[key] = candidate
+            try:
+                m.parse_state(trial, "state")
+            except SchemaError:
+                continue
+            out = trial
+            break
+        else:
+            raise AssertionError(f"no valid alternative for {key!r}")
+    return out
+
+
 def _copy(snap: object) -> dict[str, object]:
     copied = _from_jsonable(_to_jsonable(snap))
     assert isinstance(copied, dict)
@@ -206,7 +239,7 @@ def _copy(snap: object) -> dict[str, object]:
 def test_own_snapshot_parses_to_itself(name: str) -> None:
     m = _STATEFUL[name]()
     snap = dict(m.snapshot())
-    assert m.parse_state(snap) == snap
+    assert m.parse_state(snap, "state") == snap
 
 
 @pytest.mark.parametrize("name", sorted(_STATEFUL))
@@ -214,11 +247,29 @@ def test_json_decoded_snapshot_parses_and_restores(name: str) -> None:
     m = _STATEFUL[name]()
     decoded = _from_jsonable(json.loads(json.dumps(_to_jsonable(dict(m.snapshot())))))
     assert isinstance(decoded, dict)
-    assert m.parse_state(decoded) == m.snapshot()
+    assert m.parse_state(decoded, "state") == m.snapshot()
     fresh = _STATEFUL[name]()
     fresh.reset()
     fresh.restore(decoded)
     assert fresh.snapshot() == m.snapshot()
+
+
+@pytest.mark.parametrize("name", sorted(_STATEFUL))
+def test_apply_state_of_parsed_snapshot_restores_same_state(name: str) -> None:
+    m = _STATEFUL[name]()
+    snap = _copy(m.snapshot())
+    fresh = _STATEFUL[name]()
+    fresh.apply_state(fresh.parse_state(_perturbed(fresh, snap), "state"))
+    assert fresh.snapshot() != m.snapshot()
+    fresh.apply_state(fresh.parse_state(snap, "state"))
+    assert fresh.snapshot() == m.snapshot()
+
+
+@pytest.mark.parametrize("name", sorted(_STATELESS))
+def test_stateless_apply_state_of_parsed_snapshot_is_noop(name: str) -> None:
+    m = _STATELESS[name]()
+    m.apply_state(m.parse_state(_copy(m.snapshot()), "state"))
+    assert m.snapshot() == {}
 
 
 @pytest.mark.parametrize("name", sorted(_STATEFUL))
@@ -227,7 +278,7 @@ def test_parse_state_does_not_mutate(name: str) -> None:
     before = m.snapshot()
     other = _STATEFUL[name]()
     other.write(0x6000, 1)
-    m.parse_state(_copy(other.snapshot()))
+    m.parse_state(_copy(other.snapshot()), "state")
     assert m.snapshot() == before
 
 
@@ -237,7 +288,7 @@ def test_malformed_state_rejected_and_restore_leaves_mapper_unchanged(name: str)
     snap = _copy(m.snapshot())
     for case, bad in _malformed_states(snap):
         with pytest.raises(SchemaError):
-            m.parse_state(bad)
+            m.parse_state(bad, "state")
         before = m.snapshot()
         with pytest.raises(ValueError):
             m.restore(bad)
@@ -249,7 +300,7 @@ def test_non_object_state_rejected(name: str) -> None:
     m = _STATEFUL[name]()
     for bad in ([], None, "state", 0):
         with pytest.raises(SchemaError):
-            m.parse_state(bad)
+            m.parse_state(bad, "state")
 
 
 def test_error_message_names_field_path() -> None:
@@ -261,11 +312,11 @@ def test_error_message_names_field_path() -> None:
 @pytest.mark.parametrize("name", sorted(_STATELESS))
 def test_stateless_mapper_accepts_only_empty_object(name: str) -> None:
     m = _STATELESS[name]()
-    assert m.parse_state({}) == {}
+    assert m.parse_state({}, "state") == {}
     m.restore({})
     for bad in ({"banks": [0, 0, 0, 0]}, [], None):
         with pytest.raises(SchemaError):
-            m.parse_state(bad)
+            m.parse_state(bad, "state")
     with pytest.raises(ValueError):
         m.restore({"banks": [0]})
 
@@ -329,14 +380,14 @@ def test_ram_mapper_ram_length_follows_instance_size() -> None:
     small = RamMapper(size_kb=64)
     big = RamMapper(size_kb=256)
     with pytest.raises(SchemaError):
-        big.parse_state(_copy(small.snapshot()))
+        big.parse_state(_copy(small.snapshot()), "state")
     _assert_rejected_unchanged(big, _copy(small.snapshot()))
-    assert big.parse_state(_copy(big.snapshot())) == big.snapshot()
+    assert big.parse_state(_copy(big.snapshot()), "state") == big.snapshot()
 
 
 def test_sram_length_follows_class_size() -> None:
     m2 = _ascii8_sram(Ascii8Sram2Mapper)()
     m8 = _ascii8_sram(Ascii8Sram8Mapper)()
     with pytest.raises(SchemaError):
-        m8.parse_state(_copy(m2.snapshot()))
+        m8.parse_state(_copy(m2.snapshot()), "state")
     _assert_rejected_unchanged(m8, _copy(m2.snapshot()))

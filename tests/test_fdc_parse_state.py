@@ -1,6 +1,7 @@
-"""Tests for the FDC's parse_state(): the whole fdc_state subtree (connection
-style, controller, every drive) is validated before restore() assigns
-anything (openspec/changes/producer-state-validation)."""
+"""Tests for the FDC's parse_state() / apply_state(): the whole fdc_state
+subtree (connection style, controller, every drive) is validated before
+anything is assigned (openspec/changes/producer-state-validation,
+openspec/changes/producer-state-single-parse)."""
 from __future__ import annotations
 
 import copy
@@ -21,6 +22,7 @@ from msx.fdc.interface import (
     TC_REG_CONTROL0,
     TC_REG_DATA,
     FloppyDisk,
+    FloppyDiskParsed,
 )
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
 from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
@@ -101,6 +103,16 @@ def _roundtrip(snap: dict[str, object]) -> Any:
     return _from_jsonable(json.loads(json.dumps(_to_jsonable(snap))))
 
 
+def _as_snapshot(fdc: FloppyDisk, parsed: FloppyDiskParsed) -> dict[str, object]:
+    """A parse_state() result in snapshot() form, for comparison."""
+    return {
+        "kind": fdc.kind.value,
+        "connection_style": parsed.connection_style,
+        "controller": parsed.controller,
+        "drives": parsed.drives,
+    }
+
+
 # ---------------------------------------------------------------------------
 # A valid snapshot parses
 # ---------------------------------------------------------------------------
@@ -110,9 +122,9 @@ def test_own_snapshot_parses_and_equals_itself(tmp_path: Path, kind: str) -> Non
     fdc = _fdc(tmp_path, kind)
     _activity(fdc, 4)
     snap = fdc.snapshot()
-    assert fdc.parse_state(snap) == snap
+    assert _as_snapshot(fdc, fdc.parse_state(snap, "fdc_state")) == snap
     decoded = _roundtrip(snap)
-    assert fdc.parse_state(decoded) == decoded
+    assert _as_snapshot(fdc, fdc.parse_state(decoded, "fdc_state")) == decoded
     assert decoded == snap
 
 
@@ -121,7 +133,7 @@ def test_parse_does_not_mutate(tmp_path: Path, kind: str) -> None:
     fdc = _fdc(tmp_path, kind)
     _activity(fdc, 4)
     before = fdc.snapshot()
-    fdc.parse_state(_roundtrip(before))
+    fdc.parse_state(_roundtrip(before), "fdc_state")
     assert fdc.snapshot() == before
 
 
@@ -133,6 +145,41 @@ def test_restore_of_decoded_snapshot_restores_it(tmp_path: Path, kind: str) -> N
     _activity(fdc, 9)
     fdc.restore(saved)
     assert fdc.snapshot() == saved
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+def test_apply_state_of_parsed_snapshot_restores_it(tmp_path: Path, kind: str) -> None:
+    fdc = _fdc(tmp_path, kind)
+    _activity(fdc, 4)
+    saved = _roundtrip(fdc.snapshot())
+    selected = fdc.controller.drive
+    _activity(fdc, 9)
+    if kind == "wd2793":
+        fdc.write_mem(REG_DRIVE, 0x01)  # select drive B; the restore reselects A
+    fdc.apply_state(fdc.parse_state(saved, "fdc_state"))
+    assert fdc.snapshot() == saved
+    assert fdc.controller.drive is selected
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+def test_parse_then_apply_hashes_each_mounted_disk_once(
+    tmp_path: Path, kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load path's parse_state + apply_state reads each mounted disk's
+    identity once: apply_state re-checks nothing."""
+    fdc = _fdc(tmp_path, kind)
+    saved = _roundtrip(fdc.snapshot())
+    hashed: list[Path] = []
+    original = DskDiskImage.content_sha1
+
+    def spy(image: DskDiskImage) -> str:
+        hashed.append(image.path)
+        return original(image)
+
+    monkeypatch.setattr(DskDiskImage, "content_sha1", spy)
+    fdc.apply_state(fdc.parse_state(saved, "fdc_state"))
+    assert sorted(hashed) == sorted(drive.image.path for drive in fdc.drives if drive.image)
+    assert len(hashed) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +248,7 @@ def _assert_rejected_unchanged(
     with pytest.raises(ValueError, match=match):
         fdc.restore(bad)
     with pytest.raises(ValueError, match=match):
-        fdc.parse_state(bad)
+        fdc.parse_state(bad, "fdc_state")
 
     assert fdc.snapshot() == before
     assert fdc.controller.drive is selected
@@ -298,9 +345,9 @@ def test_schema_failures_are_schema_errors(tmp_path: Path, kind: str) -> None:
     snap = _roundtrip(fdc.snapshot())
     del snap["controller"]
     with pytest.raises(SchemaError, match="fdc_state is missing keys"):
-        fdc.parse_state(snap)
+        fdc.parse_state(snap, "fdc_state")
     with pytest.raises(SchemaError, match="fdc_state must be an object"):
-        fdc.parse_state([])
+        fdc.parse_state([], "fdc_state")
 
 
 @pytest.mark.parametrize("kind", _KINDS)
@@ -309,10 +356,10 @@ def test_kind_mismatch_and_unknown_kind_rejected(tmp_path: Path, kind: str) -> N
     snap = _roundtrip(fdc.snapshot())
     snap["kind"] = "tc8566af" if kind == "wd2793" else "wd2793_sony"
     with pytest.raises(ValueError, match="FDC kind mismatch"):
-        fdc.parse_state(snap)
+        fdc.parse_state(snap, "fdc_state")
     snap["kind"] = "nope"
     with pytest.raises(SchemaError, match=r"fdc_state\.kind"):
-        fdc.parse_state(snap)
+        fdc.parse_state(snap, "fdc_state")
 
 
 def test_drive_identity_reads_the_mounted_image(tmp_path: Path) -> None:
@@ -323,4 +370,4 @@ def test_drive_identity_reads_the_mounted_image(tmp_path: Path) -> None:
     other.write_bytes(bytes([0x33]) * _2DD)
     fdc.mount(DskDiskImage(other), drive=1)
     with pytest.raises(ValueError, match=r"fdc_state\.drives\[1\].*disk mismatch"):
-        fdc.parse_state(snap)
+        fdc.parse_state(snap, "fdc_state")

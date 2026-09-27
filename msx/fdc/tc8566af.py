@@ -25,10 +25,9 @@ SEEK/RECALIBRATE already set, not by the streamed C values.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.snapshot_schema import (
@@ -566,27 +565,25 @@ class TC8566AF:
 
     def restore(self, state: dict[str, object]) -> None:
         """Restore register/phase/buffer state produced by snapshot()."""
-        self.restore_parsed(self.parse_state(state, "tc8566af"))
+        self.apply_state(self.parse_state(state, "tc8566af"))
 
-    def restore_parsed(self, state: Mapping[str, object]) -> None:
-        """Assign a state returned by this class's parse_state() (typed as
-        Mapping to satisfy FdcController; the cast restores its schema)."""
-        typed_state = cast(TC8566AFState, state)
-        c, h, r, n = typed_state["exec_ctr"]
-        self.control_reg0 = typed_state["control_reg0"]
-        self.control_reg1 = typed_state["control_reg1"]
-        self._selected_drive_index = typed_state["selected_drive_index"]
-        self._last_st0 = typed_state["last_st0"]
-        self._last_pcn = typed_state["last_pcn"]
-        self._phase = Phase(typed_state["phase"])
-        self._command = typed_state["command"]
-        self._cmd_buffer = bytearray(typed_state["cmd_buffer"])
-        self._cmd_needed = typed_state["cmd_needed"]
-        self._result_buffer = bytearray(typed_state["result_buffer"])
-        self._result_index = typed_state["result_index"]
-        self._exec_buffer = bytearray(typed_state["exec_buffer"])
-        self._exec_index = typed_state["exec_index"]
-        self._exec_is_write = typed_state["exec_is_write"]
-        self._exec_needed = typed_state["exec_needed"]
+    def apply_state(self, state: TC8566AFState) -> None:
+        """Assign a state returned by parse_state()."""
+        c, h, r, n = state["exec_ctr"]
+        self.control_reg0 = state["control_reg0"]
+        self.control_reg1 = state["control_reg1"]
+        self._selected_drive_index = state["selected_drive_index"]
+        self._last_st0 = state["last_st0"]
+        self._last_pcn = state["last_pcn"]
+        self._phase = Phase(state["phase"])
+        self._command = state["command"]
+        self._cmd_buffer = bytearray(state["cmd_buffer"])
+        self._cmd_needed = state["cmd_needed"]
+        self._result_buffer = bytearray(state["result_buffer"])
+        self._result_index = state["result_index"]
+        self._exec_buffer = bytearray(state["exec_buffer"])
+        self._exec_index = state["exec_index"]
+        self._exec_is_write = state["exec_is_write"]
+        self._exec_needed = state["exec_needed"]
         self._exec_ctr = (c, h, r, n)
-        self._format_fill = typed_state["format_fill"]
+        self._format_fill = state["format_fill"]
