@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from msx.fdc.disk_drive import DiskDrive
+from msx.snapshot_schema import check_bool, check_bytes, check_choice, check_int, check_object
 
 
 class Mode(Enum):
@@ -63,9 +64,14 @@ class WD2793State(TypedDict):
     intrq: bool
     drq: bool
     mode: int
-    buffer: bytes
+    buffer: bytearray
     index: int
     step_dir: int
+
+
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(WD2793State.__annotations__)
 
 
 @dataclass
@@ -352,33 +358,47 @@ class WD2793:
             "intrq": self._intrq,
             "drq": self._drq,
             "mode": self._mode.value,
-            "buffer": bytes(self._buffer),
+            "buffer": bytearray(self._buffer),
             "index": self._index,
             "step_dir": self._step_dir,
         }
 
+    def parse_state(self, obj: object, label: str) -> WD2793State:
+        """Validate a snapshot() object without mutating the controller.
+
+        Raises:
+            SchemaError: A missing/unknown key or a value of the wrong type
+                or range.
+        """
+        fields = check_object(obj, label, _STATE_KEYS)
+        return {
+            "command_reg": check_int(fields["command_reg"], f"{label}.command_reg", 0, 0xFF),
+            "track_reg": check_int(fields["track_reg"], f"{label}.track_reg", 0, 0xFF),
+            "sector_reg": check_int(fields["sector_reg"], f"{label}.sector_reg", 0, 0xFF),
+            "data_reg": check_int(fields["data_reg"], f"{label}.data_reg", 0, 0xFF),
+            "status_reg": check_int(fields["status_reg"], f"{label}.status_reg", 0, 0xFF),
+            "intrq": check_bool(fields["intrq"], f"{label}.intrq"),
+            "drq": check_bool(fields["drq"], f"{label}.drq"),
+            "mode": check_int(fields["mode"], f"{label}.mode", 0, 3),
+            "buffer": check_bytes(fields["buffer"], f"{label}.buffer", max_length=SECTOR_SIZE),
+            "index": check_int(fields["index"], f"{label}.index", 0, TRACK_BYTES),
+            "step_dir": check_choice(fields["step_dir"], f"{label}.step_dir", (-1, 1)),
+        }
+
     def restore(self, state: dict[str, object]) -> None:
         """Restore register/phase/buffer state produced by snapshot()."""
-        typed_state = cast(WD2793State, state)
-        command_reg = typed_state["command_reg"]
-        track_reg = typed_state["track_reg"]
-        sector_reg = typed_state["sector_reg"]
-        data_reg = typed_state["data_reg"]
-        status_reg = typed_state["status_reg"]
-        intrq = typed_state["intrq"]
-        drq = typed_state["drq"]
-        mode = Mode(typed_state["mode"])
-        buffer = bytearray(typed_state["buffer"])
-        index = typed_state["index"]
-        step_dir = typed_state["step_dir"]
-        self.command_reg = command_reg
-        self.track_reg = track_reg
-        self.sector_reg = sector_reg
-        self.data_reg = data_reg
-        self.status_reg = status_reg
-        self._intrq = intrq
-        self._drq = drq
-        self._mode = mode
-        self._buffer = buffer
-        self._index = index
-        self._step_dir = step_dir
+        self.apply_state(self.parse_state(state, "wd2793"))
+
+    def apply_state(self, state: WD2793State) -> None:
+        """Assign a state returned by parse_state()."""
+        self.command_reg = state["command_reg"]
+        self.track_reg = state["track_reg"]
+        self.sector_reg = state["sector_reg"]
+        self.data_reg = state["data_reg"]
+        self.status_reg = state["status_reg"]
+        self._intrq = state["intrq"]
+        self._drq = state["drq"]
+        self._mode = Mode(state["mode"])
+        self._buffer = bytearray(state["buffer"])
+        self._index = state["index"]
+        self._step_dir = state["step_dir"]

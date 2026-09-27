@@ -5,11 +5,13 @@ Ports 0xFC–0xFF select which 16 KB bank is visible in each of the four
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
+from msx.snapshot_schema import check_bytes, check_int_list, check_object
 
 _BANK_SIZE = 0x4000  # 16 KB
 _DEFAULT_SIZE_KB = 128  # 8 banks, matching every machine before size became configurable
@@ -19,7 +21,12 @@ class RamMapperState(TypedDict):
     """Save-state schema for RamMapper.snapshot()/restore()."""
 
     banks: list[int]
-    ram: bytes
+    ram: bytearray
+
+
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(RamMapperState.__annotations__)
 
 
 @dataclass
@@ -102,20 +109,22 @@ class RamMapper:
         self.banks[(port - 0xFC) & 0x03] = value & self.bank_mask
 
     def snapshot(self) -> RamMapperState:
-        return {"banks": list(self.banks), "ram": bytes(self.ram)}
+        return {"banks": list(self.banks), "ram": bytearray(self.ram)}
+
+    def parse_state(self, obj: object, label: str) -> RamMapperState:
+        state = check_object(obj, label, _STATE_KEYS)
+        return {
+            "banks": check_int_list(state["banks"], f"{label}.banks", 4, 0, 0xFF),
+            "ram": check_bytes(state["ram"], f"{label}.ram", len(self.ram)),
+        }
+
+    def apply_state(self, state: Mapping[str, object]) -> None:
+        st = cast(RamMapperState, state)
+        self.banks[:] = st["banks"]
+        self.ram[:] = st["ram"]
 
     def restore(self, state: dict[str, object]) -> None:
-        typed_state = cast(RamMapperState, state)
-        banks = typed_state["banks"]
-        if len(banks) != 4 or any(b < 0 for b in banks):
-            raise ValueError("RamMapperState.banks must have 4 non-negative entries")
-        ram = typed_state["ram"]
-        if len(ram) != len(self.ram):
-            raise ValueError(
-                f"RamMapperState.ram must have {len(self.ram)} bytes, got {len(ram)}"
-            )
-        self.banks[:] = banks
-        self.ram[:] = ram
+        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank_info(self, page: int) -> str | None:
         """Describe the bank visible at CPU page (0-3, i.e. addr >> 14).

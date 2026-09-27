@@ -18,6 +18,7 @@ from msx.machine_loader import (
     load_extension_overlay,
 )
 from msx.opll import Opll
+from msx.snapshot_schema import SchemaError
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -302,7 +303,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     pre_r1fff = fmpac._r1fff
 
     del snap["r1fff"]
-    with pytest.raises(KeyError):
+    with pytest.raises(SchemaError, match="r1fff"):
         fmpac.restore(snap)
 
     assert bytes(fmpac.sram) == pre_sram

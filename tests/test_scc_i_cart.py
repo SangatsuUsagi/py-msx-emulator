@@ -303,7 +303,7 @@ def test_restore_with_missing_mode_register_does_not_partially_mutate() -> None:
     pre_banks = list(cart._banks)
 
     del snap["mode_register"]
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError):
         cart.restore(snap)
 
     assert bytes(cart.ram) == pre_ram

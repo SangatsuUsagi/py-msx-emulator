@@ -27,9 +27,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from msx.fdc.disk_drive import DiskDrive
+from msx.snapshot_schema import (
+    check_bool,
+    check_bytes,
+    check_choice,
+    check_int,
+    check_int_list,
+    check_object,
+)
 
 SECTOR_SIZE: int = 512
 
@@ -103,16 +111,26 @@ class TC8566AFState(TypedDict):
     last_pcn: int
     phase: int
     command: int
-    cmd_buffer: bytes
+    cmd_buffer: bytearray
     cmd_needed: int
-    result_buffer: bytes
+    result_buffer: bytearray
     result_index: int
-    exec_buffer: bytes
+    exec_buffer: bytearray
     exec_index: int
     exec_is_write: bool
     exec_needed: int
-    exec_ctr: tuple[int, int, int, int]
+    exec_ctr: list[int]  # C, H, R, N
     format_fill: int
+
+
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(TC8566AFState.__annotations__)
+# Largest Command-Phase parameter count / Result-Phase length / Execution-Phase
+# buffer (FORMAT's 4 descriptor bytes for up to 255 sectors) this model produces.
+_MAX_CMD_BYTES: int = 8
+_MAX_RESULT_BYTES: int = 7
+_MAX_EXEC_BYTES: int = 1024
 
 
 @dataclass
@@ -485,52 +503,85 @@ class TC8566AF:
             "last_pcn": self._last_pcn,
             "phase": self._phase.value,
             "command": self._command,
-            "cmd_buffer": bytes(self._cmd_buffer),
+            "cmd_buffer": bytearray(self._cmd_buffer),
             "cmd_needed": self._cmd_needed,
-            "result_buffer": bytes(self._result_buffer),
+            "result_buffer": bytearray(self._result_buffer),
             "result_index": self._result_index,
-            "exec_buffer": bytes(self._exec_buffer),
+            "exec_buffer": bytearray(self._exec_buffer),
             "exec_index": self._exec_index,
             "exec_is_write": self._exec_is_write,
             "exec_needed": self._exec_needed,
-            "exec_ctr": self._exec_ctr,
+            "exec_ctr": list(self._exec_ctr),
             "format_fill": self._format_fill,
+        }
+
+    def parse_state(self, obj: object, label: str) -> TC8566AFState:
+        """Validate a snapshot() object without mutating the controller.
+
+        Raises:
+            SchemaError: A missing/unknown key or a value of the wrong type
+                or range, or a read index past its buffer.
+        """
+        fields = check_object(obj, label, _STATE_KEYS)
+        result_buffer = check_bytes(
+            fields["result_buffer"], f"{label}.result_buffer", max_length=_MAX_RESULT_BYTES
+        )
+        exec_buffer = check_bytes(
+            fields["exec_buffer"], f"{label}.exec_buffer", max_length=_MAX_EXEC_BYTES
+        )
+        return {
+            "control_reg0": check_int(fields["control_reg0"], f"{label}.control_reg0", 0, 0xFF),
+            "control_reg1": check_int(fields["control_reg1"], f"{label}.control_reg1", 0, 0xFF),
+            "selected_drive_index": check_int(
+                fields["selected_drive_index"], f"{label}.selected_drive_index", 0, 3
+            ),
+            "last_st0": check_int(fields["last_st0"], f"{label}.last_st0", 0, 0xFF),
+            "last_pcn": check_int(fields["last_pcn"], f"{label}.last_pcn", 0, 0xFF),
+            "phase": check_int(fields["phase"], f"{label}.phase", 0, 3),
+            "command": check_int(fields["command"], f"{label}.command", 0, 0xFF),
+            "cmd_buffer": check_bytes(
+                fields["cmd_buffer"], f"{label}.cmd_buffer", max_length=_MAX_CMD_BYTES
+            ),
+            "cmd_needed": check_choice(
+                fields["cmd_needed"], f"{label}.cmd_needed", (0, 1, 2, 5, 8)
+            ),
+            "result_buffer": result_buffer,
+            "result_index": check_int(
+                fields["result_index"], f"{label}.result_index", 0, len(result_buffer)
+            ),
+            "exec_buffer": exec_buffer,
+            "exec_index": check_int(
+                fields["exec_index"], f"{label}.exec_index", 0, len(exec_buffer)
+            ),
+            "exec_is_write": check_bool(fields["exec_is_write"], f"{label}.exec_is_write"),
+            "exec_needed": check_int(
+                fields["exec_needed"], f"{label}.exec_needed", 0, _MAX_EXEC_BYTES
+            ),
+            "exec_ctr": check_int_list(fields["exec_ctr"], f"{label}.exec_ctr", 4, 0, 0xFF),
+            "format_fill": check_int(fields["format_fill"], f"{label}.format_fill", 0, 0xFF),
         }
 
     def restore(self, state: dict[str, object]) -> None:
         """Restore register/phase/buffer state produced by snapshot()."""
-        typed_state = cast(TC8566AFState, state)
-        control_reg0 = typed_state["control_reg0"]
-        control_reg1 = typed_state["control_reg1"]
-        selected_drive_index = typed_state["selected_drive_index"]
-        last_st0 = typed_state["last_st0"]
-        last_pcn = typed_state["last_pcn"]
-        phase = Phase(typed_state["phase"])
-        command = typed_state["command"]
-        cmd_buffer = bytearray(typed_state["cmd_buffer"])
-        cmd_needed = typed_state["cmd_needed"]
-        result_buffer = bytearray(typed_state["result_buffer"])
-        result_index = typed_state["result_index"]
-        exec_buffer = bytearray(typed_state["exec_buffer"])
-        exec_index = typed_state["exec_index"]
-        exec_is_write = typed_state["exec_is_write"]
-        exec_needed = typed_state["exec_needed"]
-        c, h, r, n = typed_state["exec_ctr"]
-        format_fill = typed_state["format_fill"]
-        self.control_reg0 = control_reg0
-        self.control_reg1 = control_reg1
-        self._selected_drive_index = selected_drive_index
-        self._last_st0 = last_st0
-        self._last_pcn = last_pcn
-        self._phase = phase
-        self._command = command
-        self._cmd_buffer = cmd_buffer
-        self._cmd_needed = cmd_needed
-        self._result_buffer = result_buffer
-        self._result_index = result_index
-        self._exec_buffer = exec_buffer
-        self._exec_index = exec_index
-        self._exec_is_write = exec_is_write
-        self._exec_needed = exec_needed
+        self.apply_state(self.parse_state(state, "tc8566af"))
+
+    def apply_state(self, state: TC8566AFState) -> None:
+        """Assign a state returned by parse_state()."""
+        c, h, r, n = state["exec_ctr"]
+        self.control_reg0 = state["control_reg0"]
+        self.control_reg1 = state["control_reg1"]
+        self._selected_drive_index = state["selected_drive_index"]
+        self._last_st0 = state["last_st0"]
+        self._last_pcn = state["last_pcn"]
+        self._phase = Phase(state["phase"])
+        self._command = state["command"]
+        self._cmd_buffer = bytearray(state["cmd_buffer"])
+        self._cmd_needed = state["cmd_needed"]
+        self._result_buffer = bytearray(state["result_buffer"])
+        self._result_index = state["result_index"]
+        self._exec_buffer = bytearray(state["exec_buffer"])
+        self._exec_index = state["exec_index"]
+        self._exec_is_write = state["exec_is_write"]
+        self._exec_needed = state["exec_needed"]
         self._exec_ctr = (c, h, r, n)
-        self._format_fill = format_fill
+        self._format_fill = state["format_fill"]

@@ -9,8 +9,9 @@ the block more coarsely mirrors these four).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, TypedDict, cast
+from typing import TYPE_CHECKING, Callable, TypedDict
 
+from msx.snapshot_schema import check_bool, check_int, check_int_list, check_object
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
 from msx.vdp._v9938_defs import (
@@ -277,10 +278,6 @@ class V9938State(TypedDict):
     palette_pending: bool
 
 
-class V9938StateError(ValueError):
-    """A `vdp9938` save-state object that parse_v9938_state() rejects."""
-
-
 # The timed-command countdowns are i32 in a port; a saved value must fit.
 _I32_MIN: int = -(1 << 31)
 _I32_MAX: int = (1 << 31) - 1
@@ -295,103 +292,67 @@ _STATE_KEYS: frozenset[str] = frozenset(V9938State.__annotations__)
 _CMD_ENGINE_KEYS: frozenset[str] = frozenset(V9938CmdEngineState.__annotations__)
 
 
-def check_state_int(value: object, label: str, lo: int, hi: int) -> int:
-    """Return `value` if it is an int (not a bool) in [lo, hi], else raise
-    V9938StateError. Also used by msx/state.py for the common VDP fields."""
-    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
-        raise V9938StateError(f"{label} must be an int in [{lo}, {hi}], got {value!r}")
-    return value
+def _state_int(state: dict[str, object], label: str, key: str, lo: int, hi: int) -> int:
+    return check_int(state[key], f"{label}.{key}", lo, hi)
 
 
-def _state_int(state: dict[str, object], key: str, lo: int, hi: int) -> int:
-    """Read an int field of a snapshot dict, rejecting wrong types and ranges."""
-    return check_state_int(state[key], key, lo, hi)
-
-
-def _state_bool(state: dict[str, object], key: str) -> bool:
-    """Read a bool field of a snapshot dict, rejecting any other type."""
-    value = state[key]
-    if not isinstance(value, bool):
-        raise V9938StateError(f"{key} must be a bool, got {value!r}")
-    return value
+def _state_bool(state: dict[str, object], label: str, key: str) -> bool:
+    return check_bool(state[key], f"{label}.{key}")
 
 
 def _state_int_list(
-    state: dict[str, object], key: str, length: int, lo: int, hi: int
+    state: dict[str, object], label: str, key: str, length: int, lo: int, hi: int
 ) -> list[int]:
-    """Read a fixed-length list of ints of a snapshot dict."""
-    value = state[key]
-    if not isinstance(value, list) or len(value) != length:
-        raise V9938StateError(f"{key} must be a list of {length} ints, got {value!r}")
-    result: list[int] = []
-    for item in value:
-        result.append(check_state_int(item, f"{key} entry", lo, hi))
-    return result
-
-
-def _state_object(value: object, label: str, keys: frozenset[str]) -> dict[str, object]:
-    """Return `value` as a snapshot dict holding exactly `keys`, else raise."""
-    if not isinstance(value, dict):
-        raise V9938StateError(f"{label} must be an object, got {value!r}")
-    unknown: list[str] = []
-    for key in value:
-        if key not in keys:
-            unknown.append(str(key))
-    if unknown:
-        raise V9938StateError(f"{label} has unknown keys {sorted(unknown)}")
-    missing: list[str] = []
-    for key in keys:
-        if key not in value:
-            missing.append(key)
-    if missing:
-        raise V9938StateError(f"{label} is missing keys {sorted(missing)}")
-    return cast(dict[str, object], value)
+    return check_int_list(state[key], f"{label}.{key}", length, lo, hi)
 
 
 def parse_v9938_state(obj: object) -> V9938State:
     """Validate a JSON-decoded `vdp9938` object into a V9938State.
 
     Every value's type and range is checked, and a missing or unknown key is
-    rejected; every rejection raises V9938StateError. The ranges are the
-    widths the chip and command engine produce (coordinates: SX/DX 9 bits,
-    SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024 lines).
+    rejected; every rejection raises SchemaError naming the field path. The
+    ranges are the widths the chip and command engine produce (coordinates:
+    SX/DX 9 bits, SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024
+    lines).
     """
-    state = _state_object(obj, "vdp9938", _STATE_KEYS)
-    engine = _state_object(state["cmd_engine"], "cmd_engine", _CMD_ENGINE_KEYS)
+    label = "vdp9938"
+    engine_label = f"{label}.cmd_engine"
+    state = check_object(obj, label, _STATE_KEYS)
+    engine = check_object(state["cmd_engine"], engine_label, _CMD_ENGINE_KEYS)
     cmd_engine: V9938CmdEngineState = {
-        "active": _state_bool(engine, "active"),
-        "transfer": _state_bool(engine, "transfer"),
-        "code": _state_int(engine, "code", 0, 0x0F),
-        "log": _state_int(engine, "log", 0, 0x0F),
-        "sx": _state_int(engine, "sx", 0, 0x1FF),
-        "sy": _state_int(engine, "sy", 0, 0x3FF),
-        "dx": _state_int(engine, "dx", 0, 0x1FF),
-        "dy": _state_int(engine, "dy", 0, 0x3FF),
-        "nx": _state_int(engine, "nx", 0, 0x200),
-        "ny": _state_int(engine, "ny", 0, 0x400),
-        "x": _state_int(engine, "x", 0, 0x200),
-        "y": _state_int(engine, "y", 0, 0x400),
-        "xstep": _state_int(engine, "xstep", -1, 1),
-        "ystep": _state_int(engine, "ystep", -1, 1),
-        "bpl": _state_int(engine, "bpl", 1, 256),
-        "ppb": _state_int(engine, "ppb", 1, 8),
-        "bpp": _state_int(engine, "bpp", 1, 8),
-        "tr_delay": _state_int(engine, "tr_delay", _I32_MIN, _I32_MAX),
+        "active": _state_bool(engine, engine_label, "active"),
+        "transfer": _state_bool(engine, engine_label, "transfer"),
+        "code": _state_int(engine, engine_label, "code", 0, 0x0F),
+        "log": _state_int(engine, engine_label, "log", 0, 0x0F),
+        "sx": _state_int(engine, engine_label, "sx", 0, 0x1FF),
+        "sy": _state_int(engine, engine_label, "sy", 0, 0x3FF),
+        "dx": _state_int(engine, engine_label, "dx", 0, 0x1FF),
+        "dy": _state_int(engine, engine_label, "dy", 0, 0x3FF),
+        "nx": _state_int(engine, engine_label, "nx", 0, 0x200),
+        "ny": _state_int(engine, engine_label, "ny", 0, 0x400),
+        "x": _state_int(engine, engine_label, "x", 0, 0x200),
+        "y": _state_int(engine, engine_label, "y", 0, 0x400),
+        "xstep": _state_int(engine, engine_label, "xstep", -1, 1),
+        "ystep": _state_int(engine, engine_label, "ystep", -1, 1),
+        "bpl": _state_int(engine, engine_label, "bpl", 1, 256),
+        "ppb": _state_int(engine, engine_label, "ppb", 1, 8),
+        "bpp": _state_int(engine, engine_label, "bpp", 1, 8),
+        "tr_delay": _state_int(engine, engine_label, "tr_delay", _I32_MIN, _I32_MAX),
     }
     return {
-        "palette": _state_int_list(state, "palette", 16, 0, 0x1FF),
-        "cmd_regs": _state_int_list(state, "cmd_regs", 15, 0, 0xFF),
-        "status1": _state_int(state, "status1", 0, 0xFF),
-        "status2": _state_int(state, "status2", 0, 0xFF),
-        "status8": _state_int(state, "status8", 0, 0xFF),
-        "status9": _state_int(state, "status9", 0, 0xFF),
-        "cmd_remaining": _state_int(state, "cmd_remaining", _I32_MIN, _I32_MAX),
+        "palette": _state_int_list(state, label, "palette", 16, 0, 0x1FF),
+        "cmd_regs": _state_int_list(state, label, "cmd_regs", 15, 0, 0xFF),
+        "status1": _state_int(state, label, "status1", 0, 0xFF),
+        "status2": _state_int(state, label, "status2", 0, 0xFF),
+        "status8": _state_int(state, label, "status8", 0, 0xFF),
+        "status9": _state_int(state, label, "status9", 0, 0xFF),
+        "cmd_remaining": _state_int(state, label, "cmd_remaining", _I32_MIN, _I32_MAX),
         "cmd_engine": cmd_engine,
-        "collision_x": _state_int(state, "collision_x", 0, 0x3FF),
-        "collision_y": _state_int(state, "collision_y", 0, 0x3FF),
-        "first_byte": _state_int(state, "first_byte", 0, 0xFF),
-        "control_pending": _state_bool(state, "control_pending"),
-        "palette_pending": _state_bool(state, "palette_pending"),
+        "collision_x": _state_int(state, label, "collision_x", 0, 0x3FF),
+        "collision_y": _state_int(state, label, "collision_y", 0, 0x3FF),
+        "first_byte": _state_int(state, label, "first_byte", 0, 0xFF),
+        "control_pending": _state_bool(state, label, "control_pending"),
+        "palette_pending": _state_bool(state, label, "palette_pending"),
     }
 
 
@@ -576,13 +537,11 @@ class V9938:
 
         Single source for the vertical-blanking boundary: Machine.run_frame()
         reads it to decide where to split the frame and render."""
-        return self.display_height
+        return display_height_of(self.regs)
 
     @property
     def display_width(self) -> int:
-        """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
-        SCREEN 7 (G6) (M5 set, M4 clear; SCREEN 8/G7, M5+M4, is 256), and for
-        TEXT2 (M1 and M4 set, M3 clear)."""
+        """Active display width in dots, 256 or 512 (see display_width_of)."""
         return display_width_of(self.regs)
 
     def increment_frame(self) -> None:

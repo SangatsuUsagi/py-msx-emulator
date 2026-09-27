@@ -156,7 +156,7 @@ class TestSnapshotRestore:
         pre_sram = bytes(m.sram)
 
         del snap["sram_enabled"]
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             m.restore(snap)
 
         assert list(m._banks) == pre_banks
