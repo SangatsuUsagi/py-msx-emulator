@@ -278,7 +278,12 @@ class VDP:
 
         0x98 = VRAM data (writes at the current address, auto-increments it);
         0x99 = control (two-byte latch: the second byte either writes a register
-        when bit 7 is set, or sets up the VRAM address otherwise).
+        when bit 7 is set, or sets up the VRAM address otherwise). Real MSX1
+        VDPs use no latch for the address pointer itself: the first control
+        byte also writes straight into its low 8 bits, and a register write
+        (unlike on the V9938) also perturbs its high 6 bits from the second
+        byte -- both confirmed on real TMS9928A/TMS9929A hardware (see
+        allium/tms9918a.allium's WriteControlPort).
         """
         value = value & 0xFF
         if port == 0x98:
@@ -294,6 +299,7 @@ class VDP:
                 self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
             if self.latch is None:
                 self.latch = value
+                self.addr = (self.addr & 0x3F00) | value
             else:
                 low = self.latch
                 self.latch = None
@@ -306,6 +312,7 @@ class VDP:
                         self.update_irq()
                     if self._logger is not None:
                         self._logger.on_vdp_reg_write(reg, stored, self._frame_count)
+                    self.addr = ((value << 8) | (self.addr & 0xFF)) & 0x3FFF
                 else:
                     # VRAM address setup
                     self.addr = ((value & 0x3F) << 8) | low

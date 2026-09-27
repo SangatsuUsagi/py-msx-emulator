@@ -120,6 +120,35 @@ def test_port_99_register_write_ignores_28_to_31() -> None:
     assert len(vdp.regs) == 28  # list unchanged
 
 
+def test_port_99_second_byte_0xc0_to_0xff_is_not_a_register_write() -> None:
+    # Unlike an MSX1 VDP, a real V9938 performs no register write when the
+    # second control byte has bits 7 and 6 both set (openMSX VDP.cc;
+    # confirmed on real hardware, both an MSX1 VDP and a real V99x8 -- see
+    # allium/v9938.allium's WriteControlPort).
+    vdp = V9938()
+    vdp.write_port(0x99, 0x42)
+    vdp.write_port(0x99, 0xC0 | 3)
+    assert vdp.regs[3] == 0
+
+
+def test_port_99_second_byte_0xc0_to_0xff_leaves_address_pointer_unchanged() -> None:
+    vdp = V9938()
+    _set_write_addr(vdp, 0x1234)
+    before = vdp._addr
+    vdp.write_port(0x99, 0x42)
+    vdp.write_port(0x99, 0xC0 | 3)
+    assert vdp._addr == before
+
+
+def test_port_99_second_byte_0xc0_to_0xff_still_clears_latch() -> None:
+    vdp = V9938()
+    vdp.write_port(0x99, 0x42)
+    vdp.write_port(0x99, 0xC0 | 3)  # no register write, but latch clears
+    vdp.write_port(0x99, 0x99)      # fresh first byte
+    vdp.write_port(0x99, 0x80 | 5)  # register select: reg 5
+    assert vdp.regs[5] == 0x99
+
+
 # ---------------------------------------------------------------------------
 # Port 0x99: address latch
 # ---------------------------------------------------------------------------
