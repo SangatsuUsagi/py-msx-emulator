@@ -238,7 +238,7 @@ class SCC:
     def generate_samples(self, n: int) -> bytearray:
         """Return n signed 16-bit little-endian mono PCM samples.
 
-        Hot path (audio callback, 735 samples/frame): the registers are constant
+        Hot path (audio callback, 735 or 882 samples/frame): the registers are constant
         across a buffer (the CPU only writes SCC registers between buffers), so
         the per-channel period / volume / enable / waveform bank are precomputed
         once, and the phase state is bound to locals — mirroring PSG.generate_
