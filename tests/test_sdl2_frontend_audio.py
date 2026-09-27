@@ -4,6 +4,7 @@ from array import array
 from frontend.sdl2_frontend import _init_sdl, _mix_audio
 from msx.audio_filter import BiquadLowPass
 from msx.psg import SAMPLES_PER_FRAME
+from msx.vdp._geometry import VideoStandard
 
 
 def _pcm(value: int) -> bytes:
@@ -31,7 +32,9 @@ class _Machine:
         scc: bytes | None = None,
         dac: bytes | None = None,
         fmpac_opll: bytes | None = None,
+        video_standard: VideoStandard = VideoStandard.NTSC,
     ) -> None:
+        self.video_standard = video_standard
         self.psg = _Gen(psg)
         self.scc = _Gen(scc) if scc is not None else None
         self.dac = _Gen(dac) if dac is not None else None
@@ -199,3 +202,38 @@ def test_init_sdl_creates_texture_at_requested_size() -> None:
     sdl = _FakeInitSDL(audio_opens=True)
     _init_sdl(sdl, "title", 768, 636, 256, 212)
     assert sdl.created_texture_size == (256, 212)
+
+
+class _CountingGen:
+    """Records the sample count it is asked for and returns that many samples."""
+
+    def __init__(self) -> None:
+        self.requested: list[int] = []
+
+    def generate_samples(self, n: int, *_args: int) -> bytes:
+        self.requested.append(n)
+        return array("h", [1] * n).tobytes()
+
+
+def _counting_machine(standard: VideoStandard) -> tuple[_Machine, list[_CountingGen]]:
+    machine = _Machine(b"", video_standard=standard)
+    gens = [_CountingGen() for _ in range(4)]
+    machine.psg, machine.scc, machine.dac = gens[0], gens[1], gens[2]
+    machine.fmpac = _FmPac(b"")
+    machine.fmpac.opll = gens[3]
+    return machine, gens
+
+
+def test_ntsc_machine_mixes_735_samples_per_frame() -> None:
+    machine, gens = _counting_machine(VideoStandard.NTSC)
+    out = _mix_audio(machine, 0, 59_736)
+    assert len(out) == 735 * 2
+    assert [g.requested for g in gens] == [[735]] * 4
+
+
+def test_pal_machine_mixes_882_samples_per_frame() -> None:
+    # app-sdl2-audio "Samples per frame follow the video standard".
+    machine, gens = _counting_machine(VideoStandard.PAL)
+    out = _mix_audio(machine, 0, 71_364)
+    assert len(out) == 882 * 2
+    assert [g.requested for g in gens] == [[882]] * 4
