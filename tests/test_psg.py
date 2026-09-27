@@ -367,8 +367,8 @@ def test_snapshot_synth_and_restore_synth_round_trip() -> None:
 
 
 def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
-    """restore_synth() reads every field before assigning any of them, so a
-    missing key fails before earlier fields are touched."""
+    """restore_synth() parses the whole object before assigning any field,
+    so a missing key fails before earlier fields are touched."""
     psg = PSG()
     _program_tone_noise_envelope(psg)
     psg.generate_samples(500)
@@ -376,7 +376,7 @@ def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
     pre = dict(psg.snapshot_synth())
 
     del snapshot["_clk_frac"]
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="_clk_frac"):
         psg.restore_synth(snapshot)
 
     assert dict(psg.snapshot_synth()) == pre

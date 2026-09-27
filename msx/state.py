@@ -113,9 +113,10 @@ class StateLoadError(ValueError):
         self.producer = producer
 
 
-def _restore_producer(producer: str, fn: Callable[[], None]) -> None:
-    """Run one producer's restore call, wrapping a malformed-data failure
-    as StateLoadError(producer, ...) instead of letting it propagate raw."""
+def _restore_producer(producer: str, fn: Callable[[], object]) -> None:
+    """Run one producer's parse_state or restore call, wrapping a
+    malformed-data failure as StateLoadError(producer, ...) instead of
+    letting it propagate raw."""
     try:
         fn()
     except (KeyError, TypeError, ValueError) as exc:
@@ -238,6 +239,15 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.scc is None:
         return None
     return cast(dict[str, object], machine.scc.snapshot())
+
+
+def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -> None:
+    if (scc_state is None) != (machine.scc is None):
+        raise ValueError(
+            "SCC wiring mismatch: "
+            f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
+            f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
+        )
 
 
 def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> None:
@@ -685,7 +695,8 @@ def _parse_paired_states(
 def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     """Every check against the running machine that must pass before
     _restore_snapshot writes anything: format version, machine type, mapper
-    kinds, RAM and RAM-mapper sizes, and the FDC and expanded-slot wiring.
+    kinds, RAM and RAM-mapper sizes, the FDC, expanded-slot and SCC wiring,
+    and every producer object's parse_state.
     (parse_snapshot has already checked everything the snapshot alone decides.)"""
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
@@ -735,6 +746,58 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         2, machine.memory.slot2_sub_slot_enabled, machine.memory._mapper2_subslots,
         snap.mapper2_subslot_kinds,
     )
+    _check_scc_wiring(machine, snap.scc_state)
+    _parse_producer_objects(machine, snap)
+
+
+def _parse_subslot_producers(
+    producer: str,
+    label: str,
+    subslots: list["Mapper | None"],
+    states: list[dict[str, object]] | None,
+) -> None:
+    if states is None:
+        return
+    for i, sub_mapper in enumerate(subslots):
+        if sub_mapper is not None:
+            state = states[i]
+            sub_label = f"{label}[{i}]"
+            _restore_producer(producer, lambda: sub_mapper.parse_state(state, sub_label))
+
+
+def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> None:
+    """Validate every producer object the snapshot carries with its
+    producer's parse_state, before anything is restored (the wiring checks
+    have already matched each object to a running producer)."""
+    mapper = machine.memory._mapper
+    mapper2 = machine.memory._mapper2
+    _restore_producer(
+        f"mapper ({mapper.kind.value})",
+        lambda: mapper.parse_state(snap.mapper_state, "mapper_state"),
+    )
+    _restore_producer(
+        f"mapper2 ({mapper2.kind.value})",
+        lambda: mapper2.parse_state(snap.mapper2_state, "mapper2_state"),
+    )
+    _parse_subslot_producers(
+        "mapper1_subslots", "mapper1_subslot_states",
+        machine.memory._mapper1_subslots, snap.mapper1_subslot_states,
+    )
+    _parse_subslot_producers(
+        "mapper2_subslots", "mapper2_subslot_states",
+        machine.memory._mapper2_subslots, snap.mapper2_subslot_states,
+    )
+    _restore_producer(
+        "psg", lambda: machine.psg.parse_synth_state(snap.psg_synth, "psg_synth")
+    )
+    scc = machine.scc
+    scc_state = snap.scc_state
+    if scc is not None and scc_state is not None:
+        _restore_producer("scc", lambda: scc.parse_state(scc_state, "scc_state"))
+    fdc = machine.fdc
+    fdc_state = snap.fdc_state
+    if fdc is not None and fdc_state is not None:
+        _restore_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:

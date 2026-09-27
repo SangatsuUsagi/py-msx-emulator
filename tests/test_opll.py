@@ -26,6 +26,7 @@ from msx.opll import (
     Opll,
     note_frequency,
 )
+from msx.snapshot_schema import SchemaError
 
 _LOUD_INSTRUMENT_VOL = 0x10  # instrument=1 (violin), vol=0 (loudest)
 
@@ -515,7 +516,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 
     snap = dict(pre)
     del snap["out_time"]
-    with pytest.raises(KeyError):
+    with pytest.raises(SchemaError, match="out_time"):
         o.restore(snap)
 
     assert o.snapshot() == pre

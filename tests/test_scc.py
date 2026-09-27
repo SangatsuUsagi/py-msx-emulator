@@ -319,7 +319,7 @@ def test_snapshot_and_restore_round_trip() -> None:
 
 
 def test_restore_with_missing_key_does_not_partially_mutate() -> None:
-    """restore() reads every field before assigning any of them, so a
+    """restore() parses the whole object before assigning any field, so a
     missing key fails before _waves (assigned first) is touched."""
     scc = _make_scc_tone(freq=0x123, vol=15, ch=0)
     scc.write(0x00, 0x11)
@@ -328,7 +328,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 
     snap = dict(pre)
     del snap["_clk_frac"]
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="_clk_frac"):
         scc.restore(snap)
 
     assert scc.snapshot() == pre
