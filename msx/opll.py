@@ -1121,18 +1121,21 @@ class Opll:
         return out
 
     # --------------------------------------------------------- save / restore
-    # PORT-LIBRARY-NOTE: snapshot()/restore() emit/consume each field
-    #   explicitly via a TypedDict (OpllState, below), rather than by
-    #   getattr/setattr reflection -- the same explicit-field pattern used by
-    #   PSG.snapshot_synth()/restore_synth(), SCC.snapshot()/restore(), and
-    #   FmPac.snapshot()/restore(). The dict maps 1:1 onto the emu2413
-    #   OPLL_PATCH / OPLL_SLOT structs this file is a port of.
+    # PORT-LIBRARY-NOTE: snapshot()/parse_state()/apply_state() emit,
+    #   validate and consume each field explicitly via a TypedDict (OpllState,
+    #   below), rather than by getattr/setattr reflection -- the same
+    #   explicit-field pattern used by PSG.snapshot_synth()/
+    #   parse_synth_state()/apply_synth_state(), SCC and FmPac
+    #   snapshot()/parse_state()/apply_state(). parse_state() is the only
+    #   step that can fail; apply_state() assigns an already-parsed value, and
+    #   restore() is apply_state(parse_state(...)). The dict maps 1:1 onto the
+    #   emu2413 OPLL_PATCH / OPLL_SLOT structs this file is a port of.
     # Rust crate candidates: serde + serde_json (or bincode) deriving
     #   Serialize/Deserialize directly on the equivalent OpllState/_Patch/
     #   _Slot structs -- the explicit field lists here already give the
     #   struct shape for free.
     # C++ library candidates: nlohmann::json (or hand-written struct
-    #   (de)serialize functions mirroring snapshot()/restore() as written).
+    #   (de)serialize functions mirroring snapshot()/parse_state() as written).
     # Not adopted now because: Python's stdlib dict/TypedDict already gives
     #   the save-state format for free; no serialization dependency needed
     #   in the Python codebase today.
@@ -1158,7 +1161,7 @@ class Opll:
             "out_time": self._out_time,
         }
 
-    def parse_state(self, obj: object, label: str = "opll") -> OpllState:
+    def parse_state(self, obj: object, label: str) -> OpllState:
         """Validate a snapshot() object (exact keys, types, ranges and
         lengths) and return it as an OpllState, without touching the chip.
         Raises SchemaError naming the field path.
@@ -1173,7 +1176,7 @@ class Opll:
         for i in range(18):
             slots.append(_parse_slot(slot_objs[i], f"{label}.slots[{i}]"))
         return {
-            "reg": _check_blob(d["reg"], f"{label}.reg", 0x40),
+            "reg": bytes(check_bytes(d["reg"], f"{label}.reg", 0x40)),
             "patch_number": check_int_list(
                 d["patch_number"], f"{label}.patch_number", 9, 0, 18
             ),
@@ -1203,7 +1206,7 @@ class Opll:
         """Restore chip state produced by snapshot(). Parses the whole
         object first, so a rejected state leaves the chip unchanged.
         """
-        self.apply_state(self.parse_state(state))
+        self.apply_state(self.parse_state(state, "opll"))
 
     def apply_state(self, state: OpllState) -> None:
         """Assign an already-parsed OpllState (see parse_state)."""
@@ -1240,7 +1243,7 @@ class Opll:
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
 
-# Save-state field helpers for OPLL.snapshot()/restore() -- see the
+# Save-state field helpers for OPLL.snapshot()/apply_state() -- see the
 # PORT-LIBRARY-NOTE on OPLL.snapshot() for the explicit-field-vs-reflection
 # rationale.
 
@@ -1329,13 +1332,6 @@ _OUTPUT_MAX = (_EXP_TABLE[0xFF] + 1024) << 1
 _OUTPUT_MIN = ~(_EXP_TABLE[0xFF] + 1024) << 1
 # Largest total level: _TLL_TABLE's top entry (KL 3 at the top block/fnum, TL 63).
 _TLL_MAX = _TLL_TABLE[127][63][3]
-
-
-def _check_blob(value: object, label: str, length: int) -> bytes:
-    """check_bytes, also accepting the `bytes` snapshot() itself returns."""
-    if isinstance(value, bytes):
-        value = bytearray(value)
-    return bytes(check_bytes(value, label, length))
 
 
 def _check_list(value: object, label: str, length: int) -> list[object]:

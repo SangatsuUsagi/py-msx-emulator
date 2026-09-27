@@ -238,3 +238,55 @@ def test_floppy_disk_state_drive_count_mismatch_rejected_before_restore() -> Non
 
     assert drive.track == 5
     assert controller.track_reg == 9
+
+
+def test_load_parses_each_producer_once_and_hashes_each_disk_once(
+    tmp_path: Path, saves_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # machine-state "A load parses each producer object once".
+    from msx.fdc.disk_image import DskDiskImage
+    from msx.psg import PSG
+
+    _make_roms(tmp_path)
+    dsk = tmp_path / "game.dsk"
+    _make_disk(dsk)
+    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    assert machine.fdc is not None
+    save_state(machine, _RGB_MSX2, "test")
+
+    counts = {"sha1": 0, "fdc": 0, "psg": 0, "mapper": 0}
+    real_sha1 = DskDiskImage.content_sha1
+    real_fdc_parse = type(machine.fdc).parse_state
+    real_psg_parse = PSG.parse_synth_state
+    mapper_cls = type(machine.memory._mapper)
+    real_mapper_parse = mapper_cls.parse_state
+
+    def sha1(self):
+        counts["sha1"] += 1
+        return real_sha1(self)
+
+    def fdc_parse(self, obj, label):
+        counts["fdc"] += 1
+        return real_fdc_parse(self, obj, label)
+
+    def psg_parse(self, obj, label):
+        counts["psg"] += 1
+        return real_psg_parse(self, obj, label)
+
+    def mapper_parse(self, obj, label):
+        counts["mapper"] += 1
+        return real_mapper_parse(self, obj, label)
+
+    monkeypatch.setattr(DskDiskImage, "content_sha1", sha1)
+    monkeypatch.setattr(type(machine.fdc), "parse_state", fdc_parse)
+    monkeypatch.setattr(PSG, "parse_synth_state", psg_parse)
+    monkeypatch.setattr(mapper_cls, "parse_state", mapper_parse)
+
+    load_state(machine)
+
+    assert counts["fdc"] == 1
+    assert counts["psg"] == 1
+    assert counts["sha1"] == 1  # one mounted disk
+    # slot 1 and slot 2 each hold a mapper; count parses of this class's instances
+    same_class = int(type(machine.memory._mapper2) is mapper_cls) + 1
+    assert counts["mapper"] == same_class

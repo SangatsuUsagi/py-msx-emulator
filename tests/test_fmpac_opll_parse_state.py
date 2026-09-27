@@ -66,20 +66,20 @@ def fmpac() -> FmPac:
 
 def test_fmpac_own_snapshot_parses_and_equals_itself(fmpac: FmPac) -> None:
     snap = fmpac.snapshot()
-    assert fmpac.parse_state(snap) == snap
+    assert fmpac.parse_state(snap, "state") == snap
     assert fmpac.snapshot() == snap  # parse_state does not mutate
 
 
 def test_opll_own_snapshot_parses_and_equals_itself(fmpac: FmPac) -> None:
     snap = fmpac.opll.snapshot()
-    assert fmpac.opll.parse_state(snap) == snap
+    assert fmpac.opll.parse_state(snap, "opll") == snap
 
 
 def test_json_round_tripped_snapshot_parses(fmpac: FmPac) -> None:
     """The load path hands parse_state bytearray blobs and JSON numbers."""
     snap = fmpac.snapshot()
     decoded = _from_jsonable(json.loads(json.dumps(_to_jsonable(snap))))
-    assert fmpac.parse_state(decoded) == snap
+    assert fmpac.parse_state(decoded, "state") == snap
 
 
 def test_restore_from_parsed_snapshot_is_bit_identical(fmpac: FmPac) -> None:
@@ -101,7 +101,7 @@ def _assert_rejected(fmpac: FmPac, mutate: Callable[[dict[str, Any]], None], pat
     bad: dict[str, Any] = copy.deepcopy(dict(pre))
     mutate(bad)
     with pytest.raises(ValueError, match=path):
-        fmpac.parse_state(bad)
+        fmpac.parse_state(bad, "state")
     with pytest.raises(ValueError, match=path):
         fmpac.restore(bad)
     assert fmpac.snapshot() == pre
@@ -248,3 +248,26 @@ def test_opll_restore_rejects_without_mutating() -> None:
     with pytest.raises(SchemaError, match=r"opll\.patch_number\[8\]"):
         opll.restore(bad)
     assert opll.snapshot() == pre
+
+
+# ---------------------------------------------------------------------------
+# apply_state(parse_state(snapshot)) reproduces the state
+# ---------------------------------------------------------------------------
+
+def test_fmpac_apply_parsed_snapshot_reproduces_state(fmpac: FmPac) -> None:
+    snap = fmpac.snapshot()
+    expected = bytes(fmpac.opll.generate_samples(400))
+    other = FmPac(rom=_bank_rom(), opll=Opll())
+    other.apply_state(other.parse_state(snap, "state"))
+    assert other.snapshot() == snap
+    assert bytes(other.opll.generate_samples(400)) == expected
+    assert other.read(0x4000) == 0xA0  # SRAM enable recomputed by apply_state
+
+
+def test_opll_apply_parsed_snapshot_reproduces_state(fmpac: FmPac) -> None:
+    snap = fmpac.opll.snapshot()
+    expected = bytes(fmpac.opll.generate_samples(400))
+    other = Opll()
+    other.apply_state(other.parse_state(snap, "opll"))
+    assert other.snapshot() == snap
+    assert bytes(other.generate_samples(400)) == expected

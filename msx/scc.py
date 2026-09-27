@@ -187,7 +187,7 @@ class SCC:
             "_clk_frac": self._clk_frac,
         }
 
-    def parse_state(self, obj: object, label: str = "scc_state") -> SccState:
+    def parse_state(self, obj: object, label: str) -> SccState:
         """Validate a snapshot() object without touching the chip."""
         state = check_object(obj, label, _SCC_STATE_KEYS)
         waves_label = f"{label}._waves"
@@ -217,15 +217,23 @@ class SCC:
         }
 
     def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot()."""
-        parsed = self.parse_state(state)
-        self._waves = parsed["_waves"]
-        self._freq = parsed["_freq"]
-        self._vol = parsed["_vol"]
-        self._enable = parsed["_enable"]
-        self._phase_cnt = parsed["_phase_cnt"]
-        self._phase_idx = parsed["_phase_idx"]
-        self._clk_frac = parsed["_clk_frac"]
+        """Restore chip state produced by snapshot(). Parses the whole
+        object first, so a rejected state leaves the chip unchanged.
+        """
+        self.apply_state(self.parse_state(state, "scc_state"))
+
+    def apply_state(self, state: SccState) -> None:
+        """Assign an already-parsed SccState (see parse_state)."""
+        waves: list[list[int]] = []
+        for w in state["_waves"]:
+            waves.append(list(w))
+        self._waves = waves
+        self._freq = list(state["_freq"])
+        self._vol = list(state["_vol"])
+        self._enable = state["_enable"]
+        self._phase_cnt = list(state["_phase_cnt"])
+        self._phase_idx = list(state["_phase_idx"])
+        self._clk_frac = state["_clk_frac"]
 
     # -------------------------------------------------------- sample generation
 

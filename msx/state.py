@@ -12,7 +12,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import MISSING, asdict, dataclass
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
@@ -35,8 +35,13 @@ from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
 from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
+    from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
+    from msx.psg import PsgSynthState
+    from msx.scc import SccState
+
+_T = TypeVar("_T")
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
 # Version 6: mapper_class: str (Python class name) replaced with
@@ -95,31 +100,29 @@ CURRENT_FORMAT_VERSION: int = 14
 
 
 class StateLoadError(ValueError):
-    """A save-state producer's restore() (or restore_synth()) failed on
-    malformed data.
+    """A save-state value was rejected while loading: a top-level field
+    (parse_snapshot) or a producer object (its producer's parse_state, run by
+    _validate_snapshot), always before anything is restored.
 
-    Distinct from the plain ValueErrors _restore_snapshot raises directly
-    for format/machine-type/mapper-kind mismatches (those already have
-    clear top-level messages); this specifically wraps whatever a
-    producer's own restore() raises when handed a malformed dict, so a
-    corrupted or hand-edited .state file always fails with one predictable,
-    catchable error naming which producer broke. The original exception is
-    chained via __cause__, so a developer debugging the failure still sees
-    the original traceback and exception type.
+    `producer` names the field or producer. Distinct from the plain
+    ValueErrors raised for format / layout / machine-type / mapper-kind /
+    wiring mismatches (those already have clear top-level messages), so a
+    corrupted or hand-edited .state file fails with one predictable,
+    catchable error naming the part that broke. The original exception is
+    chained via __cause__.
     """
 
     def __init__(self, producer: str, cause: Exception) -> None:
-        super().__init__(f"failed to restore {producer} state: {cause}")
+        super().__init__(f"invalid {producer} state: {cause}")
         self.producer = producer
 
 
-def _restore_producer(producer: str, fn: Callable[[], object]) -> None:
-    """Run one producer's parse_state or restore call, wrapping a
-    malformed-data failure as StateLoadError(producer, ...) instead of
-    letting it propagate raw."""
+def _parse_producer(producer: str, parse: Callable[[], _T]) -> _T:
+    """Run one producer's parse_state, reporting a rejection (any ValueError,
+    including SchemaError and identity mismatches) as StateLoadError(producer)."""
     try:
-        fn()
-    except (KeyError, TypeError, ValueError) as exc:
+        return parse()
+    except ValueError as exc:
         raise StateLoadError(producer, exc) from exc
 
 
@@ -141,14 +144,11 @@ class MachineSnapshot:
     # `mapper_kind` is the persisted mapper-identity discriminant -- a closed
     # MapperKind enum (msx/mapper.py), not the mapper's Python class name, so
     # a class rename does not change save-state compatibility (see
-    # openspec/changes/mapper-state-tagged-union). `mapper_state` itself is
-    # still the untyped `dict[str, object]` + cast() shape documented on the
-    # `Mapper` Protocol in msx/mapper.py (see that file's PORT-NOTE on
-    # GameMaster2Mapper.snapshot()) -- restore() failures on a malformed
-    # mapper_state are caught and re-raised as StateLoadError (see
-    # _restore_producer below), but the dict's shape itself is not validated
-    # ahead of that call. Replacing dict[str, object] with a per-kind typed
-    # variant is a separate, larger redesign, deliberately out of scope here.
+    # openspec/changes/mapper-state-tagged-union). `mapper_state` and the other
+    # producer objects are the file-level `dict[str, object]` layer: each is
+    # validated into its producer's typed state by that producer's
+    # parse_state in _validate_snapshot, before anything is restored, and the
+    # typed results (_ParsedProducers) are what _restore_snapshot applies.
     mapper_kind: MapperKind
     mapper_state: dict[str, object]
     # Primary slot 2, same generic mechanism as slot 1 above -- see
@@ -250,12 +250,6 @@ def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -
         )
 
 
-def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> None:
-    if machine.scc is None or scc_state is None:
-        return
-    machine.scc.restore(scc_state)
-
-
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
@@ -273,12 +267,6 @@ def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -
             f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
             f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
         )
-
-
-def _restore_fdc(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
-    if machine.fdc is None or fdc_state is None:
-        return
-    machine.fdc.restore(fdc_state)
 
 
 def _check_expanded_subslots(
@@ -313,26 +301,6 @@ def _check_expanded_subslots(
                 f"slot {slot_num} sub-slot {i} mapper mismatch: "
                 f"running {running_repr}, saved {saved_repr}"
             )
-
-
-def _restore_expanded_subslots(
-    subslots: list["Mapper | None"], saved_states: list[dict[str, object]] | None
-) -> None:
-    """Restore an expanded primary slot's per-sub-slot mapper state (the
-    wiring and kinds were checked by _check_expanded_subslots)."""
-    if saved_states is None:
-        return
-    for i, sub_mapper in enumerate(subslots):
-        if sub_mapper is not None:
-            sub_mapper.restore(saved_states[i])
-
-
-def _restore_mapper1_subslots(machine: "Machine", snap: "MachineSnapshot") -> None:
-    _restore_expanded_subslots(machine.memory._mapper1_subslots, snap.mapper1_subslot_states)
-
-
-def _restore_mapper2_subslots(machine: "Machine", snap: "MachineSnapshot") -> None:
-    _restore_expanded_subslots(machine.memory._mapper2_subslots, snap.mapper2_subslot_states)
 
 
 def _snapshot_expanded_subslots(
@@ -441,8 +409,6 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     )
 
 
-_T = TypeVar("_T")
-
 _CPU_REGS_8: tuple[str, ...] = ("A", "F", "I", "R", "A_", "F_")
 _CPU_REGS_16: tuple[str, ...] = (
     "BC", "DE", "HL", "IX", "IY", "SP", "PC", "BC_", "DE_", "HL_",
@@ -547,8 +513,10 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
     """Turn a decoded state file into a MachineSnapshot, checking the format
     version, then the key set, then every top-level value's type, range and
     (where the snapshot fixes it) length. A bad value raises StateLoadError
-    naming its field; the content of producer-owned objects is left to each
-    producer's restore(). Nothing here touches a machine."""
+    naming its field. Producer-owned objects are only checked to be objects
+    here; _validate_snapshot parses their content with each producer's
+    parse_state, which needs the running machine. Nothing here touches a
+    machine."""
     if not isinstance(decoded, dict):
         raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
     data = cast(dict[str, object], decoded)
@@ -692,11 +660,11 @@ def _parse_paired_states(
     return _parse_subslot_states(states, label)
 
 
-def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
     """Every check against the running machine that must pass before
     _restore_snapshot writes anything: format version, machine type, mapper
     kinds, RAM and RAM-mapper sizes, the FDC, expanded-slot and SCC wiring,
-    and every producer object's parse_state.
+    and every producer object's parse_state, whose results it returns.
     (parse_snapshot has already checked everything the snapshot alone decides.)"""
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
@@ -747,7 +715,23 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         snap.mapper2_subslot_kinds,
     )
     _check_scc_wiring(machine, snap.scc_state)
-    _parse_producer_objects(machine, snap)
+    return _parse_producer_objects(machine, snap)
+
+
+_MapperStates = list[tuple["Mapper", Mapping[str, object]]]
+
+
+@dataclass
+class _ParsedProducers:
+    """Every producer object of a snapshot, parsed once by the producer that
+    will apply it. Each state travels with its producer, so _restore_snapshot
+    can only hand a state to the instance that validated it, and applying
+    cannot fail."""
+
+    mappers: _MapperStates  # slot 1, slot 2, then each assigned sub-slot mapper
+    psg_synth: "PsgSynthState"
+    scc: "SccState | None"
+    fdc: "FloppyDiskParsed | None"
 
 
 def _parse_subslot_producers(
@@ -755,6 +739,7 @@ def _parse_subslot_producers(
     label: str,
     subslots: list["Mapper | None"],
     states: list[dict[str, object]] | None,
+    parsed: _MapperStates,
 ) -> None:
     if states is None:
         return
@@ -762,49 +747,58 @@ def _parse_subslot_producers(
         if sub_mapper is not None:
             state = states[i]
             sub_label = f"{label}[{i}]"
-            _restore_producer(producer, lambda: sub_mapper.parse_state(state, sub_label))
+            # Called immediately, so the loop variables it captures are current.
+            state_parsed = _parse_producer(
+                producer, lambda: sub_mapper.parse_state(state, sub_label)
+            )
+            parsed.append((sub_mapper, state_parsed))
 
 
-def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> None:
-    """Validate every producer object the snapshot carries with its
-    producer's parse_state, before anything is restored (the wiring checks
-    have already matched each object to a running producer)."""
+def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
+    """Parse every producer object the snapshot carries with its producer's
+    parse_state, before anything is restored (the wiring checks have already
+    matched each object to a running producer)."""
     mapper = machine.memory._mapper
     mapper2 = machine.memory._mapper2
-    _restore_producer(
-        f"mapper ({mapper.kind.value})",
-        lambda: mapper.parse_state(snap.mapper_state, "mapper_state"),
-    )
-    _restore_producer(
-        f"mapper2 ({mapper2.kind.value})",
-        lambda: mapper2.parse_state(snap.mapper2_state, "mapper2_state"),
-    )
+    mappers: _MapperStates = [
+        (mapper, _parse_producer(
+            f"mapper ({mapper.kind.value})",
+            lambda: mapper.parse_state(snap.mapper_state, "mapper_state"),
+        )),
+        (mapper2, _parse_producer(
+            f"mapper2 ({mapper2.kind.value})",
+            lambda: mapper2.parse_state(snap.mapper2_state, "mapper2_state"),
+        )),
+    ]
     _parse_subslot_producers(
         "mapper1_subslots", "mapper1_subslot_states",
-        machine.memory._mapper1_subslots, snap.mapper1_subslot_states,
+        machine.memory._mapper1_subslots, snap.mapper1_subslot_states, mappers,
     )
     _parse_subslot_producers(
         "mapper2_subslots", "mapper2_subslot_states",
-        machine.memory._mapper2_subslots, snap.mapper2_subslot_states,
+        machine.memory._mapper2_subslots, snap.mapper2_subslot_states, mappers,
     )
-    _restore_producer(
+    psg_synth = _parse_producer(
         "psg", lambda: machine.psg.parse_synth_state(snap.psg_synth, "psg_synth")
     )
     scc = machine.scc
     scc_state = snap.scc_state
+    scc_parsed = None
     if scc is not None and scc_state is not None:
-        _restore_producer("scc", lambda: scc.parse_state(scc_state, "scc_state"))
+        scc_parsed = _parse_producer("scc", lambda: scc.parse_state(scc_state, "scc_state"))
     fdc = machine.fdc
     fdc_state = snap.fdc_state
+    fdc_parsed = None
     if fdc is not None and fdc_state is not None:
-        _restore_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
+        fdc_parsed = _parse_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
+    return _ParsedProducers(mappers, psg_synth, scc_parsed, fdc_parsed)
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
-    _validate_snapshot(machine, snap)
+    # Everything that can fail runs here, before the first write; the rest of
+    # this function only assigns already-validated values.
+    parsed = _validate_snapshot(machine, snap)
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
-    mapper = machine.memory._mapper
-    mapper2 = machine.memory._mapper2
 
     _restore_cpu_regs(machine, snap.cpu_regs)
     machine.cpu.halted = snap.cpu_halted
@@ -816,12 +810,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.memory.ram[:] = snap.ram
     machine.memory.set_slot_register(snap.slot_register)
-    _restore_producer(
-        f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
-    )
-    _restore_producer(
-        f"mapper2 ({mapper2.kind.value})", lambda: mapper2.restore(snap.mapper2_state)
-    )
+    for producer, state in parsed.mappers:
+        producer.apply_state(state)
 
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
@@ -850,11 +840,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
-    _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
-    _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
-    _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
-    _restore_producer("mapper1_subslots", lambda: _restore_mapper1_subslots(machine, snap))
-    _restore_producer("mapper2_subslots", lambda: _restore_mapper2_subslots(machine, snap))
+    machine.psg.apply_synth_state(parsed.psg_synth)
+    if machine.scc is not None and parsed.scc is not None:
+        machine.scc.apply_state(parsed.scc)
+    if machine.fdc is not None and parsed.fdc is not None:
+        machine.fdc.apply_state(parsed.fdc)
     if snap.slot1_sub_slot_reg is not None:
         machine.memory.set_slot1_sub_slot_reg(snap.slot1_sub_slot_reg)
     if snap.slot2_sub_slot_reg is not None:
@@ -951,7 +941,10 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
 
     Raises:
         FileNotFoundError: If the target file does not exist.
-        ValueError: If format version or mapper class does not match.
+        StateLoadError: If a field or producer object is malformed.
+        ValueError: If the file is not a state file of this format version and
+            layout, or does not match the running machine (machine type,
+            mapper kind, slot / FDC / SCC wiring). Nothing is restored then.
     """
     if path is None:
         link = Path("saves") / "states" / "latest.state"

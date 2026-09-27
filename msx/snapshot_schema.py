@@ -1,9 +1,9 @@
-"""Checks shared by the save-state parsers (msx/state.py parse_snapshot and
-msx/vdp/v9938.py parse_v9938_state).
+"""Checks shared by every save-state parser: msx/state.py's parse_snapshot,
+msx/vdp/v9938.py's parse_v9938_state and each producer's parse_state.
 
 Each helper returns the value with its type narrowed, or raises SchemaError
 naming the field path (e.g. `cpu_regs.A`). A leaf module: it imports nothing
-from the emulator, so both parsers can use it without an import cycle.
+from the emulator, so every parser can use it without an import cycle.
 """
 from __future__ import annotations
 

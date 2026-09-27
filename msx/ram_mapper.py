@@ -5,9 +5,10 @@ Ports 0xFC–0xFF select which 16 KB bank is visible in each of the four
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, TypedDict
+from typing import ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
 from msx.snapshot_schema import check_bytes, check_int_list, check_object
@@ -106,17 +107,20 @@ class RamMapper:
     def snapshot(self) -> RamMapperState:
         return {"banks": list(self.banks), "ram": bytearray(self.ram)}
 
-    def parse_state(self, obj: object, label: str = "state") -> RamMapperState:
+    def parse_state(self, obj: object, label: str) -> RamMapperState:
         state = check_object(obj, label, _STATE_KEYS)
         return {
             "banks": check_int_list(state["banks"], f"{label}.banks", 4, 0, 0xFF),
             "ram": check_bytes(state["ram"], f"{label}.ram", len(self.ram)),
         }
 
-    def restore(self, state: dict[str, object]) -> None:
-        st = self.parse_state(state)
+    def apply_state(self, state: Mapping[str, object]) -> None:
+        st = cast(RamMapperState, state)
         self.banks[:] = st["banks"]
         self.ram[:] = st["ram"]
+
+    def restore(self, state: dict[str, object]) -> None:
+        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank_info(self, page: int) -> str | None:
         """Describe the bank visible at CPU page (0-3, i.e. addr >> 14).

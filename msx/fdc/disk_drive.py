@@ -200,10 +200,10 @@ class DiskDrive:
     def restore(self, state: dict[str, object]) -> None:
         """Restore head position after verifying the currently-mounted
         image's identity matches the snapshot's (see parse_state())."""
-        self.restore_parsed(self.parse_state(state, "drive"))
+        self.apply_state(self.parse_state(state, "drive"))
 
-    def restore_parsed(self, state: DiskDriveState) -> None:
-        """Assign a state already validated by parse_state()."""
+    def apply_state(self, state: DiskDriveState) -> None:
+        """Assign a state returned by parse_state()."""
         self.track = state["track"]
         self.side = state["side"]
         self.disk_changed = state["disk_changed"]
