@@ -12,25 +12,40 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import MISSING, asdict, dataclass
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from msx.mapper import MapperKind
-from msx.vdp.v9938 import (
-    V9938,
-    V9938State,
-    V9938StateError,
-    check_state_int,
-    parse_v9938_state,
+from msx.snapshot_schema import (
+    I64_MAX,
+    SchemaError,
+    SnapshotMismatchError,
+    check_bool,
+    check_bytes,
+    check_int,
+    check_int_list,
+    check_list,
+    check_object,
+    check_optional_bytes,
+    check_optional_int,
+    check_optional_int_list,
+    check_optional_object,
+    check_str,
 )
+from msx.vdp.v9938 import V9938, V9938State, parse_v9938_state
 from msx.vdp.vdp import VDP
 
 if TYPE_CHECKING:
+    from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
+    from msx.psg import PsgSynthState
+    from msx.scc import SccState
+
+_T = TypeVar("_T")
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
 # Version 6: mapper_class: str (Python class name) replaced with
@@ -89,30 +104,30 @@ CURRENT_FORMAT_VERSION: int = 14
 
 
 class StateLoadError(ValueError):
-    """A save-state producer's restore() (or restore_synth()) failed on
-    malformed data.
+    """A save-state value was rejected while loading: a top-level field
+    (parse_snapshot) or a producer object (its producer's parse_state, run by
+    _validate_snapshot), always before anything is restored.
 
-    Distinct from the plain ValueErrors _restore_snapshot raises directly
-    for format/machine-type/mapper-kind mismatches (those already have
-    clear top-level messages); this specifically wraps whatever a
-    producer's own restore() raises when handed a malformed dict, so a
-    corrupted or hand-edited .state file always fails with one predictable,
-    catchable error naming which producer broke. The original exception is
-    chained via __cause__, so a developer debugging the failure still sees
-    the original traceback and exception type.
+    `producer` names the field or producer. Distinct from the plain
+    ValueErrors raised for a file of another format version or layout, and
+    from SnapshotMismatchError (machine type, mapper kind, wiring, mounted
+    disk), both of which already carry clear top-level messages, so a
+    corrupted or hand-edited .state file fails with one predictable,
+    catchable error naming the part that broke. The original exception is
+    chained via __cause__.
     """
 
     def __init__(self, producer: str, cause: Exception) -> None:
-        super().__init__(f"failed to restore {producer} state: {cause}")
+        super().__init__(f"invalid {producer} state: {cause}")
         self.producer = producer
 
 
-def _restore_producer(producer: str, fn: Callable[[], None]) -> None:
-    """Run one producer's restore call, wrapping a malformed-data failure
-    as StateLoadError(producer, ...) instead of letting it propagate raw."""
+def _parse_producer(producer: str, parse: Callable[[], _T]) -> _T:
+    """Run one producer's parse_state, reporting a rejection (any ValueError,
+    including SchemaError and identity mismatches) as StateLoadError(producer)."""
     try:
-        fn()
-    except (KeyError, TypeError, ValueError) as exc:
+        return parse()
+    except ValueError as exc:
         raise StateLoadError(producer, exc) from exc
 
 
@@ -134,14 +149,11 @@ class MachineSnapshot:
     # `mapper_kind` is the persisted mapper-identity discriminant -- a closed
     # MapperKind enum (msx/mapper.py), not the mapper's Python class name, so
     # a class rename does not change save-state compatibility (see
-    # openspec/changes/mapper-state-tagged-union). `mapper_state` itself is
-    # still the untyped `dict[str, object]` + cast() shape documented on the
-    # `Mapper` Protocol in msx/mapper.py (see that file's PORT-NOTE on
-    # GameMaster2Mapper.snapshot()) -- restore() failures on a malformed
-    # mapper_state are caught and re-raised as StateLoadError (see
-    # _restore_producer below), but the dict's shape itself is not validated
-    # ahead of that call. Replacing dict[str, object] with a per-kind typed
-    # variant is a separate, larger redesign, deliberately out of scope here.
+    # openspec/changes/mapper-state-tagged-union). `mapper_state` and the other
+    # producer objects are the file-level `dict[str, object]` layer: each is
+    # validated into its producer's typed state by that producer's
+    # parse_state in _validate_snapshot, before anything is restored, and the
+    # typed results (_ParsedProducers) are what _restore_snapshot applies.
     mapper_kind: MapperKind
     mapper_state: dict[str, object]
     # Primary slot 2, same generic mechanism as slot 1 above -- see
@@ -196,51 +208,6 @@ class MachineSnapshot:
     mapper1_subslot_states: list[dict[str, object]] | None = None
 
 
-class _MachineSnapshotFields(TypedDict):
-    """Mirrors MachineSnapshot's field set, for typing `MachineSnapshot(**fields)`
-    in load_state() -- `fields` there is JSON-decoded (loosely typed by
-    `_from_jsonable`'s `object` return), and `asdict(snap)` always serializes
-    every field (defaults included), so a loaded file always has all keys."""
-
-    format_version: int
-    machine_type: str
-    cpu_regs: dict[str, int]
-    cpu_halted: bool
-    cpu_iff1: bool
-    cpu_iff2: bool
-    cpu_int_pending: bool
-    cpu_nmi_pending: bool
-    cpu_im: int
-    ram: bytearray
-    slot_register: int
-    mapper_kind: MapperKind
-    mapper_state: dict[str, object]
-    mapper2_kind: MapperKind
-    mapper2_state: dict[str, object]
-    vdp_vram: bytearray
-    vdp_regs: list[int]
-    vdp_status: int
-    vdp_latch: int | None
-    vdp_addr: int
-    vdp_read_buf: int
-    vdp_frame_count: int
-    psg_regs: list[int]
-    psg_latch: int
-    psg_synth: dict[str, object]
-    scc_state: dict[str, object] | None
-    vdp9938: V9938State | None
-    ram_mapper_ram: bytearray | None
-    ram_mapper_banks: list[int] | None
-    sub_slot_reg: int | None
-    fdc_state: dict[str, object] | None
-    slot2_sub_slot_reg: int | None
-    mapper2_subslot_kinds: list[MapperKind | None] | None
-    mapper2_subslot_states: list[dict[str, object]] | None
-    slot1_sub_slot_reg: int | None
-    mapper1_subslot_kinds: list[MapperKind | None] | None
-    mapper1_subslot_states: list[dict[str, object]] | None
-
-
 # --- internal helpers ---------------------------------------------------------
 
 def _cpu_regs_to_dict(machine: "Machine") -> dict[str, int]:
@@ -279,10 +246,13 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     return cast(dict[str, object], machine.scc.snapshot())
 
 
-def _restore_scc(machine: "Machine", scc_state: dict[str, object] | None) -> None:
-    if machine.scc is None or scc_state is None:
-        return
-    machine.scc.restore(scc_state)
+def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -> None:
+    if (scc_state is None) != (machine.scc is None):
+        raise SnapshotMismatchError(
+            "SCC wiring mismatch: "
+            f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
+            f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
+        )
 
 
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -295,36 +265,29 @@ def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     return machine.fdc.snapshot()
 
 
-def _restore_fdc(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
+def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
     if (fdc_state is None) != (machine.fdc is None):
-        raise ValueError(
+        raise SnapshotMismatchError(
             "FDC wiring mismatch: "
             f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
             f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
         )
-    if machine.fdc is None or fdc_state is None:
-        return
-    machine.fdc.restore(fdc_state)
 
 
-def _restore_expanded_subslots(
+def _check_expanded_subslots(
     slot_num: int,
     running_enabled: bool,
     subslots: list["Mapper | None"],
     saved_kinds: list[MapperKind | None] | None,
-    saved_states: list[dict[str, object]] | None,
 ) -> None:
-    """Restore an expanded primary slot's per-sub-slot mapper state --
-    shared by slot 1 and slot 2 (see openspec/changes/
+    """Check an expanded primary slot's expansion wiring, then every assigned
+    sub-slot's mapper kind -- shared by slot 1 and slot 2 (see openspec/changes/
     slot1-slot2-symmetrization and, for slot 2 specifically, the earlier
-    openspec/changes/generalize-slot2-mapper-state). Checks the slot's
-    expansion wiring, then every assigned sub-slot's mapper kind, before
-    restoring anything -- mirroring _restore_fdc's wiring-mismatch check
-    and the "check every drive before restoring any" atomicity pattern
-    FloppyDiskState.restore() uses."""
+    openspec/changes/generalize-slot2-mapper-state). Run by _validate_snapshot,
+    before anything is restored."""
     saved_enabled = saved_kinds is not None
     if running_enabled != saved_enabled:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"slot {slot_num} expansion wiring mismatch: "
             f"running machine has {'an expanded' if running_enabled else 'a flat'} "
             f"slot {slot_num}, saved state has "
@@ -333,34 +296,16 @@ def _restore_expanded_subslots(
     if not running_enabled:
         return
     assert saved_kinds is not None
-    assert saved_states is not None
     for i, sub_mapper in enumerate(subslots):
         running_kind = sub_mapper.kind if sub_mapper is not None else None
         saved_kind = saved_kinds[i]
         if running_kind != saved_kind:
             running_repr = repr(running_kind.value) if running_kind is not None else "None"
             saved_repr = repr(saved_kind.value) if saved_kind is not None else "None"
-            raise ValueError(
+            raise SnapshotMismatchError(
                 f"slot {slot_num} sub-slot {i} mapper mismatch: "
                 f"running {running_repr}, saved {saved_repr}"
             )
-    for i, sub_mapper in enumerate(subslots):
-        if sub_mapper is not None:
-            sub_mapper.restore(saved_states[i])
-
-
-def _restore_mapper1_subslots(machine: "Machine", snap: "MachineSnapshot") -> None:
-    _restore_expanded_subslots(
-        1, machine.memory.slot1_sub_slot_enabled, machine.memory._mapper1_subslots,
-        snap.mapper1_subslot_kinds, snap.mapper1_subslot_states,
-    )
-
-
-def _restore_mapper2_subslots(machine: "Machine", snap: "MachineSnapshot") -> None:
-    _restore_expanded_subslots(
-        2, machine.memory.slot2_sub_slot_enabled, machine.memory._mapper2_subslots,
-        snap.mapper2_subslot_kinds, snap.mapper2_subslot_states,
-    )
 
 
 def _snapshot_expanded_subslots(
@@ -469,25 +414,91 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     )
 
 
-def _check_vdp_latch(vdp_latch: object) -> None:
-    """Reject a common `vdp_latch` that is neither None nor a byte."""
-    if vdp_latch is None:
-        return
+_CPU_REGS_8: tuple[str, ...] = ("A", "F", "I", "R", "A_", "F_")
+_CPU_REGS_16: tuple[str, ...] = (
+    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "BC_", "DE_", "HL_",
+)
+_CPU_REG_KEYS: frozenset[str] = frozenset(_CPU_REGS_8 + _CPU_REGS_16)
+
+_TMS_VRAM_SIZE = 0x4000
+_V9938_VRAM_SIZE = 0x20000
+_TMS_REG_COUNT = 8
+_V9938_REG_COUNT = 28
+_PSG_REG_COUNT = 16
+_RAM_MAPPER_PAGES = 4  # the four 16 KB pages a RAM mapper bank register serves
+_SUBSLOTS = 4
+
+
+def _field(name: str, parse: Callable[[], _T]) -> _T:
+    """Run one top-level field's parse, reporting a SchemaError as
+    StateLoadError naming that field."""
     try:
-        check_state_int(vdp_latch, "vdp_latch", 0, 0xFF)
-    except V9938StateError as exc:
-        raise StateLoadError("vdp", exc) from exc
+        return parse()
+    except SchemaError as exc:
+        raise StateLoadError(name, exc) from exc
 
 
-def _check_v9938_latch_agrees(vdp_latch: int | None, state: V9938State) -> None:
-    """The common `vdp_latch` is the V9938 latch's port-0x99 view; reject a
-    file where the two disagree instead of letting restore order pick one."""
+def _parse_cpu_regs(value: object) -> dict[str, int]:
+    obj = check_object(value, "cpu_regs", _CPU_REG_KEYS)
+    regs: dict[str, int] = {}
+    for key in _CPU_REGS_8:
+        regs[key] = check_int(obj[key], f"cpu_regs.{key}", 0, 0xFF)
+    for key in _CPU_REGS_16:
+        regs[key] = check_int(obj[key], f"cpu_regs.{key}", 0, 0xFFFF)
+    return regs
+
+
+def _parse_mapper_kind(value: object, label: str) -> MapperKind:
+    text = check_str(value, label)
+    try:
+        return MapperKind(text)
+    except ValueError:
+        raise SchemaError(f"{label} must be a mapper kind, got {text!r}") from None
+
+
+def _parse_subslot_kinds(value: object, label: str) -> list[MapperKind | None] | None:
+    if value is None:
+        return None
+    kinds: list[MapperKind | None] = []
+    for i, entry in enumerate(check_list(value, label, _SUBSLOTS)):
+        kinds.append(None if entry is None else _parse_mapper_kind(entry, f"{label}[{i}]"))
+    return kinds
+
+
+def _parse_subslot_states(value: object, label: str) -> list[dict[str, object]] | None:
+    if value is None:
+        return None
+    states: list[dict[str, object]] = []
+    for i, entry in enumerate(check_list(value, label, _SUBSLOTS)):
+        states.append(check_object(entry, f"{label}[{i}]"))
+    return states
+
+
+def _parse_paired_states(
+    kinds: object, states: object, label: str
+) -> list[dict[str, object]] | None:
+    """A sub-slot state list is present exactly when its kind list is."""
+    if (kinds is None) != (states is None):
+        raise SchemaError(f"{label} must be present exactly when its kind list is")
+    return _parse_subslot_states(states, label)
+
+
+def _parse_vdp9938(value: object, msx2: bool, vdp_latch: int | None) -> V9938State | None:
+    if not msx2:
+        if value is not None:
+            raise SchemaError("vdp9938 must be null in an MSX1 snapshot")
+        return None
+    if value is None:
+        raise SchemaError("vdp9938 is required in an MSX2 snapshot")
+    state = parse_v9938_state(value)
+    # The common `vdp_latch` is the V9938 latch's port-0x99 view; reject a file
+    # where the two disagree instead of letting restore order pick one.
     expected = state["first_byte"] if state["control_pending"] else None
     if vdp_latch != expected:
-        raise StateLoadError(
-            "vdp9938",
-            ValueError(f"vdp_latch {vdp_latch!r} disagrees with the V9938 latch ({expected!r})"),
+        raise SchemaError(
+            f"vdp_latch {vdp_latch!r} disagrees with the V9938 latch ({expected!r})"
         )
+    return state
 
 
 def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
@@ -510,11 +521,108 @@ def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
         )
 
 
-def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
-    """Every check that must pass before _restore_snapshot writes anything:
-    format version, machine type, VDP port latch, V9938 state presence and
-    latch agreement, and the slot 1/2 mapper kinds. (load_state has already
-    checked the file layout and parsed the vdp9938 object.)"""
+def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
+    """Turn a decoded state file into a MachineSnapshot, checking the format
+    version, then the key set, then every top-level value's type, range and
+    (where the snapshot fixes it) length. A bad value raises StateLoadError
+    naming its field. Producer-owned objects are only checked to be objects
+    here; _validate_snapshot parses their content with each producer's
+    parse_state, which needs the running machine. Nothing here touches a
+    machine."""
+    if not isinstance(decoded, dict):
+        raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
+    data = cast(dict[str, object], decoded)
+    version = data.get("format_version")
+    if version != CURRENT_FORMAT_VERSION:
+        raise ValueError(
+            f"incompatible state file: version {version}, "
+            f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
+        )
+    _check_snapshot_keys(data, resolved)
+
+    def machine_type_of() -> str:
+        text = check_str(data["machine_type"], "machine_type")
+        if text != "msx1" and text != "msx2":
+            raise SchemaError(f"machine_type must be 'msx1' or 'msx2', got {text!r}")
+        return text
+
+    machine_type = _field("machine_type", machine_type_of)
+    msx2 = machine_type == "msx2"
+    vram_size = _V9938_VRAM_SIZE if msx2 else _TMS_VRAM_SIZE
+    reg_count = _V9938_REG_COUNT if msx2 else _TMS_REG_COUNT
+    addr_max = vram_size - 1
+
+    def top(key: str, check: Callable[[object, str], _T]) -> _T:
+        # A field with no value in the file (only the defaulted, MSX2- or
+        # expansion-only ones pass _check_snapshot_keys) reads as None, the
+        # stand-in for serde's #[serde(default)].
+        return _field(key, lambda: check(data.get(key), key))
+
+    def byte(key: str) -> int:
+        return top(key, lambda v, k: check_int(v, k, 0, 0xFF))
+
+    def opt_byte(key: str) -> int | None:
+        return top(key, lambda v, k: check_optional_int(v, k, 0, 0xFF))
+
+    vdp_latch = opt_byte("vdp_latch")
+    mapper1_kinds = data.get("mapper1_subslot_kinds")
+    mapper2_kinds = data.get("mapper2_subslot_kinds")
+    return MachineSnapshot(
+        format_version=CURRENT_FORMAT_VERSION,
+        machine_type=machine_type,
+        cpu_regs=top("cpu_regs", lambda v, k: _parse_cpu_regs(v)),
+        cpu_halted=top("cpu_halted", check_bool),
+        cpu_iff1=top("cpu_iff1", check_bool),
+        cpu_iff2=top("cpu_iff2", check_bool),
+        cpu_int_pending=top("cpu_int_pending", check_bool),
+        cpu_nmi_pending=top("cpu_nmi_pending", check_bool),
+        cpu_im=top("cpu_im", lambda v, k: check_int(v, k, 0, 2)),
+        ram=top("ram", lambda v, k: check_bytes(v, k)),
+        slot_register=byte("slot_register"),
+        mapper_kind=top("mapper_kind", _parse_mapper_kind),
+        mapper_state=top("mapper_state", lambda v, k: check_object(v, k)),
+        mapper2_kind=top("mapper2_kind", _parse_mapper_kind),
+        mapper2_state=top("mapper2_state", lambda v, k: check_object(v, k)),
+        vdp_vram=top("vdp_vram", lambda v, k: check_bytes(v, k, vram_size)),
+        vdp_regs=top("vdp_regs", lambda v, k: check_int_list(v, k, reg_count, 0, 0xFF)),
+        vdp_status=byte("vdp_status"),
+        vdp_latch=vdp_latch,
+        vdp_addr=top("vdp_addr", lambda v, k: check_int(v, k, 0, addr_max)),
+        vdp_read_buf=byte("vdp_read_buf"),
+        vdp_frame_count=top("vdp_frame_count", lambda v, k: check_int(v, k, 0, I64_MAX)),
+        psg_regs=top("psg_regs", lambda v, k: check_int_list(v, k, _PSG_REG_COUNT, 0, 0xFF)),
+        psg_latch=top("psg_latch", lambda v, k: check_int(v, k, 0, 0x0F)),
+        psg_synth=top("psg_synth", lambda v, k: check_object(v, k)),
+        scc_state=top("scc_state", check_optional_object),
+        vdp9938=top("vdp9938", lambda v, k: _parse_vdp9938(v, msx2, vdp_latch)),
+        ram_mapper_ram=top("ram_mapper_ram", check_optional_bytes),
+        ram_mapper_banks=top(
+            "ram_mapper_banks",
+            lambda v, k: check_optional_int_list(v, k, _RAM_MAPPER_PAGES, 0, 0xFF),
+        ),
+        sub_slot_reg=opt_byte("sub_slot_reg"),
+        fdc_state=top("fdc_state", check_optional_object),
+        slot2_sub_slot_reg=opt_byte("slot2_sub_slot_reg"),
+        mapper2_subslot_kinds=top("mapper2_subslot_kinds", _parse_subslot_kinds),
+        mapper2_subslot_states=top(
+            "mapper2_subslot_states", lambda v, k: _parse_paired_states(mapper2_kinds, v, k)
+        ),
+        slot1_sub_slot_reg=opt_byte("slot1_sub_slot_reg"),
+        mapper1_subslot_kinds=top("mapper1_subslot_kinds", _parse_subslot_kinds),
+        mapper1_subslot_states=top(
+            "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
+        ),
+    )
+
+
+def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
+    """Every check against the running machine that must pass before
+    _restore_snapshot writes anything: format version, machine type, mapper
+    kinds, RAM and RAM-mapper sizes, the FDC, expanded-slot and SCC wiring,
+    and every producer object's parse_state, whose results it returns.
+    (parse_snapshot has already checked everything the snapshot alone decides.)"""
+    # parse_snapshot already checked the version; this guards a MachineSnapshot
+    # built by hand (tests, tools).
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {snap.format_version}, "
@@ -523,34 +631,129 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     expected_type = "msx2" if vdp9938 is not None else "msx1"
     if snap.machine_type != expected_type:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
-    _check_vdp_latch(snap.vdp_latch)
-    if vdp9938 is not None:
-        if snap.vdp9938 is None:
-            raise StateLoadError("vdp9938", ValueError("MSX2 snapshot has no vdp9938 state"))
-        _check_v9938_latch_agrees(snap.vdp_latch, snap.vdp9938)
     mapper = machine.memory._mapper
     if mapper.kind != snap.mapper_kind:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"mapper mismatch: running {mapper.kind.value!r}, "
             f"saved {snap.mapper_kind.value!r}"
         )
     mapper2 = machine.memory._mapper2
     if mapper2.kind != snap.mapper2_kind:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"slot 2 mapper mismatch: running {mapper2.kind.value!r}, "
             f"saved {snap.mapper2_kind.value!r}"
         )
+    ram_len = len(machine.memory.ram)
+    if len(snap.ram) != ram_len:
+        raise StateLoadError(
+            "ram", ValueError(f"ram must be {ram_len} bytes, got {len(snap.ram)}")
+        )
+    rm = machine.memory.ram_mapper
+    if rm is not None and snap.ram_mapper_ram is not None:
+        size = len(rm.ram)
+        if len(snap.ram_mapper_ram) != size:
+            raise StateLoadError(
+                "ram_mapper_ram",
+                ValueError(f"ram_mapper_ram must be {size} bytes, got {len(snap.ram_mapper_ram)}"),
+            )
+    _check_fdc_wiring(machine, snap.fdc_state)
+    _check_expanded_subslots(
+        1, machine.memory.slot1_sub_slot_enabled, machine.memory._mapper1_subslots,
+        snap.mapper1_subslot_kinds,
+    )
+    _check_expanded_subslots(
+        2, machine.memory.slot2_sub_slot_enabled, machine.memory._mapper2_subslots,
+        snap.mapper2_subslot_kinds,
+    )
+    _check_scc_wiring(machine, snap.scc_state)
+    return _parse_producer_objects(machine, snap)
+
+
+_MapperStates = list[tuple["Mapper", Mapping[str, object]]]
+
+
+@dataclass
+class _ParsedProducers:
+    """Every producer object of a snapshot, parsed once by the producer that
+    will apply it. Each state travels with its producer, so _restore_snapshot
+    can only hand a state to the instance that validated it, and applying
+    cannot fail."""
+
+    mappers: _MapperStates  # slot 1, slot 2, then each assigned sub-slot mapper
+    psg_synth: "PsgSynthState"
+    scc: "SccState | None"
+    fdc: "FloppyDiskParsed | None"
+
+
+def _parse_subslot_producers(
+    producer: str,
+    label: str,
+    subslots: list["Mapper | None"],
+    states: list[dict[str, object]] | None,
+    parsed: _MapperStates,
+) -> None:
+    if states is None:
+        return
+    for i, sub_mapper in enumerate(subslots):
+        if sub_mapper is not None:
+            state = states[i]
+            sub_label = f"{label}[{i}]"
+            # Called immediately, so the loop variables it captures are current.
+            state_parsed = _parse_producer(
+                producer, lambda: sub_mapper.parse_state(state, sub_label)
+            )
+            parsed.append((sub_mapper, state_parsed))
+
+
+def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
+    """Parse every producer object the snapshot carries with its producer's
+    parse_state, before anything is restored (the wiring checks have already
+    matched each object to a running producer)."""
+    mapper = machine.memory._mapper
+    mapper2 = machine.memory._mapper2
+    mappers: _MapperStates = [
+        (mapper, _parse_producer(
+            f"mapper ({mapper.kind.value})",
+            lambda: mapper.parse_state(snap.mapper_state, "mapper_state"),
+        )),
+        (mapper2, _parse_producer(
+            f"mapper2 ({mapper2.kind.value})",
+            lambda: mapper2.parse_state(snap.mapper2_state, "mapper2_state"),
+        )),
+    ]
+    _parse_subslot_producers(
+        "mapper1_subslots", "mapper1_subslot_states",
+        machine.memory._mapper1_subslots, snap.mapper1_subslot_states, mappers,
+    )
+    _parse_subslot_producers(
+        "mapper2_subslots", "mapper2_subslot_states",
+        machine.memory._mapper2_subslots, snap.mapper2_subslot_states, mappers,
+    )
+    psg_synth = _parse_producer(
+        "psg", lambda: machine.psg.parse_synth_state(snap.psg_synth, "psg_synth")
+    )
+    scc = machine.scc
+    scc_state = snap.scc_state
+    scc_parsed = None
+    if scc is not None and scc_state is not None:
+        scc_parsed = _parse_producer("scc", lambda: scc.parse_state(scc_state, "scc_state"))
+    fdc = machine.fdc
+    fdc_state = snap.fdc_state
+    fdc_parsed = None
+    if fdc is not None and fdc_state is not None:
+        fdc_parsed = _parse_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
+    return _ParsedProducers(mappers, psg_synth, scc_parsed, fdc_parsed)
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
-    _validate_snapshot(machine, snap)
+    # Everything that can fail runs here, before the first write; the rest of
+    # this function only assigns already-validated values.
+    parsed = _validate_snapshot(machine, snap)
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
-    mapper = machine.memory._mapper
-    mapper2 = machine.memory._mapper2
 
     _restore_cpu_regs(machine, snap.cpu_regs)
     machine.cpu.halted = snap.cpu_halted
@@ -562,12 +765,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.memory.ram[:] = snap.ram
     machine.memory.set_slot_register(snap.slot_register)
-    _restore_producer(
-        f"mapper ({mapper.kind.value})", lambda: mapper.restore(snap.mapper_state)
-    )
-    _restore_producer(
-        f"mapper2 ({mapper2.kind.value})", lambda: mapper2.restore(snap.mapper2_state)
-    )
+    for producer, state in parsed.mappers:
+        producer.apply_state(state)
 
     machine.vdp.vram[:] = snap.vdp_vram
     machine.vdp.regs[:] = snap.vdp_regs
@@ -581,7 +780,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         assert isinstance(machine.vdp, VDP)
         machine.vdp.latch = snap.vdp_latch
     else:
-        assert snap.vdp9938 is not None  # checked by _validate_snapshot
+        assert snap.vdp9938 is not None  # parse_snapshot requires it for MSX2
         vdp9938.restore_state(snap.vdp9938)
         rm = machine.memory.ram_mapper
         if rm is not None and snap.ram_mapper_ram is not None:
@@ -596,11 +795,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 
     machine.psg.regs[:] = snap.psg_regs
     machine.psg.latch = snap.psg_latch
-    _restore_producer("psg", lambda: machine.psg.restore_synth(snap.psg_synth))
-    _restore_producer("scc", lambda: _restore_scc(machine, snap.scc_state))
-    _restore_producer("fdc", lambda: _restore_fdc(machine, snap.fdc_state))
-    _restore_producer("mapper1_subslots", lambda: _restore_mapper1_subslots(machine, snap))
-    _restore_producer("mapper2_subslots", lambda: _restore_mapper2_subslots(machine, snap))
+    machine.psg.apply_synth_state(parsed.psg_synth)
+    if machine.scc is not None and parsed.scc is not None:
+        machine.scc.apply_state(parsed.scc)
+    if machine.fdc is not None and parsed.fdc is not None:
+        machine.fdc.apply_state(parsed.fdc)
     if snap.slot1_sub_slot_reg is not None:
         machine.memory.set_slot1_sub_slot_reg(snap.slot1_sub_slot_reg)
     if snap.slot2_sub_slot_reg is not None:
@@ -697,7 +896,10 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
 
     Raises:
         FileNotFoundError: If the target file does not exist.
-        ValueError: If format version or mapper class does not match.
+        StateLoadError: If a field or producer object is malformed.
+        ValueError: If the file is not a state file of this format version and
+            layout, or does not match the running machine (machine type,
+            mapper kind, slot / FDC / SCC wiring). Nothing is restored then.
     """
     if path is None:
         link = Path("saves") / "states" / "latest.state"
@@ -726,45 +928,6 @@ def load_state(machine: "Machine", path: Path | None = None) -> None:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
 
-    decoded = _from_jsonable(data)
-    if not isinstance(decoded, dict):
-        raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
-    fields = cast(dict[str, object], decoded)
-    # Validate the version before checking the layout, so a file of another
-    # version is reported as such rather than as unknown/missing keys.
-    version = fields.get("format_version")
-    if version != CURRENT_FORMAT_VERSION:
-        raise ValueError(
-            f"incompatible state file: version {version}, "
-            f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
-        )
-    _check_snapshot_keys(fields, resolved)
-    # JSON round-trips mapper_kind/mapper2_kind (and each entry of
-    # mapper2_subslot_kinds) as plain str/None (MapperKind's own str-Enum
-    # values serialize directly, see save_state); convert them back to
-    # MapperKind members here so _restore_snapshot's identity checks and
-    # any later `.value` access see real enum members, not bare strings.
-    if "mapper_kind" in fields:
-        fields["mapper_kind"] = MapperKind(fields["mapper_kind"])
-    if "mapper2_kind" in fields:
-        fields["mapper2_kind"] = MapperKind(fields["mapper2_kind"])
-    subslot_kinds = fields.get("mapper2_subslot_kinds")
-    if isinstance(subslot_kinds, list):
-        fields["mapper2_subslot_kinds"] = [
-            MapperKind(k) if k is not None else None for k in subslot_kinds
-        ]
-    subslot1_kinds = fields.get("mapper1_subslot_kinds")
-    if isinstance(subslot1_kinds, list):
-        fields["mapper1_subslot_kinds"] = [
-            MapperKind(k) if k is not None else None for k in subslot1_kinds
-        ]
-    raw_vdp9938 = fields.get("vdp9938")
-    if raw_vdp9938 is not None:
-        try:
-            fields["vdp9938"] = parse_v9938_state(raw_vdp9938)
-        except V9938StateError as exc:
-            raise StateLoadError("vdp9938", exc) from exc
-    typed_fields = cast(_MachineSnapshotFields, fields)
-    snap = MachineSnapshot(**typed_fields)
+    snap = parse_snapshot(_from_jsonable(data), resolved)
     _restore_snapshot(machine, snap)
     print(f"state loaded: {resolved}")

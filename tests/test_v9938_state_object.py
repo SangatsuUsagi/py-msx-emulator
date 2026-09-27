@@ -14,8 +14,9 @@ import json
 
 import pytest
 
+from msx.snapshot_schema import SchemaError
 from msx.state import StateLoadError, load_state, save_state
-from msx.vdp.v9938 import V9938, V9938StateError, parse_v9938_state
+from msx.vdp.v9938 import V9938, parse_v9938_state
 from tests.factories import make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
@@ -113,7 +114,7 @@ def _corrupt(state: dict, path: tuple[str, ...], value: object) -> dict:
 )
 def test_parse_rejects_a_malformed_object(path, value) -> None:
     bad = _corrupt(dict(_busy_vdp().snapshot_state()), path, value)
-    with pytest.raises(V9938StateError):
+    with pytest.raises(SchemaError):
         parse_v9938_state(bad)
 
 
@@ -258,8 +259,9 @@ def test_out_of_range_vdp_latch_is_rejected(tmp_path, monkeypatch, value) -> Non
     machine, state_path = _edited_msx2_file(
         tmp_path, monkeypatch, lambda d: d.__setitem__("vdp_latch", value)
     )
-    with pytest.raises(StateLoadError, match="vdp"):
+    with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
+    assert exc_info.value.producer == "vdp_latch"
 
 
 def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None:
@@ -294,7 +296,7 @@ def test_parse_names_a_missing_key_and_its_object(where, key) -> None:
         target = target[part]
     del target[key]
     label = where[-1] if where else "vdp9938"
-    with pytest.raises(V9938StateError, match=rf"{label} is missing keys \['{key}'\]"):
+    with pytest.raises(SchemaError, match=rf"{label} is missing keys \['{key}'\]"):
         parse_v9938_state(bad)
 
 

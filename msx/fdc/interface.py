@@ -11,28 +11,44 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
+import abc
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, Protocol, cast
+from typing import Any, ClassVar, Generic, Protocol, TypedDict, TypeVar, cast
 
-from msx.fdc.disk_drive import DiskDrive
+from msx.fdc.disk_drive import DiskDrive, DiskDriveState
 from msx.fdc.disk_image import DskDiskImage
-from msx.fdc.tc8566af import TC8566AF
-from msx.fdc.wd2793 import WD2793
+from msx.fdc.tc8566af import TC8566AF, TC8566AFState
+from msx.fdc.wd2793 import WD2793, WD2793State
+from msx.snapshot_schema import (
+    SchemaError,
+    SnapshotMismatchError,
+    check_int,
+    check_list,
+    check_object,
+    check_str,
+)
+
+# A controller's own parsed save-state (WD2793State / TC8566AFState).
+S = TypeVar("S", bound=Mapping[str, object])
+# A connection style's own parsed save-state (SonyPhilipsConnectionState / ...).
+C = TypeVar("C", bound=Mapping[str, object])
 
 
-class FdcController(Protocol):
-    """The four members `FloppyDiskState`/`FloppyDisk` call on their
-    `controller: WD2793 | TC8566AF` union, formalised as an explicit
-    contract -- mirrors `Mapper(Protocol)`'s own rationale (msx/mapper.py):
-    `WD2793`/`TC8566AF` satisfy this structurally, with no explicit
-    inheritance, same as every concrete `Mapper` implementer does for
-    `Mapper`."""
+class FdcController(Protocol[S]):
+    """The members `FloppyDiskState`/`FloppyDisk` call on their controller,
+    formalised as an explicit contract -- mirrors `Mapper(Protocol)`'s own
+    rationale (msx/mapper.py): `WD2793`/`TC8566AF` satisfy this structurally,
+    with no explicit inheritance. Generic in the controller's own state
+    `TypedDict`, so `apply_state` takes exactly what `parse_state` returned."""
 
     drive: DiskDrive | None
     def abort(self) -> None: ...
     def snapshot(self) -> Mapping[str, object]: ...
     def restore(self, state: dict[str, object]) -> None: ...
+    def parse_state(self, obj: object, label: str) -> S: ...
+    def apply_state(self, state: S) -> None: ...
 
 
 class FdcKind(str, Enum):
@@ -44,6 +60,60 @@ class FdcKind(str, Enum):
 
     WD2793_SONY = "wd2793_sony"
     TC8566AF = "tc8566af"
+
+
+class FloppyDiskStateSnapshot(TypedDict):
+    """Save-state schema for FloppyDiskState.snapshot()/parse_state()."""
+
+    controller: Mapping[str, object]  # the controller's own WD2793State / TC8566AFState
+    drives: list[DiskDriveState]
+
+
+class FloppyDiskSnapshot(FloppyDiskStateSnapshot):
+    """Save-state schema for FloppyDisk's full state (FloppyDisk.parse_state())."""
+
+    kind: str  # an FdcKind value
+    connection_style: Mapping[str, object]  # the connection style's own state
+
+
+class SonyPhilipsConnectionState(TypedDict):
+    """SonyPhilipsInterface's connection-style state."""
+
+    side_reg: int
+    drive_reg: int
+
+
+class TC8566AFConnectionState(TypedDict):
+    """TC8566AFInterface's connection-style state: no registers of its own."""
+
+
+@dataclass(frozen=True)
+class FloppyDiskStateParsed(Generic[S]):
+    """FloppyDiskState.parse_state()'s result: the controller's and every
+    drive's parsed state (drives in FloppyDiskState.drives order)."""
+
+    controller: S
+    drives: list[DiskDriveState]
+
+
+@dataclass(frozen=True)
+class FloppyDiskParsedBase(FloppyDiskStateParsed[S], Generic[S, C]):
+    """FloppyDisk.parse_state()'s result: FloppyDiskStateParsed plus the
+    connection style's parsed state. The FdcKind is not kept -- parse_state()
+    already checked it equals the running FDC's own."""
+
+    connection_style: C
+
+
+# PORT-NOTE: key sets read from the TypedDicts, inherited keys included (see
+#   msx/vdp/v9938.py's _STATE_KEYS PORT-NOTE: serde `deny_unknown_fields` in
+#   Rust, a constexpr key array in C++).
+_FLOPPY_DISK_STATE_KEYS: frozenset[str] = frozenset(FloppyDiskStateSnapshot.__annotations__)
+_FLOPPY_DISK_KEYS: frozenset[str] = frozenset(FloppyDiskSnapshot.__annotations__)
+_SONY_PHILIPS_CONNECTION_KEYS: frozenset[str] = frozenset(
+    SonyPhilipsConnectionState.__annotations__
+)
+_TC8566AF_CONNECTION_KEYS: frozenset[str] = frozenset(TC8566AFConnectionState.__annotations__)
 
 # Sony/Philips register window offsets (addr & 0x3FFF), shared by
 # SonyPhilipsInterface.read_mem/write_mem/reset and by _read_reg/_write_reg so
@@ -59,7 +129,7 @@ REG_UNCONNECTED: int = 0x3FFE     # not wired to anything; reads open bus
 REG_CONTROL_STATUS: int = 0x3FFF  # active-low INTRQ (bit 6) / DRQ (bit 7)
 
 
-class FloppyDiskState:
+class FloppyDiskState(Generic[S]):
     """Owned device state every connection style composes: controller, drives,
     DISK ROM, plus the operations that only touch that state.
 
@@ -72,7 +142,7 @@ class FloppyDiskState:
 
     def __init__(
         self,
-        controller: FdcController,
+        controller: FdcController[S],
         drives: list[DiskDrive],
         disk_rom: bytes | None = None,
     ) -> None:
@@ -113,40 +183,71 @@ class FloppyDiskState:
             if drive.image is not None:
                 drive.image.flush()
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> FloppyDiskStateSnapshot:
         """Capture the controller's and every drive's own state (in
         self.drives order). The connection-style-specific piece and the
         FdcKind discriminant are FloppyDisk's own concern, layered around
         this."""
-        return {
-            "controller": cast(dict[str, object], self.controller.snapshot()),
-            "drives": [cast(dict[str, object], drive.snapshot()) for drive in self.drives],
-        }
+        drives: list[DiskDriveState] = []
+        for drive in self.drives:
+            drives.append(drive.snapshot())
+        return {"controller": self.controller.snapshot(), "drives": drives}
+
+    def parse_state(self, obj: object, label: str) -> FloppyDiskStateParsed[S]:
+        """Validate a snapshot() object -- the controller and every drive --
+        without mutating anything.
+
+        Raises:
+            SchemaError: A malformed field (the message names its path).
+            SnapshotMismatchError: A drive-count or mounted-disk identity mismatch.
+        """
+        controller, drives = self.parse_fields(
+            check_object(obj, label, _FLOPPY_DISK_STATE_KEYS), label
+        )
+        return FloppyDiskStateParsed(controller=controller, drives=drives)
+
+    def parse_fields(
+        self, fields: dict[str, object], label: str
+    ) -> tuple[S, list[DiskDriveState]]:
+        """parse_state() on an object whose key set the caller already
+        checked (FloppyDisk's own state adds keys around these two)."""
+        drives_value = fields["drives"]
+        # A list of the wrong length is a well-formed state for another machine
+        # (a mismatch); anything that is not a list is a schema error.
+        if isinstance(drives_value, list) and len(drives_value) != len(self.drives):
+            raise SnapshotMismatchError(
+                f"FDC drive count mismatch in {label}.drives: running has "
+                f"{len(self.drives)} drive(s), saved state has {len(drives_value)}"
+            )
+        drive_objs = check_list(drives_value, f"{label}.drives", len(self.drives))
+        controller = self.controller.parse_state(fields["controller"], f"{label}.controller")
+        drives: list[DiskDriveState] = []
+        for i, drive in enumerate(self.drives):
+            drives.append(drive.parse_state(drive_objs[i], f"{label}.drives[{i}]"))
+        return controller, drives
 
     def restore(self, state: dict[str, object]) -> None:
         """Restore the controller's and every drive's own state produced by
-        snapshot()."""
-        drive_states = cast(list[dict[str, object]], state["drives"])
-        if len(drive_states) != len(self.drives):
-            raise ValueError(
-                f"FDC drive count mismatch: running has {len(self.drives)} drive(s), "
-                f"saved state has {len(drive_states)}"
-            )
-        self.controller.restore(cast(dict[str, object], state["controller"]))
-        for drive, drive_state in zip(self.drives, drive_states, strict=True):
-            drive.restore(drive_state)
+        snapshot(); the whole state is validated before anything is assigned."""
+        self.apply_state(self.parse_state(state, "fdc_state"))
+
+    def apply_state(self, state: FloppyDiskStateParsed[S]) -> None:
+        """Assign a state returned by parse_state()."""
+        self.controller.apply_state(state.controller)
+        for i, drive in enumerate(self.drives):
+            drive.apply_state(state.drives[i])
 
 
-class FloppyDisk:
+class FloppyDiskBase(abc.ABC, Generic[S, C]):
     """Base connection-style device: composes FloppyDiskState, declares the
     read_mem/write_mem/reset register-dispatch surface for subclasses to fill in.
 
     PORT-NOTE: is-a half of the has-a/is-a split -- read_mem/write_mem/reset
-      are declared as NotImplementedError for subclasses to fill in (the
-      project's usual interface convention, no abc.ABC anywhere in msx/),
-      while the has-a state (controller, drives, disk_rom) lives on the
-      composed `self.state: FloppyDiskState` instead of directly on this
-      class, exposed here only via read-only properties/thin delegating
+      and the three connection-style save-state hooks are abstract methods
+      for subclasses to fill in (so a subclass missing one fails at
+      construction, not on first call), while the has-a state (controller,
+      drives, disk_rom) lives on the composed `self.state: FloppyDiskState`
+      instead of directly on this class, exposed here only via read-only properties/thin delegating
       methods for external API compatibility (`.controller`, `.drives`,
       `.disk_rom`, `.mount()`, `.swap()`, `.flush()`).
     Rust equivalent: FloppyDiskState -> an owned-state struct; this class's
@@ -164,7 +265,7 @@ class FloppyDisk:
       openspec/changes/archive/2026-08-21-add-tc8566af-fdc/design.md for the
       full comparison (including its post-archive addendum recording this
       split's actual implementation).
-      `self.state.controller`'s static type is `FdcController` (not
+      `self.state.controller`'s static type is `FdcController[S]` (not
       WD2793-specific), so TC8566AFInterface no longer needs `typing.cast` to
       construct one -- only `_ctrl()`'s narrowing back to the concrete
       TC8566AF type remains, which is ordinary type narrowing, not a
@@ -180,14 +281,14 @@ class FloppyDisk:
 
     def __init__(
         self,
-        controller: FdcController,
+        controller: FdcController[S],
         drives: list[DiskDrive],
         disk_rom: bytes | None = None,
     ) -> None:
         self.state = FloppyDiskState(controller, drives, disk_rom)
 
     @property
-    def controller(self) -> FdcController:
+    def controller(self) -> FdcController[S]:
         return self.state.controller
 
     @property
@@ -211,52 +312,110 @@ class FloppyDisk:
         """Flush every mounted image's pending writes back to its file."""
         self.state.flush()
 
-    def _snapshot_connection_style(self) -> dict[str, object]:
+    @abc.abstractmethod
+    def _snapshot_connection_style(self) -> C:
         """Connection-style-specific extra state beyond the controller/
-        drives FloppyDiskState already captures. Empty by default;
-        SonyPhilipsInterface overrides this for side_reg/drive_reg."""
-        return {}
+        drives FloppyDiskState already captures."""
+        raise NotImplementedError
 
-    def _restore_connection_style(self, state: dict[str, object]) -> None:
-        """Inverse of _snapshot_connection_style(). No-op by default."""
+    @abc.abstractmethod
+    def _parse_connection_style(self, obj: object, label: str) -> C:
+        """Validate a _snapshot_connection_style() object without mutating
+        anything."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _apply_connection_style(self, state: C) -> None:
+        """Assign a state returned by _parse_connection_style()."""
+        raise NotImplementedError
 
     def snapshot(self) -> dict[str, object]:
         """Capture this FDC's full save-state: identity (FdcKind),
         connection-style-specific state, and the composed controller/drives
         state (FloppyDiskState.snapshot())."""
-        state = dict(self.state.snapshot())
-        state["kind"] = self.kind.value
-        state["connection_style"] = self._snapshot_connection_style()
-        return state
+        state: FloppyDiskSnapshot = {
+            **self.state.snapshot(),
+            "kind": self.kind.value,
+            "connection_style": self._snapshot_connection_style(),
+        }
+        # Returned as a plain dict: msx/state.py stores it as the snapshot's
+        # dict[str, object] fdc_state field.
+        return dict(state)
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore state produced by snapshot().
+    def parse_state(self, obj: object, label: str) -> FloppyDiskParsedBase[S, C]:
+        """Validate a snapshot() object -- kind, connection style, the drive
+        count, the controller and every drive (with its mounted-disk
+        identity) -- without mutating anything.
 
         Raises:
-            ValueError: If the snapshot's FdcKind doesn't match this FDC's
+            SchemaError: A malformed field (the message names its path).
+            SnapshotMismatchError: If the snapshot's FdcKind doesn't match this FDC's
                 own kind (e.g. a WD2793/Sony state loaded into a TC8566AF
-                machine, or vice versa).
+                machine, or vice versa), or on a drive-count or mounted-disk
+                identity mismatch.
         """
-        saved_kind = FdcKind(state["kind"])
+        fields = check_object(obj, label, _FLOPPY_DISK_KEYS)
+        kind_value = check_str(fields["kind"], f"{label}.kind")
+        try:
+            saved_kind = FdcKind(kind_value)
+        except ValueError:
+            raise SchemaError(
+                f"{label}.kind must be an FdcKind value, got {kind_value!r}"
+            ) from None
         if saved_kind != self.kind:
-            raise ValueError(
+            raise SnapshotMismatchError(
                 f"FDC kind mismatch: running {self.kind.value!r}, "
                 f"saved {saved_kind.value!r}"
             )
-        self._restore_connection_style(cast(dict[str, object], state["connection_style"]))
-        self.state.restore(state)
+        connection_style = self._parse_connection_style(
+            fields["connection_style"], f"{label}.connection_style"
+        )
+        controller, drives = self.state.parse_fields(fields, label)
+        return FloppyDiskParsedBase(
+            controller=controller, drives=drives, connection_style=connection_style
+        )
 
+    def apply_state(self, state: FloppyDiskParsedBase[S, C]) -> None:
+        """Assign a state returned by parse_state(): connection style first
+        (it reselects the controller's drive), then controller and drives."""
+        self._apply_connection_style(state.connection_style)
+        self.state.apply_state(state)
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore state produced by snapshot(). The whole state is
+        validated by parse_state() before anything is assigned.
+
+        Raises:
+            ValueError: See parse_state().
+        """
+        self.apply_state(self.parse_state(state, "fdc_state"))
+
+    @abc.abstractmethod
     def read_mem(self, addr: int) -> int:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def write_mem(self, addr: int, value: int) -> None:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def reset(self) -> None:
         raise NotImplementedError
 
 
-class SonyPhilipsInterface(FloppyDisk):
+# The FDC as the rest of the machine holds it (Machine.fdc, MemoryBus.fdc):
+# which connection style is wired is chosen at run time from the machine YAML,
+# so its state types are unknown statically. FloppyDisk.parse_state() returns a
+# FloppyDiskParsed, and apply_state() is only ever handed the result of the same
+# instance's parse_state(), which keeps the Any sound.
+# PORT-NOTE: Rust/C++ -- an enum over the concrete connection styles (and a
+#   matching enum of their parsed states), or a trait object whose parsed state
+#   is an associated type behind the same enum.
+FloppyDisk = FloppyDiskBase[Any, Any]
+FloppyDiskParsed = FloppyDiskParsedBase[Any, Any]
+
+
+class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionState]):
     """Sony/Philips connection style (openMSX PhilipsFDC).
 
     Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
@@ -276,12 +435,19 @@ class SonyPhilipsInterface(FloppyDisk):
         self.side_reg = 0
         self.drive_reg = 0
 
-    def _snapshot_connection_style(self) -> dict[str, object]:
+    def _snapshot_connection_style(self) -> SonyPhilipsConnectionState:
         return {"side_reg": self.side_reg, "drive_reg": self.drive_reg}
 
-    def _restore_connection_style(self, state: dict[str, object]) -> None:
-        self.side_reg = cast(int, state["side_reg"])
-        self.drive_reg = cast(int, state["drive_reg"])
+    def _parse_connection_style(self, obj: object, label: str) -> SonyPhilipsConnectionState:
+        fields = check_object(obj, label, _SONY_PHILIPS_CONNECTION_KEYS)
+        return {
+            "side_reg": check_int(fields["side_reg"], f"{label}.side_reg", 0, 0xFF),
+            "drive_reg": check_int(fields["drive_reg"], f"{label}.drive_reg", 0, 0xFF),
+        }
+
+    def _apply_connection_style(self, state: SonyPhilipsConnectionState) -> None:
+        self.side_reg = state["side_reg"]
+        self.drive_reg = state["drive_reg"]
         self._select_drive(self.drive_reg)
 
     @property
@@ -370,7 +536,7 @@ class SonyPhilipsInterface(FloppyDisk):
 
     def _select_drive(self, value: int) -> None:
         # bits 1:0 -> drive (00/10 = A, 01 = B, 11 = none). Shared by the
-        # register write path and _restore_connection_style, so a restored
+        # register write path and _apply_connection_style, so a restored
         # snapshot reattaches whichever drive drive_reg encodes (or none),
         # instead of leaving FloppyDiskState.__init__'s construction-time
         # drives[0] default in place.
@@ -399,7 +565,7 @@ TC_REG_DATA: int = 0x3FFB      # read/write Data Register
 _TC_RESERVED: dict[int, int] = {0x3FFC: 0xFC, 0x3FFD: 0xFC, 0x3FFE: 0xFF, 0x3FFF: 0x3F}
 
 
-class TC8566AFInterface(FloppyDisk):
+class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
     """TC8566AF connection style (Panasonic FS-A1F).
 
     Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
@@ -420,6 +586,16 @@ class TC8566AFInterface(FloppyDisk):
         disk_rom: bytes | None = None,
     ) -> None:
         super().__init__(controller, drives, disk_rom)
+
+    def _snapshot_connection_style(self) -> TC8566AFConnectionState:
+        return {}
+
+    def _parse_connection_style(self, obj: object, label: str) -> TC8566AFConnectionState:
+        check_object(obj, label, _TC8566AF_CONNECTION_KEYS)
+        return {}
+
+    def _apply_connection_style(self, state: TC8566AFConnectionState) -> None:
+        pass  # no connection-style registers
 
     # self.controller's static type is FdcController (FloppyDisk composes
     # FloppyDiskState, not WD2793-specific); this narrows it locally to the

@@ -34,9 +34,18 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Callable, TypedDict, cast
+from typing import Callable, TypedDict
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
+from msx.snapshot_schema import (
+    I64_MAX,
+    check_bytes,
+    check_float,
+    check_int,
+    check_int_list,
+    check_list,
+    check_object,
+)
 
 __all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
 
@@ -1112,18 +1121,21 @@ class Opll:
         return out
 
     # --------------------------------------------------------- save / restore
-    # PORT-LIBRARY-NOTE: snapshot()/restore() emit/consume each field
-    #   explicitly via a TypedDict (OpllState, below), rather than by
-    #   getattr/setattr reflection -- the same explicit-field pattern used by
-    #   PSG.snapshot_synth()/restore_synth(), SCC.snapshot()/restore(), and
-    #   FmPac.snapshot()/restore(). The dict maps 1:1 onto the emu2413
-    #   OPLL_PATCH / OPLL_SLOT structs this file is a port of.
+    # PORT-LIBRARY-NOTE: snapshot()/parse_state()/apply_state() emit,
+    #   validate and consume each field explicitly via a TypedDict (OpllState,
+    #   below), rather than by getattr/setattr reflection -- the same
+    #   explicit-field pattern used by PSG.snapshot_synth()/
+    #   parse_synth_state()/apply_synth_state(), SCC and FmPac
+    #   snapshot()/parse_state()/apply_state(). parse_state() is the only
+    #   step that can fail; apply_state() assigns an already-parsed value, and
+    #   restore() is apply_state(parse_state(...)). The dict maps 1:1 onto the
+    #   emu2413 OPLL_PATCH / OPLL_SLOT structs this file is a port of.
     # Rust crate candidates: serde + serde_json (or bincode) deriving
     #   Serialize/Deserialize directly on the equivalent OpllState/_Patch/
     #   _Slot structs -- the explicit field lists here already give the
     #   struct shape for free.
     # C++ library candidates: nlohmann::json (or hand-written struct
-    #   (de)serialize functions mirroring snapshot()/restore() as written).
+    #   (de)serialize functions mirroring snapshot()/parse_state() as written).
     # Not adopted now because: Python's stdlib dict/TypedDict already gives
     #   the save-state format for free; no serialization dependency needed
     #   in the Python codebase today.
@@ -1149,51 +1161,81 @@ class Opll:
             "out_time": self._out_time,
         }
 
+    def parse_state(self, obj: object, label: str) -> OpllState:
+        """Validate a snapshot() object (exact keys, types, ranges and
+        lengths) and return it as an OpllState, without touching the chip.
+        Raises SchemaError naming the field path.
+        """
+        d = check_object(obj, label, _OPLL_KEYS)
+        user_patch_objs = check_list(d["user_patch"], f"{label}.user_patch", 2)
+        user_patch: list[_PatchState] = []
+        for i in range(2):
+            user_patch.append(_parse_patch(user_patch_objs[i], f"{label}.user_patch[{i}]"))
+        slot_objs = check_list(d["slots"], f"{label}.slots", 18)
+        slots: list[_SlotState] = []
+        for i in range(18):
+            slots.append(_parse_slot(slot_objs[i], f"{label}.slots[{i}]"))
+        return {
+            "reg": bytes(check_bytes(d["reg"], f"{label}.reg", 0x40)),
+            "patch_number": check_int_list(
+                d["patch_number"], f"{label}.patch_number", 9, 0, 18
+            ),
+            "user_patch": user_patch,
+            "slots": slots,
+            "adr": check_int(d["adr"], f"{label}.adr", 0, 0xFF),
+            "pm_phase": check_int(d["pm_phase"], f"{label}.pm_phase", 0, 0xFFFFFFFF),
+            "am_phase": check_int(d["am_phase"], f"{label}.am_phase", 0, 0xFFFFFFFF),
+            "lfo_am": check_int(d["lfo_am"], f"{label}.lfo_am", 0, 13),
+            # The LFSR never reaches 0 (see _update_output's noise steps).
+            "noise": check_int(d["noise"], f"{label}.noise", 1, 0x7FFFFF),
+            "short_noise": check_int(d["short_noise"], f"{label}.short_noise", 0, 1),
+            "test_flag": check_int(d["test_flag"], f"{label}.test_flag", 0, 0xFF),
+            "rhythm_mode": check_int(d["rhythm_mode"], f"{label}.rhythm_mode", 0, 1),
+            "slot_key_status": check_int(
+                d["slot_key_status"], f"{label}.slot_key_status", 0, 0x3FFFF
+            ),
+            "eg_counter": check_int(d["eg_counter"], f"{label}.eg_counter", 0, I64_MAX),
+            "ch_out": check_int_list(
+                d["ch_out"], f"{label}.ch_out", 14, _OUTPUT_MIN, _OUTPUT_MAX
+            ),
+            # generate_samples leaves out_time in [0, SAMPLE_RATE).
+            "out_time": check_float(d["out_time"], f"{label}.out_time", 0.0, float(SAMPLE_RATE)),
+        }
+
     def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot()."""
-        typed_state = cast(OpllState, state)
-        reg = bytearray(typed_state["reg"])
-        patch_number = [int(x) for x in typed_state["patch_number"]]
-        user_patch = typed_state["user_patch"]
-        slots = typed_state["slots"]
-        adr = int(typed_state["adr"])
-        pm_phase = int(typed_state["pm_phase"])
-        am_phase = int(typed_state["am_phase"])
-        lfo_am = int(typed_state["lfo_am"])
-        noise = int(typed_state["noise"])
-        short_noise = int(typed_state["short_noise"])
-        test_flag = int(typed_state["test_flag"])
-        rhythm_mode = int(typed_state["rhythm_mode"])
-        slot_key_status = int(typed_state["slot_key_status"])
-        eg_counter = int(typed_state["eg_counter"])
-        ch_out = [int(x) for x in typed_state["ch_out"]]
-        out_time = float(typed_state["out_time"])
-        self._reg = reg
-        self._patch_number = patch_number
+        """Restore chip state produced by snapshot(). Parses the whole
+        object first, so a rejected state leaves the chip unchanged.
+        """
+        self.apply_state(self.parse_state(state, "opll"))
+
+    def apply_state(self, state: OpllState) -> None:
+        """Assign an already-parsed OpllState (see parse_state)."""
+        self._reg = bytearray(state["reg"])
+        self._patch_number = list(state["patch_number"])
         # Rebuild the fixed preset bank, then the user tone from its saved fields.
         for i in range(19):
             mod, car = _dump_to_patch(_DEFAULT_INST[i])
             self._patch[i * 2 + 0] = mod
             self._patch[i * 2 + 1] = car
-        _set_patch_fields(self._patch[0], user_patch[0])
-        _set_patch_fields(self._patch[1], user_patch[1])
+        _set_patch_fields(self._patch[0], state["user_patch"][0])
+        _set_patch_fields(self._patch[1], state["user_patch"][1])
         for ch in range(9):
             self._mod(ch).patch = self._patch[self._patch_number[ch] * 2 + 0]
             self._car(ch).patch = self._patch[self._patch_number[ch] * 2 + 1]
-        for i, sf in enumerate(slots):
-            _restore_slot_fields(self._slot[i], sf)
-        self._adr = adr
-        self._pm_phase = pm_phase
-        self._am_phase = am_phase
-        self._lfo_am = lfo_am
-        self._noise = noise
-        self._short_noise = short_noise
-        self._test_flag = test_flag
-        self._rhythm_mode = rhythm_mode
-        self._slot_key_status = slot_key_status
-        self._eg_counter = eg_counter
-        self._ch_out = ch_out
-        self._out_time = out_time
+        for i in range(18):
+            _restore_slot_fields(self._slot[i], state["slots"][i])
+        self._adr = state["adr"]
+        self._pm_phase = state["pm_phase"]
+        self._am_phase = state["am_phase"]
+        self._lfo_am = state["lfo_am"]
+        self._noise = state["noise"]
+        self._short_noise = state["short_noise"]
+        self._test_flag = state["test_flag"]
+        self._rhythm_mode = state["rhythm_mode"]
+        self._slot_key_status = state["slot_key_status"]
+        self._eg_counter = state["eg_counter"]
+        self._ch_out = list(state["ch_out"])
+        self._out_time = state["out_time"]
 
 
 # Output gain from the chip's raw mix (each channel roughly ±4000 pre-mix,
@@ -1201,7 +1243,7 @@ class Opll:
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
 
-# Save-state field helpers for OPLL.snapshot()/restore() -- see the
+# Save-state field helpers for OPLL.snapshot()/apply_state() -- see the
 # PORT-LIBRARY-NOTE on OPLL.snapshot() for the explicit-field-vs-reflection
 # rationale.
 
@@ -1214,19 +1256,19 @@ def _patch_fields(p: _Patch) -> _PatchState:
 
 
 def _set_patch_fields(p: _Patch, d: _PatchState) -> None:
-    p.AM = int(d["AM"])
-    p.PM = int(d["PM"])
-    p.EG = int(d["EG"])
-    p.KR = int(d["KR"])
-    p.ML = int(d["ML"])
-    p.KL = int(d["KL"])
-    p.TL = int(d["TL"])
-    p.FB = int(d["FB"])
-    p.WS = int(d["WS"])
-    p.AR = int(d["AR"])
-    p.DR = int(d["DR"])
-    p.SL = int(d["SL"])
-    p.RR = int(d["RR"])
+    p.AM = d["AM"]
+    p.PM = d["PM"]
+    p.EG = d["EG"]
+    p.KR = d["KR"]
+    p.ML = d["ML"]
+    p.KL = d["KL"]
+    p.TL = d["TL"]
+    p.FB = d["FB"]
+    p.WS = d["WS"]
+    p.AR = d["AR"]
+    p.DR = d["DR"]
+    p.SL = d["SL"]
+    p.RR = d["RR"]
 
 
 def _slot_fields(s: _Slot) -> _SlotState:
@@ -1243,25 +1285,89 @@ def _slot_fields(s: _Slot) -> _SlotState:
 
 
 def _restore_slot_fields(s: _Slot, d: _SlotState) -> None:
-    s.type = int(d["type"])
+    s.type = d["type"]
     s.buddy_index = _buddy_index(s.number, s.type)
-    s.pg_keep = int(d["pg_keep"])
-    s.pg_phase = int(d["pg_phase"])
-    s.eg_state = int(d["eg_state"])
-    s.eg_shift = int(d["eg_shift"])
-    s.eg_rate_h = int(d["eg_rate_h"])
-    s.eg_rate_l = int(d["eg_rate_l"])
-    s.rks = int(d["rks"])
-    s.tll = int(d["tll"])
-    s.key_flag = int(d["key_flag"])
-    s.sus_flag = int(d["sus_flag"])
-    s.blk_fnum = int(d["blk_fnum"])
-    s.blk = int(d["blk"])
-    s.fnum = int(d["fnum"])
-    s.volume = int(d["volume"])
-    s.pg_out = int(d["pg_out"])
-    s.eg_out = int(d["eg_out"])
-    s.update_requests = int(d["update_requests"])
-    s.output = [int(x) for x in d["output"]]
-    s.ws = int(d["ws"])
+    s.pg_keep = d["pg_keep"]
+    s.pg_phase = d["pg_phase"]
+    s.eg_state = d["eg_state"]
+    s.eg_shift = d["eg_shift"]
+    s.eg_rate_h = d["eg_rate_h"]
+    s.eg_rate_l = d["eg_rate_l"]
+    s.rks = d["rks"]
+    s.tll = d["tll"]
+    s.key_flag = d["key_flag"]
+    s.sus_flag = d["sus_flag"]
+    s.blk_fnum = d["blk_fnum"]
+    s.blk = d["blk"]
+    s.fnum = d["fnum"]
+    s.volume = d["volume"]
+    s.pg_out = d["pg_out"]
+    s.eg_out = d["eg_out"]
+    s.update_requests = d["update_requests"]
+    s.output = list(d["output"])
+    s.ws = d["ws"]
     s.wave_table = _WAVE_TABLE_MAP[s.ws]
+
+
+# Save-state parsers for Opll.parse_state(). Ranges are the values the chip
+# itself produces (register masks and table bounds above).
+
+# PORT-NOTE: key sets read from the TypedDicts (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_OPLL_KEYS: frozenset[str] = frozenset(OpllState.__annotations__)
+_PATCH_KEYS: frozenset[str] = frozenset(_PatchState.__annotations__)
+_SLOT_KEYS: frozenset[str] = frozenset(_SlotState.__annotations__)
+
+# Operator output bounds: (EXP_TABLE[255] + 1024) << 1 and its one's
+# complement (_update_output's `res << 1` / `~res << 1`).
+_OUTPUT_MAX = (_EXP_TABLE[0xFF] + 1024) << 1
+_OUTPUT_MIN = ~(_EXP_TABLE[0xFF] + 1024) << 1
+# Largest total level: _TLL_TABLE's top entry (KL 3 at the top block/fnum, TL 63).
+_TLL_MAX = _TLL_TABLE[127][63][3]
+
+
+def _parse_patch(obj: object, label: str) -> _PatchState:
+    d = check_object(obj, label, _PATCH_KEYS)
+    return {
+        "AM": check_int(d["AM"], f"{label}.AM", 0, 1),
+        "PM": check_int(d["PM"], f"{label}.PM", 0, 1),
+        "EG": check_int(d["EG"], f"{label}.EG", 0, 1),
+        "KR": check_int(d["KR"], f"{label}.KR", 0, 1),
+        "ML": check_int(d["ML"], f"{label}.ML", 0, 15),
+        "KL": check_int(d["KL"], f"{label}.KL", 0, 3),
+        "TL": check_int(d["TL"], f"{label}.TL", 0, 63),
+        "FB": check_int(d["FB"], f"{label}.FB", 0, 7),
+        "WS": check_int(d["WS"], f"{label}.WS", 0, 1),
+        "AR": check_int(d["AR"], f"{label}.AR", 0, 15),
+        "DR": check_int(d["DR"], f"{label}.DR", 0, 15),
+        "SL": check_int(d["SL"], f"{label}.SL", 0, 15),
+        "RR": check_int(d["RR"], f"{label}.RR", 0, 15),
+    }
+
+
+def _parse_slot(obj: object, label: str) -> _SlotState:
+    d = check_object(obj, label, _SLOT_KEYS)
+    return {
+        "type": check_int(d["type"], f"{label}.type", 0, 3),
+        "pg_keep": check_int(d["pg_keep"], f"{label}.pg_keep", 0, 1),
+        "pg_phase": check_int(d["pg_phase"], f"{label}.pg_phase", 0, _DP_WIDTH - 1),
+        "eg_state": check_int(d["eg_state"], f"{label}.eg_state", _ATTACK, _DAMP),
+        "eg_shift": check_int(d["eg_shift"], f"{label}.eg_shift", 0, 12),
+        "eg_rate_h": check_int(d["eg_rate_h"], f"{label}.eg_rate_h", 0, 15),
+        "eg_rate_l": check_int(d["eg_rate_l"], f"{label}.eg_rate_l", 0, 3),
+        "rks": check_int(d["rks"], f"{label}.rks", 0, 15),
+        "tll": check_int(d["tll"], f"{label}.tll", 0, _TLL_MAX),
+        "key_flag": check_int(d["key_flag"], f"{label}.key_flag", 0, 1),
+        "sus_flag": check_int(d["sus_flag"], f"{label}.sus_flag", 0, 1),
+        "blk_fnum": check_int(d["blk_fnum"], f"{label}.blk_fnum", 0, 0xFFF),
+        "blk": check_int(d["blk"], f"{label}.blk", 0, 7),
+        "fnum": check_int(d["fnum"], f"{label}.fnum", 0, 0x1FF),
+        "volume": check_int(d["volume"], f"{label}.volume", 0, 60),
+        "pg_out": check_int(d["pg_out"], f"{label}.pg_out", 0, _PG_WIDTH - 1),
+        "eg_out": check_int(d["eg_out"], f"{label}.eg_out", 0, _EG_MUTE),
+        "update_requests": check_int(
+            d["update_requests"], f"{label}.update_requests", 0, _UPDATE_ALL
+        ),
+        "output": check_int_list(d["output"], f"{label}.output", 2, _OUTPUT_MIN, _OUTPUT_MAX),
+        "ws": check_int(d["ws"], f"{label}.ws", 0, 1),
+    }

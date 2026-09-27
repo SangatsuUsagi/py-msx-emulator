@@ -203,7 +203,7 @@ def test_restore_with_missing_scc_mode_does_not_partially_mutate(
     pre_banks = list(mapper._banks)
     pre_scc_mode = mapper._scc_mode
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError):
         mapper.restore({"banks": [1, 2, 3, 4]})
 
     assert list(mapper._banks) == pre_banks

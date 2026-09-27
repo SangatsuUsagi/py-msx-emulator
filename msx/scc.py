@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
+from msx.snapshot_schema import check_int, check_int_list, check_list, check_object
 
 SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
@@ -42,6 +43,11 @@ class SccState(TypedDict):
     _phase_cnt: list[int]
     _phase_idx: list[int]
     _clk_frac: int
+
+
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_SCC_STATE_KEYS: frozenset[str] = frozenset(SccState.__annotations__)
 
 
 @dataclass
@@ -183,27 +189,49 @@ class SCC:
             "_clk_frac": self._clk_frac,
         }
 
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot()."""
-        typed_state = cast(SccState, state)
-        waves = [list(w) for w in typed_state["_waves"]]
-        if len(waves) != WAVE_BANKS or any(len(bank) != WAVE_LEN for bank in waves):
-            raise ValueError(
-                f"SccState._waves must be {WAVE_BANKS} banks of {WAVE_LEN} bytes each"
+    def parse_state(self, obj: object, label: str) -> SccState:
+        """Validate a snapshot() object without touching the chip."""
+        state = check_object(obj, label, _SCC_STATE_KEYS)
+        waves_label = f"{label}._waves"
+        waves_obj = check_list(state["_waves"], waves_label, WAVE_BANKS)
+        waves: list[list[int]] = []
+        for bank in range(WAVE_BANKS):
+            waves.append(
+                check_int_list(waves_obj[bank], f"{waves_label}[{bank}]", WAVE_LEN, 0, 0xFF)
             )
-        freq = list(typed_state["_freq"])
-        vol = list(typed_state["_vol"])
-        enable = int(typed_state["_enable"])
-        phase_cnt = list(typed_state["_phase_cnt"])
-        phase_idx = list(typed_state["_phase_idx"])
-        clk_frac = int(typed_state["_clk_frac"])
+        return {
+            "_waves": waves,
+            "_freq": check_int_list(state["_freq"], f"{label}._freq", NUM_CHANNELS, 0, 0xFFF),
+            "_vol": check_int_list(state["_vol"], f"{label}._vol", NUM_CHANNELS, 0, 0x0F),
+            "_enable": check_int(state["_enable"], f"{label}._enable", 0, 0x1F),
+            # The period counter wraps modulo freq + 1 <= 4096.
+            "_phase_cnt": check_int_list(
+                state["_phase_cnt"], f"{label}._phase_cnt", NUM_CHANNELS, 0, 0xFFF
+            ),
+            "_phase_idx": check_int_list(
+                state["_phase_idx"], f"{label}._phase_idx", NUM_CHANNELS, 0, WAVE_LEN - 1
+            ),
+            "_clk_frac": check_int(state["_clk_frac"], f"{label}._clk_frac", 0, SAMPLE_RATE - 1),
+        }
+
+    def restore(self, state: dict[str, object]) -> None:
+        """Restore chip state produced by snapshot(). Parses the whole
+        object first, so a rejected state leaves the chip unchanged.
+        """
+        self.apply_state(self.parse_state(state, "scc_state"))
+
+    def apply_state(self, state: SccState) -> None:
+        """Assign an already-parsed SccState (see parse_state)."""
+        waves: list[list[int]] = []
+        for w in state["_waves"]:
+            waves.append(list(w))
         self._waves = waves
-        self._freq = freq
-        self._vol = vol
-        self._enable = enable
-        self._phase_cnt = phase_cnt
-        self._phase_idx = phase_idx
-        self._clk_frac = clk_frac
+        self._freq = list(state["_freq"])
+        self._vol = list(state["_vol"])
+        self._enable = state["_enable"]
+        self._phase_cnt = list(state["_phase_cnt"])
+        self._phase_idx = list(state["_phase_idx"])
+        self._clk_frac = state["_clk_frac"]
 
     # -------------------------------------------------------- sample generation
 

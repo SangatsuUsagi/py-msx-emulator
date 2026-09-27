@@ -18,6 +18,7 @@ from msx.fdc.wd2793 import (
     WRITE_PROTECTED,
     Mode,
 )
+from msx.snapshot_schema import SchemaError
 
 _2DD = 737280
 
@@ -172,7 +173,7 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
 
     snap = dict(pre)
     del snap["step_dir"]
-    with pytest.raises(KeyError):
+    with pytest.raises(SchemaError, match="missing keys"):
         wd.restore(snap)
 
     assert dict(wd.snapshot()) == pre

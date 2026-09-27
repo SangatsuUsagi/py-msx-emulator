@@ -165,8 +165,8 @@ def test_legacy_pickle_state_rejected(machine, saves_dir):
 def test_malformed_mapper_state_raises_state_load_error(saves_dir):
     import json
 
-    # ASCII8's restore() indexes "banks" directly (KeyError if absent), unlike
-    # the flat-cartridge default mapper whose restore() is a no-op.
+    # ASCII8's state requires "banks" (a schema error if absent), unlike the
+    # flat-cartridge default mapper whose state is an empty object.
     machine = make_machine(rom=_ROM, cartridge=b"\x00" * 0x10000, mapper="ASCII8")
     rgb = bytearray(256 * 192 * 3)
     state_path = save_state(machine, rgb, "test")
@@ -180,7 +180,7 @@ def test_malformed_mapper_state_raises_state_load_error(saves_dir):
     with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
     assert "mapper" in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
@@ -198,7 +198,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
     with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
     assert "psg" in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_well_formed_state_does_not_raise_state_load_error(machine, saves_dir):
@@ -300,8 +300,9 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    with pytest.raises(StateLoadError, match="vdp"):
+    with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
+    assert exc_info.value.producer == "vdp_latch"
 
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
