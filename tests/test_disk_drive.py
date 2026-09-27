@@ -19,6 +19,7 @@ import pytest
 
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.snapshot_schema import SchemaError
 from tests.disk_factories import make_dsk as _make_dsk
 
 # --- mount / unmount / has_disk / write_protected, in isolation ----------
@@ -56,7 +57,7 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
     snap = dict(drive.snapshot())
 
     del snap["disk_changed"]
-    with pytest.raises(KeyError):
+    with pytest.raises(SchemaError, match="missing keys"):
         drive.restore(snap)
 
     assert drive.track == 5

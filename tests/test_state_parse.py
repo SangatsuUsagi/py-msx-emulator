@@ -222,3 +222,58 @@ def test_unmodified_file_round_trips(tmp_path, monkeypatch, factory) -> None:
     load_state(machine, state_path)
 
     assert _fingerprint(machine) == saved
+
+
+# ---------------------------------------------------------------------------
+# Producer objects are parsed before anything is restored
+# ---------------------------------------------------------------------------
+
+def _producer_fingerprint(machine) -> tuple:
+    return _fingerprint(machine) + (
+        dict(machine.memory._mapper.snapshot()),
+        dict(machine.psg.snapshot_synth()),
+    )
+
+
+@pytest.mark.parametrize(
+    ("edit", "producer"),
+    [
+        (_set_in("psg_synth", "_noise_cnt", -1_000_000), "psg"),
+        (_set_in("psg_synth", "_tone_cnt", [1, 1]), "psg"),
+        (_set_in("mapper_state", "sram", _blob(10)), "mapper (ascii8_sram2)"),
+        (_set_in("mapper_state", "banks", [0, 0, 0, 256]), "mapper (ascii8_sram2)"),
+        (_set_in("mapper_state", "extra", 0), "mapper (ascii8_sram2)"),
+    ],
+)
+def test_malformed_producer_object_leaves_the_machine_unchanged(
+    tmp_path, monkeypatch, edit, producer
+) -> None:
+    machine = make_machine(_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    state_path = _edited(tmp_path, monkeypatch, machine, edit)
+    _disturb(machine)
+    machine.memory._mapper.sram[0] = 0x5A
+    before = _producer_fingerprint(machine)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(machine, state_path)
+
+    assert exc_info.value.producer == producer
+    assert _producer_fingerprint(machine) == before
+    assert machine.memory._mapper.sram[0] == 0x5A
+
+
+def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:
+    machine = make_machine(_ROM)
+    state_path = _edited(tmp_path, monkeypatch, machine, _set("scc_state", {}))
+    _disturb(machine)
+    before = _fingerprint(machine)
+    with pytest.raises(ValueError, match="SCC wiring mismatch"):
+        load_state(machine, state_path)
+    assert _fingerprint(machine) == before
+
+
+def test_scc_state_missing_for_an_scc_machine_is_rejected(tmp_path, monkeypatch) -> None:
+    machine = make_machine(_ROM, cartridge=bytes(65536), mapper="KonamiSCC")
+    state_path = _edited(tmp_path, monkeypatch, machine, _set("scc_state", None))
+    with pytest.raises(ValueError, match="SCC wiring mismatch"):
+        load_state(machine, state_path)

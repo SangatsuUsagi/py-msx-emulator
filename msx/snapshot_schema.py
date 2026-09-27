@@ -65,13 +65,39 @@ def check_int_list(value: object, label: str, length: int, lo: int, hi: int) -> 
     return result
 
 
-def check_bytes(value: object, label: str, length: int | None = None) -> bytearray:
-    """Return `value` as a byte blob, of exactly `length` bytes when given."""
+def check_bytes(
+    value: object, label: str, length: int | None = None, *, max_length: int | None = None
+) -> bytearray:
+    """Return `value` as a byte blob, of exactly `length` bytes, or at most
+    `max_length` bytes, when given. A file's blob decodes as bytearray; a
+    producer's own snapshot may hold bytes, which is accepted and copied."""
+    if isinstance(value, bytes):
+        value = bytearray(value)
     if not isinstance(value, bytearray):
         raise SchemaError(f"{label} must be a byte blob, got {type(value).__name__}")
     if length is not None and len(value) != length:
         raise SchemaError(f"{label} must be {length} bytes, got {len(value)}")
+    if max_length is not None and len(value) > max_length:
+        raise SchemaError(f"{label} must be at most {max_length} bytes, got {len(value)}")
     return value
+
+
+def check_choice(value: object, label: str, choices: tuple[int, ...]) -> int:
+    """Return `value` if it is an int (not a bool) equal to one of `choices`."""
+    if isinstance(value, bool) or not isinstance(value, int) or value not in choices:
+        raise SchemaError(f"{label} must be one of {list(choices)}, got {value!r}")
+    return value
+
+
+def check_float(value: object, label: str, lo: float, hi: float) -> float:
+    """Return `value` as a finite float in [lo, hi] (an int is accepted, as
+    JSON writes a whole-valued float without a fraction)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SchemaError(f"{label} must be a number, got {value!r}")
+    number = float(value)
+    if not lo <= number <= hi:  # also rejects NaN; infinities fall outside the range
+        raise SchemaError(f"{label} must be a number in [{lo}, {hi}], got {value!r}")
+    return number
 
 
 def check_object(

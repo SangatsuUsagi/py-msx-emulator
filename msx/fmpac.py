@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 from msx.mapper import MapperKind
+from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
 
 if TYPE_CHECKING:
     from msx.opll import Opll, OpllState
@@ -54,6 +55,9 @@ _MAGIC_R1FFF = 0x69
 _ENABLE_IO_OPLL = 0x01     # bit 0: gates the I/O-port (0x7C/0x7D) OPLL access
 _ENABLE_WRITE_PROTECT = 0x10  # bit 4: freezes the magic registers
 _ENABLE_MASK = 0x11
+_ENABLE_VALUES = (0x00, 0x01, 0x10, 0x11)  # every value `& _ENABLE_MASK` leaves
+
+_STATE_KEYS = frozenset(("sram", "bank", "enable", "r1ffe", "r1fff", "opll"))
 
 
 @dataclass
@@ -199,23 +203,41 @@ class FmPac:
             "opll": self.opll.snapshot(),
         }
 
+    def parse_state(self, obj: object, label: str = "state") -> FmPacState:
+        """Validate a snapshot() object, including the nested OPLL state,
+        and return it as a FmPacState without touching the device. Raises
+        SchemaError naming the field path.
+        """
+        d = check_object(obj, label, _STATE_KEYS)
+        sram = d["sram"]
+        if isinstance(sram, bytes):  # snapshot() itself returns bytes
+            sram = bytearray(sram)
+        bank = check_int(d["bank"], f"{label}.bank", 0, 0x03)
+        if (bank + 1) * _BANK_SIZE > len(self.rom):
+            raise SchemaError(
+                f"{label}.bank {bank} is past the end of the {len(self.rom)}-byte ROM"
+            )
+        return {
+            "sram": bytes(check_bytes(sram, f"{label}.sram", SRAM_SIZE)),
+            "bank": bank,
+            "enable": check_choice(d["enable"], f"{label}.enable", _ENABLE_VALUES),
+            "r1ffe": check_int(d["r1ffe"], f"{label}.r1ffe", 0, 0xFF),
+            "r1fff": check_int(d["r1fff"], f"{label}.r1fff", 0, 0xFF),
+            "opll": self.opll.parse_state(d["opll"], f"{label}.opll"),
+        }
+
     def restore(self, state: dict[str, object]) -> None:
         """Restore device state produced by snapshot(), including the
-        carried OPLL's own state.
+        carried OPLL's own state. Parses the whole object first, so a
+        rejected state leaves the device and its OPLL unchanged.
         """
-        typed_state = cast(FmPacState, state)
-        sram = typed_state["sram"]
-        bank = typed_state["bank"]
-        enable = typed_state["enable"]
-        r1ffe = typed_state["r1ffe"]
-        r1fff = typed_state["r1fff"]
-        opll_state = cast(dict[str, Any], typed_state["opll"])
-        self.sram[:] = sram
-        self._bank = bank
-        self._enable = enable
-        self._r1ffe = r1ffe
-        self._r1fff = r1fff
-        self.opll.restore(opll_state)
+        parsed = self.parse_state(state)
+        self.sram[:] = parsed["sram"]
+        self._bank = parsed["bank"]
+        self._enable = parsed["enable"]
+        self._r1ffe = parsed["r1ffe"]
+        self._r1fff = parsed["r1fff"]
+        self.opll.apply_state(parsed["opll"])
         self._check_sram_enable()
 
     def debug_bank_info(self, page: int) -> str | None:

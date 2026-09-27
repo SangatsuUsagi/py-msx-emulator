@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from msx.input import InputState
 from msx.mouse import MouseDevice
+from msx.snapshot_schema import (
+    check_bool,
+    check_choice,
+    check_int,
+    check_int_list,
+    check_object,
+)
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -85,6 +92,9 @@ class PsgSynthState(TypedDict):
     _env_hold_flag: bool
     _env_holding: bool
     _clk_frac: int
+
+
+_PSG_SYNTH_KEYS: frozenset[str] = frozenset(PsgSynthState.__annotations__)
 
 
 @dataclass
@@ -244,31 +254,44 @@ class PSG:
             "_clk_frac": self._clk_frac,
         }
 
+    def parse_synth_state(self, obj: object, label: str = "psg_synth") -> PsgSynthState:
+        """Validate a snapshot_synth() object without touching the PSG.
+
+        Ranges are what the generators themselves produce: counters reload
+        to at most 12-bit tone / 2 * 5-bit noise / 16-bit envelope periods,
+        and a hold can leave _env_cnt a few ticks below zero (-16 margin).
+        """
+        state = check_object(obj, label, _PSG_SYNTH_KEYS)
+        return {
+            "_tone_cnt": check_int_list(state["_tone_cnt"], f"{label}._tone_cnt", 3, 1, 0xFFF),
+            "_tone_out": check_int_list(state["_tone_out"], f"{label}._tone_out", 3, 0, 1),
+            "_noise_cnt": check_int(state["_noise_cnt"], f"{label}._noise_cnt", 1, 62),
+            "_lfsr": check_int(state["_lfsr"], f"{label}._lfsr", 1, 0x1FFFF),
+            "_env_cnt": check_int(state["_env_cnt"], f"{label}._env_cnt", -16, 0xFFFF),
+            "_env_step": check_int(state["_env_step"], f"{label}._env_step", 0, 0x1F),
+            "_env_attack": check_choice(
+                state["_env_attack"], f"{label}._env_attack", (0x00, 0x1F)
+            ),
+            "_env_alternate": check_bool(state["_env_alternate"], f"{label}._env_alternate"),
+            "_env_hold_flag": check_bool(state["_env_hold_flag"], f"{label}._env_hold_flag"),
+            "_env_holding": check_bool(state["_env_holding"], f"{label}._env_holding"),
+            "_clk_frac": check_int(state["_clk_frac"], f"{label}._clk_frac", 0, SAMPLE_RATE - 1),
+        }
+
     def restore_synth(self, state: dict[str, object]) -> None:
         """Restore internal generator state produced by snapshot_synth()."""
-        typed_state = cast(PsgSynthState, state)
-        tone_cnt = list(typed_state["_tone_cnt"])
-        tone_out = list(typed_state["_tone_out"])
-        noise_cnt = int(typed_state["_noise_cnt"])
-        lfsr = int(typed_state["_lfsr"])
-        env_cnt = int(typed_state["_env_cnt"])
-        env_step = int(typed_state["_env_step"])
-        env_attack = int(typed_state["_env_attack"])
-        env_alternate = bool(typed_state["_env_alternate"])
-        env_hold_flag = bool(typed_state["_env_hold_flag"])
-        env_holding = bool(typed_state["_env_holding"])
-        clk_frac = int(typed_state["_clk_frac"])
-        self._tone_cnt = tone_cnt
-        self._tone_out = tone_out
-        self._noise_cnt = noise_cnt
-        self._lfsr = lfsr
-        self._env_cnt = env_cnt
-        self._env_step = env_step
-        self._env_attack = env_attack
-        self._env_alternate = env_alternate
-        self._env_hold_flag = env_hold_flag
-        self._env_holding = env_holding
-        self._clk_frac = clk_frac
+        parsed = self.parse_synth_state(state)
+        self._tone_cnt = parsed["_tone_cnt"]
+        self._tone_out = parsed["_tone_out"]
+        self._noise_cnt = parsed["_noise_cnt"]
+        self._lfsr = parsed["_lfsr"]
+        self._env_cnt = parsed["_env_cnt"]
+        self._env_step = parsed["_env_step"]
+        self._env_attack = parsed["_env_attack"]
+        self._env_alternate = parsed["_env_alternate"]
+        self._env_hold_flag = parsed["_env_hold_flag"]
+        self._env_holding = parsed["_env_holding"]
+        self._clk_frac = parsed["_clk_frac"]
 
     # --------------------------------------------------------- envelope reset
 
