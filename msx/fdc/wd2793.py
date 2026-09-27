@@ -69,10 +69,9 @@ class WD2793State(TypedDict):
     step_dir: int
 
 
-_STATE_KEYS: frozenset[str] = frozenset({
-    "command_reg", "track_reg", "sector_reg", "data_reg", "status_reg", "intrq", "drq",
-    "mode", "buffer", "index", "step_dir",
-})
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(WD2793State.__annotations__)
 
 
 @dataclass

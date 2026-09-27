@@ -360,8 +360,17 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     return out
 
 
-def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
-    """Build (y0, y1, regs_snapshot, palette_snapshot) bands from register change log."""
+class _Band(NamedTuple):
+    """Scanlines [y0, y1) rendered with one register and palette snapshot."""
+
+    y0: int
+    y1: int
+    regs: list[int]
+    palette: list[int]
+
+
+def _build_bands(vdp: "V9938") -> list[_Band]:
+    """Build the frame's bands from the register change log."""
     log = vdp._reg_write_log
     display_height = vdp.display_height
 
@@ -382,14 +391,14 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
     if not change_lines:
         return []
 
-    bands = []
+    bands: list[_Band] = []
     cur_regs = list(vdp._frame_start_regs)
     cur_palette = list(vdp._frame_start_palette)
     prev_y = 0
 
     for line in sorted(change_lines):
         if line > prev_y:
-            bands.append((prev_y, line, list(cur_regs), list(cur_palette)))
+            bands.append(_Band(prev_y, line, list(cur_regs), list(cur_palette)))
         for entry in change_lines[line]:
             if isinstance(entry, _PaletteChange):
                 cur_palette[entry.idx] = entry.rgb
@@ -398,7 +407,7 @@ def _build_bands(vdp: "V9938") -> list[tuple[int, int, list[int], list[int]]]:
         prev_y = line
 
     if prev_y < display_height:
-        bands.append((prev_y, display_height, list(cur_regs), list(cur_palette)))
+        bands.append(_Band(prev_y, display_height, list(cur_regs), list(cur_palette)))
 
     return bands
 
@@ -434,7 +443,7 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     runs = _width_runs(bands)
     frame_w = 0
     for run in runs:
-        frame_w = max(frame_w, display_width_of(run[0][2]))
+        frame_w = max(frame_w, display_width_of(run[0].regs))
 
     # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
     # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
@@ -448,10 +457,10 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # it alongside row_vscroll so the sprite pass reads both per line.
     row_vscroll = [0] * full_h
     row_spd = [False] * full_h
-    for y0, y1, band_regs, _ in bands:
-        v = band_regs[23]
-        spd = bool(band_regs[8] & 0x02)
-        for y in range(y0, min(y1, full_h)):
+    for band in bands:
+        v = band.regs[23]
+        spd = bool(band.regs[8] & 0x02)
+        for y in range(band.y0, min(band.y1, full_h)):
             row_vscroll[y] = v
             row_spd[y] = spd
 
@@ -460,18 +469,15 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
         _render_band_run(vdp, st, out, runs[0], full_h, row_vscroll, row_spd, True)
     else:
         for run in runs:
-            run_w = display_width_of(run[0][2])
+            run_w = display_width_of(run[0].regs)
             if run_w == frame_w:
                 _render_band_run(vdp, st, out, run, full_h, row_vscroll, row_spd, False)
             else:
                 narrow = bytearray(run_w * full_h)
                 _render_band_run(vdp, st, narrow, run, full_h, row_vscroll, row_spd, False)
-                _widen_rows(out, frame_w, narrow, run_w, run[0][0], min(run[-1][1], full_h))
+                _widen_rows(out, frame_w, narrow, run_w, run[0].y0, min(run[-1].y1, full_h))
     _update_field_parity(vdp, st)
     return out
-
-
-_Band = tuple[int, int, list[int], list[int]]
 
 
 def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
@@ -479,7 +485,7 @@ def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
     runs: list[list[_Band]] = []
     run_w = -1
     for band in bands:
-        w = display_width_of(band[2])
+        w = display_width_of(band.regs)
         if runs and w == run_w:
             runs[-1].append(band)
         else:
@@ -516,8 +522,10 @@ def _render_band_run(
     # registers and palette are never swapped. The palette needs no per-band
     # handling here at all: the renderers emit palette indices, and to_rgb24
     # applies each band's palette from the register-write log.
-    for y0, y1, band_regs, _ in run:
-        _render_pass_range(vdp, band_regs, st, buf, y0, min(y1, full_h), draw_sprites=False)
+    for band in run:
+        _render_pass_range(
+            vdp, band.regs, st, buf, band.y0, min(band.y1, full_h), draw_sprites=False
+        )
 
     # Sprites are evaluated in as few passes as possible: one per distinct sprite
     # attribute table (R#5/R#11), using the registers of the largest band sharing
@@ -534,16 +542,16 @@ def _render_band_run(
     # not affect non-multiplexed games. The merge runs within one width run, so a
     # pass never spans a width change.
     sat_segments: list[_SatSegment] = []
-    for y0, y1, band_regs, _ in run:
-        bh = y1 - y0
-        if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
+    for band in run:
+        bh = band.y1 - band.y0
+        if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band.regs):
             seg = sat_segments[-1]
-            seg.y1 = y1
+            seg.y1 = band.y1
             if bh > seg.height:
-                seg.regs = band_regs
+                seg.regs = band.regs
                 seg.height = bh
         else:
-            sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
+            sat_segments.append(_SatSegment(band.y0, band.y1, band.regs, bh))
 
     if len(sat_segments) == 1 and whole_frame:
         # One SAT for the whole frame → single pass (main band regs); per-line
@@ -808,7 +816,7 @@ def _update_field_parity(vdp: "V9938", st: _RenderStatus) -> None:
         st.status2 &= ~_S2_EO
 
 
-def _colour0(vdp: "V9938", regs: list[int]) -> int:
+def _colour0(regs: list[int]) -> int:
     """Palette index drawn for colour code 0 in the pattern and text modes.
 
     TP=0 (R#8 bit 5): colour 0 is invisible, so the backdrop shows; TP=1: it
@@ -837,7 +845,7 @@ def _render_g1(
     # (PixelRenderer::draw: "if (!isTextMode()) displayY += getVerticalScroll()",
     # with no GRAPHIC1-vs-GRAPHIC2 distinction), as _render_g2 does.
     vscroll = regs[23]
-    colour0 = _colour0(vdp, regs)
+    colour0 = _colour0(regs)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile`/`cb` (hence fg/bg) only depend on `row`, constant across the 8
@@ -903,7 +911,7 @@ def _render_g2(
     pat_mask = ((regs[4] & 0x03) << 11) | 0x7FF
     col_mask = ((regs[3] & 0x7F) << 6) | 0x3F
     vscroll = regs[23]
-    colour0 = _colour0(vdp, regs)
+    colour0 = _colour0(regs)
     ye = y_end if y_end is not None else _TILE_H
 
     for scan in range(y_start, ye):
@@ -941,7 +949,7 @@ def _render_text(
     # colour code 0 follows TP like every other colour code 0 (see _colour0).
     fg = (regs[7] >> 4) & 0x0F
     if fg == 0:
-        fg = _colour0(vdp, regs)
+        fg = _colour0(regs)
     bg = regs[7] & 0x0F
     # No mode-specific 192-line cap: VDP::getNumberOfLines() (real hardware)
     # is mode-independent, so TEXT1's active display period at R#9 LN=1
@@ -984,7 +992,7 @@ def _render_text2(
     pat_base = (regs[4] & 0x3F) << 11
     fg = (regs[7] >> 4) & 0x0F
     if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
-        fg = _colour0(vdp, regs)
+        fg = _colour0(regs)
     bg = regs[7] & 0x0F
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
@@ -1022,7 +1030,7 @@ def _render_mc(
     # _render_g1's comment (openMSX PixelRenderer::draw treats every
     # non-text mode alike).
     vscroll = regs[23]
-    colour0 = _colour0(vdp, regs)
+    colour0 = _colour0(regs)
     ye = y_end if y_end is not None else _TILE_H
 
     # `tile` only depends on `row`, constant across the 8 scanlines sharing a
@@ -1083,10 +1091,7 @@ def _render_sprites(
     mode 2 (SpriteChecker::checkSprites1's displayDelta = getVerticalScroll()
     - getLineZero(), same construction as checkSprites2's); there is no
     hardware basis for sprite mode 1 ignoring vscroll or a banded pass's
-    per-line SPD schedule, and prior to this fix this function silently used
-    only the scalar regs[8]/regs[23], so a banded split-screen band
-    boundary (row_spd/row_vscroll) had no effect here even though the sprite
-    mode 2 path already handled it correctly.
+    per-line SPD schedule.
     """
     if vdp.debug_disable_sprites:  # debug: render background only
         return
@@ -1721,9 +1726,9 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     # v_off shift, and the top/bottom output-height pad rows).
     default_channels = _channel_tables_indexed(_make_lut16(vdp._frame_start_palette))
     line_channels: list[tuple[bytes, bytes, bytes]] = [default_channels] * native_h
-    for _y0, _y1, _band_regs, band_palette in bands:
-        channels = _channel_tables_indexed(_make_lut16(band_palette))
-        for sy in range(max(0, _y0), min(native_h, _y1)):
+    for band in bands:
+        channels = _channel_tables_indexed(_make_lut16(band.palette))
+        for sy in range(max(0, band.y0), min(native_h, band.y1)):
             line_channels[sy] = channels
 
     out = bytearray(w * OUTPUT_H * 3)

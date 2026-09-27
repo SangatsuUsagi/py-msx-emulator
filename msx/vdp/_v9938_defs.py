@@ -1,9 +1,9 @@
 """Definitions shared by the V9938 chip (msx/vdp/v9938.py) and its renderer
 (msx/vdp/v9938_renderer.py).
 
-A leaf module, so the chip can import the renderer at module level without an
-import cycle (the renderer needs these at load time, and the chip only under
-TYPE_CHECKING).
+A leaf module: both the chip and the renderer import it at load time, and the
+renderer imports the chip only under TYPE_CHECKING, so the chip can import the
+renderer at module level without an import cycle.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _S2_EO = 0x02
 
 # Register-derived geometry, as functions of a register list so the renderer
 # can evaluate them for a band's snapshot as well as the live registers (the
-# V9938 properties of the same names call these).
+# V9938 properties named without the `_of` suffix call these).
 
 
 def display_height_of(regs: list[int]) -> int:

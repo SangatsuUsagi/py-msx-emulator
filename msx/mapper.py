@@ -7,12 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 from msx.snapshot_schema import (
-    SchemaError,
     check_bool,
     check_bytes,
     check_choice,
     check_int,
     check_int_list,
+    check_list,
     check_object,
 )
 
@@ -232,17 +232,13 @@ class BankTracingMapper:
         pass
 
 
-_BANK_KEYS: frozenset[str] = frozenset({"banks"})
-_BANK_SRAM_KEYS: frozenset[str] = frozenset({"banks", "sram"})
 _GM2_SRAM_HALVES: tuple[int, ...] = (0, 0x1000)
-_RTYPE_KEYS: frozenset[str] = frozenset({"bank"})
-_MAJUTSUSHI_KEYS: frozenset[str] = frozenset({"banks", "last_dac"})
-_KONAMI_SCC_KEYS: frozenset[str] = frozenset({"banks", "scc_mode"})
-_SCCI_KEYS: frozenset[str] = frozenset({"ram", "banks", "mode_register"})
-_HALNOTE_KEYS: frozenset[str] = frozenset({"banks", "subbanks", "sram"})
-_GM2_KEYS: frozenset[str] = frozenset(
-    {"banks", "sram_half", "window_sram_half", "sram_enabled", "sram"}
-)
+
+# PORT-NOTE: each mapper's `_*_KEYS` set (defined beside its `*State` TypedDict)
+#   is read from that TypedDict, inherited keys included, so it cannot drift
+#   from the schema -- see msx/vdp/v9938.py's _STATE_KEYS PORT-NOTE.
+# Rust equivalent: serde `#[serde(deny_unknown_fields)]` on the struct.
+# C++ equivalent: a hand-written constexpr array of key names per struct.
 
 
 def _parse_banks(obj: dict[str, object], label: str, count: int) -> list[int]:
@@ -270,6 +266,9 @@ class NoStateMapperState(TypedDict):
     """Save-state schema for _NoStateMapperMixin -- always empty."""
 
 
+_NO_STATE_KEYS: frozenset[str] = frozenset(NoStateMapperState.__annotations__)
+
+
 class _NoStateMapperMixin:
     """Shared no-op write/snapshot/restore for mappers with no persisted state
     (no bank registers, no SRAM)."""
@@ -283,7 +282,7 @@ class _NoStateMapperMixin:
         return {}
 
     def parse_state(self, obj: object, label: str) -> NoStateMapperState:
-        check_object(obj, label, frozenset())
+        check_object(obj, label, _NO_STATE_KEYS)
         return {}
 
     def apply_state(self, state: Mapping[str, object]) -> None:
@@ -442,6 +441,9 @@ class Ascii8MapperState(TypedDict):
     banks: list[int]
 
 
+_ASCII8_KEYS: frozenset[str] = frozenset(Ascii8MapperState.__annotations__)
+
+
 @dataclass
 class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     """ASCII8 mapper: four 8 KB windows at 0x4000/0x6000/0x8000/0xA000.
@@ -507,7 +509,7 @@ class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
         return {"banks": list(self._banks)}
 
     def parse_state(self, obj: object, label: str) -> Ascii8MapperState:
-        state = check_object(obj, label, _BANK_KEYS)
+        state = check_object(obj, label, _ASCII8_KEYS)
         return {"banks": _parse_banks(state, label, 4)}
 
     def apply_state(self, state: Mapping[str, object]) -> None:
@@ -524,6 +526,9 @@ class Ascii16MapperState(TypedDict):
     """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
 
     banks: list[int]
+
+
+_ASCII16_KEYS: frozenset[str] = frozenset(Ascii16MapperState.__annotations__)
 
 
 @dataclass
@@ -592,7 +597,7 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
         return {"banks": list(self._banks)}
 
     def parse_state(self, obj: object, label: str) -> Ascii16MapperState:
-        state = check_object(obj, label, _BANK_KEYS)
+        state = check_object(obj, label, _ASCII16_KEYS)
         return {"banks": _parse_banks(state, label, 2)}
 
     def apply_state(self, state: Mapping[str, object]) -> None:
@@ -607,6 +612,9 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
 
 class Ascii8Sram2MapperState(Ascii8MapperState):
     sram: bytearray
+
+
+_ASCII8_SRAM2_KEYS: frozenset[str] = frozenset(Ascii8Sram2MapperState.__annotations__)
 
 
 @dataclass
@@ -734,7 +742,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         return {**super().snapshot(), "sram": bytearray(self.sram)}
 
     def parse_state(self, obj: object, label: str) -> Ascii8Sram2MapperState:
-        state = check_object(obj, label, _BANK_SRAM_KEYS)
+        state = check_object(obj, label, _ASCII8_SRAM2_KEYS)
         return {
             "banks": _parse_banks(state, label, 4),
             "sram": check_bytes(state["sram"], f"{label}.sram", self._SRAM_SIZE),
@@ -778,6 +786,9 @@ class GameMaster2MapperState(TypedDict):
     window_sram_half: list[int]
     sram_enabled: bool
     sram: bytearray
+
+
+_GM2_KEYS: frozenset[str] = frozenset(GameMaster2MapperState.__annotations__)
 
 
 @dataclass
@@ -957,11 +968,9 @@ class GameMaster2Mapper(BankTracingMapper):
 
     def parse_state(self, obj: object, label: str) -> GameMaster2MapperState:
         state = check_object(obj, label, _GM2_KEYS)
-        window_sram_half = state["window_sram_half"]
-        if not isinstance(window_sram_half, list) or len(window_sram_half) != 4:
-            raise SchemaError(
-                f"{label}.window_sram_half must be a list of 4 ints, got {window_sram_half!r}"
-            )
+        window_sram_half = check_list(
+            state["window_sram_half"], f"{label}.window_sram_half", 4
+        )
         halves: list[int] = []
         for i in range(4):
             halves.append(
@@ -996,6 +1005,9 @@ class GameMaster2Mapper(BankTracingMapper):
 
 class Ascii16Sram2MapperState(Ascii16MapperState):
     sram: bytearray
+
+
+_ASCII16_SRAM2_KEYS: frozenset[str] = frozenset(Ascii16Sram2MapperState.__annotations__)
 
 
 @dataclass
@@ -1113,7 +1125,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         return {**super().snapshot(), "sram": bytearray(self.sram)}
 
     def parse_state(self, obj: object, label: str) -> Ascii16Sram2MapperState:
-        state = check_object(obj, label, _BANK_SRAM_KEYS)
+        state = check_object(obj, label, _ASCII16_SRAM2_KEYS)
         return {
             "banks": _parse_banks(state, label, 2),
             "sram": check_bytes(state["sram"], f"{label}.sram", self._SRAM_SIZE),
@@ -1141,6 +1153,9 @@ class RTypeMapperState(TypedDict):
     """Save-state schema for RTypeMapper.snapshot()/restore()."""
 
     bank: int
+
+
+_RTYPE_KEYS: frozenset[str] = frozenset(RTypeMapperState.__annotations__)
 
 
 @dataclass
@@ -1249,6 +1264,9 @@ class KonamiMapperState(TypedDict):
     banks: list[int]
 
 
+_KONAMI_KEYS: frozenset[str] = frozenset(KonamiMapperState.__annotations__)
+
+
 @dataclass
 class KonamiMapper(BankTracingMapper):
     """Konami (Konami4) mapper: four 8 KB windows.
@@ -1341,7 +1359,7 @@ class KonamiMapper(BankTracingMapper):
         return {"banks": list(self._banks)}
 
     def parse_state(self, obj: object, label: str) -> KonamiMapperState:
-        state = check_object(obj, label, _BANK_KEYS)
+        state = check_object(obj, label, _KONAMI_KEYS)
         return {"banks": _parse_banks(state, label, 4)}
 
     def apply_state(self, state: Mapping[str, object]) -> None:
@@ -1359,6 +1377,9 @@ class KonamiMapper(BankTracingMapper):
 
 class MajutsushiMapperState(KonamiMapperState):
     last_dac: int
+
+
+_MAJUTSUSHI_KEYS: frozenset[str] = frozenset(MajutsushiMapperState.__annotations__)
 
 
 @dataclass
@@ -1443,6 +1464,9 @@ class MajutsushiMapper(KonamiMapper):
 class KonamiSCCMapperState(TypedDict):
     banks: list[int]
     scc_mode: bool
+
+
+_KONAMI_SCC_KEYS: frozenset[str] = frozenset(KonamiSCCMapperState.__annotations__)
 
 
 @dataclass
@@ -1615,6 +1639,9 @@ class SCCICartState(TypedDict):
     ram: bytearray
     banks: list[int]
     mode_register: int
+
+
+_SCCI_KEYS: frozenset[str] = frozenset(SCCICartState.__annotations__)
 
 
 @dataclass
@@ -1796,6 +1823,9 @@ class HalnoteMapperState(TypedDict):
     banks: list[int]
     subbanks: list[int]
     sram: bytearray
+
+
+_HALNOTE_KEYS: frozenset[str] = frozenset(HalnoteMapperState.__annotations__)
 
 
 @dataclass

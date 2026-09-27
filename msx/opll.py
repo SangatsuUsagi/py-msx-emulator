@@ -39,11 +39,11 @@ from typing import Callable, TypedDict
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import (
     I64_MAX,
-    SchemaError,
     check_bytes,
     check_float,
     check_int,
     check_int_list,
+    check_list,
     check_object,
 )
 
@@ -1167,11 +1167,11 @@ class Opll:
         Raises SchemaError naming the field path.
         """
         d = check_object(obj, label, _OPLL_KEYS)
-        user_patch_objs = _check_list(d["user_patch"], f"{label}.user_patch", 2)
+        user_patch_objs = check_list(d["user_patch"], f"{label}.user_patch", 2)
         user_patch: list[_PatchState] = []
         for i in range(2):
             user_patch.append(_parse_patch(user_patch_objs[i], f"{label}.user_patch[{i}]"))
-        slot_objs = _check_list(d["slots"], f"{label}.slots", 18)
+        slot_objs = check_list(d["slots"], f"{label}.slots", 18)
         slots: list[_SlotState] = []
         for i in range(18):
             slots.append(_parse_slot(slot_objs[i], f"{label}.slots[{i}]"))
@@ -1312,19 +1312,11 @@ def _restore_slot_fields(s: _Slot, d: _SlotState) -> None:
 # Save-state parsers for Opll.parse_state(). Ranges are the values the chip
 # itself produces (register masks and table bounds above).
 
-_OPLL_KEYS = frozenset((
-    "reg", "patch_number", "user_patch", "slots", "adr", "pm_phase", "am_phase",
-    "lfo_am", "noise", "short_noise", "test_flag", "rhythm_mode", "slot_key_status",
-    "eg_counter", "ch_out", "out_time",
-))
-_PATCH_KEYS = frozenset((
-    "AM", "PM", "EG", "KR", "ML", "KL", "TL", "FB", "WS", "AR", "DR", "SL", "RR",
-))
-_SLOT_KEYS = frozenset((
-    "type", "pg_keep", "pg_phase", "eg_state", "eg_shift", "eg_rate_h", "eg_rate_l",
-    "rks", "tll", "key_flag", "sus_flag", "blk_fnum", "blk", "fnum", "volume",
-    "pg_out", "eg_out", "update_requests", "output", "ws",
-))
+# PORT-NOTE: key sets read from the TypedDicts (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_OPLL_KEYS: frozenset[str] = frozenset(OpllState.__annotations__)
+_PATCH_KEYS: frozenset[str] = frozenset(_PatchState.__annotations__)
+_SLOT_KEYS: frozenset[str] = frozenset(_SlotState.__annotations__)
 
 # Operator output bounds: (EXP_TABLE[255] + 1024) << 1 and its one's
 # complement (_update_output's `res << 1` / `~res << 1`).
@@ -1332,12 +1324,6 @@ _OUTPUT_MAX = (_EXP_TABLE[0xFF] + 1024) << 1
 _OUTPUT_MIN = ~(_EXP_TABLE[0xFF] + 1024) << 1
 # Largest total level: _TLL_TABLE's top entry (KL 3 at the top block/fnum, TL 63).
 _TLL_MAX = _TLL_TABLE[127][63][3]
-
-
-def _check_list(value: object, label: str, length: int) -> list[object]:
-    if not isinstance(value, list) or len(value) != length:
-        raise SchemaError(f"{label} must be a list of {length} objects, got {value!r}")
-    return value
 
 
 def _parse_patch(obj: object, label: str) -> _PatchState:

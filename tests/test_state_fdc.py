@@ -290,3 +290,33 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     # slot 1 and slot 2 each hold a mapper; count parses of this class's instances
     same_class = int(type(machine.memory._mapper2) is mapper_cls) + 1
     assert counts["mapper"] == same_class
+
+
+@pytest.mark.parametrize("case", ["other_disk", "other_kind"])
+def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
+    tmp_path: Path, saves_dir: Path, case: str
+) -> None:
+    """The FDC's own SnapshotMismatchError reaches the caller wrapped as
+    StateLoadError("fdc"), with the mismatch chained as its cause."""
+    from msx.snapshot_schema import SnapshotMismatchError
+    from msx.state import StateLoadError
+
+    _make_roms(tmp_path)
+    dsk = tmp_path / "game.dsk"
+    _make_disk(dsk, fill=0xAA)
+    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    save_state(machine, _RGB_MSX2, "test")
+
+    if case == "other_disk":
+        other = tmp_path / "other.dsk"
+        _make_disk(other, fill=0xBB)
+        assert machine.fdc is not None
+        machine.fdc.mount(DskDiskImage(other), drive=0)
+        target = machine
+    else:
+        target = build_machine(_tc8566af_spec(tmp_path), fdd1=dsk)
+
+    with pytest.raises(StateLoadError) as exc_info:
+        load_state(target)
+    assert exc_info.value.producer == "fdc"
+    assert isinstance(exc_info.value.__cause__, SnapshotMismatchError)
