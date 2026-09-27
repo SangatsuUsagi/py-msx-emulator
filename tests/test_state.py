@@ -300,8 +300,9 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    with pytest.raises(StateLoadError, match="vdp"):
+    with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
+    assert exc_info.value.producer == "vdp_latch"
 
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
