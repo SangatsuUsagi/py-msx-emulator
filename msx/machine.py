@@ -445,7 +445,8 @@ class Machine:
     def run_frame(self, skip_render: bool = False) -> bytearray:
         """Run one frame and return the rendered index framebuffer.
 
-        Returns a `display_width * OUTPUT_H` buffer, or an empty bytearray when
+        Returns a `width * OUTPUT_H` buffer (the frame's width, see
+        v9938_renderer.render_frame), or an empty bytearray when
         `skip_render` is set. Advances the VDP frame counter either way. A break
         (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
         is still rendered and counted, and the next call restarts at line 0.
