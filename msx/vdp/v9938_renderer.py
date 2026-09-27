@@ -39,11 +39,13 @@ _SPRITE_CLAIM = 0x10
 _COLLISION_X_OFFSET = 12
 _COLLISION_Y_OFFSET = 8
 
-# Cache constant border-fill buffers per colour so a band prefill can slice-assign
-# a memoryview instead of rebuilding bytes([border]) * n every band/frame.
+# Cache border-fill buffers per border pattern (see _border_pattern) so a band
+# prefill can slice-assign a memoryview instead of rebuilding the fill every
+# band/frame.
 #
-# PORT-NOTE: module-level mutable memoization cache keyed on border colour
-#   (0-15, so <=16 entries), grown lazily by _border_fill().
+# PORT-NOTE: module-level mutable memoization cache keyed on the border
+#   pattern (a 1-byte colour, or a 2-byte GRAPHIC5 even/odd pair), grown
+#   lazily by _border_fill().
 # Rust equivalent: precompute all 16 constant border-fill buffers once at
 #   VDP/renderer construction (or as const data), not as a runtime-grown
 #   global — Rust has no ergonomic mutable static without OnceLock/interior
@@ -54,15 +56,16 @@ _COLLISION_Y_OFFSET = 8
 #   global cache shared across VDP instances is also a latent
 #   multi-instance-safety issue this single-machine-process design doesn't
 #   currently need to think about; revisit once Rust vs. C++ is chosen.
-_BORDER_CACHE: dict[int, bytes] = {}
+_BORDER_CACHE: dict[bytes, bytes] = {}
 
 
-def _border_fill(border: int, n: int) -> memoryview:
-    """Return an n-byte view of a cached constant-`border` buffer."""
-    buf = _BORDER_CACHE.get(border)
+def _border_fill(pattern: bytes, n: int) -> memoryview:
+    """Return an n-byte view of a cached buffer repeating `pattern` (n is a
+    whole number of lines, so a 2-byte pattern starts every line on dot 0)."""
+    buf = _BORDER_CACHE.get(pattern)
     if buf is None or len(buf) < n:
-        buf = bytes((border,)) * n
-        _BORDER_CACHE[border] = buf
+        buf = pattern * (n // len(pattern))
+        _BORDER_CACHE[pattern] = buf
     return memoryview(buf)[:n]
 
 
@@ -136,18 +139,23 @@ def _g46_luts(tp: bool, border: int) -> tuple[bytes, bytes]:
 
 
 def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
-    """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion."""
+    """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion.
+
+    With TP clear, colour 0 takes R#7 bits 3:2 at even dots (p0, p2) and bits
+    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0."""
     key = (tp, border)
     if key not in _G5_LUT_CACHE:
+        even_zero = (border >> 2) & 0x03
+        odd_zero = border & 0x03
 
-        def _ch(b: int, shift: int) -> int:
+        def _ch(b: int, shift: int, zero: int) -> int:
             c = (b >> shift) & 0x03
-            return c if (tp or c) else border
+            return c if (tp or c) else zero
 
-        p0 = bytes(_ch(b, 6) for b in range(256))
-        p1 = bytes(_ch(b, 4) for b in range(256))
-        p2 = bytes(_ch(b, 2) for b in range(256))
-        p3 = bytes(_ch(b, 0) for b in range(256))
+        p0 = bytes(_ch(b, 6, even_zero) for b in range(256))
+        p1 = bytes(_ch(b, 4, odd_zero) for b in range(256))
+        p2 = bytes(_ch(b, 2, even_zero) for b in range(256))
+        p3 = bytes(_ch(b, 0, odd_zero) for b in range(256))
         _G5_LUT_CACHE[key] = (p0, p1, p2, p3)
     return _G5_LUT_CACHE[key]
 
@@ -208,8 +216,9 @@ def render_frame(vdp: "V9938", skip_render: bool = False) -> bytearray:
     """Render one frame; return bytearray of palette indices.
 
     The returned buffer always has the constant output height (length
-    display_width × OUTPUT_H, i.e. 256×212 normally, or 512×212 for SCREEN 6/7
-    and TEXT2). A 192-line frame (R#9 LN=0) is centred with border rows above
+    width × OUTPUT_H: 256×212 normally, 512×212 for SCREEN 6/7 and TEXT2, and
+    512×212 for a frame that mixes a 512-dot band with a 256-dot one). A
+    192-line frame (R#9 LN=0) is centred with border rows above
     and below so the displayed image keeps a stable geometry regardless of LN.
 
     Commits the render's _RenderStatus (S#0 sprite bits, S#3-S#6, S#2 EO) to
@@ -236,7 +245,10 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
     log = vdp._reg_write_log
     buf = _render_banded(vdp, st) if log else _render_pass(vdp, st)
     buf = _apply_display_adjust(vdp, buf)
-    out = pad_to_output_height(buf, vdp.display_height, vdp.display_width, _border_color(vdp))
+    h = vdp.display_height
+    # The frame's width comes from the buffer: a mid-frame width change makes it
+    # the widest band's width, not the live registers' (see _render_banded).
+    out = pad_to_output_height(buf, h, len(buf) // h, _border_pattern(vdp.regs))
     return out, st
 
 
@@ -287,16 +299,24 @@ def _r18_row_offsets(vdp: "V9938", h: int) -> tuple[list[int], int]:
     return row_h, v_off
 
 
-def _border_color(vdp: "V9938") -> int:
-    """Border-colour byte for the current mode.
+def _border_pattern(regs: list[int]) -> bytes:
+    """Border fill pattern for the mode in `regs`, repeated from dot 0.
 
-    SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour; every other
-    mode uses the low nibble of R#7 as a palette index. Shared by the R#18
-    display-adjust fill and the output-height padding so the two cannot drift.
+    SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour. SCREEN 6
+    (G5) alternates two palette indices, R#7 bits 3:2 at even dots and bits
+    1:0 at odd dots (openMSX getBorderColors). Every other mode uses the low
+    nibble of R#7. Shared by the band prefill, the R#18 display-adjust fill
+    and the output-height padding so they cannot drift.
     """
-    r0 = vdp.regs[0]
-    is_g7 = bool(((r0 >> 2) & 1) and ((r0 >> 3) & 1))
-    return vdp.regs[7] if is_g7 else (vdp.regs[7] & 0x0F)
+    r0 = regs[0]
+    m3 = (r0 >> 1) & 1
+    m4 = (r0 >> 2) & 1
+    m5 = (r0 >> 3) & 1
+    if m5 and m4:
+        return bytes((regs[7],))
+    if m5 and not m3:
+        return bytes(((regs[7] >> 2) & 0x03, regs[7] & 0x03))
+    return bytes((regs[7] & 0x0F,))
 
 
 def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
@@ -309,7 +329,7 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     matching openMSX where both derive from getLeftSprites.
     """
     h = vdp.display_height
-    w = vdp.display_width
+    w = len(buf) // h  # the rendered frame's width (see _render_banded)
 
     row_h, v_off = _r18_row_offsets(vdp, h)
     # Nothing to do when there is no vertical shift and every scanline offset is
@@ -317,10 +337,10 @@ def _apply_display_adjust(vdp: "V9938", buf: bytearray) -> bytearray:
     if v_off == 0 and not any(row_h):
         return buf
 
-    border = _border_color(vdp)
-    scale = w // 256  # 512-wide modes shift 2 buffer px per dot
+    border = _border_pattern(vdp.regs)
+    scale = w // 256  # 512-wide modes shift 2 buffer px per dot (keeps G5's dot parity)
 
-    out = bytearray([border]) * (w * h)
+    out = bytearray(border * (w * h // len(border)))
     for sy in range(h):
         dy = sy + v_off
         if dy < 0 or dy >= h:
@@ -399,29 +419,22 @@ class _SatSegment:
 
 
 def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
-    """Render with band-split: each band uses its own register snapshot."""
+    """Render with band-split: each band uses its own register snapshot.
+
+    The frame is as wide as its widest band. Consecutive bands of one width form
+    a run; with a mid-frame width change each run renders at its own width and a
+    narrower run's rows are widened by doubling every pixel (openMSX likewise
+    keeps a width per line and scales each line to the output width).
+    """
     bands = _build_bands(vdp)
     if not bands:
         return _render_pass(vdp, st)
 
     full_h = vdp.display_height
-    full_w = vdp.display_width
-
-    # Sprites are evaluated in as few passes as possible: one per distinct sprite
-    # attribute table (R#5/R#11), using the registers of the largest band sharing
-    # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to
-    # split; it is applied per scanline within a pass (see row_vscroll below).
-    main_regs = max(bands, key=lambda b: b[1] - b[0])[2]
-
-    out = bytearray(full_w * full_h)
-
-    # Each pass is handed its band's (or SAT segment's) registers; the chip's own
-    # registers and palette are never swapped. The palette needs no per-band
-    # handling here at all: the renderers emit palette indices, and to_rgb24
-    # applies each band's palette from the register-write log.
-    # Background: one pass per band with that band's registers (no sprites).
-    for y0, y1, band_regs, _ in bands:
-        _render_pass_range(vdp, band_regs, st, out, y0, min(y1, full_h), draw_sprites=False)
+    runs = _width_runs(bands)
+    frame_w = 0
+    for run in runs:
+        frame_w = max(frame_w, display_width_of(run[0][2]))
 
     # Sprites: vertical scroll (R#23) is applied per scanline within a pass.
     # openMSX re-reads R#23 on every line (VDP.cc case 23 syncs then stores,
@@ -430,15 +443,6 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # region's sprites with its own vscroll without redrawing them. The band
     # snapshots already carry each region's R#23; row_vscroll[y] flattens that
     # into a per-line value that the sprite pass reads instead of its registers' R#23.
-    #
-    # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
-    # regions read *different* SAT buffers, used for sprite multiplexing /
-    # "sprite doubler" (a second set of 32 sprites in the lower half). There
-    # one sprite pass per SAT region — each clipped to its scanline span — is
-    # required. Consecutive bands sharing a SAT base are merged so an ordinary
-    # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
-    # only changed mid-active-display for this purpose, so keying on it does
-    # not affect non-multiplexed games.
     # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
     # sprites over just its status band (SPD=1 there, 0 in the play area). Build
     # it alongside row_vscroll so the sprite pass reads both per line.
@@ -451,11 +455,86 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
             row_vscroll[y] = v
             row_spd[y] = spd
 
-    def _sat_key(regs: list[int]) -> tuple[int, int]:
-        return (regs[5], regs[11] & 0x03)
+    out = bytearray(frame_w * full_h)
+    if len(runs) == 1:
+        _render_band_run(vdp, st, out, runs[0], full_h, row_vscroll, row_spd, True)
+    else:
+        for run in runs:
+            run_w = display_width_of(run[0][2])
+            if run_w == frame_w:
+                _render_band_run(vdp, st, out, run, full_h, row_vscroll, row_spd, False)
+            else:
+                narrow = bytearray(run_w * full_h)
+                _render_band_run(vdp, st, narrow, run, full_h, row_vscroll, row_spd, False)
+                _widen_rows(out, frame_w, narrow, run_w, run[0][0], min(run[-1][1], full_h))
+    _update_field_parity(vdp, st)
+    return out
 
+
+_Band = tuple[int, int, list[int], list[int]]
+
+
+def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
+    """Split the bands into maximal runs of consecutive bands of one display width."""
+    runs: list[list[_Band]] = []
+    run_w = -1
+    for band in bands:
+        w = display_width_of(band[2])
+        if runs and w == run_w:
+            runs[-1].append(band)
+        else:
+            runs.append([band])
+            run_w = w
+    return runs
+
+
+def _widen_rows(
+    out: bytearray, out_w: int, src: bytearray, src_w: int, y0: int, y1: int
+) -> None:
+    """Copy rows [y0, y1) of `src` into `out`, doubling every pixel (256 → 512)."""
+    for y in range(y0, y1):
+        row = src[y * src_w:(y + 1) * src_w]
+        d = y * out_w
+        out[d:d + out_w:2] = row
+        out[d + 1:d + out_w:2] = row
+
+
+def _render_band_run(
+    vdp: "V9938",
+    st: _RenderStatus,
+    buf: bytearray,
+    run: list[_Band],
+    full_h: int,
+    row_vscroll: list[int],
+    row_spd: list[bool],
+    whole_frame: bool,
+) -> None:
+    """Render one width run's bands into `buf` (the run's own width): the
+    background per band, then its sprite passes. `whole_frame` means the run is
+    the whole frame, whose single sprite pass then covers every scanline."""
+    # Each pass is handed its band's (or SAT segment's) registers; the chip's own
+    # registers and palette are never swapped. The palette needs no per-band
+    # handling here at all: the renderers emit palette indices, and to_rgb24
+    # applies each band's palette from the register-write log.
+    for y0, y1, band_regs, _ in run:
+        _render_pass_range(vdp, band_regs, st, buf, y0, min(y1, full_h), draw_sprites=False)
+
+    # Sprites are evaluated in as few passes as possible: one per distinct sprite
+    # attribute table (R#5/R#11), using the registers of the largest band sharing
+    # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to
+    # split; it is applied per scanline within a pass (row_vscroll).
+    #
+    # A mid-screen sprite attribute table switch (R#5/R#11) is different: the
+    # regions read *different* SAT buffers, used for sprite multiplexing /
+    # "sprite doubler" (a second set of 32 sprites in the lower half). There
+    # one sprite pass per SAT region — each clipped to its scanline span — is
+    # required. Consecutive bands sharing a SAT base are merged so an ordinary
+    # game (single SAT, whatever its vscroll splits) stays at one pass. R#5 is
+    # only changed mid-active-display for this purpose, so keying on it does
+    # not affect non-multiplexed games. The merge runs within one width run, so a
+    # pass never spans a width change.
     sat_segments: list[_SatSegment] = []
-    for y0, y1, band_regs, _ in bands:
+    for y0, y1, band_regs, _ in run:
         bh = y1 - y0
         if sat_segments and _sat_key(sat_segments[-1].regs) == _sat_key(band_regs):
             seg = sat_segments[-1]
@@ -466,18 +545,21 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
         else:
             sat_segments.append(_SatSegment(y0, y1, band_regs, bh))
 
-    if len(sat_segments) <= 1:
+    if len(sat_segments) == 1 and whole_frame:
         # One SAT for the whole frame → single pass (main band regs); per-line
         # row_vscroll / row_spd handle any R#23 / SPD split within it.
-        _render_sprites_for_mode(vdp, main_regs, st, out, 0, full_h, row_vscroll, row_spd)
+        _render_sprites_for_mode(
+            vdp, sat_segments[0].regs, st, buf, 0, full_h, row_vscroll, row_spd
+        )
     else:
         for seg in sat_segments:
             _render_sprites_for_mode(
-                vdp, seg.regs, st, out, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
+                vdp, seg.regs, st, buf, seg.y0, min(seg.y1, full_h), row_vscroll, row_spd
             )
 
-    _update_field_parity(vdp, st)
-    return out
+
+def _sat_key(regs: list[int]) -> tuple[int, int]:
+    return (regs[5], regs[11] & 0x03)
 
 
 def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
@@ -514,11 +596,8 @@ def _render_pass_range(
     m4 = (r0 >> 2) & 1
     m5 = (r0 >> 3) & 1
 
-    is_g7 = bool(m5 and m4)
-    border = regs[7] if is_g7 else (regs[7] & 0x0F)
-
     n = (y_end - y_start) * w
-    buf[y_start * w : y_end * w] = _border_fill(border, n)
+    buf[y_start * w : y_end * w] = _border_fill(_border_pattern(regs), n)
 
     if not (r1 & 0x40):  # BL clear → blank band already filled above
         return

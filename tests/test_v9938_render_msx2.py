@@ -401,18 +401,48 @@ def test_screen6_vram_base_from_r2() -> None:
     assert buf[0] == 3
 
 
-def test_screen6_colour_zero_uses_border_when_tp_clear() -> None:
-    """TP clear (default): a 2-bit colour value of 0 is transparent and shows
-    the border colour, same TP semantics as SCREEN 5/7 (R#8 bit 5)."""
+def test_screen6_colour_zero_splits_r7_by_dot_parity_when_tp_clear() -> None:
+    """TP clear (default): colour 0 shows R#7 bits 3:2 at even dots and bits
+    1:0 at odd dots (openMSX precalcColorIndex0), not R#7's whole nibble."""
     vdp = V9938()
     _set_screen6(vdp)
     vdp.regs[2] = 0x00
-    vdp.regs[7] = 0x04  # border colour 4
-    vdp.vram[0] = 0b00_01_00_00  # pixel 0 = 0 (transparent), pixel 1 = 1
+    vdp.regs[7] = 0x06  # bits 3:2 = 1, bits 1:0 = 2
+    vdp.vram[0] = 0x00  # four colour-0 dots
 
     buf = _active(vdp)
-    assert buf[0] == 4  # colour 0 substituted with border
-    assert buf[1] == 1
+    assert list(buf[0:4]) == [1, 2, 1, 2]
+
+
+def test_screen6_border_alternates_r7_bit_pairs() -> None:
+    """SCREEN 6 border (openMSX getBorderColors): even dots R#7 bits 3:2, odd
+    dots bits 1:0, across every output-height padding row."""
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[7] = 0x06
+    buf = render_frame(vdp)
+    assert vdp.display_height == 192
+    top_row = buf[0:512]
+    assert list(top_row[0:4]) == [1, 2, 1, 2]
+    assert set(top_row[0::2]) == {1} and set(top_row[1::2]) == {2}
+
+
+def test_screen6_r18_edge_fill_alternates_r7_bit_pairs() -> None:
+    vdp = V9938()
+    _set_screen6(vdp)
+    vdp.regs[7] = 0x06
+    vdp.regs[8] = 0x20  # TP set: VRAM colour 0 stays palette 0
+    vdp.regs[18] = 0x0F  # shift right by 1 dot (2 output pixels at 512 wide)
+    buf = _active(vdp)
+    assert list(buf[0:3]) == [1, 2, 0]
+
+
+def test_screen5_border_is_a_single_colour() -> None:
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[7] = 0x06
+    buf = render_frame(vdp)
+    assert set(buf[0:256]) == {6}
 
 
 def test_screen6_colour_zero_is_opaque_when_tp_set() -> None:
