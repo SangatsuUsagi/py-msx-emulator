@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
-from msx.snapshot_schema import SchemaError, check_int, check_int_list, check_object
+from msx.snapshot_schema import check_int, check_int_list, check_list, check_object
 
 SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
@@ -45,6 +45,8 @@ class SccState(TypedDict):
     _clk_frac: int
 
 
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
 _SCC_STATE_KEYS: frozenset[str] = frozenset(SccState.__annotations__)
 
 
@@ -191,11 +193,7 @@ class SCC:
         """Validate a snapshot() object without touching the chip."""
         state = check_object(obj, label, _SCC_STATE_KEYS)
         waves_label = f"{label}._waves"
-        waves_obj = state["_waves"]
-        if not isinstance(waves_obj, list) or len(waves_obj) != WAVE_BANKS:
-            raise SchemaError(
-                f"{waves_label} must be a list of {WAVE_BANKS} banks, got {waves_obj!r}"
-            )
+        waves_obj = check_list(state["_waves"], waves_label, WAVE_BANKS)
         waves: list[list[int]] = []
         for bank in range(WAVE_BANKS):
             waves.append(

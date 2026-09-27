@@ -22,12 +22,16 @@ from msx.mapper import MapperKind
 from msx.snapshot_schema import (
     I64_MAX,
     SchemaError,
+    SnapshotMismatchError,
     check_bool,
     check_bytes,
     check_int,
     check_int_list,
+    check_list,
     check_object,
+    check_optional_bytes,
     check_optional_int,
+    check_optional_int_list,
     check_optional_object,
     check_str,
 )
@@ -105,8 +109,9 @@ class StateLoadError(ValueError):
     _validate_snapshot), always before anything is restored.
 
     `producer` names the field or producer. Distinct from the plain
-    ValueErrors raised for format / layout / machine-type / mapper-kind /
-    wiring mismatches (those already have clear top-level messages), so a
+    ValueErrors raised for a file of another format version or layout, and
+    from SnapshotMismatchError (machine type, mapper kind, wiring, mounted
+    disk), both of which already carry clear top-level messages, so a
     corrupted or hand-edited .state file fails with one predictable,
     catchable error naming the part that broke. The original exception is
     chained via __cause__.
@@ -243,7 +248,7 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
 
 def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -> None:
     if (scc_state is None) != (machine.scc is None):
-        raise ValueError(
+        raise SnapshotMismatchError(
             "SCC wiring mismatch: "
             f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
             f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
@@ -262,7 +267,7 @@ def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
 
 def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
     if (fdc_state is None) != (machine.fdc is None):
-        raise ValueError(
+        raise SnapshotMismatchError(
             "FDC wiring mismatch: "
             f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
             f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
@@ -282,7 +287,7 @@ def _check_expanded_subslots(
     before anything is restored."""
     saved_enabled = saved_kinds is not None
     if running_enabled != saved_enabled:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"slot {slot_num} expansion wiring mismatch: "
             f"running machine has {'an expanded' if running_enabled else 'a flat'} "
             f"slot {slot_num}, saved state has "
@@ -297,7 +302,7 @@ def _check_expanded_subslots(
         if running_kind != saved_kind:
             running_repr = repr(running_kind.value) if running_kind is not None else "None"
             saved_repr = repr(saved_kind.value) if saved_kind is not None else "None"
-            raise ValueError(
+            raise SnapshotMismatchError(
                 f"slot {slot_num} sub-slot {i} mapper mismatch: "
                 f"running {running_repr}, saved {saved_repr}"
             )
@@ -419,6 +424,8 @@ _TMS_VRAM_SIZE = 0x4000
 _V9938_VRAM_SIZE = 0x20000
 _TMS_REG_COUNT = 8
 _V9938_REG_COUNT = 28
+_PSG_REG_COUNT = 16
+_RAM_MAPPER_PAGES = 4  # the four 16 KB pages a RAM mapper bank register serves
 _SUBSLOTS = 4
 
 
@@ -446,16 +453,14 @@ def _parse_mapper_kind(value: object, label: str) -> MapperKind:
     try:
         return MapperKind(text)
     except ValueError:
-        raise SchemaError(f"{label} is not a mapper kind: {text!r}") from None
+        raise SchemaError(f"{label} must be a mapper kind, got {text!r}") from None
 
 
 def _parse_subslot_kinds(value: object, label: str) -> list[MapperKind | None] | None:
     if value is None:
         return None
-    if not isinstance(value, list) or len(value) != _SUBSLOTS:
-        raise SchemaError(f"{label} must be a list of {_SUBSLOTS} entries, got {value!r}")
     kinds: list[MapperKind | None] = []
-    for i, entry in enumerate(value):
+    for i, entry in enumerate(check_list(value, label, _SUBSLOTS)):
         kinds.append(None if entry is None else _parse_mapper_kind(entry, f"{label}[{i}]"))
     return kinds
 
@@ -463,21 +468,28 @@ def _parse_subslot_kinds(value: object, label: str) -> list[MapperKind | None] |
 def _parse_subslot_states(value: object, label: str) -> list[dict[str, object]] | None:
     if value is None:
         return None
-    if not isinstance(value, list) or len(value) != _SUBSLOTS:
-        raise SchemaError(f"{label} must be a list of {_SUBSLOTS} objects, got {value!r}")
     states: list[dict[str, object]] = []
-    for i, entry in enumerate(value):
+    for i, entry in enumerate(check_list(value, label, _SUBSLOTS)):
         states.append(check_object(entry, f"{label}[{i}]"))
     return states
+
+
+def _parse_paired_states(
+    kinds: object, states: object, label: str
+) -> list[dict[str, object]] | None:
+    """A sub-slot state list is present exactly when its kind list is."""
+    if (kinds is None) != (states is None):
+        raise SchemaError(f"{label} must be present exactly when its kind list is")
+    return _parse_subslot_states(states, label)
 
 
 def _parse_vdp9938(value: object, msx2: bool, vdp_latch: int | None) -> V9938State | None:
     if not msx2:
         if value is not None:
-            raise SchemaError("an MSX1 snapshot carries no vdp9938 state")
+            raise SchemaError("vdp9938 must be null in an MSX1 snapshot")
         return None
     if value is None:
-        raise SchemaError("MSX2 snapshot has no vdp9938 state")
+        raise SchemaError("vdp9938 is required in an MSX2 snapshot")
     state = parse_v9938_state(value)
     # The common `vdp_latch` is the V9938 latch's port-0x99 view; reject a file
     # where the two disagree instead of letting restore order pick one.
@@ -538,126 +550,69 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
     msx2 = machine_type == "msx2"
     vram_size = _V9938_VRAM_SIZE if msx2 else _TMS_VRAM_SIZE
     reg_count = _V9938_REG_COUNT if msx2 else _TMS_REG_COUNT
-    addr_max = 0x1FFFF if msx2 else 0x3FFF
-    vdp_latch = _field(
-        "vdp_latch", lambda: check_optional_int(data["vdp_latch"], "vdp_latch", 0, 0xFF)
-    )
+    addr_max = vram_size - 1
 
-    def get(key: str) -> object:
-        return data.get(key)  # every field with no value in the file defaults to None
+    def top(key: str, check: Callable[[object, str], _T]) -> _T:
+        # A field with no value in the file (only the defaulted, MSX2- or
+        # expansion-only ones pass _check_snapshot_keys) reads as None, the
+        # stand-in for serde's #[serde(default)].
+        return _field(key, lambda: check(data.get(key), key))
 
+    def byte(key: str) -> int:
+        return top(key, lambda v, k: check_int(v, k, 0, 0xFF))
+
+    def opt_byte(key: str) -> int | None:
+        return top(key, lambda v, k: check_optional_int(v, k, 0, 0xFF))
+
+    vdp_latch = opt_byte("vdp_latch")
+    mapper1_kinds = data.get("mapper1_subslot_kinds")
+    mapper2_kinds = data.get("mapper2_subslot_kinds")
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type=machine_type,
-        cpu_regs=_field("cpu_regs", lambda: _parse_cpu_regs(data["cpu_regs"])),
-        cpu_halted=_field("cpu_halted", lambda: check_bool(data["cpu_halted"], "cpu_halted")),
-        cpu_iff1=_field("cpu_iff1", lambda: check_bool(data["cpu_iff1"], "cpu_iff1")),
-        cpu_iff2=_field("cpu_iff2", lambda: check_bool(data["cpu_iff2"], "cpu_iff2")),
-        cpu_int_pending=_field(
-            "cpu_int_pending", lambda: check_bool(data["cpu_int_pending"], "cpu_int_pending")
-        ),
-        cpu_nmi_pending=_field(
-            "cpu_nmi_pending", lambda: check_bool(data["cpu_nmi_pending"], "cpu_nmi_pending")
-        ),
-        cpu_im=_field("cpu_im", lambda: check_int(data["cpu_im"], "cpu_im", 0, 2)),
-        ram=_field("ram", lambda: check_bytes(data["ram"], "ram")),
-        slot_register=_field(
-            "slot_register", lambda: check_int(data["slot_register"], "slot_register", 0, 0xFF)
-        ),
-        mapper_kind=_field(
-            "mapper_kind", lambda: _parse_mapper_kind(data["mapper_kind"], "mapper_kind")
-        ),
-        mapper_state=_field(
-            "mapper_state", lambda: check_object(data["mapper_state"], "mapper_state")
-        ),
-        mapper2_kind=_field(
-            "mapper2_kind", lambda: _parse_mapper_kind(data["mapper2_kind"], "mapper2_kind")
-        ),
-        mapper2_state=_field(
-            "mapper2_state", lambda: check_object(data["mapper2_state"], "mapper2_state")
-        ),
-        vdp_vram=_field("vdp_vram", lambda: check_bytes(data["vdp_vram"], "vdp_vram", vram_size)),
-        vdp_regs=_field(
-            "vdp_regs", lambda: check_int_list(data["vdp_regs"], "vdp_regs", reg_count, 0, 0xFF)
-        ),
-        vdp_status=_field(
-            "vdp_status", lambda: check_int(data["vdp_status"], "vdp_status", 0, 0xFF)
-        ),
+        cpu_regs=top("cpu_regs", lambda v, k: _parse_cpu_regs(v)),
+        cpu_halted=top("cpu_halted", check_bool),
+        cpu_iff1=top("cpu_iff1", check_bool),
+        cpu_iff2=top("cpu_iff2", check_bool),
+        cpu_int_pending=top("cpu_int_pending", check_bool),
+        cpu_nmi_pending=top("cpu_nmi_pending", check_bool),
+        cpu_im=top("cpu_im", lambda v, k: check_int(v, k, 0, 2)),
+        ram=top("ram", lambda v, k: check_bytes(v, k)),
+        slot_register=byte("slot_register"),
+        mapper_kind=top("mapper_kind", _parse_mapper_kind),
+        mapper_state=top("mapper_state", lambda v, k: check_object(v, k)),
+        mapper2_kind=top("mapper2_kind", _parse_mapper_kind),
+        mapper2_state=top("mapper2_state", lambda v, k: check_object(v, k)),
+        vdp_vram=top("vdp_vram", lambda v, k: check_bytes(v, k, vram_size)),
+        vdp_regs=top("vdp_regs", lambda v, k: check_int_list(v, k, reg_count, 0, 0xFF)),
+        vdp_status=byte("vdp_status"),
         vdp_latch=vdp_latch,
-        vdp_addr=_field("vdp_addr", lambda: check_int(data["vdp_addr"], "vdp_addr", 0, addr_max)),
-        vdp_read_buf=_field(
-            "vdp_read_buf", lambda: check_int(data["vdp_read_buf"], "vdp_read_buf", 0, 0xFF)
-        ),
-        vdp_frame_count=_field(
-            "vdp_frame_count",
-            lambda: check_int(data["vdp_frame_count"], "vdp_frame_count", 0, I64_MAX),
-        ),
-        psg_regs=_field(
-            "psg_regs", lambda: check_int_list(data["psg_regs"], "psg_regs", 16, 0, 0xFF)
-        ),
-        psg_latch=_field("psg_latch", lambda: check_int(data["psg_latch"], "psg_latch", 0, 0x0F)),
-        psg_synth=_field("psg_synth", lambda: check_object(data["psg_synth"], "psg_synth")),
-        scc_state=_field(
-            "scc_state", lambda: check_optional_object(data["scc_state"], "scc_state")
-        ),
-        vdp9938=_field("vdp9938", lambda: _parse_vdp9938(get("vdp9938"), msx2, vdp_latch)),
-        ram_mapper_ram=_field(
-            "ram_mapper_ram",
-            lambda: None if get("ram_mapper_ram") is None
-            else check_bytes(get("ram_mapper_ram"), "ram_mapper_ram"),
-        ),
-        ram_mapper_banks=_field(
+        vdp_addr=top("vdp_addr", lambda v, k: check_int(v, k, 0, addr_max)),
+        vdp_read_buf=byte("vdp_read_buf"),
+        vdp_frame_count=top("vdp_frame_count", lambda v, k: check_int(v, k, 0, I64_MAX)),
+        psg_regs=top("psg_regs", lambda v, k: check_int_list(v, k, _PSG_REG_COUNT, 0, 0xFF)),
+        psg_latch=top("psg_latch", lambda v, k: check_int(v, k, 0, 0x0F)),
+        psg_synth=top("psg_synth", lambda v, k: check_object(v, k)),
+        scc_state=top("scc_state", check_optional_object),
+        vdp9938=top("vdp9938", lambda v, k: _parse_vdp9938(v, msx2, vdp_latch)),
+        ram_mapper_ram=top("ram_mapper_ram", check_optional_bytes),
+        ram_mapper_banks=top(
             "ram_mapper_banks",
-            lambda: None if get("ram_mapper_banks") is None
-            else check_int_list(get("ram_mapper_banks"), "ram_mapper_banks", 4, 0, 0xFF),
+            lambda v, k: check_optional_int_list(v, k, _RAM_MAPPER_PAGES, 0, 0xFF),
         ),
-        sub_slot_reg=_field(
-            "sub_slot_reg",
-            lambda: check_optional_int(get("sub_slot_reg"), "sub_slot_reg", 0, 0xFF),
+        sub_slot_reg=opt_byte("sub_slot_reg"),
+        fdc_state=top("fdc_state", check_optional_object),
+        slot2_sub_slot_reg=opt_byte("slot2_sub_slot_reg"),
+        mapper2_subslot_kinds=top("mapper2_subslot_kinds", _parse_subslot_kinds),
+        mapper2_subslot_states=top(
+            "mapper2_subslot_states", lambda v, k: _parse_paired_states(mapper2_kinds, v, k)
         ),
-        fdc_state=_field(
-            "fdc_state", lambda: check_optional_object(get("fdc_state"), "fdc_state")
-        ),
-        slot2_sub_slot_reg=_field(
-            "slot2_sub_slot_reg",
-            lambda: check_optional_int(get("slot2_sub_slot_reg"), "slot2_sub_slot_reg", 0, 0xFF),
-        ),
-        mapper2_subslot_kinds=_field(
-            "mapper2_subslot_kinds",
-            lambda: _parse_subslot_kinds(get("mapper2_subslot_kinds"), "mapper2_subslot_kinds"),
-        ),
-        mapper2_subslot_states=_field(
-            "mapper2_subslot_states",
-            lambda: _parse_paired_states(
-                get("mapper2_subslot_kinds"), get("mapper2_subslot_states"),
-                "mapper2_subslot_states",
-            ),
-        ),
-        slot1_sub_slot_reg=_field(
-            "slot1_sub_slot_reg",
-            lambda: check_optional_int(get("slot1_sub_slot_reg"), "slot1_sub_slot_reg", 0, 0xFF),
-        ),
-        mapper1_subslot_kinds=_field(
-            "mapper1_subslot_kinds",
-            lambda: _parse_subslot_kinds(get("mapper1_subslot_kinds"), "mapper1_subslot_kinds"),
-        ),
-        mapper1_subslot_states=_field(
-            "mapper1_subslot_states",
-            lambda: _parse_paired_states(
-                get("mapper1_subslot_kinds"), get("mapper1_subslot_states"),
-                "mapper1_subslot_states",
-            ),
+        slot1_sub_slot_reg=opt_byte("slot1_sub_slot_reg"),
+        mapper1_subslot_kinds=top("mapper1_subslot_kinds", _parse_subslot_kinds),
+        mapper1_subslot_states=top(
+            "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
         ),
     )
-
-
-def _parse_paired_states(
-    kinds: object, states: object, label: str
-) -> list[dict[str, object]] | None:
-    """A sub-slot state list is present exactly when its kind list is."""
-    if (kinds is None) != (states is None):
-        raise SchemaError(f"{label} must be present exactly when its kind list is")
-    return _parse_subslot_states(states, label)
 
 
 def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
@@ -666,6 +621,8 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     kinds, RAM and RAM-mapper sizes, the FDC, expanded-slot and SCC wiring,
     and every producer object's parse_state, whose results it returns.
     (parse_snapshot has already checked everything the snapshot alone decides.)"""
+    # parse_snapshot already checked the version; this guards a MachineSnapshot
+    # built by hand (tests, tools).
     if snap.format_version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {snap.format_version}, "
@@ -674,19 +631,19 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
     expected_type = "msx2" if vdp9938 is not None else "msx1"
     if snap.machine_type != expected_type:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
     mapper = machine.memory._mapper
     if mapper.kind != snap.mapper_kind:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"mapper mismatch: running {mapper.kind.value!r}, "
             f"saved {snap.mapper_kind.value!r}"
         )
     mapper2 = machine.memory._mapper2
     if mapper2.kind != snap.mapper2_kind:
-        raise ValueError(
+        raise SnapshotMismatchError(
             f"slot 2 mapper mismatch: running {mapper2.kind.value!r}, "
             f"saved {snap.mapper2_kind.value!r}"
         )
@@ -696,15 +653,13 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
             "ram", ValueError(f"ram must be {ram_len} bytes, got {len(snap.ram)}")
         )
     rm = machine.memory.ram_mapper
-    if rm is not None and snap.ram_mapper_ram is not None and len(snap.ram_mapper_ram) != len(
-        rm.ram
-    ):
-        raise StateLoadError(
-            "ram_mapper_ram",
-            ValueError(
-                f"ram_mapper_ram must be {len(rm.ram)} bytes, got {len(snap.ram_mapper_ram)}"
-            ),
-        )
+    if rm is not None and snap.ram_mapper_ram is not None:
+        size = len(rm.ram)
+        if len(snap.ram_mapper_ram) != size:
+            raise StateLoadError(
+                "ram_mapper_ram",
+                ValueError(f"ram_mapper_ram must be {size} bytes, got {len(snap.ram_mapper_ram)}"),
+            )
     _check_fdc_wiring(machine, snap.fdc_state)
     _check_expanded_subslots(
         1, machine.memory.slot1_sub_slot_enabled, machine.memory._mapper1_subslots,

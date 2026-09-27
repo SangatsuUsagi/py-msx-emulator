@@ -11,6 +11,7 @@ drive / runtime disk swap is an additive change, not a refactor.
 """
 from __future__ import annotations
 
+import abc
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -20,7 +21,14 @@ from msx.fdc.disk_drive import DiskDrive, DiskDriveState
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.tc8566af import TC8566AF, TC8566AFState
 from msx.fdc.wd2793 import WD2793, WD2793State
-from msx.snapshot_schema import SchemaError, check_int, check_object, check_str
+from msx.snapshot_schema import (
+    SchemaError,
+    SnapshotMismatchError,
+    check_int,
+    check_list,
+    check_object,
+    check_str,
+)
 
 # A controller's own parsed save-state (WD2793State / TC8566AFState).
 S = TypeVar("S", bound=Mapping[str, object])
@@ -97,11 +105,15 @@ class FloppyDiskParsedBase(FloppyDiskStateParsed[S], Generic[S, C]):
     connection_style: C
 
 
-_FLOPPY_DISK_STATE_KEYS: frozenset[str] = frozenset({"controller", "drives"})
-_FLOPPY_DISK_KEYS: frozenset[str] = frozenset(
-    {"kind", "connection_style", "controller", "drives"}
+# PORT-NOTE: key sets read from the TypedDicts, inherited keys included (see
+#   msx/vdp/v9938.py's _STATE_KEYS PORT-NOTE: serde `deny_unknown_fields` in
+#   Rust, a constexpr key array in C++).
+_FLOPPY_DISK_STATE_KEYS: frozenset[str] = frozenset(FloppyDiskStateSnapshot.__annotations__)
+_FLOPPY_DISK_KEYS: frozenset[str] = frozenset(FloppyDiskSnapshot.__annotations__)
+_SONY_PHILIPS_CONNECTION_KEYS: frozenset[str] = frozenset(
+    SonyPhilipsConnectionState.__annotations__
 )
-_SONY_PHILIPS_CONNECTION_KEYS: frozenset[str] = frozenset({"side_reg", "drive_reg"})
+_TC8566AF_CONNECTION_KEYS: frozenset[str] = frozenset(TC8566AFConnectionState.__annotations__)
 
 # Sony/Philips register window offsets (addr & 0x3FFF), shared by
 # SonyPhilipsInterface.read_mem/write_mem/reset and by _read_reg/_write_reg so
@@ -187,7 +199,7 @@ class FloppyDiskState(Generic[S]):
 
         Raises:
             SchemaError: A malformed field (the message names its path).
-            ValueError: A drive-count or mounted-disk identity mismatch.
+            SnapshotMismatchError: A drive-count or mounted-disk identity mismatch.
         """
         controller, drives = self.parse_fields(
             check_object(obj, label, _FLOPPY_DISK_STATE_KEYS), label
@@ -199,14 +211,15 @@ class FloppyDiskState(Generic[S]):
     ) -> tuple[S, list[DiskDriveState]]:
         """parse_state() on an object whose key set the caller already
         checked (FloppyDisk's own state adds keys around these two)."""
-        drive_objs = fields["drives"]
-        if not isinstance(drive_objs, list):
-            raise SchemaError(f"{label}.drives must be a list, got {drive_objs!r}")
-        if len(drive_objs) != len(self.drives):
-            raise ValueError(
+        drives_value = fields["drives"]
+        # A list of the wrong length is a well-formed state for another machine
+        # (a mismatch); anything that is not a list is a schema error.
+        if isinstance(drives_value, list) and len(drives_value) != len(self.drives):
+            raise SnapshotMismatchError(
                 f"FDC drive count mismatch in {label}.drives: running has "
-                f"{len(self.drives)} drive(s), saved state has {len(drive_objs)}"
+                f"{len(self.drives)} drive(s), saved state has {len(drives_value)}"
             )
+        drive_objs = check_list(drives_value, f"{label}.drives", len(self.drives))
         controller = self.controller.parse_state(fields["controller"], f"{label}.controller")
         drives: list[DiskDriveState] = []
         for i, drive in enumerate(self.drives):
@@ -225,16 +238,16 @@ class FloppyDiskState(Generic[S]):
             drive.apply_state(state.drives[i])
 
 
-class FloppyDiskBase(Generic[S, C]):
+class FloppyDiskBase(abc.ABC, Generic[S, C]):
     """Base connection-style device: composes FloppyDiskState, declares the
     read_mem/write_mem/reset register-dispatch surface for subclasses to fill in.
 
     PORT-NOTE: is-a half of the has-a/is-a split -- read_mem/write_mem/reset
-      are declared as NotImplementedError for subclasses to fill in (the
-      project's usual interface convention, no abc.ABC anywhere in msx/),
-      while the has-a state (controller, drives, disk_rom) lives on the
-      composed `self.state: FloppyDiskState` instead of directly on this
-      class, exposed here only via read-only properties/thin delegating
+      and the three connection-style save-state hooks are abstract methods
+      for subclasses to fill in (so a subclass missing one fails at
+      construction, not on first call), while the has-a state (controller,
+      drives, disk_rom) lives on the composed `self.state: FloppyDiskState`
+      instead of directly on this class, exposed here only via read-only properties/thin delegating
       methods for external API compatibility (`.controller`, `.drives`,
       `.disk_rom`, `.mount()`, `.swap()`, `.flush()`).
     Rust equivalent: FloppyDiskState -> an owned-state struct; this class's
@@ -299,16 +312,19 @@ class FloppyDiskBase(Generic[S, C]):
         """Flush every mounted image's pending writes back to its file."""
         self.state.flush()
 
+    @abc.abstractmethod
     def _snapshot_connection_style(self) -> C:
         """Connection-style-specific extra state beyond the controller/
         drives FloppyDiskState already captures."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def _parse_connection_style(self, obj: object, label: str) -> C:
         """Validate a _snapshot_connection_style() object without mutating
         anything."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def _apply_connection_style(self, state: C) -> None:
         """Assign a state returned by _parse_connection_style()."""
         raise NotImplementedError
@@ -333,7 +349,7 @@ class FloppyDiskBase(Generic[S, C]):
 
         Raises:
             SchemaError: A malformed field (the message names its path).
-            ValueError: If the snapshot's FdcKind doesn't match this FDC's
+            SnapshotMismatchError: If the snapshot's FdcKind doesn't match this FDC's
                 own kind (e.g. a WD2793/Sony state loaded into a TC8566AF
                 machine, or vice versa), or on a drive-count or mounted-disk
                 identity mismatch.
@@ -347,7 +363,7 @@ class FloppyDiskBase(Generic[S, C]):
                 f"{label}.kind must be an FdcKind value, got {kind_value!r}"
             ) from None
         if saved_kind != self.kind:
-            raise ValueError(
+            raise SnapshotMismatchError(
                 f"FDC kind mismatch: running {self.kind.value!r}, "
                 f"saved {saved_kind.value!r}"
             )
@@ -374,12 +390,15 @@ class FloppyDiskBase(Generic[S, C]):
         """
         self.apply_state(self.parse_state(state, "fdc_state"))
 
+    @abc.abstractmethod
     def read_mem(self, addr: int) -> int:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def write_mem(self, addr: int, value: int) -> None:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def reset(self) -> None:
         raise NotImplementedError
 
@@ -572,7 +591,7 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
         return {}
 
     def _parse_connection_style(self, obj: object, label: str) -> TC8566AFConnectionState:
-        check_object(obj, label, frozenset())
+        check_object(obj, label, _TC8566AF_CONNECTION_KEYS)
         return {}
 
     def _apply_connection_style(self, state: TC8566AFConnectionState) -> None:

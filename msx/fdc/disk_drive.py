@@ -19,11 +19,12 @@ from msx.fdc.disk_image import (
 from msx.snapshot_schema import (
     I64_MAX,
     SchemaError,
+    SnapshotMismatchError,
     check_bool,
     check_int,
     check_object,
     check_optional_int,
-    check_str,
+    check_optional_str,
 )
 
 FORMAT_FILL: int = 0xE5
@@ -47,9 +48,9 @@ class DiskDriveState(TypedDict):
     disk_sha1: str | None
 
 
-_STATE_KEYS: frozenset[str] = frozenset(
-    {"track", "side", "disk_changed", "disk_path", "disk_size", "disk_sha1"}
-)
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(DiskDriveState.__annotations__)
 
 
 class DiskDrive:
@@ -149,7 +150,7 @@ class DiskDrive:
         Raises:
             SchemaError: A missing/unknown key or a value of the wrong type
                 or range, or an identity that is only partly None.
-            ValueError: If exactly one of {a disk is mounted now, a disk was
+            SnapshotMismatchError: If exactly one of {a disk is mounted now, a disk was
                 mounted at snapshot time} is true, or both are mounted but
                 their (path, size, sha1) identity differs.
         """
@@ -157,20 +158,16 @@ class DiskDrive:
         track = check_int(fields["track"], f"{label}.track", 0, 0xFF)
         side = check_int(fields["side"], f"{label}.side", 0, 1)
         disk_changed = check_bool(fields["disk_changed"], f"{label}.disk_changed")
-        disk_path: str | None = None
-        if fields["disk_path"] is not None:
-            disk_path = check_str(fields["disk_path"], f"{label}.disk_path")
+        disk_path = check_optional_str(fields["disk_path"], f"{label}.disk_path")
         disk_size = check_optional_int(fields["disk_size"], f"{label}.disk_size", 1, I64_MAX)
-        disk_sha1: str | None = None
-        if fields["disk_sha1"] is not None:
-            disk_sha1 = check_str(fields["disk_sha1"], f"{label}.disk_sha1")
+        disk_sha1 = check_optional_str(fields["disk_sha1"], f"{label}.disk_sha1")
         has_path = disk_path is not None
         if has_path != (disk_size is not None) or has_path != (disk_sha1 is not None):
             raise SchemaError(
                 f"{label}: disk_path, disk_size and disk_sha1 must be all None or all set"
             )
         if has_path != (self.image is not None):
-            raise ValueError(
+            raise SnapshotMismatchError(
                 f"{label}: disk mount mismatch: "
                 f"running has {'a disk' if self.image is not None else 'no disk'} mounted, "
                 f"saved state has {'a disk' if disk_path is not None else 'no disk'} mounted"
@@ -183,7 +180,7 @@ class DiskDrive:
             )
             saved = (disk_path, disk_size, disk_sha1)
             if current != saved:
-                raise ValueError(
+                raise SnapshotMismatchError(
                     f"{label}: disk mismatch: running {current[0]!r} "
                     f"({current[1]} bytes, sha1 {current[2]}), "
                     f"saved {saved[0]!r} ({saved[1]} bytes, sha1 {saved[2]})"

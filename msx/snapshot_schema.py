@@ -27,10 +27,23 @@ class SchemaError(ValueError):
     """A save-state value that does not match its schema."""
 
 
+class SnapshotMismatchError(ValueError):
+    """A well-formed save state that does not fit the running machine: a
+    different machine type, mapper kind, FDC kind or drive count, slot / FDC /
+    SCC wiring, or a different mounted disk."""
+
+
 def check_int(value: object, label: str, lo: int, hi: int) -> int:
     """Return `value` if it is an int (not a bool) in [lo, hi]."""
     if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
         raise SchemaError(f"{label} must be an int in [{lo}, {hi}], got {value!r}")
+    return value
+
+
+def check_list(value: object, label: str, length: int) -> list[object]:
+    """Return `value` if it is a list of exactly `length` entries."""
+    if not isinstance(value, list) or len(value) != length:
+        raise SchemaError(f"{label} must be a list of {length} entries, got {value!r}")
     return value
 
 
@@ -53,6 +66,13 @@ def check_str(value: object, label: str) -> str:
     if not isinstance(value, str):
         raise SchemaError(f"{label} must be a string, got {value!r}")
     return value
+
+
+def check_optional_str(value: object, label: str) -> str | None:
+    """Return `value` if it is None or a str."""
+    if value is None:
+        return None
+    return check_str(value, label)
 
 
 def check_int_list(value: object, label: str, length: int, lo: int, hi: int) -> list[int]:
@@ -123,6 +143,22 @@ def check_object(
         if missing:
             raise SchemaError(f"{label} is missing keys {sorted(missing)}")
     return cast(dict[str, object], value)
+
+
+def check_optional_bytes(value: object, label: str) -> bytearray | None:
+    """Return `value` if it is None or a byte blob (any length)."""
+    if value is None:
+        return None
+    return check_bytes(value, label)
+
+
+def check_optional_int_list(
+    value: object, label: str, length: int, lo: int, hi: int
+) -> list[int] | None:
+    """Return `value` if it is None or a list of `length` ints in [lo, hi]."""
+    if value is None:
+        return None
+    return check_int_list(value, label, length, lo, hi)
 
 
 def check_optional_object(value: object, label: str) -> dict[str, object] | None:

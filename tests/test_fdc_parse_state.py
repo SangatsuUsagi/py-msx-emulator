@@ -371,3 +371,95 @@ def test_drive_identity_reads_the_mounted_image(tmp_path: Path) -> None:
     fdc.mount(DskDiskImage(other), drive=1)
     with pytest.raises(ValueError, match=r"fdc_state\.drives\[1\].*disk mismatch"):
         fdc.parse_state(snap, "fdc_state")
+
+
+# ---------------------------------------------------------------------------
+# Identity mismatches are SnapshotMismatchError, shape errors SchemaError
+# ---------------------------------------------------------------------------
+
+def _drive_count_mismatch(snap: dict[str, Any]) -> None:
+    snap["drives"] = snap["drives"] + [copy.deepcopy(snap["drives"][0])]
+
+
+def _other_kind(snap: dict[str, Any]) -> None:
+    snap["kind"] = "tc8566af" if snap["kind"] == "wd2793_sony" else "wd2793_sony"
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+@pytest.mark.parametrize("mutate", [_other_kind, _drive_count_mismatch], ids=["kind", "drives"])
+def test_identity_mismatch_is_a_snapshot_mismatch_error(
+    tmp_path: Path, kind: str, mutate: Mutation
+) -> None:
+    from msx.snapshot_schema import SnapshotMismatchError
+
+    fdc = _fdc(tmp_path, kind)
+    snap = _roundtrip(fdc.snapshot())
+    mutate(snap)
+    with pytest.raises(SnapshotMismatchError) as exc_info:
+        fdc.parse_state(snap, "fdc_state")
+    assert not isinstance(exc_info.value, SchemaError)
+
+
+def test_mounted_disk_mismatch_is_a_snapshot_mismatch_error(tmp_path: Path) -> None:
+    from msx.snapshot_schema import SnapshotMismatchError
+
+    fdc = _fdc(tmp_path, "tc8566af")
+    snap = _roundtrip(fdc.snapshot())
+    fdc.mount(None, drive=0)
+    with pytest.raises(SnapshotMismatchError) as exc_info:
+        fdc.parse_state(snap, "fdc_state")
+    assert not isinstance(exc_info.value, SchemaError)
+
+
+@pytest.mark.parametrize("kind", _KINDS)
+def test_drives_that_is_not_a_list_is_a_schema_error(tmp_path: Path, kind: str) -> None:
+    from msx.snapshot_schema import SnapshotMismatchError
+
+    fdc = _fdc(tmp_path, kind)
+    snap = _roundtrip(fdc.snapshot())
+    snap["drives"] = {"0": snap["drives"][0]}
+    with pytest.raises(SchemaError) as exc_info:
+        fdc.parse_state(snap, "fdc_state")
+    assert not isinstance(exc_info.value, SnapshotMismatchError)
+
+
+# ---------------------------------------------------------------------------
+# FloppyDiskBase is abstract
+# ---------------------------------------------------------------------------
+
+_FLOPPY_ABSTRACT = {
+    "read_mem", "write_mem", "reset",
+    "_snapshot_connection_style", "_parse_connection_style", "_apply_connection_style",
+}
+
+
+def test_floppy_disk_base_declares_its_hooks_abstract() -> None:
+    from msx.fdc.interface import FloppyDiskBase
+
+    assert set(FloppyDiskBase.__abstractmethods__) == _FLOPPY_ABSTRACT
+
+
+def test_instantiating_floppy_disk_base_raises_type_error() -> None:
+    from msx.fdc.disk_drive import DiskDrive
+    from msx.fdc.interface import FloppyDiskBase
+    from msx.fdc.wd2793 import WD2793
+
+    drive = DiskDrive()
+    with pytest.raises(TypeError):
+        FloppyDiskBase(WD2793(drive=drive), [drive])  # type: ignore[abstract]
+
+
+@pytest.mark.parametrize("missing", sorted(_FLOPPY_ABSTRACT))
+def test_subclass_missing_one_hook_fails_at_construction(missing: str) -> None:
+    from msx.fdc.disk_drive import DiskDrive
+    from msx.fdc.interface import FloppyDiskBase
+    from msx.fdc.wd2793 import WD2793
+
+    def _hook(self, *args):  # noqa: ANN001, ANN202
+        return None
+
+    body = {name: _hook for name in _FLOPPY_ABSTRACT if name != missing}
+    partial = type("PartialFloppy", (FloppyDiskBase,), body)
+    drive = DiskDrive()
+    with pytest.raises(TypeError, match=missing):
+        partial(WD2793(drive=drive), [drive])

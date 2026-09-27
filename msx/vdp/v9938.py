@@ -310,46 +310,49 @@ def parse_v9938_state(obj: object) -> V9938State:
     """Validate a JSON-decoded `vdp9938` object into a V9938State.
 
     Every value's type and range is checked, and a missing or unknown key is
-    rejected; every rejection raises SchemaError naming the field path. The ranges are the
-    widths the chip and command engine produce (coordinates: SX/DX 9 bits,
-    SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024 lines).
+    rejected; every rejection raises SchemaError naming the field path. The
+    ranges are the widths the chip and command engine produce (coordinates:
+    SX/DX 9 bits, SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024
+    lines).
     """
-    state = check_object(obj, "vdp9938", _STATE_KEYS)
-    engine = check_object(state["cmd_engine"], "vdp9938.cmd_engine", _CMD_ENGINE_KEYS)
+    label = "vdp9938"
+    engine_label = f"{label}.cmd_engine"
+    state = check_object(obj, label, _STATE_KEYS)
+    engine = check_object(state["cmd_engine"], engine_label, _CMD_ENGINE_KEYS)
     cmd_engine: V9938CmdEngineState = {
-        "active": _state_bool(engine, "vdp9938.cmd_engine", "active"),
-        "transfer": _state_bool(engine, "vdp9938.cmd_engine", "transfer"),
-        "code": _state_int(engine, "vdp9938.cmd_engine", "code", 0, 0x0F),
-        "log": _state_int(engine, "vdp9938.cmd_engine", "log", 0, 0x0F),
-        "sx": _state_int(engine, "vdp9938.cmd_engine", "sx", 0, 0x1FF),
-        "sy": _state_int(engine, "vdp9938.cmd_engine", "sy", 0, 0x3FF),
-        "dx": _state_int(engine, "vdp9938.cmd_engine", "dx", 0, 0x1FF),
-        "dy": _state_int(engine, "vdp9938.cmd_engine", "dy", 0, 0x3FF),
-        "nx": _state_int(engine, "vdp9938.cmd_engine", "nx", 0, 0x200),
-        "ny": _state_int(engine, "vdp9938.cmd_engine", "ny", 0, 0x400),
-        "x": _state_int(engine, "vdp9938.cmd_engine", "x", 0, 0x200),
-        "y": _state_int(engine, "vdp9938.cmd_engine", "y", 0, 0x400),
-        "xstep": _state_int(engine, "vdp9938.cmd_engine", "xstep", -1, 1),
-        "ystep": _state_int(engine, "vdp9938.cmd_engine", "ystep", -1, 1),
-        "bpl": _state_int(engine, "vdp9938.cmd_engine", "bpl", 1, 256),
-        "ppb": _state_int(engine, "vdp9938.cmd_engine", "ppb", 1, 8),
-        "bpp": _state_int(engine, "vdp9938.cmd_engine", "bpp", 1, 8),
-        "tr_delay": _state_int(engine, "vdp9938.cmd_engine", "tr_delay", _I32_MIN, _I32_MAX),
+        "active": _state_bool(engine, engine_label, "active"),
+        "transfer": _state_bool(engine, engine_label, "transfer"),
+        "code": _state_int(engine, engine_label, "code", 0, 0x0F),
+        "log": _state_int(engine, engine_label, "log", 0, 0x0F),
+        "sx": _state_int(engine, engine_label, "sx", 0, 0x1FF),
+        "sy": _state_int(engine, engine_label, "sy", 0, 0x3FF),
+        "dx": _state_int(engine, engine_label, "dx", 0, 0x1FF),
+        "dy": _state_int(engine, engine_label, "dy", 0, 0x3FF),
+        "nx": _state_int(engine, engine_label, "nx", 0, 0x200),
+        "ny": _state_int(engine, engine_label, "ny", 0, 0x400),
+        "x": _state_int(engine, engine_label, "x", 0, 0x200),
+        "y": _state_int(engine, engine_label, "y", 0, 0x400),
+        "xstep": _state_int(engine, engine_label, "xstep", -1, 1),
+        "ystep": _state_int(engine, engine_label, "ystep", -1, 1),
+        "bpl": _state_int(engine, engine_label, "bpl", 1, 256),
+        "ppb": _state_int(engine, engine_label, "ppb", 1, 8),
+        "bpp": _state_int(engine, engine_label, "bpp", 1, 8),
+        "tr_delay": _state_int(engine, engine_label, "tr_delay", _I32_MIN, _I32_MAX),
     }
     return {
-        "palette": _state_int_list(state, "vdp9938", "palette", 16, 0, 0x1FF),
-        "cmd_regs": _state_int_list(state, "vdp9938", "cmd_regs", 15, 0, 0xFF),
-        "status1": _state_int(state, "vdp9938", "status1", 0, 0xFF),
-        "status2": _state_int(state, "vdp9938", "status2", 0, 0xFF),
-        "status8": _state_int(state, "vdp9938", "status8", 0, 0xFF),
-        "status9": _state_int(state, "vdp9938", "status9", 0, 0xFF),
-        "cmd_remaining": _state_int(state, "vdp9938", "cmd_remaining", _I32_MIN, _I32_MAX),
+        "palette": _state_int_list(state, label, "palette", 16, 0, 0x1FF),
+        "cmd_regs": _state_int_list(state, label, "cmd_regs", 15, 0, 0xFF),
+        "status1": _state_int(state, label, "status1", 0, 0xFF),
+        "status2": _state_int(state, label, "status2", 0, 0xFF),
+        "status8": _state_int(state, label, "status8", 0, 0xFF),
+        "status9": _state_int(state, label, "status9", 0, 0xFF),
+        "cmd_remaining": _state_int(state, label, "cmd_remaining", _I32_MIN, _I32_MAX),
         "cmd_engine": cmd_engine,
-        "collision_x": _state_int(state, "vdp9938", "collision_x", 0, 0x3FF),
-        "collision_y": _state_int(state, "vdp9938", "collision_y", 0, 0x3FF),
-        "first_byte": _state_int(state, "vdp9938", "first_byte", 0, 0xFF),
-        "control_pending": _state_bool(state, "vdp9938", "control_pending"),
-        "palette_pending": _state_bool(state, "vdp9938", "palette_pending"),
+        "collision_x": _state_int(state, label, "collision_x", 0, 0x3FF),
+        "collision_y": _state_int(state, label, "collision_y", 0, 0x3FF),
+        "first_byte": _state_int(state, label, "first_byte", 0, 0xFF),
+        "control_pending": _state_bool(state, label, "control_pending"),
+        "palette_pending": _state_bool(state, label, "palette_pending"),
     }
 
 
@@ -534,13 +537,11 @@ class V9938:
 
         Single source for the vertical-blanking boundary: Machine.run_frame()
         reads it to decide where to split the frame and render."""
-        return self.display_height
+        return display_height_of(self.regs)
 
     @property
     def display_width(self) -> int:
-        """256 normally; 512 for the wide bitmap modes SCREEN 6 (G5) and
-        SCREEN 7 (G6) (M5 set, M4 clear; SCREEN 8/G7, M5+M4, is 256), and for
-        TEXT2 (M1 and M4 set, M3 clear)."""
+        """Active display width in dots, 256 or 512 (see display_width_of)."""
         return display_width_of(self.regs)
 
     def increment_frame(self) -> None:

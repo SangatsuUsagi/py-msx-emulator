@@ -277,3 +277,86 @@ def test_scc_state_missing_for_an_scc_machine_is_rejected(tmp_path, monkeypatch)
     state_path = _edited(tmp_path, monkeypatch, machine, _set("scc_state", None))
     with pytest.raises(ValueError, match="SCC wiring mismatch"):
         load_state(machine, state_path)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [_set("fdc_state", {}), _set("scc_state", {}), _set("mapper_kind", "konami")],
+)
+def test_machine_mismatches_raise_snapshot_mismatch_error(tmp_path, monkeypatch, edit) -> None:
+    from msx.snapshot_schema import SnapshotMismatchError
+
+    machine = make_machine(_ROM)
+    state_path = _edited(tmp_path, monkeypatch, machine, edit)
+    with pytest.raises(SnapshotMismatchError):
+        load_state(machine, state_path)
+
+
+# ---------------------------------------------------------------------------
+# _validate_snapshot: error kinds and the parsed producers it returns
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"machine_type": "msx2"},
+        {"mapper_kind": "konami"},
+        {"mapper2_kind": "konami"},
+    ],
+    ids=["machine_type", "mapper_kind", "mapper2_kind"],
+)
+def test_validate_snapshot_identity_mismatch_is_not_a_load_error(change) -> None:
+    import dataclasses
+
+    from msx.mapper import MapperKind
+    from msx.snapshot_schema import SchemaError, SnapshotMismatchError
+    from msx.state import _snapshot_from_machine, _validate_snapshot
+
+    machine = make_machine(_ROM)
+    fields = {
+        k: (MapperKind(v) if k.endswith("_kind") else v) for k, v in change.items()
+    }
+    snap = dataclasses.replace(_snapshot_from_machine(machine), **fields)
+    with pytest.raises(SnapshotMismatchError) as exc_info:
+        _validate_snapshot(machine, snap)
+    assert not isinstance(exc_info.value, (StateLoadError, SchemaError))
+
+
+def test_validate_snapshot_version_mismatch_is_a_plain_value_error() -> None:
+    import dataclasses
+
+    from msx.snapshot_schema import SchemaError, SnapshotMismatchError
+    from msx.state import CURRENT_FORMAT_VERSION, _snapshot_from_machine, _validate_snapshot
+
+    machine = make_machine(_ROM)
+    snap = dataclasses.replace(
+        _snapshot_from_machine(machine), format_version=CURRENT_FORMAT_VERSION - 1
+    )
+    with pytest.raises(ValueError, match="incompatible state file: version") as exc_info:
+        _validate_snapshot(machine, snap)
+    assert not isinstance(
+        exc_info.value, (SnapshotMismatchError, StateLoadError, SchemaError)
+    )
+
+
+@pytest.mark.parametrize("mapper", ["auto", "KonamiSCC"])
+def test_validate_snapshot_pairs_each_parsed_state_with_its_producer(mapper) -> None:
+    from msx.state import _snapshot_from_machine, _validate_snapshot
+
+    cartridge = None if mapper == "auto" else bytes(65536)
+    machine = make_machine(_ROM, cartridge=cartridge, mapper=mapper)
+    before = _producer_fingerprint(machine)
+    snap = _snapshot_from_machine(machine)
+
+    parsed = _validate_snapshot(machine, snap)
+
+    assert [producer for producer, _ in parsed.mappers] == [
+        machine.memory._mapper, machine.memory._mapper2,
+    ]
+    assert dict(parsed.psg_synth) == dict(machine.psg.snapshot_synth())
+    if machine.scc is None:
+        assert parsed.scc is None
+    else:
+        assert dict(parsed.scc) == dict(machine.scc.snapshot())
+    assert parsed.fdc is None
+    assert _producer_fingerprint(machine) == before  # validating writes nothing

@@ -15,7 +15,6 @@ from msx.snapshot_schema import check_bytes, check_int_list, check_object
 
 _BANK_SIZE = 0x4000  # 16 KB
 _DEFAULT_SIZE_KB = 128  # 8 banks, matching every machine before size became configurable
-_STATE_KEYS: frozenset[str] = frozenset({"banks", "ram"})
 
 
 class RamMapperState(TypedDict):
@@ -23,6 +22,11 @@ class RamMapperState(TypedDict):
 
     banks: list[int]
     ram: bytearray
+
+
+# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
+#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+_STATE_KEYS: frozenset[str] = frozenset(RamMapperState.__annotations__)
 
 
 @dataclass
