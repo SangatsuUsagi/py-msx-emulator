@@ -552,17 +552,17 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
     reg_count = _V9938_REG_COUNT if msx2 else _TMS_REG_COUNT
     addr_max = vram_size - 1
 
-    def top(key: str, check: Callable[[object, str], _T]) -> _T:
+    def parse_field(key: str, check: Callable[[object, str], _T]) -> _T:
         # A field with no value in the file (only the defaulted, MSX2- or
         # expansion-only ones pass _check_snapshot_keys) reads as None, the
         # stand-in for serde's #[serde(default)].
         return _field(key, lambda: check(data.get(key), key))
 
     def byte(key: str) -> int:
-        return top(key, lambda v, k: check_int(v, k, 0, 0xFF))
+        return parse_field(key, lambda v, k: check_int(v, k, 0, 0xFF))
 
     def opt_byte(key: str) -> int | None:
-        return top(key, lambda v, k: check_optional_int(v, k, 0, 0xFF))
+        return parse_field(key, lambda v, k: check_optional_int(v, k, 0, 0xFF))
 
     vdp_latch = opt_byte("vdp_latch")
     # Raw pre-parse values, only to check presence for _parse_paired_states
@@ -573,46 +573,48 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type=machine_type,
-        cpu_regs=top("cpu_regs", lambda v, k: _parse_cpu_regs(v)),
-        cpu_halted=top("cpu_halted", check_bool),
-        cpu_iff1=top("cpu_iff1", check_bool),
-        cpu_iff2=top("cpu_iff2", check_bool),
-        cpu_int_pending=top("cpu_int_pending", check_bool),
-        cpu_nmi_pending=top("cpu_nmi_pending", check_bool),
-        cpu_im=top("cpu_im", lambda v, k: check_int(v, k, 0, 2)),
-        ram=top("ram", lambda v, k: check_bytes(v, k)),
+        cpu_regs=parse_field("cpu_regs", lambda v, k: _parse_cpu_regs(v)),
+        cpu_halted=parse_field("cpu_halted", check_bool),
+        cpu_iff1=parse_field("cpu_iff1", check_bool),
+        cpu_iff2=parse_field("cpu_iff2", check_bool),
+        cpu_int_pending=parse_field("cpu_int_pending", check_bool),
+        cpu_nmi_pending=parse_field("cpu_nmi_pending", check_bool),
+        cpu_im=parse_field("cpu_im", lambda v, k: check_int(v, k, 0, 2)),
+        ram=parse_field("ram", lambda v, k: check_bytes(v, k)),
         slot_register=byte("slot_register"),
-        mapper_kind=top("mapper_kind", _parse_mapper_kind),
-        mapper_state=top("mapper_state", lambda v, k: check_object(v, k)),
-        mapper2_kind=top("mapper2_kind", _parse_mapper_kind),
-        mapper2_state=top("mapper2_state", lambda v, k: check_object(v, k)),
-        vdp_vram=top("vdp_vram", lambda v, k: check_bytes(v, k, vram_size)),
-        vdp_regs=top("vdp_regs", lambda v, k: check_int_list(v, k, reg_count, 0, 0xFF)),
+        mapper_kind=parse_field("mapper_kind", _parse_mapper_kind),
+        mapper_state=parse_field("mapper_state", lambda v, k: check_object(v, k)),
+        mapper2_kind=parse_field("mapper2_kind", _parse_mapper_kind),
+        mapper2_state=parse_field("mapper2_state", lambda v, k: check_object(v, k)),
+        vdp_vram=parse_field("vdp_vram", lambda v, k: check_bytes(v, k, vram_size)),
+        vdp_regs=parse_field("vdp_regs", lambda v, k: check_int_list(v, k, reg_count, 0, 0xFF)),
         vdp_status=byte("vdp_status"),
         vdp_latch=vdp_latch,
-        vdp_addr=top("vdp_addr", lambda v, k: check_int(v, k, 0, addr_max)),
+        vdp_addr=parse_field("vdp_addr", lambda v, k: check_int(v, k, 0, addr_max)),
         vdp_read_buf=byte("vdp_read_buf"),
-        vdp_frame_count=top("vdp_frame_count", lambda v, k: check_int(v, k, 0, I64_MAX)),
-        psg_regs=top("psg_regs", lambda v, k: check_int_list(v, k, _PSG_REG_COUNT, 0, 0xFF)),
-        psg_latch=top("psg_latch", lambda v, k: check_int(v, k, 0, 0x0F)),
-        psg_synth=top("psg_synth", lambda v, k: check_object(v, k)),
-        scc_state=top("scc_state", check_optional_object),
-        vdp9938=top("vdp9938", lambda v, k: _parse_vdp9938(v, msx2, vdp_latch)),
-        ram_mapper_ram=top("ram_mapper_ram", check_optional_bytes),
-        ram_mapper_banks=top(
+        vdp_frame_count=parse_field("vdp_frame_count", lambda v, k: check_int(v, k, 0, I64_MAX)),
+        psg_regs=parse_field(
+            "psg_regs", lambda v, k: check_int_list(v, k, _PSG_REG_COUNT, 0, 0xFF)
+        ),
+        psg_latch=parse_field("psg_latch", lambda v, k: check_int(v, k, 0, 0x0F)),
+        psg_synth=parse_field("psg_synth", lambda v, k: check_object(v, k)),
+        scc_state=parse_field("scc_state", check_optional_object),
+        vdp9938=parse_field("vdp9938", lambda v, k: _parse_vdp9938(v, msx2, vdp_latch)),
+        ram_mapper_ram=parse_field("ram_mapper_ram", check_optional_bytes),
+        ram_mapper_banks=parse_field(
             "ram_mapper_banks",
             lambda v, k: check_optional_int_list(v, k, _RAM_MAPPER_PAGES, 0, 0xFF),
         ),
         sub_slot_reg=opt_byte("sub_slot_reg"),
-        fdc_state=top("fdc_state", check_optional_object),
+        fdc_state=parse_field("fdc_state", check_optional_object),
         slot2_sub_slot_reg=opt_byte("slot2_sub_slot_reg"),
-        mapper2_subslot_kinds=top("mapper2_subslot_kinds", _parse_subslot_kinds),
-        mapper2_subslot_states=top(
+        mapper2_subslot_kinds=parse_field("mapper2_subslot_kinds", _parse_subslot_kinds),
+        mapper2_subslot_states=parse_field(
             "mapper2_subslot_states", lambda v, k: _parse_paired_states(mapper2_kinds, v, k)
         ),
         slot1_sub_slot_reg=opt_byte("slot1_sub_slot_reg"),
-        mapper1_subslot_kinds=top("mapper1_subslot_kinds", _parse_subslot_kinds),
-        mapper1_subslot_states=top(
+        mapper1_subslot_kinds=parse_field("mapper1_subslot_kinds", _parse_subslot_kinds),
+        mapper1_subslot_states=parse_field(
             "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
         ),
     )
