@@ -11,8 +11,22 @@ by machine-readable component specifications.
 
 ---
 
+Every hardware component is pure Python and defined by a machine-readable
+specification before it is implemented, and those specs drive the test suite.
+See [Spec-driven architecture](#spec-driven-architecture) for how. Component
+wiring is explicit, done by hand in `build_machine()` with no reflection or
+dependency-injection magic. The only platform-specific dependency is pysdl2,
+for the display and audio frontend.
+[`docs/technical-implementation.md`](docs/technical-implementation.md) walks
+through the internals.
+
+### Verified hardware and software
+
 This emulator has only been verified against the following hardware and
-software owned by the author.
+software owned by the author. It has only been tested against physical
+ROM/disk dumps the author owns, so other MSX1 or MSX2 titles are not
+guaranteed to work. Bug reports for other titles are welcome, but support is
+best-effort.
 
 **Hardware:**
 
@@ -34,28 +48,13 @@ software owned by the author.
   - [Dragon Slayer VI - The Legend of Heroes (ドラゴンスレイヤー英雄伝説) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-vi-the-legend-of-heroes/1387)
   - [Letter Writer: Print Like Handwriting (はがき書右衛門) by Sony](https://generation-msx.nl/software/sony-corporation/letter-writer-print-like-handwriting/1181)
 
-It has only been tested against physical ROM/disk dumps owned by the author, so
-other MSX1 or MSX2 titles are not guaranteed to work. Bug reports for other
-titles are welcome, but support is best-effort.
-
-Every hardware component is pure Python and is defined by a machine-readable
-specification before it is implemented, and those specs drive the test suite —
-see [Spec-driven architecture](#spec-driven-architecture). Component wiring is
-explicit — done by hand in `build_machine()`, with no reflection or
-dependency-injection magic. The only platform-specific dependency is pysdl2,
-for the display and audio frontend.
-[`docs/technical-implementation.md`](docs/technical-implementation.md) walks
-through the internals.
-
 ---
 
 ## Contents
 
 - [Emulated hardware](#emulated-hardware)
 - [Spec-driven architecture](#spec-driven-architecture)
-- [Requirements](#requirements)
 - [Performance](#performance)
-- [BIOS setup](#bios-setup)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Tools](#tools)
@@ -94,7 +93,7 @@ default 0 keeps the core a pure Zilog Z80).
     except by the block I/O flag routine, so `PUSH AF`/`POP AF`/`EX AF,AF'`
     do not round-trip them.
 
-### VDP — TMS9918A (MSX1)
+### VDP (Video Display Processor) — TMS9918A (MSX1)
 
 16 KB VRAM, 8 control registers, Screen modes 0–3 (Text 40-col, Graphic 1,
 Graphic 2, Multicolor), sprite rendering with size/magnification, 5th-sprite and
@@ -139,16 +138,16 @@ mid-frame register and palette changes.
     on a skipped frame, so a ROM polling collision during turbo mode sees
     stale (last-rendered-frame) status.
 
-### PSG — AY-3-8910
+### PSG (Programmable Sound Generator) — AY-3-8910
 
 16 registers, 3 tone channels, a noise channel, an envelope generator with 8
 waveform shapes, a measured-silicon amplitude table (derived from ayumi's
 oscilloscope-measured AY-3-8910 DAC curve, rather than an idealised geometric
-one), and 44100 Hz PCM output at 735 samples/frame. **Sub-frame software-PCM** reproduction cycle-timestamps
-volume-register writes and replays them at their in-frame sample positions; the
-tone generator is integrated over each output sample, so an ultrasonic period-0
-PCM carrier is band-limited to its duty average instead of aliasing to a
-full/zero chop.
+one), and 44100 Hz PCM output at 735 samples/frame. **Sub-frame software-PCM**
+reproduction cycle-timestamps volume-register writes and replays them at their
+in-frame sample positions; the tone generator is integrated over each output
+sample, so an ultrasonic period-0 PCM carrier is band-limited to its duty
+average instead of aliasing to a full/zero chop.
 
 - Implementation: `msx/psg.py`
 
@@ -216,7 +215,13 @@ top cymbal, hi-hat), mixed into the audio output alongside PSG/SCC.
 | I/O ports | `0x7C`/`0x7D`, gated by the enable register's bit 0 |
 | SRAM persistence | `saves/sram/fmpac.sram`, loaded on start and saved on exit |
 | OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
-| Known limitations | <ul><li>Output rate conversion uses an accumulate-and-average decimator (chip clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the analog-style low-pass cleans up the residual imaging.</li><li>Only the YM2413 instrument set is included (no VRC7 / YMF281 banks).</li><li>No channel masking / stereo pan.</li></ul> |
+
+- Known limitations:
+  - Output rate conversion uses an accumulate-and-average decimator (chip
+    clk/72 → 44100 Hz) rather than emu2413's windowed-sinc resampler; the
+    analog-style low-pass cleans up the residual imaging.
+  - Only the YM2413 instrument set is included (no VRC7 / YMF281 banks).
+  - No channel masking / stereo pan.
 
 ### Sony HBI-J1 — Kanji-ROM + MSX-JE word processor
 
@@ -246,13 +251,13 @@ hardware, not just documentation.
 
 ### Audio output filter
 
-An analog-style output low-pass (2-pole Butterworth) models the RC filter on real
-MSX audio out, removing residual imaging/aliasing from the mixed PSG/SCC/DAC/OPLL
-signal.
+An analog-style output low-pass (2-pole Butterworth) models the RC filter on
+real MSX audio out, removing residual imaging/aliasing from the mixed
+PSG/SCC/DAC/OPLL signal.
 
 - Implementation: `msx/audio_filter.py`
 
-### PPI — Intel i8255
+### PPI (Programmable Peripheral Interface) — Intel i8255
 
 Slot-select register (port 0xA8), the 11-row × 8-bit MSX keyboard matrix (port
 0xA9), and row selection (port 0xAA).
@@ -309,7 +314,7 @@ battery-backed CMOS RAM (blocks 2/3) and 12/24-hour mode encoding
 Flat (no bank switching), ASCII8, ASCII16, Konami, KonamiSCC, Majutsushi (DAC),
 ASCII8SRAM2/8, ASCII16SRAM2/8, R-Type, a fixed-page mapper (Page2/0x4000/0x8000),
 KoeiSRAM32, and GameMaster2, auto-detected from a SHA1-based ROM database.
-Override with `--mapper`/`--mapper1` (slot 1) or `--mapper2` (slot 2) — both
+Override with `--mapper`/`--mapper1` (slot 1) or `--mapper2` (slot 2); both
 accept the identical type list.
 
 | Mapper | Description |
@@ -339,8 +344,8 @@ both slots resolve to `KonamiSCC` at once, or if one slot resolves to
 
 ### Floppy disk drive (WD2793)
 
-Generic FDC layer (disk image / drive / controller / connection-style interface)
-with a WD2793 controller and Sony/Philips connection style, as used by the Sony
+Generic FDC (Floppy Disk Controller) layer (disk image / drive / controller /
+connection-style interface) with a WD2793 controller and Sony/Philips connection style, as used by the Sony
 HB-F1XD. Registers are memory-mapped in slot 3 sub-slot 0; `*.dsk` images mount
 via `--fdd1`. Supports Disk BASIC boot, `CALL FORMAT`, and file read/write with
 write-back on exit; disks can be swapped at runtime from the debugger REPL
@@ -405,7 +410,17 @@ Range-based port registration; reads/writes dispatched to the registered handler
 | Keyboard | `msx/input.py`; 11 rows × 8 bits, active-low, per MSX Technical Handbook |
 | Physical joystick | `msx/joystick.py`; SDL2 GameController (preferred) + raw joystick fallback; hot-plug/unplug |
 | Keyboard emulation | WASD = Joy1 directions; Z/X or ,/. = Trigger A/B; arrow keys also mapped. Each function's key is overridable via `keyboard_joystick.buttons` in `py_emulator.yaml` |
-| Known limitations | <ul><li>The MSX numeric keypad (matrix rows 9-10) has no host-key binding.</li><li>Key ghosting (inherent to the diode-less matrix) is not modelled.</li><li>Joystick Type A vs Type B (pin 7 second-trigger) detection is not modelled — every port behaves as Type B.</li><li>On macOS with a JIS keyboard, SDL2 can misdetect the host layout as US right after launch. If symbol keys behave oddly on a JIS machine (e.g. `cbios_msx2_jp`), switching the input source away and back once (⌘+Space) usually fixes it — this is an SDL2/macOS quirk outside this project's control.</li></ul> |
+
+- Known limitations:
+  - The MSX numeric keypad (matrix rows 9-10) has no host-key binding.
+  - Key ghosting (inherent to the diode-less matrix) is not modelled.
+  - Joystick Type A vs Type B (pin 7 second-trigger) detection is not
+    modelled — every port behaves as Type B.
+  - On macOS with a JIS keyboard, SDL2 can misdetect the host layout as US
+    right after launch. If symbol keys behave oddly on a JIS machine (e.g.
+    `cbios_msx2_jp`), switching the input source away and back once
+    (⌘+Space) usually fixes it — this is an SDL2/macOS quirk outside this
+    project's control.
 
 ### Mouse
 
@@ -422,7 +437,13 @@ trackball. Left/right buttons drive the port's trigger A/B lines.
 | Implementation | `msx/mouse.py` (protocol state machine), `msx/psg.py` (register 14/15 wiring) |
 | Enable | `--mouse[=1\|2]` (CLI) or `mouse.enabled`/`mouse.port` in `py_emulator.yaml`; the CLI flag always overrides the config file |
 | Host input | SDL relative-mouse mode (cursor hidden and locked to the window); motion is scaled to the window's integer `--scale` factor |
-| Known limitations | <ul><li>The NYYRIKKI/Prodatron extended protocol (higher resolution, wheel, extra buttons) is not implemented.</li><li>Absolute positioning is not implemented.</li><li>The real mouse's click-and-hold joystick-emulation mode is not implemented.</li></ul> |
+
+- Known limitations:
+  - The NYYRIKKI/Prodatron extended protocol (higher resolution, wheel,
+    extra buttons) is not implemented.
+  - Absolute positioning is not implemented.
+  - The real mouse's click-and-hold joystick-emulation mode is not
+    implemented.
 
 ### SDL2 frontend
 
@@ -470,9 +491,7 @@ detector.
 
 ## Spec-driven architecture
 
-Every hardware component in this emulator is defined by a machine-readable
-specification written before any code is produced. This project was implemented
-using [Claude Code](https://claude.ai/code) and
+This project was implemented using [Claude Code](https://claude.ai/code) and
 [OpenSpec](https://openspec.dev/).
 
 Since v2.5.0, [Allium](https://juxt.github.io/allium/) is used alongside
@@ -506,22 +525,6 @@ follows.
 
 ---
 
-## Requirements
-
-- **Python 3.10 or later**
-- **SDL2 native library** — installed separately from pysdl2
-
-| Package | Minimum version | Purpose |
-| --- | --- | --- |
-| Pillow | 12.0 | PNG export for screenshots and state saves |
-| pysdl2 | 0.9.16 | SDL2 bindings for the display/audio frontend |
-| PyYAML | 6.0 | ROM database title lookup and machine YAML loading (graceful fallback if absent) |
-
-Development dependencies (pytest, ruff, mypy) are in `requirements-dev.txt`.
-This project is not published to PyPI.
-
----
-
 ## Performance
 
 Measured with the `--benchmark` CLI flag: a headless run, unthrottled (no
@@ -552,7 +555,7 @@ score.
 | Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 314.82 | ~5.2× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
-Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
+Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper, the
 heaviest rendering/audio load among the target titles) at ~1.2×; PyPy raises the
 same case to ~6.0×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
@@ -590,61 +593,10 @@ throughput and does not improve audio quality on slow hardware.
 
 ---
 
-## BIOS setup
-
-This emulator does not bundle a BIOS ROM. You must supply one yourself.
-
-**C-BIOS** is a free, open-source MSX BIOS replacement and the recommended
-choice:
-
-1. Download the latest release from
-   [https://cbios.sourceforge.net/](https://cbios.sourceforge.net/)
-2. Extract the archive and copy the relevant files into `roms/cbios/` in this
-   repository.
-
-For MSX1 (`cbios_msx1_jp`, the default when a known MSX1 cartridge is detected):
-
-- `cbios_main_msx1_jp.rom`
-- `cbios_logo_msx1.rom`
-
-For MSX2 (`cbios_msx2_jp`, the default when no cartridge or an MSX2 cartridge is
-given):
-
-- `cbios_main_msx2.rom`
-- `cbios_logo_msx2.rom`
-- `cbios_sub.rom`
-
-The required filenames for each machine ID are listed in the corresponding YAML
-under `config/machines/`.
-
-> **Legal note:** MSX BIOS files are copyrighted. Only use a file you dumped
-> yourself, from a real MSX machine you own of the corresponding model.
-> C-BIOS is the recommended free and legal alternative. The `roms/` directory is excluded from version
-> control by `.gitignore`.
-
----
-
 ## Installation
 
-```bash
-git clone https://github.com/SangatsuUsagi/py-msx-emulator.git
-cd py-msx-emulator
-
-# Install SDL2 native library
-# macOS:
-brew install sdl2
-# Ubuntu / Debian:
-sudo apt install libsdl2-2.0-0
-
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-Supported platforms are macOS and Linux (Ubuntu). Windows is untested; if you
-try it, add `pysdl2-dll` to the installed packages in place of the system SDL2
-library.
+See [QUICK_START.md](QUICK_START.md) for requirements, installation steps, and
+BIOS setup.
 
 ---
 
@@ -653,9 +605,6 @@ library.
 ### Running the emulator
 
 ```bash
-# MSX BASIC only — default machine (cbios_msx2_jp, no cartridge)
-python .
-
 # With a cartridge — machine auto-detected from ROM database
 python . path/to/game.rom
 
