@@ -122,6 +122,28 @@ def test_scc_mode_not_affected_by_window3_write(mapper: KonamiSCCMapper) -> None
 
 
 # ---------------------------------------------------------------------------
+# reset()
+# ---------------------------------------------------------------------------
+
+def test_reset_restores_bank_registers_and_disables_scc_mode(
+    mapper: KonamiSCCMapper,
+) -> None:
+    mapper.write(0x5000, 4)
+    mapper.write(0x9000, 0x3F)  # enables SCC mode; page-select masks 0x3F to 7
+    assert mapper._banks == [4, 1, 7, 3]
+    assert mapper._scc_mode is True
+
+    mapper.reset()
+
+    assert mapper._banks == [0, 1, 2, 3]
+    assert mapper._scc_mode is False
+    assert mapper.read(0x4000) == 0
+    # 0x9800 is back to ordinary window-2 ROM content (page 2), not
+    # forwarded to the SCC chip.
+    assert mapper.read(0x9800) == 2
+
+
+# ---------------------------------------------------------------------------
 # SCC register routing
 # ---------------------------------------------------------------------------
 

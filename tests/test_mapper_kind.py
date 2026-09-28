@@ -12,6 +12,7 @@ from msx.mapper import (
     Ascii16Mapper,
     Ascii16Sram2Mapper,
     Ascii16Sram8Mapper,
+    BankTracingMapper,
     FixedPageMapper,
     FlatMapper,
     GameMaster2Mapper,
@@ -27,6 +28,28 @@ from msx.mapper import (
     mapper_kind_display_name,
 )
 from msx.ram_mapper import RamMapper
+
+# Every _ALL_MAPPER_CLASSES member that subclasses BankTracingMapper (directly
+# or via an intermediate class/mixin). FlatMapper and FixedPageMapper subclass
+# _NoStateMapperMixin instead -- a different no-op, not BankTracingMapper's --
+# and RamMapper/FmPac are unrelated device classes that merely structurally
+# satisfy the Mapper protocol, so none of those three are in scope here.
+_BANK_TRACING_MAPPER_SUBCLASSES: tuple[type[Mapper], ...] = (
+    Ascii8Mapper,
+    Ascii16Mapper,
+    Ascii8Sram2Mapper,
+    Ascii8Sram8Mapper,
+    KoeiSRAM32Mapper,
+    GameMaster2Mapper,
+    Ascii16Sram2Mapper,
+    Ascii16Sram8Mapper,
+    RTypeMapper,
+    KonamiMapper,
+    MajutsushiMapper,
+    KonamiSCCMapper,
+    SCCICart,
+    HalnoteMapper,
+)
 
 # Every concrete Mapper(Protocol)-conforming class, including FmPac (which
 # structurally satisfies Mapper via machine.memory._mapper2, see
@@ -114,19 +137,49 @@ def test_has_sram_matches_the_known_sram_carrying_set() -> None:
         )
 
 
-def test_reset_does_not_raise_on_a_mapper_with_no_reset_affected_state() -> None:
-    # Machine.reset() does not touch bank-switching ROM mapper registers
-    # today (see machine-core's "Machine reset restores power-on state"),
-    # so the Mapper protocol's reset() default is a deliberate no-op for
-    # these -- confirm it is callable and genuinely inert.
+def test_reset_does_not_raise_on_a_mapper_with_no_bank_state() -> None:
+    # FlatMapper has no bank registers at all, so the Mapper protocol's
+    # reset() default (the shared no-op) is genuinely correct for it --
+    # confirm it is callable and inert.
     flat = FlatMapper(cartridge=None)
     flat.reset()
 
+
+def test_reset_restores_ascii8_bank_registers_to_power_on_values() -> None:
+    # Every bank-switching mapper now restores its bank registers on
+    # reset() -- an explicit emulation-policy choice (this project treats
+    # the slot reset signal as reaching every cartridge mapper's own reset
+    # input; see openspec/changes/wire-cartridge-mapper-and-ppi-reset and
+    # cart-rom-mapper's "Bank-switching mapper reset restores power-on
+    # state"), reversing this project's earlier no-op position.
     ascii8 = Ascii8Mapper(rom=bytes(range(256)) * 128)
     ascii8.write(0x6000, 3)
-    banks_before = list(ascii8._banks)
+    assert ascii8._banks != [0, 0, 0, 0]
     ascii8.reset()
-    assert ascii8._banks == banks_before
+    assert ascii8._banks == [0, 0, 0, 0]
+
+
+def test_bank_tracing_mapper_subclass_list_covers_every_other_mapper_class() -> None:
+    # Keeps _BANK_TRACING_MAPPER_SUBCLASSES honest as new mapper classes are
+    # added: every _ALL_MAPPER_CLASSES member is either in that list, or is
+    # one of the three known exceptions (see its own comment above).
+    other = {FlatMapper, FixedPageMapper, RamMapper, FmPac}
+    assert set(_ALL_MAPPER_CLASSES) == set(_BANK_TRACING_MAPPER_SUBCLASSES) | other
+
+
+def test_every_banktracingmapper_subclass_overrides_reset() -> None:
+    # BankTracingMapper.reset() is a no-op fallback for a subclass with
+    # genuinely no reset-affected state -- but every current subclass does
+    # carry bank-register (or other power-on) state, so none may silently
+    # fall back to it. A class that forgets to override reset() when adding
+    # bank-register state would otherwise fail *silently* (reset() simply
+    # does nothing): this closes that gap at test time, standing in for the
+    # compile-time check a non-defaulted trait method would give in a future
+    # Rust/C++ port.
+    for cls in _BANK_TRACING_MAPPER_SUBCLASSES:
+        assert cls.reset is not BankTracingMapper.reset, (
+            f"{cls.__name__} inherits BankTracingMapper's no-op reset() unchanged"
+        )
 
 
 def test_save_sram_is_a_no_op_when_has_sram_is_false(tmp_path) -> None:

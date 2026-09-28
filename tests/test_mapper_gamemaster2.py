@@ -225,3 +225,36 @@ class TestSramConstruction:
         m.save_sram(p)
         assert p.read_bytes()[0x100] == 0x42
         assert len(p.read_bytes()) == 8192
+
+
+class TestReset:
+    def test_reset_restores_bank_registers_and_disables_sram(self):
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        m.write(0x6000, 0x05)
+        m.write(0x8000, 0x06)
+        m.write(0xA000, 0x10)  # window 3: SRAM enabled
+        assert m._banks == [0, 0x05, 0x06, 0x10]
+        assert m._sram_enabled is True
+
+        m.reset()
+
+        assert m._banks == [0, 1, 2, 3]
+        assert m._sram_enabled is False
+        assert m.read(0x6010) == _rom_byte(1, 0x10)
+        assert m.read(0x8010) == _rom_byte(2, 0x10)
+        assert m.read(0xA010) == _rom_byte(3, 0x10)
+        # 0xB000-0xBFFF writes no longer reach SRAM once disabled.
+        m.write(0xB100, 0x99)
+        assert m.sram[0x100] != 0x99
+
+    def test_reset_does_not_erase_sram_contents(self):
+        m = GameMaster2Mapper(rom=_ROM_128K)
+        m.write(0xA000, 0x10)  # window 3: SRAM enabled
+        m.write(0xB100, 0x42)
+        assert m.sram[0x100] == 0x42
+
+        m.reset()
+
+        assert m.sram[0x100] == 0x42  # contents survive
+        m.write(0xA000, 0x10)  # re-enable SRAM
+        assert m.read(0xA100) == 0x42  # previously-written byte visible again

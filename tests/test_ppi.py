@@ -181,3 +181,27 @@ def test_write_control_port_masks_before_decoding() -> None:
     ppi = make_ppi()
     ppi.write_port(0xAB, 0x10D)  # 0x10D & 0xFF == 0x0D -> bit-set, index 6, value 1
     assert ppi.read_port(0xAA) & (1 << 6)
+
+
+# --- allium/ppi.allium: rule Reset (openspec/changes/
+# wire-cartridge-mapper-and-ppi-reset) -----------------------------------
+
+def test_reset_restores_control_word_to_post_reset_default() -> None:
+    ppi = make_ppi()
+    ppi.write_port(0xAB, 0x82)  # a mode-set word other than 0x9B
+
+    ppi.reset()
+
+    assert ppi.read_port(0xAB) == 0x9B
+
+
+def test_reset_clears_port_c() -> None:
+    input_state = InputState()
+    input_state.matrix[0] = 0xFE  # row 0: distinct from every other row's 0xFF
+    ppi = make_ppi(input_state=input_state)
+    ppi.write_port(0xAA, 0x43)  # CAPS LED bit + row 3 selected
+
+    ppi.reset()
+
+    assert ppi.read_port(0xAA) == 0x00
+    assert ppi.read_port(0xA9) == 0xFE  # row selection back to 0

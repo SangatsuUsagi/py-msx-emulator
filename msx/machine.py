@@ -11,9 +11,10 @@ from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
 from msx.kanji import KanjiRom
-from msx.mapper import HalnoteMapper, MajutsushiMapper, SCCICart
+from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import MouseDevice
+from msx.ppi import PPI
 from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.vdp._geometry import VideoStandard
@@ -88,6 +89,7 @@ class Machine:
     fmpac: "FmPac | None" = field(default=None, repr=False)
     halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
+    ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
     video_standard: VideoStandard = VideoStandard.NTSC
@@ -177,17 +179,22 @@ class Machine:
 
     def reset(self) -> None:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
-        present), VDP, FDC (if present), Kanji ROM (if present), Halnote
-        cartridge (if present), the RAM mapper (if present, in either its
-        slot-3 or its expanded-slot-2-sub-slot placement), and the
-        primary/secondary slot registers. Memory/VRAM contents are retained."""
+        present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
+        present), the primary/secondary slot registers, the RAM mapper (if
+        present, in either its slot-3 or its expanded-slot-2-sub-slot
+        placement), and every `Mapper` -- `memory._mapper`, `memory._mapper2`,
+        and every non-`None` entry of an expanded slot's per-sub-slot array
+        (this also covers a present Halnote cartridge, which only ever lives
+        in one of those sub-slot entries). Memory/VRAM contents are retained.
+
+        Every `Mapper` is reset unconditionally regardless of whether a given
+        real cartridge's bank-select hardware is actually wired to the slot
+        reset signal -- rationale in openspec/changes/
+        wire-cartridge-mapper-and-ppi-reset."""
         self.cpu.reset()
         self.psg.reset()
         if self.scc is not None:
             self.scc.reset()
-            for mapper in (self.memory._mapper, self.memory._mapper2):
-                if isinstance(mapper, SCCICart):
-                    mapper.resync_scc_mode()
         if self.fmpac is not None:
             self.fmpac.reset()
         self.vdp.reset()
@@ -195,6 +202,8 @@ class Machine:
             self.fdc.reset()
         if self.kanji is not None:
             self.kanji.reset()
+        if self.ppi is not None:
+            self.ppi.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).
         self.memory.set_slot_register(0x00)
         self.memory.set_sub_slot_reg(0x00)
@@ -202,6 +211,8 @@ class Machine:
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
+        self.memory._mapper.reset()
+        self.memory._mapper2.reset()
         # halnote_cart (when present) is always also one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
         # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
