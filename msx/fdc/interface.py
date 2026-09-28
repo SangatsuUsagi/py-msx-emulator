@@ -250,6 +250,14 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
       instead of directly on this class, exposed here only via read-only properties/thin delegating
       methods for external API compatibility (`.controller`, `.drives`,
       `.disk_rom`, `.mount()`, `.swap()`, `.flush()`).
+    This is the one place in msx/ using abc.ABC/abstractmethod rather than
+      the Protocol + NotImplementedError convention every other interface
+      here follows (Mapper, FdcController, VdpDevice): those are satisfied
+      structurally by classes selected at runtime from config, with nothing
+      to construct against ahead of time, whereas this base's two concrete
+      subclasses (SonyPhilipsInterface, TC8566AFInterface) are its only
+      intended subclasses, so failing at construction is a real benefit
+      worth the deviation.
     Rust equivalent: FloppyDiskState -> an owned-state struct; this class's
       read_mem/write_mem/reset -> a `FloppyInterface` trait each concrete
       connection-style struct implements, holding a `FloppyDiskState` field.
