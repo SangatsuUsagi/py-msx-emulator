@@ -197,6 +197,24 @@ class TestAscii8Sram2:
         m.write(0x7800, _SRAM_BANK)
         assert len(m._banks) == 4
 
+    def test_reset_restores_bank_registers_without_erasing_sram(self):
+        # Inherited from Ascii8Mapper via _WindowedRomMapperMixin.reset() --
+        # no override in this class. Bank registers reset to 0; sram
+        # contents survive.
+        m = Ascii8Sram2Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        m.write(0x8000 + 0x200, 0x55)
+        assert m._banks == [0, 0, _SRAM_BANK, 0]
+
+        m.reset()
+
+        assert m._banks == [0, 0, 0, 0]
+        assert m.read(0x4000) == _ROM_16K[0]  # window 0 back to ROM page 0
+        assert m.sram[0x200] == 0x55  # SRAM contents untouched
+
+        m.write(0x7000, _SRAM_BANK)  # re-select SRAM for window 2
+        assert m.read(0x8000 + 0x200) == 0x55  # previously-written byte visible again
+
 
 # ---------------------------------------------------------------------------
 # Ascii8Sram8Mapper

@@ -2186,6 +2186,7 @@ def _build_msx1(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
         video_standard=spec.video_standard,
+        ppi=ppi,
     )
 
 
@@ -2330,6 +2331,7 @@ def _build_msx2(
         fdc=fdc_device,
         rtc=rtc,
         rtc_sram_save_path=rtc_sram_save_path,
+        ppi=ppi,
     )
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer
