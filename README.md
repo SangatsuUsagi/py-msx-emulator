@@ -538,23 +538,23 @@ score.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 294.03 | ~4.9× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 488.02 | ~8.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 320.24 | ~5.3× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1259.00 | ~21.0× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1069.32 | ~17.8× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1367.67 | ~22.8× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 77.71 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 131.06 | ~2.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 86.27 | ~1.4× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 274.27 | ~4.6× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 359.61 | ~6.0× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 333.84 | ~5.6× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 285.57 | ~4.8× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 571.82 | ~9.5× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 299.56 | ~5.0× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1123.72 | ~18.7× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1269.52 | ~21.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1069.07 | ~17.8× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 74.91 | ~1.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 189.38 | ~3.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 84.54 | ~1.4× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 359.38 | ~6.0× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 472.93 | ~7.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 314.82 | ~5.2× |
 
 Every combination tested clears the raw 60 fps target. The tightest margin is
 Raspberry Pi 5 with CPython running Salamander (MSX1, KonamiSCC mapper — the
-heaviest rendering/audio load among the target titles) at ~1.3×; PyPy raises the
-same case to ~4.6×. On hardware weaker than a Raspberry Pi 5, or under a heavier
+heaviest rendering/audio load among the target titles) at ~1.2×; PyPy raises the
+same case to ~6.0×. On hardware weaker than a Raspberry Pi 5, or under a heavier
 title, a run can still drop below 60 fps — in which case the game runs in slow
 motion at a rate proportional to the achieved frame rate, and audio degrades
 (clicks or silence) because samples are generated per-frame while the audio
@@ -570,7 +570,7 @@ PyPy figures as broadly indicative rather than exact.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.6.0, per platform and runtime.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.7.0, per platform and runtime.
 All versions were measured uniformly with the cold-boot methodology above.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
