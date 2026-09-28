@@ -643,20 +643,27 @@ class Machine:
                         # most common execution pattern in MSX software (measured
                         # ~74% of all step() calls on a representative title), so
                         # batch its per-instruction stepping when it's provably
-                        # safe: the condition below is the exact negation of the
-                        # NMI/interrupt-accept checks step() itself does before
-                        # its halted branch (which never mutates any of these),
-                        # plus "no VDP command is running" -- with a command
-                        # active, tick() can raise the command-engine interrupt
-                        # at a T-state offset this loop can't predict without
-                        # calling tick() anyway, so batching is skipped and the
-                        # normal per-instruction path (below) still ticks it.
-                        # See openspec cpu-z80 "Batched HALT execution is
-                        # externally transparent" for the full equivalence proof.
+                        # safe: would_accept_interrupt is the exact condition
+                        # step() itself checks (KEEP IN SYNC with z80.py's
+                        # Z80.step(), the `if self.int_pending and self.iff1 and
+                        # not self.ei_pending:` line) before its halted branch,
+                        # which never mutates any of nmi_pending/int_pending/
+                        # iff1/ei_pending/halted -- so none of them can flip
+                        # partway through a batch. The remaining clause is "no
+                        # VDP command is running": with a command active,
+                        # tick() can raise the command-engine interrupt at a
+                        # T-state offset this loop can't predict without calling
+                        # tick() anyway, so batching is skipped and the normal
+                        # per-instruction path (below) still ticks it. See
+                        # openspec cpu-z80 "Batched HALT execution is externally
+                        # transparent" for the full equivalence proof.
+                        would_accept_interrupt = (
+                            cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                        )
                         if (
                             cpu.halted
                             and not cpu.nmi_pending
-                            and not (cpu.int_pending and cpu.iff1 and not cpu.ei_pending)
+                            and not would_accept_interrupt
                             and not vdp9938._cmd_active
                         ):
                             n = cpu.step_halted_batch(line_end - total)
@@ -689,11 +696,16 @@ class Machine:
                         # Same HALT-batching optimization as the V9938 branch
                         # above (no _cmd_active clause: the TMS9918A has no
                         # command engine, so int_pending can't change mid-line
-                        # by any other means while the CPU is halted).
+                        # by any other means while the CPU is halted). KEEP IN
+                        # SYNC with z80.py's Z80.step() interrupt-accept check
+                        # and this same condition in the V9938 branch above.
+                        would_accept_interrupt = (
+                            cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                        )
                         if (
                             cpu.halted
                             and not cpu.nmi_pending
-                            and not (cpu.int_pending and cpu.iff1 and not cpu.ei_pending)
+                            and not would_accept_interrupt
                         ):
                             n = cpu.step_halted_batch(line_end - total)
                         else:

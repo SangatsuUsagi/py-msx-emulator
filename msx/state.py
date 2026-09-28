@@ -565,6 +565,9 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
         return top(key, lambda v, k: check_optional_int(v, k, 0, 0xFF))
 
     vdp_latch = opt_byte("vdp_latch")
+    # Raw pre-parse values, only to check presence for _parse_paired_states
+    # below -- the parsed mapper{1,2}_subslot_kinds fields can't be read here
+    # since the MachineSnapshot they'll live on doesn't exist yet.
     mapper1_kinds = data.get("mapper1_subslot_kinds")
     mapper2_kinds = data.get("mapper2_subslot_kinds")
     return MachineSnapshot(
