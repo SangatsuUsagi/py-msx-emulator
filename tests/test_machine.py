@@ -8,7 +8,7 @@ from msx.machine_loader import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
 from msx.romdb import RomDbEntry
 from msx.vdp._geometry import VideoStandard
-from tests.factories import make_machine
+from tests.factories import make_machine, make_machine_msx2
 
 NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
 
@@ -100,6 +100,51 @@ def test_vblank_sets_int_pending_when_ie_set() -> None:
     m.vdp.regs[1] = 0x60  # BL=1, IE=1
     m.run_frame()
     assert m.cpu.int_pending
+
+
+# --- _run_lines_fast HALT batching (Z80.step_halted_batch) ------------------
+# The CPU spins in HALT for the whole pre-VBlank segment; Machine's hot loop
+# batches those HALT-NOP steps instead of calling cpu.step() once per M1
+# cycle (see openspec cpu-z80 "Batched HALT execution is externally
+# transparent"). These are regression tests for the wiring in
+# Machine._run_lines_fast, not the batching arithmetic itself (covered by
+# tests/cpu/test_interrupts.py's step_halted_batch tests).
+
+_EI_HALT_ROM = bytes([0xFB, 0x76] + [0x00] * 32766)  # EI; HALT
+
+
+def test_halt_batching_still_fires_vblank_msx1() -> None:
+    # ROM is all NOPs past the vector, so once the interrupt is taken (jumping
+    # to 0x0038) the CPU keeps fetching NOPs for the rest of the frame with no
+    # RETI -- PC ends up well past 2, not pinned at the vector itself.
+    m = _make_machine(rom=_EI_HALT_ROM)
+    m.vdp.regs[1] = 0x60  # BL=1, IE=1
+    m.run_frame()
+    assert m.vdp.status & 0x80  # VBlank flag latched
+    assert m.cpu.halted is False  # woke up and took the interrupt
+    assert not m.cpu.iff1  # interrupt acceptance cleared IFF1 (no RETI in ROM)
+    assert m.cpu.registers.PC > 2
+
+
+def test_halt_batching_still_fires_vblank_msx2() -> None:
+    m = make_machine_msx2(_EI_HALT_ROM, b"\x00" * 0x4000)
+    m.vdp.regs[1] = 0x60  # BL=1, IE0=1
+    m.run_frame()
+    assert m.vdp.status & 0x80
+    assert m.cpu.halted is False
+    assert not m.cpu.iff1
+    assert m.cpu.registers.PC > 2
+
+
+def test_halt_with_interrupts_disabled_runs_full_frame() -> None:
+    # No EI: interrupts stay disabled, so the CPU never wakes -- batching's
+    # safety condition still applies throughout (nmi/int_pending both false),
+    # and the whole frame must still complete without error.
+    m = _make_machine(rom=_HALT_ROM)
+    m.run_frame()
+    assert m.cpu.halted is True
+    assert m.cpu.registers.PC == 1  # PC stays where HALT left it
+    assert m.vdp._frame_count == 1
 
 
 def test_reset_clears_cpu_state() -> None:

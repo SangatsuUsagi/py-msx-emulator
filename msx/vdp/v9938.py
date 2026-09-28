@@ -841,7 +841,14 @@ class V9938:
             low = self._first_byte
             self._ctrl_pending = False
             if value & 0x80:
-                self._write_register(value & 0x3F, low)
+                if not (value & 0x40):
+                    self._write_register(value & 0x3F, low)
+                # else: second byte 0xC0-0xFF -- unlike an MSX1 VDP, the
+                # V9938 does not perform a register write for this pattern
+                # (openMSX VDP.cc; confirmed on real hardware, both MSX1
+                # and V99x8 -- see allium/v9938.allium's WriteControlPort).
+                # The latch is already cleared above; the address pointer
+                # is left untouched.
             else:
                 # Combine 14-bit address from this write with R#14 high bits.
                 self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
