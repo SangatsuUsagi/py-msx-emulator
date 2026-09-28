@@ -96,6 +96,27 @@ class Z80:
         r = self.registers.R
         self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
 
+    def step_halted_batch(self, budget: int) -> int:
+        """Advance a run of consecutive halted-NOP M1 cycles in one call.
+
+        Equivalent to calling step() ceil(budget / (4 + m1_wait_states)) times
+        in a row while halted (same R value and T-state total afterwards,
+        including the same "last step overshoots budget" behavior an unrolled
+        caller loop already has) -- valid ONLY while, for the whole span:
+        self.halted is True, self.nmi_pending is False, and
+        (self.int_pending and self.iff1 and not self.ei_pending) is False (the
+        exact negation of step()'s own NMI/interrupt-accept conditions, which
+        are the only things step() checks before its halted branch and which
+        the halted branch itself never mutates). The caller must also confirm
+        nothing else can flip int_pending mid-span (e.g. a V9938 command
+        engine interrupt) before choosing to call this instead of step().
+        """
+        stride = 4 + self.m1_wait_states
+        steps = (budget + stride - 1) // stride  # ceil division
+        reg = self.registers
+        reg.R = (reg.R & 0x80) | ((reg.R + steps) & 0x7F)
+        return steps * stride
+
     def _fetch_word(self) -> int:
         lo = self._fetch()
         hi = self._fetch()
