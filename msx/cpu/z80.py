@@ -160,8 +160,13 @@ class Z80:
 
         if self.halted:
             # A halted CPU keeps executing internal NOPs, each an M1 cycle
-            # that refreshes R.
-            self._inc_r()
+            # that refreshes R. Inlined rather than calling _inc_r(): this
+            # branch runs every T-state a program spends idling in HALT
+            # (the most common execution pattern in MSX software), and the
+            # extra Python call overhead measured as a ~15% fps regression
+            # on a representative title.
+            reg = self.registers
+            reg.R = (reg.R & 0x80) | ((reg.R + 1) & 0x7F)
             return 4 + self.m1_wait_states
 
         r = self.registers
