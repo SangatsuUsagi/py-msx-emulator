@@ -231,6 +231,20 @@ class BankTracingMapper:
         overridden by the SRAM-carrying subclasses."""
         pass
 
+    def parse_state(self, obj: object, label: str) -> Mapping[str, object]:
+        """Overridden by every concrete subclass with its own state schema."""
+        raise NotImplementedError
+
+    def apply_state(self, state: Mapping[str, object]) -> None:
+        """Overridden by every concrete subclass with its own state schema."""
+        raise NotImplementedError
+
+    def restore(self, state: dict[str, object]) -> None:
+        """parse_state + apply_state in one call -- shared by every
+        BankTracingMapper subclass, since only parse_state/apply_state
+        themselves differ per mapper, never how restore composes them."""
+        self.apply_state(self.parse_state(state, "state"))
+
 
 _GM2_SRAM_HALVES: tuple[int, ...] = (0, 0x1000)
 
@@ -518,9 +532,6 @@ class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
 
 class Ascii16MapperState(TypedDict):
     """Save-state schema for Ascii16Mapper.snapshot()/restore()."""
@@ -605,9 +616,6 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
         self._banks[:] = st["banks"]
         for window in range(2):
             self._sync_window(window)
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
 
 class Ascii8Sram2MapperState(Ascii8MapperState):
@@ -752,9 +760,6 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         st = cast(Ascii8Sram2MapperState, state)
         super().apply_state(st)
         self.sram[:] = st["sram"]
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
 
 @dataclass
@@ -996,9 +1001,6 @@ class GameMaster2Mapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
@@ -1136,9 +1138,6 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         super().apply_state(st)
         self.sram[:] = st["sram"]
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
 
 @dataclass
 class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
@@ -1254,9 +1253,6 @@ class RTypeMapper(BankTracingMapper):
         self._bank = st["bank"]
         self._sync_window(1)
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
 
 class KonamiMapperState(TypedDict):
     """Save-state schema for KonamiMapper.snapshot()/restore()."""
@@ -1368,9 +1364,6 @@ class KonamiMapper(BankTracingMapper):
         for window in range(4):
             self._sync_window(window)
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
@@ -1456,9 +1449,6 @@ class MajutsushiMapper(KonamiMapper):
         st = cast(MajutsushiMapperState, state)
         super().apply_state(st)
         self._last_dac = st["last_dac"]
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
 
 class KonamiSCCMapperState(TypedDict):
@@ -1607,9 +1597,6 @@ class KonamiSCCMapper(BankTracingMapper):
         self._scc_mode = st["scc_mode"]
         for window in range(4):
             self._sync_window(window)
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
@@ -1800,9 +1787,6 @@ class SCCICart(BankTracingMapper):
             self._sync_window_base(window)
         self._set_mode_register(st["mode_register"])
 
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
-
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
@@ -1965,9 +1949,6 @@ class HalnoteMapper(BankTracingMapper):
         self.sram[:] = st["sram"]
         for window in range(4):
             self._sync_window(window)
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)

@@ -58,8 +58,9 @@ _ENABLE_WRITE_PROTECT = 0x10  # bit 4: freezes the magic registers
 _ENABLE_MASK = 0x11
 _ENABLE_VALUES = (0x00, 0x01, 0x10, 0x11)  # every value `& _ENABLE_MASK` leaves
 
-# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
-#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+# PORT-NOTE: key set read from the TypedDict at import time (see
+#   msx/vdp/v9938.py's _STATE_KEYS note: serde `deny_unknown_fields` in Rust,
+#   a constexpr key array in C++).
 _STATE_KEYS: frozenset[str] = frozenset(FmPacState.__annotations__)
 
 
