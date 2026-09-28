@@ -155,6 +155,11 @@ class Z80:
         # ei_pending is set. ei_pending is cleared below so the delay lasts a
         # single instruction (e.g. the RET in C-BIOS's EI;RET interrupt epilogue
         # must run before the next interrupt is taken).
+        # KEEP IN SYNC: this condition's negation (the "would_accept_interrupt"
+        #   local) is re-derived in msx/machine.py's two _run_lines_fast loop
+        #   bodies, to decide when step_halted_batch() is safe to use instead
+        #   of calling step() once per HALT-NOP -- see step_halted_batch's
+        #   docstring below for the equivalence this depends on.
         if self.int_pending and self.iff1 and not self.ei_pending:
             self.int_pending = False
             self.halted = False
