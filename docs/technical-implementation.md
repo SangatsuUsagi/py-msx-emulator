@@ -45,16 +45,19 @@ corresponding prefix table.
 
 ### Execution loop
 
-`Z80.step() -> int` drives one instruction:
+`Z80.step() -> int` drives one instruction (all costs below are in T-states,
+the Z80's basic clock-cycle unit):
 
 1. If `nmi_pending` is set: push PC, jump to 0x0066, return 11 T-states.
-2. If `ei_pending` is set: clear it. (EI enables interrupts only after the
-   instruction that follows it, so an accepted interrupt is suppressed for
-   exactly one step.)
-3. If `iff1` and `int_pending` are both true: accept the interrupt. Mode 1 —
-   push PC, jump to 0x0038, 13 T-states. Mode 2 — push PC, read the vector byte
-   from `I<<8 | data_bus`, jump to the handler address, 19 T-states.
-4. If `halted`: advance 4 T-states without fetching an opcode.
+2. If `iff1` and `int_pending` are both true and `ei_pending` is not set:
+   accept the interrupt. Mode 1 — push PC, jump to 0x0038, 13 T-states.
+   Mode 2 — push PC, read the vector byte from `I<<8 | data_bus`, jump to
+   the handler address, 19 T-states.
+3. If `ei_pending` is set: clear it. (EI enables interrupts only after the
+   instruction that follows it, so `ei_pending` — checked above, cleared
+   here — suppresses an otherwise-accepted interrupt for exactly one step.)
+4. If `halted`: advance `4 + m1_wait_states` T-states without fetching an
+   opcode (4 on a pure Z80 core; MSX's M1 wait applies here too).
 5. Otherwise: record the current PC in `instruction_pc`, fetch the opcode via
    `_fetch()`, dispatch.
 
@@ -444,7 +447,7 @@ today — WD2793 with the Sony/Philips style, and TC8566AF with its own:
 
 | Layer      | File                             | Responsibility                                                                                                                                                                                                                                                    |
 | ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk image | `disk_image.py` (`DskDiskImage`) | Reads a `*.dsk` sector image; derives geometry from the FAT12 BPB (bytes/sector, total sectors, sectors/track, heads); buffers writes and flushes back to the file on exit                                                                                        |
+| Disk image | `disk_image.py` (`DskDiskImage`) | Reads a `*.dsk` sector image; derives geometry from the FAT12 filesystem's BPB (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads); buffers writes and flushes back to the file on exit                                                                                        |
 | Drive      | `disk_drive.py` (`DiskDrive`)    | One physical drive: holds the mounted image, tracks the head position, exposes sector read/write                                                                                                                                                                  |
 | Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I–IV command decode, status register, data/track/sector registers, `abort()`. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register |
 | Interface  | `interface.py`                   | Connection style between the controller and the memory bus, both mapping the DISK ROM at 0x4000–0x7FFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8–0x7FFF and consumes the disk-change bit; `TC8566AFInterface` puts two control registers, the Main Status Register and the Data Register at 0x7FF8–0x7FFB. `swap()` mounts/ejects at runtime and is shared by both |
@@ -796,10 +799,12 @@ These patterns translate cleanly to any statically-typed target:
 - **I/O bus dispatch** (`msx/io.py`) — linear scan over a
   `list[tuple[int, int, Callable]]`. No dictionary lookup or reflection. The
   number of registered handlers is small and fixed per machine configuration.
-- **Component structs** — every hardware component is a
-  `@dataclass(slots=True)`. All fields are explicitly declared with types; no
-  `__getattr__`/`__setattr__` magic. `slots=True` avoids the `__dict__` per
-  instance and makes the field layout explicit.
+- **Component structs** — every hardware component is a `@dataclass`, with
+  all fields explicitly declared and typed; there is no `__getattr__`/
+  `__setattr__` magic anywhere in `msx/`. The two hottest-path structs,
+  `Z80` and `Registers`, additionally use `@dataclass(slots=True)` to avoid
+  the per-instance `__dict__`; the rest use a plain `@dataclass`, since the
+  field-layout guarantee matters less off the hot path.
 - **Timing constants** — `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
   `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
   `_CYCLES_PER_BYTE` etc. are module-level integer constants. The per-frame
