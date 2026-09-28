@@ -184,12 +184,14 @@ def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) 
         )
 
 
-def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
-    """Machine.reset() resets the carried SCC chip directly, clearing its
-    _plus_mode -- without resyncing, SCCICart's own (unreset) mode/bank
-    registers would keep forwarding the Plus-mode window address (0xB800)
-    into a chip now decoding Compatible offsets. Regression guard for the
-    scc.allium reset-desync fix."""
+def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path) -> None:
+    """Machine.reset() resets both the carried SCC chip (scc.reset()) and,
+    as of openspec/changes/wire-cartridge-mapper-and-ppi-reset, the SCCICart
+    itself (memory._mapper2.reset()): the mode register and bank registers
+    return to their power-on values (0x00, [0, 1, 2, 3]), so a Plus-mode
+    cartridge does not survive a reset -- it comes back in Compatible mode
+    with no active SCC window, matching the chip's own reset() rather than
+    being resynced to its pre-reset state."""
     machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
     cart = machine.memory._mapper2
     assert isinstance(cart, SCCICart)
@@ -201,8 +203,10 @@ def test_machine_reset_resyncs_scci_plus_mode(tmp_path: Path) -> None:
 
     machine.reset()
 
-    assert machine.scc._plus_mode is True  # re-derived from cart's own mode register
-    assert cart._scc_window_base == 0xB800  # still consistent with the chip's mode
+    assert machine.scc._plus_mode is False
+    assert cart._mode_register == 0x00
+    assert cart._banks == [0, 1, 2, 3]
+    assert cart._scc_window_base is None
 
 
 def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: Path) -> None:

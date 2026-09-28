@@ -4,6 +4,8 @@
 .claude/
 .serena/
 disks/**/*.dsk
+extras/MSX-DOS/
+extras/MSX-DOS2/
 references/MSX2-Technical-Handbook/
 references/The-MSX-Red-Book/
 references/ayumi/
@@ -14,7 +16,9 @@ references/emu2413/
 references/msx-msxlib/
 references/openMSX/
 references/z80/
+roms/**/*.lzh
 roms/**/*.rom
+roms/**/*.zip
 saves/*
 venvs/
 
