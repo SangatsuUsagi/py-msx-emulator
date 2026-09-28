@@ -42,6 +42,12 @@ class PPI:
             else:
                 self._port_c &= ~(1 << bit) & 0xFF
 
+    def reset(self) -> None:
+        """Restore the Intel 8255 post-reset defaults: control word 0x9B
+        (mode 0, ports A/B/C all input) and Port C's output latches cleared."""
+        self._control = 0x9B
+        self._port_c = 0
+
     def read_port(self, port: int) -> int:
         if port == 0xA8:
             return self.memory.slot_register & 0xFF

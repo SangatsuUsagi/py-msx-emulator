@@ -375,6 +375,20 @@ def test_ascii16_banks_list_has_two_entries() -> None:
     assert len(m._banks) == 2
 
 
+def test_ascii16_reset_restores_bank_registers_to_zero() -> None:
+    rom = _rom_16k_pages(4)
+    m = Ascii16Mapper(rom)
+    m.write(0x6000, 2)
+    m.write(0x7000, 3)
+    assert m._banks == [2, 3]
+
+    m.reset()
+
+    assert m._banks == [0, 0]
+    assert m.read(0x4000) == rom[0]
+    assert m.read(0x8000) == rom[0]
+
+
 def test_ascii16_snapshot_restore_roundtrips_banks() -> None:
     rom = _rom_16k_pages(4)
     m = Ascii16Mapper(rom)
@@ -470,6 +484,23 @@ def test_konami_read_above_window_mirrors_windows_2_and_3() -> None:
     small_rom = _rom_8k_pages(1)
     m = KonamiMapper(small_rom)
     assert m.read(0xC000) == 0xFF
+
+
+def test_konami_reset_restores_bank_registers_to_power_on_pages() -> None:
+    rom = _rom_8k_pages(8)
+    m = KonamiMapper(rom)
+    m.write(0x6000, 4)
+    m.write(0x8000, 5)
+    m.write(0xA000, 6)
+    assert m._banks == [0, 4, 5, 6]
+
+    m.reset()
+
+    assert m._banks == [0, 1, 2, 3]
+    assert m.read(0x4000) == rom[0]
+    assert m.read(0x6000) == rom[1 * _PAGE_8K]
+    assert m.read(0x8000) == rom[2 * _PAGE_8K]
+    assert m.read(0xA000) == rom[3 * _PAGE_8K]
 
 
 def test_konami_snapshot_restore_roundtrips_banks() -> None:
@@ -624,3 +655,16 @@ def test_majutsushi_snapshot_restore_roundtrips_banks_and_last_dac() -> None:
     m2.restore(snap)
     assert m2._banks == m._banks
     assert m2._last_dac == 0xC0
+
+
+def test_majutsushi_reset_restores_bank_registers_inherited_from_konami() -> None:
+    # MajutsushiMapper needs no reset() override of its own -- it inherits
+    # KonamiMapper.reset() unchanged, the same way it inherits every other
+    # KonamiMapper method besides write()'s DAC carve-out.
+    m = _maj()
+    m.write(0x6000, 2)
+    assert m._banks == [0, 2, 2, 3]
+
+    m.reset()
+
+    assert m._banks == [0, 1, 2, 3]

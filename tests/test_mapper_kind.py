@@ -114,19 +114,26 @@ def test_has_sram_matches_the_known_sram_carrying_set() -> None:
         )
 
 
-def test_reset_does_not_raise_on_a_mapper_with_no_reset_affected_state() -> None:
-    # Machine.reset() does not touch bank-switching ROM mapper registers
-    # today (see machine-core's "Machine reset restores power-on state"),
-    # so the Mapper protocol's reset() default is a deliberate no-op for
-    # these -- confirm it is callable and genuinely inert.
+def test_reset_does_not_raise_on_a_mapper_with_no_bank_state() -> None:
+    # FlatMapper has no bank registers at all, so the Mapper protocol's
+    # reset() default (the shared no-op) is genuinely correct for it --
+    # confirm it is callable and inert.
     flat = FlatMapper(cartridge=None)
     flat.reset()
 
+
+def test_reset_restores_ascii8_bank_registers_to_power_on_values() -> None:
+    # Every bank-switching mapper now restores its bank registers on
+    # reset() -- an explicit emulation-policy choice (this project treats
+    # the slot reset signal as reaching every cartridge mapper's own reset
+    # input; see openspec/changes/wire-cartridge-mapper-and-ppi-reset and
+    # cart-rom-mapper's "Bank-switching mapper reset restores power-on
+    # state"), reversing this project's earlier no-op position.
     ascii8 = Ascii8Mapper(rom=bytes(range(256)) * 128)
     ascii8.write(0x6000, 3)
-    banks_before = list(ascii8._banks)
+    assert ascii8._banks != [0, 0, 0, 0]
     ascii8.reset()
-    assert ascii8._banks == banks_before
+    assert ascii8._banks == [0, 0, 0, 0]
 
 
 def test_save_sram_is_a_no_op_when_has_sram_is_false(tmp_path) -> None:

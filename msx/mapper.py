@@ -448,6 +448,17 @@ class _WindowedRomMapperMixin:
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
+    def reset(self) -> None:
+        """Restore every bank register to its power-on value (0) and resync
+        the flat read-path mirror. Shared by Ascii8Mapper/Ascii16Mapper and
+        every SRAM-carrying subclass — none of them overrides this method,
+        so `self._sync_window` dispatches to each subclass's own override
+        (e.g. Ascii8Sram2Mapper's SRAM-aware one) unchanged; SRAM contents
+        are never touched here, only bank registers."""
+        self._banks[:] = [0] * len(self._banks)
+        for window in range(len(self._banks)):
+            self._sync_window(window)
+
 
 class Ascii8MapperState(TypedDict):
     """Save-state schema for Ascii8Mapper.snapshot()/restore()."""
@@ -1004,6 +1015,18 @@ class GameMaster2Mapper(BankTracingMapper):
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
+    def reset(self) -> None:
+        """Restore all four bank registers to their power-on pages
+        (0, 1, 2, 3), the SRAM-enable/half tracking to construction
+        defaults, and resync the flat read-path mirror + per-window SRAM
+        flags. self.sram's bytes are never touched."""
+        self._banks[:] = [0, 1, 2, 3]
+        self._window_sram_half[:] = [0, 0, 0, 0]
+        self._sram_half = 0
+        self._sram_enabled = False
+        for window in range(4):
+            self._sync_window(window)
+
 
 class Ascii16Sram2MapperState(Ascii16MapperState):
     sram: bytearray
@@ -1253,6 +1276,13 @@ class RTypeMapper(BankTracingMapper):
         self._bank = st["bank"]
         self._sync_window(1)
 
+    def reset(self) -> None:
+        """Restore the switchable window's bank register to its power-on
+        value (0) and resync it. The fixed window (_fixed_block) is
+        resolved once from ROM size at construction and never changes."""
+        self._bank = 0
+        self._sync_window(1)
+
 
 class KonamiMapperState(TypedDict):
     """Save-state schema for KonamiMapper.snapshot()/restore()."""
@@ -1366,6 +1396,15 @@ class KonamiMapper(BankTracingMapper):
 
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
+
+    def reset(self) -> None:
+        """Restore all four bank registers to their power-on pages
+        (0, 1, 2, 3) and resync the flat read-path mirror. Inherited
+        unchanged by MajutsushiMapper -- it overrides only write()'s DAC
+        carve-out, never this method or _sync_window."""
+        self._banks[:] = [0, 1, 2, 3]
+        for window in range(4):
+            self._sync_window(window)
 
 
 class MajutsushiMapperState(KonamiMapperState):
@@ -1601,6 +1640,15 @@ class KonamiSCCMapper(BankTracingMapper):
     def debug_bank_info(self, page: int) -> str | None:
         return _format_bank_info(self._banks, page)
 
+    def reset(self) -> None:
+        """Restore all four bank registers to their power-on pages
+        (0, 1, 2, 3), disable SCC mode, and resync the flat read-path
+        mirror."""
+        self._banks[:] = [0, 1, 2, 3]
+        self._scc_mode = False
+        for window in range(4):
+            self._sync_window(window)
+
 
 _SCCI_RAM_BLOCKS = 8
 # Real SCC-I cartridges (Konami 052539) have a 128 KB (16 x 8 KB block)
@@ -1750,18 +1798,19 @@ class SCCICart(BankTracingMapper):
         else:
             self._scc_window_base = None
 
-    def resync_scc_mode(self) -> None:
-        """Re-push this cartridge's own (unreset) mode register into `scc`.
-
-        `Machine.reset()` resets the carried `SCC` chip directly, which clears
-        its `_plus_mode` back to Compatible -- but this cartridge's own mode
-        register and bank registers are not part of a soft reset (no mapper
-        in this codebase resets its bank state), so without this call
-        `_scc_window_base` would keep forwarding a Plus-mode window address
-        (0xB800) into a chip now decoding Compatible offsets. Mirrors what
-        restore() already does after loading a saved mode_register.
-        """
-        self._set_mode_register(self._mode_register)
+    def reset(self) -> None:
+        """Restore the four bank registers and the mode register to their
+        power-on values (0, 1, 2, 3 and 0x00 respectively). `self.ram` is
+        never touched. Mirrors __post_init__'s own shape: resync every
+        window base from the freshly-reset banks, then push mode register
+        0 through _set_mode_register -- which itself re-derives Compatible
+        mode/the inactive SCC window and pushes scc.set_mode(False), so no
+        separate re-sync step is needed the way resync_scc_mode() used to
+        provide when reset() was a no-op."""
+        self._banks[:] = [0, 1, 2, 3]
+        for window in range(4):
+            self._sync_window_base(window)
+        self._set_mode_register(0)
 
     def snapshot(self) -> SCCICartState:
         # SCC chip state is snapshotted separately by the state module.

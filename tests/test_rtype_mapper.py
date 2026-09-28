@@ -165,3 +165,24 @@ class TestRTypeSnapshotRestore:
         m2.restore(snap)
         assert m2._bank == 2
         assert m2.read(0x8000) == 0xCC
+
+
+class TestRTypeReset:
+    def test_reset_restores_switchable_window_to_page_0(self):
+        m = RTypeMapper(rom=_ROM_4P)
+        m.write(0x4000, 2)
+        assert m._bank == 2
+        assert m.read(0x8000) == 0xCC
+
+        m.reset()
+
+        assert m._bank == 0
+        assert m.read(0x8000) == 0xAA
+
+    def test_reset_does_not_affect_the_fixed_window(self):
+        m = RTypeMapper(rom=_ROM_4P)
+        m.write(0x4000, 2)  # affects the switchable window only
+
+        m.reset()
+
+        assert m.read(0x4000) == 0xDD  # fixed window: still the last page
