@@ -1312,8 +1312,9 @@ def _restore_slot_fields(s: _Slot, d: _SlotState) -> None:
 # Save-state parsers for Opll.parse_state(). Ranges are the values the chip
 # itself produces (register masks and table bounds above).
 
-# PORT-NOTE: key sets read from the TypedDicts (see msx/vdp/v9938.py's _STATE_KEYS
-#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+# PORT-NOTE: key sets read from the TypedDicts at import time (see
+#   msx/vdp/v9938.py's _STATE_KEYS note: serde `deny_unknown_fields` in Rust,
+#   a constexpr key array in C++).
 _OPLL_KEYS: frozenset[str] = frozenset(OpllState.__annotations__)
 _PATCH_KEYS: frozenset[str] = frozenset(_PatchState.__annotations__)
 _SLOT_KEYS: frozenset[str] = frozenset(_SlotState.__annotations__)
