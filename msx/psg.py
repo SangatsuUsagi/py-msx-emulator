@@ -94,8 +94,9 @@ class PsgSynthState(TypedDict):
     _clk_frac: int
 
 
-# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
-#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+# PORT-NOTE: key set read from the TypedDict at import time (see
+#   msx/vdp/v9938.py's _STATE_KEYS note: serde `deny_unknown_fields` in Rust,
+#   a constexpr key array in C++).
 _PSG_SYNTH_KEYS: frozenset[str] = frozenset(PsgSynthState.__annotations__)
 
 
