@@ -658,9 +658,8 @@ def test_majutsushi_snapshot_restore_roundtrips_banks_and_last_dac() -> None:
 
 
 def test_majutsushi_reset_restores_bank_registers_inherited_from_konami() -> None:
-    # MajutsushiMapper needs no reset() override of its own -- it inherits
-    # KonamiMapper.reset() unchanged, the same way it inherits every other
-    # KonamiMapper method besides write()'s DAC carve-out.
+    # MajutsushiMapper.reset() calls super().reset() for the bank-register
+    # half, matching KonamiMapper.reset() unchanged.
     m = _maj()
     m.write(0x6000, 2)
     assert m._banks == [0, 2, 2, 3]
@@ -668,3 +667,23 @@ def test_majutsushi_reset_restores_bank_registers_inherited_from_konami() -> Non
     m.reset()
 
     assert m._banks == [0, 1, 2, 3]
+
+
+def test_majutsushi_reset_restores_dac_to_silence() -> None:
+    m = _maj()
+    m.write(0x5000, 0xFF)
+
+    m.reset()
+
+    buf = m.generate_samples(2, 0, 100)
+    for i in range(2):
+        assert struct.unpack_from("<h", buf, i * 2)[0] == 0
+
+
+def test_majutsushi_reset_clears_pending_dac_events() -> None:
+    m = _maj()
+    m.write(0x5000, 0xC0)
+
+    m.reset()
+
+    assert m._dac_events == []

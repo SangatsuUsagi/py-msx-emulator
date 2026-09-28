@@ -1436,6 +1436,11 @@ class MajutsushiMapper(KonamiMapper):
     _last_dac: int = field(default=0x80, init=False, repr=False)
     _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
 
+    def reset(self) -> None:
+        super().reset()
+        self._last_dac = 0x80
+        self._dac_events = []
+
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
             cycle = self._get_cycle() if self._get_cycle else 0
