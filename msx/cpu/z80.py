@@ -96,6 +96,27 @@ class Z80:
         r = self.registers.R
         self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
 
+    def step_halted_batch(self, budget: int) -> int:
+        """Advance a run of consecutive halted-NOP M1 cycles in one call.
+
+        Equivalent to calling step() ceil(budget / (4 + m1_wait_states)) times
+        in a row while halted (same R value and T-state total afterwards,
+        including the same "last step overshoots budget" behavior an unrolled
+        caller loop already has) -- valid ONLY while, for the whole span:
+        self.halted is True, self.nmi_pending is False, and
+        (self.int_pending and self.iff1 and not self.ei_pending) is False (the
+        exact negation of step()'s own NMI/interrupt-accept conditions, which
+        are the only things step() checks before its halted branch and which
+        the halted branch itself never mutates). The caller must also confirm
+        nothing else can flip int_pending mid-span (e.g. a V9938 command
+        engine interrupt) before choosing to call this instead of step().
+        """
+        stride = 4 + self.m1_wait_states
+        steps = (budget + stride - 1) // stride  # ceil division
+        reg = self.registers
+        reg.R = (reg.R & 0x80) | ((reg.R + steps) & 0x7F)
+        return steps * stride
+
     def _fetch_word(self) -> int:
         lo = self._fetch()
         hi = self._fetch()
@@ -134,6 +155,11 @@ class Z80:
         # ei_pending is set. ei_pending is cleared below so the delay lasts a
         # single instruction (e.g. the RET in C-BIOS's EI;RET interrupt epilogue
         # must run before the next interrupt is taken).
+        # KEEP IN SYNC: this condition's negation (the "would_accept_interrupt"
+        #   local) is re-derived in msx/machine.py's two _run_lines_fast loop
+        #   bodies, to decide when step_halted_batch() is safe to use instead
+        #   of calling step() once per HALT-NOP -- see step_halted_batch's
+        #   docstring below for the equivalence this depends on.
         if self.int_pending and self.iff1 and not self.ei_pending:
             self.int_pending = False
             self.halted = False
@@ -160,8 +186,13 @@ class Z80:
 
         if self.halted:
             # A halted CPU keeps executing internal NOPs, each an M1 cycle
-            # that refreshes R.
-            self._inc_r()
+            # that refreshes R. Inlined rather than calling _inc_r(): this
+            # branch runs every T-state a program spends idling in HALT
+            # (the most common execution pattern in MSX software), and the
+            # extra Python call overhead measured as a ~15% fps regression
+            # on a representative title.
+            reg = self.registers
+            reg.R = (reg.R & 0x80) | ((reg.R + 1) & 0x7F)
             return 4 + self.m1_wait_states
 
         r = self.registers

@@ -350,6 +350,24 @@ def test_reset_restores_power_on_slot1_sub_slot_register(tmp_path: Path) -> None
     assert machine.memory.slot1_sub_slot_reg == 0x00
 
 
+def test_reset_restores_halnote_mapper_power_on_state_on_slot1(tmp_path: Path) -> None:
+    # Mirrors test_reset_restores_halnote_mapper_power_on_state below, with
+    # the HalnoteMapper wired into slot 1 instead of slot 2 -- Machine.reset()
+    # reaches it via _mapper1_subslots' per-sub-slot loop the same way it
+    # reaches _mapper2_subslots' (allium/halnote-mapper.allium's Reset rule
+    # is not slot-specific).
+    machine = _hbi_j1_machine_slot1(tmp_path)
+    halnote = machine.halnote_cart
+    assert halnote is not None
+    assert halnote is machine.memory._mapper1_subslots[0]
+    halnote.write(0x8FFF, 0x0A)  # bank 2 -> page 10
+    halnote.write(0x4FFF, 0x85)  # bank 0 -> page 5, SRAM enabled
+    machine.reset()
+    state = halnote.snapshot()
+    assert state["banks"] == [0, 1, 2, 3]
+    assert halnote._sram_enabled is False
+
+
 def test_reset_restores_power_on_slot2_sub_slot_register(tmp_path: Path) -> None:
     # ResetSlotRegisters' third setter call (Machine.reset()'s new
     # self.memory.set_slot2_sub_slot_reg(0x00)), alongside the pre-existing

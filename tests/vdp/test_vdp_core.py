@@ -87,6 +87,19 @@ def test_register_write_ignores_bit6_of_second_byte() -> None:
     assert vdp.regs[3] == 0x42
 
 
+def test_register_write_also_sets_address_high_bits() -> None:
+    # Unlike the V9938, a real MSX1 VDP's register write also perturbs the
+    # VRAM address pointer's high 6 bits from the second control byte
+    # (openMSX VDP.cc, thanks-to-dvik; confirmed on real MSX1 hardware --
+    # see allium/tms9918a.allium's WriteControlPort).
+    vdp = make_vdp()
+    vdp.write_port(0x99, 0x42)        # data byte (also sets addr's low
+                                       # byte to 0x42, see the test below)
+    vdp.write_port(0x99, 0x80 | 3)    # register select: reg 3
+    assert vdp.regs[3] == 0x42
+    assert vdp.addr == 0x0342         # high bits from (0x80|3) & 0x3F = 3
+
+
 
 # --- Status register ---
 
@@ -139,6 +152,18 @@ def test_status_read_does_not_substitute_when_5s_set() -> None:
 
 # --- Address latch and read-ahead buffer ---
 
+def test_first_control_byte_directly_sets_address_low_byte() -> None:
+    # Real MSX1 VDPs use no latch for the address pointer itself: unlike
+    # the V9938, the first control byte writes straight into addr's low
+    # byte, even before a second byte completes the sequence (openMSX
+    # VDP.cc, thanks-to-hap; confirmed on a real TMS9929A -- see
+    # allium/tms9918a.allium's WriteControlPort).
+    vdp = make_vdp()
+    vdp.addr = 0x3F00  # arbitrary high bits already set
+    vdp.write_port(0x99, 0xAB)  # single, stranded control byte
+    assert vdp.addr == 0x3FAB
+
+
 def test_write_address_setup() -> None:
     vdp = make_vdp()
     set_write_addr(vdp, 0x0000)
@@ -177,11 +202,16 @@ def test_read_address_wraps_at_16kb() -> None:
 # --- Data port access resets the control latch ---
 
 def test_data_port_write_discards_stray_control_byte() -> None:
+    # A stray, unpaired first control byte still perturbs the address's low
+    # byte directly (see test_first_control_byte_directly_sets_address_low_
+    # byte) -- what "discards" here is the pending control PAIR: the latch
+    # clears on the data-port access, so the stray byte never completes as
+    # a register write or an address-setup high byte later on.
     vdp = make_vdp()
     set_write_addr(vdp, 0x0100)
-    vdp.write_port(0x99, 0x55)  # stray first byte
+    vdp.write_port(0x99, 0x55)  # stray first byte -- addr low byte -> 0x55
     vdp.write_port(0x98, 0xAB)
-    assert vdp.vram[0x0100] == 0xAB
+    assert vdp.vram[0x0155] == 0xAB  # high byte (0x01) kept, low byte -> 0x55
     vdp.write_port(0x99, 0x0E)
     vdp.write_port(0x99, 0x80 | 2)
     assert vdp.regs[2] == 0x0E

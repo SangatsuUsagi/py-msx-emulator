@@ -123,8 +123,9 @@ class TC8566AFState(TypedDict):
     format_fill: int
 
 
-# PORT-NOTE: key set read from the TypedDict (see msx/vdp/v9938.py's _STATE_KEYS
-#   PORT-NOTE: serde `deny_unknown_fields` in Rust, a constexpr key array in C++).
+# PORT-NOTE: key set read from the TypedDict at import time (see
+#   msx/vdp/v9938.py's _STATE_KEYS note: serde `deny_unknown_fields` in Rust,
+#   a constexpr key array in C++).
 _STATE_KEYS: frozenset[str] = frozenset(TC8566AFState.__annotations__)
 # Largest Command-Phase parameter count / Result-Phase length / Execution-Phase
 # buffer (FORMAT's 4 descriptor bytes for up to 255 sectors) this model produces.

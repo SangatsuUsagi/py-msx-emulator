@@ -208,3 +208,66 @@ def test_each_halted_nop_increments_r() -> None:
     for _ in range(3):
         cpu.step()
     assert cpu.registers.R == 0x13
+
+
+# --- step_halted_batch: equivalent to unrolled step() calls while halted ----
+# (Machine._run_lines_fast's HALT-batching optimization; see openspec cpu-z80
+# "Batched HALT execution is externally transparent".)
+
+
+def _run_unrolled(cpu: Z80, budget: int) -> int:
+    """Reference behavior step_halted_batch must match: keep calling step()
+    (already halted, no interrupt pending) until at least `budget` T-states
+    have elapsed, exactly as Machine's old un-batched loop did."""
+    total = 0
+    while total < budget:
+        total += cpu.step()
+    return total
+
+
+def test_batch_matches_unrolled_steps_exact_multiple() -> None:
+    cpu = make_cpu([0x76])  # HALT
+    cpu.step()
+    cpu.registers.R = 0x10
+    budget = 4 * 5  # exactly 5 HALT-NOPs at stride 4 (m1_wait_states=0)
+    n = cpu.step_halted_batch(budget)
+    assert n == budget
+    assert cpu.registers.R == 0x15
+
+
+def test_batch_matches_unrolled_steps_non_multiple_budget() -> None:
+    # budget not a multiple of the stride: batch must overshoot by the same
+    # amount an unrolled `while total < budget: total += step()` loop would.
+    reference = make_cpu([0x76])
+    reference.step()
+    reference.registers.R = 0x20
+    budget = 4 * 3 + 1
+    expected_total = _run_unrolled(reference, budget)
+
+    batched = make_cpu([0x76])
+    batched.step()
+    batched.registers.R = 0x20
+    n = batched.step_halted_batch(budget)
+
+    assert n == expected_total
+    assert batched.registers.R == reference.registers.R
+
+
+def test_batch_respects_m1_wait_states() -> None:
+    cpu = make_cpu([0x76])
+    cpu.m1_wait_states = 1
+    cpu.step()
+    cpu.registers.R = 0x00
+    budget = 7  # stride is 5 (4 + 1); ceil(7/5) = 2 steps
+    n = cpu.step_halted_batch(budget)
+    assert n == 10
+    assert cpu.registers.R == 0x02
+
+
+def test_batch_preserves_r_bit7_across_wraparound() -> None:
+    cpu = make_cpu([0x76])
+    cpu.step()
+    cpu.registers.R = 0x80 | 0x7E  # bit 7 set, low bits near wraparound
+    n = cpu.step_halted_batch(4 * 4)  # 4 HALT-NOPs: 0x7E -> 0x02 (mod 128)
+    assert n == 16
+    assert cpu.registers.R == 0x82
