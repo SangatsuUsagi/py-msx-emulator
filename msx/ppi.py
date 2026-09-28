@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from msx.input import InputState
 from msx.memory import Memory
@@ -10,13 +11,15 @@ from msx.memory import Memory
 class PPI:
     memory: Memory
     _input: InputState | None = field(default=None, repr=False)
+    # Intel 8255 post-reset control word: mode 0, ports A/B/C all input.
+    _POST_RESET_CONTROL: ClassVar[int] = 0x9B
     # PPI Port C (0xAA): bits 3-0 = keyboard row select; bits 7-4 = output control
     # lines (bit4 tape motor, bit5 tape out, bit6 CAPS LED, bit7 key click).
     _port_c: int = field(default=0, repr=False)
     # Last mode-set control word written to 0xAB, or the Intel 8255 post-reset
-    # default (mode 0, ports A/B/C all input) before any write. Read back
-    # verbatim by port 0xAB, matching openMSX's I8255::readControlPort.
-    _control: int = field(default=0x9B, repr=False)
+    # default before any write. Read back verbatim by port 0xAB, matching
+    # openMSX's I8255::readControlPort.
+    _control: int = field(default=_POST_RESET_CONTROL, repr=False)
 
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
@@ -43,9 +46,9 @@ class PPI:
                 self._port_c &= ~(1 << bit) & 0xFF
 
     def reset(self) -> None:
-        """Restore the Intel 8255 post-reset defaults: control word 0x9B
-        (mode 0, ports A/B/C all input) and Port C's output latches cleared."""
-        self._control = 0x9B
+        """Restore the Intel 8255 post-reset defaults: control word back to
+        _POST_RESET_CONTROL and Port C's output latches cleared."""
+        self._control = self._POST_RESET_CONTROL
         self._port_c = 0
 
     def read_port(self, port: int) -> int:
