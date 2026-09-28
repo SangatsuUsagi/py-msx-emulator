@@ -180,19 +180,17 @@ class Machine:
     def reset(self) -> None:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
-        present), the two top-level cartridge-slot mappers (unconditionally,
-        including a present Halnote cartridge via the sub-slot loop below),
-        the RAM mapper (if present, in either its slot-3 or its
-        expanded-slot-2-sub-slot placement), and the primary/secondary slot
-        registers. Memory/VRAM contents are retained.
+        present), the primary/secondary slot registers, the RAM mapper (if
+        present, in either its slot-3 or its expanded-slot-2-sub-slot
+        placement), and every `Mapper` -- `memory._mapper`, `memory._mapper2`,
+        and every non-`None` entry of an expanded slot's per-sub-slot array
+        (this also covers a present Halnote cartridge, which only ever lives
+        in one of those sub-slot entries). Memory/VRAM contents are retained.
 
-        Every `Mapper` (`memory._mapper`, `memory._mapper2`, and every
-        non-`None` entry of an expanded slot's per-sub-slot array) is reset
-        unconditionally: this project's owner has decided the emulator
-        treats the slot reset signal as reaching every cartridge mapper's
-        own reset input, regardless of whether a given real cartridge's
-        bank-select hardware is actually wired that way (see
-        openspec/changes/wire-cartridge-mapper-and-ppi-reset)."""
+        Every `Mapper` is reset unconditionally regardless of whether a given
+        real cartridge's bank-select hardware is actually wired to the slot
+        reset signal -- rationale in openspec/changes/
+        wire-cartridge-mapper-and-ppi-reset."""
         self.cpu.reset()
         self.psg.reset()
         if self.scc is not None:

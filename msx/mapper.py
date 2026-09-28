@@ -219,11 +219,17 @@ class BankTracingMapper:
         return None
 
     def reset(self) -> None:
-        """Default for BankTracingMapper subclasses with no reset-affected
-        state -- Machine.reset() does not touch bank-switching ROM mapper
-        registers today, so this is a deliberate no-op, not a stub.
-        Overridden by subclasses that do have power-on-reset state
-        (HalnoteMapper)."""
+        """No-op fallback for a BankTracingMapper subclass with genuinely no
+        reset-affected state. Every current direct subclass carries
+        bank-register (or other power-on) state and overrides this with a
+        real restore -- see e.g. KonamiMapper.reset(), GameMaster2Mapper.
+        reset(), RTypeMapper.reset(), SCCICart.reset(), HalnoteMapper.
+        reset(), and _WindowedRomMapperMixin.reset() (shared by
+        Ascii8Mapper/Ascii16Mapper and their SRAM variants) -- so this
+        default is currently unreachable, kept only for a future subclass
+        that genuinely has none. tests/test_mapper_kind.py's
+        test_every_banktracingmapper_subclass_overrides_reset enforces
+        that no subclass silently falls back to it."""
         pass
 
     def save_sram(self, path: Path) -> None:
@@ -1433,12 +1439,17 @@ class MajutsushiMapper(KonamiMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.MAJUTSUSHI
-    _last_dac: int = field(default=0x80, init=False, repr=False)
+    _DAC_SILENCE: ClassVar[int] = 0x80
+    _last_dac: int = field(default=_DAC_SILENCE, init=False, repr=False)
     _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
 
     def reset(self) -> None:
+        """super().reset() restores the bank registers (see
+        KonamiMapper.reset()); this also silences the DAC and drops any
+        DAC events queued but not yet consumed by generate_samples(),
+        matching openMSX's RomMajutsushi::reset() -> dac.reset()."""
         super().reset()
-        self._last_dac = 0x80
+        self._last_dac = self._DAC_SILENCE
         self._dac_events = []
 
     def write(self, addr: int, value: int) -> None:
