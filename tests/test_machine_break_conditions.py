@@ -52,6 +52,17 @@ def test_main_ram_range_mapper_full_space() -> None:
     assert mem.main_ram_range() == (0x0000, 0xFFFF)
 
 
+def test_main_ram_range_falls_back_to_slot0_ram_when_slot3_empty() -> None:
+    """Sony HB-10 shape: slot 3 has no RAM at all (self.ram is zero-length),
+    so main_ram_range() must report slot0_ram's own page window instead of
+    the degenerate (0x10000, 0xFFFF) it would otherwise compute."""
+    mem = Memory(
+        rom=bytes(32768), ram=bytearray(0),
+        _mapper=FlatMapper(None), slot0_ram=bytearray(0x4000), slot0_ram_page=3,
+    )
+    assert mem.main_ram_range() == (0xC000, 0xFFFF)
+
+
 # ---------------------------------------------------------------------------
 # bh — break on HALT with interrupts disabled
 # ---------------------------------------------------------------------------

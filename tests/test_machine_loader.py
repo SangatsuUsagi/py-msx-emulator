@@ -19,6 +19,7 @@ from msx.machine_loader import (
     _parse_slot3_msx2,
     _require_scc,
     _RomEntry,
+    _Slot0RamEntry,
     build_machine,
     load_device_registry,
     load_machine_spec,
@@ -360,6 +361,42 @@ def test_build_machine_msx1_no_ram_mapper(tmp_path: Path) -> None:
     assert machine.memory.ram_mapper is None
 
 
+def test_build_machine_msx1_slot0_ram_entry_reaches_memory(tmp_path: Path) -> None:
+    """Sony HB-10 shape: slot0_ram_entry threads through build_machine into
+    Memory.slot0_ram/slot0_ram_page, coexisting with the main ROM."""
+    spec = dataclasses.replace(
+        _make_msx1_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
+    )
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert machine.memory.slot0_ram is not None
+    assert len(machine.memory.slot0_ram) == 16 * 1024
+    assert machine.memory.slot0_ram_page == 3
+
+
+def test_build_machine_msx1_no_slot0_ram_entry_leaves_slot0_ram_none(tmp_path: Path) -> None:
+    spec = _make_msx1_spec(tmp_path)
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert machine.memory.slot0_ram is None
+
+
+def test_real_hb_10_config_has_no_slot3_ram() -> None:
+    """Sony HB-10's slot 3 is genuinely unpopulated on real hardware
+    (size_kb: 0 in config/machines/hb_10.yaml); real RAM lives only in
+    slot 0's page 3. Regression guard for the BIOS-finds-phantom-32KB bug a
+    bare omission of slot 3 previously caused."""
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec("hb_10", Path("config"), reg, Path("."))
+    assert spec.ram_size_kb == 0
+    assert spec.slot0_ram_entry is not None
+    assert spec.slot0_ram_entry.size_kb == 16
+    assert spec.slot0_ram_entry.page == 3
+
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert len(machine.memory.ram) == 0
+    assert machine.memory.slot0_ram is not None
+    assert len(machine.memory.slot0_ram) == 16 * 1024
+
+
 def test_build_machine_msx2_vdp_type(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
     machine = build_machine(
@@ -562,10 +599,11 @@ def test_parse_slot0_entry_claiming_main_and_logo_pages_is_main_only() -> None:
             {"rom": {"file": "combo.rom", "size_kb": 48, "pages": [0, 1, 2]}},
         ],
     }
-    main_rom, logo_rom = _parse_slot0(slot0, "test")
+    main_rom, logo_rom, ram_entry = _parse_slot0(slot0, "test")
     assert main_rom is not None
     assert main_rom.file == "combo.rom"
     assert logo_rom is None
+    assert ram_entry is None
 
 
 def test_parse_slot0_last_match_wins_for_each_role() -> None:
@@ -575,9 +613,66 @@ def test_parse_slot0_last_match_wins_for_each_role() -> None:
             {"rom": {"file": "main2.rom", "size_kb": 32, "pages": [0, 1]}},
         ],
     }
-    main_rom, _logo_rom = _parse_slot0(slot0, "test")
+    main_rom, _logo_rom, _ram_entry = _parse_slot0(slot0, "test")
     assert main_rom is not None
     assert main_rom.file == "main2.rom"
+
+
+# ---------------------------------------------------------------------------
+# Slot 0 flat RAM (e.g. Sony HB-10: 32 KB main ROM in pages 0-1, 16 KB RAM in
+# page 3) -- coexists with the ROM content items above; see
+# openspec/specs/memory-slot-bus/spec.md's "Slot 0 MAY host flat RAM at a
+# configured page" Requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_slot0_ram_entry_coexists_with_rom() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}},
+            {"ram": {"size_kb": 16, "pages": [3]}},
+        ],
+    }
+    main_rom, logo_rom, ram_entry = _parse_slot0(slot0, "test")
+    assert main_rom is not None
+    assert main_rom.file == "main.rom"
+    assert logo_rom is None
+    assert ram_entry is not None
+    assert ram_entry.size_kb == 16
+    assert ram_entry.page == 3
+
+
+def test_parse_slot0_no_ram_entry_defaults_to_none() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}},
+        ],
+    }
+    _main_rom, _logo_rom, ram_entry = _parse_slot0(slot0, "test")
+    assert ram_entry is None
+
+
+def test_parse_slot0_ram_entry_with_two_pages_raises() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}},
+            {"ram": {"size_kb": 32, "pages": [2, 3]}},
+        ],
+    }
+    with pytest.raises(MachineLoadError):
+        _parse_slot0(slot0, "test")
+
+
+def test_parse_slot0_duplicate_ram_entry_raises() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}},
+            {"ram": {"size_kb": 16, "pages": [2]}},
+            {"ram": {"size_kb": 16, "pages": [3]}},
+        ],
+    }
+    with pytest.raises(MachineLoadError):
+        _parse_slot0(slot0, "test")
 
 
 # ---------------------------------------------------------------------------
@@ -664,10 +759,11 @@ def test_parse_slot3_msx2_flat_ram_size_not_validated_as_mapper_granularity() ->
 
 def test_parse_slot0_skips_non_mapping_content_item() -> None:
     slot0 = {"content": ["oops", {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}}]}
-    main_rom, logo_rom = _parse_slot0(slot0, "test")
+    main_rom, logo_rom, ram_entry = _parse_slot0(slot0, "test")
     assert main_rom is not None
     assert main_rom.file == "main.rom"
     assert logo_rom is None
+    assert ram_entry is None
 
 
 def test_parse_slot3_msx2_skips_non_mapping_content_item() -> None:

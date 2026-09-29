@@ -249,6 +249,15 @@ class _RomEntry:
 
 
 @dataclass
+class _Slot0RamEntry:
+    """Resolved slot-0 flat RAM region (e.g. Sony HB-10's 16 KB page 3),
+    coexisting with slot 0's main/logo ROM. Named to avoid a positional
+    tuple, matching _RomEntry/_FdcDef's own precedent."""
+    size_kb: int
+    page: int
+
+
+@dataclass
 class _FdcDef:
     """Resolved floppy interface: DISK ROM entry, controller, style, drive count."""
     disk_rom_entry: _RomEntry
@@ -292,6 +301,12 @@ class MachineSpec:
     # Device flags
     has_v9938: bool
     has_rtc: bool
+
+    # Optional flat RAM region in slot 0, coexisting with main_rom_entry/
+    # logo_rom_entry above (e.g. Sony HB-10's 16 KB page 3). None for every
+    # machine that doesn't declare one (the default, unaffected by this
+    # field's addition).
+    slot0_ram_entry: _Slot0RamEntry | None = None
 
     # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
     keyboard_type: str = "int"
@@ -450,8 +465,19 @@ def _is_device_entry_shape(data: object) -> TypeGuard[DeviceEntryYaml]:
     return isinstance(data, dict)
 
 
+class RamEntryYaml(TypedDict, total=False):
+    size_kb: int
+    pages: list[int]
+
+
+def _is_ram_entry_shape(data: object) -> TypeGuard[RamEntryYaml]:
+    """True if `data` is a dict (ram: block shape, slot 0 content-list item only)."""
+    return isinstance(data, dict)
+
+
 class ContentItemYaml(TypedDict, total=False):
     rom: RomEntryYaml
+    ram: RamEntryYaml
 
 
 def _is_content_item_shape(data: object) -> TypeGuard[ContentItemYaml]:
@@ -714,23 +740,40 @@ def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
 
 def _parse_slot0(
     slot0: Slot0Yaml, machine_id: str
-) -> tuple[_RomEntry | None, _RomEntry | None]:
-    """Extract main ROM (pages [0,1]) and optional logo ROM (page [2]) from slot 0."""
+) -> tuple[_RomEntry | None, _RomEntry | None, _Slot0RamEntry | None]:
+    """Extract main ROM (pages [0,1]), optional logo ROM (page [2]), and an
+    optional flat RAM region (e.g. Sony HB-10's 16 KB page 3) from slot 0's
+    content list. RAM coexists with the ROM entries -- see
+    openspec/specs/memory-slot-bus/spec.md's "Slot 0 MAY host flat RAM at a
+    configured page" Requirement."""
     main_rom: _RomEntry | None = None
     logo_rom: _RomEntry | None = None
+    ram_entry: _Slot0RamEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
         if not _is_content_item_shape(item):
             continue
         rom_data = item.get("rom")
-        if not _is_rom_entry_shape(rom_data):
+        if _is_rom_entry_shape(rom_data):
+            entry = _parse_rom_entry(rom_data, context)
+            if 0 in entry.pages or 1 in entry.pages:
+                main_rom = entry
+            elif 2 in entry.pages:
+                logo_rom = entry
             continue
-        entry = _parse_rom_entry(rom_data, context)
-        if 0 in entry.pages or 1 in entry.pages:
-            main_rom = entry
-        elif 2 in entry.pages:
-            logo_rom = entry
-    return main_rom, logo_rom
+        ram_data = item.get("ram")
+        if _is_ram_entry_shape(ram_data):
+            if ram_entry is not None:
+                raise MachineLoadError(f"{context}: at most one 'ram' content item is supported")
+            pages = [int(p) for p in ram_data.get("pages", [])]
+            if len(pages) != 1:
+                raise MachineLoadError(
+                    f"{context}: 'ram' content item must declare exactly one page, "
+                    f"got {pages!r}"
+                )
+            size_kb = int(ram_data.get("size_kb", 0))
+            ram_entry = _Slot0RamEntry(size_kb=size_kb, page=pages[0])
+    return main_rom, logo_rom, ram_entry
 
 
 def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
@@ -1036,7 +1079,7 @@ def load_machine_spec(
 
     slot0_raw = primary.get(0, {})
     slot0: Slot0Yaml = slot0_raw if _is_slot0_shape(slot0_raw) else {}
-    main_rom_entry, logo_rom_entry = _parse_slot0(slot0, machine_id)
+    main_rom_entry, logo_rom_entry, slot0_ram_entry = _parse_slot0(slot0, machine_id)
     if main_rom_entry is None:
         raise MachineLoadError(
             f"{machine_path}: slot 0 has no main ROM (content with pages [0] or [1])"
@@ -1097,6 +1140,7 @@ def load_machine_spec(
         rom_base_dir=rom_base_dir,
         main_rom_entry=main_rom_entry,
         logo_rom_entry=logo_rom_entry,
+        slot0_ram_entry=slot0_ram_entry,
         sub_rom_entry=sub_rom_entry,
         has_ram_mapper=has_ram_mapper,
         ram_mapper_size_kb=ram_mapper_size_kb,
@@ -2161,6 +2205,11 @@ def _build_msx1(
     slot2_sub_slot_enabled: bool = False,
     mapper2_subslots: list[Mapper | None] | None = None,
 ) -> "Machine":
+    slot0_ram: bytearray | None = None
+    slot0_ram_page = 3
+    if spec.slot0_ram_entry is not None:
+        slot0_ram = bytearray(spec.slot0_ram_entry.size_kb * 1024)
+        slot0_ram_page = spec.slot0_ram_entry.page
     memory = Memory(
         rom=main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
@@ -2170,6 +2219,8 @@ def _build_msx1(
         _logger=logger,
         extrom=logo_bytes,
         rom_name=spec.main_rom_entry.file,
+        slot0_ram=slot0_ram,
+        slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
         else _empty_subslots(),
