@@ -100,7 +100,12 @@ _T = TypeVar("_T")
 #   latch) in one `vdp9938` object produced and validated by the V9938
 #   (V9938.snapshot_state()/restore_state()); None for MSX1. No other field
 #   changed.
-CURRENT_FORMAT_VERSION: int = 14
+# Version 15: slot0_ram: bytearray | None added (the optional flat RAM
+#   region in primary slot 0, e.g. Sony HB-10's 16 KB page 3 -- see
+#   openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
+#   configured page" Requirement). None unless machine.memory.slot0_ram is
+#   configured.
+CURRENT_FORMAT_VERSION: int = 15
 
 
 class StateLoadError(ValueError):
@@ -206,6 +211,11 @@ class MachineSnapshot:
     slot1_sub_slot_reg: int | None = None
     mapper1_subslot_kinds: list[MapperKind | None] | None = None
     mapper1_subslot_states: list[dict[str, object]] | None = None
+    # Optional flat RAM region in primary slot 0 (e.g. Sony HB-10's 16 KB
+    # page 3), None unless machine.memory.slot0_ram is configured. See
+    # openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
+    # configured page" Requirement.
+    slot0_ram: bytearray | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -271,6 +281,21 @@ def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -
             "FDC wiring mismatch: "
             f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
             f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
+        )
+
+
+def _check_slot0_ram_wiring(machine: "Machine", slot0_ram: bytearray | None) -> None:
+    running = machine.memory.slot0_ram
+    if (slot0_ram is None) != (running is None):
+        raise SnapshotMismatchError(
+            "slot 0 RAM wiring mismatch: "
+            f"running machine has {'slot 0 RAM' if running is not None else 'no slot 0 RAM'}, "
+            f"saved state has {'slot 0 RAM' if slot0_ram is not None else 'no slot 0 RAM'}"
+        )
+    if running is not None and slot0_ram is not None and len(slot0_ram) != len(running):
+        raise StateLoadError(
+            "slot0_ram",
+            ValueError(f"slot0_ram must be {len(running)} bytes, got {len(slot0_ram)}"),
         )
 
 
@@ -373,6 +398,9 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     slot2_sub_slot_reg: int | None = (
         machine.memory.slot2_sub_slot_reg if machine.memory.slot2_sub_slot_enabled else None
     )
+    slot0_ram: bytearray | None = (
+        bytearray(machine.memory.slot0_ram) if machine.memory.slot0_ram is not None else None
+    )
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type="msx2" if vdp9938 is not None else "msx1",
@@ -411,6 +439,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         slot1_sub_slot_reg=slot1_sub_slot_reg,
         mapper1_subslot_kinds=mapper1_subslot_kinds,
         mapper1_subslot_states=mapper1_subslot_states,
+        slot0_ram=slot0_ram,
     )
 
 
@@ -617,6 +646,7 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
         mapper1_subslot_states=parse_field(
             "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
         ),
+        slot0_ram=parse_field("slot0_ram", check_optional_bytes),
     )
 
 
@@ -675,6 +705,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
         snap.mapper2_subslot_kinds,
     )
     _check_scc_wiring(machine, snap.scc_state)
+    _check_slot0_ram_wiring(machine, snap.slot0_ram)
     return _parse_producer_objects(machine, snap)
 
 
@@ -809,6 +840,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.memory.set_slot1_sub_slot_reg(snap.slot1_sub_slot_reg)
     if snap.slot2_sub_slot_reg is not None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
+    if machine.memory.slot0_ram is not None and snap.slot0_ram is not None:
+        machine.memory.slot0_ram[:] = snap.slot0_ram
 
 
 # --- symlink helper -----------------------------------------------------------
