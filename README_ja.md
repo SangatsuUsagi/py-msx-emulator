@@ -16,6 +16,7 @@
 
 **ハードウェア:**
 
+- [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX標準日本語カートリッジ HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
 - [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
@@ -421,7 +422,7 @@ python . path/to/game.rom --extension2 fmpac
 
 # スロット 2 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
 # フロッピーから起動
-python . --extension2 scc_plus --fdd1 path/to/disk.dsk
+python . --machine hb_f1xd --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Sony HBI-J1（漢字ROM/MSX-JEカートリッジ、スロット2を拡張）を接続
 python . --extension2 hbi_j1
@@ -653,9 +654,14 @@ Shift+0 に割り当ててあります。その他のキーはキートップの
 | `cbios_msx2_jp` | MSX2 | 日本（デフォルト） | V9938 |
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
+| `hb_10` | MSX1 | 日本 | TMS9918A |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
 | `hb_f1xd_256k` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
+
+`hb_10`（Sony HB-10）は実機 ROM を使用し、BIOS と同じスロット 0 に 16KB RAM を備えます（実機同様、スロット 3 は空き）。`hb-10_basic-bios1.rom` を `roms/hb_10/` に配置します。
+
+> **注記**：HB-10 の VDP は TMS9118NL ですが、本エミュレータでは機能的に等価な TMS9918A として実装されています。
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
 
