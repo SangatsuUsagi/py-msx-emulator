@@ -397,6 +397,22 @@ def test_real_hb_10_config_has_no_slot3_ram() -> None:
     assert len(machine.memory.slot0_ram) == 16 * 1024
 
 
+def test_real_hb_10_64k_config_moves_ram_to_slot3() -> None:
+    """The HB-10 64 KB RAM mod drops slot 0's 16 KB RAM and fills all four
+    pages of slot 3 with flat RAM; slot 0 keeps only the main ROM."""
+    reg = load_device_registry(Path("config"))
+    spec = load_machine_spec("hb_10_64k", Path("config"), reg, Path("."))
+    assert spec.ram_size_kb == 64
+    assert spec.slot0_ram_entry is None
+
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    assert machine.memory.slot0_ram is None
+    assert len(machine.memory.ram) == 64 * 1024
+    machine.memory.set_slot_register(0xFF)  # all pages -> slot 3
+    machine.memory.write(0x0000, 0x5A)
+    assert machine.memory.read(0x0000) == 0x5A
+
+
 def test_build_machine_msx2_vdp_type(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
     machine = build_machine(
