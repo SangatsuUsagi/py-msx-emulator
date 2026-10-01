@@ -655,6 +655,7 @@ Shift+0 に割り当ててあります。その他のキーはキートップの
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
 | `hb_10` | MSX1 | 日本 | TMS9918A |
+| `hb_10_64k` | MSX1 | 日本 | TMS9918A |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
 | `hb_f1xd_256k` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
@@ -662,6 +663,8 @@ Shift+0 に割り当ててあります。その他のキーはキートップの
 `hb_10`（Sony HB-10）は実機 ROM を使用し、BIOS と同じスロット 0 に 16KB RAM を備えます（実機同様、スロット 3 は空き）。`hb-10_basic-bios1.rom` を `roms/hb_10/` に配置します。
 
 > **注記**：HB-10 の VDP は TMS9118NL ですが、本エミュレータでは機能的に等価な TMS9918A として実装されています。
+
+`hb_10_64k` は [Sony HB-10 のカテゴリページ](https://www.msx.org/wiki/Category:Sony_HB-10)で紹介されている 64KB RAM 改造を施した HB-10 に相当します。スロット 0 の 16KB RAM を取り除き、スロット 3 の全 4 ページに 64KB の flat RAM を配置しています。ROM は `hb_10` と同じ `roms/hb_10/` のものを使います。改造済みの実機での検証は行っていません。
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
 

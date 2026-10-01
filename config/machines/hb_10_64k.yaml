@@ -1,0 +1,42 @@
+schema_version: 1
+id: hb_10_64k
+name: "Sony HB-10 64 KB RAM mod (MSX1, Japan)"
+generation: msx1
+video_standard: ntsc
+rom_base: roms/hb_10
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
+
+# Sony HB-10 with the community 64 KB RAM modification (see
+# https://www.msx.org/wiki/Category:Sony_HB-10): the stock 16 KB RAM in
+# slot 0 page 3 (config/machines/hb_10.yaml) is removed and replaced by a
+# 64 KB flat RAM in slot 3 covering pages 0-3. Slot 0 keeps only the
+# 32 KB main ROM. Same ROM image as the stock hb_10, so rom_base is shared.
+#
+# The author owns a real HB-10; this modified configuration is not
+# verified against a modified unit.
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: hb-10_basic-bios1.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: 302afb5d8be26c758309ca3df611ae69cced2821
+    1: { type: cartridge }
+    2: { type: cartridge }
+    3:
+      type: ram
+      size_kb: 64
+      mapper: none
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: { keyboard_type: jp }
+  - ref: vdp_tms9918a
+  - ref: psg_ay8910
+
+default_extensions: []
