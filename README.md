@@ -30,6 +30,7 @@ best-effort.
 
 **Hardware:**
 
+- [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX Standard Japanese Cartridge HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
 - [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
@@ -640,7 +641,7 @@ python . path/to/game.rom --extension2 fmpac
 
 # Connect an SCC-I (SCC+) cartridge in slot 2 (no cartridge ROM argument);
 # boot from floppy instead
-python . --extension2 scc_plus --fdd1 path/to/disk.dsk
+python . --machine hb_f1xd --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Attach the Sony HBI-J1 Kanji-ROM/MSX-JE cartridge (expands slot 2)
 python . --extension2 hbi_j1
@@ -879,9 +880,17 @@ automatically (MSX1 ROM → `cbios_msx1_jp`; MSX2 ROM or no cartridge →
 | `cbios_msx2_jp` | MSX2 | Japan (default) | V9938 |
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
+| `hb_10` | MSX1 | Japan | TMS9918A |
 | `hb_f1xd` | MSX2 | Japan | V9938 |
 | `hb_f1xd_256k` | MSX2 | Japan | V9938 |
 | `fs_a1f` | MSX2 | Japan | V9938 |
+
+`hb_10` (Sony HB-10) uses the real machine ROM, with 16 KB RAM in slot 0
+alongside the BIOS (slot 3 is unpopulated, as on real hardware); place its
+`hb-10_basic-bios1.rom` under `roms/hb_10/`.
+
+> **Note**: the HB-10's VDP is a TMS9118NL; this emulator implements it as
+> the functionally equivalent TMS9918A.
 
 `hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
 disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and

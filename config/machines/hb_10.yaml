@@ -23,9 +23,7 @@ cpu:
 # exactly the bug a bare omission caused before this size_kb: 0 was added.
 # ROM filename/SHA1 reuse openMSX's Sony_HB-10.xml values (SHA1 advisory).
 #
-# The author does not yet own a real HB-10, so this configuration is based
-# on publicly available technical documentation (openMSX's machine
-# definition) and has not been verified against real hardware.
+# The author owns a real HB-10.
 slots:
   primary:
     0:
