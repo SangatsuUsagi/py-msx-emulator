@@ -88,6 +88,14 @@ class Memory:
     # and open bus everywhere else. None keeps the legacy mapper / MSX1 flat-top
     # behaviour.
     flat_ram_subslot: int | None = field(default=None)
+    # Optional flat RAM region in primary slot 0, coexisting with the main
+    # ROM at the slot's other pages (e.g. Sony HB-10: 32 KB ROM in pages 0-1,
+    # 16 KB RAM in page 3). Construction-time-fixed like flat_ram_subslot
+    # above -- no setter, since no machine reassigns it after construction.
+    # None (the default) leaves slot 0 exactly as it behaves without this
+    # field: every page routes to the main ROM.
+    slot0_ram: bytearray | None = field(default=None, repr=False)
+    slot0_ram_page: int = field(default=3)
     # Which sub-slot owns the SUB ROM (page 0 of that sub-slot) and which owns
     # the FDC (`fdc_page` of that sub-slot) -- independent of each other and of
     # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
@@ -116,6 +124,9 @@ class Memory:
     # _extrom_len above (ram is assumed construction-time-fixed, same as rom).
     _ram_len: int = field(init=False, repr=False, default=0)
     _msx1_ram_base: int = field(init=False, repr=False, default=0)
+    # Length of the optional slot-0 RAM buffer, precomputed like _ram_len
+    # above (0 when slot0_ram is None).
+    _slot0_ram_len: int = field(init=False, repr=False, default=0)
     # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever one
     # of the 8 set_*() methods below invalidates it (event-driven: a single
     # bool check per access, no per-access recomputation of a comparison
@@ -225,10 +236,15 @@ class Memory:
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
         self._ram_len = len(self.ram)
         self._msx1_ram_base = 0x10000 - self._ram_len
+        self._slot0_ram_len = len(self.slot0_ram) if self.slot0_ram is not None else 0
         if len(self._mapper1_subslots) != 4:
             raise ValueError("Memory: _mapper1_subslots must have exactly 4 entries")
         if len(self._mapper2_subslots) != 4:
             raise ValueError("Memory: _mapper2_subslots must have exactly 4 entries")
+        if self.slot0_ram is not None and self.slot0_ram_page == 2 and self.extrom is not None:
+            raise ValueError(
+                "Memory: slot0_ram_page 2 conflicts with the MSX2 ext ROM overlay (extrom)"
+            )
         self._validate_slot3_strategy()
         self._rebuild_page_cache()
 
@@ -259,6 +275,22 @@ class Memory:
     def _write_flat_ram(self, addr: int, value: int) -> None:
         if addr < self._ram_len:
             self.ram[addr] = value
+
+    def _read_slot0_ram(self, addr: int) -> int:
+        # slot0_ram covers exactly one 16 KB page (slot0_ram_page); offset
+        # from the page base, same pattern as _read_msx1_flat_ram's
+        # base-relative bounds check (slot0_ram does not necessarily span
+        # the whole page, so this cannot index by raw addr like
+        # _read_flat_ram does for a full-address-space RAM).
+        assert self.slot0_ram is not None
+        off = addr - (self.slot0_ram_page << 14)
+        return self.slot0_ram[off] if 0 <= off < self._slot0_ram_len else 0xFF
+
+    def _write_slot0_ram(self, addr: int, value: int) -> None:
+        assert self.slot0_ram is not None
+        off = addr - (self.slot0_ram_page << 14)
+        if 0 <= off < self._slot0_ram_len:
+            self.slot0_ram[off] = value
 
     def _read_msx1_flat_ram(self, addr: int) -> int:
         # MSX1: flat RAM sits at the top of the address space (32 KB → base
@@ -421,6 +453,8 @@ class Memory:
     def _resolve_page_read_leaf(self, page: int) -> Callable[[int], int]:
         slot = (self.slot_register >> (page * 2)) & 0x03
         if slot == 0:
+            if self.slot0_ram is not None and page == self.slot0_ram_page:
+                return self._read_slot0_ram
             return self._read_rom
         if slot == 1:
             if self.slot1_sub_slot_enabled:
@@ -439,6 +473,8 @@ class Memory:
     def _resolve_page_write_leaf(self, page: int) -> Callable[[int, int], None]:
         slot = (self.slot_register >> (page * 2)) & 0x03
         if slot == 0:
+            if self.slot0_ram is not None and page == self.slot0_ram_page:
+                return self._write_slot0_ram
             return self._write_noop  # BIOS ROM is read-only
         if slot == 1:
             if self.slot1_sub_slot_enabled:
@@ -520,10 +556,17 @@ class Memory:
 
         MSX1 flat RAM sits at the top of the address space, so the window is
         derived from the RAM size. Mapper-backed (MSX2) RAM can appear in any
-        page, so the whole address space is treated as valid RAM.
+        page, so the whole address space is treated as valid RAM. A machine
+        whose real RAM lives in slot0_ram instead (e.g. Sony HB-10, whose
+        slot 3 is genuinely unpopulated -- self.ram is a zero-length buffer)
+        falls back to slot0_ram's own page window rather than the empty
+        (and otherwise inverted, low > high) slot-3 range.
         """
         if self.ram_mapper is not None:
             return (0x0000, 0xFFFF)
+        if self._ram_len == 0 and self.slot0_ram is not None:
+            base = self.slot0_ram_page << 14
+            return (base, base + self._slot0_ram_len - 1)
         low = max(0, 0x10000 - len(self.ram))
         return (low, 0xFFFF)
 

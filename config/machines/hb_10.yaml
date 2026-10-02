@@ -1,0 +1,49 @@
+schema_version: 1
+id: hb_10
+name: "Sony HB-10 (MSX1, Japan)"
+generation: msx1
+video_standard: ntsc
+rom_base: roms/hb_10
+cpu:
+  type: z80a
+  clock_mhz: 3.579545
+  m1_wait_states: 1 # MSX inserts 1 wait per M1 (opcode fetch)
+
+# Sony HB-10: basic Japanese MSX1 with 16 KB RAM. Slot 0 hosts the 32 KB
+# main ROM (pages 0-1) and a 16 KB flat RAM (page 3) side by side, per
+# real hardware's actual layout (openMSX's
+# references/openMSX/share/machines/Sony_HB-10.xml) -- see
+# openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
+# configured page" Requirement. Slot 3 is unpopulated on real hardware
+# (<primary slot="3"/>, no device); size_kb: 0 below makes it genuinely
+# open bus (Memory's MSX1 flat-RAM bounds check always misses with a
+# zero-length buffer). Omitting slot 3 entirely would instead fall back to
+# this codebase's 32 KB default flat RAM there, which the BIOS's own
+# memory-size probe would find and prefer over slot 0's real 16 KB --
+# exactly the bug a bare omission caused before this size_kb: 0 was added.
+# ROM filename/SHA1 reuse openMSX's Sony_HB-10.xml values (SHA1 advisory).
+#
+# The author owns a real HB-10.
+slots:
+  primary:
+    0:
+      content:
+        - rom:
+            file: hb-10_basic-bios1.rom
+            size_kb: 32
+            pages: [0, 1]
+            sha1: 302afb5d8be26c758309ca3df611ae69cced2821
+        - ram:
+            size_kb: 16
+            pages: [3]
+    1: { type: cartridge }
+    2: { type: cartridge }
+    3: { size_kb: 0 } # unpopulated on real hardware -- open bus, not RAM
+
+builtin_devices:
+  - ref: ppi8255
+    overrides: { keyboard_type: jp }
+  - ref: vdp_tms9918a
+  - ref: psg_ay8910
+
+default_extensions: []
