@@ -80,9 +80,11 @@ _UNPACK8: tuple[bytes, ...] = tuple(
 _SS_OFFSETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1)}
 
 # GRAPHIC7 (SCREEN 8) sprites use a FIXED 16-colour palette, NOT the
-# programmable one. Source values from openMSX Renderer::GRAPHIC7_SPRITE_PALETTE
-# as 0xGRB nibbles (each channel 0-7); stored here pre-converted to the GRB332
-# byte the SCREEN 8 frame buffer holds: (G<<5) | (R<<2) | (B>>1).
+# programmable one (V9938 data book, "Setting the Sprite Colors", whose table
+# these values match). Source values from openMSX
+# Renderer::GRAPHIC7_SPRITE_PALETTE as 0xGRB nibbles (each channel 0-7);
+# stored here pre-converted to the GRB332 byte the SCREEN 8 frame buffer
+# holds: (G<<5) | (R<<2) | (B>>1).
 _G7_SPRITE_GRB_SRC: tuple[int, ...] = (
     0x000,
     0x002,
@@ -142,7 +144,9 @@ def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
     """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion.
 
     With TP clear, colour 0 takes R#7 bits 3:2 at even dots (p0, p2) and bits
-    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0."""
+    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0 and the
+    V9938 data book's GRAPHIC 5 "Hardware tiling function" (background colour
+    split into even and odd dots)."""
     key = (tp, border)
     if key not in _G5_LUT_CACHE:
         even_zero = (border >> 2) & 0x03
@@ -255,7 +259,9 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
 def _r18_offset(reg18: int) -> tuple[int, int]:
     """Decode R#18 into (horizontal, vertical) pixel offsets (openMSX): each
     nibble adjust = (nibble ^ 7), offset = adjust - 7, range -7..+8; the
-    BIOS-neutral nibble 0 → 0. Positive offset moves the picture right/down."""
+    BIOS-neutral nibble 0 → 0. Positive offset moves the picture right/down.
+    Matches the V9938 data book's R#18 figure: H = 7 leftmost, 0 centre,
+    8 rightmost; V = 7 top, 0 centre, 8 bottom."""
     h_off = ((reg18 & 0x0F) ^ 0x07) - 7
     v_off = ((reg18 >> 4) ^ 0x07) - 7
     return h_off, v_off
@@ -304,7 +310,8 @@ def _border_pattern(regs: list[int]) -> bytes:
 
     SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour. SCREEN 6
     (G5) alternates two palette indices, R#7 bits 3:2 at even dots and bits
-    1:0 at odd dots (openMSX getBorderColors). Every other mode uses the low
+    1:0 at odd dots (openMSX getBorderColors; V9938 data book GRAPHIC 5
+    "Hardware tiling function"). Every other mode uses the low
     nibble of R#7. Shared by the band prefill, the R#18 display-adjust fill
     and the output-height padding so they cannot drift.
     """
@@ -1137,8 +1144,9 @@ def _render_sprites(
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
-    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
-    # transparent and take no part in coincidence, same as before.
+    # !getTransparency(); V9938 data book "TP and Sprites"). At the default
+    # TP=0, colour-0 sprites are fully transparent and take no part in
+    # coincidence, same as before.
     can0collide = bool(regs[8] & 0x20)
 
     # No mode-specific 192-line cap: sprite mode 1's active display period is
@@ -1356,7 +1364,9 @@ def _render_sprites_mode2(
     sprite plane is doubled horizontally so sprites span the full screen.
     split_colour=True (SCREEN 6 / GRAPHIC5): the plane holds 2 bits per screen dot,
     so each sprite dot's 4-bit colour splits across its two screen pixels — bits
-    3:2 on the left, bits 1:0 on the right (openMSX SpriteConverter::drawMode2's
+    3:2 on the left, bits 1:0 on the right (V9938 data book GRAPHIC 5
+    "Hardware tiling function": high two bits for even dots, low two for odd;
+    openMSX SpriteConverter::drawMode2's
     GRAPHIC5 branch; confirmed on openMSX with a solid sprite of colour code 6,
     which renders as palette 1 / palette 2 columns, not as a palette-6 block).
 
@@ -1387,7 +1397,9 @@ def _render_sprites_mode2(
     # bits 9:0 cleared; there R#5 bits 1:0 gate offset bits 8:7 and bit 9
     # reads as 0, so the sprite*16 + line offset is ANDed, not added
     # (matches openMSX's sprite-mode-2 colour addressing). With R#5 bits 2:0
-    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset".
+    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset",
+    # the V9938 data book's rule (Sprite Color Table base = SAT base - 512);
+    # the AND behaviour for other R#5 values is openMSX-only.
     attr_reg = ((regs[11] & 3) << 15) | (regs[5] << 7)
     sat_base = attr_reg & ~0x1FF & 0x1FFFF
     col_base_high = attr_reg & ~0x3FF & 0x1FFFF
@@ -1396,8 +1408,9 @@ def _render_sprites_mode2(
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
-    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
-    # transparent and take no part in coincidence, same as sprite mode 1.
+    # !getTransparency(); V9938 data book "TP and Sprites"). At the default
+    # TP=0, colour-0 sprites are fully transparent and take no part in
+    # coincidence, same as sprite mode 1.
     can0collide = bool(regs[8] & 0x20)
 
     # scan_hi caps how far this pass's line index ever reaches (< scan_hi

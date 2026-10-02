@@ -146,7 +146,9 @@ class PSG:
     _tone_out: list[int] = field(default_factory=lambda: [0, 0, 0], init=False, repr=False)
     _noise_cnt: int = field(default=1, init=False, repr=False)
     _lfsr: int = field(default=1, init=False, repr=False)   # 17-bit; must never be 0
-    # Envelope: 32-step down-counter + attack/alternate/hold model (openMSX/MAME).
+    # Envelope: 32-step down-counter + attack/alternate/hold model (openMSX/MAME;
+    # the attack/alternate/hold shape bits are the AY-3-8910 data sheet's R15,
+    # references/docs/General_Instrument_AY-3-8910.md).
     _env_cnt: int = field(default=1, init=False, repr=False)
     _env_step: int = field(default=0x1F, init=False, repr=False)   # 5-bit counter 0-31
     _env_attack: int = field(default=0, init=False, repr=False)    # 0x00 or 0x1F

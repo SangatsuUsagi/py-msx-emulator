@@ -254,7 +254,9 @@ class VDP:
         """Recompute the /INT level: F (S#0 bit 7) gated by IE0 (R#1 bit 5).
 
         Called whenever either input changes, so an IE0 0->1 write while F is
-        still pending raises the line at once (openMSX VDP.cc, R#1 write)."""
+        still pending raises the line at once (openMSX VDP.cc, R#1 write; TI
+        TMS9918A data manual Sec. 2.3.1: INT is active whenever IE and F are
+        both 1)."""
         self.irq = bool(self.status & 0x80) and bool(self.regs[1] & 0x20)
 
     def begin_vblank(self) -> None:
@@ -358,7 +360,9 @@ class VDP:
             # Clear VBlank (bit 7), 5th-sprite flag (bit 6) and coincidence
             # (bit 5) together, keeping only the 5th-sprite index (bits 4:0).
             # Matches openMSX SpriteChecker::resetStatus() / VDP::readStatusReg
-            # case 0, both of which clear status & 0x1F on an S#0 read.
+            # case 0, both of which clear status & 0x1F on an S#0 read, and
+            # the TI TMS9918A data manual Sec. 2.3 (F, C and 5S are each
+            # cleared when the status register is read).
             self.status &= 0x1F
             self.update_irq()     # F is now clear, so the /INT line drops
             self.latch = None     # reading status resets the address latch
