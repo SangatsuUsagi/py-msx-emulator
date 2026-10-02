@@ -972,7 +972,7 @@ def _render_text(
 
 
 # ---------------------------------------------------------------------------
-# Text 2 (SCREEN 0, WIDTH 80) — 80×24 chars, 6 pixels wide, no sprites, no blink
+# Text 2 (SCREEN 0, WIDTH 80) — 80×24 chars, 6 pixels wide, no sprites
 # ---------------------------------------------------------------------------
 
 
@@ -983,17 +983,29 @@ def _render_text2(
     Technical Handbook 3.2.2), but 80 columns into a 512-wide buffer and a
     4 KB-aligned name table selected by R#2 bits 6-2 (A16-A12) instead of
     TEXT1's 1 KB-aligned, 4-bit addressing -- see openspec design.md Decision
-    1. Blink (R#12/R#13/blink table) is not implemented; every character
-    renders in its plain (non-blinking) colour.
+    1.
+
+    Blink: a character whose bit in the blink table (R#10/R#3, A16-A9; one
+    bit per character, MSB first, 10 bytes per row) is set uses R#12's
+    colours during the R#13 blink ON period and R#7's otherwise (V9938 data
+    book, TEXT 2 mode sections 4-6).
     """
     name_base = (regs[2] & 0x7C) << 10
     # Pattern generator: full-width R#4 base (see _render_g1); the name table
     # is 4 KB-aligned in TEXT2.
     pat_base = (regs[4] & 0x3F) << 11
+    blink_base = ((regs[10] & 0x07) << 14) | ((regs[3] & 0xF8) << 6)
     fg = (regs[7] >> 4) & 0x0F
     if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
         fg = _colour0(regs)
     bg = regs[7] & 0x0F
+    blink_on = vdp.blink_state
+    blink_bg = regs[12] & 0x0F
+    if blink_bg == 0:
+        blink_bg = _colour0(regs)
+    blink_fg = (regs[12] >> 4) & 0x0F
+    if blink_fg == 0:  # matches openMSX: blink text colour 0 shows the blink background
+        blink_fg = blink_bg
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
     row_end = (ye + 7) // 8
@@ -1005,13 +1017,20 @@ def _render_text2(
     for row in range(row_start, row_end):
         for col in range(80):
             tile = vdp.vram[(name_base + row * 80 + col) & 0x1FFFF]
+            cfg = fg
+            cbg = bg
+            if blink_on:
+                attr = vdp.vram[(blink_base + row * 10 + (col >> 3)) & 0x1FFFF]
+                if attr & (0x80 >> (col & 7)):
+                    cfg = blink_fg
+                    cbg = blink_bg
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x1FFFF]
                 off = scan * 512 + 16 + col * 6
-                buf[off : off + 6] = _TEXT6_BYTES[pat][fg][bg]
+                buf[off : off + 6] = _TEXT6_BYTES[pat][cfg][cbg]
 
 
 # ---------------------------------------------------------------------------
@@ -1527,12 +1546,14 @@ def _display_page_bits(vdp: "V9938", regs: list[int], mask: int) -> int:
     for the 64 KB-page modes SCREEN 7/8. Either way the lowest page bit is
     R#2 bit 5.
 
-    With EO (R#9 bit 2) set, the first field (S#2 EO = 0, even frame) shows
-    the even page and the second field the page R#2 selects (V9938 data book,
-    Special Functions 2.2), so bit 5 is forced to 0 on even frames.
+    Bit 5 is forced to 0 (even page) during the R#13 blink ON period, and
+    with EO (R#9 bit 2) set on the first field (S#2 EO = 0, even frame): the
+    data book shows the even page for the ON time and, with EO, in the first
+    field (V9938 data book, R#13 and Special Functions 1.1/2.2).
     """
     bits = regs[2] & mask
-    if even_odd_enabled_of(regs) and not (vdp.frame_count & 1):
+    first_field = even_odd_enabled_of(regs) and not (vdp.frame_count & 1)
+    if vdp.blink_state or first_field:
         bits &= ~0x20 & 0xFF
     return bits
 

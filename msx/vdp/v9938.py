@@ -217,7 +217,12 @@ _CYCLES_PER_PIXEL: int = _CYCLES_PER_BYTE
 # Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
 # tracked so a mid-frame display-adjust change (per-region dot scroll, e.g. a
 # split screen that dot-scrolls only its lower half) shifts the correct bands.
-_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
+_DISPLAY_REGS: frozenset[int] = frozenset(
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 18, 19, 23}
+)
+
+# One R#13 time unit, in frames (V9938 data book: 166.9 ms at NTSC = 10 fields).
+_BLINK_FRAMES_PER_UNIT = 10
 
 # S#2 status bits
 _S2_HR = 0x20  # horizontal retrace (set during horizontal blanking)
@@ -276,6 +281,8 @@ class V9938State(TypedDict):
     first_byte: int
     control_pending: bool
     palette_pending: bool
+    blink_state: bool
+    blink_count: int
 
 
 # The timed-command countdowns are i32 in a port; a saved value must fit.
@@ -353,6 +360,8 @@ def parse_v9938_state(obj: object) -> V9938State:
         "first_byte": _state_int(state, label, "first_byte", 0, 0xFF),
         "control_pending": _state_bool(state, label, "control_pending"),
         "palette_pending": _state_bool(state, label, "palette_pending"),
+        "blink_state": _state_bool(state, label, "blink_state"),
+        "blink_count": _state_int(state, label, "blink_count", 0, _BLINK_FRAMES_PER_UNIT * 15),
     }
 
 
@@ -451,6 +460,11 @@ class V9938:
     _frame_count: int = field(default=0, init=False, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
+    # R#13 blink timer, shared by TEXT2 character blink and GRAPHIC4-7 page
+    # alternation: blink_state True = ON period (R#12 colours / even page),
+    # blink_count = frames left in the current period, 0 = state held.
+    blink_state: bool = field(default=False, init=False, repr=False)
+    blink_count: int = field(default=0, init=False, repr=False)
     # Sprite collision coordinates (S#3-S#6), already biased by +12 dots / +8
     # lines the way the hardware reports them. Written by the sprite renderer
     # when it flags C, cleared by a read of S#5.
@@ -545,8 +559,28 @@ class V9938:
         return display_width_of(self.regs)
 
     def increment_frame(self) -> None:
-        """Advance the completed-frame counter. Called once per frame."""
+        """Advance the completed-frame counter and the R#13 blink timer.
+        Called once per frame."""
         self._frame_count += 1
+        if self.blink_count != 0:
+            self.blink_count -= 1
+            if self.blink_count == 0:
+                self.blink_state = not self.blink_state
+                r13 = self.regs[13]
+                period = (r13 >> 4) if self.blink_state else (r13 & 0x0F)
+                self.blink_count = period * _BLINK_FRAMES_PER_UNIT
+
+    def _restart_blink(self, r13: int) -> None:
+        """An R#13 write (even of the held value) restarts the blink timer:
+        ON unless the ON time is 0; it alternates only when both times are
+        non-zero, otherwise the state just set holds."""
+        on_time = r13 >> 4
+        off_time = r13 & 0x0F
+        self.blink_state = on_time != 0
+        if on_time != 0 and off_time != 0:
+            self.blink_count = on_time * _BLINK_FRAMES_PER_UNIT
+        else:
+            self.blink_count = 0
 
     @property
     def frame_count(self) -> int:
@@ -614,6 +648,8 @@ class V9938:
             "first_byte": self._first_byte,
             "control_pending": self._ctrl_pending,
             "palette_pending": self._pal_pending,
+            "blink_state": self.blink_state,
+            "blink_count": self.blink_count,
         }
 
     def restore_state(self, state: V9938State) -> None:
@@ -633,6 +669,8 @@ class V9938:
         self._first_byte = state["first_byte"]
         self._ctrl_pending = state["control_pending"]
         self._pal_pending = state["palette_pending"]
+        self.blink_state = state["blink_state"]
+        self.blink_count = state["blink_count"]
         self._cmd_active = engine["active"]
         self._cmd_transfer = engine["transfer"]
         self._cmd_code = engine["code"]
@@ -696,6 +734,8 @@ class V9938:
         self._status2 = 0
         self._status8 = 0
         self._status9 = 0
+        self.blink_state = False
+        self.blink_count = 0
         self.collision_x = 0
         self.collision_y = 0
         self._cmd_remaining = 0
@@ -874,6 +914,8 @@ class V9938:
                 self._reg_write_log.append(_RegChange(self.display_line, reg, value))
             if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                 self.update_irq()
+            elif reg == 13:
+                self._restart_blink(value)
             elif reg == 14:
                 self._set_addr_high(value)
         elif 32 <= reg <= 46:

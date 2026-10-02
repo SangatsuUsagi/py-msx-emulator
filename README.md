@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3464%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3481%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -128,13 +128,14 @@ mid-frame register and palette changes.
     addressing model is used instead, which diverges only when VRAM content
     written in a planar mode is read back after switching to a non-planar
     mode without an intervening clear.
-  - TEXT2 (SCREEN 0 WIDTH 80)'s blink colour/rate (R#12/R#13) is not
-    implemented, so blinking characters render in a single fixed colour
-    instead of alternating. R#9's EO bit drives GRAPHIC4-7's automatic
-    even/odd page alternation (matching real V9938 behaviour), but the
-    half-scanline CRT field-fusion shift that produces true interlaced
-    (double vertical resolution) output is a deliberate non-goal,
-    prioritizing rendering simplicity/performance.
+  - The R#13 blink timer (TEXT2 character blink with R#12 colours, and
+    GRAPHIC4-7 automatic page alternation) advances once per frame, so a
+    mid-frame R#13 write takes effect for the whole frame, and the
+    undocumented R#1 bit 2 per-line blink timing is not implemented. R#9's
+    EO bit drives GRAPHIC4-7's automatic even/odd page alternation
+    (matching real V9938 behaviour), but the half-scanline CRT field-fusion
+    shift that produces true interlaced (double vertical resolution) output
+    is a deliberate non-goal, prioritizing rendering simplicity/performance.
   - During frame skip, sprite 5th-sprite/coincidence status is not updated
     on a skipped frame, so a ROM polling collision during turbo mode sees
     stale (last-rendered-frame) status.
@@ -1006,7 +1007,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 3464 tests spanning unit tests
+The test suite covers all major components with 3481 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1076,7 +1077,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3464 tests
+├── tests/                 # Test suite — 3481 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
