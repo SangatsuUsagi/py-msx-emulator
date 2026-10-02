@@ -795,7 +795,9 @@ class V9938:
             if self._cmd_remaining <= 0:
                 # Completion clears CE only: TR keeps its value until the next
                 # R#44 write / S#7 read taken with no command running
-                # (openMSX commandDone(), which never touches TR).
+                # (openMSX commandDone(), which never touches TR; V9938 data
+                # book LMCM note 2: the command completes with CE = 0 even
+                # while TR = 1).
                 self._cmd_active = False
                 self._cmd_code = _CMD_ABRT
                 self._status2 &= ~_S2_CE
@@ -983,7 +985,9 @@ class V9938:
             # result or the dot an LMCM has staged. The read doubles as the
             # LMCM handshake: taking the dot lets the engine fetch the next
             # one. With no command running it clears TR instead (openMSX
-            # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor).
+            # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor; V9938
+            # data book LMCM note 1: "TR must be reset before the command is
+            # executed. Read Status Register #7 ...").
             result = self.cmd_regs[12]
             if self._cmd_active and self._cmd_code == _CMD_LMCM:
                 self._advance_lmcm()
@@ -1007,7 +1011,11 @@ class V9938:
         if self.regs[15] == 3:
             # S#3-S#6: sprite collision X/Y, as reported by the sprite
             # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
-            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`).
+            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the
+            # V9938 data book shows S#4 as 1111111X8). The data book shows
+            # S#6 as 1 1 1 1 1 1 EO Y8, i.e. bit 1 is the field flag, which
+            # this read does not return -- see
+            # extras/OPENMSX_ONLY_BASIS_AUDIT.md.
             return self.collision_x & 0xFF
         if self.regs[15] == 4:
             return ((self.collision_x >> 8) & 0x01) | 0xFE
@@ -1340,7 +1348,9 @@ class V9938:
         self._cmd_ystep = ys
         self._status2 |= _S2_CE
         # V9938 does NOT auto-load the first dot from R#44 at command start
-        # (OpenMSX startLmmc/startHmmc set TR only). Writing R#44 (COL) sets the
+        # (OpenMSX startLmmc/startHmmc set TR only; the V9938 data book's HMMC
+        # execution order has the program put the first byte in CLR before
+        # writing CMR, and send the rest after). Writing R#44 (COL) sets the
         # transfer latch; if that happened during command setup the pending COL
         # is the first dot, otherwise the first CPU data-port write supplies it.
         # Unconditionally consuming CLR here shifted every transfer by one dot

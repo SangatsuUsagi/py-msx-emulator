@@ -65,7 +65,8 @@ class Z80:
     instruction_pc: int = 0
     # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
     # the core reusable for non-MSX systems); MSX machines configure 1 (the MSX
-    # M1 wait state, matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
+    # M1 wait state -- Sony MSX Technical Handbook: "1 WAIT in M1 CYCLE" --
+    # matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
     # from the machine config.
     m1_wait_states: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)

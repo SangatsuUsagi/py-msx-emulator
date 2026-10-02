@@ -3,7 +3,8 @@
 Register-level chip emulation. Transfers are resolved to/from a whole 512-byte
 sector buffer and paced by DRQ per byte (the MSX DISK ROM polls STATUS/DRQ, not
 T-states), so the model is deterministic rather than cycle-accurate. Status-bit
-constants and command decode follow openMSX ``WD2793.cc``.
+constants and command decode follow openMSX ``WD2793.cc`` and the WD279X
+data sheet (references/docs/WESTERN_DIGITAL_WD279X.md).
 
 The status byte's bit meanings depend on the command type:
   Type I  (positioning): INDEX/TRACK00/CRC/SEEK_ERROR/HEAD_LOADED/WPRT/NOT_READY
