@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3445%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3462%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -16,6 +16,7 @@
 
 **ハードウェア:**
 
+- [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX標準日本語カートリッジ HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
 - [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
@@ -176,9 +177,10 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | アドレス空間 | フラット 64 KB（0x0000–0xFFFF）、4 つの 16 KB ページ |
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
+| スロット 0 ページ 3 | 一部の機種（例：`hb_10`）で 16 KB SRAM を 0xC000–0xFFFF にマップ — 電源断で消えるワーク RAM で、カートリッジ SRAM のようなバッテリーバックアップや保存はない；BIOS と並べてマシン YAML の `ram: {size_kb: 16, pages: [3]}` エントリとして宣言する |
 | スロット 1 | マッパー経由のカートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension1` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension2` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
-| スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
+| スロット 3（MSX1） | 既定はページ 2–3（0x8000–0xFFFF）の 32 KB RAM；サイズは機種ごとに設定（`hb_10_64k` は全ページの 64 KB、`hb_10` は空きでオープンバス） |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
 ### RAM マッパー
@@ -421,7 +423,7 @@ python . path/to/game.rom --extension2 fmpac
 
 # スロット 2 に SCC-I（SCC+）カートリッジを接続（カートリッジ ROM 引数なし）；
 # フロッピーから起動
-python . --extension2 scc_plus --fdd1 path/to/disk.dsk
+python . --machine hb_f1xd --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Sony HBI-J1（漢字ROM/MSX-JEカートリッジ、スロット2を拡張）を接続
 python . --extension2 hbi_j1
@@ -653,9 +655,17 @@ Shift+0 に割り当ててあります。その他のキーはキートップの
 | `cbios_msx2_jp` | MSX2 | 日本（デフォルト） | V9938 |
 | `cbios_msx2_eu` | MSX2 | ヨーロッパ | V9938 |
 | `cbios_msx2_br` | MSX2 | ブラジル | V9938 |
+| `hb_10` | MSX1 | 日本 | TMS9918A |
+| `hb_10_64k` | MSX1 | 日本 | TMS9918A |
 | `hb_f1xd` | MSX2 | 日本 | V9938 |
 | `hb_f1xd_256k` | MSX2 | 日本 | V9938 |
 | `fs_a1f` | MSX2 | 日本 | V9938 |
+
+`hb_10`（Sony HB-10）は実機 ROM を使用し、BIOS と同じスロット 0 に 16KB RAM を備えます（実機同様、スロット 3 は空き）。`hb-10_basic-bios1.rom` を `roms/hb_10/` に配置します。
+
+> **注記**：HB-10 の VDP は TMS9118NL ですが、本エミュレータでは機能的に等価な TMS9918A として実装されています。
+
+`hb_10_64k` は [Sony HB-10 のカテゴリページ](https://www.msx.org/wiki/Category:Sony_HB-10)で紹介されている 64KB RAM 改造を施した HB-10 に相当します。スロット 0 の 16KB RAM を取り除き、スロット 3 の全 4 ページに 64KB の flat RAM を配置しています。ROM は `hb_10` と同じ `roms/hb_10/` のものを使います。改造済みの実機での検証は行っていません。
 
 `hb_f1xd`（Sony HB-F1XD）は実機 ROM を使用し、WD2793 フロッピーディスクドライブを備えます。`hb-f1xd_basic-bios2.rom`・`hb-f1xd_msx2sub.rom`・`hb-f1xd_disk.rom` を `roms/hb_f1xd/` に配置し、`--fdd1` でディスクをマウントします。
 
@@ -741,7 +751,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3445 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 3462 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -808,7 +818,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 3445 テスト
+├── tests/                 # テストスイート — 3462 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定

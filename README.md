@@ -5,7 +5,7 @@ by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3445%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3462%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -30,6 +30,7 @@ best-effort.
 
 **Hardware:**
 
+- [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX Standard Japanese Cartridge HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
 - [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
@@ -285,9 +286,10 @@ cartridge slots at once (rejected at startup).
 | Address space | Flat 64 KB (0x0000–0xFFFF), four 16 KB pages |
 | Slot 0 pages 0–1 | BIOS ROM (read-only, 0x0000–0x7FFF) |
 | Slot 0 page 2 | Logo ROM (`cbios_logo_msx1.rom`) at 0x8000–0xBFFF; declared in the machine YAML as a `pages: [2]` entry next to the BIOS; returns 0xFF if absent |
+| Slot 0 page 3 | 16 KB SRAM at 0xC000–0xFFFF on some machines (e.g. `hb_10`) — volatile work RAM, not battery-backed or saved like cartridge SRAM; declared in the machine YAML as a `ram: {size_kb: 16, pages: [3]}` entry next to the BIOS |
 | Slot 1 | Cartridge ROM via mapper; open bus (0xFF on read, writes ignored) when no slot 1 ROM is loaded. Expanded into sub-slots under `--extension1` — see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 2 | Second cartridge ROM via `_mapper2`; open bus (0xFF on read, writes ignored) when no slot 2 ROM is loaded. Expanded into sub-slots under `--extension2` — see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
-| Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF |
+| Slot 3 (MSX1) | 32 KB RAM at 0x8000–0xFFFF by default; the size is set per machine (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
 | Slot 3 (MSX2) | Expanded into 4 secondary slots; sub-ROM in 3-0, 128 KB RAM mapper in 3-2 |
 
 ### RAM mapper
@@ -640,7 +642,7 @@ python . path/to/game.rom --extension2 fmpac
 
 # Connect an SCC-I (SCC+) cartridge in slot 2 (no cartridge ROM argument);
 # boot from floppy instead
-python . --extension2 scc_plus --fdd1 path/to/disk.dsk
+python . --machine hb_f1xd --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Attach the Sony HBI-J1 Kanji-ROM/MSX-JE cartridge (expands slot 2)
 python . --extension2 hbi_j1
@@ -879,9 +881,24 @@ automatically (MSX1 ROM → `cbios_msx1_jp`; MSX2 ROM or no cartridge →
 | `cbios_msx2_jp` | MSX2 | Japan (default) | V9938 |
 | `cbios_msx2_eu` | MSX2 | Europe | V9938 |
 | `cbios_msx2_br` | MSX2 | Brazil | V9938 |
+| `hb_10` | MSX1 | Japan | TMS9918A |
+| `hb_10_64k` | MSX1 | Japan | TMS9918A |
 | `hb_f1xd` | MSX2 | Japan | V9938 |
 | `hb_f1xd_256k` | MSX2 | Japan | V9938 |
 | `fs_a1f` | MSX2 | Japan | V9938 |
+
+`hb_10` (Sony HB-10) uses the real machine ROM, with 16 KB RAM in slot 0
+alongside the BIOS (slot 3 is unpopulated, as on real hardware); place its
+`hb-10_basic-bios1.rom` under `roms/hb_10/`.
+
+> **Note**: the HB-10's VDP is a TMS9118NL; this emulator implements it as
+> the functionally equivalent TMS9918A.
+
+`hb_10_64k` models an HB-10 with the 64 KB RAM modification described on the
+[Sony HB-10 category page](https://www.msx.org/wiki/Category:Sony_HB-10):
+slot 0's 16 KB RAM is removed and slot 3 holds 64 KB flat RAM across all four
+pages. It reuses `hb_10`'s ROM from `roms/hb_10/`. This configuration has not
+been verified against a modified unit.
 
 `hb_f1xd` (Sony HB-F1XD) uses the real machine ROMs and adds a WD2793 floppy
 disk drive; place its `hb-f1xd_basic-bios2.rom`, `hb-f1xd_msx2sub.rom`, and
@@ -989,7 +1006,7 @@ their device YAML are skipped at load time with a warning.
 
 ## Running tests
 
-The test suite covers all major components with 3445 tests spanning unit tests
+The test suite covers all major components with 3462 tests spanning unit tests
 for individual opcodes and hardware registers, integration tests that wire
 multiple components together, and scenario-level tests whose conditions are
 derived directly from the component specs.
@@ -1059,7 +1076,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3445 tests
+├── tests/                 # Test suite — 3462 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration

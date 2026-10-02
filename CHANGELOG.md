@@ -2,6 +2,17 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.2** (2026-10-02) — Primary slot 0 can now host a flat RAM region next to the main ROM, declared as a `ram: {size_kb, pages}`
+  entry in slot 0's `content:` list (exactly one page; at most one entry). Adds the Sony HB-10 (`--machine hb_10`), an
+  MSX1 whose 16 KB RAM sits at slot 0 page 3 alongside the 32 KB BIOS while slot 3 is genuinely unpopulated (`size_kb: 0`,
+  open bus) — omitting slot 3 instead would fall back to a 32 KB default RAM that the BIOS's memory-size probe finds and
+  prefers over the real 16 KB. The author owns a real HB-10, which is added to the owned-hardware list. Also adds
+  `hb_10_64k`, an HB-10 with the 64 KB RAM modification described on msx.org (slot 0's RAM removed, 64 KB flat RAM across
+  all four pages of slot 3; not verified against a modified unit). Save-state format bumped to version 15 to carry the
+  optional slot 0 RAM buffer, and the debugger's `bs` auto-range falls back to slot 0's RAM window when slot 3 has none.
+  Documentation updates: the memory bus tables, the machine YAML schema chapter and the extension slot model now cover
+  slot 0 RAM and per-machine MSX1 slot 3 RAM size, `fs_a1f` is no longer described as hardware-verified, and the SCC+
+  example now uses `--machine hb_f1xd` (C-BIOS has no floppy support).
 - **v2.7.1** (2026-09-29) — Reset now reaches every cartridge mapper and the PPI. Previously, most bank-switching
   ROM mapper classes (`Ascii8Mapper`/`Ascii16Mapper` and their SRAM variants, `KonamiMapper`/`MajutsushiMapper`/
   `KonamiSCCMapper`, `GameMaster2Mapper`, `RTypeMapper`, the SCC-I cartridge) had a deliberate no-op `reset()`

@@ -1,9 +1,13 @@
 """Tests for msx/state.py save/load state functionality."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from PIL import Image
 
+from msx.machine_loader import MachineSpec, _RomEntry, _Slot0RamEntry, build_machine
+from msx.snapshot_schema import SnapshotMismatchError
 from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
 from tests.factories import make_machine
 
@@ -15,6 +19,26 @@ _ROM = b"\x00" * 0x8000
 @pytest.fixture()
 def machine():
     return make_machine(rom=_ROM)
+
+
+def _make_msx1_machine_with_slot0_ram():
+    """Sony HB-10 shape: 16 KB flat RAM in slot 0 page 3, coexisting with the
+    main ROM (see openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM
+    at a configured page" Requirement)."""
+    spec = MachineSpec(
+        name="test_msx1_slot0ram",
+        generation="msx1",
+        rom_base_dir=Path("."),
+        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        logo_rom_entry=None,
+        slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3),
+        sub_rom_entry=None,
+        has_ram_mapper=False,
+        ram_size_kb=32,
+        has_v9938=False,
+        has_rtc=False,
+    )
+    return build_machine(spec, bios_override=_ROM)
 
 
 @pytest.fixture()
@@ -104,6 +128,31 @@ def test_load_state_restores_cpu_registers(machine, saves_dir):
 
 def test_load_state_missing_file_raises(machine, saves_dir):
     with pytest.raises(FileNotFoundError):
+        load_state(machine)
+
+
+# --- slot 0 flat RAM (Sony HB-10 shape) ----------------------------------------
+
+def test_slot0_ram_round_trips_through_save_load(saves_dir):
+    machine = _make_msx1_machine_with_slot0_ram()
+    machine.memory.write(0xC000, 0x77)
+    rgb = bytearray(256 * 192 * 3)
+    save_state(machine, rgb, "test")
+
+    machine.memory.write(0xC000, 0x00)
+    load_state(machine)
+
+    assert machine.memory.read(0xC000) == 0x77
+
+
+def test_load_state_rejects_slot0_ram_wiring_mismatch(machine, saves_dir):
+    """A save from a machine with slot0_ram configured cannot load onto one
+    without it (or vice versa) -- mirrors the FDC/SCC wiring mismatch checks."""
+    slot0_machine = _make_msx1_machine_with_slot0_ram()
+    rgb = bytearray(256 * 192 * 3)
+    save_state(slot0_machine, rgb, "test")
+
+    with pytest.raises(SnapshotMismatchError, match="slot 0 RAM"):
         load_state(machine)
 
 
