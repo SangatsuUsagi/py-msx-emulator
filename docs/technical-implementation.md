@@ -401,10 +401,10 @@ Default MSX1 layout:
 
 | Slot | Content                                   |
 | ---- | ----------------------------------------- |
-| 0    | BIOS ROM (read-only)                      |
+| 0    | BIOS ROM (read-only); some machines add 16 KB RAM at page 3 (e.g. `hb_10`) |
 | 1    | Cartridge ROM via mapper                  |
 | 2    | Second cartridge or open bus (reads 0xFF) |
-| 3    | 32 KB RAM at pages 2–3 (0x8000–0xFFFF)    |
+| 3    | 32 KB RAM at pages 2–3 (0x8000–0xFFFF); size set per machine |
 
 ### MSX2 expanded sub-slot
 
@@ -538,6 +538,17 @@ its absence raises `MachineLoadError`) and the entry whose `pages` includes
 verification for that ROM; any other string value is checked against the
 loaded file.
 
+`content` may also hold at most one `{ram: {size_kb, pages}}` entry — flat
+RAM in slot 0 next to the ROMs, e.g. the Sony HB-10's 16 KB SRAM at page 3
+(volatile work RAM, not battery-backed):
+
+```yaml
+    - ram: {size_kb: 16, pages: [3]}
+```
+
+`pages` must name exactly one page, otherwise `MachineLoadError`; a second
+`ram` entry is rejected the same way.
+
 #### Slots 1 and 2: not read from the machine YAML
 
 Every machine YAML declares `1: {type: cartridge}` and `2: {type: cartridge}`
@@ -556,8 +567,10 @@ parameters — a consequence of the CLI, not of anything under
   size_kb: 32   # optional, defaults to 32
 ```
 
-`_parse_slot3_msx1` reads only `size_kb` (default `32`) — flat RAM at
-0x8000–0xFFFF, no further structure.
+`_parse_slot3_msx1` reads only `size_kb` (default `32`) — flat RAM ending at
+0xFFFF, no further structure: 32 KB covers 0x8000–0xFFFF, 64 KB (`hb_10_64k`)
+covers all four pages, and `size_kb: 0` (`hb_10`) leaves slot 3 as open bus.
+Omitting `3:` falls back to the 32 KB default rather than open bus.
 
 #### Slot 3 — MSX2
 
