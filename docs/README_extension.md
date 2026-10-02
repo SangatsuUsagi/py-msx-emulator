@@ -43,10 +43,10 @@ What each primary slot can hold when building a machine, and which slot(s)
 
 | Slot | Sub-slot expansion | Extensible via | What it can hold |
 | --- | --- | --- | --- |
-| 0 | No | No | Main BIOS ROM only (plus an optional logo ROM at page 2) |
+| 0 | No | No | Main BIOS ROM, plus an optional logo ROM at page 2 and, on some machines, flat RAM at one page (e.g. `hb_10`'s 16 KB SRAM at page 3) |
 | 1 | Yes, 0–3 (only ever via `--extension1` — no machine YAML declares slot 1 expanded on its own) | `--extension1` | Cartridge ROM + mapper (positional `cartridge`/`--slot1`/`--mapper`/`--mapper1`), **or**, once expanded: the same per-sub-slot device shapes slot 2 supports (below) |
 | 2 | Yes, 0–3 (only ever via `--extension2` — no machine YAML declares slot 2 expanded on its own) | `--extension2` | Cartridge ROM + mapper (`--slot2`/`--mapper2`), **or**, once expanded: any number of ROM sub-slots (each one `flat_rom`, or one bank-switched mapper kind — `ascii8`, `ascii16`, or `halnote`), at most one `ram_mapper` sub-slot, and at most one overlay-wide `io_device` (currently only `kanji_rom`, which has no slot location of its own) |
-| 3 | Yes, 0–3 (machine-defined only) | No | Fixed per machine YAML (`config/machines/*.yaml`), not selectable via `--extension1`/`--extension2`: MSX2's own SUB ROM, a RAM mapper or flat RAM, and — on the two hardware-verified machines — a floppy disk controller (`hb_f1xd`: WD2793; `fs_a1f`: TC8566AF) |
+| 3 | MSX2: yes, 0–3 (machine-defined only); MSX1: no | No | Fixed per machine YAML (`config/machines/*.yaml`), not selectable via `--extension1`/`--extension2`. MSX1: flat RAM sized per machine (32 KB default, 64 KB on `hb_10_64k`), or nothing on `hb_10`. MSX2: its own SUB ROM, a RAM mapper or flat RAM, and a floppy disk controller on `hb_f1xd` (WD2793) and `fs_a1f` (TC8566AF; implemented from public documentation, not verified against real hardware) |
 
 Slot 1 and slot 2 are each independently extensible, one extension per slot
 (so two *different* extensions — one per slot — combine freely, e.g. FM-PAC

@@ -42,10 +42,10 @@
 
 | スロット | サブスロット拡張 | 拡張手段 | 保持できるもの |
 | --- | --- | --- | --- |
-| 0 | なし | いいえ | メイン BIOS ROM のみ（オプションでページ 2 にロゴ ROM を追加可能） |
+| 0 | なし | いいえ | メイン BIOS ROM、オプションでページ 2 のロゴ ROM、および一部の機種では 1 ページ分のフラット RAM（例：`hb_10` のページ 3 の 16 KB SRAM） |
 | 1 | あり、0〜3（`--extension1` 経由のみ — マシン YAML 単体でスロット 1 を拡張状態にするものはない） | `--extension1` | カートリッジ ROM + マッパー（位置引数のカートリッジ/`--slot1`/`--mapper`/`--mapper1`）、**または**、拡張状態にした場合：スロット 2 と同じサブスロットデバイス形状（下記） |
 | 2 | あり、0〜3（`--extension2` 経由のみ — マシン YAML 単体でスロット 2 を拡張状態にするものはない） | `--extension2` | カートリッジ ROM + マッパー（`--slot2`/`--mapper2`）、**または**、拡張状態にした場合：任意個数の ROM サブスロット（各サブスロットは `flat_rom`、もしくはバンク切り替え型マッパー 1 種 — `ascii8`、`ascii16`、`halnote` のいずれか）、最大 1 つの `ram_mapper` サブスロット、そして拡張全体で最大 1 つの `io_device`（現状は `kanji_rom` のみで、専用のスロット位置を持たない） |
-| 3 | あり、0〜3（マシン定義のみ） | いいえ | マシン YAML（`config/machines/*.yaml`）ごとに固定で、`--extension1`/`--extension2` では選択不可：MSX2 自体の SUB ROM、RAM マッパーまたはフラット RAM、そして実機で検証済みの 2 マシンではフロッピーディスクコントローラ（`hb_f1xd`：WD2793、`fs_a1f`：TC8566AF） |
+| 3 | MSX2：あり、0〜3（マシン定義のみ）；MSX1：なし | いいえ | マシン YAML（`config/machines/*.yaml`）ごとに固定で、`--extension1`/`--extension2` では選択不可。MSX1：機種ごとのサイズのフラット RAM（既定 32 KB、`hb_10_64k` は 64 KB）、`hb_10` では空き。MSX2：自身の SUB ROM、RAM マッパーまたはフラット RAM、そして `hb_f1xd`（WD2793）と `fs_a1f`（TC8566AF。公開資料を元に実装しており、実機では未検証）ではフロッピーディスクコントローラ |
 
 スロット 1・スロット 2 はそれぞれ独立に拡張可能で、スロットごとに拡張は 1 つ
 までです（つまり *異なる* 拡張をそれぞれのスロットに配置する組み合わせは自由
@@ -105,9 +105,9 @@ MSX-JE ワードプロセッサカートリッジです。以下の 3 つの ROM
 
 ```
 roms/hbi_j1/
-├— hbi-j1_kanjibasic.rom   (32 KB  — 漢字ドライバ + BASIC 拡張)
-├— hbi-j1_kanjifont.rom    (256 KB — JIS 漢字フォント ROM)
-└— hbi-j1_msx-je.rom       (1 MB   — MSX-JE ワードプロセッサ ROM)
+├── hbi-j1_kanjibasic.rom   (32 KB  — 漢字ドライバ + BASIC 拡張)
+├── hbi-j1_kanjifont.rom    (256 KB — JIS 漢字フォント ROM)
+└── hbi-j1_msx-je.rom       (1 MB   — MSX-JE ワードプロセッサ ROM)
 ```
 
 これらは商用の Sony 製 ROM であり、**このプロジェクトには含まれていません** —
@@ -216,14 +216,14 @@ python . --extension2 msxdos2_512k_viewfont --machine hb_f1xd --fdd1 path/to/dis
 
 ```
 roms/
-├— fmpac/
-│   └— fmpac.rom
-├— hbi_j1/
-│   ├— hbi-j1_kanjibasic.rom
-│   ├— hbi-j1_kanjifont.rom
-│   └— hbi-j1_msx-je.rom
-├— kanji/
-│   └— k12x8shn.rom
-└— msxdos2s/
-    └— msxd22s.rom
+├── fmpac/
+│   └── fmpac.rom
+├── hbi_j1/
+│   ├── hbi-j1_kanjibasic.rom
+│   ├── hbi-j1_kanjifont.rom
+│   └── hbi-j1_msx-je.rom
+├── kanji/
+│   └── k12x8shn.rom
+└── msxdos2s/
+    └── msxd22s.rom
 ```

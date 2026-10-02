@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3445%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3462%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -177,9 +177,10 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 | アドレス空間 | フラット 64 KB（0x0000–0xFFFF）、4 つの 16 KB ページ |
 | スロット 0 ページ 0–1 | BIOS ROM（読み取り専用、0x0000–0x7FFF） |
 | スロット 0 ページ 2 | ロゴ ROM（`cbios_logo_msx1.rom`）を 0x8000–0xBFFF にマップ；BIOS と並べてマシン YAML の `pages: [2]` エントリとして宣言する；存在しない場合は 0xFF を返す |
+| スロット 0 ページ 3 | 一部の機種（例：`hb_10`）で 16 KB SRAM を 0xC000–0xFFFF にマップ — 電源断で消えるワーク RAM で、カートリッジ SRAM のようなバッテリーバックアップや保存はない；BIOS と並べてマシン YAML の `ram: {size_kb: 16, pages: [3]}` エントリとして宣言する |
 | スロット 1 | マッパー経由のカートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension1` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
 | スロット 2 | `_mapper2` 経由の第 2 カートリッジ ROM；未装着の場合はオープンバス（読み出しは 0xFF、書き込みは無視）。`--extension2` によりサブスロットに拡張 — 詳細は[`docs/README_extension_ja.md`](docs/README_extension_ja.md#スロットモデル)を参照 |
-| スロット 3（MSX1） | ページ 2–3（0x8000–0xFFFF）の 32 KB RAM |
+| スロット 3（MSX1） | 既定はページ 2–3（0x8000–0xFFFF）の 32 KB RAM；サイズは機種ごとに設定（`hb_10_64k` は全ページの 64 KB、`hb_10` は空きでオープンバス） |
 | スロット 3（MSX2） | 4 つのセカンダリスロットに拡張；3-0 にサブ ROM、3-2 に 128 KB RAM マッパー |
 
 ### RAM マッパー
@@ -750,7 +751,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3445 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 3462 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -817,7 +818,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 3445 テスト
+├── tests/                 # テストスイート — 3462 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
