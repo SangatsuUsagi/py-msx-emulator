@@ -205,7 +205,7 @@ def test_screen8_second_pixel() -> None:
 def test_screen8_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen8(vdp)
-    vdp.regs[2] = 0x40  # G7: 64KB pages, bit6=1 → base = 0x10000
+    vdp.regs[2] = 0x3F  # G7: R#2 bit 5 = A16 → page 1, base = 0x10000
 
     vdp.vram[0x0000]  = 0xFF   # decoy at offset 0 — must NOT appear
     vdp.vram[0x10000] = 0x42   # first pixel at actual base
@@ -501,13 +501,26 @@ def test_screen7_second_byte_is_next_two_pixels() -> None:
 def test_screen7_vram_base_from_r2() -> None:
     vdp = V9938()
     _set_screen7(vdp)
-    vdp.regs[2] = 0x40   # G6: 64KB pages, bit6=1 → base = 0x10000
+    vdp.regs[2] = 0x3F   # G6: R#2 bit 5 = A16 → page 1, base = 0x10000
 
     vdp.vram[0x0000]  = 0xFF   # decoy
     vdp.vram[0x10000] = 0x5E   # high nibble = 5
 
     buf = _active(vdp)
     assert buf[0] == 5
+
+
+def test_screen7_r2_bit6_alone_is_not_a_page_bit() -> None:
+    """GRAPHIC 6/7 R#2 is 0 0 A16 1 1 1 1 1: bit 6 does not select page 1."""
+    vdp = V9938()
+    _set_screen7(vdp)
+    vdp.regs[2] = 0x5F   # bit 6 set, bit 5 clear → still page 0
+
+    vdp.vram[0x0000]  = 0x3E   # page 0: high nibble = 3
+    vdp.vram[0x10000] = 0x5E   # page 1 decoy
+
+    buf = _active(vdp)
+    assert buf[0] == 3
 
 
 def test_screen7_second_row_offset() -> None:
@@ -608,19 +621,21 @@ def test_midframe_ln_toggle_still_212_rows() -> None:
 # Interlace mode (R#9 IL/EO): automatic even/odd page alternation
 # ---------------------------------------------------------------------------
 
-def test_display_page_bits_toggles_lsb_when_eo_and_odd_frame() -> None:
-    """_display_page_bits XORs the mask's lowest bit when EO is enabled and
-    the current frame is odd (frame_count & 1); untouched on an even frame."""
+def test_display_page_bits_clears_bit5_on_first_field_when_eo() -> None:
+    """With EO, the first field (even frame) shows the even page (R#2 bit 5
+    forced to 0); the second field (odd frame) shows the page R#2 selects."""
     from msx.vdp.v9938_renderer import _display_page_bits
 
     vdp = V9938()
-    vdp.regs[2] = 0x20  # G4/G5: page 1 selected (bit 5 set)
+    vdp.regs[2] = 0x3F  # page 1 (bit 5 set)
     vdp.regs[9] = 0x04  # EO
     vdp.frame_count = 0
-    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x20  # even frame: page 1 as selected
+    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x00  # first field: page 0
+    assert _display_page_bits(vdp, vdp.regs, 0x20) == 0x00
 
     vdp.frame_count = 1
-    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x00  # odd frame: page 0 (LSB toggled)
+    assert _display_page_bits(vdp, vdp.regs, 0x60) == 0x20  # second field: page 1
+    assert _display_page_bits(vdp, vdp.regs, 0x20) == 0x20
 
 
 def test_display_page_bits_no_toggle_when_eo_disabled() -> None:
@@ -642,25 +657,39 @@ def test_screen5_page_alternates_by_frame_parity_when_eo_enabled() -> None:
     vdp.vram[0x0000] = 0xCD  # page 0 content
 
     vdp.frame_count = 0
-    assert _active(vdp)[0] == 0x0A  # even frame: page 1 (as R#2 selects)
+    assert _active(vdp)[0] == 0x0C  # first field: even page 0
 
     vdp.frame_count = 1
-    assert _active(vdp)[0] == 0x0C  # odd frame: page 0 (LSB toggled)
+    assert _active(vdp)[0] == 0x0A  # second field: page 1 (as R#2 selects)
+
+
+def test_screen5_even_page_does_not_alternate_when_eo_enabled() -> None:
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.regs[2] = 0x5F  # page 2 -> base 0x10000
+    vdp.regs[9] = 0x04  # EO
+    vdp.vram[0x10000] = 0xAB  # page 2 content
+    vdp.vram[0x18000] = 0xCD  # page 3 decoy
+
+    vdp.frame_count = 0
+    assert _active(vdp)[0] == 0x0A
+    vdp.frame_count = 1
+    assert _active(vdp)[0] == 0x0A
 
 
 def test_screen7_page_alternates_by_frame_parity_when_eo_enabled() -> None:
     vdp = V9938()
     _set_screen7(vdp)
-    vdp.regs[2] = 0x40  # page 1 -> base 0x10000
+    vdp.regs[2] = 0x3F  # page 1 -> base 0x10000
     vdp.regs[9] = 0x04  # EO
     vdp.vram[0x10000] = 0xAB
     vdp.vram[0x00000] = 0xCD
 
     vdp.frame_count = 0
-    assert _active(vdp)[0] == 0x0A
+    assert _active(vdp)[0] == 0x0C  # first field: page 0
 
     vdp.frame_count = 1
-    assert _active(vdp)[0] == 0x0C
+    assert _active(vdp)[0] == 0x0A  # second field: page 1
 
 
 def test_screen5_no_page_alternation_when_eo_disabled() -> None:
@@ -712,7 +741,8 @@ def test_s2_eo_status_bit_toggles_once_per_frame() -> None:
     render_frame(vdp)
     s2_odd = vdp.read_port(0x99)
 
-    assert (s2_even & 0x02) != (s2_odd & 0x02)
+    assert s2_even & 0x02 == 0  # first field
+    assert s2_odd & 0x02 == 0x02  # second field
 
 
 def test_screen6_page_alternates_by_frame_parity_when_eo_enabled() -> None:
@@ -725,26 +755,26 @@ def test_screen6_page_alternates_by_frame_parity_when_eo_enabled() -> None:
     vdp.vram[0x0000] = 0x00  # page 0: pixel 0 index = 0
 
     vdp.frame_count = 0
-    assert _active(vdp)[0] == 3  # even frame: page 1 (as R#2 selects)
+    assert _active(vdp)[0] == 0  # first field: page 0
 
     vdp.frame_count = 1
-    assert _active(vdp)[0] == 0  # odd frame: page 0 (LSB toggled)
+    assert _active(vdp)[0] == 3  # second field: page 1 (as R#2 selects)
 
 
 def test_screen8_page_alternates_by_frame_parity_when_eo_enabled() -> None:
-    """SCREEN 8 (G7) uses the same 64 KB page mask (0x40) as SCREEN 7."""
+    """SCREEN 8 (G7) uses the same 64 KB page bit (R#2 bit 5) as SCREEN 7."""
     vdp = V9938()
     _set_screen8(vdp)
-    vdp.regs[2] = 0x40  # page 1 -> base 0x10000
+    vdp.regs[2] = 0x3F  # page 1 -> base 0x10000
     vdp.regs[9] = 0x04  # EO
     vdp.vram[0x10000] = 0xAB  # page 1 content (raw GRB332 byte)
     vdp.vram[0x00000] = 0xCD  # page 0 content
 
     vdp.frame_count = 0
-    assert _active(vdp)[0] == 0xAB
+    assert _active(vdp)[0] == 0xCD  # first field: page 0
 
     vdp.frame_count = 1
-    assert _active(vdp)[0] == 0xCD
+    assert _active(vdp)[0] == 0xAB  # second field: page 1
 
 
 def test_eo_page_toggle_applies_per_band_with_frame_wide_parity() -> None:
@@ -760,24 +790,24 @@ def test_eo_page_toggle_applies_per_band_with_frame_wide_parity() -> None:
     vdp.regs[2] = 0x20  # band 1 (rows 0-96): page 1 -> base 0x8000
 
     vdp.begin_scanline(0)
-    vdp._reg_write_log.append(_RegChange(96, 2, 0x40))  # band 2: page 2 -> base 0x10000
-    vdp.regs[2] = 0x40  # live regs hold the post-change value
+    vdp._reg_write_log.append(_RegChange(96, 2, 0x60))  # band 2: page 3 -> base 0x18000
+    vdp.regs[2] = 0x60  # live regs hold the post-change value
 
     row100_offset = 100 * 128  # G4: 128 bytes/row (256 4-bit pixels)
 
-    # Band 1 (page 1, mask 0x60 LSB = 0x20): even -> 0x8000, odd -> 0x0000 (page 0)
+    # Band 1 (page 1): first field -> 0x0000 (page 0), second field -> 0x8000
     vdp.vram[0x8000] = 0x11
     vdp.vram[0x0000] = 0x22
-    # Band 2 (page 2 = 0x40, mask 0x60 LSB = 0x20): even -> 0x10000, odd -> 0x18000 (page 3)
+    # Band 2 (page 3): first field -> 0x10000 (page 2), second field -> 0x18000
     vdp.vram[0x10000 + row100_offset] = 0x33
     vdp.vram[0x18000 + row100_offset] = 0x44
 
     vdp.frame_count = 0
     buf_even = _active(vdp)
-    assert buf_even[0] == 0x01          # band 1, row 0: page 1 content (high nibble)
+    assert buf_even[0] == 0x02          # band 1, row 0: page 0 content (high nibble)
     assert buf_even[100 * 256] == 0x03  # band 2, row 100: page 2 content
 
     vdp.frame_count = 1
     buf_odd = _active(vdp)
-    assert buf_odd[0] == 0x02           # band 1, row 0: toggled to page 0
-    assert buf_odd[100 * 256] == 0x04   # band 2, row 100: toggled to page 3
+    assert buf_odd[0] == 0x01           # band 1, row 0: page 1 as R#2 selects
+    assert buf_odd[100 * 256] == 0x04   # band 2, row 100: page 3 as R#2 selects
