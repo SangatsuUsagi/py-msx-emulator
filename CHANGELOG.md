@@ -2,6 +2,13 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.3** (2026-10-03) — Fix the V9938 display page in GRAPHIC 6/7 (SCREEN 7/8). R#2 there is `0 0 A16 1 1 1 1 1`, so
+  the 64 KB page bit is bit 5, but the renderer read bit 6 (the GRAPHIC 4/5 layout): `SET PAGE 1` (R#2 = 0x3F) kept
+  showing page 0, so a SCREEN 7 disk title whose menu is drawn on page 1 stayed on its title screen. The page base is now
+  `(R#2 & 0x20) << 11`. Also fix the R#9 EO (even/odd page alternation) field mapping: the first field (S#2 EO = 0) now
+  shows the even page and the second field the page R#2 selects, as the V9938 data book (Special Functions 2.2)
+  describes; previously the page bit was XOR-toggled on odd frames, which inverted the mapping and made an even-page R#2
+  alternate upward to the next page.
 - **v2.7.2** (2026-10-02) — Primary slot 0 can now host a flat RAM region next to the main ROM, declared as a `ram: {size_kb, pages}`
   entry in slot 0's `content:` list (exactly one page; at most one entry). Adds the Sony HB-10 (`--machine hb_10`), an
   MSX1 whose 16 KB RAM sits at slot 0 page 3 alongside the 32 KB BIOS while slot 3 is genuinely unpopulated (`size_kb: 0`,

@@ -1522,20 +1522,18 @@ def _sprite_row_pixels(
 
 
 def _display_page_bits(vdp: "V9938", regs: list[int], mask: int) -> int:
-    """R#2 display-page bits, LSB-toggled by frame parity when EO (R#9 bit 2)
-    is enabled -- the automatic even/odd page alternation used for interlace
-    in GRAPHIC4-7. `mask` is the page-select bits within R#2 (0x60 for the
-    32 KB-page modes SCREEN 5/6, 0x40 for the 64 KB-page modes SCREEN 7/8);
-    the toggled bit is the mask's lowest set bit, so one implementation
-    serves both mask shapes.
+    """R#2 display-page bits for GRAPHIC4-7. `mask` is the page-select bits
+    within R#2: 0x60 (A16:A15) for the 32 KB-page modes SCREEN 5/6, 0x20 (A16)
+    for the 64 KB-page modes SCREEN 7/8. Either way the lowest page bit is
+    R#2 bit 5.
+
+    With EO (R#9 bit 2) set, the first field (S#2 EO = 0, even frame) shows
+    the even page and the second field the page R#2 selects (V9938 data book,
+    Special Functions 2.2), so bit 5 is forced to 0 on even frames.
     """
     bits = regs[2] & mask
-    if even_odd_enabled_of(regs) and (vdp.frame_count & 1):
-        # Lowest set bit of `mask`, via explicit 8-bit-truncated negation
-        # (PORT-NOTE: mask & -mask relies on Python's unbounded int width;
-        # `-mask & 0xFF` pins the two's-complement negation to a u8 so the
-        # same expression is valid in a fixed-width target language).
-        bits ^= mask & (-mask & 0xFF)
+    if even_odd_enabled_of(regs) and not (vdp.frame_count & 1):
+        bits &= ~0x20 & 0xFF
     return bits
 
 
@@ -1616,7 +1614,7 @@ def _render_g6(
     y_end: int | None = None,
 ) -> None:
     """SCREEN 7: 4-bpp, 2 pixels per byte, full 512-pixel width."""
-    base = _display_page_bits(vdp, regs, 0x40) << 10  # G6: 64KB pages, bit6 only
+    base = _display_page_bits(vdp, regs, 0x20) << 11  # G6: R#2 bit 5 = A16 (64 KB pages)
     tp = bool(regs[8] & 0x20)
     border = regs[7] & 0x0F
     vscroll = regs[23]
@@ -1665,7 +1663,7 @@ def _render_g7(
     y_end: int | None = None,
 ) -> None:
     """SCREEN 8: 8-bpp GRB332, one raw byte per pixel (palette not used)."""
-    base = _display_page_bits(vdp, regs, 0x40) << 10  # G7: 64KB pages, bit6 only
+    base = _display_page_bits(vdp, regs, 0x20) << 11  # G7: R#2 bit 5 = A16 (64 KB pages)
     vscroll = regs[23]
     vram = vdp.vram
     ye = y_end if y_end is not None else h
