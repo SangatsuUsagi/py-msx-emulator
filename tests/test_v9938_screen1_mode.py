@@ -272,6 +272,28 @@ def test_text1_renders_beyond_192_lines_at_ln1() -> None:
     assert buf[scan * 256 + 8] == 15, "TEXT1 must render past line 192 at LN=1"
 
 
+def test_text1_name_index_wraps_at_1k_with_r2_low_bits_clear() -> None:
+    """At LN=1 TEXT1 row 25 reaches name index 1024; with R#2 bits 1:0 clear
+    it wraps to the table start (real HB-F1XD, extras/HB-F1XD/LN212.BAS)."""
+    vdp = V9938()
+    vdp.regs[0] = 0x00
+    vdp.regs[1] = 0x50  # BL | M1 -> TEXT1
+    vdp.regs[9] = 0x80  # LN=1
+    vdp.regs[2] = 0x00  # name table at 0x0000
+    vdp.regs[4] = 0x01  # pattern generator at 0x0800
+    vdp.regs[7] = 0xF0  # fg=15, bg=0
+    vdp.vram[0x0800 + 1 * 8] = 0x80  # tile 1, character row 0: leftmost pixel set
+    vdp.vram[0x03FF] = 1  # index 1023: row 25, column 23
+    vdp.vram[0x0000] = 1  # index 1024 wraps here: row 25, column 24
+    vdp.vram[0x0400] = 0  # where an unwrapped index 1024 would read
+
+    buf = _active(vdp)
+
+    scan = 25 * 8
+    assert buf[scan * 256 + 8 + 23 * 6] == 15
+    assert buf[scan * 256 + 8 + 24 * 6] == 15
+
+
 def test_sprite_mode1_renders_beyond_192_lines_at_ln1() -> None:
     vdp = V9938()
     _set_g1(vdp)
