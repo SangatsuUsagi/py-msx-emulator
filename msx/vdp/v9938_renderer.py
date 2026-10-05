@@ -949,8 +949,12 @@ def _render_g2(
 def _render_text(
     vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
 ) -> None:
-    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1).
-    name_base = (regs[2] & 0x7F) << 10
+    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1), but at
+    # LN=1 its 26.5 rows of 40 reach name index 1059: index bits 11:10 are
+    # ANDed with R#2 bits 1:0, so with those clear index 1024 wraps to the
+    # table start (real HB-F1XD, extras/HB-F1XD/LN212.BAS; openMSX
+    # VDP::updateNameBase masks the text-mode index the same way).
+    name_mask = ((regs[2] & 0x7F) << 10) | 0x3FF
     pat_base = (regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
     # colour code 0 follows TP like every other colour code 0 (see _colour0).
@@ -968,7 +972,7 @@ def _render_text(
 
     for row in range(row_start, row_end):
         for col in range(40):
-            tile = vdp.vram[(name_base + row * 40 + col) & 0x1FFFF]
+            tile = vdp.vram[name_mask & ((row * 40 + col) | 0x1F000)]
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
