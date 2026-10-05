@@ -15,6 +15,7 @@ from msx.snapshot_schema import check_bool, check_int, check_int_list, check_obj
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
 from msx.vdp._v9938_defs import (
+    _S2_EO,
     _PaletteChange,
     _RegChange,
     display_height_of,
@@ -1022,10 +1023,12 @@ class V9938:
             self.collision_y = 0
             return result
         if self.regs[15] == 6:
-            # V9938 data book, sprite-collision section: S#6 = 1 1 1 1 1 1 Y9 Y8
-            # (Y9 is always 0: the biased Y never exceeds 219). Bit 1 shows the
-            # field only in the light-pen function, which is not emulated.
-            return ((self.collision_y >> 8) & 0x03) | 0xFC
+            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
+            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
+            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # summary shows; its sprite-collision section, the Handbook and
+            # openMSX give collision Y bit 9 there, which would always be 0.
+            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
         if self.regs[15] >= 10:
             return 0xFF  # non-existent status register
         # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
