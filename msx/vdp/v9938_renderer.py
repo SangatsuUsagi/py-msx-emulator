@@ -1673,9 +1673,13 @@ def _render_g6(
 # SCREEN 8 (Graphic 7) — 8-bpp GRB332, raw bytes, no palette
 # ---------------------------------------------------------------------------
 
-# 3-bit channel → 8-bit intensity, matching openMSX (255 * i / 7).
+# 3-bit channel → 8-bit intensity in steps of 255/7, and 2-bit blue mapped to
+# the 3-bit levels 0, 2, 4, 7 (grauw's VDP programming guide, "What is there to
+# say about screen 8's colours?", references/docs/; openMSX does the same).
+# The guide rounds (bit replication: 0, 36, 73, 109, 146, 182, 219, 255); this
+# table truncates (72, 145, 218 for levels 2, 4, 6). The VDP outputs analogue
+# levels, so the 8-bit rounding is a host-side choice.
 _INTENSITY3: tuple[int, ...] = tuple(255 * i // 7 for i in range(8))
-# 2-bit blue → 8-bit, via openMSX's intensity indices {0, 2, 4, 7}.
 _BLUE2: tuple[int, ...] = (_INTENSITY3[0], _INTENSITY3[2], _INTENSITY3[4], _INTENSITY3[7])
 
 
