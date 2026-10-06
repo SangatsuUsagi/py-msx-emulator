@@ -312,7 +312,7 @@ class MachineSpec:
     keyboard_type: str = "int"
 
     # Whether a port 0xAB read returns the PPI control word, resolved from the
-    # ppi8255 device (False for the S-1985 machines -- see msx/ppi.py).
+    # ppi8255 device (False for the S1985 machines -- see msx/ppi.py).
     ppi_control_readback: bool = True
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved

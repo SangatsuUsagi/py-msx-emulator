@@ -22,7 +22,7 @@ class PPI:
     # Whether a port 0xAB read returns _control. A CMOS 82C55A reads the
     # control word back (openMSX I8255::readControlPort models this); an NMOS
     # 8255A does not drive the bus there, so the MSX pull-ups give 0xFF.
-    # Verified on a real SONY HB-F1XD (S-1985 MSX-ENGINE): 0xAB reads 0xFF
+    # Verified on a real SONY HB-F1XD (S1985 MSX-ENGINE): 0xAB reads 0xFF
     # (extras/HB-F1XD/PORTRD.BAS, 2026-10-05).
     control_readback: bool = True
 

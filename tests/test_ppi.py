@@ -89,7 +89,7 @@ def test_port_ab_read_returns_last_mode_set_word() -> None:
 
 
 def test_port_ab_read_without_control_readback_returns_ff() -> None:
-    # S-1985 MSX-ENGINE PPI: a real HB-F1XD reads 0xFF at 0xAB
+    # S1985 MSX-ENGINE PPI: a real HB-F1XD reads 0xFF at 0xAB
     # (extras/HB-F1XD/PORTRD.BAS); the mode-set word is still stored.
     mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
     ppi = PPI(memory=mem, control_readback=False)
