@@ -8,3 +8,7 @@ controls: slot_register_and_keyboard_matrix
 # Keyboard layout: "int" (International) or "jp" (Japanese/JIS). Machines may
 # override this per builtin_devices entry (Japanese machines set "jp").
 keyboard_type: int
+# Whether a port 0xAB read returns the last mode-set control word (CMOS 82C55A
+# behaviour, as openMSX models it). Machines whose PPI does not read it back
+# (the S-1985 MSX-ENGINE: 0xFF on a real HB-F1XD) override this to false.
+control_readback: true
