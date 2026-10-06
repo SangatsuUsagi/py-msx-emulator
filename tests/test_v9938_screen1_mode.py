@@ -294,6 +294,26 @@ def test_text1_name_index_wraps_at_1k_with_r2_low_bits_clear() -> None:
     assert buf[scan * 256 + 8 + 24 * 6] == 15
 
 
+def test_text1_name_index_does_not_wrap_with_r2_low_bits_set() -> None:
+    """With R#2 bits 1:0 set, name-index bits 11:10 pass through the AND, so
+    index 1024 reads 0x0400 instead of wrapping to the table start."""
+    vdp = V9938()
+    vdp.regs[0] = 0x00
+    vdp.regs[1] = 0x50  # BL | M1 -> TEXT1
+    vdp.regs[9] = 0x80  # LN=1
+    vdp.regs[2] = 0x03  # bits 1:0 set: name address = index & 0xFFF
+    vdp.regs[4] = 0x01  # pattern generator at 0x0800
+    vdp.regs[7] = 0xF0  # fg=15, bg=0
+    vdp.vram[0x0800 + 1 * 8] = 0x80  # tile 1, character row 0: leftmost pixel set
+    vdp.vram[0x0400] = 1  # index 1024 unwrapped: row 25, column 24
+    vdp.vram[0x0000] = 0  # where a wrapped index 1024 would read
+
+    buf = _active(vdp)
+
+    scan = 25 * 8
+    assert buf[scan * 256 + 8 + 24 * 6] == 15
+
+
 def test_sprite_mode1_renders_beyond_192_lines_at_ln1() -> None:
     vdp = V9938()
     _set_g1(vdp)

@@ -75,6 +75,15 @@ def test_rewriting_r13_restarts_the_on_period() -> None:
     assert vdp.blink_count == 20
 
 
+def test_indirect_r13_write_restarts_the_timer() -> None:
+    vdp = V9938()
+    _write_reg(vdp, 17, 13)  # R#17: indirect pointer to R#13, auto-increment on
+    vdp.write_port(0x9B, 0x21)
+    assert vdp.regs[13] == 0x21
+    assert vdp.blink_state is True
+    assert vdp.blink_count == 20
+
+
 def test_reset_clears_the_timer() -> None:
     vdp = V9938()
     _write_reg(vdp, 13, 0x22)
