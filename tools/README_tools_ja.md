@@ -13,7 +13,8 @@
 | [`mcp_server.py`](#mcp_serverpy) | ソケットRPC APIをラップするMCPサーバー。Claude Codeから起動中のエミュレータを操作できる |
 
 いずれも素のPython 3.10+で、プロジェクト本体の依存(`requirements.txt` /
-`requirements-dev.txt`)以外の追加依存はありません。プロジェクトのvenvで実行し
+`requirements-dev.txt`)以外の追加依存はありません。ただし `mcp_server.py` だけは
+オプションの `mcp` 依存も必要です([`mcp_server.py`](#mcp_serverpy) を参照)。プロジェクトのvenvで実行し
 ます: 例 `venvs/py-msx-emulator/bin/python tools/dskftp.py`。
 
 ---
@@ -141,11 +142,11 @@ RPCメソッドは次を網羅します:
 
 - デバッガの一時停止/ステップ/継続
 - ブレークポイントとウォッチポイント
-- メモリ・VRAMの読み書き、逆アセンブル
+- メモリの読み書き、VRAMの読み出し、逆アセンブル
 - VDPレジスタ
 - キーボード/ジョイスティック入力
 - スクリーンショット取得
-- ステートセーブ
+- ステートのセーブ/ロード
 - ディスク入れ替え
 
 ワイヤプロトコルと全メソッドの一覧は
@@ -196,7 +197,7 @@ python tools/rpc_client.py --socket /tmp/alt.sock cpu.get_registers
 
 - Z80のポーズ/ステップ/再開
 - ブレークポイント・ウォッチポイントの設定
-- メモリ/VRAMの読み書き
+- メモリの読み書き、VRAMの読み出し
 - キーボード・ジョイスティック入力の注入
 - スクリーンショットの取得
 

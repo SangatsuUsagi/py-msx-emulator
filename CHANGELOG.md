@@ -2,82 +2,296 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
-- **v2.7.3** (2026-10-03) — Fix the V9938 display page in GRAPHIC 6/7 (SCREEN 7/8). R#2 there is `0 0 A16 1 1 1 1 1`, so
-  the 64 KB page bit is bit 5, but the renderer read bit 6 (the GRAPHIC 4/5 layout): `SET PAGE 1` (R#2 = 0x3F) kept
-  showing page 0, so a SCREEN 7 disk title whose menu is drawn on page 1 stayed on its title screen. The page base is now
-  `(R#2 & 0x20) << 11`. Also fix the R#9 EO (even/odd page alternation) field mapping: the first field (S#2 EO = 0) now
-  shows the even page and the second field the page R#2 selects, as the V9938 data book (Special Functions 2.2)
-  describes; previously the page bit was XOR-toggled on odd frames, which inverted the mapping and made an even-page R#2
-  alternate upward to the next page.
-- **v2.7.2** (2026-10-02) — Primary slot 0 can now host a flat RAM region next to the main ROM, declared as a `ram: {size_kb, pages}`
-  entry in slot 0's `content:` list (exactly one page; at most one entry). Adds the Sony HB-10 (`--machine hb_10`), an
-  MSX1 whose 16 KB RAM sits at slot 0 page 3 alongside the 32 KB BIOS while slot 3 is genuinely unpopulated (`size_kb: 0`,
-  open bus) — omitting slot 3 instead would fall back to a 32 KB default RAM that the BIOS's memory-size probe finds and
-  prefers over the real 16 KB. The author owns a real HB-10, which is added to the owned-hardware list. Also adds
-  `hb_10_64k`, an HB-10 with the 64 KB RAM modification described on msx.org (slot 0's RAM removed, 64 KB flat RAM across
-  all four pages of slot 3; not verified against a modified unit). Save-state format bumped to version 15 to carry the
-  optional slot 0 RAM buffer, and the debugger's `bs` auto-range falls back to slot 0's RAM window when slot 3 has none.
-  Documentation updates: the memory bus tables, the machine YAML schema chapter and the extension slot model now cover
-  slot 0 RAM and per-machine MSX1 slot 3 RAM size, `fs_a1f` is no longer described as hardware-verified, and the SCC+
-  example now uses `--machine hb_f1xd` (C-BIOS has no floppy support).
-- **v2.7.1** (2026-09-29) — Reset now reaches every cartridge mapper and the PPI. Previously, most bank-switching
-  ROM mapper classes (`Ascii8Mapper`/`Ascii16Mapper` and their SRAM variants, `KonamiMapper`/`MajutsushiMapper`/
-  `KonamiSCCMapper`, `GameMaster2Mapper`, `RTypeMapper`, the SCC-I cartridge) had a deliberate no-op `reset()`
-  mirroring the fact that on real hardware, whether a cartridge's own bank-select logic responds to the slot
-  reset line depends on that cartridge's own design, and `Machine.reset()` never called the two top-level
-  cartridge-slot mappers' `reset()` at all. This is reversed as an explicit emulation-policy choice: every
-  cartridge mapper's bank registers (and, for the SCC-I cartridge and `KonamiSCCMapper`, its SCC mode) now
-  restore to their power-on values on reset, regardless of a given real cartridge's own wiring — SRAM/RAM
-  contents are untouched. The Intel 8255 PPI, which had no `reset()` at all and wasn't even referenced from
-  `Machine`, now also resets to its post-reset defaults (control word 0x9B, Port C cleared) as part of the same
-  pass. A follow-up Allium weeding pass over this same area found and fixed one more real gap: `MajutsushiMapper`
-  inherited its bank-register reset but left its DAC output level and pending DAC-write queue untouched, unlike
-  openMSX's `RomMajutsushi::reset()` (which resets its DAC alongside the inherited Konami reset); the DAC now
-  correctly returns to silence and drops any queued-but-unconsumed writes. No other observable behaviour change.
-- **v2.7.0** (2026-09-28) — Fix two real-hardware-confirmed VDP control-port bugs found by allium weeding: a real MSX1 (TMS9918A) VDP has no separate latch for the VRAM address pointer, so the control port's first byte now also writes directly into the pointer's low 8 bits (previously only a register-write second byte's side effect touched it), and a register-write second byte now also rewrites the pointer's high 6 bits, matching openMSX and an independent real-hardware source (Grauw's VDP tutorial, an MSX Resource Center hardware thread); on the V9938, a control-port second byte with bits 7 and 6 both set (0xC0-0xFF) no longer performs a register write — unlike an MSX1 VDP, a real V9938 only completes the latch pair for that pattern, confirmed by two openMSX contributors' real-hardware tests. Also fixes the performance regression the v2.6.1 R-register-refresh-during-HALT correctness fix introduced: the CPU's hot scanline loop now advances a whole run of consecutive HALT-internal-NOP M1 cycles in one call instead of one Python call per 4 T-states, recovering the lost throughput and then some on titles that idle in HALT waiting for VBlank (~43% faster than the pre-regression baseline on a representative MSX2 title, measured with `--benchmark`); titles that spend little time in HALT are affected by at most 1-2%. No other observable behavior change.
-- **v2.6.6** (2026-09-27) — Fix PAL audio underrun: the SDL2 frontend generated a fixed 735 samples per emulated frame (the NTSC rate, 44100 / 60) for every machine, so a PAL machine — paced at 50 fps — fed only 36,750 samples/s into the 44,100 Hz audio device instead of the ~44,100/s it needs, starving the queue and causing periodic dropouts. The per-frame sample count is now derived from the machine's video standard (`audio_sample_rate_hz // target_fps`: 735 at 60 fps NTSC, 882 at 50 fps PAL), applied uniformly to PSG, SCC, the Majutsushi DAC and OPLL so the combined mix stays equal-length across all four sources.
-- **v2.6.5** (2026-09-27) — Internal save-state loading refactor; no observable behaviour change for well-formed saves (on-disk format unchanged, files written before this change still load). Loading now rejects a corrupted or hand-edited save file earlier and more precisely: `parse_snapshot` checks every top-level field's type, range and (where the snapshot fixes it) length before a `MachineSnapshot` is even constructed, reporting a bad value as `StateLoadError` naming its exact field path (e.g. `cpu_regs.PC`); every save-state producer (each cartridge mapper, PSG, SCC, FM-PAC/OPLL, the FDC) is fully validated before any producer is restored. Previously a short VRAM/register list, a string CPU register, or an out-of-range PC could load silently and corrupt the machine, and a bad producer object further down the snapshot could fail after other producers had already been restored — loading is now atomic across the whole machine, not just per producer.
-- **v2.6.4** (2026-09-27) — Fix two V9938 rendering bugs. A banded (split-screen) frame whose display width changes mid-frame (switching between a 512-dot mode such as GRAPHIC 5/6/TEXT2 and a 256-dot mode) now renders at the width of its widest band instead of the live end-of-frame registers: previously a 512-to-256 switch crashed the emulator on a length assertion, and the reverse switch wrote the upper band at the wrong stride and garbled the picture; a narrower band's rows are now pixel-doubled into the wider buffer, and sprite passes are merged within a run so none spans a width change. GRAPHIC 5 (SCREEN 6) now splits its border colour and colour-0 pixels (with the transparent-colour bit clear) by dot parity — R#7 bits 3:2 for even dots, bits 1:0 for odd — instead of treating the register as one flat colour, matching the V9938 datasheet's documented hardware tiling function and the MSX2 Technical Handbook's description of the border behaviour.
-- **v2.6.3** (2026-09-27) — Internal V9938 renderer/save-state structural refactor; no observable behaviour change (framebuffers identical on every tested cartridge, save-state format unchanged). The render pipeline no longer mutates the chip mid-render: S#0 status, the sprite collision coordinates and the raw S#2 byte are threaded through the whole render as one returned value, committed to the chip once at the end by `render_frame` and discarded entirely by `render_preview` — so capturing a screenshot or a save-state thumbnail can no longer perturb what the paused program reads next, and a banded (split-screen) render's several passes can no longer race each other over the same live status field. The V9938-only half of a save state is now carried as one `vdp9938` object, validated as a whole (missing/unknown keys, out-of-range values, and the live port latch's agreement with the saved one) before anything is restored, instead of being validated and restored piecemeal alongside the fields both VDP types share. A banded render no longer swaps the chip's own register file and palette in and out for each band: every renderer below the top level now takes the registers it draws with as an explicit argument, and the RGB conversion applies each band's palette from the register-write log instead of a temporary chip-wide swap. Sprite-heavy frames render 4-22% faster from a shared mode-1/mode-2 sprite-row helper.
-- **v2.6.2** (2026-09-27) — Fix several TMS9918A/V9938 rendering and register-decode asymmetries, found while auditing the two VDP variants' shared behaviour against each other and against openMSX/the chip data manuals. The V9938 renderer now gates GRAPHIC2/3's second/third pattern and colour table thirds the same way the TMS9918A does (R#4 bits 1:0 / R#3 bits 6:5 decide whether they mirror the first third or are independent) — a title screen defining only one third previously rendered blank on tile rows 8-23; GRAPHIC1/MULTICOLOUR/TEXT1's pattern and name table addressing is widened from the TMS9918A-narrow (16 KB) form to the full V9938 128 KB range, matching GRAPHIC2/3; and sprite mode 2's per-sprite colour-table address now correctly gates its low bits on R#5, fixing an aliasing bug between sprite indices 8-31 and index (N mod 8). Both VDPs now store only their register file's implemented bits instead of the raw written byte (with R#0's unreachable, TMS9918A-only GRAPHIC4 decode path removed, since it isn't a real chip mode and previously risked an out-of-bounds VRAM access), and the V9938 additionally starts R#21/R#22 at their real power-on colour-burst preset values. A TMS9918A frame cut short by a breakpoint or Ctrl-C no longer raises VBlank/the interrupt for that frame, matching the V9938. Text colour code 0 is now transparent (showing the backdrop) on TEXT1 (both VDPs), TEXT2 and GRAPHIC1/2/3/MULTICOLOR (V9938, gated by R#8 TP) instead of always opaque. The `--debug` VDP `[BOOT]` milestones are now logged on V9938 machines too, from both the direct and indirect register-write paths.
-- **v2.6.1** (2026-09-27) — Fix several VDP and CPU accuracy bugs found while investigating VRAM/logo corruption on a real MSX1 cartridge, each cross-checked against openMSX and, where available, primary hardware documentation. VDP: the TMS9918A now raises VBlank/its interrupt at the start of vertical blanking instead of after the full frame, matching the V9938 path and real hardware; the TMS9918A interrupt line is now driven as the level `F && IE0` instead of latched once at VBlank, so re-enabling IE0 while F is still pending takes the interrupt immediately; the control-port latch on both VDPs is now reset on every data-port access, so an ISR landing mid-address-setup no longer shifts every later register write by one byte; `Machine`'s NTSC `cycles_per_frame` and PAL frame-pacing rate are corrected; and the debugger/RPC screenshot capture (`render_current_rgb24`) no longer perturbs VDP status, the interrupt level, or (on the V9938) the collision coordinates and S#2 byte, so taking a screenshot or a save-state thumbnail can no longer change what the paused program reads next. CPU: the R register now refreshes on NMI/maskable-interrupt acceptance and on each halted internal NOP (previously only on instruction fetch); the 18 undocumented ED-prefixed mirror opcodes for IM/NEG/RETN now execute as their canonical instruction instead of a NOP; an absorbed DD/FD prefix now costs its own full 4-T-state M1 cycle; and every V9938 command dispatch now clears a pending TR re-assert delay left behind by an overridden HMMC/LMMC transfer.
-- **v2.6.0** (2026-09-21) — Slot 1 and slot 2 are now fully symmetric: add `--slot1`/`--mapper1`/`--extension1` alongside `--slot2`/`--mapper2`/`--extension2` (the positional `cartridge` argument remains shorthand for `--slot1 ... --mapper1 auto`; `--mapper`/`--slot`/`--extension` remain accepted as their exact pre-symmetrization aliases — `--mapper`/`--slot` for `--mapper1`/`--slot1`, `--extension` for `--extension2`, since that is what it always meant — so no existing invocation changes behavior). Both cartridge slots now accept the identical mapper type list (every SRAM-backed type included, with independent SRAM persistence per slot) and the identical `--extensionN` id set, including the expanded-shape ones (`hbi_j1`, `memory_512k`, `msxdos2_512k*`) that previously only worked on slot 2 — two different extensions, one per slot, now combine freely (e.g. FM-PAC in slot 1 alongside HBI-J1 in slot 2). New restriction: the same ROM or extension id on both slots at once is rejected at startup (there is essentially no real use case for it); the KonamiSCC single-chip-sharing check is generalized to all four possible sources (either slot's cartridge mapper, either slot's `scc_plus` extension), and a new check rejects two expanded overlays that both declare a `ram_mapper` or `halnote` sub-slot. Large refactor of `Memory`/`Machine`/`machine_loader.py`'s slot-1/slot-2 resolution into shared, per-slot-parameterized code. Fixes three real bugs found along the way: `Machine.reset()` never reset slot 1's sub-slot register or its sub-slot mappers (only slot 2's); an FM-PAC cartridge placed on slot 1 built and ran but silently never persisted its SRAM; and a second expanded overlay with no `halnote` sub-slot could erase the other slot's already-resolved Halnote device. A follow-up Allium weed pass over `machine_loader.py` found four more: `_wire_extension_overlay` could silently erase an already-resolved FM-PAC cartridge on one slot whenever the other slot's flat overlay was `scc_plus` (audio went silent, SRAM stopped saving); a Majutsushi cartridge in slot 2 built and ran but its DAC never reached `machine.dac`, silently dropping its audio (unlike slot 1); FM-PAC on both cartridge slots at once wasn't explicitly rejected (defense in depth — not reachable via the CLI today, since the identical-extension-id check already catches it); and the `kanji_rom` conflict error named only two of its three possible sources. Also switches `scripts/run_benchmarks.py`'s methodology from resuming a saved mid-game scene to a cold boot through the full frame count, removing the version-to-version PyPy drift the old save-state-based runs introduced, and re-measures the full README benchmark history (v0.1.0 through v2.6.0) under it.
-- **v2.5.17** (2026-09-19) — Extend `--mapper2` (slot 2 cartridge mapper) to also accept `R-Type`, `Page2`, `0x4000`, `0x8000`: these mapper types read only ROM through a bank register, so none of the SRAM dependency that keeps `ASCII8SRAM2/8`, `ASCII16SRAM2/8`, `KoeiSRAM32`, and `GameMaster2` slot-1-only applies to them. Speed up several hot paths: the Z80's `LD r,r'` dispatch (precomputed cycle count), two follow-on YM2413 (OPLL) optimizations (inlined envelope/phase generation, fused channel mix/noise/linearization), an unrolled SCC 5-channel sample loop, and `dskftp` keeping its write handle open across a batch of flushes. Large internal refactor and typing pass across `machine_loader.py` (slot-1 setup/post-construction wiring extracted from `build_machine`), `__main__.py` (option resolution extracted from `main()`, `_resolve_paths` now returns a `NamedTuple`), the debugger, and the VDP renderer (a shared sprite-scanline scan, a shared TMS9918A sprite-plot closure) — no observable behavior change. Add a third benchmarked title, MSX2: HB-F1XD + FDD (Dragon Slayer VI - The Legend of Heroes), tracked from v2.4.1 onward in the README's benchmark history, and add Sony HBI-J1 to the owned-hardware list.
-- **v2.5.16** (2026-09-17) — Fix a JIS keyboard regression from v2.5.15: a real JIS `^`/`~` key was being misrouted to `_` by the scancode interception meant for an International/US host's dead `=` key. `_` is now reached via a dedicated JIS `\`/`_` scancode sentinel and a new SHIFT+`0` escape hatch (both layouts), while the backquote-to-`^` fallback for International keyboards affected by a macOS/SDL2 keyboard-layout misdetection is kept. Fix `dskftp.py` writing a zero-filled boot sector loader stub, so a formatted disk ran a NOP sled instead of falling back to BASIC; rename `make_blank_dsk.py` to `dskblank.py` to match `dskftp`/`dskdd`'s naming. Split the Socket RPC/MCP and tools reference out of `README.md` into `tools/README_tools.md`/`_ja.md`, and move `README_extension.md`/`_ja.md` into `docs/`.
-- **v2.5.15** (2026-09-15) — Add `--extension msxdos2_512k_viewfont` (an ASCII8-mapped MSX-View-compatible font ROM alongside `msxdos2_512k`'s RAM mapper + MSX-DOS2 kernel) and `ascii8`/`ascii16` as supported expanded-overlay sub-slot device kinds; rename `--extension msxdos2_512k_kanji` to `msxdos2_512k_kanjirom` to stay unambiguous alongside it. Expanded extension overlays (`hbi_j1`, `memory_512k`, `msxdos2_512k*`) now reject an MSX1 base machine with `MachineLoadError` instead of silently building one with no real-hardware counterpart. Fix five JIS symbol keys (`=`, apostrophe, `^`/`~`, `:`/`*`, `_`) that an International/US host keyboard couldn't produce under `keyboard_type: jp`. Split extension documentation out of `README.md` into `README_extension.md`/`_ja.md`, move the version history into this file, add a "Machine and extension YAML schema" chapter to `docs/technical-implementation.md`/`_ja.md`, and re-point every owned-software citation at [Generation MSX](https://generation-msx.nl/) instead of Wikipedia/msx.org.
-- **v2.5.14** (2026-09-12) — Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}` flag (`extension` config key, backed by `config/extensions/<id>.yaml` overlay files), each extension unconditionally occupying primary slot 2. **BREAKING**: SCC-I now occupies primary slot 2 instead of slot 1. `--mapper2` also gains `KonamiSCC` support, sharing the machine's single SCC chip with slot 1.
-- **v2.5.13** (2026-09-12) — Add Sony HBI-J1 support via `--extension hbi_j1` (a JIS Kanji font ROM I/O device, a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM, and a flat Kanji driver + BASIC ROM, expanding slot 2 into two sub-slots — the author physically owns this cartridge and dumped its ROMs, SHA1-verified against openMSX) and V9938 interlace mode (R#9 IL/EO bits, with EO driving GRAPHIC4-7's automatic even/odd page alternation, matching real V9938 behaviour).
-- **v2.5.12** (2026-09-09) — `RamMapper`'s size is now configurable (whole 16 KB banks, previously fixed at 128 KB), and slot 3's legacy (RAM-mapper) dispatch branch can now host an FDC alongside the RAM mapper — previously an FDC required the data-driven flat-RAM layout instead. Adds `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony HB-F1XD (no real hardware matches this configuration) built to satisfy MSX-DOS2's extended BIOS mapper support routines, which require a RAM mapper of at least 128 KB; confirmed booting MSX-DOS2 successfully. Also implements the V9938's TEXT2 mode (SCREEN 0 WIDTH 80, MSX-DOS's `MODE 80`) — previously misdispatched as a GRAPHIC2 background with sprite mode 2 sprites, corrupting the screen — fixing the mode-bit dispatch priority, adding a dedicated 80-column/512-wide renderer, and extending `display_width` and the debugger's screen-mode display; confirmed on MSX-DOS.
-- **v2.5.11** (2026-09-06) — Remove the `mapper`/`mapper2` `py_emulator.yaml` config keys; cartridge mapper selection is now CLI-only (`--mapper` / `--mapper2`). Fixes a config-file default silently and falsely tripping the `--scc-plus`/`--mapper` mutual-exclusivity check.
-- **v2.5.10** (2026-09-01) — Add Allium specs for the remaining uncovered components (RTC, floppy disk image/drive, plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups), fixing several real bugs found along the way: RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram` (previously a single shared file let one machine's settings leak into another's) with a 12/24-hour encoding fix, and an undocumented Z80 DDCB/FDCB register-echo behavior is now implemented. Also adds full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to save/load, with FDC-kind and disk-identity mismatch checks.
-- **v2.5.9** (2026-08-25) — Full OpenSpec/Allium inventory pass across every component, re-verifying each specification against openMSX and the implementation. Fixes several accuracy bugs found along the way (V9938 sprite rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, among others).
-- **v2.5.8** (2026-08-22) — Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration (`--machine fs_a1f`), a second floppy-disk-capable MSX2 alongside the Sony HB-F1XD (WD2793). FS-A1F now uses its real 4-sub-slot hardware layout (RAM, SUB ROM, and the FDC each independently placed).
-- **v2.5.7** (2026-08-20) — Large internal refactor preparing for an eventual Rust/C++ port: mapper save-state now uses a tagged `MapperKind` enum instead of untyped dicts, `Memory`'s cache invalidation moved to explicit setter methods, and the debugger's reflection-based mapper/slot introspection was replaced with explicit interface methods. No observable behavior change (verified via a multi-angle code review and an Allium spec-alignment check).
-- **v2.5.6** (2026-08-19) — Fix the JIS ¥ key never reaching the MSX keyboard matrix on macOS: SDL2 reports it with a consistent scancode but an inconsistent keysym, so `key_down`/`key_up` now resolve it from scancode alone.
-- **v2.5.5** (2026-08-19) — Fix an `Ascii16Sram2Mapper` write-side open-bus leak (writes at or above 0xC000 could corrupt SRAM while a window was SRAM-mapped) and give `RTypeMapper` a flat read mirror, closing the last mapper class still resolving its window on every read.
-- **v2.5.4** (2026-08-19) — Fix three Konami-family mapper bugs (`KonamiMapper`/`KonamiSCCMapper`/`MajutsushiMapper`) found by cross-checking against openMSX source: address mirroring outside the ROM windows, bank-select page arithmetic, and SCC-enable writes not updating the bank register. Adds a new Allium spec for this mapper family and fixes an unrelated test-isolation bug in `test_cli_scc_plus.py`.
-- **v2.5.3** (2026-08-17) — Fix `--break-point`/`--watch-point` CLI flags being silently ignored on MSX1 machines; the interactive debugger's own commands already worked there, only the CLI startup path was gated to MSX2.
-- **v2.5.2** (2026-08-16) — Add SCC-I ("SCC+") cartridge support via `--scc-plus`: a bare sound cartridge in slot 1 with 64 KB bank-switched RAM and a Plus-mode SCC chip, for floppy-disk MSX2 titles that use it purely for audio.
-- **v2.5.1** (2026-08-16) — Close most outstanding Allium open questions from v2.5.0, fixing two PPI (i8255) bugs and rebinding quit to Ctrl+Q along the way. Switch the PSG amplitude table to measured-silicon data — an audible change.
-- **v2.5.0** (2026-08-15) — Introduce Allium as a second, behaviour-focused spec layer and distill one for every major component, fixing several accuracy bugs (V9938 sprite collision, FDC) found along the way. Also add save-state schemas, a memory dispatch cache, and JIS keyboard bindings.
-- **v2.4.8** (2026-08-08) — Render V9938 frames at the start of vertical blanking instead of after the scanline loop, fixing a one-frame tear on titles that update VRAM and a display register in the same VBlank ISR. Also speeds up the debugger's per-instruction loop by ~9%.
-- **v2.4.7** (2026-08-05) — Extend `py_emulator.yaml` with `slot2`/`mapper2` and `frame_skip` config keys, and a `keyboard_joystick.buttons` section for rebinding Joy1's keyboard-emulation keys.
-- **v2.4.6** (2026-08-05) — Add support for the `GameMaster2` ROM database mapper type (128 KB ROM + 8 KB battery-backed SRAM); reconcile `--mapper` accepted names with the loader's supported set.
-- **v2.4.5** (2026-08-04) — Add support for four previously-unsupported ROM database mapper types: `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`) and `KoeiSRAM32`.
-- **v2.4.4** (2026-08-04) — Add MSX mouse emulation (`--mouse[=1|2]`), reproducing the real pin-8-clocked nibble protocol via the host mouse.
-- **v2.4.3** (2026-08-03) — Speed up cartridge ROM reads on bank-switching mappers with a flat mirror rebuilt only on bank switch, instead of resolving the active window on every read.
-- **v2.4.2** (2026-08-02) — Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings to the SDL2 frontend.
-- **v2.4.1** (2026-08-02) — Add an optional `py_emulator.yaml` startup configuration file; switch `--benchmark` to a frame count.
-- **v2.4.0** (2026-07-30) — Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
-- **v2.3.6** (2026-07-23) — Unify rendered output to a constant 212-line height.
-- **v2.3.5** (2026-07-20) — Fix sprite ghosting from the upper split-screen region.
-- **v2.3.4** (2026-07-19) — Add per-line banding for the display-adjust register.
-- **v2.3.3** (2026-07-19) — Fix handling of filenames with spaces.
-- **v2.3.2** (2026-07-19) — Fix V9938 line-interrupt handling.
-- **v2.3.1** (2026-07-19) — Refactor the socket RPC and MCP server.
-- **v2.3.0** (2026-07-19) — Add a socket RPC interface and MCP server.
-- **v2.2.1** (2026-07-15) — Add cycle-accurate CPU timing and PSG PCM playback.
-- **v2.2.0** (2026-07-13) — Add support for the Sony HB-F1XD (FDD + RTC).
-- **v2.1.0** (2026-07-13) — Improve MSX2 emulation performance.
-- **v2.0.0** (2026-07-06) — Add MSX2 CBIOS support.
-- **v1.0.0** (2026-06-07) — Initial release.
+- **v2.7.3** (2026-10-03): Fix the V9938 display page in GRAPHIC 6/7 (SCREEN 7/8).
+  - In these modes, R#2 is `0 0 A16 1 1 1 1 1`, so the 64 KB page bit is bit 5. The renderer read bit 6 (the
+    GRAPHIC 4/5 layout). `SET PAGE 1` (R#2 = 0x3F) thus still showed page 0. A SCREEN 7 disk title that draws its menu
+    on page 1 stayed on its title screen. The page base is now `(R#2 & 0x20) << 11`.
+  - Also fix the R#9 EO (even/odd page alternation) field mapping. The first field (S#2 EO = 0) now shows the even
+    page, and the second field shows the page that R#2 selects. This matches the V9938 data book (Special Functions
+    2.2). Before this fix, the renderer XOR-toggled the page bit on odd frames. This inverted the mapping and made an
+    even-page R#2 alternate upward to the next page.
+- **v2.7.2** (2026-10-02): Primary slot 0 can now hold a flat RAM region next to the main ROM.
+  - Declare it as a `ram: {size_kb, pages}` entry in the `content:` list of slot 0 (exactly one page, at most one
+    entry).
+  - Add the Sony HB-10 (`--machine hb_10`). This MSX1 has 16 KB of RAM at slot 0 page 3, next to the 32 KB BIOS, and
+    its slot 3 is unpopulated (`size_kb: 0`, open bus). Without an explicit slot 3 entry, the loader would use a 32 KB
+    default RAM. The memory-size probe of the BIOS would find that RAM and prefer it to the real 16 KB. The author owns
+    a real HB-10, and the owned-hardware list now includes it.
+  - Add `hb_10_64k`, an HB-10 with the 64 KB RAM modification that msx.org describes. This configuration removes the
+    slot 0 RAM and has 64 KB of flat RAM across all four pages of slot 3. The author has not verified it against a
+    modified unit.
+  - The save-state format is now version 15, to carry the optional slot 0 RAM buffer. When slot 3 has no RAM, the
+    `bs` auto-range of the debugger uses the slot 0 RAM window.
+  - Documentation updates: the memory bus tables, the machine YAML schema chapter, and the extension slot model now
+    cover slot 0 RAM and the per-machine MSX1 slot 3 RAM size. The documentation no longer describes `fs_a1f` as
+    hardware-verified. The SCC+ example now uses `--machine hb_f1xd`, because C-BIOS has no floppy support.
+- **v2.7.1** (2026-09-29): Reset now reaches every cartridge mapper and the PPI.
+  - Before this change, most bank-switching ROM mapper classes had a deliberate no-op `reset()`:
+    `Ascii8Mapper`/`Ascii16Mapper` and their SRAM variants, `KonamiMapper`/`MajutsushiMapper`/`KonamiSCCMapper`,
+    `GameMaster2Mapper`, `RTypeMapper`, and the SCC-I cartridge. The reason was that on real hardware, the response of
+    the bank-select logic of a cartridge to the slot reset line depends on the design of that cartridge. Also,
+    `Machine.reset()` never called `reset()` on the two top-level cartridge-slot mappers.
+  - This release reverses that, as an explicit emulation-policy choice. On reset, the bank registers of every
+    cartridge mapper now go back to their power-on values, whatever the wiring of a given real cartridge is. For the
+    SCC-I cartridge and `KonamiSCCMapper`, the SCC mode also goes back. SRAM/RAM contents do not change.
+  - The Intel 8255 PPI had no `reset()`, and `Machine` did not refer to it. It now also resets to its post-reset
+    defaults (control word 0x9B, Port C cleared) in the same pass.
+  - A follow-up Allium weeding pass over this area found and fixed one more real gap. `MajutsushiMapper` inherited its
+    bank-register reset, but it did not reset its DAC output level and its pending DAC-write queue. openMSX's
+    `RomMajutsushi::reset()` resets its DAC together with the inherited Konami reset. The DAC now correctly returns to
+    silence and drops all queued writes that it did not consume.
+  - No other observable behavior change.
+- **v2.7.0** (2026-09-28): Fix two VDP control-port bugs that allium weeding found and that real hardware confirms.
+  - A real MSX1 (TMS9918A) VDP has no separate latch for the VRAM address pointer. The first byte to the control port
+    thus now also writes directly into the low 8 bits of the pointer. Before this fix, only a side effect of a
+    register-write second byte changed it. A register-write second byte now also rewrites the high 6 bits of the
+    pointer. This matches openMSX and an independent real-hardware source (Grauw's VDP tutorial, an MSX Resource
+    Center hardware thread).
+  - On the V9938, a control-port second byte with bits 7 and 6 both set (0xC0-0xFF) no longer does a register write.
+    Unlike an MSX1 VDP, a real V9938 only completes the latch pair for that pattern. Real-hardware tests by two
+    openMSX contributors confirm this.
+  - Also fix the performance regression from the v2.6.1 correctness fix for the R-register refresh during HALT. The
+    hot scanline loop of the CPU now advances a full run of consecutive HALT-internal-NOP M1 cycles in one call.
+    Before, it used one Python call per 4 T-states. This recovers the lost throughput, and more, on titles that wait
+    for VBlank in HALT. On a representative MSX2 title, `--benchmark` measured ~43% faster than the baseline before
+    the regression. Titles that spend little time in HALT change by at most 1-2%.
+  - No other observable behavior change.
+- **v2.6.6** (2026-09-27): Fix PAL audio underrun.
+  - The SDL2 frontend generated a fixed 735 samples per emulated frame (the NTSC rate, 44100 / 60) for every machine.
+    A PAL machine runs at 50 fps, so it sent only 36,750 samples/s to the 44,100 Hz audio device, not the ~44,100/s
+    that it needs. The queue became empty, and periodic dropouts occurred.
+  - The per-frame sample count now comes from the video standard of the machine
+    (`audio_sample_rate_hz // target_fps`: 735 at 60 fps NTSC, 882 at 50 fps PAL). It applies equally to PSG, SCC,
+    the Majutsushi DAC, and OPLL, so all four sources stay the same length in the combined mix.
+- **v2.6.5** (2026-09-27): Internal refactor of save-state loading. There is no observable behavior change for
+  well-formed saves. The on-disk format is unchanged, and files from before this change still load.
+  - Loading now rejects a corrupted or hand-edited save file earlier and more precisely. `parse_snapshot` checks the
+    type, range, and (where the snapshot fixes it) length of every top-level field before it constructs a
+    `MachineSnapshot`. It reports a bad value as a `StateLoadError` that gives the exact field path
+    (e.g. `cpu_regs.PC`).
+  - The loader fully validates every save-state producer (each cartridge mapper, PSG, SCC, FM-PAC/OPLL, the FDC)
+    before it restores any producer.
+  - Before this change, a short VRAM/register list, a string CPU register, or an out-of-range PC could load silently
+    and corrupt the machine. A bad producer object later in the snapshot could also fail after the loader had
+    restored other producers. Loading is now atomic across the whole machine, not only per producer.
+- **v2.6.4** (2026-09-27): Fix two V9938 rendering bugs.
+  - A banded (split-screen) frame can change its display width mid-frame, for example between a 512-dot mode
+    (GRAPHIC 5/6/TEXT2) and a 256-dot mode. Such a frame now renders at the width of its widest band, not with the
+    live end-of-frame registers. Before this fix, a switch from 512 to 256 crashed the emulator on a length
+    assertion. The reverse switch wrote the upper band at the wrong stride and garbled the picture. The renderer now
+    pixel-doubles the rows of a narrower band into the wider buffer. It merges sprite passes within a run, so no
+    sprite pass spans a width change.
+  - GRAPHIC 5 (SCREEN 6) now splits its border color and its color-0 pixels (with the transparent-color bit clear) by
+    dot parity: R#7 bits 3:2 for even dots, bits 1:0 for odd dots. Before, it used the register as one flat color.
+    This matches the hardware tiling function in the V9938 datasheet and the description of the border behavior in
+    the MSX2 Technical Handbook.
+- **v2.6.3** (2026-09-27): Internal structural refactor of the V9938 renderer and save state. There is no observable
+  behavior change: the framebuffers are identical on every tested cartridge, and the save-state format is unchanged.
+  - The render pipeline no longer changes the chip mid-render. The S#0 status, the sprite collision coordinates, and
+    the raw S#2 byte go through the whole render as one returned value. `render_frame` commits this value to the chip
+    once at the end, and `render_preview` discards it. A screenshot or a save-state thumbnail thus can no longer
+    change what the paused program reads next. The passes of a banded (split-screen) render can no longer race each
+    other over the same live status field.
+  - A save state now carries the V9938-only half as one `vdp9938` object. The loader validates this object as a whole
+    before it restores anything: missing or unknown keys, out-of-range values, and the agreement between the live
+    port latch and the saved latch. Before, the loader validated and restored these fields one by one, together with
+    the fields that both VDP types share.
+  - A banded render no longer swaps the register file and palette of the chip in and out for each band. Every
+    renderer below the top level now takes its registers as an explicit argument. The RGB conversion applies the
+    palette of each band from the register-write log, not from a temporary chip-wide swap.
+  - Sprite-heavy frames render 4-22% faster, because of a shared mode-1/mode-2 sprite-row helper.
+- **v2.6.2** (2026-09-27): Fix several rendering and register-decode asymmetries between the TMS9918A and the V9938.
+  An audit found them. It compared the shared behavior of the two VDP variants with each other, with openMSX, and
+  with the chip data manuals.
+  - The V9938 renderer now gates the second and third pattern and color table thirds of GRAPHIC2/3 in the same way as
+    the TMS9918A. R#4 bits 1:0 / R#3 bits 6:5 decide whether these thirds mirror the first third or are independent.
+    Before this fix, a title screen that defined only one third rendered blank on tile rows 8-23.
+  - The pattern and name table addressing of GRAPHIC1/MULTICOLOR/TEXT1 now uses the full V9938 128 KB range, as
+    GRAPHIC2/3 do, not the narrow TMS9918A form (16 KB).
+  - The per-sprite color-table address of sprite mode 2 now correctly gates its low bits on R#5. This fixes an
+    aliasing bug between sprite indices 8-31 and index (N mod 8).
+  - Both VDPs now store only the implemented bits of their register file, not the raw written byte. This release also
+    removes the unreachable, TMS9918A-only GRAPHIC4 decode path of R#0. It is not a real chip mode, and it could
+    cause an out-of-bounds VRAM access. The V9938 also starts R#21/R#22 at their real power-on color-burst preset
+    values.
+  - If a breakpoint or Ctrl-C cuts a TMS9918A frame short, the VDP no longer raises VBlank or the interrupt for that
+    frame. This matches the V9938.
+  - Text color code 0 is now transparent (it shows the backdrop), not always opaque. This applies to TEXT1 (both
+    VDPs), and to TEXT2 and GRAPHIC1/2/3/MULTICOLOR (V9938, gated by R#8 TP).
+  - On V9938 machines, the `--debug` VDP `[BOOT]` milestones now also go to the log, from both the direct and the
+    indirect register-write paths.
+- **v2.6.1** (2026-09-27): Fix several VDP and CPU accuracy bugs. An investigation of VRAM/logo corruption on a real
+  MSX1 cartridge found them. The author cross-checked each fix against openMSX and, where available, primary hardware
+  documentation.
+  - VDP: the TMS9918A now raises VBlank and its interrupt at the start of vertical blanking, not after the full frame.
+    This matches the V9938 path and real hardware.
+  - VDP: the TMS9918A interrupt line is now the level `F && IE0`, not a latch at VBlank. If a program sets IE0 again
+    while F is still pending, the interrupt occurs immediately.
+  - VDP: on both VDPs, every data-port access now resets the control-port latch. An ISR that occurs during an address
+    setup thus no longer shifts all later register writes by one byte.
+  - `Machine`: the NTSC `cycles_per_frame` and the PAL frame-pacing rate are now correct.
+  - The screenshot capture of the debugger and RPC (`render_current_rgb24`) no longer changes the VDP status or the
+    interrupt level. On the V9938, it also no longer changes the collision coordinates and the S#2 byte. A screenshot
+    or a save-state thumbnail thus can no longer change what the paused program reads next.
+  - CPU: the R register now refreshes on NMI and maskable-interrupt acceptance, and on each halted internal NOP.
+    Before, it refreshed only on instruction fetch.
+  - CPU: the 18 undocumented ED-prefixed mirror opcodes for IM/NEG/RETN now execute as their canonical instruction,
+    not as a NOP.
+  - CPU: an absorbed DD/FD prefix now uses its own full 4-T-state M1 cycle.
+  - Every V9938 command dispatch now clears a pending TR re-assert delay from an overridden HMMC/LMMC transfer.
+- **v2.6.0** (2026-09-21): Slot 1 and slot 2 are now fully symmetric.
+  - Add `--slot1`/`--mapper1`/`--extension1` next to `--slot2`/`--mapper2`/`--extension2`. The positional `cartridge`
+    argument stays a shorthand for `--slot1 ... --mapper1 auto`. `--mapper`/`--slot`/`--extension` stay as aliases,
+    with their exact meaning before the symmetrization: `--mapper`/`--slot` for `--mapper1`/`--slot1`, and
+    `--extension` for `--extension2`, because that is what it always meant. No existing command line changes
+    behavior.
+  - Both cartridge slots now accept the same mapper type list, including every SRAM-backed type, with independent
+    SRAM persistence per slot. They also accept the same `--extensionN` id set. This includes the expanded-shape ids
+    (`hbi_j1`, `memory_512k`, `msxdos2_512k*`), which before worked only on slot 2. Two different extensions, one per
+    slot, now combine freely (e.g. FM-PAC in slot 1 with HBI-J1 in slot 2).
+  - New restrictions: at startup, the emulator rejects the same ROM or extension id on both slots at once, because
+    there is almost no real use case for it. The KonamiSCC single-chip-sharing check now covers all four possible
+    sources: the cartridge mapper of either slot, and the `scc_plus` extension of either slot. A new check rejects two
+    expanded overlays that both declare a `ram_mapper` or `halnote` sub-slot.
+  - A large refactor moves the slot-1/slot-2 resolution in `Memory`/`Machine`/`machine_loader.py` into shared code
+    with a per-slot parameter.
+  - This work found and fixed three real bugs:
+    - `Machine.reset()` never reset the sub-slot register or the sub-slot mappers of slot 1 (only those of slot 2).
+    - An FM-PAC cartridge in slot 1 built and ran, but silently never saved its SRAM.
+    - A second expanded overlay with no `halnote` sub-slot could erase the already-resolved Halnote device of the
+      other slot.
+  - A follow-up Allium weed pass over `machine_loader.py` found four more:
+    - `_wire_extension_overlay` could silently erase an already-resolved FM-PAC cartridge on one slot when the flat
+      overlay of the other slot was `scc_plus`. The audio went silent, and the SRAM was no longer saved.
+    - A Majutsushi cartridge in slot 2 built and ran, but its DAC never reached `machine.dac`. Its audio was thus
+      silently lost (unlike slot 1).
+    - FM-PAC on both cartridge slots at once had no explicit rejection. This is defense in depth: the CLI cannot reach
+      this case today, because the identical-extension-id check already catches it.
+    - The `kanji_rom` conflict error named only two of its three possible sources.
+  - `scripts/run_benchmarks.py` now uses a cold boot through the full frame count, not a resume from a saved mid-game
+    scene. This removes the PyPy drift between versions that the old runs from save states caused. The full README
+    benchmark history (v0.1.0 through v2.6.0) is measured again with this method.
+- **v2.5.17** (2026-09-19): Extend `--mapper2` (slot 2 cartridge mapper) to also accept `R-Type`, `Page2`, `0x4000`,
+  and `0x8000`. These mapper types read only ROM through a bank register. The SRAM dependency that keeps
+  `ASCII8SRAM2/8`, `ASCII16SRAM2/8`, `KoeiSRAM32`, and `GameMaster2` slot-1-only thus does not apply to them.
+  - Speed up several hot paths: the `LD r,r'` dispatch of the Z80 (precomputed cycle count), two follow-on YM2413
+    (OPLL) optimizations (inlined envelope/phase generation, fused channel mix/noise/linearization), an unrolled SCC
+    5-channel sample loop, and `dskftp`, which now keeps its write handle open across a batch of flushes.
+  - Large internal refactor and typing pass across `machine_loader.py` (slot-1 setup and post-construction wiring
+    extracted from `build_machine`), `__main__.py` (option resolution extracted from `main()`, and `_resolve_paths`
+    now returns a `NamedTuple`), the debugger, and the VDP renderer (a shared sprite-scanline scan, a shared TMS9918A
+    sprite-plot closure). No observable behavior change.
+  - Add a third benchmarked title, MSX2: HB-F1XD + FDD (Dragon Slayer VI - The Legend of Heroes). The benchmark
+    history in the README tracks it from v2.4.1 onward. Add the Sony HBI-J1 to the owned-hardware list.
+- **v2.5.16** (2026-09-17): Fix a JIS keyboard regression from v2.5.15. The scancode interception for the dead `=`
+  key of an International/US host sent a real JIS `^`/`~` key incorrectly to `_`.
+  - `_` now comes from a dedicated JIS `\`/`_` scancode sentinel and a new SHIFT+`0` escape hatch (both layouts). The
+    backquote-to-`^` fallback stays, for International keyboards that a macOS/SDL2 keyboard-layout misdetection
+    affects.
+  - Fix `dskftp.py`, which wrote a zero-filled boot sector loader stub. A formatted disk thus ran a NOP sled and did
+    not fall back to BASIC.
+  - Rename `make_blank_dsk.py` to `dskblank.py`, to match the naming of `dskftp`/`dskdd`.
+  - Move the Socket RPC/MCP and tools reference out of `README.md` into `tools/README_tools.md`/`_ja.md`. Move
+    `README_extension.md`/`_ja.md` into `docs/`.
+- **v2.5.15** (2026-09-15): Add `--extension msxdos2_512k_viewfont`: an ASCII8-mapped MSX-View-compatible font ROM,
+  together with the RAM mapper + MSX-DOS2 kernel of `msxdos2_512k`. Add `ascii8`/`ascii16` as supported sub-slot
+  device kinds for expanded overlays. Rename `--extension msxdos2_512k_kanji` to `msxdos2_512k_kanjirom`, so that the
+  two names stay clearly different.
+  - Expanded extension overlays (`hbi_j1`, `memory_512k`, `msxdos2_512k*`) now reject an MSX1 base machine with
+    `MachineLoadError`. Before, they silently built a machine that has no real-hardware counterpart.
+  - Fix five JIS symbol keys (`=`, apostrophe, `^`/`~`, `:`/`*`, `_`) that an International/US host keyboard could not
+    type under `keyboard_type: jp`.
+  - Documentation: move the extension documentation out of `README.md` into `README_extension.md`/`_ja.md`, and move
+    the version history into this file. Add a "Machine and extension YAML schema" chapter to
+    `docs/technical-implementation.md`/`_ja.md`. Change every owned-software citation from Wikipedia/msx.org to
+    [Generation MSX](https://generation-msx.nl/).
+- **v2.5.14** (2026-09-12): Replace `--fmpac`/`--scc-plus` with a unified `--extension {none,fmpac,scc_plus,hbi_j1}`
+  flag (`extension` config key, with `config/extensions/<id>.yaml` overlay files). Each extension always occupies
+  primary slot 2. **BREAKING**: SCC-I now occupies primary slot 2, not slot 1. `--mapper2` also gets `KonamiSCC`
+  support, and shares the single SCC chip of the machine with slot 1.
+- **v2.5.13** (2026-09-12): Add Sony HBI-J1 support through `--extension hbi_j1`. The cartridge has a JIS Kanji font
+  ROM I/O device, a Halnote-mapped MSX-JE word-processor ROM + 16 KB SRAM, and a flat Kanji driver + BASIC ROM. It
+  expands slot 2 into two sub-slots. The author physically owns this cartridge and dumped its ROMs, and their SHA1
+  values match openMSX. Also add the V9938 interlace mode (R#9 IL/EO bits). EO drives the automatic even/odd page
+  alternation of GRAPHIC4-7, as on a real V9938.
+- **v2.5.12** (2026-09-09): The size of `RamMapper` is now configurable in whole 16 KB banks. Before, it was fixed at
+  128 KB. The legacy (RAM-mapper) dispatch branch of slot 3 can now also hold an FDC next to the RAM mapper. Before,
+  an FDC needed the data-driven flat-RAM layout.
+  - Add `hb_f1xd_256`, a hypothetical 256 KB RAM-mapper variant of the Sony HB-F1XD. No real hardware matches this
+    configuration. Its purpose is the extended BIOS mapper support routines of MSX-DOS2, which need a RAM mapper of at
+    least 128 KB. The author confirmed that MSX-DOS2 boots on it.
+  - Implement the TEXT2 mode of the V9938 (SCREEN 0 WIDTH 80, `MODE 80` of MSX-DOS). Before, the emulator dispatched
+    it incorrectly as a GRAPHIC2 background with sprite mode 2 sprites, which corrupted the screen. The fix corrects
+    the mode-bit dispatch priority, adds a dedicated 80-column/512-wide renderer, and extends `display_width` and the
+    screen-mode display of the debugger. The author confirmed the fix on MSX-DOS.
+- **v2.5.11** (2026-09-06): Remove the `mapper`/`mapper2` config keys from `py_emulator.yaml`. The cartridge mapper
+  selection is now CLI-only (`--mapper` / `--mapper2`). This fixes a config-file default that silently and incorrectly
+  triggered the `--scc-plus`/`--mapper` mutual-exclusivity check.
+- **v2.5.10** (2026-09-01): Add Allium specs for the remaining uncovered components: RTC, floppy disk image/drive,
+  plain/fixed-page mappers, I/O bus, and the Z80 ED/CB/DD/FD prefix groups. This work found and fixed several real
+  bugs:
+  - RTC CMOS RAM now persists per machine to `saves/sram/rtc_<machine_id>.sram`. Before, a single shared file let the
+    settings of one machine leak into another machine. This release also includes a 12/24-hour encoding fix.
+  - The emulator now implements an undocumented Z80 DDCB/FDCB register-echo behavior.
+  - Also add the full floppy disk state (WD2793/TC8566AF registers, drive position, mounted-disk identity) to
+    save/load, with mismatch checks for the FDC kind and the disk identity.
+- **v2.5.9** (2026-08-25): Full OpenSpec/Allium inventory pass across every component. The pass verified each
+  specification again against openMSX and the implementation. It also fixed several accuracy bugs (V9938 sprite
+  rendering, ASCII8/ASCII16 mapper bank arithmetic, SCC-I mode sync, mouse protocol timing, and others).
+- **v2.5.8** (2026-08-22): Add the TC8566AF FDC controller and a Panasonic FS-A1F machine configuration
+  (`--machine fs_a1f`). This is a second MSX2 with floppy disk support, in addition to the Sony HB-F1XD (WD2793). The
+  FS-A1F now uses its real 4-sub-slot hardware layout, with RAM, SUB ROM, and the FDC each in its own sub-slot.
+- **v2.5.7** (2026-08-20): Large internal refactor in preparation for a future Rust/C++ port. Mapper save state now
+  uses a tagged `MapperKind` enum instead of untyped dicts. The cache invalidation of `Memory` moved to explicit
+  setter methods. Explicit interface methods replace the reflection-based mapper/slot introspection of the debugger.
+  No observable behavior change (verified with a multi-angle code review and an Allium spec-alignment check).
+- **v2.5.6** (2026-08-19): Fix the JIS ¥ key, which never reached the MSX keyboard matrix on macOS. SDL2 reports this
+  key with a consistent scancode but an inconsistent keysym. `key_down`/`key_up` thus now resolve it from the scancode
+  alone.
+- **v2.5.5** (2026-08-19): Fix a write-side open-bus leak in `Ascii16Sram2Mapper`: writes at or above 0xC000 could
+  corrupt SRAM while a window was SRAM-mapped. Give `RTypeMapper` a flat read mirror. It was the last mapper class
+  that still resolved its window on every read.
+- **v2.5.4** (2026-08-19): Fix three bugs in the Konami-family mappers (`KonamiMapper`/`KonamiSCCMapper`/
+  `MajutsushiMapper`). A cross-check against the openMSX source found them: address mirroring outside the ROM
+  windows, bank-select page arithmetic, and SCC-enable writes that did not update the bank register. Add a new Allium
+  spec for this mapper family, and fix an unrelated test-isolation bug in `test_cli_scc_plus.py`.
+- **v2.5.3** (2026-08-17): Fix the `--break-point`/`--watch-point` CLI flags, which MSX1 machines silently ignored.
+  The commands of the interactive debugger already worked there. Only the CLI startup path was limited to MSX2.
+- **v2.5.2** (2026-08-16): Add SCC-I ("SCC+") cartridge support through `--scc-plus`. This is a bare sound cartridge
+  in slot 1 with 64 KB of bank-switched RAM and a Plus-mode SCC chip, for floppy-disk MSX2 titles that use it only for
+  audio.
+- **v2.5.1** (2026-08-16): Close most open Allium questions from v2.5.0. This work fixed two PPI (i8255) bugs and
+  changed the quit key to Ctrl+Q. Change the PSG amplitude table to measured-silicon data. This change is audible.
+- **v2.5.0** (2026-08-15): Introduce Allium as a second, behavior-focused spec layer, and distill one spec for every
+  major component. This work fixed several accuracy bugs (V9938 sprite collision, FDC). Also add save-state schemas, a
+  memory dispatch cache, and JIS keyboard bindings.
+- **v2.4.8** (2026-08-08): Render V9938 frames at the start of vertical blanking, not after the scanline loop. This
+  fixes a one-frame tear on titles that update VRAM and a display register in the same VBlank ISR. Also make the
+  per-instruction loop of the debugger ~9% faster.
+- **v2.4.7** (2026-08-05): Extend `py_emulator.yaml` with the `slot2`/`mapper2` and `frame_skip` config keys, and a
+  `keyboard_joystick.buttons` section to change the keyboard-emulation keys of Joy1.
+- **v2.4.6** (2026-08-05): Add support for the `GameMaster2` ROM database mapper type (128 KB ROM + 8 KB
+  battery-backed SRAM). Make the names that `--mapper` accepts agree with the set that the loader supports.
+- **v2.4.5** (2026-08-04): Add support for four ROM database mapper types that were not supported before:
+  `Page2`/`0x4000`/`0x8000` (a new `FixedPageMapper`) and `KoeiSRAM32`.
+- **v2.4.4** (2026-08-04): Add MSX mouse emulation (`--mouse[=1|2]`). It reproduces the real pin-8-clocked nibble
+  protocol with the host mouse.
+- **v2.4.3** (2026-08-03): Make cartridge ROM reads faster on bank-switching mappers. A flat mirror, rebuilt only on
+  a bank switch, replaces the resolution of the active window on every read.
+- **v2.4.2** (2026-08-02): Add Ctrl+F1..F5 (MSX HOME/INS/DEL/STOP/SELECT) and Right Alt (MSX CODE/KANA) key bindings
+  to the SDL2 frontend.
+- **v2.4.1** (2026-08-02): Add an optional `py_emulator.yaml` startup configuration file. Change `--benchmark` to a
+  frame count.
+- **v2.4.0** (2026-07-30): Add the FM-PAC (MSX-MUSIC) cartridge with a YM2413 (OPLL) FM sound chip.
+- **v2.3.6** (2026-07-23): Unify the rendered output to a constant 212-line height.
+- **v2.3.5** (2026-07-20): Fix sprite ghosting from the upper split-screen region.
+- **v2.3.4** (2026-07-19): Add per-line banding for the display-adjust register.
+- **v2.3.3** (2026-07-19): Fix the handling of filenames with spaces.
+- **v2.3.2** (2026-07-19): Fix V9938 line-interrupt handling.
+- **v2.3.1** (2026-07-19): Refactor the socket RPC and MCP server.
+- **v2.3.0** (2026-07-19): Add a socket RPC interface and MCP server.
+- **v2.2.1** (2026-07-15): Add cycle-accurate CPU timing and PSG PCM playback.
+- **v2.2.0** (2026-07-13): Add support for the Sony HB-F1XD (FDD + RTC).
+- **v2.1.0** (2026-07-13): Improve MSX2 emulation performance.
+- **v2.0.0** (2026-07-06): Add MSX2 CBIOS support.
+- **v1.0.0** (2026-06-07): Initial release.
