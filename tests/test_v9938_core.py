@@ -24,6 +24,16 @@ def _set_read_addr(vdp: V9938, addr: int) -> None:
     vdp.write_port(0x99, (addr >> 8) & 0x3F)
 
 
+def _set_reg(vdp: V9938, reg: int, value: int) -> None:
+    """Write control register R#reg via port 0x99."""
+    vdp.write_port(0x99, value)
+    vdp.write_port(0x99, 0x80 | reg)
+
+
+_R0_GRAPHIC1 = 0x00
+_R0_GRAPHIC4 = 0x06  # M4 and M3 set
+
+
 # ---------------------------------------------------------------------------
 # VRAM size
 # ---------------------------------------------------------------------------
@@ -85,12 +95,74 @@ def test_port_98_read_increments_address() -> None:
 
 def test_port_98_address_wraps_at_17_bits() -> None:
     vdp = V9938()
-    vdp.regs[14] = 0x07
+    _set_reg(vdp, 0, _R0_GRAPHIC4)
+    _set_reg(vdp, 14, 0x07)
     _set_write_addr(vdp, 0x3FFF)  # addr = 0x1FFFF (last valid)
     vdp.write_port(0x98, 0xAA)    # writes to 0x1FFFF, addr wraps to 0x00000
     vdp.write_port(0x98, 0xBB)    # writes to 0x00000
     assert vdp.vram[0x1FFFF] == 0xAA
     assert vdp.vram[0x00000] == 0xBB
+    assert vdp.regs[14] == 0
+
+
+def test_port_98_address_wraps_inside_16kb_bank_in_graphic1() -> None:
+    vdp = V9938()
+    _set_reg(vdp, 0, _R0_GRAPHIC1)
+    _set_write_addr(vdp, 0x3FFF)
+    vdp.write_port(0x98, 0xAA)
+    vdp.write_port(0x98, 0xBB)
+    assert vdp.vram[0x3FFF] == 0xAA
+    assert vdp.vram[0x0000] == 0xBB
+    assert vdp.vram[0x4000] == 0x00
+    assert vdp.regs[14] == 0
+
+
+def test_port_98_address_wraps_inside_upper_bank_in_graphic1() -> None:
+    vdp = V9938()
+    _set_reg(vdp, 0, _R0_GRAPHIC1)
+    _set_reg(vdp, 14, 0x01)
+    _set_write_addr(vdp, 0x3FFF)  # addr = 0x7FFF
+    vdp.write_port(0x98, 0xAA)
+    vdp.write_port(0x98, 0xBB)
+    assert vdp.vram[0x7FFF] == 0xAA
+    assert vdp.vram[0x4000] == 0xBB
+    assert vdp.regs[14] == 0x01
+
+
+def test_port_98_address_carries_into_r14_in_graphic4() -> None:
+    vdp = V9938()
+    _set_reg(vdp, 0, _R0_GRAPHIC4)
+    _set_write_addr(vdp, 0x3FFF)
+    vdp.write_port(0x98, 0xAA)
+    vdp.write_port(0x98, 0xBB)
+    assert vdp.vram[0x3FFF] == 0xAA
+    assert vdp.vram[0x4000] == 0xBB
+    assert vdp.vram[0x0000] == 0x00
+    assert vdp.regs[14] == 0x01
+
+
+def test_address_setup_after_carry_uses_incremented_r14() -> None:
+    # HB-F1XD VRAMWRAP.BAS, SCREEN 5: the A3 write lands at 0x4010.
+    vdp = V9938()
+    _set_reg(vdp, 0, _R0_GRAPHIC4)
+    _set_write_addr(vdp, 0x3FFF)
+    vdp.write_port(0x98, 0xA1)
+    vdp.write_port(0x98, 0xA2)
+    _set_write_addr(vdp, 0x0010)  # R#14 not written
+    vdp.write_port(0x98, 0xA3)
+    assert vdp.vram[0x4010] == 0xA3
+    assert vdp.vram[0x0010] == 0x00
+
+
+@pytest.mark.parametrize("r0", [0x04, 0x08, 0x0A, 0x0E])  # GRAPHIC 3 / TEXT 2, G5, G6, G7
+def test_port_98_address_carries_in_every_m4_m5_mode(r0: int) -> None:
+    vdp = V9938()
+    _set_reg(vdp, 0, r0)
+    _set_write_addr(vdp, 0x3FFF)
+    vdp.write_port(0x98, 0xAA)
+    vdp.write_port(0x98, 0xBB)
+    assert vdp.vram[0x4000] == 0xBB
+    assert vdp.regs[14] == 0x01
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +283,30 @@ def test_port_98_read_discards_stray_control_byte() -> None:
 
 def test_port_98_read_address_wraps_at_17_bits() -> None:
     vdp = V9938()
-    vdp.regs[14] = 0x07
+    _set_reg(vdp, 0, _R0_GRAPHIC4)
+    _set_reg(vdp, 14, 0x07)
     vdp.vram[0x1FFFF] = 0xAA
     vdp.vram[0x00000] = 0xBB
     _set_read_addr(vdp, 0x3FFF)   # addr = 0x1FFFF (last valid)
     assert vdp.read_port(0x98) == 0xAA
     assert vdp.read_port(0x98) == 0xBB  # wrapped to 0x00000
+    assert vdp.regs[14] == 0
+
+
+@pytest.mark.parametrize(("r0", "second", "r14"), [
+    (_R0_GRAPHIC1, 0xBB, 0x00),   # 0x3FFF -> 0x0000
+    (_R0_GRAPHIC4, 0xCC, 0x01),   # 0x3FFF -> 0x4000, R#14 carried
+])
+def test_port_98_read_advances_like_write(r0: int, second: int, r14: int) -> None:
+    vdp = V9938()
+    _set_reg(vdp, 0, r0)
+    vdp.vram[0x3FFF] = 0xAA
+    vdp.vram[0x0000] = 0xBB
+    vdp.vram[0x4000] = 0xCC
+    _set_read_addr(vdp, 0x3FFF)   # the read-ahead itself crosses the boundary
+    assert vdp.read_port(0x98) == 0xAA
+    assert vdp.read_port(0x98) == second
+    assert vdp.regs[14] == r14
 
 
 def test_port_98_read_returns_buffered_byte_not_live_vram() -> None:

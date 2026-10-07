@@ -523,6 +523,25 @@ class V9938:
         """
         self._addr = ((r14 & 0x07) << 14) | (self._addr & 0x3FFF)
 
+    def _advance_addr(self) -> None:
+        """Advance the VRAM address after a CPU access (A13-A0 wrap at 16 KB).
+
+        On the wrap, M4/M5 modes carry into R#14 (R#14 itself increments) and
+        A16-A14; the MSX1-compatible modes stay in the current 16 KB bank.
+        Confirmed on a real SONY HB-F1XD (extras/HB-F1XD/VRAMWRAP.BAS,
+        2026-10-07): SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
+        0x4000 and a later address setup without R#14 lands at 0x4010.
+        openMSX executeCpuVramAccess agrees; the M4/M5 test for the modes
+        not run on the hardware (GRAPHIC 3, TEXT 2, GRAPHIC 5-7) follows it.
+        """
+        low = (self._addr + 1) & 0x3FFF
+        high = self._addr & 0x1C000
+        if low == 0 and self.regs[0] & 0x0C:
+            r14 = (self.regs[14] + 1) & 0x07
+            self.regs[14] = r14
+            high = r14 << 14
+        self._addr = high | low
+
     @property
     def read_buf(self) -> int:
         return self._read_buf
@@ -838,7 +857,7 @@ class V9938:
         The V9938 decodes two address bits, so it has exactly four ports and
         any wider decode on the machine side mirrors them (Handbook Table 4.3;
         openMSX VDP::writeIO switches on `port & 0x03`):
-        port 0 = VRAM data (auto-increments the 17-bit address); port 1 =
+        port 0 = VRAM data (advances the address, see _advance_addr); port 1 =
         control (two-byte latch: register write or VRAM address setup);
         port 2 = palette data; port 3 = indirect register access
         (R#17-pointed register).
@@ -847,7 +866,7 @@ class V9938:
         port &= 0x03
         if port == 0:
             self.vram[self._addr] = value
-            self._addr = (self._addr + 1) & 0x1FFFF
+            self._advance_addr()
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
             self._ctrl_pending = False
@@ -897,7 +916,7 @@ class V9938:
                 self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
                 if not (value & 0x40):  # bit6=0 → read mode: preload buffer
                     self._read_buf = self.vram[self._addr]
-                    self._addr = (self._addr + 1) & 0x1FFFF
+                    self._advance_addr()
 
     def _write_register(self, reg: int, value: int) -> None:
         """Store a register write from port 0x99 or port 0x9B.
@@ -947,7 +966,7 @@ class V9938:
         """Dispatch a V9938 VDP port read.
 
         Two address bits, as in write_port: port 0 = VRAM data (returns the
-        read-ahead buffer, refills it, auto-increments the 17-bit address);
+        read-ahead buffer, refills it, advances the address, see _advance_addr);
         port 1 = status register S#n, where R#15 selects which S#n is returned
         (reading also resets the control latch). Ports 2 and 3 are write-only
         and read as 0xFF (openMSX VDP::readIO cases 2/3).
@@ -956,7 +975,7 @@ class V9938:
         if port == 0:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
-            self._addr = (self._addr + 1) & 0x1FFFF
+            self._advance_addr()
             self._ctrl_pending = False
             return result
         if port == 1:
