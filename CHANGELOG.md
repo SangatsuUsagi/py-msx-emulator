@@ -2,6 +2,36 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.4** (2026-10-07): Emulate the V9938 R#13 blink, and fix V9938, Z80 and PPI behaviour found by tests on the
+  author's real Sony HB-F1XD.
+  - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colours during
+    the ON period. In GRAPHIC 4-7 the display alternates between the page R#2 selects and the even page. Every R#13
+    write restarts the timer; when one time nibble is 0, the state set by the write holds. A blink text colour 0 shows
+    the blink background (as on the HB-F1XD; MAME draws colour 0). The timer is in the save state (format version still
+    15; re-save older version-15 files).
+  - V9938 status and addressing:
+    - S#6 bit 1 is the display field (EO), as the status-register summary of the data book says, not collision Y bit 9.
+    - The TEXT1 name-table index wraps at 1 KB (rows 25 and 26 with R#9 LN=1).
+    - The VRAM address counter wraps inside the 16 KB bank in GRAPHIC 1/2, MULTICOLOR and TEXT1, and carries into R#14
+      (which increments) in the M4/M5 modes.
+    - A port 0x98 write also refills the read-ahead buffer, so an IN right after an OUT returns the written byte.
+  - V9938 command engine:
+    - LMCM completes when it fetches its last dot. The read that takes that dot then clears TR.
+    - The last HMMC/LMMC byte leaves TR set; an R#44 write with no command running clears it.
+    - With MXS set (no expansion RAM), POINT and LMCM give the all-ones dot value (0x0F in SCREEN 5).
+    - Leaving the bitmap modes through R#0 no longer aborts a running command.
+    - Block commands take their own time per byte or dot (HMMV 10, HMMM 21, YMMM 18 T-states per byte; LMMV 21, LMMM 30
+      per dot), measured with the display and sprites on. Before, every command used 8.
+  - Z80:
+    - R counts M1 cycles only. Operand, address and displacement bytes no longer increment it.
+    - The undocumented F bits 5 (Y) and 3 (X) now follow the documented per-instruction rules. BIT n,(HL) leaves them
+      clear (MEMPTR is not emulated).
+  - PPI: port 0xAB reads 0xFF on the S1985 machines (`hb_f1xd`, `hb_f1xd_256k`, `fs_a1f`), as on the HB-F1XD. A new
+    `control_readback` setting of the `ppi8255` device selects this per machine. `fs_a1f` uses the same S1985 and is
+    not verified on a real FS-A1F.
+  - Comments now cite a second source (data books, data sheets, MSX Wiki, real-hardware results) where the behaviour
+    came only from openMSX. The documentation was rewritten in plainer technical English and matches the current
+    behaviour.
 - **v2.7.3** (2026-10-03): Fix the V9938 display page in GRAPHIC 6/7 (SCREEN 7/8).
   - In these modes, R#2 is `0 0 A16 1 1 1 1 1`, so the 64 KB page bit is bit 5. The renderer read bit 6 (the
     GRAPHIC 4/5 layout). `SET PAGE 1` (R#2 = 0x3F) thus still showed page 0. A SCREEN 7 disk title that draws its menu

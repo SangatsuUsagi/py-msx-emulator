@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3484%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3537%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -90,11 +90,11 @@ Zilog Z80.
 - Known limitations:
   - OTIR/INIR and similar block I/O instructions are not cycle-exact across
     page boundaries.
-  - The R register increments on every fetched byte (opcode and operand). On
-    real hardware, it increments only on M1 opcode-fetch cycles.
-  - Only the block I/O flag routine reproduces the undocumented flag bits Y
-    (bit 5) and X (bit 3). Thus `PUSH AF`/`POP AF`/`EX AF,AF'` do not keep
-    these bits.
+  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the documented
+    per-instruction rules, with three exceptions. The emulator does not model
+    the internal MEMPTR register, so `BIT n,(HL)` leaves Y and X clear. It also
+    does not model the PC-derived Y/X of a repeating block instruction or the
+    dependence of `SCF`/`CCF` on the previous instruction.
 
 ### VDP (Video Display Processor): TMS9918A (MSX1)
 
@@ -127,7 +127,9 @@ palette changes.
 - Known limitations:
   - Command timing is approximate, not cycle-accurate. The emulator does not
     faithfully reproduce beam-raced blits or double-buffered VRAM updates
-    within a single frame.
+    within a single frame. Each block command has one cost per byte or dot,
+    measured on a real HB-F1XD with the display and sprites on. The speed-up
+    with less display or sprite VRAM traffic is not modelled.
   - The emulator does not model the GRAPHIC 6/7 planar VRAM interleave. The
     real chip splits these modes across two VRAM ICs by even/odd byte. The
     emulator uses a linear addressing model instead. The result differs in
@@ -1045,7 +1047,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3484 tests and covers all major components. It includes
+The test suite has 3537 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1115,7 +1117,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3484 tests
+├── tests/                 # Test suite — 3537 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
