@@ -526,19 +526,19 @@ def test_adc_a_ix_d_with_carry() -> None:
 def test_sub_ix_d() -> None:
     cpu = _alu_ix_d(0x96, memval=0x03, a=0x10)
     assert cpu.registers.A == 0x0D
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_X | F.FLAG_N)  # X from 0x0D
 
 
 def test_sbc_a_ix_d_with_carry() -> None:
     cpu = _alu_ix_d(0x9E, memval=0x03, a=0x10, f=F.FLAG_C)
     assert cpu.registers.A == 0x0C
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_X | F.FLAG_N)  # X from 0x0C
 
 
 def test_and_ix_d() -> None:
     cpu = _alu_ix_d(0xA6, memval=0x0F, a=0xFF)
     assert cpu.registers.A == 0x0F
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV)
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_X | F.FLAG_PV)  # X from 0x0F
 
 
 def test_xor_ix_d() -> None:
@@ -550,13 +550,13 @@ def test_xor_ix_d() -> None:
 def test_or_ix_d() -> None:
     cpu = _alu_ix_d(0xB6, memval=0xF0, a=0x0F)
     assert cpu.registers.A == 0xFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_PV)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_X | F.FLAG_PV)
 
 
 def test_cp_ix_d_equal() -> None:
     cpu = _alu_ix_d(0xBE, memval=0x20, a=0x20)
     assert cpu.registers.A == 0x20  # A unchanged
-    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_Y | F.FLAG_N)  # Y from the operand
 
 
 # --- INC/DEC (IX+d) ---------------------------------------------------------

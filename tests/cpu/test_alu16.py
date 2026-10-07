@@ -105,7 +105,8 @@ def test_adc16_signed_overflow_sets_pv() -> None:
     # 0x7FFF + 0x7FFF + 1 = 0xFFFF: positive+positive -> negative -> overflow
     cpu = _adc16(0x7FFF, 0x6A, lambda r: None, carry=True)  # ADC HL,HL
     assert cpu.registers.HL == 0xFFFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_H | F.FLAG_PV)
+    # Y/X from the high byte 0xFF
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_PV)
 
 
 def test_adc16_carry_in_path() -> None:
@@ -127,21 +128,21 @@ def test_sbc16_borrow_out() -> None:
     # 0x0000 - 0x0001 = -1 -> 0xFFFF: borrow, half-borrow, sign, N
     cpu = _sbc16(0x0000, 0x52, lambda r: setattr(r, "DE", 0x0001), carry=False)
     assert cpu.registers.HL == 0xFFFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_H | F.FLAG_N | F.FLAG_C)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_N | F.FLAG_C)
 
 
 def test_sbc16_half_borrow_at_bit11() -> None:
     # 0x1000 - 0x0001 = 0x0FFF: half-borrow from bit 11 only
     cpu = _sbc16(0x1000, 0x52, lambda r: setattr(r, "DE", 0x0001), carry=False)
     assert cpu.registers.HL == 0x0FFF
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_H | F.FLAG_X | F.FLAG_N)  # X from high byte 0x0F
 
 
 def test_sbc16_signed_overflow_sets_pv() -> None:
     # 0x8000 - 0x0001 = 0x7FFF: negative-positive -> positive -> overflow
     cpu = _sbc16(0x8000, 0x72, lambda r: setattr(r, "SP", 0x0001), carry=False)
     assert cpu.registers.HL == 0x7FFF
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_PV | F.FLAG_N)
 
 
 def test_sbc16_carry_in_path() -> None:
@@ -168,13 +169,13 @@ def test_and_n_clears_to_zero() -> None:
 def test_and_n_sets_half_and_parity() -> None:
     cpu = _alu_imm(0xE6, 0xFF, 0x3C)  # AND 0x3C
     assert cpu.registers.A == 0x3C
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV)
+    assert cpu.registers.F == (F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_PV)
 
 
 def test_or_n_sets_sign() -> None:
     cpu = _alu_imm(0xF6, 0x0F, 0xF0)  # OR 0xF0
     assert cpu.registers.A == 0xFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_PV)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_X | F.FLAG_PV)
 
 
 def test_xor_n_sets_zero() -> None:
@@ -186,13 +187,13 @@ def test_xor_n_sets_zero() -> None:
 def test_cp_n_equal() -> None:
     cpu = _alu_imm(0xFE, 0x20, 0x20)  # CP 0x20
     assert cpu.registers.A == 0x20  # A unchanged
-    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_Y | F.FLAG_N)  # Y/X from the operand
 
 
 def test_cp_n_less_sets_carry_and_sign() -> None:
     cpu = _alu_imm(0xFE, 0x10, 0x20)  # CP 0x20 (A < n)
     assert cpu.registers.A == 0x10  # A unchanged
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_N | F.FLAG_C)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_N | F.FLAG_C)  # Y from 0x20
 
 
 def test_cp_n_signed_overflow() -> None:
