@@ -1461,7 +1461,11 @@ class V9938:
                 self._cmd_active = False
                 self._cmd_code = _CMD_ABRT
                 self._tr_delay = 0
-                self._status2 &= ~_S2_CE  # TR survives completion
+                # The completing byte leaves TR set: confirmed on a real SONY
+                # HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS line 4, 2026-10-07: a
+                # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
+                # idle R#44 write); openMSX agrees.
+                self._status2 = (self._status2 & ~_S2_CE) | _S2_TR
 
     def _advance_lmcm(self) -> None:
         """Take the staged LMCM dot and fetch the next one.

@@ -209,7 +209,24 @@ def test_hmmc_clears_ce_when_done() -> None:
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=2, ny=1, clr=0xAB)
     assert vdp.vram[0] == 0xAB
     assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert vdp._status2 & 0x80  # TR set: the completing byte leaves it set
     assert not vdp._cmd_active
+
+
+def test_hmmc_tr_after_last_byte_matches_hb_f1xd() -> None:
+    # HB-F1XD VDPCMD2.BAS line 4: TR/CE 81 after the start, 80 after the
+    # second byte and after waiting, 00 after an idle R#44 write; VRAM 12 34.
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0x12)
+    states = [vdp._status2 & 0x81]
+    _write_data(vdp, 0x34)
+    states.append(vdp._status2 & 0x81)
+    vdp.tick(10_000)
+    states.append(vdp._status2 & 0x81)
+    _write_data(vdp, 0x00)  # no command running
+    states.append(vdp._status2 & 0x81)
+    assert states == [0x81, 0x80, 0x80, 0x00]
+    assert (vdp.vram[0], vdp.vram[1]) == (0x12, 0x34)
 
 
 def test_colour_register_write_when_inactive_touches_no_vram() -> None:
@@ -318,6 +335,7 @@ def test_lmmc_transfers_bytes_via_port_9b() -> None:
     assert vdp.vram[128] == 0x42 # row 1 byte 0: pixels (0,1)=4, (1,1)=2
     assert vdp.vram[129] == 0x68 # row 1 byte 1: pixels (2,1)=6, (3,1)=8
     assert not vdp._cmd_active    # command complete after NX*NY dots
+    assert vdp._status2 & 0x81 == 0x80  # CE clear, TR left set (as for HMMC)
 
 
 # ---------------------------------------------------------------------------
