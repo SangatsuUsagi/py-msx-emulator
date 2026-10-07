@@ -309,6 +309,18 @@ def test_port_98_read_advances_like_write(r0: int, second: int, r14: int) -> Non
     assert vdp.regs[14] == r14
 
 
+def test_port_98_write_refills_the_read_buffer() -> None:
+    # HB-F1XD RDBUF.BAS: read setup 0x3000, OUT 0x5A, IN twice -> 5A 33.
+    vdp = V9938()
+    for i in range(4):
+        vdp.vram[0x3000 + i] = (i + 1) * 0x11
+    _set_read_addr(vdp, 0x3000)
+    vdp.write_port(0x98, 0x5A)  # lands at 0x3001
+    assert vdp.read_port(0x98) == 0x5A
+    assert vdp.read_port(0x98) == 0x33
+    assert vdp.vram[0x3001] == 0x5A
+
+
 def test_port_98_read_returns_buffered_byte_not_live_vram() -> None:
     vdp = V9938()
     vdp.vram[0x0300] = 0x11

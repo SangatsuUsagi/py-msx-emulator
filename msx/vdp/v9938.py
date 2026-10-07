@@ -868,6 +868,10 @@ class V9938:
         port &= 0x03
         if port == 0:
             self.vram[self._addr] = value
+            # A data-port write also refills the read-ahead buffer: confirmed
+            # on a real SONY HB-F1XD (extras/HB-10/RDBUF.BAS, 2026-10-07: IN
+            # after OUT returns the written byte); openMSX agrees.
+            self._read_buf = value
             self._advance_addr()
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
