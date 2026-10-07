@@ -65,7 +65,8 @@ class Z80:
     instruction_pc: int = 0
     # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
     # the core reusable for non-MSX systems); MSX machines configure 1 (the MSX
-    # M1 wait state, matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
+    # M1 wait state -- Sony MSX Technical Handbook: "1 WAIT in M1 CYCLE" --
+    # matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
     # from the machine config.
     m1_wait_states: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
@@ -81,11 +82,25 @@ class Z80:
         self.ei_pending = False
 
     def _fetch(self) -> int:
+        """Read an operand/address/displacement byte at PC (not an M1 cycle: R unchanged)."""
         b = self.read_byte(self.registers.PC)
         self.registers.PC = (self.registers.PC + 1) & 0xFFFF
-        # R is a 7-bit refresh counter: only bits 0-6 increment on real
-        # hardware; bit 7 is preserved (sticky) across increments and only
-        # changes via a full-register write (e.g. LD R,A).
+        return b
+
+    def _fetch_opcode(self) -> int:
+        """Read the opcode byte after a CB/DD/ED/FD prefix: an M1 cycle, so R refreshes.
+
+        Not used for the DDCB/FDCB displacement and opcode bytes, which are
+        not M1 reads (read with _fetch()).
+
+        R counts M1 cycles only: confirmed on a real SONY HB-F1XD
+        (extras/HB-10/ZRREG.BAS, 2026-10-07: NOP, LD HL,nn, LD A,(nn),
+        LD (IX+d),n and RLC B add 1 1 1 2 2), as the Z80 documentation and
+        references/z80 (on_m1_fetch_cycle vs on_fetch_cycle) say. R is a 7-bit
+        refresh counter: bit 7 is kept and only changes via LD R,A.
+        """
+        b = self.read_byte(self.registers.PC)
+        self.registers.PC = (self.registers.PC + 1) & 0xFFFF
         r = self.registers.R
         self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
         return b

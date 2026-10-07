@@ -693,6 +693,27 @@ def test_collision_coordinate_reads_do_not_clear_s0_flags() -> None:
     assert vdp.status & 0xE0 == 0x80 | 0x40 | 0x20
 
 
+def test_s6_bit1_reports_the_display_field() -> None:
+    """S#6 = 1 1 1 1 1 1 EO Y8: bit 1 follows the field (S#2 bit 1), as a
+    real HB-F1XD reports it (extras/HB-F1XD/S6EO.BAS)."""
+    vdp = V9938()
+    _set_screen5(vdp)
+    vdp.frame_count = 0
+    render_frame(vdp)  # first field
+    assert _read_status(vdp, 6) == 0xFC
+    vdp.frame_count = 1
+    render_frame(vdp)  # second field
+    assert _read_status(vdp, 6) == 0xFE
+    assert _read_status(vdp, 2) & 0x02 == 0x02
+
+
+def test_s6_bit0_is_collision_y_bit8() -> None:
+    vdp = V9938()
+    vdp.collision_y = 0x3FF  # bits 8 and 9 set; only bit 8 is reported
+    vdp.frame_count = 0
+    assert _read_status(vdp, 6) == 0xFD
+
+
 def test_nonexistent_status_register_reads_ff() -> None:
     """R#15 >= 10 selects no status register; the read returns 0xFF and leaves
     S#0's flags alone (openMSX VDP::peekStatusReg default case)."""

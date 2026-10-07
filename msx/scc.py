@@ -113,7 +113,11 @@ class SCC:
             # separately readable here even though it is only writable via
             # channel 4's mirrored write (see write()) — real 051649 hardware
             # has no such storage and reads 0xFF through this whole range
-            # instead (openMSX SCC::peekMem, Mode::Compatible vs Mode::Real).
+            # instead (openMSX SCC::peekMem, Mode::Compatible vs Mode::Real;
+            # references/docs/"Konami's Sound Cartridge (SCC+) for the MSX.md":
+            # 98A0h-98BFh "read: waveform channel 5 (no write)", and
+            # references/docs/"Konami SCC Sound Chip.md": 9880h-98FFh is
+            # write-only and reads FFh).
             return self._waves[4][addr & 0x1F] & 0xFF
         # The frequency/volume/enable block, the deformation register, and any
         # no-function gap are all write-only on real hardware and read back as
@@ -134,7 +138,9 @@ class SCC:
             if not self._plus_mode and bank == 3:
                 # Compatible mode only: channel 5 has no independent waveform
                 # of its own, so it mirrors whatever channel 4 was just
-                # written (openMSX SCC::writeWave).
+                # written (openMSX SCC::writeWave; references/docs/"Konami SCC
+                # Sound Chip.md": channel 4 shares its waveform with
+                # channel 5).
                 self._waves[4][byte] = value
             return
         freq_vol_limit = 0xC0 if self._plus_mode else 0xA0

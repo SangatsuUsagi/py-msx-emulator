@@ -80,9 +80,11 @@ _UNPACK8: tuple[bytes, ...] = tuple(
 _SS_OFFSETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1)}
 
 # GRAPHIC7 (SCREEN 8) sprites use a FIXED 16-colour palette, NOT the
-# programmable one. Source values from openMSX Renderer::GRAPHIC7_SPRITE_PALETTE
-# as 0xGRB nibbles (each channel 0-7); stored here pre-converted to the GRB332
-# byte the SCREEN 8 frame buffer holds: (G<<5) | (R<<2) | (B>>1).
+# programmable one (V9938 data book, "Setting the Sprite Colors", whose table
+# these values match). Source values from openMSX
+# Renderer::GRAPHIC7_SPRITE_PALETTE as 0xGRB nibbles (each channel 0-7);
+# stored here pre-converted to the GRB332 byte the SCREEN 8 frame buffer
+# holds: (G<<5) | (R<<2) | (B>>1).
 _G7_SPRITE_GRB_SRC: tuple[int, ...] = (
     0x000,
     0x002,
@@ -142,7 +144,9 @@ def _g5_luts(tp: bool, border: int) -> tuple[bytes, bytes, bytes, bytes]:
     """Return (p0,p1,p2,p3) translate tables for 2-bpp G5 expansion.
 
     With TP clear, colour 0 takes R#7 bits 3:2 at even dots (p0, p2) and bits
-    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0."""
+    1:0 at odd dots (p1, p3), matching openMSX's precalcColorIndex0 and the
+    V9938 data book's GRAPHIC 5 "Hardware tiling function" (background colour
+    split into even and odd dots)."""
     key = (tp, border)
     if key not in _G5_LUT_CACHE:
         even_zero = (border >> 2) & 0x03
@@ -255,7 +259,9 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
 def _r18_offset(reg18: int) -> tuple[int, int]:
     """Decode R#18 into (horizontal, vertical) pixel offsets (openMSX): each
     nibble adjust = (nibble ^ 7), offset = adjust - 7, range -7..+8; the
-    BIOS-neutral nibble 0 → 0. Positive offset moves the picture right/down."""
+    BIOS-neutral nibble 0 → 0. Positive offset moves the picture right/down.
+    Matches the V9938 data book's R#18 figure: H = 7 leftmost, 0 centre,
+    8 rightmost; V = 7 top, 0 centre, 8 bottom."""
     h_off = ((reg18 & 0x0F) ^ 0x07) - 7
     v_off = ((reg18 >> 4) ^ 0x07) - 7
     return h_off, v_off
@@ -304,7 +310,8 @@ def _border_pattern(regs: list[int]) -> bytes:
 
     SCREEN 8 (G7) uses the raw R#7 byte as a direct GRB332 colour. SCREEN 6
     (G5) alternates two palette indices, R#7 bits 3:2 at even dots and bits
-    1:0 at odd dots (openMSX getBorderColors). Every other mode uses the low
+    1:0 at odd dots (openMSX getBorderColors; V9938 data book GRAPHIC 5
+    "Hardware tiling function"). Every other mode uses the low
     nibble of R#7. Shared by the band prefill, the R#18 display-adjust fill
     and the output-height padding so they cannot drift.
     """
@@ -942,8 +949,12 @@ def _render_g2(
 def _render_text(
     vdp: "V9938", regs: list[int], buf: bytearray, y_start: int = 0, y_end: int | None = None
 ) -> None:
-    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1).
-    name_base = (regs[2] & 0x7F) << 10
+    # TEXT1 uses the same full-width R#2/R#4 bases (see _render_g1), but at
+    # LN=1 its 26.5 rows of 40 reach name index 1059: index bits 11:10 are
+    # ANDed with R#2 bits 1:0, so with those clear index 1024 wraps to the
+    # table start (real HB-F1XD, extras/HB-F1XD/LN212.BAS; openMSX
+    # VDP::updateNameBase masks the text-mode index the same way).
+    name_mask = ((regs[2] & 0x7F) << 10) | 0x3FF
     pat_base = (regs[4] & 0x3F) << 11
     # TEXT1: R#7 high nibble = text colour, low nibble = background. A text
     # colour code 0 follows TP like every other colour code 0 (see _colour0).
@@ -961,7 +972,7 @@ def _render_text(
 
     for row in range(row_start, row_end):
         for col in range(40):
-            tile = vdp.vram[(name_base + row * 40 + col) & 0x1FFFF]
+            tile = vdp.vram[name_mask & ((row * 40 + col) | 0x1F000)]
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
@@ -972,7 +983,7 @@ def _render_text(
 
 
 # ---------------------------------------------------------------------------
-# Text 2 (SCREEN 0, WIDTH 80) — 80×24 chars, 6 pixels wide, no sprites, no blink
+# Text 2 (SCREEN 0, WIDTH 80) — 80×24 chars, 6 pixels wide, no sprites
 # ---------------------------------------------------------------------------
 
 
@@ -983,17 +994,33 @@ def _render_text2(
     Technical Handbook 3.2.2), but 80 columns into a 512-wide buffer and a
     4 KB-aligned name table selected by R#2 bits 6-2 (A16-A12) instead of
     TEXT1's 1 KB-aligned, 4-bit addressing -- see openspec design.md Decision
-    1. Blink (R#12/R#13/blink table) is not implemented; every character
-    renders in its plain (non-blinking) colour.
+    1.
+
+    Blink: a character whose bit in the blink table (R#10/R#3, A16-A9; one
+    bit per character, MSB first, 10 bytes per row) is set uses R#12's
+    colours during the R#13 blink ON period and R#7's otherwise (V9938 data
+    book, TEXT 2 mode sections 4-6).
     """
     name_base = (regs[2] & 0x7C) << 10
     # Pattern generator: full-width R#4 base (see _render_g1); the name table
     # is 4 KB-aligned in TEXT2.
     pat_base = (regs[4] & 0x3F) << 11
+    blink_base = ((regs[10] & 0x07) << 14) | ((regs[3] & 0xF8) << 6)
     fg = (regs[7] >> 4) & 0x0F
     if fg == 0:  # text colour 0 follows TP, as in TEXT1 (see _colour0)
         fg = _colour0(regs)
     bg = regs[7] & 0x0F
+    blink_on = vdp.blink_state
+    blink_bg = regs[12] & 0x0F
+    if blink_bg == 0:
+        blink_bg = _colour0(regs)
+    blink_fg = (regs[12] >> 4) & 0x0F
+    # Deliberately unlike the plain text colour above: a blink text colour 0
+    # shows the blink background, not the TP-dependent colour 0. Confirmed on
+    # a real SONY HB-F1XD (extras/HB-F1XD/T2BLINK.BAS, 2026-10-05: R#12=&H08
+    # makes the blink text invisible) and in openMSX; MAME draws colour 0.
+    if blink_fg == 0:
+        blink_fg = blink_bg
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8
     row_end = (ye + 7) // 8
@@ -1005,13 +1032,20 @@ def _render_text2(
     for row in range(row_start, row_end):
         for col in range(80):
             tile = vdp.vram[(name_base + row * 80 + col) & 0x1FFFF]
+            cfg = fg
+            cbg = bg
+            if blink_on:
+                attr = vdp.vram[(blink_base + row * 10 + (col >> 3)) & 0x1FFFF]
+                if attr & (0x80 >> (col & 7)):
+                    cfg = blink_fg
+                    cbg = blink_bg
             for py in range(8):
                 scan = row * 8 + py
                 if scan < y_start or scan >= ye:
                     continue
                 pat = vdp.vram[(pat_base + tile * 8 + py) & 0x1FFFF]
                 off = scan * 512 + 16 + col * 6
-                buf[off : off + 6] = _TEXT6_BYTES[pat][fg][bg]
+                buf[off : off + 6] = _TEXT6_BYTES[pat][cfg][cbg]
 
 
 # ---------------------------------------------------------------------------
@@ -1118,8 +1152,9 @@ def _render_sprites(
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
-    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
-    # transparent and take no part in coincidence, same as before.
+    # !getTransparency(); V9938 data book "TP and Sprites"). At the default
+    # TP=0, colour-0 sprites are fully transparent and take no part in
+    # coincidence, same as before.
     can0collide = bool(regs[8] & 0x20)
 
     # No mode-specific 192-line cap: sprite mode 1's active display period is
@@ -1337,7 +1372,9 @@ def _render_sprites_mode2(
     sprite plane is doubled horizontally so sprites span the full screen.
     split_colour=True (SCREEN 6 / GRAPHIC5): the plane holds 2 bits per screen dot,
     so each sprite dot's 4-bit colour splits across its two screen pixels — bits
-    3:2 on the left, bits 1:0 on the right (openMSX SpriteConverter::drawMode2's
+    3:2 on the left, bits 1:0 on the right (V9938 data book GRAPHIC 5
+    "Hardware tiling function": high two bits for even dots, low two for odd;
+    openMSX SpriteConverter::drawMode2's
     GRAPHIC5 branch; confirmed on openMSX with a solid sprite of colour code 6,
     which renders as palette 1 / palette 2 columns, not as a palette-6 block).
 
@@ -1368,7 +1405,9 @@ def _render_sprites_mode2(
     # bits 9:0 cleared; there R#5 bits 1:0 gate offset bits 8:7 and bit 9
     # reads as 0, so the sprite*16 + line offset is ANDed, not added
     # (matches openMSX's sprite-mode-2 colour addressing). With R#5 bits 2:0
-    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset".
+    # all set -- the usual BIOS value -- this equals "SAT - 0x200 + offset",
+    # the V9938 data book's rule (Sprite Color Table base = SAT base - 512);
+    # the AND behaviour for other R#5 values is openMSX-only.
     attr_reg = ((regs[11] & 3) << 15) | (regs[5] << 7)
     sat_base = attr_reg & ~0x1FF & 0x1FFFF
     col_base_high = attr_reg & ~0x3FF & 0x1FFFF
@@ -1377,8 +1416,9 @@ def _render_sprites_mode2(
 
     # TP (R#8 bit 5): colour 0 is not transparent, so a colour-0 sprite can
     # collide (openMSX VDP.hh canSpriteColor0Collide() for a non-MSX1 VDP:
-    # !getTransparency()). At the default TP=0, colour-0 sprites are fully
-    # transparent and take no part in coincidence, same as sprite mode 1.
+    # !getTransparency(); V9938 data book "TP and Sprites"). At the default
+    # TP=0, colour-0 sprites are fully transparent and take no part in
+    # coincidence, same as sprite mode 1.
     can0collide = bool(regs[8] & 0x20)
 
     # scan_hi caps how far this pass's line index ever reaches (< scan_hi
@@ -1527,12 +1567,14 @@ def _display_page_bits(vdp: "V9938", regs: list[int], mask: int) -> int:
     for the 64 KB-page modes SCREEN 7/8. Either way the lowest page bit is
     R#2 bit 5.
 
-    With EO (R#9 bit 2) set, the first field (S#2 EO = 0, even frame) shows
-    the even page and the second field the page R#2 selects (V9938 data book,
-    Special Functions 2.2), so bit 5 is forced to 0 on even frames.
+    Bit 5 is forced to 0 (even page) during the R#13 blink ON period, and
+    with EO (R#9 bit 2) set on the first field (S#2 EO = 0, even frame): the
+    data book shows the even page for the ON time and, with EO, in the first
+    field (V9938 data book, R#13 and Special Functions 1.1/2.2).
     """
     bits = regs[2] & mask
-    if even_odd_enabled_of(regs) and not (vdp.frame_count & 1):
+    first_field = even_odd_enabled_of(regs) and not (vdp.frame_count & 1)
+    if vdp.blink_state or first_field:
         bits &= ~0x20 & 0xFF
     return bits
 
@@ -1635,9 +1677,13 @@ def _render_g6(
 # SCREEN 8 (Graphic 7) — 8-bpp GRB332, raw bytes, no palette
 # ---------------------------------------------------------------------------
 
-# 3-bit channel → 8-bit intensity, matching openMSX (255 * i / 7).
+# 3-bit channel → 8-bit intensity in steps of 255/7, and 2-bit blue mapped to
+# the 3-bit levels 0, 2, 4, 7 (grauw's VDP programming guide, "What is there to
+# say about screen 8's colours?", references/docs/; openMSX does the same).
+# The guide rounds (bit replication: 0, 36, 73, 109, 146, 182, 219, 255); this
+# table truncates (72, 145, 218 for levels 2, 4, 6). The VDP outputs analogue
+# levels, so the 8-bit rounding is a host-side choice.
 _INTENSITY3: tuple[int, ...] = tuple(255 * i // 7 for i in range(8))
-# 2-bit blue → 8-bit, via openMSX's intensity indices {0, 2, 4, 7}.
 _BLUE2: tuple[int, ...] = (_INTENSITY3[0], _INTENSITY3[2], _INTENSITY3[4], _INTENSITY3[7])
 
 

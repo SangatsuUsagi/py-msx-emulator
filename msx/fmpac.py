@@ -4,6 +4,12 @@ Ground truth: openMSX `MSXFmPac`/`MSXMusicBase`. Window is the primary-slot
 0x4000-0x7FFF page pair (bank-switched ROM, magic-unlocked SRAM, and the
 memory-mapped OPLL registers all live here); addresses outside the window
 read 0xFF and ignore writes.
+
+The SRAM unlock (0x4D at 0x5FFE, 0x69 at 0x5FFF), the 0x4000-0x5FFD SRAM
+window, the 0x4D/0x69 readback and re-locking by any other value are also
+documented for the Panasonic PAC SRAM interface, which the FM-PAC shares, in
+Gigamix Online's PAC SRAM technical memo (saved under references/docs/):
+https://gigamix.hatenablog.com/entry/devmsx/pac-sram-access
 """
 from __future__ import annotations
 
@@ -53,7 +59,10 @@ _OFF_BANK = 0x3FF7
 _MAGIC_R1FFE = 0x4D
 _MAGIC_R1FFF = 0x69
 
-_ENABLE_IO_OPLL = 0x01     # bit 0: gates the I/O-port (0x7C/0x7D) OPLL access
+# bit 0 gates the I/O-port (0x7C/0x7D) OPLL access; the FM-PAC's own CALL MUSIC
+# sets it only when no other MSX-MUSIC is present (gdx's trace in the MRC
+# thread "What is the right way to search for FM-Pak and its RAM").
+_ENABLE_IO_OPLL = 0x01
 _ENABLE_WRITE_PROTECT = 0x10  # bit 4: freezes the magic registers
 _ENABLE_MASK = 0x11
 _ENABLE_VALUES = (0x00, 0x01, 0x10, 0x11)  # every value `& _ENABLE_MASK` leaves
@@ -103,6 +112,9 @@ class FmPac:
                 return self._r1ffe
             if off == _OFF_MAGIC_HI:
                 return self._r1fff
+            # BiFi, quoted in the MRC thread "What is the right way to search
+            # for FM-Pak and its RAM" (references/docs/): "When the SRAM is
+            # active 6000h - 7FFFh is FFh except for 7FF7h and 7FF6h."
             return 0xFF
         return self.rom[self._bank * _BANK_SIZE + off]
 

@@ -27,6 +27,8 @@ from msx.snapshot_schema import (
     check_optional_str,
 )
 
+# MSX FORMAT writes each sector's data as E5h (MSX Computing, August 1985,
+# "Peripherals").
 FORMAT_FILL: int = 0xE5
 
 

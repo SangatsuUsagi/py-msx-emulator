@@ -209,7 +209,24 @@ def test_hmmc_clears_ce_when_done() -> None:
     _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=2, ny=1, clr=0xAB)
     assert vdp.vram[0] == 0xAB
     assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert vdp._status2 & 0x80  # TR set: the completing byte leaves it set
     assert not vdp._cmd_active
+
+
+def test_hmmc_tr_after_last_byte_matches_hb_f1xd() -> None:
+    # HB-F1XD VDPCMD2.BAS line 4: TR/CE 81 after the start, 80 after the
+    # second byte and after waiting, 00 after an idle R#44 write; VRAM 12 34.
+    vdp = _make_vdp()
+    _dispatch_cmd(vdp, cmd_code=0xF, dx=0, dy=0, nx=4, ny=1, clr=0x12)
+    states = [vdp._status2 & 0x81]
+    _write_data(vdp, 0x34)
+    states.append(vdp._status2 & 0x81)
+    vdp.tick(10_000)
+    states.append(vdp._status2 & 0x81)
+    _write_data(vdp, 0x00)  # no command running
+    states.append(vdp._status2 & 0x81)
+    assert states == [0x81, 0x80, 0x80, 0x00]
+    assert (vdp.vram[0], vdp.vram[1]) == (0x12, 0x34)
 
 
 def test_colour_register_write_when_inactive_touches_no_vram() -> None:
@@ -318,6 +335,7 @@ def test_lmmc_transfers_bytes_via_port_9b() -> None:
     assert vdp.vram[128] == 0x42 # row 1 byte 0: pixels (0,1)=4, (1,1)=2
     assert vdp.vram[129] == 0x68 # row 1 byte 1: pixels (2,1)=6, (3,1)=8
     assert not vdp._cmd_active    # command complete after NX*NY dots
+    assert vdp._status2 & 0x81 == 0x80  # CE clear, TR left set (as for HMMC)
 
 
 # ---------------------------------------------------------------------------
@@ -513,15 +531,44 @@ def test_lmcm_delivers_one_dot_per_read() -> None:
     assert [_read_data(vdp) for _ in range(4)] == [0xA, 0xB, 0xC, 0xD]
 
 
-def test_lmcm_clears_ce_after_last_dot() -> None:
+def test_lmcm_clears_ce_when_last_dot_is_fetched() -> None:
     vdp = _make_vdp()
     vdp.vram[0] = 0x12
     _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1)
-    _read_data(vdp)  # dot (0,0)
-    assert vdp._status2 & 0x01  # CE still set: one dot left
-    _read_data(vdp)  # dot (1,0)
+    assert vdp._status2 & 0x01  # CE set: dot (1,0) not fetched yet
+    assert _read_data(vdp) == 0x1  # takes dot (0,0), fetches the last dot
     assert vdp._status2 & 0x01 == 0  # CE cleared
+    assert vdp._status2 & 0x80  # TR still set: the last dot is waiting
     assert not vdp._cmd_active
+    assert _read_data(vdp) == 0x2  # dot (1,0), read with no command running
+    assert vdp._status2 & 0x80 == 0  # that read cleared TR
+
+
+def test_lmcm_tr_ce_sequence_matches_hb_f1xd() -> None:
+    # HB-F1XD VDPCMD2.BAS line 1: TR/CE 81 after the start, then
+    # 81 81 80 00 after each of the four S#7 reads.
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x12
+    vdp.vram[1] = 0x34
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)
+    states = [vdp._status2 & 0x81]
+    dots = []
+    for _ in range(4):
+        dots.append(_read_data(vdp))
+        states.append(vdp._status2 & 0x81)
+    assert dots == [1, 2, 3, 4]
+    assert states == [0x81, 0x81, 0x81, 0x80, 0x00]
+
+
+def test_one_dot_lmcm_completes_at_dispatch() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x50
+    _dispatch_cmd(vdp, cmd_code=0xA, sx=0, sy=0, nx=1, ny=1)
+    assert vdp.cmd_regs[12] == 0x5
+    assert vdp._status2 & 0x81 == 0x80  # TR set, CE clear
+    assert not vdp._cmd_active
+    assert _read_data(vdp) == 0x5
+    assert vdp._status2 & 0x80 == 0
 
 
 def test_colour_register_write_during_lmcm_is_not_a_transfer() -> None:
@@ -543,6 +590,7 @@ def test_lmcm_read_via_status_register_7() -> None:
     vdp.regs[15] = 7
     assert [vdp.read_port(0x99) for _ in range(4)] == [0xA, 0xB, 0xC, 0xD]
     assert vdp._status2 & 0x01 == 0  # CE cleared after the last dot
+    assert vdp._status2 & 0x80 == 0  # the last read ran with no command: TR cleared
     assert not vdp._cmd_active
 
 
@@ -690,10 +738,10 @@ def test_hmmv_ce_clears_after_full_tick() -> None:
 
 def test_hmmm_ce_clears_after_full_tick() -> None:
     vdp = _make_vdp()
-    # NX=128, NY=85 → duration = 128 × 85 × 8 = 86,912
+    # NX=128 dots = 64 bytes, NY=85 → duration = 64 × 85 × 21 (HMMM per byte)
     _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
     assert vdp._status2 & 0x01
-    vdp.tick(128 * 85 * 8)
+    vdp.tick(64 * 85 * 21)
     assert vdp._status2 & 0x01 == 0
     assert not vdp._cmd_active
 
@@ -703,15 +751,13 @@ def test_hmmm_ce_clears_after_full_tick() -> None:
 # ---------------------------------------------------------------------------
 
 def test_lmmv_ce_duration_is_pixel_unit() -> None:
-    # SCREEN 5 (ppb=2): LMMV counts pixels; HMMV counts bytes (ppb× fewer units),
-    # so for the same NX/NY the LMMV CE duration is ppb× longer.
+    # SCREEN 5 (ppb=2): LMMV counts dots; HMMV counts bytes (ppb× fewer units).
     lmmv = _make_vdp()
     _dispatch_cmd(lmmv, cmd_code=0x8, dx=0, dy=0, nx=8, ny=2, clr=0x01)
     hmmv = _make_vdp()
     _dispatch_cmd(hmmv, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0x01)
-    assert lmmv._cmd_remaining == 8 * 2 * 8       # nx*ny*_CYCLES_PER_PIXEL
-    assert hmmv._cmd_remaining == (8 // 2) * 2 * 8  # ceil(nx/ppb)*ny*_CYCLES_PER_BYTE
-    assert lmmv._cmd_remaining == 2 * hmmv._cmd_remaining
+    assert lmmv._cmd_remaining == 8 * 2 * 21         # nx*ny*_LMMV_CYCLES_PER_DOT
+    assert hmmv._cmd_remaining == (8 // 2) * 2 * 10  # (nx/ppb)*ny*_HMMV_CYCLES_PER_BYTE
 
 
 def test_lmmm_ce_clears_after_full_tick() -> None:
