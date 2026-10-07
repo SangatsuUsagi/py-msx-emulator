@@ -738,10 +738,10 @@ def test_hmmv_ce_clears_after_full_tick() -> None:
 
 def test_hmmm_ce_clears_after_full_tick() -> None:
     vdp = _make_vdp()
-    # NX=128, NY=85 → duration = 128 × 85 × 8 = 86,912
+    # NX=128 dots = 64 bytes, NY=85 → duration = 64 × 85 × 21 (HMMM per byte)
     _dispatch_cmd(vdp, cmd_code=0xD, sx=0, sy=0, dx=0, dy=100, nx=128, ny=85)
     assert vdp._status2 & 0x01
-    vdp.tick(128 * 85 * 8)
+    vdp.tick(64 * 85 * 21)
     assert vdp._status2 & 0x01 == 0
     assert not vdp._cmd_active
 
@@ -751,15 +751,13 @@ def test_hmmm_ce_clears_after_full_tick() -> None:
 # ---------------------------------------------------------------------------
 
 def test_lmmv_ce_duration_is_pixel_unit() -> None:
-    # SCREEN 5 (ppb=2): LMMV counts pixels; HMMV counts bytes (ppb× fewer units),
-    # so for the same NX/NY the LMMV CE duration is ppb× longer.
+    # SCREEN 5 (ppb=2): LMMV counts dots; HMMV counts bytes (ppb× fewer units).
     lmmv = _make_vdp()
     _dispatch_cmd(lmmv, cmd_code=0x8, dx=0, dy=0, nx=8, ny=2, clr=0x01)
     hmmv = _make_vdp()
     _dispatch_cmd(hmmv, cmd_code=0xC, dx=0, dy=0, nx=8, ny=2, clr=0x01)
-    assert lmmv._cmd_remaining == 8 * 2 * 8       # nx*ny*_CYCLES_PER_PIXEL
-    assert hmmv._cmd_remaining == (8 // 2) * 2 * 8  # ceil(nx/ppb)*ny*_CYCLES_PER_BYTE
-    assert lmmv._cmd_remaining == 2 * hmmv._cmd_remaining
+    assert lmmv._cmd_remaining == 8 * 2 * 21         # nx*ny*_LMMV_CYCLES_PER_DOT
+    assert hmmv._cmd_remaining == (8 // 2) * 2 * 10  # (nx/ppb)*ny*_HMMV_CYCLES_PER_BYTE
 
 
 def test_lmmm_ce_clears_after_full_tick() -> None:

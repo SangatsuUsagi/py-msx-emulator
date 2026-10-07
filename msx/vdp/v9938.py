@@ -205,14 +205,18 @@ _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 _ARG_MXS = 0x10  # source in expansion RAM
 _ARG_MXD = 0x20  # destination in expansion RAM
 
-_CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
-# Byte-unit commands (HMMV/HMMM/YMMM) process one VRAM byte (= ppb pixels) per
-# _CYCLES_PER_BYTE; pixel-unit commands (LMMV/LMMM) process one pixel per
-# _CYCLES_PER_PIXEL. openMSX's VDP-clock coefficients (HMMV≈48, HMMM≈88,
-# LMMV≈96, LMMM≈120 per unit) put the logical (pixel) commands ~ppb× slower than
-# the byte commands; expressing them per pixel (rather than per byte) reproduces
-# that ratio in this emulator's calibrated T-state unit.
-_CYCLES_PER_PIXEL: int = _CYCLES_PER_BYTE
+# TR re-assert delay after each HMMC/LMMC byte (calibrated from an openMSX log).
+_CYCLES_PER_BYTE: int = 8
+# CE duration per unit (T-states per byte for HMMV/HMMM/YMMM, per dot for
+# LMMV/LMMM), measured on a real SONY HB-F1XD (extras/HB-F1XD/CMDTIME.BAS,
+# 2026-10-07: 20 full-page commands in SCREEN 5 with display and sprites on,
+# BASIC overhead taken out). That is the slowest case; the real chip is faster
+# with less display/sprite VRAM traffic, which is not modelled.
+_HMMV_CYCLES_PER_BYTE: int = 10
+_HMMM_CYCLES_PER_BYTE: int = 21
+_YMMM_CYCLES_PER_BYTE: int = 18
+_LMMV_CYCLES_PER_DOT: int = 21
+_LMMM_CYCLES_PER_DOT: int = 30
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
@@ -1119,21 +1123,21 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
-    def _byte_cmd_cycles(self, byte_cols: int, ny: int) -> int:
+    def _byte_cmd_cycles(self, byte_cols: int, ny: int, per_byte: int) -> int:
         """CE duration for a byte-unit command (HMMV/HMMM/YMMM).
 
-        Each of the byte_cols × ny VRAM bytes costs _CYCLES_PER_BYTE T-states.
+        Each of the byte_cols × ny VRAM bytes costs per_byte T-states.
         Clamped to a 4 T-state minimum.
         """
-        return max(4, byte_cols * ny * _CYCLES_PER_BYTE)
+        return max(4, byte_cols * ny * per_byte)
 
-    def _pixel_cmd_cycles(self, nx_px: int, ny: int) -> int:
-        """CE duration for a pixel-unit command (LMMV/LMMM).
+    def _pixel_cmd_cycles(self, nx_px: int, ny: int, per_dot: int) -> int:
+        """CE duration for a dot-unit command (LMMV/LMMM).
 
-        Logical commands process one pixel per _CYCLES_PER_PIXEL T-states (no
-        ppb division), making them ~ppb× slower than the byte commands.
+        Each of the nx_px × ny dots costs per_dot T-states.
+        Clamped to a 4 T-state minimum.
         """
-        return max(4, nx_px * ny * _CYCLES_PER_PIXEL)
+        return max(4, nx_px * ny * per_dot)
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14]).
@@ -1282,7 +1286,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
+        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
 
     def _cmd_lmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, sw: int, log: int, src_ext: bool,
@@ -1299,7 +1303,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
+        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
 
     def _cmd_hmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, clr: int, dst_ext: bool) -> None:
@@ -1316,7 +1320,7 @@ class V9938:
                     self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
 
     def _cmd_hmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, src_ext: bool, dst_ext: bool) -> None:
@@ -1334,7 +1338,7 @@ class V9938:
                     self.vram[dst] = 0xFF if src_ext else self.vram[src]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
 
     def _cmd_ymmm(self, sy: int, dx: int, dy: int, ny: int, dix: bool, diy: bool, xs: int,
                   ys: int, dst_ext: bool) -> None:
@@ -1354,7 +1358,7 @@ class V9938:
                         self.vram[self._vram_byte_addr_col(col, syy)]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
 
     def _cmd_cpu_feed(self, cmd: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                       diy: bool, xs: int, ys: int, sw: int, log: int, clr: int) -> None:

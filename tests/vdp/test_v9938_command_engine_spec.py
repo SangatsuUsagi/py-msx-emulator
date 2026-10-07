@@ -28,7 +28,11 @@ from msx.vdp.v9938 import (
     _ARG_MXD,
     _ARG_MXS,
     _CYCLES_PER_BYTE,
-    _CYCLES_PER_PIXEL,
+    _HMMM_CYCLES_PER_BYTE,
+    _HMMV_CYCLES_PER_BYTE,
+    _LMMM_CYCLES_PER_DOT,
+    _LMMV_CYCLES_PER_DOT,
+    _YMMM_CYCLES_PER_BYTE,
     V9938,
 )
 
@@ -232,7 +236,7 @@ def test_hmmv_ny_zero_means_1024_lines() -> None:
     1024 rows of VRAM."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=8, ny=0, clr=0x00)
-    assert vdp._cmd_remaining == (8 // 2) * 1024 * _CYCLES_PER_BYTE
+    assert vdp._cmd_remaining == (8 // 2) * 1024 * _HMMV_CYCLES_PER_BYTE
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +259,8 @@ def test_ymmm_ce_duration_is_byte_unit() -> None:
     vdp = _make_vdp()
     # DIX clear, DX=0 -> the strip spans the whole 128-byte line.
     _dispatch(vdp, cmd_code=0xE, dx=0, sy=0, dy=1, ny=4)
-    assert vdp._cmd_remaining == 128 * 4 * _CYCLES_PER_BYTE
-    vdp.tick(128 * 4 * _CYCLES_PER_BYTE)
+    assert vdp._cmd_remaining == 128 * 4 * _YMMM_CYCLES_PER_BYTE
+    vdp.tick(128 * 4 * _YMMM_CYCLES_PER_BYTE)
     assert vdp._status2 & _CE == 0
 
 
@@ -317,11 +321,28 @@ def test_search_result_high_reads_ones_when_bit_eight_is_clear() -> None:
 # ---------------------------------------------------------------------------
 
 def test_cycle_cost_defaults() -> None:
-    """config.cycles_per_byte / cycles_per_dot: byte- and dot-unit commands run
-    at the same cost per element, which makes a dot-unit command dots_per_byte
-    times slower than the byte-unit command covering the same area."""
+    """Per-command costs measured on a real HB-F1XD (CMDTIME.BAS), and the
+    HMMC/LMMC TR re-assert delay."""
+    assert _HMMV_CYCLES_PER_BYTE == 10
+    assert _HMMM_CYCLES_PER_BYTE == 21
+    assert _YMMM_CYCLES_PER_BYTE == 18
+    assert _LMMV_CYCLES_PER_DOT == 21
+    assert _LMMM_CYCLES_PER_DOT == 30
     assert _CYCLES_PER_BYTE == 8
-    assert _CYCLES_PER_PIXEL == 8
+
+
+@pytest.mark.parametrize(("cmd_code", "dy", "expected"), [
+    (0xC, 0, 27136 * 10),    # HMMV
+    (0xD, 256, 27136 * 21),  # HMMM page 0 -> 1
+    (0xE, 256, 27136 * 18),  # YMMM page 0 -> 1
+    (0x8, 0, 54272 * 21),    # LMMV
+    (0x9, 256, 54272 * 30),  # LMMM page 0 -> 1
+])
+def test_full_page_command_durations(cmd_code: int, dy: int, expected: int) -> None:
+    """The CMDTIME.BAS cases: each command covers the whole GRAPHIC 4 page."""
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=cmd_code, sx=0, sy=0, dx=0, dy=dy, nx=256, ny=212)
+    assert vdp._cmd_remaining == expected
 
 
 def test_minimum_command_duration() -> None:
@@ -427,7 +448,7 @@ def test_origin_past_the_right_edge_processes_one_element_per_line() -> None:
     element per row rather than a full-width run."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0x8, dx=300, dy=0, nx=8, ny=1, clr=0xF)
-    assert vdp._cmd_remaining == 1 * 1 * _CYCLES_PER_PIXEL
+    assert vdp._cmd_remaining == 1 * 1 * _LMMV_CYCLES_PER_DOT
 
 
 def test_copy_clips_against_whichever_operand_is_nearer_the_edge() -> None:
