@@ -674,11 +674,26 @@ def test_mxd_write_is_discarded() -> None:
     assert vdp.vram[0] == 0x00
 
 
-def test_mxs_read_returns_all_ones() -> None:
+def test_mxs_read_returns_all_ones_dot() -> None:
+    # HB-F1XD VDPCMD2.BAS line 2: POINT with MXS after R#44 = 0x55 read 0x0F.
     vdp = _make_vdp()
     vdp.vram[0] = 0x7F
-    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, arg=_ARG_MXS)  # POINT
-    assert _read_status(vdp, 7) == 0xFF
+    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, clr=0x55, arg=_ARG_MXS)  # POINT
+    assert _read_status(vdp, 7) == 0x0F
+
+
+@pytest.mark.parametrize(("r0", "expected"), [(_G5, 0x03), (_G6, 0x0F), (_G7, 0xFF)])
+def test_mxs_point_is_masked_to_the_dot_width(r0: int, expected: int) -> None:
+    vdp = _make_vdp(r0)
+    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, clr=0x55, arg=_ARG_MXS)  # POINT
+    assert _read_status(vdp, 7) == expected
+
+
+def test_mxs_lmcm_reads_all_ones_dots() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x12
+    _dispatch(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1, clr=0x55, arg=_ARG_MXS)
+    assert [_read_status(vdp, 7) for _ in range(2)] == [0x0F, 0x0F]
 
 
 def test_mxd_transfer_write_is_discarded() -> None:
