@@ -376,7 +376,7 @@ _CB_ROTATE_FNS: tuple[Callable[[Z80, int], int], ...] = (
 
 
 def _execute_cb(cpu: Z80) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     row = op >> 6
     bit = (op >> 3) & 7
     reg = op & 7
@@ -838,7 +838,7 @@ _build_dd_fd_dispatch()
 
 
 def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     handler = _DD_FD_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, use_iy, op)
@@ -1139,7 +1139,7 @@ _build_ed_dispatch()
 
 
 def _execute_ed(cpu: Z80) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     handler = _ED_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, op)

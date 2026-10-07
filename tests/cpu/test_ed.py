@@ -1,3 +1,5 @@
+import pytest
+
 from msx.cpu import flags as F
 from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
@@ -403,13 +405,40 @@ def test_ld_a_r_reads_refresh_and_sets_pv_from_iff2() -> None:
     assert not (cpu.registers.F & F.FLAG_S)
 
 
-def test_fetch_operand_byte_preserves_r_bit7() -> None:
-    """The `_fetch()` path (used for operand/displacement/immediate bytes,
-    not just opcode M1 fetches) must also treat bit 7 as sticky."""
-    cpu = make_cpu([0xED, 0x5E, 0x00])  # LD A, R ; NOP (any 2+ byte stream)
-    cpu.registers.R = 0xC8  # bit 7 set
+def test_fetch_operand_byte_leaves_r_alone() -> None:
+    """`_fetch()` reads operand/displacement/immediate bytes, which are not
+    M1 cycles, so R does not change (HB-F1XD ZRREG.BAS)."""
+    cpu = make_cpu([0xED, 0x5E, 0x00])
+    cpu.registers.R = 0xC8
     cpu._fetch()
+    assert cpu.registers.R == 0xC8
+
+
+def test_fetch_opcode_preserves_r_bit7() -> None:
+    """`_fetch_opcode()` (the byte after a prefix) is an M1 cycle: R's low 7
+    bits count up and bit 7 is sticky."""
+    cpu = make_cpu([0xED, 0x5E, 0x00])
+    cpu.registers.R = 0xC8  # bit 7 set
+    cpu._fetch_opcode()
     assert cpu.registers.R == 0xC9  # bit 7 preserved, low 7 bits +1
+
+
+@pytest.mark.parametrize(("code", "m1_cycles"), [
+    ([0x00], 1),                    # NOP
+    ([0x21, 0x34, 0x12], 1),        # LD HL,nn
+    ([0x3A, 0x00, 0x40], 1),        # LD A,(nn)
+    ([0xDD, 0x36, 0x05, 0x42], 2),  # LD (IX+d),n
+    ([0xCB, 0x00], 2),              # RLC B
+    ([0xDD, 0xCB, 0x01, 0x06], 2),  # RLC (IX+1): d and op are not M1 cycles
+    ([0xED, 0x44], 2),              # NEG
+])
+def test_r_counts_m1_cycles_only(code: list[int], m1_cycles: int) -> None:
+    # HB-F1XD ZRREG.BAS: NOP, LD HL,nn, LD A,(nn), LD (IX+d),n, RLC B add
+    # 1 1 1 2 2 (plus LD A,R's own two).
+    cpu = make_cpu(code)
+    cpu.registers.R = 0x00
+    cpu.step()
+    assert cpu.registers.R == m1_cycles
 
 
 def test_ld_r_a_sets_bit7_and_next_fetch_preserves_it() -> None:

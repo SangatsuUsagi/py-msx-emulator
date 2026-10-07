@@ -82,11 +82,22 @@ class Z80:
         self.ei_pending = False
 
     def _fetch(self) -> int:
+        """Read an operand/address/displacement byte at PC (not an M1 cycle: R unchanged)."""
         b = self.read_byte(self.registers.PC)
         self.registers.PC = (self.registers.PC + 1) & 0xFFFF
-        # R is a 7-bit refresh counter: only bits 0-6 increment on real
-        # hardware; bit 7 is preserved (sticky) across increments and only
-        # changes via a full-register write (e.g. LD R,A).
+        return b
+
+    def _fetch_opcode(self) -> int:
+        """Read the opcode byte after a CB/DD/ED/FD prefix: an M1 cycle, so R refreshes.
+
+        R counts M1 cycles only: confirmed on a real SONY HB-F1XD
+        (extras/HB-10/ZRREG.BAS, 2026-10-07: NOP, LD HL,nn, LD A,(nn),
+        LD (IX+d),n and RLC B add 1 1 1 2 2), as the Z80 documentation and
+        references/z80 (on_m1_fetch_cycle vs on_fetch_cycle) say. R is a 7-bit
+        refresh counter: bit 7 is kept and only changes via LD R,A.
+        """
+        b = self.read_byte(self.registers.PC)
+        self.registers.PC = (self.registers.PC + 1) & 0xFFFF
         r = self.registers.R
         self.registers.R = (r & 0x80) | ((r + 1) & 0x7F)
         return b
