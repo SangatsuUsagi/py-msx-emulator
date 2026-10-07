@@ -1218,7 +1218,12 @@ class V9938:
 
     def _cmd_point(self, sx: int, sy: int, src_ext: bool, px_mask: int) -> None:
         # The sampled dot lands in the colour register, where S#7 reads it.
-        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
+        # An MXS source (absent expansion RAM) reads as the all-ones dot value:
+        # on a real SONY HB-F1XD the value is masked to the dot width but its
+        # low bits are not stable (VDPCMD.BAS / VDPCMD2.BAS, SCREEN 5: 0x00,
+        # 0x0F, 0x0D), so this fixed value matches the POINT result seen there.
+        # openMSX gives an unmasked 0xFF.
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
 
     def _cmd_pset(self, dx: int, dy: int, clr: int, log: int, dst_ext: bool, px_mask: int) -> None:
         if not dst_ext:
@@ -1260,8 +1265,9 @@ class V9938:
         self._cmd_remaining = 0
         self._status2 |= _S2_CE | _S2_TR
         # The first dot is fetched at once (openMSX startLmcm sets its
-        # transfer flag); every S#7 read takes one and stages the next.
-        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
+        # transfer flag); every S#7 read takes one and stages the next. An MXS
+        # source reads as the all-ones dot value, as in _cmd_point.
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
         if self._cmd_nx == 1 and self._cmd_ny == 1:
             self._finish_lmcm()  # the first dot is also the last
 
@@ -1481,7 +1487,7 @@ class V9938:
         x = self._cmd_sx + self._cmd_x * self._cmd_xstep
         y = self._cmd_sy + self._cmd_y * self._cmd_ystep
         if self.cmd_regs[13] & _ARG_MXS:
-            self.cmd_regs[12] = 0xFF
+            self.cmd_regs[12] = 0xFF & ((1 << self._cmd_bpp) - 1)  # as in _cmd_point
         else:
             self.cmd_regs[12] = self._vram_pixel_read(x, y) & ((1 << self._cmd_bpp) - 1)
         if self._cmd_x == self._cmd_nx - 1 and self._cmd_y == self._cmd_ny - 1:
