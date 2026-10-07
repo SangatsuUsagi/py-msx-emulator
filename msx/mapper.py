@@ -484,7 +484,9 @@ class Ascii8Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     address) map to windows 0–3 respectively.
 
     Power-on state: all four windows select bank 0 (matches real ASCII8 hardware
-    and openMSX, which reset all segment registers to 0). Same rationale as
+    and openMSX, which reset all segment registers to 0; the MSX Wiki
+    "MegaROM Mappers" page in references/docs/ lists initial segment 0 for
+    every ASCII8 page). Same rationale as
     Ascii16Mapper: a cartridge INIT may rely on the upper windows mirroring
     bank 0 before it switches banks itself.
 
@@ -572,7 +574,9 @@ class Ascii16Mapper(_WindowedRomMapperMixin, BankTracingMapper):
     not switch any bank.
 
     Power-on state: both windows select bank 0 (matches real ASCII16 hardware
-    and openMSX, which reset all segment registers to 0). Some games rely on the
+    and openMSX, which reset all segment registers to 0; the MSX Wiki
+    "MegaROM Mappers" page in references/docs/ lists initial segment 0 for
+    both ASCII16 pages). Some games rely on the
     0x8000 window mirroring bank 0 at startup — e.g. their cartridge INIT does
     `JP 8031h` into bank-0 code visible through the second window.
     """
@@ -817,9 +821,13 @@ _GM2_KEYS: frozenset[str] = frozenset(GameMaster2MapperState.__annotations__)
 class GameMaster2Mapper(BankTracingMapper):
     """Konami Game Master 2 mapper: 128 KB ROM + 8 KB battery-backed SRAM.
 
-    Follows openMSX RomGameMaster2.cc. Four 8 KB windows at 0x4000-0x5FFF
-    (window 0, fixed to ROM page 0, not switchable), 0x6000-0x7FFF (window 1),
-    0x8000-0x9FFF (window 2), 0xA000-0xBFFF (window 3).
+    Follows openMSX RomGameMaster2.cc, cross-checked against the Game Master 2
+    section of the MSX Wiki "MegaROM Mappers" page in references/docs/ (fixed
+    page 0 at 0x4000, segment-number bits 0-3, bit 4 = SRAM select, bit 5 =
+    4 KB SRAM half, SRAM writable only at 0xB000-0xBFFF). Four 8 KB windows
+    at 0x4000-0x5FFF (window 0, fixed to ROM page 0, not switchable),
+    0x6000-0x7FFF (window 1), 0x8000-0x9FFF (window 2), 0xA000-0xBFFF
+    (window 3).
 
     Windows 1-3 switch only on a write to the *low 4 KB* of their region
     (0x6000-0x6FFF, 0x8000-0x8FFF, 0xA000-0xAFFF); a write to the high 4 KB
@@ -1363,7 +1371,11 @@ class KonamiMapper(BankTracingMapper):
             return self._flat[idx]
         # Outside the four windows: real hardware mirrors windows 0/1 into
         # 0x0000-0x3FFF and windows 2/3 into 0xC000-0xFFFF (openMSX
-        # RomKonami::bankSwitch). Both ranges land inside _flat directly,
+        # RomKonami::bankSwitch; the real-hardware reports in openMSX issue
+        # #1213, saved under references/docs/: "Konami: 0000-3FFF is always
+        # the same as page 1, C000-FFFF is always the same as page 2"). The MSX
+        # Wiki MegaROM page's table gives the SCC direction for this mapper
+        # too; it is not followed. Both ranges land inside _flat directly,
         # with no separate bank/bounds arithmetic needed: idx = addr for
         # the low mirror (no shift), idx = addr - 0x8000 for the high one.
         if addr < 0x4000:
@@ -1424,7 +1436,8 @@ _MAJUTSUSHI_KEYS: frozenset[str] = frozenset(MajutsushiMapperState.__annotations
 class MajutsushiMapper(KonamiMapper):
     """Konami mapper + DAC for Hai no Majutsushi.
 
-    Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM);
+    Writes to 0x5000–0x5FFF are routed to the DAC (8-bit unsigned PCM; MSX
+    Wiki "MegaROM Mappers", "Konami MegaROMs without SCC" notes);
     all other behaviour -- bank switching (write()) and reads, mirror
     included -- is inherited from KonamiMapper unchanged. This matches
     openMSX's RomMajutsushi exactly: it subclasses RomKonami and overrides
@@ -1591,13 +1604,14 @@ class KonamiSCCMapper(BankTracingMapper):
             return self._flat[idx]
         # Outside the four windows: real hardware mirrors windows 0/1 into
         # 0xC000-0xFFFF and windows 2/3 into 0x0000-0x3FFF (openMSX
-        # RomKonamiSCC::bankSwitch) -- the opposite direction from plain
-        # KonamiMapper. Both ranges land inside _flat directly, with no
-        # separate bank/bounds arithmetic needed: idx = addr + 0x4000 for
-        # the low mirror, idx = addr - 0xC000 for the high one. The
-        # mirror is checked here (i.e. only once the SCC
-        # zone check above has already missed) because it is pure ROM and
-        # never SCC-routed, whatever scc_mode holds -- openMSX's own
+        # RomKonamiSCC::bankSwitch; confirmed on an original Konami SCC
+        # cartridge in openMSX issue #1213, saved under references/docs/) --
+        # the opposite direction from plain KonamiMapper. Both ranges land
+        # inside _flat directly, with no separate bank/bounds arithmetic
+        # needed: idx = addr + 0x4000 for the low mirror, idx = addr -
+        # 0xC000 for the high one. The mirror is checked here (i.e. only
+        # once the SCC zone check above has already missed) because it is
+        # pure ROM and never SCC-routed, whatever scc_mode holds -- openMSX's own
         # SCC-visibility check only ever tests the raw address against
         # 0x9800-0x9FFF, never a mirrored one.
         if addr < 0x4000:
@@ -1703,7 +1717,9 @@ class SCCICart(BankTracingMapper):
     0x4000-0xBFFF -- no ROM is ever loaded, RAM starts blank -- plus an
     `SCC` chip reachable at 0x9800-0x9FFF (classic/Compatible mode) or
     0xB800-0xBFFF (Plus mode), selected by a mode register at 0xBFFE/
-    0xBFFF. Ground truth: openMSX `MSXSCCPlusCart`.
+    0xBFFF. Ground truth: openMSX `MSXSCCPlusCart`; the mode register, the
+    0x3F SCC-enable value and the Compatible/Plus register maps agree with
+    references/docs/"Konami's Sound Cartridge (SCC+) for the MSX.md".
 
     Same four bank-register zones as `KonamiSCCMapper` (0x5000-0x57FF,
     0x7000-0x77FF, 0x9000-0x97FF, 0xB000-0xB7FF), but each window's register

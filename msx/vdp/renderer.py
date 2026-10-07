@@ -264,7 +264,8 @@ def _render_sprites(vdp: VDP, buf: bytearray, status: int) -> int:
     # does not block a lower-priority one showing through); sprite_touched
     # tracks coincidence (any sprite's pattern bit, painted or not — a
     # colour-0 sprite still collides on real TMS9918A/TMS9129 hardware,
-    # openMSX VDP.hh canSpriteColor0Collide()).
+    # openMSX VDP.hh canSpriteColor0Collide(); TI TMS9918A data manual
+    # Sec. 2.3.2: "Transparent colored sprites ... are also considered").
     sprite_painted = bytearray(_W * _H)
     sprite_touched = bytearray(_W * _H)
     coincidence = False

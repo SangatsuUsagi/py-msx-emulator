@@ -1,3 +1,5 @@
+import pytest
+
 from msx.cpu import flags as F
 from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
@@ -316,7 +318,7 @@ def test_sbc_hl_bc_pair() -> None:
 def test_sbc_hl_de_pair_borrow() -> None:
     cpu = _sbc_hl(0x52, 0x0000, lambda r: setattr(r, "DE", 0x0001), carry=False)
     assert cpu.registers.HL == 0xFFFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_H | F.FLAG_N | F.FLAG_C)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_N | F.FLAG_C)
 
 
 def test_sbc_hl_hl_pair_self_zero() -> None:
@@ -328,7 +330,8 @@ def test_sbc_hl_hl_pair_self_zero() -> None:
 def test_sbc_hl_sp_pair() -> None:
     cpu = _sbc_hl(0x72, 0x8000, lambda r: setattr(r, "SP", 0x0001), carry=False)
     assert cpu.registers.HL == 0x7FFF
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV | F.FLAG_N)  # signed overflow
+    # signed overflow; Y/X from the high byte 0x7F
+    assert cpu.registers.F == (F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_PV | F.FLAG_N)
 
 
 # --- 1.3 IN/OUT (C), RETN, IM 0, LD A,R, RRD/RLD ---------------------------
@@ -403,19 +406,46 @@ def test_ld_a_r_reads_refresh_and_sets_pv_from_iff2() -> None:
     assert not (cpu.registers.F & F.FLAG_S)
 
 
-def test_fetch_operand_byte_preserves_r_bit7() -> None:
-    """The `_fetch()` path (used for operand/displacement/immediate bytes,
-    not just opcode M1 fetches) must also treat bit 7 as sticky."""
-    cpu = make_cpu([0xED, 0x5E, 0x00])  # LD A, R ; NOP (any 2+ byte stream)
-    cpu.registers.R = 0xC8  # bit 7 set
+def test_fetch_operand_byte_leaves_r_alone() -> None:
+    """`_fetch()` reads operand/displacement/immediate bytes, which are not
+    M1 cycles, so R does not change (HB-F1XD ZRREG.BAS)."""
+    cpu = make_cpu([0xED, 0x5E, 0x00])
+    cpu.registers.R = 0xC8
     cpu._fetch()
+    assert cpu.registers.R == 0xC8
+
+
+def test_fetch_opcode_preserves_r_bit7() -> None:
+    """`_fetch_opcode()` (the byte after a prefix) is an M1 cycle: R's low 7
+    bits count up and bit 7 is sticky."""
+    cpu = make_cpu([0xED, 0x5E, 0x00])
+    cpu.registers.R = 0xC8  # bit 7 set
+    cpu._fetch_opcode()
     assert cpu.registers.R == 0xC9  # bit 7 preserved, low 7 bits +1
+
+
+@pytest.mark.parametrize(("code", "m1_cycles"), [
+    ([0x00], 1),                    # NOP
+    ([0x21, 0x34, 0x12], 1),        # LD HL,nn
+    ([0x3A, 0x00, 0x40], 1),        # LD A,(nn)
+    ([0xDD, 0x36, 0x05, 0x42], 2),  # LD (IX+d),n
+    ([0xCB, 0x00], 2),              # RLC B
+    ([0xDD, 0xCB, 0x01, 0x06], 2),  # RLC (IX+1): d and op are not M1 cycles
+    ([0xED, 0x44], 2),              # NEG
+])
+def test_r_counts_m1_cycles_only(code: list[int], m1_cycles: int) -> None:
+    # HB-F1XD ZRREG.BAS: NOP, LD HL,nn, LD A,(nn), LD (IX+d),n, RLC B add
+    # 1 1 1 2 2 (plus LD A,R's own two).
+    cpu = make_cpu(code)
+    cpu.registers.R = 0x00
+    cpu.step()
+    assert cpu.registers.R == m1_cycles
 
 
 def test_ld_r_a_sets_bit7_and_next_fetch_preserves_it() -> None:
     """R's auto-increment on fetch only touches bits 0-6; bit 7 is sticky
     and changes only via a full-register write like LD R,A. Regression
-    guard for the sticky-bit-7 fix in Z80._fetch()/step()."""
+    guard for the sticky-bit-7 fix in Z80._fetch_opcode()/step()."""
     cpu = make_cpu([0xED, 0x4F, 0x00])  # LD R, A ; NOP
     cpu.registers.A = 0xC8  # bit 7 set
     cpu.registers.F = F.FLAG_Z | F.FLAG_C  # LD R,A affects no flags

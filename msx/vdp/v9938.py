@@ -15,6 +15,7 @@ from msx.snapshot_schema import check_bool, check_int, check_int_list, check_obj
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
 from msx.vdp._v9938_defs import (
+    _S2_EO,
     _PaletteChange,
     _RegChange,
     display_height_of,
@@ -204,20 +205,29 @@ _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 _ARG_MXS = 0x10  # source in expansion RAM
 _ARG_MXD = 0x20  # destination in expansion RAM
 
-_CYCLES_PER_BYTE: int = 8  # calibrated from OpenMSX golden log (230K T-states / 128×212)
-# Byte-unit commands (HMMV/HMMM/YMMM) process one VRAM byte (= ppb pixels) per
-# _CYCLES_PER_BYTE; pixel-unit commands (LMMV/LMMM) process one pixel per
-# _CYCLES_PER_PIXEL. openMSX's VDP-clock coefficients (HMMV≈48, HMMM≈88,
-# LMMV≈96, LMMM≈120 per unit) put the logical (pixel) commands ~ppb× slower than
-# the byte commands; expressing them per pixel (rather than per byte) reproduces
-# that ratio in this emulator's calibrated T-state unit.
-_CYCLES_PER_PIXEL: int = _CYCLES_PER_BYTE
+# TR re-assert delay after each HMMC/LMMC byte (calibrated from an openMSX log).
+_TR_REASSERT_CYCLES: int = 8
+# CE duration per unit (T-states per byte for HMMV/HMMM/YMMM, per dot for
+# LMMV/LMMM), measured on a real SONY HB-F1XD (extras/HB-F1XD/CMDTIME.BAS,
+# 2026-10-07: 20 full-page commands in SCREEN 5 with display and sprites on,
+# BASIC overhead taken out). That is the slowest case; the real chip is faster
+# with less display/sprite VRAM traffic, which is not modelled.
+_HMMV_CYCLES_PER_BYTE: int = 10
+_HMMM_CYCLES_PER_BYTE: int = 21
+_YMMM_CYCLES_PER_BYTE: int = 18
+_LMMV_CYCLES_PER_DOT: int = 21
+_LMMM_CYCLES_PER_DOT: int = 30
 
 # Display-relevant registers tracked in _reg_write_log for banded rendering.
 # Command-engine registers (R#32-R#46) and SAT registers are excluded. R#18 is
 # tracked so a mid-frame display-adjust change (per-region dot scroll, e.g. a
 # split screen that dot-scrolls only its lower half) shifts the correct bands.
-_DISPLAY_REGS: frozenset[int] = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
+_DISPLAY_REGS: frozenset[int] = frozenset(
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 18, 19, 23}
+)
+
+# One R#13 time unit, in frames (V9938 data book: 166.9 ms at NTSC = 10 fields).
+_BLINK_FRAMES_PER_UNIT = 10
 
 # S#2 status bits
 _S2_HR = 0x20  # horizontal retrace (set during horizontal blanking)
@@ -276,6 +286,8 @@ class V9938State(TypedDict):
     first_byte: int
     control_pending: bool
     palette_pending: bool
+    blink_state: bool
+    blink_count: int
 
 
 # The timed-command countdowns are i32 in a port; a saved value must fit.
@@ -353,6 +365,8 @@ def parse_v9938_state(obj: object) -> V9938State:
         "first_byte": _state_int(state, label, "first_byte", 0, 0xFF),
         "control_pending": _state_bool(state, label, "control_pending"),
         "palette_pending": _state_bool(state, label, "palette_pending"),
+        "blink_state": _state_bool(state, label, "blink_state"),
+        "blink_count": _state_int(state, label, "blink_count", 0, _BLINK_FRAMES_PER_UNIT * 15),
     }
 
 
@@ -451,6 +465,11 @@ class V9938:
     _frame_count: int = field(default=0, init=False, repr=False)
     _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
+    # R#13 blink timer, shared by TEXT2 character blink and GRAPHIC4-7 page
+    # alternation: blink_state True = ON period (R#12 colours / even page),
+    # blink_count = frames left in the current period, 0 = state held.
+    blink_state: bool = field(default=False, init=False, repr=False)
+    blink_count: int = field(default=0, init=False, repr=False)
     # Sprite collision coordinates (S#3-S#6), already biased by +12 dots / +8
     # lines the way the hardware reports them. Written by the sprite renderer
     # when it flags C, cleared by a read of S#5.
@@ -508,6 +527,25 @@ class V9938:
         """
         self._addr = ((r14 & 0x07) << 14) | (self._addr & 0x3FFF)
 
+    def _advance_addr(self) -> None:
+        """Advance the VRAM address after a CPU access (A13-A0 wrap at 16 KB).
+
+        On the wrap, M4/M5 modes carry into R#14 (R#14 itself increments) and
+        A16-A14; the MSX1-compatible modes stay in the current 16 KB bank.
+        Confirmed on a real SONY HB-F1XD (extras/HB-F1XD/VRAMWRAP.BAS,
+        2026-10-07): SCREEN 1 wraps 0x3FFF -> 0x0000, SCREEN 5 carries to
+        0x4000 and a later address setup without R#14 lands at 0x4010.
+        openMSX executeCpuVramAccess agrees; the M4/M5 test for the modes
+        not run on the hardware (GRAPHIC 3, TEXT 2, GRAPHIC 5-7) follows it.
+        """
+        low = (self._addr + 1) & 0x3FFF
+        high = self._addr & 0x1C000
+        if low == 0 and self.regs[0] & 0x0C:
+            r14 = (self.regs[14] + 1) & 0x07
+            self.regs[14] = r14
+            high = r14 << 14
+        self._addr = high | low
+
     @property
     def read_buf(self) -> int:
         return self._read_buf
@@ -545,8 +583,28 @@ class V9938:
         return display_width_of(self.regs)
 
     def increment_frame(self) -> None:
-        """Advance the completed-frame counter. Called once per frame."""
+        """Advance the completed-frame counter and the R#13 blink timer.
+        Called once per frame."""
         self._frame_count += 1
+        if self.blink_count != 0:
+            self.blink_count -= 1
+            if self.blink_count == 0:
+                self.blink_state = not self.blink_state
+                r13 = self.regs[13]
+                period = (r13 >> 4) if self.blink_state else (r13 & 0x0F)
+                self.blink_count = period * _BLINK_FRAMES_PER_UNIT
+
+    def _restart_blink(self, r13: int) -> None:
+        """An R#13 write (even of the held value) restarts the blink timer:
+        ON unless the ON time is 0; it alternates only when both times are
+        non-zero, otherwise the state just set holds."""
+        on_time = r13 >> 4
+        off_time = r13 & 0x0F
+        self.blink_state = on_time != 0
+        if on_time != 0 and off_time != 0:
+            self.blink_count = on_time * _BLINK_FRAMES_PER_UNIT
+        else:
+            self.blink_count = 0
 
     @property
     def frame_count(self) -> int:
@@ -574,18 +632,16 @@ class V9938:
         re-enables IE1 in the vblank ISR must not see a stale FH latched while
         IE1 was off.
 
-        R#0 also selects the screen mode, and the command engine only runs in
-        the bitmap modes. Leaving them aborts the command in progress
-        (openMSX VDPCmdEngine::updateDisplayMode → commandDone).
+        R#0 also selects the screen mode. Leaving the bitmap modes does NOT
+        abort a command in progress: confirmed on a real SONY HB-F1XD
+        (extras/HB-F1XD/CMDABRT.BAS, 2026-10-07: CE still 1 right after R#0
+        selects GRAPHIC 1 during an HMMV, and the page is filled after the
+        return to SCREEN 5). openMSX aborts it (updateDisplayMode) instead.
+        Whether the real command pauses outside the bitmap modes is not
+        known; here it keeps running on its dispatch-time geometry.
         """
         if (self.regs[0] & _R0_IE1) and not (new_r0 & _R0_IE1):
             self._status1 &= ~_S1_FH
-        if self._cmd_active and not _is_command_mode(new_r0):
-            self._cmd_active = False
-            self._cmd_code = _CMD_ABRT
-            self._cmd_remaining = 0
-            self._tr_delay = 0
-            self._status2 &= ~_S2_CE
 
     def snapshot_state(self) -> V9938State:
         """Capture every V9938-only field for a save state (see V9938State)."""
@@ -614,6 +670,8 @@ class V9938:
             "first_byte": self._first_byte,
             "control_pending": self._ctrl_pending,
             "palette_pending": self._pal_pending,
+            "blink_state": self.blink_state,
+            "blink_count": self.blink_count,
         }
 
     def restore_state(self, state: V9938State) -> None:
@@ -633,6 +691,8 @@ class V9938:
         self._first_byte = state["first_byte"]
         self._ctrl_pending = state["control_pending"]
         self._pal_pending = state["palette_pending"]
+        self.blink_state = state["blink_state"]
+        self.blink_count = state["blink_count"]
         self._cmd_active = engine["active"]
         self._cmd_transfer = engine["transfer"]
         self._cmd_code = engine["code"]
@@ -696,6 +756,8 @@ class V9938:
         self._status2 = 0
         self._status8 = 0
         self._status9 = 0
+        self.blink_state = False
+        self.blink_count = 0
         self.collision_x = 0
         self.collision_y = 0
         self._cmd_remaining = 0
@@ -753,12 +815,7 @@ class V9938:
         if self._cmd_remaining > 0:
             self._cmd_remaining -= cycles
             if self._cmd_remaining <= 0:
-                # Completion clears CE only: TR keeps its value until the next
-                # R#44 write / S#7 read taken with no command running
-                # (openMSX commandDone(), which never touches TR).
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
-                self._status2 &= ~_S2_CE
+                self._complete_command()
         if self._tr_delay > 0:
             self._tr_delay -= cycles
             if self._tr_delay <= 0 and self._cmd_active:
@@ -795,7 +852,7 @@ class V9938:
         The V9938 decodes two address bits, so it has exactly four ports and
         any wider decode on the machine side mirrors them (Handbook Table 4.3;
         openMSX VDP::writeIO switches on `port & 0x03`):
-        port 0 = VRAM data (auto-increments the 17-bit address); port 1 =
+        port 0 = VRAM data (advances the address, see _advance_addr); port 1 =
         control (two-byte latch: register write or VRAM address setup);
         port 2 = palette data; port 3 = indirect register access
         (R#17-pointed register).
@@ -804,7 +861,15 @@ class V9938:
         port &= 0x03
         if port == 0:
             self.vram[self._addr] = value
-            self._addr = (self._addr + 1) & 0x1FFFF
+            # A data-port write also refills the read-ahead buffer: confirmed
+            # on a real SONY HB-F1XD (extras/HB-10/RDBUF.BAS, 2026-10-07: IN
+            # after OUT returns the written byte); openMSX agrees.
+            self._read_buf = value
+            addr = self._addr + 1
+            if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
+                self._addr = addr
+            else:
+                self._advance_addr()
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
             self._ctrl_pending = False
@@ -854,7 +919,7 @@ class V9938:
                 self._addr = (self.regs[14] & 0x07) << 14 | (value & 0x3F) << 8 | low
                 if not (value & 0x40):  # bit6=0 → read mode: preload buffer
                     self._read_buf = self.vram[self._addr]
-                    self._addr = (self._addr + 1) & 0x1FFFF
+                    self._advance_addr()
 
     def _write_register(self, reg: int, value: int) -> None:
         """Store a register write from port 0x99 or port 0x9B.
@@ -874,6 +939,8 @@ class V9938:
                 self._reg_write_log.append(_RegChange(self.display_line, reg, value))
             if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line
                 self.update_irq()
+            elif reg == 13:
+                self._restart_blink(value)
             elif reg == 14:
                 self._set_addr_high(value)
         elif 32 <= reg <= 46:
@@ -902,7 +969,7 @@ class V9938:
         """Dispatch a V9938 VDP port read.
 
         Two address bits, as in write_port: port 0 = VRAM data (returns the
-        read-ahead buffer, refills it, auto-increments the 17-bit address);
+        read-ahead buffer, refills it, advances the address, see _advance_addr);
         port 1 = status register S#n, where R#15 selects which S#n is returned
         (reading also resets the control latch). Ports 2 and 3 are write-only
         and read as 0xFF (openMSX VDP::readIO cases 2/3).
@@ -911,7 +978,11 @@ class V9938:
         if port == 0:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
-            self._addr = (self._addr + 1) & 0x1FFFF
+            addr = self._addr + 1
+            if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
+                self._addr = addr
+            else:
+                self._advance_addr()
             self._ctrl_pending = False
             return result
         if port == 1:
@@ -941,7 +1012,9 @@ class V9938:
             # result or the dot an LMCM has staged. The read doubles as the
             # LMCM handshake: taking the dot lets the engine fetch the next
             # one. With no command running it clears TR instead (openMSX
-            # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor).
+            # VDP.cc readStatusReg case 7 → VDPCmdEngine::resetColor; V9938
+            # data book LMCM note 1: "TR must be reset before the command is
+            # executed. Read Status Register #7 ...").
             result = self.cmd_regs[12]
             if self._cmd_active and self._cmd_code == _CMD_LMCM:
                 self._advance_lmcm()
@@ -965,7 +1038,8 @@ class V9938:
         if self.regs[15] == 3:
             # S#3-S#6: sprite collision X/Y, as reported by the sprite
             # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
-            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`).
+            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the
+            # V9938 data book shows S#4 as 1111111X8).
             return self.collision_x & 0xFF
         if self.regs[15] == 4:
             return ((self.collision_x >> 8) & 0x01) | 0xFE
@@ -975,7 +1049,12 @@ class V9938:
             self.collision_y = 0
             return result
         if self.regs[15] == 6:
-            return ((self.collision_y >> 8) & 0x03) | 0xFC
+            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
+            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
+            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # summary shows; its sprite-collision section, the Handbook and
+            # openMSX give collision Y bit 9 there, which would always be 0.
+            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
         if self.regs[15] >= 10:
             return 0xFF  # non-existent status register
         # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
@@ -1049,21 +1128,13 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
-    def _byte_cmd_cycles(self, byte_cols: int, ny: int) -> int:
-        """CE duration for a byte-unit command (HMMV/HMMM/YMMM).
+    def _cmd_cycles(self, units: int, ny: int, per_unit: int) -> int:
+        """CE duration of a block command: units × ny elements at per_unit T-states each.
 
-        Each of the byte_cols × ny VRAM bytes costs _CYCLES_PER_BYTE T-states.
-        Clamped to a 4 T-state minimum.
+        units is bytes per line for HMMV/HMMM/YMMM and dots per line for
+        LMMV/LMMM. Clamped to a 4 T-state minimum.
         """
-        return max(4, byte_cols * ny * _CYCLES_PER_BYTE)
-
-    def _pixel_cmd_cycles(self, nx_px: int, ny: int) -> int:
-        """CE duration for a pixel-unit command (LMMV/LMMM).
-
-        Logical commands process one pixel per _CYCLES_PER_PIXEL T-states (no
-        ppb division), making them ~ppb× slower than the byte commands.
-        """
-        return max(4, nx_px * ny * _CYCLES_PER_PIXEL)
+        return max(4, units * ny * per_unit)
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14]).
@@ -1146,7 +1217,12 @@ class V9938:
 
     def _cmd_point(self, sx: int, sy: int, src_ext: bool, px_mask: int) -> None:
         # The sampled dot lands in the colour register, where S#7 reads it.
-        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
+        # An MXS source (absent expansion RAM) reads as the all-ones dot value:
+        # on a real SONY HB-F1XD the value is masked to the dot width but its
+        # low bits are not stable (VDPCMD.BAS / VDPCMD2.BAS, SCREEN 5: 0x00,
+        # 0x0F, 0x0D), so this fixed value matches the POINT result seen there.
+        # openMSX gives an unmasked 0xFF.
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
 
     def _cmd_pset(self, dx: int, dy: int, clr: int, log: int, dst_ext: bool, px_mask: int) -> None:
         if not dst_ext:
@@ -1188,8 +1264,11 @@ class V9938:
         self._cmd_remaining = 0
         self._status2 |= _S2_CE | _S2_TR
         # The first dot is fetched at once (openMSX startLmcm sets its
-        # transfer flag); every S#7 read takes one and stages the next.
-        self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
+        # transfer flag); every S#7 read takes one and stages the next. An MXS
+        # source reads as the all-ones dot value, as in _cmd_point.
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
+        if self._cmd_nx == 1 and self._cmd_ny == 1:
+            self._complete_command()  # one-dot LMCM: the first dot is also the last
 
     def _cmd_lmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, sw: int, clr: int, log: int, dst_ext: bool,
@@ -1204,7 +1283,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
 
     def _cmd_lmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, sw: int, log: int, src_ext: bool,
@@ -1221,7 +1300,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
 
     def _cmd_hmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, clr: int, dst_ext: bool) -> None:
@@ -1238,7 +1317,7 @@ class V9938:
                     self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
 
     def _cmd_hmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, src_ext: bool, dst_ext: bool) -> None:
@@ -1256,7 +1335,7 @@ class V9938:
                     self.vram[dst] = 0xFF if src_ext else self.vram[src]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
 
     def _cmd_ymmm(self, sy: int, dx: int, dy: int, ny: int, dix: bool, diy: bool, xs: int,
                   ys: int, dst_ext: bool) -> None:
@@ -1276,7 +1355,7 @@ class V9938:
                         self.vram[self._vram_byte_addr_col(col, syy)]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
 
     def _cmd_cpu_feed(self, cmd: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                       diy: bool, xs: int, ys: int, sw: int, log: int, clr: int) -> None:
@@ -1298,7 +1377,9 @@ class V9938:
         self._cmd_ystep = ys
         self._status2 |= _S2_CE
         # V9938 does NOT auto-load the first dot from R#44 at command start
-        # (OpenMSX startLmmc/startHmmc set TR only). Writing R#44 (COL) sets the
+        # (OpenMSX startLmmc/startHmmc set TR only; the V9938 data book's HMMC
+        # execution order has the program put the first byte in CLR before
+        # writing CMR, and send the rest after). Writing R#44 (COL) sets the
         # transfer latch; if that happened during command setup the pending COL
         # is the first dot, otherwise the first CPU data-port write supplies it.
         # Unconditionally consuming CLR here shifted every transfer by one dot
@@ -1361,9 +1442,9 @@ class V9938:
             return
         # A pending byte is being consumed → clear the transfer latch.
         self._cmd_transfer = False
-        # TR=0 while VDP processes; tick() re-asserts TR after _CYCLES_PER_BYTE
+        # TR=0 while VDP processes; tick() re-asserts TR after _TR_REASSERT_CYCLES
         self._status2 &= ~_S2_TR
-        self._tr_delay = _CYCLES_PER_BYTE
+        self._tr_delay = _TR_REASSERT_CYCLES
         px = self._cmd_dx + self._cmd_x * self._cmd_xstep
         py = self._cmd_dy + self._cmd_y * self._cmd_ystep
         dst_ext = bool(self.cmd_regs[13] & _ARG_MXD)
@@ -1382,10 +1463,13 @@ class V9938:
             self._cmd_x = 0
             self._cmd_y += 1
             if self._cmd_y >= self._cmd_ny:
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
                 self._tr_delay = 0
-                self._status2 &= ~_S2_CE  # TR survives completion
+                self._complete_command()
+                # The completing byte leaves TR set: confirmed on a real SONY
+                # HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS line 4, 2026-10-07: a
+                # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
+                # idle R#44 write); openMSX agrees.
+                self._status2 |= _S2_TR
 
     def _advance_lmcm(self) -> None:
         """Take the staged LMCM dot and fetch the next one.
@@ -1393,18 +1477,34 @@ class V9938:
         Driven by the CPU reading S#7 (or the data port): one dot per read,
         walking the source rectangle in the DIX/DIY directions.
         """
+        # The command ends when its last dot is staged (below), so the cursor
+        # never steps past the rectangle while the command is active.
         self._cmd_x += 1
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1
-            if self._cmd_y >= self._cmd_ny:
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
-                self._status2 &= ~_S2_CE  # TR survives completion
-                return
         x = self._cmd_sx + self._cmd_x * self._cmd_xstep
         y = self._cmd_sy + self._cmd_y * self._cmd_ystep
-        if self.cmd_regs[13] & _ARG_MXS:
-            self.cmd_regs[12] = 0xFF
-        else:
-            self.cmd_regs[12] = self._vram_pixel_read(x, y) & ((1 << self._cmd_bpp) - 1)
+        src_ext = bool(self.cmd_regs[13] & _ARG_MXS)
+        dot_mask = (1 << self._cmd_bpp) - 1
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(x, y)) & dot_mask
+        if self._cmd_x == self._cmd_nx - 1 and self._cmd_y == self._cmd_ny - 1:
+            # LMCM completes once its last dot is staged; TR stays 1, and the
+            # S#7 read that then takes the dot runs with no command active, so
+            # it clears TR. Confirmed on a real SONY HB-F1XD
+            # (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after the
+            # start, then 81 81 80 00 over the four reads of a four-dot LMCM);
+            # openMSX executeLmcm agrees.
+            self._complete_command()
+
+    def _complete_command(self) -> None:
+        """End the running command: CE clears, TR keeps its value.
+
+        TR is cleared only by the next R#44 write or S#7 read taken with no
+        command running (openMSX commandDone(), which never touches TR; V9938
+        data book LMCM note 2: the command completes with CE = 0 even while
+        TR = 1). A caller that must also set TR does so after this call.
+        """
+        self._cmd_active = False
+        self._cmd_code = _CMD_ABRT
+        self._status2 &= ~_S2_CE

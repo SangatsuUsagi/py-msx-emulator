@@ -1,11 +1,11 @@
 # Debugger Reference
 
-The emulator includes an interactive debug REPL accessible at any point during a
-run: Z80 and VDP inspection, breakpoints, watchpoints, step execution, and
-tracing.
+The emulator includes an interactive debug REPL that you can open at any point
+during a run. It gives Z80 and VDP inspection, breakpoints, watchpoints, step
+execution, and tracing.
 
-Commands marked **⚙V9938** require an MSX2 / V9938 machine. On MSX1 / TMS9918A
-they print a clear error message rather than raising an exception.
+Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 /
+TMS9918A, they print a clear error message and do not raise an exception.
 
 Source: `msx/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
 `msx/vdp/v9938_renderer.py` (VDP), `msx/mapper_tracer.py` (mapper trace).
@@ -16,9 +16,9 @@ Source: `msx/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
 
 ### Ctrl+C
 
-Press **Ctrl+C** in the terminal running the emulator (or in the SDL window).
-Emulation pauses immediately, the current PC is disassembled, and the REPL
-prompt appears:
+Press **Ctrl+C** in the terminal that runs the emulator (or in the SDL window).
+The emulation pauses immediately. The debugger disassembles the current PC and
+shows the REPL prompt:
 
 ```
 Debugger entered. Type 'c' to resume, 'q' to exit.
@@ -26,24 +26,26 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 (msx-dbg cyc=720430 frm=12)
 ```
 
-`cyc` is the cumulative Z80 T-state count; `frm` is the completed-frame count.
-The displayed image is the last rendered frame. Type `c` to resume emulation,
-`q` to exit. Pressing Ctrl+C again while at the REPL prompt exits the emulator
-immediately (`sys.exit(0)`) — it does not cancel input or return to the prompt.
+`cyc` is the cumulative Z80 T-state count. `frm` is the number of completed
+frames. The window shows the last rendered frame. Type `c` to resume the
+emulation, or `q` to exit. If you press Ctrl+C again at the REPL prompt, the
+emulator exits immediately (`sys.exit(0)`). It does not cancel the input or
+return to the prompt.
 
 ### Line editing and history
 
-Where the `readline` module is available — stock CPython and PyPy on macOS and
-Linux — the prompt gives you the usual line editing, Tab completion over every
-command name, and a command history carried across runs in
-`~/.msx_dbg_history` (last 500 entries, read on entry and written back on
-resume). Stock Windows CPython ships no `readline`; the REPL still works there,
-just without editing, completion, or history.
+The `readline` module is available in stock CPython and PyPy on macOS and
+Linux. Where it is available, the prompt gives the usual line editing and Tab
+completion of all command names. It also keeps a command history across runs in
+`~/.msx_dbg_history`. The history holds the last 500 entries. The debugger
+reads it when the REPL opens and writes it when emulation resumes. Stock
+Windows CPython has no `readline`. The REPL still works there, but without
+editing, completion, or history.
 
 ### Breakpoints and watchpoints at launch
 
-Set breakpoints or watchpoints before the SDL window opens using CLI flags.
-Both work on any machine, MSX1 or MSX2:
+To set breakpoints or watchpoints before the SDL window opens, use CLI flags.
+Both flags work on any machine, MSX1 or MSX2:
 
 ```bash
 # Execution breakpoints — up to 4, comma-separated hex addresses (no 0x prefix)
@@ -53,93 +55,98 @@ python . path/to/game.rom --machine cbios_msx2_jp --break-point C000,D000
 python . path/to/game.rom --machine cbios_msx1_jp --watch-point ca4a,w,fedc,rw
 ```
 
-Active breakpoints and watchpoints are reported to stderr on startup.
+At startup, the emulator writes the active breakpoints and watchpoints to
+stderr.
 
 ---
 
 ## Command reference
 
-**`h`**, **`?`** — print the one-line command summary. Also shown automatically
-after an unrecognized command.
+**`h`**, **`?`**: print the one-line command summary. The debugger also shows
+this summary automatically after an unrecognized command.
 
-> **Filenames with spaces:** command arguments are split on whitespace, so wrap
-> any path that contains a space in double quotes — e.g. `fdd1 "MY DISK 1.dsk"`
-> or `ld "saves/states/my checkpoint.state"`. This applies to every command that
-> takes a filename (`fdd1`/`fdd2`, `ld`, `sv`, `dvf`). An unterminated quote
-> reports `Parse error` and leaves the emulator state untouched.
+> **Filenames with spaces:** the debugger splits command arguments on
+> whitespace. Put double quotes around a path that contains a space, for
+> example `fdd1 "MY DISK 1.dsk"` or `ld "saves/states/my checkpoint.state"`.
+> This applies to every command that takes a filename (`fdd1`/`fdd2`, `ld`,
+> `sv`, `dvf`). If a quote has no closing quote, the debugger reports
+> `Parse error` and does not change the emulator state.
 
 ### Execution flow
 
-**`c`** — resume emulation.
+**`c`**: resume emulation.
 
-**`q`** — exit the emulator (process exits with code 0).
+**`q`**: exit the emulator (the process exits with code 0).
 
-**`reset`** — full power-on reset: CPU, PSG, SCC (if present), VDP, and the
-primary/secondary slot registers. Memory/VRAM contents are retained.
-Emulation resumes immediately afterward, same as `c` — there is nothing left
-to inspect at the pre-reset PC.
+**`reset`**: full power-on reset of the CPU, PSG, SCC (if present), VDP, and
+the primary/secondary slot registers. The memory and VRAM contents stay the
+same. Emulation then resumes immediately, as with `c`, because there is nothing
+to examine at the PC before the reset.
 
-**`s [N]`** — step `N` Z80 instructions (decimal; default 1). After stepping,
-prints a compact register summary and the next instruction:
+**`s [N]`**: step `N` Z80 instructions (decimal, default 1). After the step,
+the debugger prints a compact register summary and the next instruction:
 
 ```
   PC=C012  AF=0100  BC=0010  DE=0000  HL=C100
   => C012: CD 40 C0     CALL C040h
 ```
 
-**`g ADDR`** — resume emulation and run until PC reaches `ADDR` (hex). One-shot
-temporary breakpoint — cleared once hit, does not consume a `ba` slot, and does
-not alter permanent breakpoints.
+**`g ADDR`**: resume emulation and run until PC reaches `ADDR` (hex). This is
+a one-shot temporary breakpoint. The debugger clears it after the hit. It does
+not use a `ba` slot and does not change the permanent breakpoints.
 
-**`gf N`** — resume emulation and run until the frame counter (the `frm=`
-value shown in the prompt) reaches the decimal frame number `N`. One-shot,
-checked once per rendered frame rather than per instruction, so it does not
-slow down execution the way an active `ba`/`g` breakpoint does. `N` must be
-greater than the current frame count; otherwise `gf` prints an error and does
-not resume.
+**`gf N`**: resume emulation and run until the frame counter (the `frm=` value
+in the prompt) reaches the decimal frame number `N`. This is a one-shot check.
+The debugger checks it once per rendered frame, not per instruction. Thus it
+does not make execution slower, as an active `ba`/`g` breakpoint does. `N` must
+be greater than the current frame count. If it is not, `gf` prints an error and
+does not resume.
 
-**`so`** — step out: resume until SP rises above its value at the time `so` was
-issued (i.e. the current routine returns). See _Known limitations_ for edge
-cases.
+**`so`**: step out. Resume until SP goes above its value at the time of the
+`so` command (i.e. the current routine returns). See _Known limitations_ for
+edge cases.
 
 ---
 
 ### Breakpoints
 
-**`ba ADDR`** — add an execution breakpoint at `ADDR` (hex, no `0x` prefix).
-Maximum 4 breakpoints. When PC matches, emulation pauses and the REPL opens.
+**`ba ADDR`**: add an execution breakpoint at `ADDR` (hex, no `0x` prefix).
+The maximum is 4 breakpoints. When PC matches, the emulation pauses and the
+REPL opens.
 
-**`br ADDR`** — remove the breakpoint at `ADDR`. Prints an error if the address
-is not in the active set.
+**`br ADDR`**: remove the breakpoint at `ADDR`. If the address is not in the
+active set, the debugger prints an error.
 
-**`bl`** — list all active breakpoints.
+**`bl`**: list all active breakpoints.
 
 #### Crash-signature auto-break
 
-**`bh`** — toggle break-on-HALT-with-interrupts-disabled. Breaks the instant the
-CPU executes `HALT` while `iff1 == 0` — the dead-hang signature: a HALT that can
-never be woken by an interrupt. Fires once per rising edge; resuming from a
-still-true condition does not re-trigger.
+**`bh`**: toggle break-on-HALT-with-interrupts-disabled. The debugger breaks at
+the moment the CPU executes `HALT` while `iff1 == 0`. This is the signature of
+a dead hang: no interrupt can ever wake this HALT. The break fires once per
+rising edge. If you resume while the condition is still true, it does not fire
+again.
 
-**`bs [LOW HIGH | off]`** — break when SP leaves valid RAM.
+**`bs [LOW HIGH | off]`**: break when SP goes out of valid RAM.
 
-- `bs` (no arguments): enable with the range auto-derived from the machine RAM
-  configuration (MSX1 flat RAM → top-of-memory window; MSX2 mapper RAM → full
-  address space).
-- `bs LOW HIGH`: enable with an explicit inclusive hex range.
+- `bs` (no arguments): enable, with a range that the debugger calculates from
+  the RAM configuration of the machine. MSX1 flat RAM gives a top-of-memory
+  window. MSX2 mapper RAM gives the full address space.
+- `bs LOW HIGH`: enable, with an explicit inclusive hex range.
 - `bs off`: disable.
 
-Catches stack corruption at the instruction that first drives SP out of the
-valid range. Fires on the rising edge only.
+This finds stack corruption at the first instruction that moves SP out of the
+valid range. It fires on the rising edge only.
 
 ---
 
 ### Watchpoints
 
-**`wa ADDR[,r|w|rw]`** — add a watchpoint at `ADDR`. Mode: `r` = break on read,
-`w` = break on write, `rw` = both (default). Maximum 4 watchpoints.
+**`wa ADDR[,r|w|rw]`**: add a watchpoint at `ADDR`. The modes are `r` (break on
+read), `w` (break on write), and `rw` (both, the default). The maximum is 4
+watchpoints.
 
-When hit, prints:
+At a hit, the debugger prints:
 
 ```
 [WP] READ  CA4Ah = 02h  PC=C024h
@@ -151,25 +158,25 @@ or
 [WP] WRITE CA4Ah = 05h  PC=C030h
 ```
 
-then enters the REPL.
+Then it opens the REPL.
 
-**`wd ADDR`** — remove the watchpoint at `ADDR`.
+**`wd ADDR`**: remove the watchpoint at `ADDR`.
 
-**`wl`** — list all active watchpoints with their modes.
+**`wl`**: list all active watchpoints with their modes.
 
 ---
 
 ### CPU state
 
-**`rc`** — dump all Z80 registers:
+**`rc`**: dump all Z80 registers:
 
 ```
 AF=5A00  BC=0010  DE=0000  HL=C100  IX=F380  IY=FC40  SP=F3E0  PC=C010
   S=0  Z=1  H=0  P/V=0  N=0  C=0
 ```
 
-**`da [ADDR]`** — disassemble 10 instructions from `ADDR` (hex) or the current
-PC:
+**`da [ADDR]`**: disassemble 10 instructions from `ADDR` (hex) or from the
+current PC:
 
 ```
   C010: 3E 01        LD A,01h
@@ -182,26 +189,27 @@ PC:
 
 ### Memory dump
 
-**`dm ADDR [SIZE]`** — hex+ASCII dump of CPU address space. Both arguments are
-hex; SIZE defaults to 0x80 (128 bytes):
+**`dm ADDR [SIZE]`**: hex+ASCII dump of the CPU address space. Both arguments
+are hex. SIZE has a default of 0x80 (128 bytes):
 
 ```
   F000: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  ................
   F010: 41 42 43 44 45 46 47 48 49 4A 4B 4C 4D 4E 4F 50  ABCDEFGHIJKLMNOP
 ```
 
-**`dv VADDR [SIZE]`** — hex+ASCII dump of VRAM. Both arguments are hex; SIZE
-defaults to 0x80. Address wraps within the VRAM size (0x3FFF for TMS9918A;
-0x1FFFF for V9938). The address prefix width adjusts automatically.
+**`dv VADDR [SIZE]`**: hex+ASCII dump of VRAM. Both arguments are hex. SIZE has
+a default of 0x80. The address wraps within the VRAM size (0x3FFF for
+TMS9918A, 0x1FFFF for V9938). The width of the address prefix adjusts
+automatically.
 
-**`dvf FILE`** — write the entire VRAM contents as a raw binary file. Useful for
-offline diffing or loading into a reference tool.
+**`dvf FILE`**: write the full VRAM contents to a raw binary file. Use it for
+offline diffs or to load the data into a reference tool.
 
 ---
 
 ### VDP state
 
-**`v`** — VDP status summary.
+**`v`**: VDP status summary.
 
 On V9938 (⚙V9938):
 
@@ -222,9 +230,9 @@ On TMS9918A:
   Status : S#0=00
 ```
 
-**`rv`** — VDP register dump.
+**`rv`**: VDP register dump.
 
-On V9938 (⚙V9938): R#0–R#27 (display registers) followed by R#32–R#46 (command
+On V9938 (⚙V9938): R#0-R#27 (display registers), then R#32-R#46 (command
 registers), 8 per row:
 
 ```
@@ -235,61 +243,62 @@ registers), 8 per row:
   ...
 ```
 
-On TMS9918A: R#0–R#7 in a single row.
+On TMS9918A: R#0-R#7 in a single row.
 
-**`rp`** ⚙V9938 — palette dump: all 16 entries as `#N=XXX(R,G,B)` where XXX is
-the 9-bit GRB333 raw value and R/G/B are the 3-bit channel values:
+**`rp`** ⚙V9938: palette dump. It shows all 16 entries as `#N=XXX(R,G,B)`.
+XXX is the 9-bit GRB333 raw value, and R/G/B are the 3-bit channel values:
 
 ```
   #0=000(0,0,0)  #1=000(0,0,0)  #2=071(1,6,1)  #3=1FB(3,7,3)  ...
   #8=1C9(7,1,1)  #9=1DB(7,3,3)  #A=1B1(6,6,1)  #B=1B4(6,6,4)  ...
 ```
 
-Prints a clear error on TMS9918A (no programmable palette).
+On TMS9918A, which has no programmable palette, it prints a clear error.
 
 ---
 
 ### Sprites
 
-**`ds`** — toggle sprite rendering on/off for both VDP types. When off, only the
-background layer is rendered. Useful for isolating sprite artefacts. State
-persists until toggled again or the emulator exits.
+**`ds`**: toggle sprite rendering on/off for both VDP types. When sprite
+rendering is off, the renderer draws only the background layer. Use it to
+isolate sprite artifacts. The setting stays until you toggle it again or the
+emulator exits.
 
 ---
 
 ### Tracing
 
-**`te`** ⚙V9938 — enable the VDP register-write tracer. Emits a line to stdout
-for every register write during emulation:
+**`te`** ⚙V9938: enable the VDP register-write tracer. During emulation, it
+writes one line to stdout for each register write:
 
 ```
 CY=12450 FR=3 PC=C018  VDP_REG R#2=1F
 CY=12460 FR=3 PC=C01C  VDP_REG R#5=7F
 ```
 
-`te` wires the `_get_pc` and `_get_cycle` callbacks automatically on first use.
-If a `Tracer` is already attached, it re-enables it.
+On first use, `te` connects the `_get_pc` and `_get_cycle` callbacks
+automatically. If a `Tracer` is already attached, `te` enables it again.
 
-**`td`** — disable VDP register tracing.
+**`td`**: disable VDP register tracing.
 
-**`ce`** — enable the cartridge mapper bank-switch tracer. Emits a line on every
-bank-register write that changes a window's bank:
+**`ce`**: enable the cartridge mapper bank-switch tracer. It writes one line
+for each bank-register write that changes the bank of a window:
 
 ```
 CY=25000 FR=5 PC=5B2A  MAP_BANK win=1 03h->05h addr=6001h
 ```
 
-`win` is the mapper window index; `addr` is the address of the register write.
-Prints a message if no bank-switching mapper is present.
+`win` is the mapper window index. `addr` is the address of the register write.
+If no bank-switching mapper is present, `ce` prints a message.
 
-**`cd`** — disable mapper bank-switch tracing.
+**`cd`**: disable mapper bank-switch tracing.
 
 ---
 
 ### Slot inspector
 
-**`sl`** — active slot table: one row per page (P0–P3) with address range,
-primary slot, secondary slot, content, and bank/segment:
+**`sl`**: active slot table. It shows one row per page (P0-P3), with the
+address range, primary slot, secondary slot, content, and bank/segment:
 
 ```
   Page  Addr        Prim  Sec  Content                          Bank
@@ -299,15 +308,15 @@ primary slot, secondary slot, content, and bank/segment:
   P3    C000-FFFF   3     2    RAM (mapper)                     seg=2
 ```
 
-Bank column values:
+Values in the Bank column:
 
 - RAM mapper pages: `seg=N`
-- Cartridge ROM mapper pages: selected bank number and resolved ROM byte-offset
-  range
+- Cartridge ROM mapper pages: the selected bank number and the resolved ROM
+  byte-offset range
 - Flat ROM, BIOS, plain RAM: `-`
 
-**`st`** — slot tree: walks primary slots 0–3 and shows the full sub-slot
-structure for expanded slots:
+**`st`**: slot tree. It goes through primary slots 0-3 and shows the full
+sub-slot structure of expanded slots:
 
 ```
   Primary 0  ROM cbios_main_msx2.rom  64 KB
@@ -321,26 +330,28 @@ structure for expanded slots:
     3-3  (empty)
 ```
 
-On MSX1 (`sub_slot_enabled = False`), slot 3 is shown as a non-expanded primary.
+On MSX1 (`sub_slot_enabled = False`), `st` shows slot 3 as a non-expanded
+primary slot.
 
 ---
 
 ### Floppy disk
 
-**`fdd1 [FILE|-]`**, **`fdd2 [FILE|-]`** — show, swap, or eject the disk in
-floppy drive A / B (machines with a floppy interface, e.g. `hb_f1xd`,
-`fs_a1f`).
+**`fdd1 [FILE|-]`**, **`fdd2 [FILE|-]`**: show, swap, or eject the disk in
+floppy drive A / B. These commands work on machines with a floppy interface,
+e.g. `hb_f1xd` and `fs_a1f`.
 
-- No argument prints the current mount (path or `empty`).
-- A path mounts that `*.dsk` (relative to the cwd or absolute; `~` is expanded).
-  On the next `c` (continue) the controller sees the new disk via the
-  disk-change line — the swap path is shared by both connection styles, so it
-  behaves the same on WD2793 and TC8566AF machines.
+- With no argument, the command prints the current mount (path or `empty`).
+- A path mounts that `*.dsk` file. The path can be relative to the cwd or
+  absolute, and the command expands `~`. At the next `c` (continue), the
+  controller sees the new disk through the disk-change line. Both connection
+  styles share the swap path, so the behavior is the same on WD2793 and
+  TC8566AF machines.
 - `-` ejects the current disk.
 
-Errors (missing file, unreadable image, no such drive) are reported without
-changing the current disk. On a machine with no floppy interface, the command
-prints `this machine has no floppy interface`.
+For errors (missing file, unreadable image, no such drive), the command
+reports the error and does not change the current disk. On a machine with no
+floppy interface, the command prints `this machine has no floppy interface`.
 
 ```
 (msx-dbg cyc=720000 frm=12) fdd1
@@ -357,35 +368,35 @@ fdd1: ejected
 
 ### Screenshot
 
-**`ss`** — render the current VDP state and save it as
-`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`, the same location the F10
-hotkey uses:
+**`ss`**: render the current VDP state and save it as
+`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`. The F10 hotkey uses the
+same location:
 
 ```
 (msx-dbg cyc=724321 frm=12) ss
 screenshot saved: saves/screenshots/screenshot_20260101_120000.png
 ```
 
-The internal frame counter is preserved; `ss` has no side-effect on emulation
-state. Useful for correlating a visual snapshot with `v`/`dv`/`rv` output taken
-at the same pause.
+`ss` keeps the internal frame counter and has no side effect on the emulation
+state. Use it to compare a visual snapshot with the `v`/`dv`/`rv` output from
+the same pause.
 
 ---
 
 ### State save / load
 
-**`sv [TITLE]`** — save the full machine state (CPU, VDP, mappers, RAM) to
-`saves/states/<title>_YYYYMMDD_HHMMSS.state`, the same format and location
-used by the socket RPC `state.save` method (see
-[`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md)). With no argument, a default
-title is used; an argument supplies the title (not a file path). The REPL
-stays open.
+**`sv [TITLE]`**: save the full machine state (CPU, VDP, mappers, RAM) to
+`saves/states/<title>_YYYYMMDD_HHMMSS.state`. The socket RPC `state.save`
+method uses the same format and location (see
+[`docs/socket-rpc-mcp.md`](socket-rpc-mcp.md)). With no argument, `sv` uses a
+default title. An argument gives the title, not a file path. The REPL stays
+open.
 
-**`ld FILE`** — restore machine state from a previously saved `.state` file.
-The REPL stays open with no implicit resume, so the loaded state can be
-inspected or advanced precisely with `s` or `gf`. A missing file, or a
-snapshot with an incompatible `format_version` or machine type, prints an
-error without raising.
+**`ld FILE`**: restore the machine state from a `.state` file that you saved
+before. The REPL stays open and does not resume automatically. You can thus
+examine the loaded state, or advance it precisely with `s` or `gf`. If the file
+is missing, or the snapshot has an incompatible `format_version` or machine
+type, `ld` prints an error and does not raise an exception.
 
 ```
 (msx-dbg cyc=720000 frm=1999) sv before-glitch
@@ -404,8 +415,8 @@ state saved: saves/states/before-glitch_20260101_120000.state
 
 ## Launch-time tracing (headless capture)
 
-These options set up tracing before the first frame and work without entering
-the REPL.
+These options start tracing before the first frame. They work without the
+REPL.
 
 ### VDP register trace
 
@@ -428,8 +439,8 @@ python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace --mapper-trace-
 
 Output format: `CY=.. FR=.. PC=..  MAP_BANK win=W OLDh->NEWh addr=XXXXh`
 
-If the cartridge uses a flat (non-bank-switching) mapper, a note is printed to
-stderr and no `MAP_BANK` lines are emitted.
+If the cartridge uses a flat (non-bank-switching) mapper, the emulator writes a
+note to stderr and writes no `MAP_BANK` lines.
 
 ### Headless N-frame run
 
@@ -437,16 +448,15 @@ stderr and no `MAP_BANK` lines are emitted.
 python . path/to/game.rom --machine cbios_msx2_jp --count-frame 300 --vdp-trace
 ```
 
-`--count-frame N` runs exactly N frames without opening an SDL window, then
-exits. Combined with `--vdp-trace` or `--mapper-trace`, it produces
-deterministic, scriptable captures. The mapper trace can also be enabled this
-way.
+`--count-frame N` runs exactly N frames without an SDL window, and then exits.
+With `--vdp-trace` or `--mapper-trace`, it gives deterministic captures that a
+script can run.
 
 ---
 
 ## Worked example
 
-Set a breakpoint, resume, step through a routine, and inspect memory:
+Set a breakpoint, resume, step through a routine, and examine memory:
 
 ```
 $ python . path/to/game.rom --machine cbios_msx2_jp
@@ -484,18 +494,20 @@ AF=0100  BC=0010  DE=0000  HL=C100  IX=F380  IY=FC40  SP=F3E0  PC=C080
 
 ## Known limitations
 
-**Deferred renderer.** The CPU runs a full frame; VDP commands execute instantly
-into VRAM; the renderer runs once at end-of-frame. VRAM updates synchronised to
-the raster within a frame (beam-raced blits, double-buffered title screens) are
-not reproduced faithfully. This is a fundamental architectural constraint, not a
-renderer bug.
+**Deferred renderer.** The CPU runs a full frame, and VDP commands write into
+VRAM instantly. The renderer then runs once per frame, at the start of vertical
+blanking. The emulator does not faithfully reproduce VRAM updates that follow
+the raster within a frame (beam-raced blits, double-buffered title screens).
+This limit comes from the basic architecture, and a renderer fix cannot remove
+it.
 
-**Command timing.** VDP command completion (S#2 CE bit) is driven by an
-approximate cycle budget, not a cycle-accurate model. Software that busy-waits
-on CE works, but exact command durations differ from hardware.
+**Command timing.** An approximate cycle budget controls the completion of VDP
+commands (S#2 CE bit). There is no cycle-accurate model. Software that
+busy-waits on CE works, but the exact command durations differ from hardware.
 
-**`so` and `bs` are SP heuristics.** `so` breaks when SP first rises above its
-value at issue time; a routine that switches stacks, pops more than it pushed,
-or is re-entered can fire early or late. Use `g ADDR` when you need a precise
-stop. `bs` checks SP against a static address range and cannot account for slot
-switching that legitimately remaps a page to RAM.
+**`so` and `bs` are SP heuristics.** `so` breaks when SP first goes above its
+value at the time of the command. A routine that switches stacks, pops more
+than it pushed, or runs again before it returns can make `so` fire early or
+late. For a precise stop, use `g ADDR`. `bs` compares SP with a static address
+range. It does not take into account slot switching that correctly remaps a
+page to RAM.

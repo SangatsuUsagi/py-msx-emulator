@@ -27,8 +27,12 @@ from msx.vdp.v9938 import (
     _ARG_MAJ,
     _ARG_MXD,
     _ARG_MXS,
-    _CYCLES_PER_BYTE,
-    _CYCLES_PER_PIXEL,
+    _HMMM_CYCLES_PER_BYTE,
+    _HMMV_CYCLES_PER_BYTE,
+    _LMMM_CYCLES_PER_DOT,
+    _LMMV_CYCLES_PER_DOT,
+    _TR_REASSERT_CYCLES,
+    _YMMM_CYCLES_PER_BYTE,
     V9938,
 )
 
@@ -232,7 +236,7 @@ def test_hmmv_ny_zero_means_1024_lines() -> None:
     1024 rows of VRAM."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=8, ny=0, clr=0x00)
-    assert vdp._cmd_remaining == (8 // 2) * 1024 * _CYCLES_PER_BYTE
+    assert vdp._cmd_remaining == (8 // 2) * 1024 * _HMMV_CYCLES_PER_BYTE
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +259,8 @@ def test_ymmm_ce_duration_is_byte_unit() -> None:
     vdp = _make_vdp()
     # DIX clear, DX=0 -> the strip spans the whole 128-byte line.
     _dispatch(vdp, cmd_code=0xE, dx=0, sy=0, dy=1, ny=4)
-    assert vdp._cmd_remaining == 128 * 4 * _CYCLES_PER_BYTE
-    vdp.tick(128 * 4 * _CYCLES_PER_BYTE)
+    assert vdp._cmd_remaining == 128 * 4 * _YMMM_CYCLES_PER_BYTE
+    vdp.tick(128 * 4 * _YMMM_CYCLES_PER_BYTE)
     assert vdp._status2 & _CE == 0
 
 
@@ -273,7 +277,7 @@ def test_transfer_ready_drops_on_a_byte_and_returns_one_byte_time_later() -> Non
 
     _write_data(vdp, 0x11)
     assert vdp._status2 & _TR == 0          # busy
-    vdp.tick(_CYCLES_PER_BYTE - 1)
+    vdp.tick(_TR_REASSERT_CYCLES - 1)
     assert vdp._status2 & _TR == 0          # still busy
     vdp.tick(1)
     assert vdp._status2 & _TR               # ready for the next byte
@@ -317,11 +321,28 @@ def test_search_result_high_reads_ones_when_bit_eight_is_clear() -> None:
 # ---------------------------------------------------------------------------
 
 def test_cycle_cost_defaults() -> None:
-    """config.cycles_per_byte / cycles_per_dot: byte- and dot-unit commands run
-    at the same cost per element, which makes a dot-unit command dots_per_byte
-    times slower than the byte-unit command covering the same area."""
-    assert _CYCLES_PER_BYTE == 8
-    assert _CYCLES_PER_PIXEL == 8
+    """Per-command costs measured on a real HB-F1XD (CMDTIME.BAS), and the
+    HMMC/LMMC TR re-assert delay."""
+    assert _HMMV_CYCLES_PER_BYTE == 10
+    assert _HMMM_CYCLES_PER_BYTE == 21
+    assert _YMMM_CYCLES_PER_BYTE == 18
+    assert _LMMV_CYCLES_PER_DOT == 21
+    assert _LMMM_CYCLES_PER_DOT == 30
+    assert _TR_REASSERT_CYCLES == 8
+
+
+@pytest.mark.parametrize(("cmd_code", "dy", "expected"), [
+    (0xC, 0, 27136 * 10),    # HMMV
+    (0xD, 256, 27136 * 21),  # HMMM page 0 -> 1
+    (0xE, 256, 27136 * 18),  # YMMM page 0 -> 1
+    (0x8, 0, 54272 * 21),    # LMMV
+    (0x9, 256, 54272 * 30),  # LMMM page 0 -> 1
+])
+def test_full_page_command_durations(cmd_code: int, dy: int, expected: int) -> None:
+    """The CMDTIME.BAS cases: each command covers the whole GRAPHIC 4 page."""
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=cmd_code, sx=0, sy=0, dx=0, dy=dy, nx=256, ny=212)
+    assert vdp._cmd_remaining == expected
 
 
 def test_minimum_command_duration() -> None:
@@ -427,7 +448,7 @@ def test_origin_past_the_right_edge_processes_one_element_per_line() -> None:
     element per row rather than a full-width run."""
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0x8, dx=300, dy=0, nx=8, ny=1, clr=0xF)
-    assert vdp._cmd_remaining == 1 * 1 * _CYCLES_PER_PIXEL
+    assert vdp._cmd_remaining == 1 * 1 * _LMMV_CYCLES_PER_DOT
 
 
 def test_copy_clips_against_whichever_operand_is_nearer_the_edge() -> None:
@@ -584,12 +605,25 @@ def test_commands_do_nothing_outside_the_bitmap_modes() -> None:
     assert vdp._status2 & _CE == 0
 
 
-def test_leaving_bitmap_mode_aborts_the_command() -> None:
+def test_leaving_bitmap_mode_keeps_the_command_running() -> None:
+    # HB-F1XD CMDABRT.BAS: CE still 1 right after R#0 selects GRAPHIC 1.
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=200, clr=0x00)
     assert vdp._status2 & _CE
-    _write_reg(vdp, 0, 0x00)  # leave GRAPHIC 4 for TEXT1
+    _write_reg(vdp, 0, 0x00)  # leave GRAPHIC 4 for GRAPHIC 1
+    assert vdp._status2 & _CE
+    assert vdp._cmd_active
+    vdp.tick(10_000_000)  # past the command's duration
     assert vdp._status2 & _CE == 0
+
+
+def test_cpu_transfer_survives_a_switch_out_of_the_bitmap_modes() -> None:
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=0xF, dx=0, dy=1, nx=4, ny=1, clr=0x12)  # HMMC, 2 bytes
+    _write_reg(vdp, 0, 0x00)  # GRAPHIC 1
+    _write_data(vdp, 0x34)
+    _write_reg(vdp, 0, _G4)
+    assert (vdp.vram[128], vdp.vram[129]) == (0x12, 0x34)  # GRAPHIC 4 row 1
     assert not vdp._cmd_active
 
 
@@ -674,11 +708,26 @@ def test_mxd_write_is_discarded() -> None:
     assert vdp.vram[0] == 0x00
 
 
-def test_mxs_read_returns_all_ones() -> None:
+def test_mxs_read_returns_all_ones_dot() -> None:
+    # HB-F1XD VDPCMD2.BAS line 2: POINT with MXS after R#44 = 0x55 read 0x0F.
     vdp = _make_vdp()
     vdp.vram[0] = 0x7F
-    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, arg=_ARG_MXS)  # POINT
-    assert _read_status(vdp, 7) == 0xFF
+    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, clr=0x55, arg=_ARG_MXS)  # POINT
+    assert _read_status(vdp, 7) == 0x0F
+
+
+@pytest.mark.parametrize(("r0", "expected"), [(_G5, 0x03), (_G6, 0x0F), (_G7, 0xFF)])
+def test_mxs_point_is_masked_to_the_dot_width(r0: int, expected: int) -> None:
+    vdp = _make_vdp(r0)
+    _dispatch(vdp, cmd_code=0x4, sx=0, sy=0, clr=0x55, arg=_ARG_MXS)  # POINT
+    assert _read_status(vdp, 7) == expected
+
+
+def test_mxs_lmcm_reads_all_ones_dots() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0x12
+    _dispatch(vdp, cmd_code=0xA, sx=0, sy=0, nx=2, ny=1, clr=0x55, arg=_ARG_MXS)
+    assert [_read_status(vdp, 7) for _ in range(2)] == [0x0F, 0x0F]
 
 
 def test_mxd_transfer_write_is_discarded() -> None:

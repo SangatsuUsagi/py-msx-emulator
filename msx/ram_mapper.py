@@ -42,7 +42,10 @@ class RamMapper:
         banks: Four bank-register values (one per 16 KB page). Power-on/reset
             value is [0, 0, 0, 0] -- all pages start aliased to bank 0
             (openMSX MSXMemoryMapperBase::reset(): "Most mappers initialize
-            to segment 0 for all pages"). It is the MSX2 BIOS boot routine,
+            to segment 0 for all pages"; references/docs/"Memory Mapper - MSX
+            Wiki.md": "At power up, most memory mappers will have segment 0
+            selected for each of the 4 memory pages"). It is the MSX2 BIOS
+            boot routine,
             not the hardware, that subsequently writes [3, 2, 1, 0] (top of
             physical RAM in the lowest logical page) via ports 0xFC-0xFF.
         bank_mask: Mask applied to bank register values, derived from the

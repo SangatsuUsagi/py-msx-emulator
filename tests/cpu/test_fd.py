@@ -220,7 +220,7 @@ def test_cp_iy_d_equal() -> None:
     cpu.registers.F = 0
     cpu.step()
     assert cpu.registers.A == 0x20  # A unchanged
-    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_N)
+    assert cpu.registers.F == (F.FLAG_Z | F.FLAG_Y | F.FLAG_N)  # Y from the operand
 
 
 def test_add_iy_iy() -> None:

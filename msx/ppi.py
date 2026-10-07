@@ -17,9 +17,19 @@ class PPI:
     # lines (bit4 tape motor, bit5 tape out, bit6 CAPS LED, bit7 key click).
     _port_c: int = field(default=0, repr=False)
     # Last mode-set control word written to 0xAB, or the Intel 8255 post-reset
-    # default before any write. Read back verbatim by port 0xAB, matching
-    # openMSX's I8255::readControlPort.
+    # default before any write.
     _control: int = field(default=_POST_RESET_CONTROL, repr=False)
+    # Whether a port 0xAB read returns _control. A CMOS 82C55A reads the
+    # control word back (openMSX I8255::readControlPort models this); an NMOS
+    # 8255A does not drive the bus there, so the MSX pull-ups give 0xFF.
+    # Verified on a real SONY HB-F1XD (S1985 MSX-ENGINE): 0xAB reads 0xFF
+    # (extras/HB-F1XD/PORTRD.BAS, 2026-10-05).
+    control_readback: bool = True
+
+    @property
+    def control(self) -> int:
+        """The stored control word, whether or not port 0xAB reads it back."""
+        return self._control
 
     def write_port(self, port: int, value: int) -> None:
         value = value & 0xFF
@@ -61,7 +71,7 @@ class PPI:
             return 0xFF
         if port == 0xAA:
             return self._port_c & 0xFF
-        # 0xAB: MSX firmware documents this as write-only, but returns the
-        # last mode-set control word written, matching openMSX rather than
-        # floating the bus at 0xFF.
+        # 0xAB: write-only in every MSX reference; see control_readback.
+        if not self.control_readback:
+            return 0xFF
         return self._control & 0xFF

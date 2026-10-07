@@ -424,7 +424,10 @@ FloppyDiskParsed = FloppyDiskParsedBase[Any, Any]
 
 
 class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionState]):
-    """Sony/Philips connection style (openMSX PhilipsFDC).
+    """Sony/Philips connection style (openMSX PhilipsFDC; the 0x3FF8-0x3FFF
+    memory-mapped WD2793 window also matches the Philips row of
+    references/docs/"Floppy Disk Access Low-Level I_O (TC8566AF Edition) #MSX -
+    Qiita.md").
 
     Registers are decoded from ``addr & 0x3FFF`` and appear at 0x?FF8-0x?FFF;
     in the DISK-ROM page that is 0x7FF8-0x7FFF. The DISK ROM is visible at
@@ -563,7 +566,9 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
 
 # TC8566AF connection style register window offsets (addr & 0x3FFF), used by
 # the non-turboR TC8566AF-based machines (e.g. Panasonic FS-A1F) -- the
-# "R7FF8" register set from openMSX's TurboRFDC.cc.
+# "R7FF8" register set from openMSX's TurboRFDC.cc (the 0x7FF8-based
+# register window also matches references/docs/"Floppy Disk Access Low-Level
+# I_O (TC8566AF Edition) #MSX - Qiita.md").
 TC_REG_CONTROL0: int = 0x3FF8  # write-only
 TC_REG_CONTROL1: int = 0x3FF9  # write-only
 TC_REG_STATUS: int = 0x3FFA    # read-only Main Status Register

@@ -56,6 +56,8 @@ def _busy_vdp() -> V9938:
     vdp._cmd_ppb = 2
     vdp._cmd_bpp = 4
     vdp._tr_delay = 7
+    vdp.blink_state = True
+    vdp.blink_count = 17
     return vdp
 
 

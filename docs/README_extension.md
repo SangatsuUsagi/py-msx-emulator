@@ -1,26 +1,33 @@
 # Extensions
 
-`--extension1 <id>`/`--extension2 <id>` overlays a device fragment into
-primary slot 1 or slot 2 (respectively) on top of an already-resolved base
-machine, defined by a YAML fragment in `config/extensions/<id>.yaml`. Each
-cartridge slot can independently host at most one extension: `--extension1`
-unconditionally occupies primary slot 1, so it conflicts with the positional
-cartridge argument/`--slot1`/`--mapper1`; `--extension2` unconditionally
-occupies primary slot 2, so it conflicts with `--slot2`/`--mapper2`. The two
-slots' extensions (or an extension in one slot and a plain cartridge in the
-other) are otherwise independent and can be combined freely — except that the
-same `id` cannot be selected on both slots at once (rejected at startup; see
-[the "Slot model" section](#slot-model) below for why). The same ids can be
-set via the `extension1:`/`extension2:` keys in `py_emulator.yaml` (the older
-bare `extension:` key still works, as a legacy alias for `extension2:`), and
-the bare `--extension` CLI flag likewise still works, as an alias for
-`--extension2` — its exact meaning before `--extension1`/`--extension2`
-existed; `--extension1 none`/`--extension2 none` overrides that config-file
-setting for a single run, on that slot only. See
-[`README.md`'s "Emulated hardware" section](README.md#emulated-hardware) for
-the FM-PAC/SCC-I/HBI-J1 implementation detail (memory maps, I/O ports, known
-limitations) — this document focuses on what each extension is for and what
-ROM files it needs.
+`--extension1 <id>`/`--extension2 <id>` overlays a device fragment into primary
+slot 1 or slot 2, on top of an already-resolved base machine. A YAML fragment
+in `config/extensions/<id>.yaml` defines each extension.
+
+Each cartridge slot can hold at most one extension:
+
+- `--extension1` always occupies primary slot 1. It thus conflicts with the
+  positional cartridge argument, `--slot1`, and `--mapper1`.
+- `--extension2` always occupies primary slot 2. It thus conflicts with
+  `--slot2` and `--mapper2`.
+
+Apart from these conflicts, the two slots are independent. You can combine an
+extension in each slot, or an extension in one slot and a plain cartridge in
+the other. There is one exception: at startup, the emulator rejects the same
+`id` on both slots. See [the "Slot model" section](#slot-model) below for the
+reason.
+
+You can also set the ids with the `extension1:`/`extension2:` keys in
+`py_emulator.yaml`. The older bare `extension:` key still works, as a legacy
+alias for `extension2:`. The bare `--extension` CLI flag also still works, as
+an alias for `--extension2`. This was its exact meaning before
+`--extension1`/`--extension2` existed. `--extension1 none`/`--extension2 none`
+overrides the config-file setting for a single run, on that slot only.
+
+This document describes what each extension is for and which ROM files it
+needs. For the FM-PAC/SCC-I/HBI-J1 implementation details (memory maps, I/O
+ports, known limitations), see
+[the "Emulated hardware" section of `README.md`](../README.md#emulated-hardware).
 
 [日本語版はこちら](README_extension_ja.md)
 
@@ -38,68 +45,74 @@ ROM files it needs.
 
 ## Slot model
 
-What each primary slot can hold when building a machine, and which slot(s)
-`--extension1`/`--extension2` can actually reach:
+The table shows what each primary slot can hold when the emulator builds a
+machine. It also shows which slots `--extension1`/`--extension2` can reach:
 
 | Slot | Sub-slot expansion | Extensible via | What it can hold |
 | --- | --- | --- | --- |
-| 0 | No | No | Main BIOS ROM, plus an optional logo ROM at page 2 and, on some machines, flat RAM at one page (e.g. `hb_10`'s 16 KB SRAM at page 3) |
-| 1 | Yes, 0–3 (only ever via `--extension1` — no machine YAML declares slot 1 expanded on its own) | `--extension1` | Cartridge ROM + mapper (positional `cartridge`/`--slot1`/`--mapper`/`--mapper1`), **or**, once expanded: the same per-sub-slot device shapes slot 2 supports (below) |
-| 2 | Yes, 0–3 (only ever via `--extension2` — no machine YAML declares slot 2 expanded on its own) | `--extension2` | Cartridge ROM + mapper (`--slot2`/`--mapper2`), **or**, once expanded: any number of ROM sub-slots (each one `flat_rom`, or one bank-switched mapper kind — `ascii8`, `ascii16`, or `halnote`), at most one `ram_mapper` sub-slot, and at most one overlay-wide `io_device` (currently only `kanji_rom`, which has no slot location of its own) |
-| 3 | MSX2: yes, 0–3 (machine-defined only); MSX1: no | No | Fixed per machine YAML (`config/machines/*.yaml`), not selectable via `--extension1`/`--extension2`. MSX1: flat RAM sized per machine (32 KB default, 64 KB on `hb_10_64k`), or nothing on `hb_10`. MSX2: its own SUB ROM, a RAM mapper or flat RAM, and a floppy disk controller on `hb_f1xd` (WD2793) and `fs_a1f` (TC8566AF; implemented from public documentation, not verified against real hardware) |
+| 0 | No | No | Main BIOS ROM, plus an optional logo ROM at page 2 and, on some machines, flat RAM at one page (e.g. the 16 KB SRAM of `hb_10` at page 3) |
+| 1 | Yes, 0-3 (only through `--extension1`. No machine YAML declares slot 1 as expanded) | `--extension1` | Cartridge ROM + mapper (positional `cartridge`/`--slot1`/`--mapper`/`--mapper1`), **or**, when expanded, the same per-sub-slot device shapes as slot 2 (below) |
+| 2 | Yes, 0-3 (only through `--extension2`. No machine YAML declares slot 2 as expanded) | `--extension2` | Cartridge ROM + mapper (`--slot2`/`--mapper2`), **or**, when expanded: any number of ROM sub-slots (each one `flat_rom` or one bank-switched mapper kind: `ascii8`, `ascii16`, or `halnote`), at most one `ram_mapper` sub-slot, and at most one overlay-wide `io_device`. At present, the only `io_device` is `kanji_rom`, which has no slot location of its own |
+| 3 | MSX2: yes, 0-3 (machine-defined only). MSX1: no | No | Fixed by the machine YAML (`config/machines/*.yaml`). `--extension1`/`--extension2` cannot select it. MSX1: flat RAM with a size per machine (32 KB default, 64 KB on `hb_10_64k`), or nothing on `hb_10`. MSX2: its own SUB ROM, a RAM mapper or flat RAM, and a floppy disk controller on `hb_f1xd` (WD2793) and `fs_a1f` (TC8566AF, implemented from public documentation and not verified against real hardware) |
 
-Slot 1 and slot 2 are each independently extensible, one extension per slot
-(so two *different* extensions — one per slot — combine freely, e.g. FM-PAC
-in slot 1 alongside HBI-J1 in slot 2, or a game cartridge in one slot
-alongside an extension in the other). What is still not supported is the
-*same* id on both slots at once: `--extension1`/`--extension2` share
-`Machine`'s underlying per-slot cartridge-SRAM and save-state machinery, and
-there is essentially no real-hardware use case for it (the one theoretical
-case — stacking two FM-PAC/SCC-I cartridges for a richer multi-chip sound
-mix — is out of scope). This is rejected at startup as a same-ROM/same-
-extension-id check, independent of the (also still enforced) KonamiSCC
-single-chip-sharing check below. Slot 3's own sub-slot expansion is a
-base-machine property declared in `config/machines/*.yaml`, independent of
-and unaffected by either cartridge slot's extension (all expansions coexist,
-each with its own secondary slot register).
+Slot 1 and slot 2 are each independently extensible, with one extension per
+slot. Two *different* extensions, one per slot, thus combine freely. Examples
+are FM-PAC in slot 1 with HBI-J1 in slot 2, or a game cartridge in one slot
+with an extension in the other.
 
-The one thing that does not fall out of per-slot independence: a KonamiSCC
-cartridge mapper and an `scc_plus` extension both ultimately build a real
-SCC sound chip, and `Machine` has a single `scc` field — so `KonamiSCC` in
-one slot's mapper together with `scc_plus` in the other slot's extension (or
-`KonamiSCC` in both slots' mappers) is rejected, for the same
-one-physical-chip reason real hardware never has two SCC chips attached at
-once.
+This project does not support the *same* id on both slots at once, for two
+reasons. First, `--extension1`/`--extension2` share the per-slot
+cartridge-SRAM and save-state machinery of `Machine`. Second, there is almost
+no real-hardware use case for it. The one theoretical case is two stacked
+FM-PAC/SCC-I cartridges for a richer multi-chip sound mix, and this case is
+out of scope. The emulator rejects this configuration at startup with a
+same-ROM/same-extension-id check. This check is independent of the KonamiSCC
+single-chip check below, which the emulator also still applies.
+
+The sub-slot expansion of slot 3 is a base-machine property that
+`config/machines/*.yaml` declares. The extension of a cartridge slot has no
+effect on it. All expansions coexist, and each has its own secondary slot
+register.
+
+One rule does not follow from per-slot independence. A KonamiSCC cartridge
+mapper and an `scc_plus` extension both build a real SCC sound chip, but
+`Machine` has a single `scc` field. The emulator thus rejects `KonamiSCC` in
+the mapper of one slot together with `scc_plus` as the extension of the other
+slot. It also rejects `KonamiSCC` in the mappers of both slots. Real hardware
+has the same one-chip limit: it never has two SCC chips connected at once.
 
 ## FM-PAC
 
-`--extension1`/`--extension2 fmpac` — [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072), a real MSX-MUSIC
-cartridge: a YM2413 (OPLL) FM sound chip, 64 KB banked ROM, and 8 KB
-battery-backed SRAM. Requires the cartridge's own ROM at
-`roms/fmpac/fmpac.rom` — not distributed with this project; obtain your own
-dump.
+`--extension1`/`--extension2 fmpac`: [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072),
+a real MSX-MUSIC cartridge. It has a YM2413 (OPLL) FM sound chip, a 64 KB
+banked ROM, and 8 KB of battery-backed SRAM. It needs the ROM of the cartridge
+at `roms/fmpac/fmpac.rom`. This project does not distribute this ROM. Get your
+own dump.
 
 ## SCC-I cartridge (SCC+)
 
-`--extension1`/`--extension2 scc_plus` — a bare sound cartridge modeled on
-[Konami's SCC (052539)](https://www.msx.org/wiki/Konami_052539) sound chip,
-connected unconditionally in whichever primary slot the flag targets: 64 KB
-of physical bank-switched RAM addressed as if 128 KB (blank — no ROM/data
-file is ever loaded), with bank register bit 3 ignored so block N mirrors
-block N+8 — reproducing a documented real-hardware modification (["connect
-the two 64 KB banks"](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html))
-that lets one physical SCC-I cartridge work with either of the two factory
-RAM-population variants, each of which this project's two target titles
-expects. No ROM file is required.
+`--extension1`/`--extension2 scc_plus`: a bare sound cartridge modeled on the
+[Konami SCC (052539)](https://www.msx.org/wiki/Konami_052539) sound chip. The
+emulator always connects it in the primary slot that the flag selects. It has
+64 KB of physical bank-switched RAM, addressed as if it were 128 KB. The RAM is
+blank: the emulator never loads a ROM or data file into it. No ROM file is
+necessary.
+
+The bank register ignores bit 3, so block N mirrors block N+8. This reproduces
+a documented real-hardware modification (["connect the two 64 KB
+banks"](http://bifi.msxnet.org/msxnet/tech/soundcartridge.html)). With it, one
+physical SCC-I cartridge works with both factory RAM-population variants. Each
+of the two target titles of this project expects one of these variants.
 
 > **Note**: the author does not own a real SCC-I cartridge, or software that
-> uses one, so this implementation is based on publicly available
-> information and has not been verified against real hardware.
+> uses one. This implementation thus uses publicly available information, and
+> the author has not verified it against real hardware.
 
 ## Sony HBI-J1
 
-`--extension1`/`--extension2 hbi_j1` — [Sony HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1), a
-real Kanji-ROM + MSX-JE word-processor cartridge. Requires three ROM dumps at:
+`--extension1`/`--extension2 hbi_j1`: [Sony HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1),
+a real Kanji-ROM + MSX-JE word-processor cartridge. It needs three ROM dumps at
+these paths:
 
 ```
 roms/hbi_j1/
@@ -108,22 +121,24 @@ roms/hbi_j1/
 └── hbi-j1_msx-je.rom       (1 MB   — MSX-JE word-processor ROM)
 ```
 
-These are commercial Sony ROMs and are **not distributed with this project** —
-they are not redistributable under any license this project could grant. If
-you own a physical HBI-J1 cartridge, dump its ROMs yourself and place the
-files at the paths above; there is no other legitimate way to obtain them.
+These are commercial Sony ROMs. This project does **not distribute them**,
+because no license that this project can grant allows their redistribution. If
+you own a physical HBI-J1 cartridge, dump its ROMs yourself and put the files
+at the paths above. There is no other legitimate way to get them.
 
 ## memory_512k: 512 KB RAM expansion
 
-`--extension1`/`--extension2 memory_512k` does not correspond to any real
-cartridge — it is a 512 KB bank-switched RAM expansion for MSX2's main
-memory, placed in whichever primary slot the flag targets. Its main use is
-exercising MSX-DOS2 without a machine that already has a slot-3 RAM mapper:
-put an MSX-DOS2 kernel cartridge in one slot and this extension in the other,
-and the resulting machine has enough banked RAM to run MSX-DOS2. No ROM file
-is required — the RAM starts blank every run, with no save-file persistence.
-Two `ram_mapper`-declaring extensions across both slots at once (e.g. this
-one alongside `msxdos2_512k`, which also declares one) is rejected — see
+`--extension1`/`--extension2 memory_512k` is a 512 KB bank-switched RAM
+expansion for the MSX2 main memory, with no real-cartridge equivalent. The
+emulator puts it in the primary slot that the flag selects. Its main use is to
+run MSX-DOS2 on a machine that has no slot-3 RAM mapper. Put an MSX-DOS2 kernel
+cartridge in one slot and this extension in the other. The machine then has
+enough banked RAM to run MSX-DOS2.
+
+No ROM file is necessary. The RAM is blank at the start of each run, and the
+emulator does not save it to a file. The emulator rejects two extensions that
+each declare a `ram_mapper`, one in each slot. An example is this extension
+with `msxdos2_512k`, which also declares one. See
 [the "Slot model" section](#slot-model) above.
 
 ```bash
@@ -133,24 +148,25 @@ python . path/to/msxdos2_kernel.rom --extension2 memory_512k --machine hb_f1xd -
 
 ## msxdos2_512k: 512 KB RAM + MSX-DOS2 kernel
 
-`--extension1`/`--extension2 msxdos2_512k` is also not a real cartridge — it
-combines `memory_512k`'s 512 KB RAM expansion with an MSX-DOS2 kernel ROM in
-the same slot fragment, so a single `--extension1`/`--extension2` flag is
-enough to run MSX-DOS2 with no separate kernel cartridge in the other slot
-needed.
+`--extension1`/`--extension2 msxdos2_512k` also has no real-cartridge
+equivalent. It combines the 512 KB RAM expansion of `memory_512k` with an
+MSX-DOS2 kernel ROM in the same slot fragment. A single
+`--extension1`/`--extension2` flag is thus sufficient to run MSX-DOS2. You do
+not need a separate kernel cartridge in the other slot.
 
-The kernel ROM this extension expects is
+The kernel ROM for this extension is
 [`msxdos2s`](https://github.com/b3rendsh/msxdos2s), an open MSX-DOS2 kernel
-implementation, at `roms/msxdos2s/msxd22s.rom`. **Check that project's own
-license before use** — as of this writing it permits educational,
-non-commercial use only, not unrestricted redistribution or commercial use.
+implementation, at `roms/msxdos2s/msxd22s.rom`. **Check the license of that
+project before use.** At the time of writing, it permits only educational,
+non-commercial use. It does not permit unrestricted redistribution or
+commercial use.
 
-> **Note**: booting MSX-DOS2 also needs a floppy disk image containing
-> `MSXDOS2.SYS` and `COMMAND2.COM`, in addition to this extension's DOS2
-> kernel ROM. The `cbios_*` machines have no floppy disk controller at all,
-> so MSX-DOS2 cannot boot on them — use `--machine hb_f1xd` or `fs_a1f`
-> instead, both of which have one. `MSXDOS2.SYS`/`COMMAND2.COM` are **not**
-> included with this project. This applies equally to
+> **Note**: to boot MSX-DOS2, you also need a floppy disk image with
+> `MSXDOS2.SYS` and `COMMAND2.COM`, in addition to the DOS2 kernel ROM of this
+> extension. The `cbios_*` machines have no floppy disk controller, so
+> MSX-DOS2 cannot boot on them. Use `--machine hb_f1xd` or `fs_a1f` instead,
+> because both have one. This project does **not** include
+> `MSXDOS2.SYS`/`COMMAND2.COM`. The same applies to
 > [msxdos2_512k_kanjirom](#msxdos2_512k_kanjirom-kanji-font-rom) and
 > [msxdos2_512k_viewfont](#msxdos2_512k_viewfont-view-font-rom) below.
 
@@ -161,20 +177,20 @@ python . --extension2 msxdos2_512k --machine hb_f1xd --fdd1 path/to/disk.dsk
 
 ## msxdos2_512k_kanjirom: + Kanji font ROM
 
-`--extension1`/`--extension2 msxdos2_512k_kanjirom` adds the standard MSX
-JIS Kanji font ROM I/O device (ports `0xD8`-`0xDB`) on top of `msxdos2_512k`,
-so an MSX-DOS2 application can display Kanji. As configured, it reuses the HBI-J1 extension's
-own font dump at `roms/hbi_j1/hbi-j1_kanjifont.rom` — see the licensing note
-under [Sony HBI-J1](#sony-hbi-j1) above, which applies here identically. Any
-other JIS Kanji font ROM dump compatible with the `kanji_rom` I/O device can
-be substituted by editing `config/extensions/msxdos2_512k_kanjirom.yaml`'s
-`io_device.rom` block.
+`--extension1`/`--extension2 msxdos2_512k_kanjirom` adds the standard MSX JIS
+Kanji font ROM I/O device (ports `0xD8`-`0xDB`) to `msxdos2_512k`. With it, an
+MSX-DOS2 application can show Kanji. The default configuration uses the font
+dump of the HBI-J1 extension at `roms/hbi_j1/hbi-j1_kanjifont.rom`. The
+licensing note under [Sony HBI-J1](#sony-hbi-j1) above applies here in the same
+way. To use a different JIS Kanji font ROM dump that is compatible with the
+`kanji_rom` I/O device, edit the `io_device.rom` block in
+`config/extensions/msxdos2_512k_kanjirom.yaml`.
 
-This is the fixed-port I/O device shape only — a *mapper-based* (memory-mapped
-ROM cartridge) Kanji font, such as the one bundled with the MSX-View add-on
-package, is a different device kind and is not supported through this
-extension. See [msxdos2_512k_viewfont](#msxdos2_512k_viewfont-view-font-rom)
-below for that shape instead.
+This extension supports only the fixed-port I/O device shape. A
+*mapper-based* (memory-mapped ROM cartridge) Kanji font, such as the font in
+the MSX-View add-on package, is a different device kind. This extension does
+not support it. For that shape, see
+[msxdos2_512k_viewfont](#msxdos2_512k_viewfont-view-font-rom) below.
 
 ```bash
 # Same as msxdos2_512k, plus Kanji display support
@@ -184,20 +200,21 @@ python . --extension2 msxdos2_512k_kanjirom --machine hb_f1xd --fdd1 path/to/dis
 ## msxdos2_512k_viewfont: + View font ROM
 
 `--extension1`/`--extension2 msxdos2_512k_viewfont` adds an ASCII8-mapped
-(8 KB-bank MEGA ROM Controller) font ROM, compatible with the font cartridge bundled with the
-MSX-View add-on package, on top of `msxdos2_512k` (sub-slot 2, alongside
-`msxdos2_512k`'s RAM mapper and MSX-DOS2 kernel).
+(8 KB-bank MEGA ROM Controller) font ROM to `msxdos2_512k`. This ROM is
+compatible with the font cartridge in the MSX-View add-on package. It is in
+sub-slot 2, with the RAM mapper and the MSX-DOS2 kernel of `msxdos2_512k`.
 
-As configured, this uses the
+The default configuration uses the
 [MSXView Kanji Cartridge Compatible ROM](https://littlelimit.net/viewfont.htm)
-(`k12x8shn.rom`), a free, redistributable bitmap font ROM built from the
-Shinonome and k12x8 fonts specifically for this cartridge format — its
-license grants "unlimited permission... to use, copy, and distribute them,
-with or without modification, either commercially or noncommercially."
-This project does **not** bundle a copy — download it from the link above
-and place it at `roms/kanji/k12x8shn.rom`. Any other MSX-View-compatible
-font ROM also works; substitute one by editing
-`config/extensions/msxdos2_512k_viewfont.yaml`'s sub-slot 2 `rom` block.
+(`k12x8shn.rom`). This is a free, redistributable bitmap font ROM, made from
+the Shinonome and k12x8 fonts for this cartridge format. Its license grants
+"unlimited permission... to use, copy, and distribute them, with or without
+modification, either commercially or noncommercially."
+
+This project does **not** bundle a copy. Download it from the link above and
+put it at `roms/kanji/k12x8shn.rom`. Any other MSX-View-compatible font ROM
+also works. To use a different one, edit the sub-slot 2 `rom` block in
+`config/extensions/msxdos2_512k_viewfont.yaml`.
 
 ```bash
 # Same as msxdos2_512k, using a View-font-compatible Kanji ROM instead
@@ -206,8 +223,8 @@ python . --extension2 msxdos2_512k_viewfont --machine hb_f1xd --fdd1 path/to/dis
 
 ## ROM file layout
 
-Extension-related ROM files (not distributed with this project — see each
-extension's section above for how to obtain them):
+These are the extension-related ROM files. This project does not distribute
+them. See the section of each extension above for how to get them:
 
 ```
 roms/

@@ -1,6 +1,7 @@
 """RP-5C01 Real-Time Clock for MSX2 (ports 0xB4 address / 0xB5 data).
 
-Faithful to openMSX's RP5C01: 4 register blocks of 13 nibbles each, selected by
+Faithful to openMSX's RP5C01 and the RP5C01 data sheet
+(references/docs/RICOH_RP5C01.md): 4 register blocks of 13 nibbles each, selected by
 the low two bits of the mode register (reg 13). Blocks 0/1 are the clock and
 alarm/settings (block 0 time digits reflect the host clock captured at power-on);
 blocks 2/3 are 13 nibbles each of battery-backed CMOS RAM that must persist

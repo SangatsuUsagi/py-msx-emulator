@@ -109,8 +109,11 @@ DEFAULT_FORMAT_SIZE = "720"
 NUM_FATS = 2
 RESERVED_SECTORS = 1
 
-# A physical format leaves unwritten data sectors reading as 0xE5; matches
-# openMSX's formatter, so a fresh image looks like freshly formatted media.
+# A physical format leaves unwritten data sectors reading as 0xE5: MSX FORMAT
+# writes each sector's 512 data bytes as E5h (MSX Computing, August 1985,
+# "Peripherals"; references/docs/MSX Computing 1985-08 PERIPHERALS.md), and
+# openMSX's formatter does the same, so a fresh image looks like freshly
+# formatted media.
 FORMAT_FILL = 0xE5
 
 # Offset of the boot sector's executable region: bytes 0-2 are the jump

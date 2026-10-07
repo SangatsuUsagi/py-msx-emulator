@@ -40,8 +40,20 @@ _DEC_OPS: dict[int, int] = {
 # ---------------------------------------------------------------------------
 
 
+# Undocumented flags Y (bit 5) and X (bit 3) copy bits 5/3 of a per-family
+# source value (Sean Young, Undocumented Z80 Documented; references/z80):
+# usually the 8-bit result, but the operand for CP, A for SCF/CCF, the high
+# byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
+# (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
+# AND, SCF, BIT, RLCA). Not modelled: the internal MEMPTR register, which is
+# BIT n,(HL)'s Y/X source on hardware (so this core leaves them clear there);
+# the PC-derived Y/X of a repeating block instruction; SCF/CCF's Q dependence.
+_FLAG_YX = F.FLAG_Y | F.FLAG_X
+
+
 def _szp(v: int) -> int:
-    f = 0
+    """S, Z, P/V and the undocumented Y/X, all from v."""
+    f = v & _FLAG_YX
     if v == 0:
         f |= F.FLAG_Z
     if v & 0x80:
@@ -51,8 +63,9 @@ def _szp(v: int) -> int:
     return f
 
 
-# PORT-NOTE: _add8/_add16/_adc16/_sub8/_dec8/_sbc16 (and NEG, and the CPI/CPD
-#   block search) rely on Python's arbitrary-precision int as an implicit wide
+# PORT-NOTE: _add8/_add16/_adc16/_sub8/_dec8/_sbc16 (and NEG, the CPI/CPD
+#   block search with its `result - H` Y/X source, and LDI/LDD's `A + byte`
+#   Y/X source) rely on Python's arbitrary-precision int as an implicit wide
 #   accumulator. Addition's `result` is intentionally UN-masked so it can
 #   exceed the operand width (u8 -> up to 0x1FE, u16 -> up to 0x1FFFF); carry
 #   is `result > 0xFF`/`0xFFFF` and half-carry reads bit 4/12 of `result`.
@@ -74,7 +87,7 @@ def _szp(v: int) -> int:
 def _add8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
     result = a + b + carry
     r8 = result & 0xFF
-    f = 0
+    f = r8 & _FLAG_YX
     if r8 == 0:
         f |= F.FLAG_Z
     if r8 & 0x80:
@@ -93,7 +106,7 @@ def _add8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
 def _sub8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
     result = a - b - carry
     r8 = result & 0xFF
-    f = F.FLAG_N
+    f = F.FLAG_N | (r8 & _FLAG_YX)
     if r8 == 0:
         f |= F.FLAG_Z
     if r8 & 0x80:
@@ -131,12 +144,33 @@ def _xor8(cpu: Z80, v: int) -> None:
 
 
 def _cp8(cpu: Z80, v: int) -> None:
-    _sub8(cpu, cpu.registers.A, v)
+    """CP: flags of A - v, except Y/X, which come from the operand v.
+
+    Its own body rather than _sub8 plus a Y/X patch: CP is one of the most
+    frequent ALU ops, and a second F read-modify-write measured about 45 %
+    slower per call on CPython.
+    """
+    a = cpu.registers.A
+    result = a - v
+    r8 = result & 0xFF
+    f = F.FLAG_N | (v & _FLAG_YX)
+    if r8 == 0:
+        f |= F.FLAG_Z
+    if r8 & 0x80:
+        f |= F.FLAG_S
+    if result < 0:
+        f |= F.FLAG_C
+    if (a ^ v ^ result) & 0x10:
+        f |= F.FLAG_H
+    overflow = ((a ^ v) & (a ^ result)) & 0x80
+    if overflow:
+        f |= F.FLAG_PV
+    cpu.registers.F = f
 
 
 def _inc8(cpu: Z80, v: int) -> int:
     result = (v + 1) & 0xFF
-    f = cpu.registers.F & F.FLAG_C  # preserve C
+    f = (cpu.registers.F & F.FLAG_C) | (result & _FLAG_YX)  # preserve C
     if result == 0:
         f |= F.FLAG_Z
     if result & 0x80:
@@ -151,7 +185,7 @@ def _inc8(cpu: Z80, v: int) -> int:
 
 def _dec8(cpu: Z80, v: int) -> int:
     result = (v - 1) & 0xFF
-    f = (cpu.registers.F & F.FLAG_C) | F.FLAG_N  # preserve C, set N
+    f = (cpu.registers.F & F.FLAG_C) | F.FLAG_N | (result & _FLAG_YX)  # preserve C, set N
     if result == 0:
         f |= F.FLAG_Z
     if result & 0x80:
@@ -192,7 +226,8 @@ def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
 
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
     result = hl + rr
-    f = cpu.registers.F & ~(F.FLAG_H | F.FLAG_N | F.FLAG_C)
+    f = cpu.registers.F & ~(F.FLAG_H | F.FLAG_N | F.FLAG_C | _FLAG_YX)
+    f |= (result >> 8) & _FLAG_YX
     if result > 0xFFFF:
         f |= F.FLAG_C
     if (hl ^ rr ^ result) & 0x1000:
@@ -205,7 +240,7 @@ def _adc16(cpu: Z80, hl: int, rr: int) -> int:
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl + rr + c
     r16 = result & 0xFFFF
-    f = 0
+    f = (r16 >> 8) & _FLAG_YX
     if r16 == 0:
         f |= F.FLAG_Z
     if r16 & 0x8000:
@@ -225,7 +260,7 @@ def _sbc16(cpu: Z80, hl: int, rr: int) -> int:
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl - rr - c
     r16 = result & 0xFFFF
-    f = F.FLAG_N
+    f = F.FLAG_N | ((r16 >> 8) & _FLAG_YX)
     if r16 == 0:
         f |= F.FLAG_Z
     if r16 & 0x8000:
@@ -376,7 +411,7 @@ _CB_ROTATE_FNS: tuple[Callable[[Z80, int], int], ...] = (
 
 
 def _execute_cb(cpu: Z80) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     row = op >> 6
     bit = (op >> 3) & 7
     reg = op & 7
@@ -388,6 +423,8 @@ def _execute_cb(cpu: Z80) -> int:
         _set_r(cpu, reg, result)
     elif row == 1:  # BIT
         f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
+        if reg != 6:
+            f |= v & _FLAG_YX  # BIT n,(HL) would need MEMPTR: Y/X left clear
         if not (v & (1 << bit)):
             f |= F.FLAG_Z | F.FLAG_PV
         if (v & (1 << bit)) and bit == 7:
@@ -595,7 +632,7 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
     r = cpu.registers
     xy = r.IY if use_iy else r.IX
     d = _signed(cpu._fetch())
-    cb_op = cpu._fetch()
+    cb_op = cpu._fetch()  # DDCB/FDCB opcode byte: not an M1 read, so R is unchanged
     ea = (xy + d) & 0xFFFF
     v = cpu.read_byte(ea)
     row = cb_op >> 6
@@ -607,7 +644,8 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
         if reg != 6:
             _set_r(cpu, reg, result)
     elif row == 1:
-        f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
+        # Y/X from the high byte of MEMPTR, which is IX+d / IY+d here.
+        f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H | ((ea >> 8) & _FLAG_YX)
         if not (v & (1 << bit)):
             f |= F.FLAG_Z | F.FLAG_PV
         if (v & (1 << bit)) and bit == 7:
@@ -838,7 +876,7 @@ _build_dd_fd_dispatch()
 
 
 def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     handler = _DD_FD_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, use_iy, op)
@@ -878,7 +916,7 @@ def _ed_ld_r_a(cpu: Z80, op: int) -> int:
 def _ed_ld_a_ir(cpu: Z80, op: int) -> int:
     r = cpu.registers
     r.A = r.I if op == 0x57 else r.R
-    f = (r.F & F.FLAG_C) | (F.FLAG_PV if cpu.iff2 else 0)
+    f = (r.F & F.FLAG_C) | (F.FLAG_PV if cpu.iff2 else 0) | (r.A & _FLAG_YX)
     if r.A == 0:
         f |= F.FLAG_Z
     if r.A & 0x80:
@@ -1022,7 +1060,9 @@ def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
     r.HL = (r.HL + inc) & 0xFFFF
     r.DE = (r.DE + inc) & 0xFFFF
     r.BC = (r.BC - 1) & 0xFFFF
-    f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N)
+    f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N | _FLAG_YX)
+    n = (r.A + val) & 0xFF
+    f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A + byte
     if r.BC != 0:
         f |= F.FLAG_PV
     r.F = f
@@ -1046,6 +1086,8 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
         f |= F.FLAG_S
     if (r.A ^ val ^ result) & 0x10:
         f |= F.FLAG_H
+    n = (result - (1 if f & F.FLAG_H else 0)) & 0xFF
+    f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A - byte - H
     if r.BC != 0:
         f |= F.FLAG_PV
     r.F = f
@@ -1139,7 +1181,7 @@ _build_ed_dispatch()
 
 
 def _execute_ed(cpu: Z80) -> int:
-    op = cpu._fetch()
+    op = cpu._fetch_opcode()
     handler = _ED_DISPATCH.get(op)
     if handler is not None:
         return handler(cpu, op)
@@ -1490,7 +1532,7 @@ def _op_rlca(cpu: Z80) -> int:
     r = cpu.registers
     c = (r.A >> 7) & 1
     r.A = ((r.A << 1) | c) & 0xFF
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0)
+    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
     return 4
 
 
@@ -1498,7 +1540,7 @@ def _op_rrca(cpu: Z80) -> int:
     r = cpu.registers
     c = r.A & 1
     r.A = ((r.A >> 1) | (c << 7)) & 0xFF
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0)
+    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
     return 4
 
 
@@ -1507,7 +1549,7 @@ def _op_rla(cpu: Z80) -> int:
     old_c = 1 if (r.F & F.FLAG_C) else 0
     c = (r.A >> 7) & 1
     r.A = ((r.A << 1) | old_c) & 0xFF
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0)
+    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
     return 4
 
 
@@ -1516,7 +1558,7 @@ def _op_rra(cpu: Z80) -> int:
     old_c = 1 if (r.F & F.FLAG_C) else 0
     c = r.A & 1
     r.A = ((r.A >> 1) | (old_c << 7)) & 0xFF
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0)
+    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
     return 4
 
 
@@ -1536,7 +1578,7 @@ def _op_daa(cpu: Z80) -> int:
         a = (a - correction) & 0xFF
     else:
         a = (a + correction) & 0xFF
-    new_f = (F.FLAG_N if (f & F.FLAG_N) else 0) | (F.FLAG_C if new_c else 0)
+    new_f = (F.FLAG_N if (f & F.FLAG_N) else 0) | (F.FLAG_C if new_c else 0) | (a & _FLAG_YX)
     # Every DAA correction constant has bit 4 = 0, so any change of A's bit 4
     # can only be a carry/borrow out of bit 3 — i.e. the half-carry.
     if (a0 ^ a) & 0x10:
@@ -1565,13 +1607,14 @@ def _op_cpl(cpu: Z80) -> int:
     #   has no fixed-width bitwise NOT, so the mask is required here but
     #   disappears entirely in a fixed-width port.
     r.A = (~r.A) & 0xFF
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV | F.FLAG_C)) | F.FLAG_H | F.FLAG_N
+    r.F = ((r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV | F.FLAG_C)) | F.FLAG_H | F.FLAG_N
+           | (r.A & _FLAG_YX))
     return 4
 
 
 def _op_scf(cpu: Z80) -> int:
     r = cpu.registers
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | F.FLAG_C
+    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | F.FLAG_C | (r.A & _FLAG_YX)
     return 4
 
 
@@ -1582,6 +1625,7 @@ def _op_ccf(cpu: Z80) -> int:
         (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV))
         | (F.FLAG_H if old_c else 0)
         | (0 if old_c else F.FLAG_C)
+        | (r.A & _FLAG_YX)
     )
     return 4
 
