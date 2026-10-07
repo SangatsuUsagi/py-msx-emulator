@@ -584,12 +584,25 @@ def test_commands_do_nothing_outside_the_bitmap_modes() -> None:
     assert vdp._status2 & _CE == 0
 
 
-def test_leaving_bitmap_mode_aborts_the_command() -> None:
+def test_leaving_bitmap_mode_keeps_the_command_running() -> None:
+    # HB-F1XD CMDABRT.BAS: CE still 1 right after R#0 selects GRAPHIC 1.
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=128, ny=200, clr=0x00)
     assert vdp._status2 & _CE
-    _write_reg(vdp, 0, 0x00)  # leave GRAPHIC 4 for TEXT1
+    _write_reg(vdp, 0, 0x00)  # leave GRAPHIC 4 for GRAPHIC 1
+    assert vdp._status2 & _CE
+    assert vdp._cmd_active
+    vdp.tick(10_000_000)  # past the command's duration
     assert vdp._status2 & _CE == 0
+
+
+def test_cpu_transfer_survives_a_switch_out_of_the_bitmap_modes() -> None:
+    vdp = _make_vdp()
+    _dispatch(vdp, cmd_code=0xF, dx=0, dy=1, nx=4, ny=1, clr=0x12)  # HMMC, 2 bytes
+    _write_reg(vdp, 0, 0x00)  # GRAPHIC 1
+    _write_data(vdp, 0x34)
+    _write_reg(vdp, 0, _G4)
+    assert (vdp.vram[128], vdp.vram[129]) == (0x12, 0x34)  # GRAPHIC 4 row 1
     assert not vdp._cmd_active
 
 

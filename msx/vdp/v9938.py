@@ -628,18 +628,16 @@ class V9938:
         re-enables IE1 in the vblank ISR must not see a stale FH latched while
         IE1 was off.
 
-        R#0 also selects the screen mode, and the command engine only runs in
-        the bitmap modes. Leaving them aborts the command in progress
-        (openMSX VDPCmdEngine::updateDisplayMode → commandDone).
+        R#0 also selects the screen mode. Leaving the bitmap modes does NOT
+        abort a command in progress: confirmed on a real SONY HB-F1XD
+        (extras/HB-F1XD/CMDABRT.BAS, 2026-10-07: CE still 1 right after R#0
+        selects GRAPHIC 1 during an HMMV, and the page is filled after the
+        return to SCREEN 5). openMSX aborts it (updateDisplayMode) instead.
+        Whether the real command pauses outside the bitmap modes is not
+        known; here it keeps running on its dispatch-time geometry.
         """
         if (self.regs[0] & _R0_IE1) and not (new_r0 & _R0_IE1):
             self._status1 &= ~_S1_FH
-        if self._cmd_active and not _is_command_mode(new_r0):
-            self._cmd_active = False
-            self._cmd_code = _CMD_ABRT
-            self._cmd_remaining = 0
-            self._tr_delay = 0
-            self._status2 &= ~_S2_CE
 
     def snapshot_state(self) -> V9938State:
         """Capture every V9938-only field for a save state (see V9938State)."""
