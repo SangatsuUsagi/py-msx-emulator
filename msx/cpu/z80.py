@@ -90,6 +90,9 @@ class Z80:
     def _fetch_opcode(self) -> int:
         """Read the opcode byte after a CB/DD/ED/FD prefix: an M1 cycle, so R refreshes.
 
+        Not used for the DDCB/FDCB displacement and opcode bytes, which are
+        not M1 reads (read with _fetch()).
+
         R counts M1 cycles only: confirmed on a real SONY HB-F1XD
         (extras/HB-10/ZRREG.BAS, 2026-10-07: NOP, LD HL,nn, LD A,(nn),
         LD (IX+d),n and RLC B add 1 1 1 2 2), as the Z80 documentation and

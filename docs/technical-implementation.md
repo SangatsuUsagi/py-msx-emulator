@@ -337,10 +337,14 @@ operations:
 The engine executes each command immediately. To model the command duration,
 `V9938.tick(n)` decrements an approximate cycle budget (`_cmd_remaining`).
 The machine calls `tick(n)` after each instruction with the T-states that the
-instruction used. The budget uses `_CYCLES_PER_BYTE = 8` T-states per VRAM
-byte. This value comes from comparisons with openMSX golden logs (230K
-T-states for a 128×212 fill). Software that busy-waits on S#2 bit 0 (CE) sees
-CE clear after the budget expires.
+instruction used. Each block command has its own cost per element:
+`_HMMV_CYCLES_PER_BYTE` (10), `_HMMM_CYCLES_PER_BYTE` (21) and
+`_YMMM_CYCLES_PER_BYTE` (18) T-states per VRAM byte, `_LMMV_CYCLES_PER_DOT`
+(21) and `_LMMM_CYCLES_PER_DOT` (30) per dot. These values come from timing
+full-page commands on a real SONY HB-F1XD with the display and sprites on, the
+slowest case; the speed-up with less display or sprite VRAM traffic is not
+modelled. Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the
+budget expires.
 
 A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The
 first pixel or byte of a transfer comes from a pending COL write. The engine
@@ -880,7 +884,7 @@ These patterns translate directly to any statically typed target:
   because the field-layout guarantee is less important off the hot path.
 - **Timing constants**: `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
   `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
-  `_CYCLES_PER_BYTE`, etc. are module-level integer constants. The per-frame
+  `_TR_REASSERT_CYCLES`, etc. are module-level integer constants. The per-frame
   budget comes from the properties of the `VideoStandard` enum. A port writes
   these as a `match` / `const fn`.
 

@@ -27,11 +27,11 @@ from msx.vdp.v9938 import (
     _ARG_MAJ,
     _ARG_MXD,
     _ARG_MXS,
-    _CYCLES_PER_BYTE,
     _HMMM_CYCLES_PER_BYTE,
     _HMMV_CYCLES_PER_BYTE,
     _LMMM_CYCLES_PER_DOT,
     _LMMV_CYCLES_PER_DOT,
+    _TR_REASSERT_CYCLES,
     _YMMM_CYCLES_PER_BYTE,
     V9938,
 )
@@ -277,7 +277,7 @@ def test_transfer_ready_drops_on_a_byte_and_returns_one_byte_time_later() -> Non
 
     _write_data(vdp, 0x11)
     assert vdp._status2 & _TR == 0          # busy
-    vdp.tick(_CYCLES_PER_BYTE - 1)
+    vdp.tick(_TR_REASSERT_CYCLES - 1)
     assert vdp._status2 & _TR == 0          # still busy
     vdp.tick(1)
     assert vdp._status2 & _TR               # ready for the next byte
@@ -328,7 +328,7 @@ def test_cycle_cost_defaults() -> None:
     assert _YMMM_CYCLES_PER_BYTE == 18
     assert _LMMV_CYCLES_PER_DOT == 21
     assert _LMMM_CYCLES_PER_DOT == 30
-    assert _CYCLES_PER_BYTE == 8
+    assert _TR_REASSERT_CYCLES == 8
 
 
 @pytest.mark.parametrize(("cmd_code", "dy", "expected"), [

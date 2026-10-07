@@ -45,8 +45,9 @@ _DEC_OPS: dict[int, int] = {
 # usually the 8-bit result, but the operand for CP, A for SCF/CCF, the high
 # byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
-# AND, SCF, BIT, RLCA). Not modelled: MEMPTR (BIT n,(HL) clears Y/X), the
-# PC-derived Y/X of a repeating block instruction, SCF/CCF's Q dependence.
+# AND, SCF, BIT, RLCA). Not modelled: the internal MEMPTR register, which is
+# BIT n,(HL)'s Y/X source on hardware (so this core leaves them clear there);
+# the PC-derived Y/X of a repeating block instruction; SCF/CCF's Q dependence.
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
@@ -62,8 +63,9 @@ def _szp(v: int) -> int:
     return f
 
 
-# PORT-NOTE: _add8/_add16/_adc16/_sub8/_dec8/_sbc16 (and NEG, and the CPI/CPD
-#   block search) rely on Python's arbitrary-precision int as an implicit wide
+# PORT-NOTE: _add8/_add16/_adc16/_sub8/_dec8/_sbc16 (and NEG, the CPI/CPD
+#   block search with its `result - H` Y/X source, and LDI/LDD's `A + byte`
+#   Y/X source) rely on Python's arbitrary-precision int as an implicit wide
 #   accumulator. Addition's `result` is intentionally UN-masked so it can
 #   exceed the operand width (u8 -> up to 0x1FE, u16 -> up to 0x1FFFF); carry
 #   is `result > 0xFF`/`0xFFFF` and half-carry reads bit 4/12 of `result`.
@@ -142,9 +144,28 @@ def _xor8(cpu: Z80, v: int) -> None:
 
 
 def _cp8(cpu: Z80, v: int) -> None:
-    _sub8(cpu, cpu.registers.A, v)
-    r = cpu.registers
-    r.F = (r.F & ~_FLAG_YX & 0xFF) | (v & _FLAG_YX)  # CP: Y/X from the operand
+    """CP: flags of A - v, except Y/X, which come from the operand v.
+
+    Its own body rather than _sub8 plus a Y/X patch: CP is one of the most
+    frequent ALU ops, and a second F read-modify-write measured about 45 %
+    slower per call on CPython.
+    """
+    a = cpu.registers.A
+    result = a - v
+    r8 = result & 0xFF
+    f = F.FLAG_N | (v & _FLAG_YX)
+    if r8 == 0:
+        f |= F.FLAG_Z
+    if r8 & 0x80:
+        f |= F.FLAG_S
+    if result < 0:
+        f |= F.FLAG_C
+    if (a ^ v ^ result) & 0x10:
+        f |= F.FLAG_H
+    overflow = ((a ^ v) & (a ^ result)) & 0x80
+    if overflow:
+        f |= F.FLAG_PV
+    cpu.registers.F = f
 
 
 def _inc8(cpu: Z80, v: int) -> int:
@@ -611,7 +632,7 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
     r = cpu.registers
     xy = r.IY if use_iy else r.IX
     d = _signed(cpu._fetch())
-    cb_op = cpu._fetch()
+    cb_op = cpu._fetch()  # DDCB/FDCB opcode byte: not an M1 read, so R is unchanged
     ea = (xy + d) & 0xFFFF
     v = cpu.read_byte(ea)
     row = cb_op >> 6
@@ -623,6 +644,7 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
         if reg != 6:
             _set_r(cpu, reg, result)
     elif row == 1:
+        # Y/X from the high byte of MEMPTR, which is IX+d / IY+d here.
         f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H | ((ea >> 8) & _FLAG_YX)
         if not (v & (1 << bit)):
             f |= F.FLAG_Z | F.FLAG_PV
