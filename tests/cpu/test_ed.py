@@ -445,7 +445,7 @@ def test_r_counts_m1_cycles_only(code: list[int], m1_cycles: int) -> None:
 def test_ld_r_a_sets_bit7_and_next_fetch_preserves_it() -> None:
     """R's auto-increment on fetch only touches bits 0-6; bit 7 is sticky
     and changes only via a full-register write like LD R,A. Regression
-    guard for the sticky-bit-7 fix in Z80._fetch()/step()."""
+    guard for the sticky-bit-7 fix in Z80._fetch_opcode()/step()."""
     cpu = make_cpu([0xED, 0x4F, 0x00])  # LD R, A ; NOP
     cpu.registers.A = 0xC8  # bit 7 set
     cpu.registers.F = F.FLAG_Z | F.FLAG_C  # LD R,A affects no flags

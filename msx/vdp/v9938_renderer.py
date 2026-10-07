@@ -1015,7 +1015,11 @@ def _render_text2(
     if blink_bg == 0:
         blink_bg = _colour0(regs)
     blink_fg = (regs[12] >> 4) & 0x0F
-    if blink_fg == 0:  # matches openMSX: blink text colour 0 shows the blink background
+    # Deliberately unlike the plain text colour above: a blink text colour 0
+    # shows the blink background, not the TP-dependent colour 0. Confirmed on
+    # a real SONY HB-F1XD (extras/HB-F1XD/T2BLINK.BAS, 2026-10-05: R#12=&H08
+    # makes the blink text invisible) and in openMSX; MAME draws colour 0.
+    if blink_fg == 0:
         blink_fg = blink_bg
     ye = y_end if y_end is not None else _TILE_H
     row_start = y_start // 8

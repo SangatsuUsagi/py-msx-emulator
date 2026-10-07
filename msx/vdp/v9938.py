@@ -206,7 +206,7 @@ _ARG_MXS = 0x10  # source in expansion RAM
 _ARG_MXD = 0x20  # destination in expansion RAM
 
 # TR re-assert delay after each HMMC/LMMC byte (calibrated from an openMSX log).
-_CYCLES_PER_BYTE: int = 8
+_TR_REASSERT_CYCLES: int = 8
 # CE duration per unit (T-states per byte for HMMV/HMMM/YMMM, per dot for
 # LMMV/LMMM), measured on a real SONY HB-F1XD (extras/HB-F1XD/CMDTIME.BAS,
 # 2026-10-07: 20 full-page commands in SCREEN 5 with display and sprites on,
@@ -815,14 +815,7 @@ class V9938:
         if self._cmd_remaining > 0:
             self._cmd_remaining -= cycles
             if self._cmd_remaining <= 0:
-                # Completion clears CE only: TR keeps its value until the next
-                # R#44 write / S#7 read taken with no command running
-                # (openMSX commandDone(), which never touches TR; V9938 data
-                # book LMCM note 2: the command completes with CE = 0 even
-                # while TR = 1).
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
-                self._status2 &= ~_S2_CE
+                self._complete_command()
         if self._tr_delay > 0:
             self._tr_delay -= cycles
             if self._tr_delay <= 0 and self._cmd_active:
@@ -872,7 +865,11 @@ class V9938:
             # on a real SONY HB-F1XD (extras/HB-10/RDBUF.BAS, 2026-10-07: IN
             # after OUT returns the written byte); openMSX agrees.
             self._read_buf = value
-            self._advance_addr()
+            addr = self._addr + 1
+            if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
+                self._addr = addr
+            else:
+                self._advance_addr()
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
             self._ctrl_pending = False
@@ -981,7 +978,11 @@ class V9938:
         if port == 0:
             result = self._read_buf
             self._read_buf = self.vram[self._addr]
-            self._advance_addr()
+            addr = self._addr + 1
+            if addr & 0x3FFF:  # no A13-A0 wrap: the common case, kept inline
+                self._addr = addr
+            else:
+                self._advance_addr()
             self._ctrl_pending = False
             return result
         if port == 1:
@@ -1127,21 +1128,13 @@ class V9938:
         result = _apply_log(src, dst, log & 0x7, mask) & mask
         self.vram[addr] = (existing & ~(mask << shift) & 0xFF) | (result << shift)
 
-    def _byte_cmd_cycles(self, byte_cols: int, ny: int, per_byte: int) -> int:
-        """CE duration for a byte-unit command (HMMV/HMMM/YMMM).
+    def _cmd_cycles(self, units: int, ny: int, per_unit: int) -> int:
+        """CE duration of a block command: units × ny elements at per_unit T-states each.
 
-        Each of the byte_cols × ny VRAM bytes costs per_byte T-states.
-        Clamped to a 4 T-state minimum.
+        units is bytes per line for HMMV/HMMM/YMMM and dots per line for
+        LMMV/LMMM. Clamped to a 4 T-state minimum.
         """
-        return max(4, byte_cols * ny * per_byte)
-
-    def _pixel_cmd_cycles(self, nx_px: int, ny: int, per_dot: int) -> int:
-        """CE duration for a dot-unit command (LMMV/LMMM).
-
-        Each of the nx_px × ny dots costs per_dot T-states.
-        Clamped to a 4 T-state minimum.
-        """
-        return max(4, nx_px * ny * per_dot)
+        return max(4, units * ny * per_unit)
 
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14]).
@@ -1275,7 +1268,7 @@ class V9938:
         # source reads as the all-ones dot value, as in _cmd_point.
         self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
         if self._cmd_nx == 1 and self._cmd_ny == 1:
-            self._finish_lmcm()  # the first dot is also the last
+            self._complete_command()  # one-dot LMCM: the first dot is also the last
 
     def _cmd_lmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, sw: int, clr: int, log: int, dst_ext: bool,
@@ -1290,7 +1283,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, yy, clr_px, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
 
     def _cmd_lmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, sw: int, log: int, src_ext: bool,
@@ -1307,7 +1300,7 @@ class V9938:
                     self._vram_pixel_write(dx + col * xs, dyy, src_pix, log)
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._pixel_cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
+        self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
 
     def _cmd_hmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, clr: int, dst_ext: bool) -> None:
@@ -1324,7 +1317,7 @@ class V9938:
                     self.vram[self._vram_byte_addr_col(start_col + c * xs, yy)] = clr
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
 
     def _cmd_hmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                   diy: bool, xs: int, ys: int, src_ext: bool, dst_ext: bool) -> None:
@@ -1342,7 +1335,7 @@ class V9938:
                     self.vram[dst] = 0xFF if src_ext else self.vram[src]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
 
     def _cmd_ymmm(self, sy: int, dx: int, dy: int, ny: int, dix: bool, diy: bool, xs: int,
                   ys: int, dst_ext: bool) -> None:
@@ -1362,7 +1355,7 @@ class V9938:
                         self.vram[self._vram_byte_addr_col(col, syy)]
         self._cmd_active = True
         self._status2 |= _S2_CE
-        self._cmd_remaining = self._byte_cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
+        self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
 
     def _cmd_cpu_feed(self, cmd: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
                       diy: bool, xs: int, ys: int, sw: int, log: int, clr: int) -> None:
@@ -1449,9 +1442,9 @@ class V9938:
             return
         # A pending byte is being consumed → clear the transfer latch.
         self._cmd_transfer = False
-        # TR=0 while VDP processes; tick() re-asserts TR after _CYCLES_PER_BYTE
+        # TR=0 while VDP processes; tick() re-asserts TR after _TR_REASSERT_CYCLES
         self._status2 &= ~_S2_TR
-        self._tr_delay = _CYCLES_PER_BYTE
+        self._tr_delay = _TR_REASSERT_CYCLES
         px = self._cmd_dx + self._cmd_x * self._cmd_xstep
         py = self._cmd_dy + self._cmd_y * self._cmd_ystep
         dst_ext = bool(self.cmd_regs[13] & _ARG_MXD)
@@ -1470,44 +1463,47 @@ class V9938:
             self._cmd_x = 0
             self._cmd_y += 1
             if self._cmd_y >= self._cmd_ny:
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
                 self._tr_delay = 0
+                self._complete_command()
                 # The completing byte leaves TR set: confirmed on a real SONY
                 # HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS line 4, 2026-10-07: a
                 # 2-byte HMMC reads TR/CE 80 after its last byte, 00 after an
                 # idle R#44 write); openMSX agrees.
-                self._status2 = (self._status2 & ~_S2_CE) | _S2_TR
+                self._status2 |= _S2_TR
 
     def _advance_lmcm(self) -> None:
         """Take the staged LMCM dot and fetch the next one.
 
         Driven by the CPU reading S#7 (or the data port): one dot per read,
-        walking the source rectangle in the DIX/DIY directions. Fetching the
-        last dot completes the command (see _finish_lmcm).
+        walking the source rectangle in the DIX/DIY directions.
         """
+        # The command ends when its last dot is staged (below), so the cursor
+        # never steps past the rectangle while the command is active.
         self._cmd_x += 1
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1
         x = self._cmd_sx + self._cmd_x * self._cmd_xstep
         y = self._cmd_sy + self._cmd_y * self._cmd_ystep
-        if self.cmd_regs[13] & _ARG_MXS:
-            self.cmd_regs[12] = 0xFF & ((1 << self._cmd_bpp) - 1)  # as in _cmd_point
-        else:
-            self.cmd_regs[12] = self._vram_pixel_read(x, y) & ((1 << self._cmd_bpp) - 1)
+        src_ext = bool(self.cmd_regs[13] & _ARG_MXS)
+        dot_mask = (1 << self._cmd_bpp) - 1
+        self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(x, y)) & dot_mask
         if self._cmd_x == self._cmd_nx - 1 and self._cmd_y == self._cmd_ny - 1:
-            self._finish_lmcm()
+            # LMCM completes once its last dot is staged; TR stays 1, and the
+            # S#7 read that then takes the dot runs with no command active, so
+            # it clears TR. Confirmed on a real SONY HB-F1XD
+            # (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after the
+            # start, then 81 81 80 00 over the four reads of a four-dot LMCM);
+            # openMSX executeLmcm agrees.
+            self._complete_command()
 
-    def _finish_lmcm(self) -> None:
-        """Complete an LMCM once its last dot is staged in the colour register.
+    def _complete_command(self) -> None:
+        """End the running command: CE clears, TR keeps its value.
 
-        CE clears and TR stays 1; the S#7 read that then takes the last dot
-        runs with no command active, so it clears TR. Confirmed on a real
-        SONY HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after
-        the start, then 81 81 80 00 over the four reads of a four-dot LMCM);
-        openMSX executeLmcm agrees (it completes right after fetching the
-        last dot).
+        TR is cleared only by the next R#44 write or S#7 read taken with no
+        command running (openMSX commandDone(), which never touches TR; V9938
+        data book LMCM note 2: the command completes with CE = 0 even while
+        TR = 1). A caller that must also set TR does so after this call.
         """
         self._cmd_active = False
         self._cmd_code = _CMD_ABRT
