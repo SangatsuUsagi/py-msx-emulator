@@ -1262,6 +1262,8 @@ class V9938:
         # The first dot is fetched at once (openMSX startLmcm sets its
         # transfer flag); every S#7 read takes one and stages the next.
         self.cmd_regs[12] = 0xFF if src_ext else self._vram_pixel_read(sx, sy) & px_mask
+        if self._cmd_nx == 1 and self._cmd_ny == 1:
+            self._finish_lmcm()  # the first dot is also the last
 
     def _cmd_lmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
                   xs: int, ys: int, sw: int, clr: int, log: int, dst_ext: bool,
@@ -1465,20 +1467,32 @@ class V9938:
         """Take the staged LMCM dot and fetch the next one.
 
         Driven by the CPU reading S#7 (or the data port): one dot per read,
-        walking the source rectangle in the DIX/DIY directions.
+        walking the source rectangle in the DIX/DIY directions. Fetching the
+        last dot completes the command (see _finish_lmcm).
         """
         self._cmd_x += 1
         if self._cmd_x >= self._cmd_nx:
             self._cmd_x = 0
             self._cmd_y += 1
-            if self._cmd_y >= self._cmd_ny:
-                self._cmd_active = False
-                self._cmd_code = _CMD_ABRT
-                self._status2 &= ~_S2_CE  # TR survives completion
-                return
         x = self._cmd_sx + self._cmd_x * self._cmd_xstep
         y = self._cmd_sy + self._cmd_y * self._cmd_ystep
         if self.cmd_regs[13] & _ARG_MXS:
             self.cmd_regs[12] = 0xFF
         else:
             self.cmd_regs[12] = self._vram_pixel_read(x, y) & ((1 << self._cmd_bpp) - 1)
+        if self._cmd_x == self._cmd_nx - 1 and self._cmd_y == self._cmd_ny - 1:
+            self._finish_lmcm()
+
+    def _finish_lmcm(self) -> None:
+        """Complete an LMCM once its last dot is staged in the colour register.
+
+        CE clears and TR stays 1; the S#7 read that then takes the last dot
+        runs with no command active, so it clears TR. Confirmed on a real
+        SONY HB-F1XD (extras/HB-F1XD/VDPCMD2.BAS, 2026-10-07: TR/CE 81 after
+        the start, then 81 81 80 00 over the four reads of a four-dot LMCM);
+        openMSX executeLmcm agrees (it completes right after fetching the
+        last dot).
+        """
+        self._cmd_active = False
+        self._cmd_code = _CMD_ABRT
+        self._status2 &= ~_S2_CE
