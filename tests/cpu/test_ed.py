@@ -318,7 +318,7 @@ def test_sbc_hl_bc_pair() -> None:
 def test_sbc_hl_de_pair_borrow() -> None:
     cpu = _sbc_hl(0x52, 0x0000, lambda r: setattr(r, "DE", 0x0001), carry=False)
     assert cpu.registers.HL == 0xFFFF
-    assert cpu.registers.F == (F.FLAG_S | F.FLAG_H | F.FLAG_N | F.FLAG_C)
+    assert cpu.registers.F == (F.FLAG_S | F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_N | F.FLAG_C)
 
 
 def test_sbc_hl_hl_pair_self_zero() -> None:
@@ -330,7 +330,8 @@ def test_sbc_hl_hl_pair_self_zero() -> None:
 def test_sbc_hl_sp_pair() -> None:
     cpu = _sbc_hl(0x72, 0x8000, lambda r: setattr(r, "SP", 0x0001), carry=False)
     assert cpu.registers.HL == 0x7FFF
-    assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV | F.FLAG_N)  # signed overflow
+    # signed overflow; Y/X from the high byte 0x7F
+    assert cpu.registers.F == (F.FLAG_Y | F.FLAG_H | F.FLAG_X | F.FLAG_PV | F.FLAG_N)
 
 
 # --- 1.3 IN/OUT (C), RETN, IM 0, LD A,R, RRD/RLD ---------------------------

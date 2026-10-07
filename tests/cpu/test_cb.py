@@ -178,16 +178,17 @@ def test_rotate_shift_flags_are_fresh_every_op() -> None:
     # preserved). F starts as 0xFF (every flag set, including carry-in=1 for
     # RL/RR) to prove every bit gets overwritten, not just the ones the
     # tests above happen to check. A=0xC3 (1100 0011) exercises a left-hand
-    # and a right-hand carry alongside the fresh S/PV recompute.
+    # and a right-hand carry alongside the fresh S/PV recompute. Y/X (bits
+    # 5/3) also come from the result (0xE1 and 0x61 have bit 5 set).
     cases = [
         (0x07, 0x87, 0x85),  # RLC A
-        (0x0F, 0xE1, 0x85),  # RRC A
+        (0x0F, 0xE1, 0xA5),  # RRC A
         (0x17, 0x87, 0x85),  # RL A  (carry-in=1 from stale F)
-        (0x1F, 0xE1, 0x85),  # RR A  (carry-in=1 from stale F)
+        (0x1F, 0xE1, 0xA5),  # RR A  (carry-in=1 from stale F)
         (0x27, 0x86, 0x81),  # SLA A
-        (0x2F, 0xE1, 0x85),  # SRA A
+        (0x2F, 0xE1, 0xA5),  # SRA A
         (0x37, 0x87, 0x85),  # SLL A
-        (0x3F, 0x61, 0x01),  # SRL A
+        (0x3F, 0x61, 0x21),  # SRL A
     ]
     for opcode, expected_result, expected_flags in cases:
         cpu = make_cpu([0xCB, opcode])
