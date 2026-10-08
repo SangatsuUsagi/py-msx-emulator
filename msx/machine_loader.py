@@ -78,7 +78,7 @@ from msx.mapper import (
 )
 from msx.memory import Memory
 from msx.opll import Opll
-from msx.ppi import PPI
+from msx.ppi import PPI, PpiControlRead
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
@@ -311,9 +311,10 @@ class MachineSpec:
     # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
     keyboard_type: str = "int"
 
-    # Whether a port 0xAB read returns the PPI control word, resolved from the
-    # ppi8255 device (False for the S1985 machines -- see msx/ppi.py).
-    ppi_control_readback: bool = True
+    # What a port 0xAB read returns, resolved from the ppi8255 device
+    # (open_bus on the S1985 machines, bus_latch on the S3527 ones -- see
+    # msx/ppi.py).
+    ppi_control_read: PpiControlRead = PpiControlRead.CONTROL
 
     # RAM mapper's configured size (MSX2, when has_ram_mapper is True), resolved
     # from the mapper: standard sub-slot's size_kb -- default 128 preserves
@@ -951,7 +952,7 @@ class _BuiltinDevices(NamedTuple):
     has_v9938: bool
     has_rtc: bool
     keyboard_type: str
-    ppi_control_readback: bool
+    ppi_control_read: PpiControlRead
     io_ports: dict[str, tuple[int, int]]
 
 
@@ -964,7 +965,7 @@ def _parse_builtin_devices(
     has_v9938 = False
     has_rtc = False
     keyboard_type = "int"
-    ppi_control_readback = True
+    ppi_control_read = PpiControlRead.CONTROL
     device_io_ports: dict[str, tuple[int, int]] = {}
 
     for entry in raw.get("builtin_devices", []):
@@ -1001,21 +1002,29 @@ def _parse_builtin_devices(
                     f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
                 )
             keyboard_type = kt
-            readback = dev.raw.get("control_readback", True)
-            if isinstance(overrides, dict) and "control_readback" in overrides:
-                readback = overrides["control_readback"]
-            if not isinstance(readback, bool):
+            if "control_readback" in dev.raw or (
+                isinstance(overrides, dict) and "control_readback" in overrides
+            ):
                 raise MachineLoadError(
-                    f"{machine_path}: ppi8255 control_readback must be true or false, "
-                    f"got {readback!r}"
+                    f"{machine_path}: ppi8255 control_readback was replaced by "
+                    "control_read (control, open_bus or bus_latch)"
                 )
-            ppi_control_readback = readback
+            cr = dev.raw.get("control_read", PpiControlRead.CONTROL.value)
+            if isinstance(overrides, dict) and "control_read" in overrides:
+                cr = overrides["control_read"]
+            valid = [m.value for m in PpiControlRead]
+            if cr not in valid:
+                raise MachineLoadError(
+                    f"{machine_path}: ppi8255 control_read must be one of {valid}, "
+                    f"got {cr!r}"
+                )
+            ppi_control_read = PpiControlRead(cr)
         ports_raw: Any = dev.raw.get("io_ports")
         if isinstance(ports_raw, list) and len(ports_raw) >= 1:
             device_io_ports[ref_str] = (int(ports_raw[0]), int(ports_raw[-1]))
 
     return _BuiltinDevices(
-        has_v9938, has_rtc, keyboard_type, ppi_control_readback, device_io_ports
+        has_v9938, has_rtc, keyboard_type, ppi_control_read, device_io_ports
     )
 
 
@@ -1135,7 +1144,7 @@ def load_machine_spec(
         ram_size_kb = _parse_slot3_msx1(cast(Slot3Msx1Yaml, slot3))
 
     # --- Builtin device resolution ---
-    has_v9938, has_rtc, keyboard_type, ppi_control_readback, device_io_ports = (
+    has_v9938, has_rtc, keyboard_type, ppi_control_read, device_io_ports = (
         _parse_builtin_devices(raw, device_registry, machine_path)
     )
 
@@ -1165,7 +1174,7 @@ def load_machine_spec(
         has_v9938=has_v9938,
         has_rtc=has_rtc,
         keyboard_type=keyboard_type,
-        ppi_control_readback=ppi_control_readback,
+        ppi_control_read=ppi_control_read,
         device_io_ports=device_io_ports,
         video_standard=video_standard,
         m1_wait_states=m1_wait_states,
@@ -2248,7 +2257,7 @@ def _build_msx1(
     )
     vdp = VDP(_logger=logger)
     ppi = PPI(
-        memory=memory, _input=input_state, control_readback=spec.ppi_control_readback
+        memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
     _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
@@ -2378,7 +2387,7 @@ def _build_msx2(
         rtc_sram = _load_sram_or_warn(rtc_sram_save_path, RTC_SRAM_SIZE, label="RTC ")
         rtc = RTC(sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE))
     ppi = PPI(
-        memory=memory, _input=input_state, control_readback=spec.ppi_control_readback
+        memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
 
     # V9938 adds the palette (0x9A) and indirect-register (0x9B) ports; the

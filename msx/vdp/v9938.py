@@ -1474,7 +1474,7 @@ class V9938:
     def _advance_lmcm(self) -> None:
         """Take the staged LMCM dot and fetch the next one.
 
-        Driven by the CPU reading S#7 (or the data port): one dot per read,
+        Driven by the CPU reading S#7: one dot per read,
         walking the source rectangle in the DIX/DIY directions.
         """
         # The command ends when its last dot is staged (below), so the cursor

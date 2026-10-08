@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3537%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3548%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -281,7 +281,12 @@ from the mixed PSG/SCC/DAC/OPLL signal.
 ### PPI (Programmable Peripheral Interface): Intel i8255
 
 The PPI has the slot-select register (port 0xA8), the 11-row × 8-bit MSX
-keyboard matrix (port 0xA9), and row selection (port 0xAA).
+keyboard matrix (port 0xA9), and row selection (port 0xAA). A read of the
+write-only control port 0xAB depends on the machine's PPI, set per machine
+with `control_read`: the last mode word (default, as a CMOS 82C55A), 0xFF
+(`open_bus`, the S1985 machines, checked on a real HB-F1XD), or a byte
+latched from the last PPI access (`bus_latch`, the S3527 in `hb_10` /
+`hb_10_64k`, checked on a real HB-10).
 
 - Implementation: `msx/ppi.py`
 - Known limitations: the emulator does not implement the cassette interface
@@ -578,23 +583,23 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 285.57 | ~4.8× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 571.82 | ~9.5× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 299.56 | ~5.0× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1123.72 | ~18.7× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1269.52 | ~21.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1069.07 | ~17.8× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 74.91 | ~1.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 189.38 | ~3.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 84.54 | ~1.4× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 359.38 | ~6.0× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 472.93 | ~7.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 314.82 | ~5.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 292.67 | ~4.9× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 705.33 | ~11.8× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 313.11 | ~5.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1226.14 | ~20.4× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1412.82 | ~23.5× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1151.97 | ~19.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 76.25 | ~1.3× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 191.72 | ~3.2× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 84.96 | ~1.4× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 353.01 | ~5.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 472.98 | ~7.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 307.53 | ~5.1× |
 
 Every tested combination is faster than the raw 60 fps target. The smallest
-margin is ~1.2×, on Raspberry Pi 5 with CPython and Salamander. Salamander
+margin is ~1.3×, on Raspberry Pi 5 with CPython and Salamander. Salamander
 (MSX1, KonamiSCC mapper) has the heaviest rendering and audio load of the
-target titles. PyPy increases the same case to ~6.0×.
+target titles. PyPy increases the same case to ~5.9×.
 
 On hardware slower than a Raspberry Pi 5, or with a heavier title, a run can
 still go below 60 fps. If this occurs, the game runs in slow motion, at a rate
@@ -612,7 +617,7 @@ values, not exact values.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.7.0, per platform and runtime.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.7.5, per platform and runtime.
 The author measured all versions with the same cold-boot method as above.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
@@ -1031,12 +1036,12 @@ Key fields:
 | Field | Description |
 | --- | --- |
 | `generation` | `msx1` or `msx2`. Sets the VDP class and the memory model |
-| `cpu.clock_mhz` | Z80A clock frequency (3.579545 MHz for NTSC MSX) |
+| `cpu.clock_mhz` | Z80A clock frequency (3.579545 MHz for NTSC MSX). Documentation only: the loader does not read it |
 | `cpu.m1_wait_states` | Extra T-states per M1/opcode fetch (optional, default 0 = pure Z80). MSX machines use `1` |
 | `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Shallow merge over the defaults of a device (e.g. `vram_kb: 128` for V9938) |
+| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`; it accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
 | `sha1` | `null` means load without hash verification |
 
 To use a custom machine definition, add a new YAML file to `config/machines/`
@@ -1047,7 +1052,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3537 tests and covers all major components. It includes
+The test suite has 3548 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1117,7 +1122,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3537 tests
+├── tests/                 # Test suite — 3548 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
