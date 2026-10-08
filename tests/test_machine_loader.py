@@ -24,6 +24,7 @@ from msx.machine_loader import (
     load_device_registry,
     load_machine_spec,
 )
+from msx.ppi import PpiControlRead
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
@@ -482,51 +483,68 @@ def test_keyboard_type_override_jp_from_real_config() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ppi_control_readback resolution (ppi8255 device default + per-machine override)
+# ppi_control_read resolution (ppi8255 device default + per-machine override)
 # ---------------------------------------------------------------------------
 
-def test_ppi_control_readback_defaults_to_true_from_real_config() -> None:
+def test_ppi_control_read_defaults_to_control_from_real_config() -> None:
     reg = load_device_registry(Path("config"))
     spec = load_machine_spec("cbios_msx2", Path("config"), reg, Path("."))
-    assert spec.ppi_control_readback is True
+    assert spec.ppi_control_read is PpiControlRead.CONTROL
 
 
-def test_ppi_control_readback_false_for_s1985_machines() -> None:
+def test_ppi_control_read_open_bus_for_s1985_machines() -> None:
     reg = load_device_registry(Path("config"))
     for mid in ("hb_f1xd", "hb_f1xd_256k", "fs_a1f"):
         spec = load_machine_spec(mid, Path("config"), reg, Path("."))
-        assert spec.ppi_control_readback is False, mid
+        assert spec.ppi_control_read is PpiControlRead.OPEN_BUS, mid
 
 
-def _ppi_readback_machine(tmp_path: Path, override: str) -> tuple[Path, dict]:
+def test_ppi_control_read_bus_latch_for_s3527_machines() -> None:
+    reg = load_device_registry(Path("config"))
+    for mid in ("hb_10", "hb_10_64k"):
+        spec = load_machine_spec(mid, Path("config"), reg, Path("."))
+        assert spec.ppi_control_read is PpiControlRead.BUS_LATCH, mid
+
+
+def _ppi_control_read_machine(
+    tmp_path: Path, override: str, key: str = "control_read"
+) -> tuple[Path, dict]:
     config_dir, registry = _full_registry(tmp_path)
     _write(
         config_dir / "devices" / "ppi8255.yaml",
         "id: ppi8255\ntype: io_device\nimplemented: true\n"
-        "io_ports: [0xA8]\nkeyboard_type: int\ncontrol_readback: true\n",
+        "io_ports: [0xA8]\nkeyboard_type: int\ncontrol_read: control\n",
     )
     registry = load_device_registry(config_dir)
     yaml_text = _msx1_yaml_with_extra_ref("ppi8255").replace(
         "- ref: ppi8255",
-        f"- ref: ppi8255\n    overrides: {{control_readback: {override}}}",
+        f"- ref: ppi8255\n    overrides: {{{key}: {override}}}",
     )
     _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
     return config_dir, registry
 
 
-def test_ppi_control_readback_override_reaches_the_ppi(tmp_path: Path) -> None:
-    config_dir, registry = _ppi_readback_machine(tmp_path, "false")
+def test_ppi_control_read_override_reaches_the_ppi(tmp_path: Path) -> None:
+    config_dir, registry = _ppi_control_read_machine(tmp_path, "open_bus")
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
-    assert spec.ppi_control_readback is False
+    assert spec.ppi_control_read is PpiControlRead.OPEN_BUS
     machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
     assert machine.ppi is not None
     machine.ppi.write_port(0xAB, 0x82)
     assert machine.ppi.read_port(0xAB) == 0xFF
 
 
-def test_ppi_control_readback_non_boolean_override_raises(tmp_path: Path) -> None:
-    config_dir, registry = _ppi_readback_machine(tmp_path, "no_way")
-    with pytest.raises(MachineLoadError, match="control_readback must be true or false"):
+def test_ppi_control_read_unknown_value_raises(tmp_path: Path) -> None:
+    config_dir, registry = _ppi_control_read_machine(tmp_path, "no_way")
+    with pytest.raises(MachineLoadError, match="control_read must be one of"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
+def test_ppi_former_control_readback_key_raises(tmp_path: Path) -> None:
+    config_dir, registry = _ppi_control_read_machine(
+        tmp_path, "false", key="control_readback"
+    )
+    with pytest.raises(MachineLoadError, match="replaced by control_read"):
         load_machine_spec("test_msx1", config_dir, registry, tmp_path)
 
 

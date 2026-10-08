@@ -1,13 +1,14 @@
 from msx.input import InputState
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.ppi import PPI
+from msx.ppi import PPI, PpiControlRead
 
 
-def make_ppi(slot_register: int = 0, input_state: InputState | None = None) -> PPI:
+def make_ppi(slot_register: int = 0, input_state: InputState | None = None,
+             control_read: PpiControlRead = PpiControlRead.CONTROL) -> PPI:
     mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=slot_register)
-    return PPI(memory=mem, _input=input_state)
+    return PPI(memory=mem, _input=input_state, control_read=control_read)
 
 
 def test_slot_register_write_and_read() -> None:
@@ -91,12 +92,57 @@ def test_port_ab_read_returns_last_mode_set_word() -> None:
 def test_port_ab_read_without_control_readback_returns_ff() -> None:
     # S1985 MSX-ENGINE PPI: a real HB-F1XD reads 0xFF at 0xAB
     # (extras/HB-F1XD/PORTRD.BAS); the mode-set word is still stored.
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
-    ppi = PPI(memory=mem, control_readback=False)
+    ppi = make_ppi(control_read=PpiControlRead.OPEN_BUS)
     assert ppi.read_port(0xAB) == 0xFF
     ppi.write_port(0xAB, 0x82)
     assert ppi.read_port(0xAB) == 0xFF
     assert ppi.control == 0x82
+
+
+
+# --- S3527 bus latch (real HB-10, extras/HB-10/PORTRD1-4.BAS) ---
+
+def make_latch_ppi() -> PPI:
+    return make_ppi(control_read=PpiControlRead.BUS_LATCH)
+
+
+def test_bus_latch_reads_ff_before_any_access() -> None:
+    assert make_latch_ppi().read_port(0xAB) == 0xFF
+
+
+def test_bus_latch_returns_inverse_of_port_c_write() -> None:
+    # PORTRD3: 0xAB reads NOT v after OUT &HAA,v, twice in a row.
+    for v, expected in ((0x1A, 0xE5), (0x15, 0xEA), (0x00, 0xFF), (0xFF, 0x00),
+                        (0x0F, 0xF0), (0xF0, 0x0F), (0x05, 0xFA), (0xAA, 0x55)):
+        ppi = make_latch_ppi()
+        ppi.write_port(0xAA, v)
+        assert ppi.read_port(0xAB) == expected, hex(v)
+        assert ppi.read_port(0xAB) == expected, hex(v)
+
+
+def test_bus_latch_follows_each_ppi_access() -> None:
+    # PORTRD4: OUT &HAA,&H15, one access, then the 0xAB read.
+    ppi = make_latch_ppi()
+    cases = (
+        (lambda: ppi.read_port(0xAA), 0x15),
+        (lambda: ppi.read_port(0xA9), 0xFF),
+        (lambda: ppi.read_port(0xA8), 0x00),
+        (lambda: ppi.write_port(0xA8, 0x00), 0xFF),
+        (lambda: ppi.write_port(0xAB, 0x0E), 0xF1),
+    )
+    for access, expected in cases:
+        ppi.write_port(0xAA, 0x15)
+        access()
+        assert ppi.read_port(0xAB) == expected
+
+
+def test_bus_latch_keeps_control_word_and_port_c() -> None:
+    ppi = make_latch_ppi()
+    ppi.write_port(0xAB, 0x82)
+    assert ppi.control == 0x82
+    assert ppi.read_port(0xAB) == 0x7D
+    ppi.write_port(0xAB, 0x0F)   # bit set: Port C bit 7
+    assert ppi.read_port(0xAA) == 0x80
 
 
 def test_port_ab_bit_set_reset_does_not_change_control_readback() -> None:
