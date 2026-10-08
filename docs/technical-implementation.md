@@ -60,11 +60,15 @@ the basic clock-cycle unit of the Z80:
 4. If `halted` is set, advance `4 + m1_wait_states` T-states without an opcode
    fetch. The value is 4 on a pure Z80 core, and the MSX M1 wait also applies.
 5. Otherwise, record the current PC in `instruction_pc`, fetch the opcode with
-   `_fetch()`, and dispatch.
+   `_fetch_opcode()`, and dispatch.
 
-`_fetch()` reads one byte from `read_byte(PC)`, increments PC, and increments
-R. Only bits 0-6 of R count. Bit 7 is sticky and changes only through a full
-register write such as `LD R,A`.
+`_fetch()` reads one byte from `read_byte(PC)` and increments PC.
+`_fetch_opcode()` does the same and also increments R, once per M1 cycle: the
+primary opcode and the opcode byte after a CB/DD/ED/FD prefix. Operand and
+displacement bytes, including the displacement and final opcode of
+`DDCB`/`FDCB`, do not touch R. Only bits 0-6 of R count. Bit 7 is sticky and
+changes only through a full register write such as `LD R,A`. A real SONY
+HB-F1XD and HB-10 give the same R steps.
 
 ### Timing
 
@@ -105,10 +109,10 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 ### Known limitations
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
-boundaries. R increments on every byte that `_fetch()` reads, including
-operands, because `_fetch_word()` calls `_fetch()` two times. Real hardware
-refreshes R only on M1 opcode-fetch cycles. Code that reads R as an entropy
-source thus sees a different sequence.
+boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
+documented per-instruction rules, except where they come from the internal
+MEMPTR register (`BIT n,(HL)` leaves them clear), the PC of a repeating block
+instruction, or the previous instruction (`SCF`/`CCF`).
 
 ---
 
@@ -534,8 +538,9 @@ This section documents the YAML syntax that gives that result.
 
 `_DeviceDef.raw` stores every other key (`name`, `chip`, `controls`, `vram_kb`,
 `segment_size_kb`, `keyboard_type`, ...), but generic code does *not* read
-them. In the whole codebase, only two places call `dev.raw.get(...)`:
-`io_ports` above, and `keyboard_type` below (`ppi8255` only).
+them. In the whole codebase, only three keys go through `dev.raw.get(...)`:
+`io_ports` above, and `keyboard_type` and `control_read` below (`ppi8255`
+only).
 
 Nothing reads `vram_kb: 128` in `vdp_v9938.yaml`. The VRAM size of the V9938
 is the hardcoded `_VRAM_SIZE = 131072` constant in `msx/vdp/v9938.py`. That key
@@ -697,9 +702,12 @@ builtin_devices:
 
 The `ref` of each entry must resolve against the device registry (the output
 of `load_device_registry`), or the loader raises `MachineLoadError`.
-`overrides` is a free-form mapping. But `_parse_builtin_devices` reads only one
-key from it: `keyboard_type` (`int` or `jp`), and only when `ref: ppi8255`. The
-loader accepts and ignores every other `overrides` key, for every other `ref`.
+`overrides` is a free-form mapping. But `_parse_builtin_devices` reads only two
+keys from it, and only when `ref: ppi8255`: `keyboard_type` (`int` or `jp`) and
+`control_read` (`control`, `open_bus` or `bus_latch`: what a port 0xAB read
+returns). The former key `control_readback`, in the device file or in
+`overrides`, raises `MachineLoadError`. The loader accepts and ignores every
+other `overrides` key, for every other `ref`.
 
 The presence of `ref: vdp_v9938`/`rtc_rp5c01`/`ppi8255` sets the
 `has_v9938`/`has_rtc`/keyboard-layout flags of `MachineSpec`. Every other `ref`

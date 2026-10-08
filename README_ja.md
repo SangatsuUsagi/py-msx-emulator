@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3537%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3544%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -161,7 +161,7 @@
 
 ### PPI（Programmable Peripheral Interface）— Intel i8255
 
-スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）。
+スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）。書き込み専用の制御ポート 0xAB を読んだときの値はマシンの PPI によって異なり、マシンごとに `control_read` で設定する：最後のモード設定値（デフォルト、CMOS 82C55A と同じ）、0xFF（`open_bus`、S1985 搭載マシン。実機 HB-F1XD で確認）、最後の PPI アクセスでラッチされたバイト（`bus_latch`、`hb_10` / `hb_10_64k` の S3527。実機 HB-10 で確認）。
 
 - 実装：`msx/ppi.py`
 - 既知の制限：カセットインターフェース（ポート 0xAA のビット 4–7）は実装されていない。
@@ -736,12 +736,12 @@ builtin_devices:
 | フィールド | 説明 |
 | --- | --- |
 | `generation` | `msx1` または `msx2`；VDP クラスとメモリモデルを決定 |
-| `cpu.clock_mhz` | Z80A クロック周波数（NTSC MSX は 3.579545 MHz） |
+| `cpu.clock_mhz` | Z80A クロック周波数（NTSC MSX は 3.579545 MHz）。説明用のみで、ローダーは読まない |
 | `cpu.m1_wait_states` | M1（オペコードフェッチ）ごとの追加 T ステート（任意；デフォルト 0 = 純正 Z80）。MSX 機は `1` |
 | `slots.primary.N` | プライマリスロット N：`{type: cartridge}`、`{type: ram, ...}`、またはインライン ROM `content` |
 | `slots.primary.N.expanded` | `true` で 4 つのセカンダリスロットに拡張 |
 | `builtin_devices` | スロット非経由で直接配線するデバイス：VDP、PSG、PPI、RTC、RAM マッパー |
-| `overrides` | デバイスデフォルトへの浅いマージ（例：V9938 の `vram_kb: 128`） |
+| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read` だけで、他のキーは受理して無視する（例：V9938 の `vram_kb: 128`） |
 | `sha1` | `null` はハッシュ検証なしで読み込む |
 
 独自のマシン定義を追加するには、`config/machines/` に新しい YAML ファイルを置き、その `id` を `--machine` に渡してください。デバイス YAML で `implemented: false` と記述されたエントリは、ロード時に警告を表示してスキップされます。
@@ -750,7 +750,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3537 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 3544 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -817,7 +817,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 3537 テスト
+├── tests/                 # テストスイート — 3544 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定

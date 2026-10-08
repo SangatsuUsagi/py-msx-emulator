@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3537%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3544%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -281,7 +281,12 @@ from the mixed PSG/SCC/DAC/OPLL signal.
 ### PPI (Programmable Peripheral Interface): Intel i8255
 
 The PPI has the slot-select register (port 0xA8), the 11-row × 8-bit MSX
-keyboard matrix (port 0xA9), and row selection (port 0xAA).
+keyboard matrix (port 0xA9), and row selection (port 0xAA). A read of the
+write-only control port 0xAB depends on the machine's PPI, set per machine
+with `control_read`: the last mode word (default, as a CMOS 82C55A), 0xFF
+(`open_bus`, the S1985 machines, checked on a real HB-F1XD), or a byte
+latched from the last PPI access (`bus_latch`, the S3527 in `hb_10` /
+`hb_10_64k`, checked on a real HB-10).
 
 - Implementation: `msx/ppi.py`
 - Known limitations: the emulator does not implement the cassette interface
@@ -1031,12 +1036,12 @@ Key fields:
 | Field | Description |
 | --- | --- |
 | `generation` | `msx1` or `msx2`. Sets the VDP class and the memory model |
-| `cpu.clock_mhz` | Z80A clock frequency (3.579545 MHz for NTSC MSX) |
+| `cpu.clock_mhz` | Z80A clock frequency (3.579545 MHz for NTSC MSX). Documentation only: the loader does not read it |
 | `cpu.m1_wait_states` | Extra T-states per M1/opcode fetch (optional, default 0 = pure Z80). MSX machines use `1` |
 | `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Shallow merge over the defaults of a device (e.g. `vram_kb: 128` for V9938) |
+| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`; it accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
 | `sha1` | `null` means load without hash verification |
 
 To use a custom machine definition, add a new YAML file to `config/machines/`
@@ -1047,7 +1052,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3537 tests and covers all major components. It includes
+The test suite has 3544 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1117,7 +1122,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3537 tests
+├── tests/                 # Test suite — 3544 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
