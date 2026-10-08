@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3537%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3548%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -161,7 +161,7 @@
 
 ### PPI（Programmable Peripheral Interface）— Intel i8255
 
-スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）。
+スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）。書き込み専用の制御ポート 0xAB を読んだときの値はマシンの PPI によって異なり、マシンごとに `control_read` で設定する：最後のモード設定値（デフォルト、CMOS 82C55A と同じ）、0xFF（`open_bus`、S1985 搭載マシン。実機 HB-F1XD で確認）、最後の PPI アクセスでラッチされたバイト（`bus_latch`、`hb_10` / `hb_10_64k` の S3527。実機 HB-10 で確認）。
 
 - 実装：`msx/ppi.py`
 - 既知の制限：カセットインターフェース（ポート 0xAA のビット 4–7）は実装されていない。
@@ -345,26 +345,26 @@ All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 285.57 | 約 4.8 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 571.82 | 約 9.5 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 299.56 | 約 5.0 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1123.72 | 約 18.7 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1269.52 | 約 21.2 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1069.07 | 約 17.8 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 74.91 | 約 1.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 189.38 | 約 3.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 84.54 | 約 1.4 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 359.38 | 約 6.0 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 472.93 | 約 7.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 314.82 | 約 5.2 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 292.67 | 約 4.9 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 705.33 | 約 11.8 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 313.11 | 約 5.2 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1226.14 | 約 20.4 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1412.82 | 約 23.5 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1151.97 | 約 19.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 76.25 | 約 1.3 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 191.72 | 約 3.2 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 84.96 | 約 1.4 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 353.01 | 約 5.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 472.98 | 約 7.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 307.53 | 約 5.1 倍 |
 
-今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー、対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.2 倍です。PyPy に切り替えると同じケースが約 6.0 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
+今回計測したすべての組み合わせが、生の 60 fps 目標をクリアしています。最も余裕が小さいのは Raspberry Pi 5 + CPython で沙羅曼蛇（MSX1、KonamiSCC マッパー、対象タイトルの中で描画・オーディオ負荷が最も重い）を実行した場合で、約 1.3 倍です。PyPy に切り替えると同じケースが約 5.9 倍まで上がります。Raspberry Pi 5 より低速なハードウェア、あるいはより重いタイトルでは 60 fps を下回ることがあり、その場合は達成されたフレームレートに比例してゲームがスローモーションで動作します。オーディオサンプルはフレームごとに生成される一方でオーディオデバイスは常に 44100 Hz で消費するため、オーディオも劣化します（クリックノイズや無音）。PyPy3 はそのまま代替として使えるランタイムであり、処理能力の低いハードウェアでのスループットを大幅に改善するため、Raspberry Pi のような制約のあるハードウェアで余裕を保つために推奨されます。
 
 PyPy の数値は CPython よりも実行ごとのブレが大きくなりやすい点に注意してください。特定の（プラットフォーム、ゲーム）の組み合わせで、通常の範囲から大きく外れた値が出ることがあります。エミュレータ自体の問題というより、OS/ハードウェア側のスケジューリング挙動（コア間の移動やサーマルスロットリングなど）が原因である可能性が高いです。PyPy の数値は正確な値というより、大まかな目安として捉えてください。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.7.0 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）。すべて上記のコールドブート方式で統一して計測しています。
+v0.1.0 から v2.7.5 までの平均 FPS（`--benchmark`）の推移（プラットフォーム・ランタイム別）。すべて上記のコールドブート方式で統一して計測しています。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -736,12 +736,12 @@ builtin_devices:
 | フィールド | 説明 |
 | --- | --- |
 | `generation` | `msx1` または `msx2`；VDP クラスとメモリモデルを決定 |
-| `cpu.clock_mhz` | Z80A クロック周波数（NTSC MSX は 3.579545 MHz） |
+| `cpu.clock_mhz` | Z80A クロック周波数（NTSC MSX は 3.579545 MHz）。説明用のみで、ローダーは読まない |
 | `cpu.m1_wait_states` | M1（オペコードフェッチ）ごとの追加 T ステート（任意；デフォルト 0 = 純正 Z80）。MSX 機は `1` |
 | `slots.primary.N` | プライマリスロット N：`{type: cartridge}`、`{type: ram, ...}`、またはインライン ROM `content` |
 | `slots.primary.N.expanded` | `true` で 4 つのセカンダリスロットに拡張 |
 | `builtin_devices` | スロット非経由で直接配線するデバイス：VDP、PSG、PPI、RTC、RAM マッパー |
-| `overrides` | デバイスデフォルトへの浅いマージ（例：V9938 の `vram_kb: 128`） |
+| `overrides` | マシンごとのデバイス設定。ローダーが読むのは `ppi8255` の `keyboard_type` と `control_read` だけで、他のキーは受理して無視する（例：V9938 の `vram_kb: 128`） |
 | `sha1` | `null` はハッシュ検証なしで読み込む |
 
 独自のマシン定義を追加するには、`config/machines/` に新しい YAML ファイルを置き、その `id` を `--machine` に渡してください。デバイス YAML で `implemented: false` と記述されたエントリは、ロード時に警告を表示してスキップされます。
@@ -750,7 +750,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3537 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 3548 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -817,7 +817,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 3537 テスト
+├── tests/                 # テストスイート — 3548 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定

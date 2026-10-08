@@ -635,6 +635,15 @@ def test_switching_between_bitmap_modes_keeps_the_command_running() -> None:
     assert vdp._cmd_active
 
 
+
+def test_lmcm_keeps_its_dispatch_geometry_after_a_mode_switch() -> None:
+    vdp = _make_vdp()
+    vdp.vram[0] = 0xAB
+    vdp.vram[1] = 0xCD
+    _dispatch(vdp, cmd_code=0xA, sx=0, sy=0, nx=4, ny=1)  # LMCM in GRAPHIC 4
+    _write_reg(vdp, 0, _G7)  # 8-bit dots from here on, but not for this LMCM
+    assert [_read_status(vdp, 7) for _ in range(4)] == [0xA, 0xB, 0xC, 0xD]
+
 # ---------------------------------------------------------------------------
 # TR is never cleared by completion (openMSX commandDone)
 # ---------------------------------------------------------------------------

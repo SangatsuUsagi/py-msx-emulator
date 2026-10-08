@@ -78,9 +78,10 @@ this summary automatically after an unrecognized command.
 
 **`q`**: exit the emulator (the process exits with code 0).
 
-**`reset`**: full power-on reset of the CPU, PSG, SCC (if present), VDP, and
-the primary/secondary slot registers. The memory and VRAM contents stay the
-same. Emulation then resumes immediately, as with `c`, because there is nothing
+**`reset`**: full power-on reset of the CPU, PSG, VDP, PPI, the
+primary/secondary slot registers, every cartridge mapper, and, when present,
+the SCC, FM-PAC, FDC, Kanji ROM, and RAM mapper. The memory and VRAM contents
+stay the same. Emulation then resumes immediately, as with `c`, because there is nothing
 to examine at the PC before the reset.
 
 **`s [N]`**: step `N` Z80 instructions (decimal, default 1). After the step,
@@ -268,12 +269,12 @@ emulator exits.
 
 ### Tracing
 
-**`te`** ⚙V9938: enable the VDP register-write tracer. During emulation, it
+**`te`**: enable the VDP register-write tracer, on both VDP types. During emulation, it
 writes one line to stdout for each register write:
 
 ```
-CY=12450 FR=3 PC=C018  VDP_REG R#2=1F
-CY=12460 FR=3 PC=C01C  VDP_REG R#5=7F
+CY=0000012450 FR=000003 PC=C018 VDP_REG R#02=1Fh
+CY=0000012460 FR=000003 PC=C01C VDP_REG R#05=7Fh
 ```
 
 On first use, `te` connects the `_get_pc` and `_get_cycle` callbacks
@@ -285,7 +286,7 @@ automatically. If a `Tracer` is already attached, `te` enables it again.
 for each bank-register write that changes the bank of a window:
 
 ```
-CY=25000 FR=5 PC=5B2A  MAP_BANK win=1 03h->05h addr=6001h
+CY=0000025000 FR=000005 PC=5B2A MAP_BANK win=1 03h->05h addr=6001h
 ```
 
 `win` is the mapper window index. `addr` is the address of the register write.
@@ -428,7 +429,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace
 python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace --vdp-trace-out trace.log
 ```
 
-Output format: `CY=.. FR=.. PC=..  VDP_REG R#N=XX`
+Output format: `CY=.. FR=.. PC=.. VDP_REG R#NN=XXh`
 
 ### Mapper bank-switch trace
 
@@ -437,7 +438,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace
 python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace --mapper-trace-out banks.log
 ```
 
-Output format: `CY=.. FR=.. PC=..  MAP_BANK win=W OLDh->NEWh addr=XXXXh`
+Output format: `CY=.. FR=.. PC=.. MAP_BANK win=W OLDh->NEWh addr=XXXXh`
 
 If the cartridge uses a flat (non-bank-switching) mapper, the emulator writes a
 note to stderr and writes no `MAP_BANK` lines.

@@ -42,7 +42,8 @@ slots:
 
 builtin_devices:
   - ref: ppi8255
-    overrides: { keyboard_type: jp }
+    # S3527 MSX-ENGINE PPI: 0xAB reads the last PPI access's latch (verified on a real HB-10).
+    overrides: { keyboard_type: jp, control_read: bus_latch }
   - ref: vdp_tms9918a
   - ref: psg_ay8910
 

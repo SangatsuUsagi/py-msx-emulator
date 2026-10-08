@@ -278,7 +278,8 @@ class VDP:
     def write_port(self, port: int, value: int) -> None:
         """Dispatch a TMS9918A VDP port write.
 
-        0x98 = VRAM data (writes at the current address, auto-increments it);
+        0x98 = VRAM data (writes at the current address, also refills the
+        read-ahead buffer, auto-increments the address);
         0x99 = control (two-byte latch: the second byte either writes a register
         when bit 7 is set, or sets up the VRAM address otherwise). Real MSX1
         VDPs use no latch for the address pointer itself: the first control
@@ -290,6 +291,10 @@ class VDP:
         value = value & 0xFF
         if port == 0x98:
             self.vram[self.addr] = value
+            # The write also refills the read-ahead buffer: verified on a real
+            # SONY HB-10 (extras/HB-10/RDBUF.BAS, 2026-10-08), as on the V9938
+            # and in openMSX.
+            self.read_buf = value
             self.addr = (self.addr + 1) & 0x3FFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
@@ -352,7 +357,7 @@ class VDP:
             # games, which usually terminate their SAT with far fewer than
             # 31 active sprites. A fully accurate emulation would track and
             # report that real per-scan index instead of a fixed 31; see
-            # this file's Open Questions.
+            # allium/tms9918a.allium's Open Questions.
             if self.status & 0x40:
                 result = self.status
             else:

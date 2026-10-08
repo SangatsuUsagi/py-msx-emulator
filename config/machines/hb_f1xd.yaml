@@ -51,7 +51,7 @@ slots:
 builtin_devices:
   - ref: ppi8255
     # S1985 MSX-ENGINE PPI: no control-word readback (verified on a real HB-F1XD: 0xAB reads 0xFF).
-    overrides: { keyboard_type: jp, control_readback: false }
+    overrides: { keyboard_type: jp, control_read: open_bus }
   - ref: vdp_v9938
     overrides: { vram_kb: 128 }
   - ref: psg_ay8910
