@@ -59,7 +59,7 @@ python . path/to/game.rom --machine cbios_msx1_jp --watch-point ca4a,w,fedc,rw
 
 **`q`** — エミュレータを終了する（プロセスが終了コード 0 で終了）。
 
-**`reset`** — CPU・PSG・SCC（存在する場合）・VDP・プライマリ/セカンダリスロットレジスタを完全にパワーオンリセットする。メモリ／VRAM の内容は保持されます。`c` と同様、実行後は即座にエミュレーションを再開します——リセット前の PC に確認すべきものは残っていないためです。
+**`reset`** — CPU・PSG・VDP・PPI・プライマリ/セカンダリスロットレジスタ・すべてのカートリッジマッパー、および存在する場合は SCC・FM-PAC・FDC・漢字 ROM・RAM マッパーを完全にパワーオンリセットする。メモリ／VRAM の内容は保持されます。`c` と同様、実行後は即座にエミュレーションを再開します——リセット前の PC に確認すべきものは残っていないためです。
 
 **`s [N]`** — Z80 命令を `N` ステップ実行する（10 進数；デフォルトは 1）。ステップ後にコンパクトなレジスタサマリと次の命令を表示します。
 
@@ -213,11 +213,11 @@ TMS9918A ではプログラマブルパレットがないため、わかりや�
 
 ### トレース
 
-**`te`** ⚙V9938 — VDP レジスタ書き込みトレーサを有効化する。エミュレーション中のすべてのレジスタ書き込みを stdout に出力します。
+**`te`** — VDP レジスタ書き込みトレーサを有効化する（両方の VDP 種別で動作）。エミュレーション中のすべてのレジスタ書き込みを stdout に出力します。
 
 ```
-CY=12450 FR=3 PC=C018  VDP_REG R#2=1F
-CY=12460 FR=3 PC=C01C  VDP_REG R#5=7F
+CY=0000012450 FR=000003 PC=C018 VDP_REG R#02=1Fh
+CY=0000012460 FR=000003 PC=C01C VDP_REG R#05=7Fh
 ```
 
 `te` は初回使用時に `_get_pc` と `_get_cycle` コールバックを自動的に配線します。`Tracer` が既にアタッチされている場合は再有効化します。
@@ -227,7 +227,7 @@ CY=12460 FR=3 PC=C01C  VDP_REG R#5=7F
 **`ce`** — カートリッジマッパーのバンク切り替えトレーサを有効化する。バンクを変更するバンクレジスタへの書き込みごとに 1 行出力します。
 
 ```
-CY=25000 FR=5 PC=5B2A  MAP_BANK win=1 03h->05h addr=6001h
+CY=0000025000 FR=000005 PC=5B2A MAP_BANK win=1 03h->05h addr=6001h
 ```
 
 `win` はマッパーウィンドウインデックス；`addr` はレジスタ書き込みのアドレスです。バンク切り替えマッパーが存在しない場合はメッセージを表示します。
@@ -346,7 +346,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace
 python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace --vdp-trace-out trace.log
 ```
 
-出力フォーマット：`CY=.. FR=.. PC=..  VDP_REG R#N=XX`
+出力フォーマット：`CY=.. FR=.. PC=.. VDP_REG R#NN=XXh`
 
 ### マッパーバンク切り替えトレース
 
@@ -355,7 +355,7 @@ python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace
 python . path/to/game.rom --machine cbios_msx2_jp --mapper-trace --mapper-trace-out banks.log
 ```
 
-出力フォーマット：`CY=.. FR=.. PC=..  MAP_BANK win=W OLDh->NEWh addr=XXXXh`
+出力フォーマット：`CY=.. FR=.. PC=.. MAP_BANK win=W OLDh->NEWh addr=XXXXh`
 
 フラット（バンク切り替えなし）マッパーのカートリッジの場合は、stderr にメッセージが出力され `MAP_BANK` 行は出力されません。
 
