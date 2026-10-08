@@ -2,6 +2,19 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.5** (2026-10-08): Fix the MSX1 VDP and the PPI behaviour found by tests on the author's real Sony HB-10.
+  - MSX1 VDP (TMS9918A): a port 0x98 write also refills the read-ahead buffer, so an IN right after an OUT returns the
+    written byte, as on the V9938.
+  - PPI: a port 0xAB read on the HB-10 (Yamaha S3527) returns a byte latched by the last PPI access: the byte a read of
+    0xA8-0xAA returned, or the inverse of the byte a write to 0xA8-0xAB carried. The `ppi8255` device setting
+    `control_readback` (true/false) is replaced by `control_read`: `control` (the last mode word, the default),
+    `open_bus` (0xFF, the S1985 machines) or `bus_latch` (`hb_10`, `hb_10_64k`). A machine file that still sets
+    `control_readback` is rejected with a message naming `control_read`.
+  - The HB-10 also confirmed the R register count, the undocumented Y/X flags, the absorbed DD prefix timing, the ED
+    mirrors of NEG/RETN and the half-written control pair on the MSX1 VDP; no change was needed there.
+  - Documentation matches the current behaviour: R counting, the per-machine PPI 0xAB read, the loader's `ppi8255`
+    keys, the full scope of the debugger `reset`, `te` on both VDP types and the trace output format. Benchmark table
+    and history charts updated to v2.7.5.
 - **v2.7.4** (2026-10-07): Emulate the V9938 R#13 blink, and fix V9938, Z80 and PPI behaviour found by tests on the
   author's real Sony HB-F1XD.
   - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colours during
