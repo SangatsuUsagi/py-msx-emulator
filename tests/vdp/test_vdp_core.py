@@ -262,6 +262,18 @@ def test_data_port_read_returns_buffered_byte_not_live_vram() -> None:
     assert vdp.addr == 0x0302
 
 
+def test_data_port_write_refills_read_buffer() -> None:
+    # Real SONY HB-10, extras/HB-10/RDBUF.BAS: IN1 5A IN2 33 3001 5A.
+    vdp = make_vdp()
+    for i, v in enumerate((0x11, 0x22, 0x33, 0x44)):
+        vdp.vram[0x3000 + i] = v
+    set_read_addr(vdp, 0x3000)
+    vdp.write_port(0x98, 0x5A)
+    assert vdp.read_port(0x98) == 0x5A
+    assert vdp.read_port(0x98) == 0x33
+    assert vdp.vram[0x3001] == 0x5A
+
+
 def test_data_port_read_leaves_status_flags_alone() -> None:
     vdp = make_vdp()
     vdp.status = 0xE5

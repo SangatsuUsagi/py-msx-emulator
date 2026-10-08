@@ -290,6 +290,10 @@ class VDP:
         value = value & 0xFF
         if port == 0x98:
             self.vram[self.addr] = value
+            # The write also refills the read-ahead buffer: verified on a real
+            # SONY HB-10 (extras/HB-10/RDBUF.BAS, 2026-10-08), as on the V9938
+            # and in openMSX.
+            self.read_buf = value
             self.addr = (self.addr + 1) & 0x3FFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
