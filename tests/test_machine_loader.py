@@ -548,6 +548,19 @@ def test_ppi_former_control_readback_key_raises(tmp_path: Path) -> None:
         load_machine_spec("test_msx1", config_dir, registry, tmp_path)
 
 
+def test_ppi_former_control_readback_key_in_device_file_raises(tmp_path: Path) -> None:
+    config_dir, registry = _full_registry(tmp_path)
+    _write(
+        config_dir / "devices" / "ppi8255.yaml",
+        "id: ppi8255\ntype: io_device\nimplemented: true\n"
+        "io_ports: [0xA8]\nkeyboard_type: int\ncontrol_readback: true\n",
+    )
+    registry = load_device_registry(config_dir)
+    _write(config_dir / "machines" / "test_msx1.yaml", _msx1_yaml_with_extra_ref("ppi8255"))
+    with pytest.raises(MachineLoadError, match="replaced by control_read"):
+        load_machine_spec("test_msx1", config_dir, registry, tmp_path)
+
+
 def test_load_machine_spec_string_slot_keys(tmp_path: Path) -> None:
     # Slot-map keys may arrive as strings (quoted YAML / JSON). They must be
     # normalised to int so slot 0 (main ROM) and slot 3 (RAM) still resolve.

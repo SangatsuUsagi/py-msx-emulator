@@ -136,6 +136,20 @@ def test_bus_latch_follows_each_ppi_access() -> None:
         assert ppi.read_port(0xAB) == expected
 
 
+def test_bus_latch_takes_inverse_of_keyboard_port_write() -> None:
+    # Not measured on the HB-10: a 0xA9 write is treated like the other writes.
+    ppi = make_latch_ppi()
+    ppi.write_port(0xA9, 0x3C)
+    assert ppi.read_port(0xAB) == 0xC3
+
+
+def test_reset_leaves_bus_latch_alone() -> None:
+    ppi = make_latch_ppi()
+    ppi.write_port(0xAA, 0x15)
+    ppi.reset()
+    assert ppi.read_port(0xAB) == 0xEA
+
+
 def test_bus_latch_keeps_control_word_and_port_c() -> None:
     ppi = make_latch_ppi()
     ppi.write_port(0xAB, 0x82)
