@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from msx.app_config import AppConfig
 from msx.audio_filter import BiquadLowPass
 from msx.fdc.disk_image import DskDiskImage
 from msx.frame_timer import FrameTimer
@@ -262,6 +263,7 @@ class _HotkeyState:
     ff_hold_key: int | None = None
     ff_locked: bool = False
     muted: bool = False
+    fullscreen: bool = False
 
     @property
     def fast_forward(self) -> bool:
@@ -280,13 +282,9 @@ class _EventApi(Protocol):
     SDLK_RCTRL: int
     SDLK_LSHIFT: int
     SDLK_RSHIFT: int
-    SDLK_F6: int
-    SDLK_F7: int
     SDLK_F8: int
     SDLK_F9: int
     SDLK_F10: int
-    SDLK_F11: int
-    SDLK_F12: int
     SDLK_c: int
     SDLK_q: int
     KMOD_CTRL: int
@@ -423,8 +421,16 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
         machine.fdc.swap(0, None)
 
 
+def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
+    hotkeys.fullscreen = not hotkeys.fullscreen
+    flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if hotkeys.fullscreen else 0
+    if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+        print(f"fullscreen toggle failed: {sdl2.SDL_GetError().decode()}", file=sys.stderr)
+
+
 def _run_hotkey_action(
-    action: str, sym: int, machine: Machine, hotkeys: _HotkeyState
+    sdl2: _EventApi, action: str, sym: int, machine: Machine, window: object,
+    hotkeys: _HotkeyState,
 ) -> None:
     if action == "disk_next":
         _disk_next(machine, hotkeys.disks)
@@ -432,6 +438,8 @@ def _run_hotkey_action(
         _disk_toggle_eject(machine, hotkeys.disks)
     elif action == "pause":
         hotkeys.user_paused = not hotkeys.user_paused
+    elif action == "fullscreen":
+        _toggle_fullscreen(sdl2, window, hotkeys)
     elif action == "fast_forward_hold":
         hotkeys.ff_hold_key = sym
     elif action == "fast_forward_lock":
@@ -443,7 +451,7 @@ def _run_hotkey_action(
 
 
 def _handle_bound_hotkey_keydown(
-    sdl2: _EventApi, sym: int, repeat: int, machine: Machine,
+    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, window: object,
     ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
@@ -471,7 +479,7 @@ def _handle_bound_hotkey_keydown(
         if shift.rshift_held:
             machine.input.key_up(sdl2.SDLK_RSHIFT)
         shift.active_key = sym
-    _run_hotkey_action(action, sym, machine, hotkeys)
+    _run_hotkey_action(sdl2, action, sym, machine, window, hotkeys)
     return True
 
 
@@ -506,18 +514,18 @@ def _handle_bound_hotkey_keyup(
 
 
 def _handle_hotkey_keydown(
-    sdl2: _EventApi, sym: int, mod: int, machine: Machine, window: object,
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    running: bool, fullscreen: bool,
-) -> tuple[bool, bool, bool]:
-    """Application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F11 fullscreen,
-    F8 save state, F9 load state, F10 screenshot, Ctrl-C debugger break.
+    sdl2: _EventApi, sym: int, mod: int, machine: Machine,
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
+) -> tuple[bool, bool]:
+    """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
+    state, F9 load state, F10 screenshot, Ctrl-C debugger break (the
+    configurable ones are `_HotkeyState.bindings`, checked earlier).
 
     None of these produce an MSX matrix-key effect -- they are frontend
     commands that happen to be bound to keys, checked before the Ctrl+F-key
     combo and the plain key_down fallback (mirrors `_handle_ctrl_combo_keydown`'s
-    consumed/not-consumed shape). `running`/`fullscreen` are returned unchanged
-    unless this key actually changes them. Returns (consumed, running, fullscreen).
+    consumed/not-consumed shape). `running` is returned unchanged unless this
+    key quits. Returns (consumed, running).
 
     ESC is deliberately not claimed here: it has its own MSX matrix cell
     (row 7, column 2) and reaches it through the plain key_down fallback,
@@ -534,28 +542,22 @@ def _handle_hotkey_keydown(
     #   a translation contract for Rust specifically (C++ doesn't need the
     #   explicit `!= 0`), not a Python optimization to preserve.
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
-        return True, False, fullscreen
-    if sym == sdl2.SDLK_F11:
-        fullscreen = not fullscreen
-        flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if fullscreen else 0
-        if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-            print(f"fullscreen toggle failed: {sdl2.SDL_GetError().decode()}", file=sys.stderr)
-        return True, running, fullscreen
+        return True, False
     if sym == sdl2.SDLK_F8:
         save_state(machine, rgb_buf, game_title)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_F9:
         try:
             load_state(machine)
         except Exception as exc:
             print(f"load failed: {exc}", file=sys.stderr)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_F10:
         save_screenshot(rgb_buf, tex_w, tex_h)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and machine.enter_debugger_if_attached():
-        return True, running, fullscreen
-    return False, running, fullscreen
+        return True, running
+    return False, running
 
 
 # SDL joystick/GameController device and input event types, all routed to
@@ -629,16 +631,15 @@ def _handle_events(
     sdl2: _EventApi, event: _EventLike, machine: Machine, window: object,
     joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
     mouse_device: MouseDevice | None = None, hotkeys: _HotkeyState | None = None,
-) -> tuple[bool, bool]:
+) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
     `hotkeys` (None: no bound hotkeys, Shift goes through the plain path) is
     checked before every other key handler.
 
-    Returns (running, fullscreen): running is False once a quit is requested;
-    fullscreen is the (possibly toggled) window state. rgb_buf/tex_w/tex_h are
+    Returns running: False once a quit is requested. rgb_buf/tex_w/tex_h are
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
     running = True
@@ -652,12 +653,12 @@ def _handle_events(
         elif event.type == sdl2.SDL_KEYDOWN:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
             if hotkeys is not None and _handle_bound_hotkey_keydown(
-                sdl2, sym, event.key.repeat, machine, ctrl_combo, hotkeys
+                sdl2, sym, event.key.repeat, machine, window, ctrl_combo, hotkeys
             ):
                 continue
-            consumed, running, fullscreen = _handle_hotkey_keydown(
-                sdl2, sym, event.key.keysym.mod, machine, window,
-                game_title, rgb_buf, tex_w, tex_h, running, fullscreen,
+            consumed, running = _handle_hotkey_keydown(
+                sdl2, sym, event.key.keysym.mod, machine,
+                game_title, rgb_buf, tex_w, tex_h, running,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, machine
@@ -684,7 +685,7 @@ def _handle_events(
                 mouse_device.set_button(TRIGGER_A_BIT, pressed)
             elif button == sdl2.SDL_BUTTON_RIGHT:
                 mouse_device.set_button(TRIGGER_B_BIT, pressed)
-    return running, fullscreen
+    return running
 
 
 def _mix_audio(
@@ -963,7 +964,6 @@ class _LoopState:
     7 separate loop-local variables threaded through `_run_frame`'s parameter
     list and an 8-element return tuple repeated at every early return."""
     running: bool
-    fullscreen: bool
     texture: object
     tex_w: int
     tex_h: int
@@ -1001,11 +1001,10 @@ def _run_frame(
     frame-skip), mix/queue audio, and present. Updates `state` in place with
     whatever this iteration changed.
     """
-    # Process events (input + hotkeys); updates running/fullscreen.
-    state.running, state.fullscreen = _handle_events(
+    # Process events (input + hotkeys); updates running.
+    state.running = _handle_events(
         sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, state.fullscreen, mouse_device,
-        hotkeys,
+        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse_device, hotkeys,
     )
     if not state.running:
         return
@@ -1103,6 +1102,7 @@ def run(
     turbo_period: int | None = None,
     mouse_port: int | None = None,
     fdd1_images: list[Path] | None = None,
+    hotkey_bindings: dict[tuple[int, bool], str] | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1125,10 +1125,14 @@ def run(
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
             first entry is the one build_machine already mounted.
+        hotkey_bindings: (SDL keycode, Shift held) -> action table from
+            py_emulator.yaml (`AppConfig.hotkey_bindings`); None uses the
+            built-in table.
 
-    Runtime hotkeys: Ctrl-Q quit, F6 next disk, Shift+F6 eject/re-insert disk,
-    F7 fast-forward while held, Shift+F7 latch fast-forward, F12 mute,
-    Shift+F12 reset, F8 save state, F9 load state, F10 screenshot, F11 toggle fullscreen,
+    Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
+    eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
+    fast-forward, F11 pause, Shift+F11 fullscreen, F12 mute, Shift+F12 reset.
+    Fixed: Ctrl-Q quit, F8 save state, F9 load state, F10 screenshot,
     Ctrl-C break into the debugger (if attached),
     Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (see `_CtrlComboState`).
     ESC now reaches the MSX matrix (row 7, column 2) like any other key.
@@ -1196,14 +1200,9 @@ def run(
     }
 
     hotkeys = _HotkeyState(
-        bindings={
-            (sdl2.SDLK_F6, False): "disk_next",
-            (sdl2.SDLK_F6, True): "disk_eject",
-            (sdl2.SDLK_F7, False): "fast_forward_hold",
-            (sdl2.SDLK_F7, True): "fast_forward_lock",
-            (sdl2.SDLK_F12, False): "mute",
-            (sdl2.SDLK_F12, True): "reset",
-        },
+        bindings=dict(
+            hotkey_bindings if hotkey_bindings is not None else AppConfig().hotkey_bindings()
+        ),
         disks=_DiskList(list(fdd1_images) if fdd1_images else []),
     )
 
@@ -1216,7 +1215,7 @@ def run(
     frame_timer = FrameTimer(fps=_target_fps_for(machine), speed=speed)
     event = sdl2.SDL_Event()
     state = _LoopState(
-        running=True, fullscreen=False, texture=texture, tex_w=tex_w, tex_h=tex_h,
+        running=True, texture=texture, tex_w=tex_w, tex_h=tex_h,
         rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
     )
     last_title: str | None = None

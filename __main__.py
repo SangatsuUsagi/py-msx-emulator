@@ -637,7 +637,8 @@ def main() -> None:
             run(machine, scale=opts.scale, speed=opts.speed, game_title=game_title,
                 resume=args.resume, frame_skip=opts.frame_skip, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
-                mouse_port=opts.mouse_port, fdd1_images=fdd1_paths)
+                mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
+                hotkey_bindings=app_cfg.hotkey_bindings())
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
 
