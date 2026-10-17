@@ -1986,7 +1986,7 @@ class HalnoteMapper(BankTracingMapper):
 
     def snapshot(self) -> HalnoteMapperState:
         # sram_enabled/submapper_enabled are not persisted here -- they are
-        # fully determined by bank_0/bank_1's top bit (see restore(), which
+        # fully determined by bank_0/bank_1's top bit (see apply_state(), which
         # re-derives rather than restores them) -- see machine-state's
         # "HBI-J1 MSX-JE SRAM state save and restore" Requirement.
         return {
