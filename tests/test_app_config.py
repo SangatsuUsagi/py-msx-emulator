@@ -398,3 +398,37 @@ def test_valid_mappers_match_supported_mappers() -> None:
     assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
     # Every non-"auto" accepted name must actually have a builder.
     assert set(VALID_MAPPERS) - {"auto"} <= set(_MAPPER_BUILDERS)
+
+
+# ---------------------------------------------------------------------------
+# fdd1 (drive A disk list)
+# ---------------------------------------------------------------------------
+
+def test_fdd1_single_path_parsed(tmp_path: Path) -> None:
+    (tmp_path / "disks").mkdir()
+    (tmp_path / "disks" / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: disks/a.dsk\n")
+    assert load_app_config(tmp_path).fdd1 == ["disks/a.dsk"]
+
+
+def test_fdd1_list_parsed(tmp_path: Path) -> None:
+    (tmp_path / "disks").mkdir()
+    (tmp_path / "disks" / "a.dsk").write_bytes(b"\x00")
+    (tmp_path / "disks" / "b.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: [disks/a.dsk, disks/b.dsk]\n")
+    assert load_app_config(tmp_path).fdd1 == ["disks/a.dsk", "disks/b.dsk"]
+
+
+def test_nonexistent_fdd1_path_rejected(tmp_path: Path) -> None:
+    (tmp_path / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: [a.dsk, does/not/exist.dsk]\n")
+    with pytest.raises(AppConfigError, match="does/not/exist.dsk"):
+        load_app_config(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["3", "[]", "[a.dsk, 3]", "{a: b}"])
+def test_fdd1_of_wrong_type_rejected(tmp_path: Path, value: str) -> None:
+    (tmp_path / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, f"fdd1: {value}\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)

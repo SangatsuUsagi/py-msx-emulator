@@ -6,8 +6,22 @@ events are scripted as (type, sym, mod) tuples and copied into a real ctypes
 `_handle_events` works exactly as it does against the real SDL2 library.
 """
 import ctypes
+from pathlib import Path
 
-from frontend.sdl2_frontend import _CtrlComboState, _handle_events
+import pytest
+
+from frontend.sdl2_frontend import (
+    _CtrlComboState,
+    _DiskList,
+    _handle_events,
+    _HotkeyState,
+    _update_window_title,
+    _window_title,
+)
+from msx.fdc.disk_drive import DiskDrive
+from msx.fdc.disk_image import DskDiskImage
+from msx.fdc.interface import SonyPhilipsInterface
+from msx.fdc.wd2793 import WD2793
 from msx.input import KEY_MATRIX_INT, KEY_NAME_TO_CELL, InputState
 
 
@@ -18,7 +32,7 @@ class _Keysym(ctypes.Structure):
 
 
 class _KeyEvent(ctypes.Structure):
-    _fields_ = [("keysym", _Keysym)]
+    _fields_ = [("repeat", ctypes.c_uint8), ("keysym", _Keysym)]
 
 
 class _Event(ctypes.Structure):
@@ -47,6 +61,7 @@ class _FakeSDL:
     SDLK_F3 = 1073741884
     SDLK_F4 = 1073741885
     SDLK_F5 = 1073741886
+    SDLK_F6 = 1073741887
     SDLK_F8 = -8
     SDLK_F9 = -9
     SDLK_F10 = -10
@@ -55,6 +70,8 @@ class _FakeSDL:
     SDLK_q = ord("q")
     SDLK_LCTRL = 1073742048
     SDLK_RCTRL = 1073742052
+    SDLK_LSHIFT = 1073742049
+    SDLK_RSHIFT = 1073742053
     SDLK_LALT = 1073742050
     SDLK_RALT = 1073742054
     KMOD_CTRL = 0x0040
@@ -72,15 +89,16 @@ class _FakeSDL:
     # real-value-pinning rationale as SDL_SCANCODE_INTERNATIONAL3 above.
     SDL_SCANCODE_INTERNATIONAL1 = 135
 
-    def __init__(self, script: list[tuple[int, int, int, int]], event: _Event) -> None:
+    def __init__(self, script: list[tuple[int, ...]], event: _Event) -> None:
         self._script = list(script)
         self._event = event
 
     def SDL_PollEvent(self, _event_ptr: object) -> int:
         if not self._script:
             return 0
-        ev_type, sym, mod, scancode = self._script.pop(0)
+        ev_type, sym, mod, scancode, *rest = self._script.pop(0)
         self._event.type = ev_type
+        self._event.key.repeat = rest[0] if rest else 0
         self._event.key.keysym.sym = sym
         self._event.key.keysym.mod = mod
         self._event.key.keysym.scancode = scancode
@@ -91,6 +109,7 @@ class _FakeMachine:
     def __init__(self) -> None:
         self.input = InputState()
         self._debugger = None
+        self.fdc: SonyPhilipsInterface | None = None
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
@@ -111,21 +130,22 @@ class _Harness:
     """Drives `_handle_events` across multiple scripted event batches while
     keeping the same machine/ctrl-combo/event state, like consecutive frames."""
 
-    def __init__(self) -> None:
+    def __init__(self, hotkeys: _HotkeyState | None = None) -> None:
         self.machine = _FakeMachine()
         self.ctrl_combo = _CtrlComboState()
+        self.hotkeys = hotkeys
         self._event = _Event()
         self.running = True
 
-    def send(self, script: list[tuple[int, int, int, int]]) -> None:
+    def send(self, script: list[tuple[int, ...]]) -> None:
         sdl = _FakeSDL(script, self._event)
         self.running, _ = _handle_events(
             sdl, self._event, self.machine, None, None, self.ctrl_combo,
-            _CTRL_FKEY_CELLS, "", b"", 0, 0, False,
+            _CTRL_FKEY_CELLS, "", b"", 0, 0, False, None, self.hotkeys,
         )
 
-    def keydown(self, sym: int, mod: int = 0, scancode: int = 0) -> None:
-        self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod, scancode)])
+    def keydown(self, sym: int, mod: int = 0, scancode: int = 0, repeat: int = 0) -> None:
+        self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod, scancode, repeat)])
 
     def keyup(self, sym: int, mod: int = 0, scancode: int = 0) -> None:
         self.send([(_FakeSDL.SDL_KEYUP, sym, mod, scancode)])
@@ -506,3 +526,273 @@ def test_international_equals_key_reaches_equals_cell_via_plain_sym() -> None:
     assert _asserted(h.matrix, equals_cell)
     h.keyup(_K_EQUALS, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
     assert not _asserted(h.matrix, equals_cell)
+
+
+# ---------------------------------------------------------------------------
+# Bound hotkeys: disk swap (F6 / Shift+F6) and Shift-combo isolation
+# ---------------------------------------------------------------------------
+
+_SHIFT = KEY_MATRIX_INT[_FakeSDL.SDLK_LSHIFT]
+_DISK_BINDINGS = {
+    (_FakeSDL.SDLK_F6, False): "disk_next",
+    (_FakeSDL.SDLK_F6, True): "disk_eject",
+}
+
+
+def _dsk(path: Path) -> Path:
+    path.write_bytes(bytes(737280))
+    return path
+
+
+def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harness:
+    paths = [_dsk(tmp_path / n) for n in names]
+    h = _Harness(_HotkeyState(bindings=dict(_DISK_BINDINGS), disks=_DiskList(paths)))
+    if fdc:
+        h.machine.fdc = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
+        if paths:
+            h.machine.fdc.mount(DskDiskImage(paths[0]), 0)
+    return h
+
+
+def _drive_a(h: _Harness) -> str | None:
+    assert h.machine.fdc is not None
+    image = h.machine.fdc.drives[0].image
+    return None if image is None else image.path.name
+
+
+def _no_cell_asserted(h: _Harness) -> bool:
+    return all(row == 0xFF for row in h.matrix)
+
+
+def test_f6_mounts_the_next_image(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk", "c.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "b.dsk"
+    assert h.hotkeys is not None and h.hotkeys.disks.index == 1
+
+
+def test_f6_goes_through_floppy_disk_swap(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    assert h.machine.fdc is not None
+    h.machine.fdc.read_mem(0x7FFD)  # clear the power-on state
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert h.machine.fdc.read_mem(0x7FFD) & 0x04 == 0  # disk-change reported
+
+
+def test_f6_wraps_to_the_first_image(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keyup(_FakeSDL.SDLK_F6)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "a.dsk"
+    assert h.hotkeys is not None and h.hotkeys.disks.index == 0
+
+
+def test_unreadable_image_leaves_the_drive_unchanged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    (tmp_path / "b.dsk").unlink()
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "a.dsk"
+    assert h.hotkeys is not None and h.hotkeys.disks.index == 0
+    assert "disk swap failed" in capsys.readouterr().err
+
+
+def test_shift_f6_ejects(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) is None
+
+
+def test_shift_f6_reinserts_the_current_image(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)            # index 1, b.dsk
+    h.keyup(_FakeSDL.SDLK_F6)
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)            # eject
+    h.keyup(_FakeSDL.SDLK_F6)
+    h.keydown(_FakeSDL.SDLK_F6)            # re-insert
+    assert _drive_a(h) == "b.dsk"
+    assert h.hotkeys is not None and h.hotkeys.disks.index == 1
+
+
+def test_shift_f6_reinserts_after_an_external_eject(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    assert h.machine.fdc is not None
+    h.machine.fdc.swap(0, None)            # as the RPC or the debugger would
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "a.dsk"
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_disk_hotkeys_do_nothing_without_an_fdc(tmp_path: Path, shift: bool) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"], fdc=False)
+    if shift:
+        h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keyup(_FakeSDL.SDLK_F6)
+    if shift:
+        h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert h.hotkeys is not None and h.hotkeys.disks.index == 0
+    assert _no_cell_asserted(h)
+
+
+@pytest.mark.parametrize("shift", [False, True])
+def test_disk_hotkeys_do_nothing_with_an_empty_list(tmp_path: Path, shift: bool) -> None:
+    h = _disk_harness(tmp_path, [])
+    assert h.machine.fdc is not None
+    h.machine.fdc.mount(DskDiskImage(_dsk(tmp_path / "x.dsk")), 0)
+    if shift:
+        h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "x.dsk"
+
+
+def test_hotkey_fkey_does_not_reach_the_matrix(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _no_cell_asserted(h)
+    h.keyup(_FakeSDL.SDLK_F6)
+    assert _no_cell_asserted(h)
+
+
+def test_key_repeat_does_not_repeat_the_action(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk", "c.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keydown(_FakeSDL.SDLK_F6, repeat=1)
+    h.keydown(_FakeSDL.SDLK_F6, repeat=1)
+    assert _drive_a(h) == "b.dsk"
+
+
+def test_ctrl_blocks_the_hotkey(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    h.keydown(_FakeSDL.SDLK_LCTRL)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) == "a.dsk"
+
+
+def test_shift_hotkey_does_not_leave_shift_asserted(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    assert _asserted(h.matrix, _SHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert _drive_a(h) is None
+    assert _no_cell_asserted(h)
+
+
+def test_releasing_the_fkey_with_shift_held_restores_shift(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keyup(_FakeSDL.SDLK_F6)
+    assert _asserted(h.matrix, _SHIFT)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _no_cell_asserted(h)
+
+
+def test_releasing_shift_first_ends_the_combo(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    h.keyup(_FakeSDL.SDLK_F6)
+    assert _no_cell_asserted(h)
+    assert h.hotkeys is not None and h.hotkeys.shift.active_key is None
+
+
+def test_other_shift_side_during_the_combo_is_not_forwarded(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keydown(_FakeSDL.SDLK_RSHIFT)
+    h.keydown(_FakeSDL.SDLK_LSHIFT, repeat=1)  # SDL repeats a held modifier too
+    assert not _asserted(h.matrix, _SHIFT)
+    h.keyup(_FakeSDL.SDLK_F6)
+    assert _asserted(h.matrix, _SHIFT)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _asserted(h.matrix, _SHIFT)          # Right Shift still held
+    h.keyup(_FakeSDL.SDLK_RSHIFT)
+    assert _no_cell_asserted(h)
+
+
+@pytest.mark.parametrize("fkey", [
+    _FakeSDL.SDLK_F1, _FakeSDL.SDLK_F2, _FakeSDL.SDLK_F3, _FakeSDL.SDLK_F4, _FakeSDL.SDLK_F5,
+])
+def test_shift_f1_to_f5_still_reach_the_msx(tmp_path: Path, fkey: int) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(fkey)
+    assert _asserted(h.matrix, _SHIFT)
+    assert _asserted(h.matrix, KEY_MATRIX_INT[fkey])
+    h.keyup(fkey)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _no_cell_asserted(h)
+
+
+def test_plain_shift_still_sends_shift(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk"])
+    h.keydown(_FakeSDL.SDLK_RSHIFT)
+    assert _asserted(h.matrix, _SHIFT)
+    h.keyup(_FakeSDL.SDLK_RSHIFT)
+    assert _no_cell_asserted(h)
+
+
+def test_hotkey_keycodes_match_real_sdl2_constants() -> None:
+    import sdl2
+
+    from msx.input import _K_LSHIFT, _K_RSHIFT
+
+    assert sdl2.SDLK_F6 == _FakeSDL.SDLK_F6
+    assert (sdl2.SDLK_LSHIFT, sdl2.SDLK_RSHIFT) == (_FakeSDL.SDLK_LSHIFT, _FakeSDL.SDLK_RSHIFT)
+    assert (_K_LSHIFT, _K_RSHIFT) == (_FakeSDL.SDLK_LSHIFT, _FakeSDL.SDLK_RSHIFT)
+
+
+# ---------------------------------------------------------------------------
+# Window title
+# ---------------------------------------------------------------------------
+
+def test_title_shows_the_disk_position(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk", "c.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert h.hotkeys is not None
+    title = _window_title("Game", 59.6, h.machine, h.hotkeys.disks)
+    assert title == "py-msx-emulator — Game [60 fps] disk 2/3: b.dsk"
+
+
+def test_title_shows_an_ejected_drive(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    assert h.machine.fdc is not None and h.hotkeys is not None
+    h.machine.fdc.swap(0, None)
+    title = _window_title("Game", 60.0, h.machine, h.hotkeys.disks)
+    assert title.endswith("disk 1/2: (ejected)")
+
+
+def test_title_shows_an_image_from_outside_the_list(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
+    assert h.machine.fdc is not None and h.hotkeys is not None
+    h.machine.fdc.swap(0, DskDiskImage(_dsk(tmp_path / "other.dsk")))
+    title = _window_title("Game", 60.0, h.machine, h.hotkeys.disks)
+    assert title.endswith("disk -/2: other.dsk")
+
+
+def test_title_without_a_rom_database_title() -> None:
+    machine = _FakeMachine()
+    assert _window_title("py-msx-emulator", 0.0, machine, _DiskList([])) == "py-msx-emulator"
+
+
+def test_title_set_only_on_change() -> None:
+    calls: list[bytes] = []
+
+    class _TitleSDL:
+        def SDL_SetWindowTitle(self, _window: object, title: bytes) -> None:
+            calls.append(title)
+
+    sdl = _TitleSDL()
+    last = _update_window_title(sdl, None, "a", None)
+    last = _update_window_title(sdl, None, "a", last)
+    assert calls == [b"a"]
+    _update_window_title(sdl, None, "b", last)
+    assert calls == [b"a", b"b"]

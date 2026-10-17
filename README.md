@@ -400,7 +400,8 @@ implements a WD2793 controller with the Sony/Philips connection style, as used
 by the Sony HB-F1XD. The registers are memory-mapped in slot 3 sub-slot 0.
 `--fdd1` mounts a `*.dsk` image. The emulator supports Disk BASIC boot,
 `CALL FORMAT`, and file read/write with write-back on exit. You can swap disks
-at runtime from the debugger REPL (`fdd1`/`fdd2`).
+at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
+or from the debugger REPL (`fdd1`/`fdd2`).
 
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
@@ -754,7 +755,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1. The emulator rejects it if slot 1 also resolves to KonamiSCC, or if slot 1 selects `--extension1 scc_plus` |
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`). Writes go back to the file on exit |
+| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The first image is mounted at startup. F6 steps through the list. Writes go back to the file on exit. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
@@ -797,6 +798,7 @@ scale: 3                 # integer window scale over the 256x212 base
 # mapper1/mapper2 are CLI-only (--mapper / --mapper1 / --mapper2); not configurable here
 # extension1: fmpac        # overlay a slot 1 extension -- see docs/README_extension.md
 # extension2: hbi_j1       # overlay a slot 2 extension ('extension' also still works, as a legacy alias for extension2)
+# fdd1: [disks/a.dsk, disks/b.dsk]  # drive A disk list (one path or a list); F6 steps through it
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -830,7 +832,7 @@ mouse:
 ```
 
 These settings are configurable: `machine`, `speed`, `scale`, `slot1`,
-`slot2`, `extension1`, `extension2`, `frame_skip`, `mouse`, and the RPC,
+`slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, and the RPC,
 gamepad, and keyboard-joystick settings. `extension` also still works, as a
 legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
@@ -839,6 +841,8 @@ legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
   share one map.
 - `keyboard_joystick.buttons` applies only to the Joy1 keyboard emulation.
 - `--mouse` on the command line always overrides `mouse.enabled`/`mouse.port`.
+- `fdd1` takes one path or a list of paths. `--fdd1` on the command line
+  replaces the whole list.
 
 See `py_emulator.example.yaml` for the full annotated list and the valid
 button and key-name labels.
@@ -848,11 +852,13 @@ button and key-name labels.
 | Key | Action |
 | --- | --- |
 | Ctrl + Q | Quit |
+| F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
+| Shift + F6 | Eject the drive A disk, or insert the current list image again |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Toggle fullscreen |
-| Esc, F1-F5 | Passed through to the MSX keyboard matrix |
+| Esc, F1-F5 | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |
