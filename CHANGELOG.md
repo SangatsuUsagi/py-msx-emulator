@@ -2,6 +2,13 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **Unreleased**: SDL2 frontend hotkeys.
+  - New: `--fdd1` and the new `py_emulator.yaml` key `fdd1` take a list of disk images for drive A. F6 mounts the next
+    image (it wraps to the first), and Shift+F6 ejects the disk or inserts it again. Both use the same disk swap as the
+    RPC `fdd.swap` method and the debugger, and do nothing on a machine without an FDC.
+  - Shift+hotkey combos do not reach the MSX keyboard matrix: the MSX SHIFT key is released while the combo is held.
+    Shift+F1..F5 still give MSX F6-F10.
+  - The window title shows the drive A disk position, e.g. `py-msx-emulator — <title> [60 fps] disk 2/3: b.dsk`.
 - **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.
   - New: each change of PPI Port C bit 7 (port 0xAA write or 0xAB bit set/reset) drives a 1-bit DAC, so the BIOS key
     click is audible and software that toggles the bit plays 1-bit PCM. The level relative to the PSG follows openMSX's

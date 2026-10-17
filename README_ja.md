@@ -227,7 +227,7 @@ MSX1 は 4 ページ × 4 スロットのディスパッチ：スロット 0 に
 
 ### フロッピーディスクドライブ（WD2793）
 
-汎用 FDC（Floppy Disk Controller）層（ディスクイメージ / ドライブ / コントローラ / 接続スタイルインターフェース）に WD2793 コントローラと Sony/Philips 接続スタイルを実装。Sony HB-F1XD が採用。スロット 3 サブスロット 0 にメモリマップされ、`--fdd1` で `*.dsk` イメージをマウント。Disk BASIC 起動・`CALL FORMAT`・ファイル読み書き（終了時にイメージへ書き戻し）に対応。デバッガ REPL（`fdd1`/`fdd2`）から起動中のディスク入れ替えも可能。
+汎用 FDC（Floppy Disk Controller）層（ディスクイメージ / ドライブ / コントローラ / 接続スタイルインターフェース）に WD2793 コントローラと Sony/Philips 接続スタイルを実装。Sony HB-F1XD が採用。スロット 3 サブスロット 0 にメモリマップされ、`--fdd1` で `*.dsk` イメージをマウント。Disk BASIC 起動・`CALL FORMAT`・ファイル読み書き（終了時にイメージへ書き戻し）に対応。F6/Shift+F6（[エミュレータ内のキー操作](#エミュレータ内のキー操作)参照）またはデバッガ REPL（`fdd1`/`fdd2`）から起動中のディスク入れ替えも可能。
 
 - 実装：`msx/fdc/wd2793.py`、`msx/fdc/interface.py`
 - 既知の制限：
@@ -483,7 +483,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス；`--extension2` と併用不可 |
 | `--mapper2 TYPE` | `auto` | スロット 2 マッパー — `--mapper1` と同一のタイプ一覧（KonamiSCC・SRAM 搭載タイプすべて含む；スロット 2 の SRAM もスロット 1 と同様に永続化される）。KonamiSCC はスロット 1 とマシン単一の SCC チップを共有：スロット 1 も KonamiSCC に解決される場合、またはスロット 1 が `--extension1 scc_plus` を選択している場合は拒否 |
 | `--extension1 ID`、`--extension2 ID`、`--extension ID` | _（なし）_ | スロット 1/スロット 2 の拡張デバイスをオーバーレイ — id の一覧と各拡張の説明は[`docs/README_extension_ja.md`](docs/README_extension_ja.md)を参照。`--extension1` は位置引数 `cartridge`/`--slot1`/`--mapper1` と、`--extension2` は `--slot2`/`--mapper2` と併用不可。同じ拡張 id（`--slot1`/`--slot2` の場合は同じ ROM）を両スロットに同時指定することはできない — 起動時にエラー。`none` は `py_emulator.yaml` がそのスロットに拡張を設定していても強制的に拡張なしにし、そのスロットの `--slotN`/`--mapperN` を CLI で使えるようにする。`--extension` は `--extension2` の別名として使える（`--extension1`/`--extension2` が登場する以前の意味そのまま） |
-| `--fdd1 DSK` | _（なし）_ | ドライブ A にマウントするフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。書き込みは終了時にファイルへ反映 |
+| `--fdd1 DSK [DSK ...]` | _（なし）_ | ドライブ A 用のフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。起動時に先頭のイメージをマウントし、F6 で一覧を順に切り替える。書き込みは終了時にファイルへ反映。位置引数の `cartridge` は `--fdd1` より前に書くか `--slot1` を使うこと（後ろに書くとディスクイメージとして読まれる） |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピー `*.dsk` イメージ（2 ドライブ機のみ） |
 | `--resume [FILE]` | _（なし）_ | `saves/states/latest.state` から復帰（引数なし）、または特定の `.state` ファイルから復帰 |
 | `--mouse [1\|2]` | _（なし）_ | MSX マウスをジョイスティックポートに接続（引数なしは Joy2）；`py_emulator.yaml` の `mouse` 設定より優先。ヘッドレス実行時は無効 |
@@ -525,6 +525,7 @@ scale: 3                 # 256x212 ベースに対するウィンドウ整数拡
 # mapper1/mapper2 は CLI 専用（--mapper / --mapper1 / --mapper2）；ここでは設定不可
 # extension1: fmpac        # スロット 1 の拡張を重ねる -- 詳細は docs/README_extension_ja.md
 # extension2: hbi_j1       # スロット 2 の拡張を重ねる（'extension' も extension2 のレガシー別名として使える）
+# fdd1: [disks/a.dsk, disks/b.dsk]  # ドライブ A のディスク一覧（1 つのパスまたはリスト）；F6 で順に切り替え
 frame_skip: true         # true = auto（デフォルト）、false = none（無効化）
 
 rpc:
@@ -559,11 +560,12 @@ mouse:
 
 設定できるのは `machine`・`speed`・`scale`・`slot1`・`slot2`・`extension1`・
 `extension2`（`extension` も `extension2` のレガシー別名として使えます）・
-`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
+`fdd1`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
 （`mapper1`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper1`/`--mapper2` を参照）。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
 コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
+`fdd1` には 1 つのパスかパスのリストを書けます。コマンドラインの `--fdd1` は一覧全体を置き換えます。
 全項目と有効なボタン/キー名は `py_emulator.example.yaml` を参照してください。
 
 ### エミュレータ内のキー操作
@@ -571,11 +573,13 @@ mouse:
 | キー | 動作 |
 | --- | --- |
 | Ctrl + Q | 終了 |
+| F6 | `--fdd1` の一覧の次のディスクイメージをドライブ A にマウント（最後の次は先頭に戻る）。FDC のないマシンでは何もしない |
+| Shift + F6 | ドライブ A のディスクを取り出す、または一覧の現在のイメージを再挿入する |
 | F8 | ステートセーブ（`saves/states/<title>_YYYYMMDD_HHMMSS.state` に保存）* |
 | F9 | 最新のステートセーブを読み込む |
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
 | F11 | フルスクリーン切り替え |
-| Esc, F1–F5 | MSX キーボードマトリクスにそのまま渡す |
+| Esc, F1–F5 | MSX キーボードマトリクスにそのまま渡す。Shift+F1〜F5 は MSX の F6〜F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |
