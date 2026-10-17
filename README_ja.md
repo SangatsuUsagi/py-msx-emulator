@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータ。機械可読なコンポーネント仕様に基づいて実装している。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3662%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3672%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -812,7 +812,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3662 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 3672 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -881,7 +881,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（3662 テスト）
+├── tests/                 # テストスイート（3672 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴
