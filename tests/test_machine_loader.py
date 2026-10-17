@@ -1241,3 +1241,39 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
             spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay=overlay,
         )
+
+
+@pytest.mark.parametrize("pages", [[4], [-1]])
+def test_parse_slot0_ram_page_out_of_range_raises(pages: list[int]) -> None:
+    slot0 = {"content": [{"ram": {"size_kb": 16, "pages": pages}}]}
+    with pytest.raises(MachineLoadError):
+        _parse_slot0(slot0, "test")
+
+
+@pytest.mark.parametrize("size_kb", [0, 8, 32])
+def test_parse_slot0_ram_size_other_than_16k_raises(size_kb: int) -> None:
+    slot0 = {"content": [{"ram": {"size_kb": size_kb, "pages": [3]}}]}
+    with pytest.raises(MachineLoadError):
+        _parse_slot0(slot0, "test")
+
+
+def test_parse_slot0_page2_ram_with_page2_rom_raises() -> None:
+    slot0 = {
+        "content": [
+            {"rom": {"file": "main.rom", "size_kb": 32, "pages": [0, 1]}},
+            {"rom": {"file": "logo.rom", "size_kb": 16, "pages": [2]}},
+            {"ram": {"size_kb": 16, "pages": [2]}},
+        ],
+    }
+    with pytest.raises(MachineLoadError):
+        _parse_slot0(slot0, "test")
+
+
+def test_build_machine_msx2_slot0_ram_entry_reaches_memory(tmp_path: Path) -> None:
+    spec = dataclasses.replace(
+        _make_msx2_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
+    )
+    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K)
+    assert machine.memory.slot0_ram is not None
+    assert len(machine.memory.slot0_ram) == 16 * 1024
+    assert machine.memory.slot0_ram_page == 3
