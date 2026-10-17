@@ -15,6 +15,8 @@ from frontend.sdl2_frontend import (
     _DiskList,
     _handle_events,
     _HotkeyState,
+    _LoopState,
+    _run_frame,
     _update_window_title,
     _window_title,
 )
@@ -62,6 +64,8 @@ class _FakeSDL:
     SDLK_F4 = 1073741885
     SDLK_F5 = 1073741886
     SDLK_F6 = 1073741887
+    SDLK_F7 = 1073741888
+    SDLK_F12 = 1073741893
     SDLK_F8 = -8
     SDLK_F9 = -9
     SDLK_F10 = -10
@@ -110,6 +114,12 @@ class _FakeMachine:
         self.input = InputState()
         self._debugger = None
         self.fdc: SonyPhilipsInterface | None = None
+        self.reset_calls = 0
+        self.shift_at_reset: bool | None = None
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+        self.shift_at_reset = _asserted(self.input.matrix, KEY_MATRIX_INT[_FakeSDL.SDLK_LSHIFT])
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
@@ -758,7 +768,7 @@ def test_title_shows_the_disk_position(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk", "c.dsk"])
     h.keydown(_FakeSDL.SDLK_F6)
     assert h.hotkeys is not None
-    title = _window_title("Game", 59.6, h.machine, h.hotkeys.disks)
+    title = _window_title("Game", 59.6, h.machine, h.hotkeys, False)
     assert title == "py-msx-emulator — Game [60 fps] disk 2/3: b.dsk"
 
 
@@ -766,7 +776,7 @@ def test_title_shows_an_ejected_drive(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
     assert h.machine.fdc is not None and h.hotkeys is not None
     h.machine.fdc.swap(0, None)
-    title = _window_title("Game", 60.0, h.machine, h.hotkeys.disks)
+    title = _window_title("Game", 60.0, h.machine, h.hotkeys, False)
     assert title.endswith("disk 1/2: (ejected)")
 
 
@@ -774,13 +784,14 @@ def test_title_shows_an_image_from_outside_the_list(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
     assert h.machine.fdc is not None and h.hotkeys is not None
     h.machine.fdc.swap(0, DskDiskImage(_dsk(tmp_path / "other.dsk")))
-    title = _window_title("Game", 60.0, h.machine, h.hotkeys.disks)
+    title = _window_title("Game", 60.0, h.machine, h.hotkeys, False)
     assert title.endswith("disk -/2: other.dsk")
 
 
 def test_title_without_a_rom_database_title() -> None:
     machine = _FakeMachine()
-    assert _window_title("py-msx-emulator", 0.0, machine, _DiskList([])) == "py-msx-emulator"
+    hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]))
+    assert _window_title("py-msx-emulator", 0.0, machine, hotkeys, False) == "py-msx-emulator"
 
 
 def test_title_set_only_on_change() -> None:
@@ -796,3 +807,329 @@ def test_title_set_only_on_change() -> None:
     assert calls == [b"a"]
     _update_window_title(sdl, None, "b", last)
     assert calls == [b"a", b"b"]
+
+
+def test_title_shows_the_status_flags(tmp_path: Path) -> None:
+    h = _disk_harness(tmp_path, ["a.dsk", "b.dsk", "c.dsk"])
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert h.hotkeys is not None
+    h.hotkeys.ff_locked = True
+    h.hotkeys.muted = True
+    title = _window_title("Game", 60.0, h.machine, h.hotkeys, True)
+    assert title == "py-msx-emulator — Game [60 fps] [PAUSED] [FF] [MUTE] disk 2/3: b.dsk"
+
+
+# ---------------------------------------------------------------------------
+# Bound hotkeys: fast-forward, mute, reset
+# ---------------------------------------------------------------------------
+
+_CONTROL_BINDINGS = {
+    (_FakeSDL.SDLK_F7, False): "fast_forward_hold",
+    (_FakeSDL.SDLK_F7, True): "fast_forward_lock",
+    (_FakeSDL.SDLK_F12, False): "mute",
+    (_FakeSDL.SDLK_F12, True): "reset",
+}
+
+
+def _control_harness() -> _Harness:
+    return _Harness(_HotkeyState(bindings=dict(_CONTROL_BINDINGS), disks=_DiskList([])))
+
+
+def test_f7_hold() -> None:
+    h = _control_harness()
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_F7)
+    assert h.hotkeys.fast_forward
+    h.keydown(_FakeSDL.SDLK_F7, repeat=1)
+    assert h.hotkeys.fast_forward
+    h.keyup(_FakeSDL.SDLK_F7)
+    assert not h.hotkeys.fast_forward
+    assert _no_cell_asserted(h)
+
+
+def test_f7_hold_ends_even_if_shift_was_pressed_meanwhile() -> None:
+    h = _control_harness()
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_F7)
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keyup(_FakeSDL.SDLK_F7)
+    assert not h.hotkeys.fast_forward
+    assert _asserted(h.matrix, _SHIFT)  # plain Shift still reaches the MSX
+
+
+def test_shift_f7_toggles_the_latch() -> None:
+    h = _control_harness()
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F7)
+    h.keyup(_FakeSDL.SDLK_F7)
+    assert h.hotkeys.fast_forward
+    h.keydown(_FakeSDL.SDLK_F7)
+    h.keyup(_FakeSDL.SDLK_F7)
+    assert not h.hotkeys.fast_forward
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _no_cell_asserted(h)
+
+
+def test_f12_toggles_mute() -> None:
+    h = _control_harness()
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_F12)
+    h.keyup(_FakeSDL.SDLK_F12)
+    assert h.hotkeys.muted
+    h.keydown(_FakeSDL.SDLK_F12)
+    h.keyup(_FakeSDL.SDLK_F12)
+    assert not h.hotkeys.muted
+    assert _no_cell_asserted(h)
+
+
+def test_shift_f12_resets_without_shift_held() -> None:
+    h = _control_harness()
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F12)
+    h.keydown(_FakeSDL.SDLK_F12, repeat=1)
+    assert h.machine.reset_calls == 1
+    assert h.machine.shift_at_reset is False
+    h.keyup(_FakeSDL.SDLK_F12)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _no_cell_asserted(h)
+
+
+def test_control_keycodes_match_real_sdl2_constants() -> None:
+    import sdl2
+
+    assert (sdl2.SDLK_F7, sdl2.SDLK_F12) == (_FakeSDL.SDLK_F7, _FakeSDL.SDLK_F12)
+
+
+# ---------------------------------------------------------------------------
+# _run_frame: pause, fast-forward, mute
+# ---------------------------------------------------------------------------
+
+_AUDIO_DEV = 7
+_SAMPLES = 735
+
+
+class _LoopSDL(_FakeSDL):
+    """`_FakeSDL` with no queued events plus the render/audio calls `_run_frame` makes."""
+
+    def __init__(self) -> None:
+        super().__init__([], _Event())
+        self.presents = 0
+        self.queued: list[bytes] = []
+        self.pause_calls: list[int] = []
+        self.clear_calls = 0
+
+    def SDL_RenderClear(self, _renderer: object) -> int:
+        return 0
+
+    def SDL_RenderCopy(self, *_args: object) -> int:
+        return 0
+
+    def SDL_RenderPresent(self, _renderer: object) -> None:
+        self.presents += 1
+
+    def SDL_QueueAudio(self, _dev: int, data: bytes, _len: int) -> int:
+        self.queued.append(data)
+        return 0
+
+    def SDL_PauseAudioDevice(self, _dev: int, pause_on: int) -> None:
+        self.pause_calls.append(pause_on)
+
+    def SDL_ClearQueuedAudio(self, _dev: int) -> None:
+        self.clear_calls += 1
+
+
+class _LoopPSG:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_samples(self, samples: int, _start: int, _end: int) -> bytes:
+        self.calls += 1
+        return b"\x10\x00" * samples
+
+
+class _LoopVDP:
+    def to_rgb24(self, index_buf: bytearray) -> bytes:
+        return bytes(len(index_buf) * 3)
+
+
+class _LoopStandard:
+    target_fps = 60.0
+
+
+class _LoopMachine(_FakeMachine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cycle_count = 0
+        self.frames = 0
+        self.psg = _LoopPSG()
+        self.vdp = _LoopVDP()
+        self.scc = self.dac = self.ppi = self.fmpac = None
+        self.video_standard = _LoopStandard()
+
+    def run_frame(self, skip_render: bool = False) -> bytearray:
+        self.frames += 1
+        self.cycle_count += 59736
+        return bytearray(256 * 212)
+
+
+class _LoopTimer:
+    fps = 60.0
+    frame_interval = 1.0 / 60.0
+
+    def __init__(self) -> None:
+        self.ticks = 0
+        self.unpaced = 0
+
+    def tick(self) -> float:
+        self.ticks += 1
+        return self.frame_interval
+
+    def tick_unpaced(self) -> float:
+        self.unpaced += 1
+        return 0.0
+
+
+class _LoopJoy:
+    def tick(self) -> None:
+        pass
+
+
+class _PauseState:
+    def __init__(self, paused: bool) -> None:
+        self.paused = paused
+
+
+class _LoopRpc:
+    def __init__(self, paused: bool) -> None:
+        self.pause_state = _PauseState(paused)
+
+    def drain(self) -> None:
+        pass
+
+
+class _Loop:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, rpc_paused: bool | None = None) -> None:
+        import frontend.sdl2_frontend as fe
+
+        monkeypatch.setattr(fe, "_upload_to_texture", lambda *_a: None)
+        self.sdl = _LoopSDL()
+        self.machine = _LoopMachine()
+        self.timer = _LoopTimer()
+        self.hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]))
+        self.rpc = None if rpc_paused is None else _LoopRpc(rpc_paused)
+        self.state = _LoopState(
+            running=True, fullscreen=False, texture=object(), tex_w=256, tex_h=212,
+            rgb_buf=b"", skip_counter=0,
+        )
+
+    def step(self) -> None:
+        _run_frame(
+            self.sdl, self.machine, None, None, self.state, _LoopJoy(), _CtrlComboState(),
+            _CTRL_FKEY_CELLS, "", None, _Event(), self.rpc, self.timer, "auto",
+            _AUDIO_DEV, None, 3, self.hotkeys,
+        )
+
+
+def test_pause_stops_emulation_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.user_paused = True
+    loop.step()
+    loop.step()
+    assert loop.machine.frames == 0
+    assert loop.machine.psg.calls == 0
+    assert loop.sdl.queued == []
+    assert loop.sdl.pause_calls == [1]        # paused once, not per iteration
+    assert loop.sdl.presents == 2              # last frame still shown
+    assert loop.timer.ticks == 2
+
+
+def test_resume_restarts_emulation_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.user_paused = True
+    loop.step()
+    loop.hotkeys.user_paused = False
+    loop.step()
+    loop.step()
+    assert loop.machine.frames == 2
+    assert loop.sdl.pause_calls == [1, 0]
+    assert len(loop.sdl.queued) == 2
+
+
+def test_rpc_pause_also_pauses_the_audio_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch, rpc_paused=True)
+    loop.step()
+    assert loop.machine.frames == 0
+    assert loop.sdl.pause_calls == [1]
+
+
+def test_pause_action_does_not_resume_an_rpc_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch, rpc_paused=True)
+    h = _Harness(_HotkeyState(bindings={(_FakeSDL.SDLK_F6, False): "pause"},
+                              disks=_DiskList([])))
+    loop.hotkeys = h.hotkeys
+    h.keydown(_FakeSDL.SDLK_F6)
+    h.keyup(_FakeSDL.SDLK_F6)
+    assert loop.hotkeys.user_paused
+    h.keydown(_FakeSDL.SDLK_F6)
+    assert not loop.hotkeys.user_paused
+    loop.step()
+    assert loop.rpc is not None and loop.rpc.pause_state.paused
+    assert loop.machine.frames == 0
+
+
+def test_fast_forward_frame_is_unpaced_and_not_queued(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.ff_locked = True
+    loop.step()
+    assert loop.machine.frames == 1
+    assert loop.timer.unpaced == 1 and loop.timer.ticks == 0
+    assert loop.machine.psg.calls == 1          # still mixed: chips advance
+    assert loop.sdl.queued == []
+
+
+def test_fast_forward_limits_presents(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.ff_locked = True
+    loop.step()
+    loop.step()                                 # well inside 1/60 s of the first
+    assert loop.machine.frames == 2
+    assert loop.sdl.presents == 1
+
+
+def test_fast_forward_transitions_clear_the_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.step()
+    assert loop.sdl.clear_calls == 0
+    loop.hotkeys.ff_locked = True
+    loop.state.skip_counter = 3
+    loop.step()
+    assert loop.sdl.clear_calls == 1
+    assert loop.state.skip_counter == 0
+    loop.step()
+    assert loop.sdl.clear_calls == 1
+    loop.hotkeys.ff_locked = False
+    loop.step()
+    assert loop.sdl.clear_calls == 2
+
+
+def test_leaving_fast_forward_restores_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.ff_locked = True
+    loop.step()
+    loop.hotkeys.ff_locked = False
+    loop.step()
+    assert loop.timer.ticks == 1 and loop.timer.unpaced == 1
+    assert len(loop.sdl.queued) == 1
+
+
+def test_muted_frame_queues_silence(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = _Loop(monkeypatch)
+    loop.hotkeys.muted = True
+    loop.step()
+    assert loop.machine.psg.calls == 1
+    assert loop.sdl.pause_calls == []           # device keeps running
+    assert loop.sdl.queued == [bytes(2 * _SAMPLES)]
+    loop.hotkeys.muted = False
+    loop.step()
+    assert loop.sdl.queued[1] == b"\x10\x00" * _SAMPLES
