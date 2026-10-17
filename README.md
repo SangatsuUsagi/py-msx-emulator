@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3548%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3580%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -163,6 +163,22 @@ not alias to a full/zero chop.
 
 - Implementation: `msx/psg.py`
 
+### Key click: PPI Port C bit 7
+
+PPI Port C bit 7 (I/O port 0xAA) drives a 1-bit DAC. Each change of the bit
+sets the output to 0 or to a fixed level. The emulator records the cycle of
+each change and places it at its sample position in the frame, in the same way
+as the Majutsushi cartridge DAC. Thus the BIOS key click is audible, and
+software that toggles the bit plays 1-bit PCM. The level relative to the PSG
+follows openMSX's machine configurations.
+
+- Implementation: `msx/ppi.py`, `msx/dac.py` (the write-driven DAC channel
+  that the key click and the Majutsushi DAC share)
+- Known limitations:
+  - The mix has no DC-blocking stage. On a real MSX, the click decays to
+    silence after each edge. Here, a bit held at 1 stays as a constant offset
+    until the next change.
+
 ### SCC: Konami SCC (Sound Creative Chip)
 
 A 5-channel wavetable synthesizer. The emulator mixes its output into the audio
@@ -274,7 +290,7 @@ hardware, not only documentation.
 
 An analog-style output low-pass filter (2-pole Butterworth) models the RC
 filter on the real MSX audio output. It removes residual imaging and aliasing
-from the mixed PSG/SCC/DAC/OPLL signal.
+from the mixed PSG/SCC/DAC/OPLL/key-click signal.
 
 - Implementation: `msx/audio_filter.py`
 
@@ -290,7 +306,8 @@ latched from the last PPI access (`bus_latch`, the S3527 in `hb_10` /
 
 - Implementation: `msx/ppi.py`
 - Known limitations: the emulator does not implement the cassette interface
-  (port 0xAA bits 4-7).
+  (port 0xAA bits 4-5) or the CAPS LED (bit 6). Bit 7 drives the key click
+  (see "Key click: PPI Port C bit 7").
 
 ### Memory bus / slot system
 
@@ -1052,7 +1069,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3548 tests and covers all major components. It includes
+The test suite has 3580 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1096,10 +1113,11 @@ py-msx-emulator/
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
 │   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
+│   ├── dac.py             # Write-driven DAC channel (Majutsushi DAC, key click)
 │   ├── scc.py             # Konami SCC wavetable synthesiser
 │   ├── fmpac.py           # FM-PAC cartridge (banked ROM, SRAM, OPLL routing)
 │   ├── opll.py            # YM2413 (OPLL) FM sound chip
-│   ├── ppi.py             # i8255 PPI (slot register, keyboard)
+│   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
 │   ├── joystick.py        # Physical joystick manager (SDL2)
@@ -1122,7 +1140,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
 ├── openspec/
 │   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3548 tests
+├── tests/                 # Test suite — 3580 tests
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration

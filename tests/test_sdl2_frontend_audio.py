@@ -20,6 +20,18 @@ class _Gen:
         return self._buf
 
 
+class _SilentGen:
+    """A DAC-style source that is silent for the frame."""
+
+    def generate_samples(self, _n: int, *_args: int) -> None:
+        return None
+
+
+class _Ppi:
+    def __init__(self, click: "_Gen | _SilentGen | _CountingGen") -> None:
+        self.click = click
+
+
 class _FmPac:
     def __init__(self, opll_buf: bytes) -> None:
         self.opll = _Gen(opll_buf)
@@ -32,6 +44,7 @@ class _Machine:
         scc: bytes | None = None,
         dac: bytes | None = None,
         fmpac_opll: bytes | None = None,
+        click: bytes | None = None,
         video_standard: VideoStandard = VideoStandard.NTSC,
     ) -> None:
         self.video_standard = video_standard
@@ -39,6 +52,7 @@ class _Machine:
         self.scc = _Gen(scc) if scc is not None else None
         self.dac = _Gen(dac) if dac is not None else None
         self.fmpac = _FmPac(fmpac_opll) if fmpac_opll is not None else None
+        self.ppi = _Ppi(_Gen(click) if click is not None else _SilentGen())
 
 
 def test_psg_only_passthrough() -> None:
@@ -73,6 +87,39 @@ def test_opll_contributes_to_mix() -> None:
     """FM-PAC present → its OPLL buffer is summed into the mix."""
     out = _mix_audio(_Machine(_pcm(100), fmpac_opll=_pcm(50)), 0, 100)
     assert array("h", out).tolist() == [150] * SAMPLES_PER_FRAME
+
+
+def test_key_click_is_mixed_when_bit7_changes() -> None:
+    """app-sdl2-audio "Key click is mixed when bit 7 changes"."""
+    out = _mix_audio(_Machine(_pcm(100), click=_pcm(9288)), 0, 100)
+    assert array("h", out).tolist() == [9388] * SAMPLES_PER_FRAME
+
+
+def test_key_click_mix_is_clamped() -> None:
+    out = _mix_audio(_Machine(_pcm(30000), click=_pcm(9288)), 0, 100)
+    assert array("h", out).tolist() == [32767] * SAMPLES_PER_FRAME
+
+
+def test_silent_key_click_leaves_psg_only_path_unchanged() -> None:
+    """app-sdl2-audio "Silent key click leaves the PSG-only path unchanged"."""
+    psg = _pcm(1234)
+    machine = _Machine(psg)
+    assert isinstance(machine.ppi.click, _SilentGen)
+    assert _mix_audio(machine, 0, 100) == psg
+
+
+def test_silent_dac_frame_is_not_mixed() -> None:
+    """app-sdl2-audio "Silent DAC frame is not mixed"."""
+    psg = _pcm(1234)
+    machine = _Machine(psg)
+    machine.dac = _SilentGen()
+    assert _mix_audio(machine, 0, 100) == psg
+
+
+def test_machine_without_ppi_is_mixed() -> None:
+    machine = _Machine(_pcm(100), scc=_pcm(50))
+    machine.ppi = None
+    assert array("h", _mix_audio(machine, 0, 100)).tolist() == [150] * SAMPLES_PER_FRAME
 
 
 # --- allium/frontend.allium: CombineAndFilter (mix + output low-pass) ------
@@ -217,10 +264,11 @@ class _CountingGen:
 
 def _counting_machine(standard: VideoStandard) -> tuple[_Machine, list[_CountingGen]]:
     machine = _Machine(b"", video_standard=standard)
-    gens = [_CountingGen() for _ in range(4)]
+    gens = [_CountingGen() for _ in range(5)]
     machine.psg, machine.scc, machine.dac = gens[0], gens[1], gens[2]
     machine.fmpac = _FmPac(b"")
     machine.fmpac.opll = gens[3]
+    machine.ppi = _Ppi(gens[4])
     return machine, gens
 
 
@@ -228,7 +276,7 @@ def test_ntsc_machine_mixes_735_samples_per_frame() -> None:
     machine, gens = _counting_machine(VideoStandard.NTSC)
     out = _mix_audio(machine, 0, 59_736)
     assert len(out) == 735 * 2
-    assert [g.requested for g in gens] == [[735]] * 4
+    assert [g.requested for g in gens] == [[735]] * 5
 
 
 def test_pal_machine_mixes_882_samples_per_frame() -> None:
@@ -236,4 +284,4 @@ def test_pal_machine_mixes_882_samples_per_frame() -> None:
     machine, gens = _counting_machine(VideoStandard.PAL)
     out = _mix_audio(machine, 0, 71_364)
     assert len(out) == 882 * 2
-    assert [g.requested for g in gens] == [[882]] * 4
+    assert [g.requested for g in gens] == [[882]] * 5
