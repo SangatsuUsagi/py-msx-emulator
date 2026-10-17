@@ -81,7 +81,8 @@ confirms this value for both VDP chip families.
 
 This budget is different from the Z80A clock (3.579545 MHz) divided by a flat
 60 Hz. The field rate of real MSX NTSC hardware is ~59.92 Hz, not exactly
-60 Hz.
+60 Hz. PAL machines use 313 lines per frame, a budget of 71,364 T-states (see
+`video_standard` in [Machine YAML](#machine-yaml-configmachinesyaml)).
 
 #### MSX M1 wait state
 
@@ -145,11 +146,8 @@ The MSX1 path has no per-scanline interrupts.
 
 On MSX2 (V9938), interrupts are level-based. The inner loop of
 `Machine.run_frame()` samples the `irq` of the VDP at every instruction
-boundary, with the same line as the MSX1 path above:
-
-```python
-cpu.int_pending = vdp.irq
-```
+boundary, with the same `cpu.int_pending = vdp.irq` line as the MSX1 path
+above.
 
 `V9938.irq` gives the result of `irq_pending()`:
 
@@ -233,8 +231,10 @@ the value, and the current instruction PC.
 | 0x98-0x9B | VDP (TMS9918A or V9938)                  |
 | 0x9A      | V9938 palette (MSX2 only)                |
 | 0xA0-0xA2 | PSG (AY-3-8910)                          |
+| 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)  |
 | 0xA8-0xAB | PPI (i8255)                              |
 | 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                  |
+| 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions) |
 | 0xFC-0xFF | RAM mapper segment registers (MSX2 only) |
 
 ---
@@ -346,7 +346,7 @@ instruction used. Each block command has its own cost per element:
 `_YMMM_CYCLES_PER_BYTE` (18) T-states per VRAM byte, `_LMMV_CYCLES_PER_DOT`
 (21) and `_LMMM_CYCLES_PER_DOT` (30) per dot. These values come from timing
 full-page commands on a real SONY HB-F1XD with the display and sprites on, the
-slowest case; the speed-up with less display or sprite VRAM traffic is not
+slowest case. The speed-up with less display or sprite VRAM traffic is not
 modelled. Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the
 budget expires.
 
@@ -359,9 +359,8 @@ XOR, NOT) per pixel.
 
 ### Known limitations
 
-- Command timing is approximate. The exact command durations differ from
-  hardware. The emulator does not reproduce the per-command cycle counts of the
-  V9938 data book.
+- Command timing is approximate: one measured cost per element (see above), not
+  the per-command cycle counts of the V9938 data book.
 - The engine writes the VRAM results at dispatch, not incrementally. Software
   that reads VRAM while a command is nominally in progress can see the
   completed result before CE clears.
@@ -379,7 +378,8 @@ XOR, NOT) per pixel.
 
 The PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the OPLL of the FM-PAC
 (`msx/opll.py`), the Majutsushi DAC, and the PPI key click each render signed
-16-bit mono PCM at 44,100 Hz, 735 samples per frame. The `_mix_audio()`
+16-bit mono PCM at 44,100 Hz: 735 samples per frame on NTSC machines and 882 on
+PAL machines. The `_mix_audio()`
 function of the SDL2 frontend adds the outputs of the chips that the machine
 has. It clamps the result to 16 bits and queues the buffer to SDL.
 
@@ -470,14 +470,16 @@ Default MSX2 layout:
 | -------- | -------------------------- |
 | 3-0      | C-BIOS Sub ROM (read-only) |
 | 3-1      | Empty                      |
-| 3-2      | 128 KB RAM via RAM mapper  |
+| 3-2      | RAM via RAM mapper (128 KB default) |
 | 3-3      | Empty                      |
 
 ### RAM mapper
 
-`RamMapper` (`msx/ram_mapper.py`) divides 128 KB into 8 segments of 16 KB each.
-Four segment registers at ports 0xFC-0xFF independently select the visible
-segment in each CPU page:
+`RamMapper` (`msx/ram_mapper.py`) divides its RAM into 16 KB segments. The size
+is a positive multiple of 16 KB, set by `size_kb` in the machine or extension
+YAML. The default is 128 KB (8 segments). `hb_f1xd_256k` uses 256 KB, and the
+512 KB extensions use 512 KB. Four segment registers at ports 0xFC-0xFF
+independently select the visible segment in each CPU page:
 
 | Port | Page | Address range |
 | ---- | ---- | ------------- |
@@ -486,8 +488,10 @@ segment in each CPU page:
 | 0xFE | 2    | 0x8000-0xBFFF |
 | 0xFF | 3    | 0xC000-0xFFFF |
 
-A write of the segment number (0-7) to a register remaps that page
-immediately.
+A write of a segment number to a register remaps that page immediately. The
+mapper masks the number with `bank_mask`: the smallest power of two that covers
+the segment count, minus 1 (7 for 128 KB). A read returns the segment number
+with the unused upper bits set to 1.
 
 ---
 
@@ -514,9 +518,17 @@ style of a machine. The two shipped floppy machines thus differ only in data:
   across its four secondary slots: RAM in sub-slot 0, SUB ROM in 1, and the
   FDC in 2.
 
-`--fdd1`/`--fdd2` mount images into drives A/B. The `fdd1`/`fdd2` commands of
-the debugger swap them at runtime. The implementation boots Disk BASIC,
-supports `CALL FORMAT`, and reads and writes files with write-back on exit.
+`--fdd1`/`--fdd2` mount images into drives A/B. `--fdd1` can take a list of
+images. Three paths swap disks at runtime, and all of them call
+`FloppyDisk.swap()`:
+
+- The F6/Shift+F6 hotkeys of the SDL2 frontend step through the `--fdd1`
+  list, or eject and insert the drive A disk again.
+- The `fdd1`/`fdd2` commands of the debugger.
+- The `fdd.swap` method of the socket RPC server.
+
+The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and
+writes files with write-back on exit.
 `machine.fdc` is `None` on machines with no floppy interface.
 
 ## Machine and extension YAML schema
@@ -982,3 +994,7 @@ tell the scheduler that this loop is a spin.
 A Rust port adds `std::hint::spin_loop()` in the same loop. This gives the CPU
 pipeline a hint without a sleep. It can decrease power consumption and improve
 timing jitter on SMT cores.
+
+During fast-forward, the frontend calls `FrameTimer.tick_unpaced()` instead of
+`tick()`. It counts the frame for the fps measurement and restarts the
+deadline, but it does not wait. A port keeps the same two entry points.
