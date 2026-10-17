@@ -111,9 +111,9 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
 boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
-documented per-instruction rules, except where they come from the internal
-MEMPTR register (`BIT n,(HL)` leaves them clear), the PC of a repeating block
-instruction, or the previous instruction (`SCF`/`CCF`).
+documented per-instruction rules. Three sources of Y and X are not modelled:
+the internal MEMPTR register (`BIT n,(HL)` leaves them clear), the PC of a
+repeating block instruction, and the previous instruction (`SCF`/`CCF`).
 
 ---
 
@@ -146,7 +146,7 @@ The MSX1 path has no per-scanline interrupts.
 
 On MSX2 (V9938), interrupts are level-based. The inner loop of
 `Machine.run_frame()` samples the `irq` of the VDP at every instruction
-boundary, with the same `cpu.int_pending = vdp.irq` line as the MSX1 path
+boundary. It uses the same `cpu.int_pending = vdp.irq` line as the MSX1 path
 above.
 
 `V9938.irq` gives the result of `irq_pending()`:
@@ -271,9 +271,11 @@ its renderer. These are the main differences from the TMS9918A:
 - Level-based IRQ through `irq_pending()`
 
 The `display_height` property returns 192 normally, or 212 when R#9 bit 7 (LN)
-is set. The `display_width` property returns 512 for the wide modes (SCREEN
-6/G5 and SCREEN 7/G6, M5 set and M4 clear) and for TEXT2 (SCREEN 0 WIDTH 80,
-M1 and M4 set with M3 clear). It returns 256 for all other modes.
+is set. The `display_width` property returns 512 for these modes, and 256 for all
+other modes:
+
+- The wide modes SCREEN 6/G5 and SCREEN 7/G6 (M5 set, M4 clear).
+- TEXT2, SCREEN 0 WIDTH 80 (M1 and M4 set, M3 clear).
 
 ### Banded renderer
 
@@ -341,14 +343,22 @@ operations:
 The engine executes each command immediately. To model the command duration,
 `V9938.tick(n)` decrements an approximate cycle budget (`_cmd_remaining`).
 The machine calls `tick(n)` after each instruction with the T-states that the
-instruction used. Each block command has its own cost per element:
-`_HMMV_CYCLES_PER_BYTE` (10), `_HMMM_CYCLES_PER_BYTE` (21) and
-`_YMMM_CYCLES_PER_BYTE` (18) T-states per VRAM byte, `_LMMV_CYCLES_PER_DOT`
-(21) and `_LMMM_CYCLES_PER_DOT` (30) per dot. These values come from timing
-full-page commands on a real SONY HB-F1XD with the display and sprites on, the
-slowest case. The speed-up with less display or sprite VRAM traffic is not
-modelled. Software that busy-waits on S#2 bit 0 (CE) sees CE clear after the
-budget expires.
+instruction used. Software that busy-waits on S#2 bit 0 (CE) sees CE clear
+after the budget expires.
+
+Each block command has its own cost per element, in T-states:
+
+| Constant | Cost | Unit |
+| --- | --- | --- |
+| `_HMMV_CYCLES_PER_BYTE` | 10 | per VRAM byte |
+| `_HMMM_CYCLES_PER_BYTE` | 21 | per VRAM byte |
+| `_YMMM_CYCLES_PER_BYTE` | 18 | per VRAM byte |
+| `_LMMV_CYCLES_PER_DOT` | 21 | per dot |
+| `_LMMM_CYCLES_PER_DOT` | 30 | per dot |
+
+These values come from timing full-page commands on a real SONY HB-F1XD with
+the display and sprites on, the slowest case. The emulator does not model the
+speed-up with less display or sprite VRAM traffic.
 
 A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The
 first pixel or byte of a transfer comes from a pending COL write. The engine
@@ -359,13 +369,15 @@ XOR, NOT) per pixel.
 
 ### Known limitations
 
-- Command timing is approximate: one measured cost per element (see above), not
-  the per-command cycle counts of the V9938 data book.
+- Command timing is approximate. The engine uses one measured cost per element
+  (see above). It does not use the per-command cycle counts of the V9938 data
+  book.
 - The engine writes the VRAM results at dispatch, not incrementally. Software
   that reads VRAM while a command is nominally in progress can see the
   completed result before CE clears.
-- The renderer is deferred. The CPU runs a full frame, VDP commands write into
-  VRAM instantly, and then a single render pass covers the whole frame. Both
+- The emulator renders each frame after the CPU runs it. The CPU runs a full
+  frame, VDP commands write into VRAM instantly, and then a single render pass
+  covers the whole frame. Both
   the V9938 and the TMS9918A do this render pass at the start of vertical
   blanking. The emulator does not faithfully reproduce VRAM updates that
   follow the raster within a frame (beam-raced blits, double-buffered title
@@ -376,11 +388,11 @@ XOR, NOT) per pixel.
 
 ## Audio
 
-The PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the OPLL of the FM-PAC
-(`msx/opll.py`), the Majutsushi DAC, and the PPI key click each render signed
-16-bit mono PCM at 44,100 Hz: 735 samples per frame on NTSC machines and 882 on
-PAL machines. The `_mix_audio()`
-function of the SDL2 frontend adds the outputs of the chips that the machine
+Five sources render audio: the PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the
+OPLL of the FM-PAC (`msx/opll.py`), the Majutsushi DAC, and the PPI key click.
+Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples
+on NTSC machines and 882 on PAL machines. The `_mix_audio()` function of the
+SDL2 frontend adds the outputs of the chips that the machine
 has. It clamps the result to 16 bits and queues the buffer to SDL.
 
 The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
@@ -615,8 +627,8 @@ entries:
 other string value against the loaded file.
 
 `content` can also hold at most one `{ram: {size_kb, pages}}` entry. This is
-flat RAM in slot 0 next to the ROMs, for example the 16 KB SRAM of the Sony
-HB-10 at page 3 (volatile work RAM, with no battery backup):
+flat RAM in slot 0 next to the ROMs. An example is the 16 KB SRAM of the Sony
+HB-10 at page 3, a volatile work RAM with no battery backup:
 
 ```yaml
     - ram: {size_kb: 16, pages: [3]}
@@ -687,8 +699,8 @@ independently for these items:
   [Floppy disk (FDC)](#floppy-disk-fdc).
 
 A `mapper: standard` sub-slot and a `type: ram` sub-slot are mutually exclusive
-across the whole `secondary` mapping, because `Memory` cannot hold both a RAM
-mapper and flat RAM. If both are present, the loader raises
+across the whole `secondary` mapping. The reason is that `Memory` cannot hold
+both a RAM mapper and flat RAM. If both are present, the loader raises
 `MachineLoadError`. The loader also rejects flat RAM in the same sub-slot index
 as the SUB ROM or the FDC. The reason is that the write path of `Memory` does
 not stop a stray write to either of them from going into the flat RAM. The
@@ -724,9 +736,12 @@ builtin_devices:
 The `ref` of each entry must resolve against the device registry (the output
 of `load_device_registry`), or the loader raises `MachineLoadError`.
 `overrides` is a free-form mapping. But `_parse_builtin_devices` reads only two
-keys from it, and only when `ref: ppi8255`: `keyboard_type` (`int` or `jp`) and
-`control_read` (`control`, `open_bus` or `bus_latch`: what a port 0xAB read
-returns). The former key `control_readback`, in the device file or in
+keys from it, and only when `ref: ppi8255`:
+
+- `keyboard_type`: `int` or `jp`.
+- `control_read`: `control`, `open_bus` or `bus_latch`, the value that a read
+  of port 0xAB returns.
+ The former key `control_readback`, in the device file or in
 `overrides`, raises `MachineLoadError`. The loader accepts and ignores every
 other `overrides` key, for every other `ref`.
 
@@ -746,9 +761,9 @@ This field has the same shape as the `io_device` of an extension overlay
 (below). It is a slot-independent global I/O device that the machine itself
 supplies. The loader validates it against the same `_KNOWN_IO_DEVICES` set,
 which holds only `kanji_rom`. At present, no shipped machine YAML declares
-one. The only current sources of a `kanji_rom` device are the `hbi_j1` and
-`msxdos2_512k_kanjirom` extensions (`--extension1`/`--extension2`), through
-the `io_device` of the extension overlay (below).
+one. At present, only two extensions supply a `kanji_rom` device: `hbi_j1` and
+`msxdos2_512k_kanjirom` (`--extension1`/`--extension2`). Both do it through the
+`io_device` of the extension overlay (below).
 
 ### Extension overlay YAML (`config/extensions/*.yaml`)
 
@@ -813,11 +828,11 @@ loader always raises `MachineLoadError` for an expanded overlay on an MSX1
 machine. No MSX1-standard hardware matches a memory-mapper sub-slot, and every
 current expanded overlay models MSX2-era hardware. A `ram_mapper` sub-slot also
 conflicts with a machine that already has its own slot-3 RAM mapper
-(`has_ram_mapper=True`), because the two mappers would use the same ports.
+(`has_ram_mapper=True`). The two mappers would use the same ports.
 
 The loader validates the optional top-level `io_device` against a *third*
-device namespace, `_KNOWN_IO_DEVICES = {kanji_rom}`, which has no overlap with
-the other two. `device: kanji_rom` is not valid in `subslots`, and
+device namespace, `_KNOWN_IO_DEVICES = {kanji_rom}`. This namespace has no
+overlap with the other two. `device: kanji_rom` is not valid in `subslots`, and
 `device: halnote` (or any other sub-slot device) is not valid in `io_device`.
 If a machine-level `io_device` and the `io_device` of an overlay both resolve
 to `kanji_rom`, `build_machine` raises an error. The reason is that ports
@@ -941,8 +956,9 @@ once, so the dispatch on each access has no branch.
 #### Register 8-bit halves as computed properties
 
 `Registers` stores `BC`, `DE`, `HL` as 16-bit `int` fields. It gives access to
-`B`/`C`, `D`/`E`, `H`/`L` through `@property` getter/setter pairs that shift
-and mask the 16-bit pair (`Registers.B`/`C` and the related properties). Each
+`B`/`C`, `D`/`E`, `H`/`L` through `@property` getter/setter pairs
+(`Registers.B`/`C` and the related properties). Each pair shifts and masks the
+16-bit value. Each
 opcode that reads or writes a single 8-bit half thus goes through the
 descriptor protocol. This adds a call frame on the hot instruction path.
 
