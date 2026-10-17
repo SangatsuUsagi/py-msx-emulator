@@ -32,6 +32,12 @@ scale: 3
 # mapper is CLI-only (--mapper2, default auto) -- not configurable here.
 # slot2: roms/slot2.rom
 
+# Drive A floppy disk image list (relative to the repository root): one path
+# or a list. The first image is mounted at startup; F6 mounts the next one and
+# Shift+F6 ejects / re-inserts it. Ignored on machines without an FDC. A
+# --fdd1 on the command line replaces the whole list.
+# fdd1: [disks/a.dsk, disks/b.dsk]
+
 # Overlay a slot 1/slot 2 extension device: "fmpac" (MSX-MUSIC + 8 KB SRAM)
 # or "scc_plus" (an SCC-I / SCC+ cartridge: 64 KB bank-switched RAM, blank --
 # no ROM/data file is ever loaded -- plus the SCC sound chip), among others

@@ -561,3 +561,22 @@ def test_gamepad_map_and_turbo_passed_to_run() -> None:
     assert kwargs["turbo_period"] == 2
     direct, _turbo = kwargs["gamepad_map"]
     assert direct[9] == 4  # leftshoulder (index 9) → Trigger A (bit 4)
+
+
+# ---------------------------------------------------------------------------
+# fdd1 (drive A disk list)
+# ---------------------------------------------------------------------------
+
+def test_config_fdd1_used_when_cli_omitted() -> None:
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(
+        ["--machine", "hb_f1xd"], app_cfg=AppConfig(fdd1=["a.dsk", "b.dsk"]))
+    assert build_mock.call_args.kwargs["fdd1"] == Path("a.dsk")
+    assert run_mock.call_args.kwargs["fdd1_images"] == [Path("a.dsk"), Path("b.dsk")]
+
+
+def test_cli_fdd1_overrides_config_fdd1() -> None:
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(
+        ["--machine", "hb_f1xd", "--fdd1", "c.dsk"],
+        app_cfg=AppConfig(fdd1=["a.dsk", "b.dsk"]))
+    assert build_mock.call_args.kwargs["fdd1"] == Path("c.dsk")
+    assert run_mock.call_args.kwargs["fdd1_images"] == [Path("c.dsk")]
