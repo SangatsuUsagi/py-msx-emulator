@@ -398,3 +398,104 @@ def test_valid_mappers_match_supported_mappers() -> None:
     assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
     # Every non-"auto" accepted name must actually have a builder.
     assert set(VALID_MAPPERS) - {"auto"} <= set(_MAPPER_BUILDERS)
+
+
+# ---------------------------------------------------------------------------
+# fdd1 (drive A disk list)
+# ---------------------------------------------------------------------------
+
+def test_fdd1_single_path_parsed(tmp_path: Path) -> None:
+    (tmp_path / "disks").mkdir()
+    (tmp_path / "disks" / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: disks/a.dsk\n")
+    assert load_app_config(tmp_path).fdd1 == ["disks/a.dsk"]
+
+
+def test_fdd1_list_parsed(tmp_path: Path) -> None:
+    (tmp_path / "disks").mkdir()
+    (tmp_path / "disks" / "a.dsk").write_bytes(b"\x00")
+    (tmp_path / "disks" / "b.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: [disks/a.dsk, disks/b.dsk]\n")
+    assert load_app_config(tmp_path).fdd1 == ["disks/a.dsk", "disks/b.dsk"]
+
+
+def test_nonexistent_fdd1_path_rejected(tmp_path: Path) -> None:
+    (tmp_path / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, "fdd1: [a.dsk, does/not/exist.dsk]\n")
+    with pytest.raises(AppConfigError, match="does/not/exist.dsk"):
+        load_app_config(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["3", "[]", "[a.dsk, 3]", "{a: b}"])
+def test_fdd1_of_wrong_type_rejected(tmp_path: Path, value: str) -> None:
+    (tmp_path / "a.dsk").write_bytes(b"\x00")
+    _write(tmp_path, f"fdd1: {value}\n")
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# hotkeys (SDL2 frontend hotkey assignment)
+# ---------------------------------------------------------------------------
+
+_F6, _F8, _F12 = 1073741887, 1073741889, 1073741893
+
+
+def test_hotkey_keycodes_match_real_sdl2_constants() -> None:
+    import sdl2
+
+    from msx.app_config import _FKEY_KEYCODES
+
+    assert _FKEY_KEYCODES == {
+        "f1": sdl2.SDLK_F1, "f2": sdl2.SDLK_F2, "f3": sdl2.SDLK_F3, "f4": sdl2.SDLK_F4,
+        "f5": sdl2.SDLK_F5, "f6": sdl2.SDLK_F6, "f7": sdl2.SDLK_F7, "f8": sdl2.SDLK_F8,
+        "f9": sdl2.SDLK_F9, "f10": sdl2.SDLK_F10, "f11": sdl2.SDLK_F11, "f12": sdl2.SDLK_F12,
+    }
+
+
+def test_hotkeys_group_parsed(tmp_path: Path) -> None:
+    _write(tmp_path, "hotkeys:\n  mute: shift+f8\n")
+    bindings = load_app_config(tmp_path).hotkey_bindings()
+    assert bindings[(_F8, True)] == "mute"
+    assert (_F12, False) not in bindings
+
+
+def test_unset_hotkeys_gives_the_built_in_table(tmp_path: Path) -> None:
+    from msx.app_config import DEFAULT_HOTKEYS
+
+    _write(tmp_path, "speed: 1.0\n")
+    bindings = load_app_config(tmp_path).hotkey_bindings()
+    assert sorted(bindings.values()) == sorted(DEFAULT_HOTKEYS)
+    assert bindings[(_F6, False)] == "disk_next"
+    assert bindings[(_F12, True)] == "reset"
+
+
+@pytest.mark.parametrize("text", [
+    "hotkeys: [f6]\n",                    # not a mapping
+    "hotkeys:\n  rewind: f6\n",           # unknown action
+    "hotkeys:\n  mute: ctrl+f6\n",        # unknown key
+    "hotkeys:\n  mute: f13\n",
+    "hotkeys:\n  mute: 6\n",
+    "hotkeys:\n  mute: shift+f3\n",       # MSX key (MSX F8)
+    "hotkeys:\n  mute: f1\n",
+    "hotkeys:\n  mute: f9\n",             # fixed hotkey
+])
+def test_invalid_hotkeys_rejected(tmp_path: Path, text: str) -> None:
+    _write(tmp_path, text)
+    with pytest.raises(AppConfigError):
+        load_app_config(tmp_path)
+
+
+def test_hotkey_conflict_with_another_action_rejected(tmp_path: Path) -> None:
+    _write(tmp_path, "hotkeys:\n  mute: f6\n")
+    with pytest.raises(AppConfigError) as exc:
+        load_app_config(tmp_path)
+    message = str(exc.value)
+    assert "'f6'" in message and "disk_next" in message and "mute" in message
+
+
+def test_swapping_two_hotkey_actions_is_accepted(tmp_path: Path) -> None:
+    _write(tmp_path, "hotkeys:\n  mute: f6\n  disk_next: f12\n")
+    bindings = load_app_config(tmp_path).hotkey_bindings()
+    assert bindings[(_F6, False)] == "mute"
+    assert bindings[(_F12, False)] == "disk_next"

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import time
 from array import array
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from msx.app_config import AppConfig
 from msx.audio_filter import BiquadLowPass
+from msx.fdc.disk_image import DskDiskImage
 from msx.frame_timer import FrameTimer
 from msx.input import (
     KEY_NAME_TO_CELL,
@@ -33,6 +36,7 @@ from msx.vdp._geometry import OUTPUT_H
 if TYPE_CHECKING:
     from msx.rpc_server import DebugServer
 
+_APP_NAME = "py-msx-emulator"
 _SCREEN_WIDTH = 256
 # Every rendered frame is padded to a constant output height (see
 # msx/vdp/_geometry.py), so the window/texture height is fixed regardless of R#9
@@ -222,6 +226,50 @@ class _CtrlComboState:
             self.active = None
 
 
+@dataclass
+class _ShiftComboState:
+    """Tracks a Shift+hotkey combo, the Shift counterpart of `_CtrlComboState`.
+
+    Plain Shift keeps working as the MSX SHIFT key. While a Shift+hotkey is
+    active (`active_key is not None`) the MSX SHIFT cell stays released, so
+    neither the hotkey nor the Shift held for it reaches the MSX; releasing
+    the hotkey re-asserts SHIFT for every Shift side still held.
+    """
+    lshift_held: bool = False
+    rshift_held: bool = False
+    active_key: int | None = None
+
+
+@dataclass
+class _DiskList:
+    """Drive A images cycled by the disk hotkeys (`--fdd1` / config `fdd1`)."""
+    paths: list[Path]
+    index: int = 0
+
+
+@dataclass
+class _HotkeyState:
+    """Bound frontend hotkeys and the state their actions act on.
+
+    `bindings` maps (SDL keycode, Shift held) to an action name.
+    """
+    bindings: dict[tuple[int, bool], str]
+    disks: _DiskList
+    shift: _ShiftComboState = field(default_factory=_ShiftComboState)
+    # Frontend pause, separate from the RPC pause_state: emulation runs only
+    # when neither is set, and neither side clears the other.
+    user_paused: bool = False
+    # Fast-forward is on while the hold key is down or the latch is set.
+    ff_hold_key: int | None = None
+    ff_locked: bool = False
+    muted: bool = False
+    fullscreen: bool = False
+
+    @property
+    def fast_forward(self) -> bool:
+        return self.ff_hold_key is not None or self.ff_locked
+
+
 class _EventApi(Protocol):
     """The `sdl2.*` surface event polling and dispatch use: `_handle_events`,
     `_handle_hotkey_keydown`, `_handle_ctrl_combo_keydown`,
@@ -232,10 +280,11 @@ class _EventApi(Protocol):
     SDL_KEYUP: int
     SDLK_LCTRL: int
     SDLK_RCTRL: int
+    SDLK_LSHIFT: int
+    SDLK_RSHIFT: int
     SDLK_F8: int
     SDLK_F9: int
     SDLK_F10: int
-    SDLK_F11: int
     SDLK_c: int
     SDLK_q: int
     KMOD_CTRL: int
@@ -338,19 +387,145 @@ def _handle_ctrl_combo_keyup(
     return False
 
 
+def _mount_disk(machine: Machine, path: Path) -> bool:
+    """Swap `path` into drive A via `FloppyDisk.swap` (flush, disk change,
+    transfer abort). Returns False, leaving the drive as it was, if the image
+    cannot be opened."""
+    assert machine.fdc is not None
+    try:
+        image = DskDiskImage(path)
+    except (ValueError, OSError) as exc:
+        print(f"disk swap failed: {exc}", file=sys.stderr)
+        return False
+    machine.fdc.swap(0, image)
+    return True
+
+
+def _disk_next(machine: Machine, disks: _DiskList) -> None:
+    """F6: mount the next drive A image, wrapping to the first."""
+    if machine.fdc is None or not disks.paths:
+        return
+    next_index = (disks.index + 1) % len(disks.paths)
+    if _mount_disk(machine, disks.paths[next_index]):
+        disks.index = next_index
+
+
+def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
+    """Shift+F6: eject drive A, or re-insert the current list image when the
+    drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
+    if machine.fdc is None or not disks.paths:
+        return
+    if machine.fdc.drives[0].image is None:
+        _mount_disk(machine, disks.paths[disks.index])
+    else:
+        machine.fdc.swap(0, None)
+
+
+def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
+    hotkeys.fullscreen = not hotkeys.fullscreen
+    flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if hotkeys.fullscreen else 0
+    if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
+        print(f"fullscreen toggle failed: {sdl2.SDL_GetError().decode()}", file=sys.stderr)
+
+
+def _run_hotkey_action(
+    sdl2: _EventApi, action: str, sym: int, machine: Machine, window: object,
+    hotkeys: _HotkeyState,
+) -> None:
+    if action == "disk_next":
+        _disk_next(machine, hotkeys.disks)
+    elif action == "disk_eject":
+        _disk_toggle_eject(machine, hotkeys.disks)
+    elif action == "pause":
+        hotkeys.user_paused = not hotkeys.user_paused
+    elif action == "fullscreen":
+        _toggle_fullscreen(sdl2, window, hotkeys)
+    elif action == "fast_forward_hold":
+        hotkeys.ff_hold_key = sym
+    elif action == "fast_forward_lock":
+        hotkeys.ff_locked = not hotkeys.ff_locked
+    elif action == "mute":
+        hotkeys.muted = not hotkeys.muted
+    elif action == "reset":
+        machine.reset()
+
+
+def _handle_bound_hotkey_keydown(
+    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, window: object,
+    ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
+) -> bool:
+    """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
+    was consumed (Shift itself, or a bound key with no Ctrl side held)."""
+    shift = hotkeys.shift
+    if sym == sdl2.SDLK_LSHIFT or sym == sdl2.SDLK_RSHIFT:
+        if sym == sdl2.SDLK_LSHIFT:
+            shift.lshift_held = True
+        else:
+            shift.rshift_held = True
+        if shift.active_key is None:
+            machine.input.key_down(sym)
+        return True
+    if ctrl_combo.lctrl_held or ctrl_combo.rctrl_held:
+        return False
+    shift_held = shift.lshift_held or shift.rshift_held
+    action = hotkeys.bindings.get((sym, shift_held))
+    if action is None:
+        return False
+    if repeat:
+        return True
+    if shift_held and shift.active_key is None:
+        if shift.lshift_held:
+            machine.input.key_up(sdl2.SDLK_LSHIFT)
+        if shift.rshift_held:
+            machine.input.key_up(sdl2.SDLK_RSHIFT)
+        shift.active_key = sym
+    _run_hotkey_action(sdl2, action, sym, machine, window, hotkeys)
+    return True
+
+
+def _handle_bound_hotkey_keyup(
+    sdl2: _EventApi, sym: int, machine: Machine, hotkeys: _HotkeyState,
+) -> bool:
+    """Shift tracking, fast-forward hold release and Shift+hotkey KEYUP
+    handling. Returns True if `sym` was consumed."""
+    consumed = False
+    if hotkeys.ff_hold_key is not None and sym == hotkeys.ff_hold_key:
+        # Ends the hold whether or not Shift was pressed since.
+        hotkeys.ff_hold_key = None
+        consumed = True
+    shift = hotkeys.shift
+    if sym == sdl2.SDLK_LSHIFT or sym == sdl2.SDLK_RSHIFT:
+        if sym == sdl2.SDLK_LSHIFT:
+            shift.lshift_held = False
+        else:
+            shift.rshift_held = False
+        if not (shift.lshift_held or shift.rshift_held):
+            shift.active_key = None
+        machine.input.key_up(sym)
+        return True
+    if shift.active_key is not None and sym == shift.active_key:
+        shift.active_key = None
+        if shift.lshift_held:
+            machine.input.key_down(sdl2.SDLK_LSHIFT)
+        if shift.rshift_held:
+            machine.input.key_down(sdl2.SDLK_RSHIFT)
+        return True
+    return consumed
+
+
 def _handle_hotkey_keydown(
-    sdl2: _EventApi, sym: int, mod: int, machine: Machine, window: object,
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    running: bool, fullscreen: bool,
-) -> tuple[bool, bool, bool]:
-    """Application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F11 fullscreen,
-    F8 save state, F9 load state, F10 screenshot, Ctrl-C debugger break.
+    sdl2: _EventApi, sym: int, mod: int, machine: Machine,
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
+) -> tuple[bool, bool]:
+    """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
+    state, F9 load state, F10 screenshot, Ctrl-C debugger break (the
+    configurable ones are `_HotkeyState.bindings`, checked earlier).
 
     None of these produce an MSX matrix-key effect -- they are frontend
     commands that happen to be bound to keys, checked before the Ctrl+F-key
     combo and the plain key_down fallback (mirrors `_handle_ctrl_combo_keydown`'s
-    consumed/not-consumed shape). `running`/`fullscreen` are returned unchanged
-    unless this key actually changes them. Returns (consumed, running, fullscreen).
+    consumed/not-consumed shape). `running` is returned unchanged unless this
+    key quits. Returns (consumed, running).
 
     ESC is deliberately not claimed here: it has its own MSX matrix cell
     (row 7, column 2) and reaches it through the plain key_down fallback,
@@ -367,28 +542,22 @@ def _handle_hotkey_keydown(
     #   a translation contract for Rust specifically (C++ doesn't need the
     #   explicit `!= 0`), not a Python optimization to preserve.
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
-        return True, False, fullscreen
-    if sym == sdl2.SDLK_F11:
-        fullscreen = not fullscreen
-        flag = sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP if fullscreen else 0
-        if sdl2.SDL_SetWindowFullscreen(window, flag) != 0:
-            print(f"fullscreen toggle failed: {sdl2.SDL_GetError().decode()}", file=sys.stderr)
-        return True, running, fullscreen
+        return True, False
     if sym == sdl2.SDLK_F8:
         save_state(machine, rgb_buf, game_title)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_F9:
         try:
             load_state(machine)
         except Exception as exc:
             print(f"load failed: {exc}", file=sys.stderr)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_F10:
         save_screenshot(rgb_buf, tex_w, tex_h)
-        return True, running, fullscreen
+        return True, running
     if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and machine.enter_debugger_if_attached():
-        return True, running, fullscreen
-    return False, running, fullscreen
+        return True, running
+    return False, running
 
 
 # SDL joystick/GameController device and input event types, all routed to
@@ -462,13 +631,15 @@ def _handle_events(
     sdl2: _EventApi, event: _EventLike, machine: Machine, window: object,
     joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, fullscreen: bool,
-    mouse_device: MouseDevice | None = None,
-) -> tuple[bool, bool]:
+    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
+    mouse_device: MouseDevice | None = None, hotkeys: _HotkeyState | None = None,
+) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
-    Returns (running, fullscreen): running is False once a quit is requested;
-    fullscreen is the (possibly toggled) window state. rgb_buf/tex_w/tex_h are
+    `hotkeys` (None: no bound hotkeys, Shift goes through the plain path) is
+    checked before every other key handler.
+
+    Returns running: False once a quit is requested. rgb_buf/tex_w/tex_h are
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
     running = True
@@ -481,9 +652,13 @@ def _handle_events(
             running = False
         elif event.type == sdl2.SDL_KEYDOWN:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
-            consumed, running, fullscreen = _handle_hotkey_keydown(
-                sdl2, sym, event.key.keysym.mod, machine, window,
-                game_title, rgb_buf, tex_w, tex_h, running, fullscreen,
+            if hotkeys is not None and _handle_bound_hotkey_keydown(
+                sdl2, sym, event.key.repeat, machine, window, ctrl_combo, hotkeys
+            ):
+                continue
+            consumed, running = _handle_hotkey_keydown(
+                sdl2, sym, event.key.keysym.mod, machine,
+                game_title, rgb_buf, tex_w, tex_h, running,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, machine
@@ -491,6 +666,8 @@ def _handle_events(
                 machine.input.key_down(sym)
         elif event.type == sdl2.SDL_KEYUP:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
+            if hotkeys is not None and _handle_bound_hotkey_keyup(sdl2, sym, machine, hotkeys):
+                continue
             if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, machine):
                 machine.input.key_up(sym)
         elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
@@ -508,7 +685,7 @@ def _handle_events(
                 mouse_device.set_button(TRIGGER_A_BIT, pressed)
             elif button == sdl2.SDL_BUTTON_RIGHT:
                 mouse_device.set_button(TRIGGER_B_BIT, pressed)
-    return running, fullscreen
+    return running
 
 
 def _mix_audio(
@@ -689,6 +866,7 @@ class _KeysymLike(Protocol):
 
 class _KeyEventLike(Protocol):
     keysym: _KeysymLike
+    repeat: int
 
 
 class _MotionEventLike(Protocol):
@@ -732,8 +910,51 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     ) -> int: ...
     def SDL_RenderPresent(self, renderer: object) -> None: ...
     def SDL_QueueAudio(self, dev: int, data: bytes, len_: int) -> int: ...
+    def SDL_ClearQueuedAudio(self, dev: int) -> None: ...
     def SDL_SetWindowTitle(self, window: object, title: bytes) -> None: ...
     def SDL_CloseAudioDevice(self, dev: int) -> None: ...
+
+
+def _disk_status(machine: Machine, disks: _DiskList) -> str:
+    """The drive A part of the window title ("" with no FDC or no list)."""
+    if machine.fdc is None or not disks.paths:
+        return ""
+    count = len(disks.paths)
+    image = machine.fdc.drives[0].image
+    if image is None:
+        return f"disk {disks.index + 1}/{count}: (ejected)"
+    if image.path == disks.paths[disks.index]:
+        return f"disk {disks.index + 1}/{count}: {image.path.name}"
+    return f"disk -/{count}: {image.path.name}"
+
+
+def _window_title(
+    game_title: str, fps: float, machine: Machine, hotkeys: _HotkeyState, paused: bool
+) -> str:
+    """Window title: app/game name, measured fps, status flags, drive A status.
+    `paused` covers both the frontend and the RPC pause."""
+    parts = [_APP_NAME if game_title == _APP_NAME else f"{_APP_NAME} — {game_title}"]
+    if fps > 0:
+        parts.append(f"[{fps:.0f} fps]")
+    if paused:
+        parts.append("[PAUSED]")
+    if hotkeys.fast_forward:
+        parts.append("[FF]")
+    if hotkeys.muted:
+        parts.append("[MUTE]")
+    disk = _disk_status(machine, hotkeys.disks)
+    if disk:
+        parts.append(disk)
+    return " ".join(parts)
+
+
+def _update_window_title(
+    sdl2: SDL2Api, window: object, title: str, last_title: str | None
+) -> str:
+    """Set the window title only when it changed; returns the title now shown."""
+    if title != last_title:
+        sdl2.SDL_SetWindowTitle(window, title.encode("utf-8"))
+    return title
 
 
 @dataclass
@@ -743,12 +964,27 @@ class _LoopState:
     7 separate loop-local variables threaded through `_run_frame`'s parameter
     list and an 8-element return tuple repeated at every early return."""
     running: bool
-    fullscreen: bool
     texture: object
     tex_w: int
     tex_h: int
     rgb_buf: bytes
     skip_counter: int
+    # Last pause state sent to SDL_PauseAudioDevice.
+    audio_paused: bool = False
+    # Fast-forward state of the previous iteration, to act on transitions.
+    fast_forward: bool = False
+    # perf_counter() of the last present, for the fast-forward present limit.
+    last_present: float = 0.0
+
+
+def _is_paused(hotkeys: _HotkeyState, rpc_server: "DebugServer | None") -> bool:
+    return hotkeys.user_paused or (rpc_server is not None and rpc_server.pause_state.paused)
+
+
+def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
+    sdl2.SDL_RenderClear(renderer)
+    sdl2.SDL_RenderCopy(renderer, texture, None, None)
+    sdl2.SDL_RenderPresent(renderer)
 
 
 def _run_frame(
@@ -758,43 +994,55 @@ def _run_frame(
     mouse_device: MouseDevice | None, event: _EventLike,
     rpc_server: "DebugServer | None", frame_timer: FrameTimer,
     frame_skip: str, audio_dev: int, audio_filter: BiquadLowPass, scale: int,
-) -> bool:
+    hotkeys: _HotkeyState,
+) -> None:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
     RPC pause gate, advance emulation one frame (or redisplay under
     frame-skip), mix/queue audio, and present. Updates `state` in place with
     whatever this iteration changed.
-
-    Returns `frame_completed`: False for every early return (quit requested,
-    RPC-paused, texture resize failed) and True only when this iteration ran
-    a full frame through to frame pacing -- `run()` uses it to skip the
-    window-title update on an iteration that never actually advanced
-    emulation, matching the original inline loop's `continue`/`break`
-    short-circuits exactly.
     """
-    # Process events (input + hotkeys); updates running/fullscreen.
-    state.running, state.fullscreen = _handle_events(
+    # Process events (input + hotkeys); updates running.
+    state.running = _handle_events(
         sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, state.fullscreen, mouse_device,
+        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse_device, hotkeys,
     )
     if not state.running:
-        return False
+        return
 
     joy_manager.tick()
 
     # Service RPC calls between frames (on this, the emulator thread).
-    # While paused, keep the window and socket alive but freeze the
-    # CPU: redisplay the last frame, pace, and skip emulation.
     if rpc_server is not None:
         rpc_server.drain()
-        if rpc_server.pause_state.paused:
-            sdl2.SDL_RenderClear(renderer)
-            sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
-            sdl2.SDL_RenderPresent(renderer)
-            frame_timer.tick()
-            return False
 
-    # Run one frame (skip VDP pixel rendering when behind schedule)
-    skip_this_frame = state.skip_counter > 0
+    # While paused (frontend or RPC), keep the window and socket alive but
+    # freeze the CPU and the audio device: redisplay the last frame, pace,
+    # and skip emulation.
+    paused = _is_paused(hotkeys, rpc_server)
+    if audio_dev > 0 and paused != state.audio_paused:
+        sdl2.SDL_PauseAudioDevice(audio_dev, 1 if paused else 0)
+        state.audio_paused = paused
+    if paused:
+        _present(sdl2, renderer, state.texture)
+        frame_timer.tick()
+        return
+
+    fast_forward = hotkeys.fast_forward
+    if fast_forward != state.fast_forward:
+        state.fast_forward = fast_forward
+        state.skip_counter = 0
+        if audio_dev > 0:
+            # Drop the backlog so no stale audio plays across the change.
+            sdl2.SDL_ClearQueuedAudio(audio_dev)
+
+    # Run one frame. Skip VDP pixel rendering when behind schedule, or under
+    # fast-forward when less than one display interval passed since the last
+    # present.
+    if fast_forward:
+        since_present = time.perf_counter() - state.last_present
+        skip_this_frame = since_present < 1.0 / frame_timer.fps
+    else:
+        skip_this_frame = state.skip_counter > 0
     frame_start_cycle = machine.cycle_count
     index_buf = machine.run_frame(skip_render=skip_this_frame)
     frame_end_cycle = machine.cycle_count
@@ -808,32 +1056,38 @@ def _run_frame(
             sdl2, renderer, window, state.texture, index_buf, state.tex_w, state.tex_h, scale
         )
         if not state.running:
-            return False
+            return
 
-    # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
+    # Generate audio (PSG + SCC + DAC mixed as present) every frame so the
+    # chips advance; queue it unless fast-forwarding, as silence when muted.
     if audio_dev > 0:
         audio_buf = _mix_audio(
             machine, frame_start_cycle, frame_end_cycle, audio_filter
         )
-        sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
+        if hotkeys.muted:
+            audio_buf = bytes(len(audio_buf))
+        if not fast_forward:
+            sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
 
     # Upload to texture only when frame was rendered
     if not skip_this_frame:
         _upload_to_texture(sdl2, state.texture, state.rgb_buf, state.tex_w, state.tex_h)
 
-    # Render (always — redisplays previous texture on skipped frames)
-    sdl2.SDL_RenderClear(renderer)
-    sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
-    sdl2.SDL_RenderPresent(renderer)
+    # Render (always when paced -- redisplays the previous texture on skipped
+    # frames; only rendered frames under fast-forward)
+    if not (fast_forward and skip_this_frame):
+        _present(sdl2, renderer, state.texture)
+        state.last_present = time.perf_counter()
 
     # Frame pacing + skip counter update
+    if fast_forward:
+        frame_timer.tick_unpaced()
+        return
     elapsed = frame_timer.tick()
     if frame_skip == "auto":
         state.skip_counter = _update_skip_counter(
             state.skip_counter, elapsed, frame_timer.frame_interval
         )
-
-    return True
 
 
 def run(
@@ -847,6 +1101,8 @@ def run(
     gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
     turbo_period: int | None = None,
     mouse_port: int | None = None,
+    fdd1_images: list[Path] | None = None,
+    hotkey_bindings: dict[tuple[int, bool], str] | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -867,9 +1123,17 @@ def run(
         turbo_period: optional turbo-fire per-frame period; None uses the default.
         mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
             host mouse (relative-mouse mode); None disables mouse emulation.
+        fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
+            first entry is the one build_machine already mounted.
+        hotkey_bindings: (SDL keycode, Shift held) -> action table from
+            py_emulator.yaml (`AppConfig.hotkey_bindings`); None uses the
+            built-in table.
 
-    Runtime hotkeys: Ctrl-Q quit, F8 save state, F9 load state, F10 screenshot,
-    F11 toggle fullscreen, Ctrl-C break into the debugger (if attached),
+    Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
+    eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
+    fast-forward, F11 pause, Shift+F11 fullscreen, F12 mute, Shift+F12 reset.
+    Fixed: Ctrl-Q quit, F8 save state, F9 load state, F10 screenshot,
+    Ctrl-C break into the debugger (if attached),
     Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (see `_CtrlComboState`).
     ESC now reaches the MSX matrix (row 7, column 2) like any other key.
     """
@@ -935,6 +1199,13 @@ def run(
         sdl2.SDLK_F5: KEY_NAME_TO_CELL["SELECT"],
     }
 
+    hotkeys = _HotkeyState(
+        bindings=dict(
+            hotkey_bindings if hotkey_bindings is not None else AppConfig().hotkey_bindings()
+        ),
+        disks=_DiskList(list(fdd1_images) if fdd1_images else []),
+    )
+
     if resume is not None:
         try:
             load_state(machine, path=Path(resume) if resume else None)
@@ -944,7 +1215,7 @@ def run(
     frame_timer = FrameTimer(fps=_target_fps_for(machine), speed=speed)
     event = sdl2.SDL_Event()
     state = _LoopState(
-        running=True, fullscreen=False, texture=texture, tex_w=tex_w, tex_h=tex_h,
+        running=True, texture=texture, tex_w=tex_w, tex_h=tex_h,
         rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
     )
     last_title: str | None = None
@@ -952,17 +1223,19 @@ def run(
     try:
         while state.running:
             try:
-                frame_completed = _run_frame(
+                _run_frame(
                     sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
                     ctrl_fkey_cells, game_title, mouse_device, event, rpc_server,
-                    frame_timer, frame_skip, audio_dev, audio_filter, scale,
+                    frame_timer, frame_skip, audio_dev, audio_filter, scale, hotkeys,
                 )
-
-                if frame_completed and frame_timer.fps_measured > 0:
-                    new_title = f"{game_title}  [{frame_timer.fps_measured:.0f} fps]"
-                    if new_title != last_title:
-                        sdl2.SDL_SetWindowTitle(window, new_title.encode("utf-8"))
-                        last_title = new_title
+                last_title = _update_window_title(
+                    sdl2, window,
+                    _window_title(
+                        game_title, frame_timer.fps_measured, machine, hotkeys,
+                        _is_paused(hotkeys, rpc_server),
+                    ),
+                    last_title,
+                )
 
             except KeyboardInterrupt:
                 if not machine.enter_debugger_if_attached():

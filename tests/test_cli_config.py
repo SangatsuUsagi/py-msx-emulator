@@ -561,3 +561,37 @@ def test_gamepad_map_and_turbo_passed_to_run() -> None:
     assert kwargs["turbo_period"] == 2
     direct, _turbo = kwargs["gamepad_map"]
     assert direct[9] == 4  # leftshoulder (index 9) → Trigger A (bit 4)
+
+
+# ---------------------------------------------------------------------------
+# fdd1 (drive A disk list)
+# ---------------------------------------------------------------------------
+
+def test_config_fdd1_used_when_cli_omitted() -> None:
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(
+        ["--machine", "hb_f1xd"], app_cfg=AppConfig(fdd1=["a.dsk", "b.dsk"]))
+    assert build_mock.call_args.kwargs["fdd1"] == Path("a.dsk")
+    assert run_mock.call_args.kwargs["fdd1_images"] == [Path("a.dsk"), Path("b.dsk")]
+
+
+def test_cli_fdd1_overrides_config_fdd1() -> None:
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(
+        ["--machine", "hb_f1xd", "--fdd1", "c.dsk"],
+        app_cfg=AppConfig(fdd1=["a.dsk", "b.dsk"]))
+    assert build_mock.call_args.kwargs["fdd1"] == Path("c.dsk")
+    assert run_mock.call_args.kwargs["fdd1_images"] == [Path("c.dsk")]
+
+
+# ---------------------------------------------------------------------------
+# hotkeys
+# ---------------------------------------------------------------------------
+
+def test_config_hotkeys_passed_to_the_frontend() -> None:
+    cfg = AppConfig(hotkeys={"mute": "shift+f8"})
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == cfg.hotkey_bindings()
+
+
+def test_no_hotkeys_config_passes_the_built_in_table() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == AppConfig().hotkey_bindings()

@@ -57,7 +57,16 @@ class FrameTimer:
         #   sub-millisecond deadline accuracy.
         while time.perf_counter() < self._next_deadline:
             pass
+        return self._count_frame()
 
+    def tick_unpaced(self) -> float:
+        """Count a frame and restart the deadline without waiting (fast-forward).
+
+        Returns the real elapsed seconds since the previous tick, like `tick`.
+        """
+        return self._count_frame()
+
+    def _count_frame(self) -> float:
         now = time.perf_counter()
         elapsed = now - self._last_tick_time
         self._last_tick_time = now
