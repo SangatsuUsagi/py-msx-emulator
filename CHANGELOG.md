@@ -2,6 +2,14 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.
+  - New: each change of PPI Port C bit 7 (port 0xAA write or 0xAB bit set/reset) drives a 1-bit DAC, so the BIOS key
+    click is audible and software that toggles the bit plays 1-bit PCM. The level relative to the PSG follows openMSX's
+    machine configurations. The mix has no DC-blocking stage, so a bit held at 1 stays as a constant offset instead of
+    decaying.
+  - The key click and the Majutsushi cartridge DAC share one write-driven DAC channel. A DAC that is silent for a frame
+    is not mixed, so an idle machine keeps the PSG-only audio path. The Majutsushi DAC level is now restored from a save
+    state and saved even when the write is not yet rendered; the save-state format does not change.
 - **v2.7.5** (2026-10-08): Fix the MSX1 VDP and the PPI behaviour found by tests on the author's real Sony HB-10.
   - MSX1 VDP (TMS9918A): a port 0x98 write also refills the read-ahead buffer, so an IN right after an OUT returns the
     written byte, as on the V9938.
