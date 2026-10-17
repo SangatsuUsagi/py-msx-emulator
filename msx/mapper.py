@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
+from msx.dac import EventDac
 from msx.snapshot_schema import (
     check_bool,
     check_bytes,
@@ -1447,14 +1448,16 @@ class MajutsushiMapper(KonamiMapper):
     the read-side mirror can differ between the two classes on real
     hardware either.
 
-    DAC writes are timestamped via _get_cycle callback so generate_samples()
-    can reproduce sub-frame timing (same role as openMSX's BlipBuffer delta).
+    DAC writes are timestamped via _get_cycle callback and fed to an EventDac
+    (msx/dac.py), which places them at their sub-frame sample positions (same
+    role as openMSX's BlipBuffer delta).
     """
 
     kind: ClassVar[MapperKind] = MapperKind.MAJUTSUSHI
     _DAC_SILENCE: ClassVar[int] = 0x80
+    # Last byte written to the DAC: the save-state value.
     _last_dac: int = field(default=_DAC_SILENCE, init=False, repr=False)
-    _dac_events: list[tuple[int, int]] = field(default_factory=list, init=False, repr=False)
+    pcm: EventDac = field(default_factory=EventDac, init=False, repr=False)
 
     def reset(self) -> None:
         """super().reset() restores the bank registers (see
@@ -1463,47 +1466,25 @@ class MajutsushiMapper(KonamiMapper):
         matching openMSX's RomMajutsushi::reset() -> dac.reset()."""
         super().reset()
         self._last_dac = self._DAC_SILENCE
-        self._dac_events = []
+        self.pcm.reset(0)
 
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
             cycle = self._get_cycle() if self._get_cycle else 0
-            self._dac_events.append((cycle, value & 0xFF))
+            value = value & 0xFF
+            self._last_dac = value
+            # 8-bit unsigned to signed 16-bit, as openMSX DACSound8U.
+            self.pcm.write(cycle, (value - 0x80) * 256)
         else:
             super().write(addr, value)
 
-    def generate_samples(self, n: int, frame_start: int = 0, frame_end: int = 0) -> bytearray:
-        """Return n signed 16-bit LE mono PCM samples from this frame's DAC events.
-
-        frame_start / frame_end: machine.cycle_count at the frame boundaries.
-        DAC events recorded during the frame are mapped to sample positions
-        proportionally, matching openMSX DACSound8U delta-at-time behaviour.
-        Conversion: (uint8 value - 0x80) * 256 → int16.
-        """
-        events = self._dac_events
-        self._dac_events = []
-
-        cycles = frame_end - frame_start if frame_end > frame_start else 1
-        out = bytearray(n * 2)
-        value = self._last_dac
-        ev_idx = 0
-
-        for i in range(n):
-            threshold = frame_start + i * cycles // n
-            while ev_idx < len(events) and events[ev_idx][0] <= threshold:
-                value = events[ev_idx][1]
-                ev_idx += 1
-            sample = (value - 0x80) * 256
-            out[i * 2] = sample & 0xFF
-            out[i * 2 + 1] = (sample >> 8) & 0xFF
-
-        if ev_idx < len(events):
-            value = events[-1][1]
-        self._last_dac = value
-        return out
+    def generate_samples(
+        self, n: int, frame_start: int = 0, frame_end: int = 0
+    ) -> bytearray | None:
+        """Return this frame's DAC PCM, or None when silent (see EventDac)."""
+        return self.pcm.generate_samples(n, frame_start, frame_end)
 
     def snapshot(self) -> MajutsushiMapperState:
-        # _dac_events is transient (consumed each frame), so only last_dac persists.
         return {**super().snapshot(), "last_dac": self._last_dac}
 
     def parse_state(self, obj: object, label: str) -> MajutsushiMapperState:
@@ -1517,6 +1498,7 @@ class MajutsushiMapper(KonamiMapper):
         st = cast(MajutsushiMapperState, state)
         super().apply_state(st)
         self._last_dac = st["last_dac"]
+        self.pcm.reset((self._last_dac - 0x80) * 256)
 
 
 class KonamiSCCMapperState(TypedDict):

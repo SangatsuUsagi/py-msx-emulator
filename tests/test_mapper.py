@@ -552,13 +552,15 @@ def _maj(n_pages: int = 4) -> MajutsushiMapper:
 def test_majutsushi_dac_write_stored() -> None:
     m = _maj()
     m.write(0x5000, 0xFF)
-    assert m._dac_events[-1][1] == 0xFF
+    assert m._last_dac == 0xFF
+    assert m.pcm._events[-1][1] == 32512
 
 
 def test_majutsushi_dac_write_masked_to_byte() -> None:
     m = _maj()
     m.write(0x5000, 0x1FF)
-    assert m._dac_events[-1][1] == 0xFF
+    assert m._last_dac == 0xFF
+    assert m.pcm._events[-1][1] == 32512
 
 
 def test_majutsushi_dac_write_does_not_affect_bank() -> None:
@@ -584,11 +586,8 @@ def test_majutsushi_dac_write_does_not_touch_flat_mirror() -> None:
 
 def test_majutsushi_generate_samples_silence() -> None:
     m = _maj()
-    # no events written → _last_dac == 0x80 → silence
-    buf = m.generate_samples(4, 0, 100)
-    for i in range(4):
-        s = struct.unpack_from("<h", buf, i * 2)[0]
-        assert s == 0
+    # no events written → _last_dac == 0x80 → silent frame
+    assert m.generate_samples(4, 0, 100) is None
 
 
 def test_majutsushi_generate_samples_max() -> None:
@@ -609,14 +608,17 @@ def test_majutsushi_generate_samples_min() -> None:
 
 def test_majutsushi_generate_samples_length() -> None:
     m = _maj()
-    assert len(m.generate_samples(735, 0, 59736)) == 735 * 2
+    m.write(0x5000, 0xC0)
+    buf = m.generate_samples(735, 0, 59736)
+    assert buf is not None
+    assert len(buf) == 735 * 2
 
 
 def test_majutsushi_generate_samples_events_cleared() -> None:
     m = _maj()
     m.write(0x5000, 0xC0)
     m.generate_samples(4, 0, 100)
-    assert m._dac_events == []
+    assert m.pcm._events == []
 
 
 def test_majutsushi_generate_samples_last_dac_persists() -> None:
@@ -648,13 +650,32 @@ def test_majutsushi_snapshot_restore_roundtrips_banks_and_last_dac() -> None:
     m = _maj()
     m.write(0x6000, 2)     # inherited KonamiMapper bank switch
     m.write(0x5000, 0xC0)  # DAC write
-    m.generate_samples(4, 0, 100)  # consumes _dac_events, sets _last_dac
+    m.generate_samples(4, 0, 100)
     snap = m.snapshot()
 
     m2 = MajutsushiMapper(_rom_8k_pages(4))
     m2.restore(snap)
     assert m2._banks == m._banks
     assert m2._last_dac == 0xC0
+
+
+def test_majutsushi_restored_level_holds_after_load() -> None:
+    m = _maj()
+    m.write(0x5000, 0xC0)
+    snap = m.snapshot()
+
+    m2 = MajutsushiMapper(_rom_8k_pages(4))
+    m2.restore(snap)
+    buf = m2.generate_samples(2, 0, 100)
+    assert buf is not None
+    for i in range(2):
+        assert struct.unpack_from("<h", buf, i * 2)[0] == (0xC0 - 0x80) * 256
+
+
+def test_majutsushi_snapshot_holds_write_not_yet_rendered() -> None:
+    m = _maj()
+    m.write(0x5000, 0xC0)
+    assert m.snapshot()["last_dac"] == 0xC0
 
 
 def test_majutsushi_reset_restores_bank_registers_inherited_from_konami() -> None:
@@ -675,9 +696,8 @@ def test_majutsushi_reset_restores_dac_to_silence() -> None:
 
     m.reset()
 
-    buf = m.generate_samples(2, 0, 100)
-    for i in range(2):
-        assert struct.unpack_from("<h", buf, i * 2)[0] == 0
+    assert m.generate_samples(2, 0, 100) is None
+    assert m._last_dac == 0x80
 
 
 def test_majutsushi_reset_clears_pending_dac_events() -> None:
@@ -686,4 +706,4 @@ def test_majutsushi_reset_clears_pending_dac_events() -> None:
 
     m.reset()
 
-    assert m._dac_events == []
+    assert m.pcm._events == []

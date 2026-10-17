@@ -228,7 +228,9 @@ HMMC/LMMC の転送ラッチ（`_cmd_transfer`）は R#44（COL）への書き�
 
 ## オーディオ
 
-PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC はそれぞれ 44,100 Hz・1 フレーム 735 サンプルの符号付き 16 ビットモノラル PCM を生成します。SDL2 フロントエンドの `_mix_audio()` がマシンに載っているものを合算し、16 ビットにクランプして SDL にキューイングします。
+PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリックはそれぞれ 44,100 Hz・1 フレーム 735 サンプルの符号付き 16 ビットモノラル PCM を生成します。SDL2 フロントエンドの `_mix_audio()` がマシンに載っているものを合算し、16 ビットにクランプして SDL にキューイングします。
+
+Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込み駆動型の DAC チャンネル 1 つ（`msx/dac.py` の `EventDac`）を共有します。所有側は書き込みを符号付き 16 ビットのレベルに変換し、書き込み時のサイクルと一緒に渡します。レベルが変わらない書き込みは記録しません。`generate_samples` は各変化をサンプル位置 `(cycle - frame_start) * n // (frame_end - frame_start)` に置き、次の変化までレベルを保持します。変化がなくレベルが 0 のフレームでは `None` を返し、`_mix_audio()` はそのチャンネルを混ぜません。
 
 ### サブフレーム・ソフトウェア PCM
 

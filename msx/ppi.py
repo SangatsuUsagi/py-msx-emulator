@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar
 
+from msx.dac import EventDac
 from msx.input import InputState
 from msx.memory import Memory
+
+# Key-click output while Port C bit 7 is 1: the PSG single-channel maximum
+# (12287) scaled by openMSX's click-to-PSG ratio -- KeyClick writes 0xFF/0x80
+# to a DACSound8U (127/128 of full scale), and its machine configs give the PPI
+# sound volume 16000 against the PSG's 21000. 12287 * 127/128 * 16000/21000.
+KEY_CLICK_LEVEL: int = 9288
 
 
 class PpiControlRead(str, Enum):
@@ -40,6 +48,10 @@ class PPI:
     # PORTRD2-4.BAS). Kept in every mode; the 0xA9 write and the power-on
     # value were not measured.
     _bus_latch: int = field(default=0xFF, repr=False)
+    # Key click (Port C bit 7) as a 1-bit DAC; the frontend mixes its output.
+    click: EventDac = field(default_factory=EventDac, repr=False)
+    # Cycle source for click timestamps, wired by build_machine.
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
 
     @property
     def control(self) -> int:
@@ -52,7 +64,7 @@ class PPI:
         if port == 0xA8:
             self.memory.set_slot_register(value)
         elif port == 0xAA:
-            self._port_c = value
+            self._set_port_c(value)
         elif port == 0xAB:
             self._write_control(value)
 
@@ -67,15 +79,24 @@ class PPI:
             # Port C bit set/reset: bits 3-1 select the bit index, bit 0 the value.
             bit = (value >> 1) & 0x07
             if value & 0x01:
-                self._port_c |= 1 << bit
+                self._set_port_c(self._port_c | (1 << bit))
             else:
-                self._port_c &= ~(1 << bit) & 0xFF
+                self._set_port_c(self._port_c & ~(1 << bit) & 0xFF)
+
+    def _set_port_c(self, value: int) -> None:
+        # The click sounds only on a bit 7 change (openMSX MSXPPI::writeC1).
+        if (self._port_c ^ value) & 0x80:
+            cycle = self._get_cycle() if self._get_cycle is not None else 0
+            self.click.write(cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
+        self._port_c = value
 
     def reset(self) -> None:
         """Restore the Intel 8255 post-reset defaults: control word back to
-        _POST_RESET_CONTROL and Port C's output latches cleared."""
+        _POST_RESET_CONTROL and Port C's output latches cleared, which also
+        silences the key click (openMSX KeyClick::reset)."""
         self._control = self._POST_RESET_CONTROL
         self._port_c = 0
+        self.click.reset(0)
 
     def read_port(self, port: int) -> int:
         if port == 0xAB:
