@@ -512,7 +512,9 @@ with border rows, so the 4:3 CRT aspect stays the same for all values of R#9
 LN. SCREEN 6/7 (512 pixels wide) scale down to the same window width to keep
 the pixel aspect. The frontend also gives the hardware palette, mono audio at
 44100 Hz through the analog-style low-pass filter, a fullscreen toggle,
-screenshots, and state save/load. Automatic frame skip suppresses the VDP pixel
+screenshots, state save/load, fast-forward, mute, and reset. The window title
+shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk.
+Fast-forward does not play audio. Automatic frame skip suppresses the VDP pixel
 render on late frames, but the VBlank interrupt still fires every frame.
 
 - Implementation: `frontend/sdl2_frontend.py`
@@ -854,6 +856,10 @@ button and key-name labels.
 | Ctrl + Q | Quit |
 | F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
 | Shift + F6 | Eject the drive A disk, or insert the current list image again |
+| F7 (hold) | Fast-forward: run without the speed limit while the key is held |
+| Shift + F7 | Turn fast-forward on or off (latched) |
+| F12 | Mute or unmute the audio (the sound chips keep running) |
+| Shift + F12 | Reset the machine |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
