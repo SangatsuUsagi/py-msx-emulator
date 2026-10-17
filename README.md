@@ -871,19 +871,13 @@ button and key-name labels.
 | Shift + F6 | Eject the drive A disk, or insert the current list image again |
 | F7 (hold) | Fast-forward: run without the speed limit while the key is held |
 | Shift + F7 | Turn fast-forward on or off (latched) |
-| F12 | Mute or unmute the audio (the sound chips keep running) |
-| Shift + F12 | Reset the machine |
-
-F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To
-assign other keys, set `hotkeys` in `py_emulator.yaml` (see
-[Configuration file](#configuration-file-py_emulatoryaml)). These hotkeys never
-reach the MSX keyboard. While you hold Shift for one of them, the MSX does not
-see SHIFT either.
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
 | Shift + F11 | Toggle fullscreen |
+| F12 | Mute or unmute the audio (the sound chips keep running) |
+| Shift + F12 | Reset the machine |
 | Esc, F1-F5 | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
@@ -896,6 +890,12 @@ see SHIFT either.
 
 \* `<title>` is the game title from the ROM database. If the database has no
 entry for the cartridge, `<title>` is `"py-msx-emulator"`.
+
+F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To
+assign other keys, set `hotkeys` in `py_emulator.yaml` (see
+[Configuration file](#configuration-file-py_emulatoryaml)). These hotkeys never
+reach the MSX keyboard. While you hold Shift for one of them, the MSX does not
+see SHIFT either.
 
 **Note (macOS):** macOS can reserve `^F1`-`^F5` (Ctrl+F1..F5) as system-wide
 shortcuts (System Settings → Keyboard → Keyboard Shortcuts → Keyboard, e.g.

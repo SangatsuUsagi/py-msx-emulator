@@ -589,18 +589,13 @@ MSX のキー（F1〜F5、Shift+F1〜F5）を使う、固定のホットキー�
 | Shift + F6 | ドライブ A のディスクを取り出す、または一覧の現在のイメージを再挿入する |
 | F7（押している間） | 早送り：押している間だけ速度制限なしで動かす |
 | Shift + F7 | 早送りの固定 ON/OFF |
-| F12 | ミュートの切り替え（音源は動き続ける） |
-| Shift + F12 | マシンをリセット |
-
-F6・F7・F11・F12 とその Shift 付きは組み込みのデフォルトです。別のキーに割り当てるには
-`py_emulator.yaml` の `hotkeys` を設定します（[設定ファイル](#設定ファイルpy_emulatoryaml)参照）。
-これらのホットキーは MSX のキーボードには渡りません。Shift 付きのホットキーを押している間は、
-MSX 側から見た SHIFT も離した状態になります。
 | F8 | ステートセーブ（`saves/states/<title>_YYYYMMDD_HHMMSS.state` に保存）* |
 | F9 | 最新のステートセーブを読み込む |
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
 | F11 | 一時停止/再開（RPC の一時停止とは別。どちらも相手の一時停止は解除しない） |
 | Shift + F11 | フルスクリーン切り替え |
+| F12 | ミュートの切り替え（音源は動き続ける） |
+| Shift + F12 | マシンをリセット |
 | Esc, F1–F5 | MSX キーボードマトリクスにそのまま渡す。Shift+F1〜F5 は MSX の F6〜F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
@@ -612,6 +607,11 @@ MSX 側から見た SHIFT も離した状態になります。
 | Shift + 0 | MSX "_" — International キーボードには無い SHIFT+"\"（JIS専用キー）が入力する文字を入力する |
 
 \* `<title>` は ROM データベースから取得したゲームタイトルです。データベースにない場合は `"py-msx-emulator"` が使われます。
+
+F6・F7・F11・F12 とその Shift 付きは組み込みのデフォルトです。別のキーに割り当てるには
+`py_emulator.yaml` の `hotkeys` を設定します（[設定ファイル](#設定ファイルpy_emulatoryaml)参照）。
+これらのホットキーは MSX のキーボードには渡りません。Shift 付きのホットキーを押している間は、
+MSX 側から見た SHIFT も離した状態になります。
 
 **注記（macOS）:** `^F1`–`^F5`（Ctrl+F1〜F5）は macOS のシステム全体のショート
 カット（システム設定 → キーボード → キーボードショートカット → キーボード、例：
