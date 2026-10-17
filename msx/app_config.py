@@ -1,10 +1,11 @@
 """Optional root ``py_emulator.yaml`` startup configuration.
 
 Loads user defaults for startup options (machine, speed, extension, RPC),
-gamepad settings (button assignment, turbo rate), and mouse settings
-(enabled, port). Values are merged with the precedence built-in defaults <
-config file < CLI arguments; see ``__main__``. Cartridge mapper selection
-(``--mapper`` / ``--mapper2``) is CLI-only and has no config-file equivalent.
+gamepad settings (button assignment, turbo rate), mouse settings (enabled,
+port), and the SDL2 frontend hotkey assignment. Values are merged with the
+precedence built-in defaults < config file < CLI arguments; see
+``__main__``. Cartridge mapper selection (``--mapper`` / ``--mapper2``) is
+CLI-only and has no config-file equivalent.
 
 When the file is absent (or unreadable), an all-unset :class:`AppConfig` is
 returned and behaviour is identical to running with no config.
@@ -96,10 +97,37 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
     "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
 }
 
+# SDL2 frontend hotkey action → built-in key name ("f1".."f12", optionally
+# "shift+"-prefixed). `hotkeys:` in the config replaces single entries.
+DEFAULT_HOTKEYS: dict[str, str] = {
+    "disk_next": "f6",
+    "disk_eject": "shift+f6",
+    "fast_forward_hold": "f7",
+    "fast_forward_lock": "shift+f7",
+    "pause": "f11",
+    "fullscreen": "shift+f11",
+    "mute": "f12",
+    "reset": "shift+f12",
+}
+
+# Function-key name → SDL keycode (0x40000000 | SDL_SCANCODE_Fn; F1 is 58).
+_FKEY_KEYCODES: dict[str, int] = {}
+for _n in range(1, 13):
+    _FKEY_KEYCODES[f"f{_n}"] = 0x40000000 | (57 + _n)
+
+_SHIFT_PREFIX = "shift+"
+# Keys a hotkey may not take: F1-F5 (plain and Shift) reach the MSX matrix
+# (Shift+F1..F5 are MSX F6..F10); F8-F10 are fixed save/load/screenshot keys.
+_RESERVED_HOTKEY_NAMES = frozenset({
+    "f1", "f2", "f3", "f4", "f5",
+    "shift+f1", "shift+f2", "shift+f3", "shift+f4", "shift+f5",
+    "f8", "f9", "f10",
+})
+
 _KNOWN_TOP_KEYS = frozenset({
     "machine", "speed", "scale", "extension", "extension1", "extension2",
     "slot1", "slot2", "fdd1",
-    "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
+    "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse", "hotkeys",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
 _KNOWN_JOYSTICK_KEYS = frozenset({"turbo_hz", "buttons"})
@@ -141,6 +169,8 @@ class AppConfig:
     keyboard_joystick_buttons: dict[str, str] = field(default_factory=dict)
     mouse_enabled: bool | None = None
     mouse_port: int | None = None
+    # Overridden hotkey actions only: action name -> key name.
+    hotkeys: dict[str, str] = field(default_factory=dict)
 
     def mouse_port_index(self) -> int | None:
         """Resolve the config-file mouse setting to a 0-based joystick port.
@@ -224,6 +254,36 @@ class AppConfig:
         return result
 
 
+    def hotkey_bindings(self) -> dict[tuple[int, bool], str]:
+        """Resolve the SDL2 frontend hotkey table.
+
+        Returns:
+            ``(SDL keycode, Shift held) -> action`` for every action, with
+            ``hotkeys`` overrides applied over ``DEFAULT_HOTKEYS``.
+
+        Raises:
+            AppConfigError: If two actions end up on the same key.
+        """
+        result: dict[tuple[int, bool], str] = {}
+        for action, default_name in DEFAULT_HOTKEYS.items():
+            key_name = self.hotkeys.get(action, default_name)
+            key = _hotkey_key(key_name)
+            if key in result:
+                raise AppConfigError(
+                    f"{CONFIG_FILENAME}: hotkeys: {key_name!r} assigned to both "
+                    f"{result[key]!r} and {action!r}"
+                )
+            result[key] = action
+        return result
+
+
+def _hotkey_key(key_name: str) -> tuple[int, bool]:
+    """Split a validated hotkey name into (SDL keycode, Shift held)."""
+    shift = key_name.startswith(_SHIFT_PREFIX)
+    fkey = key_name[len(_SHIFT_PREFIX):] if shift else key_name
+    return _FKEY_KEYCODES[fkey], shift
+
+
 def load_app_config(root: Path) -> AppConfig:
     """Load ``py_emulator.yaml`` from ``root``; return an all-unset config if absent.
 
@@ -274,6 +334,7 @@ def load_app_config(root: Path) -> AppConfig:
     _parse_joystick(raw.get("joystick"), cfg)
     _parse_keyboard_joystick(raw.get("keyboard_joystick"), cfg)
     _parse_mouse(raw.get("mouse"), cfg)
+    _parse_hotkeys(raw.get("hotkeys"), cfg)
     return cfg
 
 
@@ -464,3 +525,31 @@ def _opt_mouse_port(raw: dict[str, Any]) -> int | None:
         raise AppConfigError(f"{CONFIG_FILENAME}: mouse.port must be 1 or 2")
     return value
 
+
+
+def _parse_hotkeys(hotkeys: Any, cfg: AppConfig) -> None:
+    if hotkeys is None:
+        return
+    if not isinstance(hotkeys, dict):
+        raise AppConfigError(f"{CONFIG_FILENAME}: hotkeys must be a mapping")
+    for action, key_name in hotkeys.items():
+        if action not in DEFAULT_HOTKEYS:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: hotkeys: unknown action {action!r} "
+                f"(expected one of {', '.join(DEFAULT_HOTKEYS)})"
+            )
+        fkey = key_name
+        if isinstance(key_name, str) and key_name.startswith(_SHIFT_PREFIX):
+            fkey = key_name[len(_SHIFT_PREFIX):]
+        if not isinstance(key_name, str) or fkey not in _FKEY_KEYCODES:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: hotkeys.{action}: unknown key {key_name!r} "
+                f"(expected f1..f12, optionally prefixed with 'shift+')"
+            )
+        if key_name in _RESERVED_HOTKEY_NAMES:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: hotkeys.{action}: {key_name!r} is reserved "
+                f"(F1-F5 and Shift+F1-F5 are MSX keys; F8-F10 are fixed hotkeys)"
+            )
+        cfg.hotkeys[action] = key_name
+    cfg.hotkey_bindings()  # surface conflicts at load time

@@ -831,11 +831,21 @@ keyboard_joystick:
 mouse:
   enabled: false         # attach an MSX mouse driven by the host mouse
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
+
+hotkeys: {}              # frontend hotkey overrides, e.g. { pause: f6, disk_next: f11 }
+  # disk_next: f6         # built-in defaults; each entry replaces one action's key
+  # disk_eject: shift+f6  # keys: f1..f12, optionally "shift+"; not f1-f5,
+  # fast_forward_hold: f7 # shift+f1-f5 (MSX keys) or f8-f10 (fixed hotkeys)
+  # fast_forward_lock: shift+f7
+  # pause: f11
+  # fullscreen: shift+f11
+  # mute: f12
+  # reset: shift+f12
 ```
 
 These settings are configurable: `machine`, `speed`, `scale`, `slot1`,
-`slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, and the RPC,
-gamepad, and keyboard-joystick settings. `extension` also still works, as a
+`slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, `hotkeys`,
+and the RPC, gamepad, and keyboard-joystick settings. `extension` also still works, as a
 legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
 
@@ -845,6 +855,9 @@ legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 - `--mouse` on the command line always overrides `mouse.enabled`/`mouse.port`.
 - `fdd1` takes one path or a list of paths. `--fdd1` on the command line
   replaces the whole list.
+- `hotkeys` moves a frontend hotkey to another function key. The emulator
+  stops at startup with an error if a key is used twice, is an MSX key (F1-F5,
+  Shift+F1..F5), or is a fixed hotkey (F8-F10).
 
 See `py_emulator.example.yaml` for the full annotated list and the valid
 button and key-name labels.
@@ -860,10 +873,17 @@ button and key-name labels.
 | Shift + F7 | Turn fast-forward on or off (latched) |
 | F12 | Mute or unmute the audio (the sound chips keep running) |
 | Shift + F12 | Reset the machine |
+
+F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To
+assign other keys, set `hotkeys` in `py_emulator.yaml` (see
+[Configuration file](#configuration-file-py_emulatoryaml)). These hotkeys never
+reach the MSX keyboard. While you hold Shift for one of them, the MSX does not
+see SHIFT either.
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
-| F11 | Toggle fullscreen |
+| F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
+| Shift + F11 | Toggle fullscreen |
 | Esc, F1-F5 | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
@@ -881,6 +901,12 @@ entry for the cartridge, `<title>` is `"py-msx-emulator"`.
 shortcuts (System Settings → Keyboard → Keyboard Shortcuts → Keyboard, e.g.
 "Move focus to the menu bar" = `^F2`). If Ctrl+F1..F5 does not reach the
 emulator, disable those shortcuts there.
+
+**Note (macOS):** macOS can reserve F11 ("Show Desktop") and F12 as system-wide
+shortcuts (System Settings → Keyboard → Keyboard Shortcuts, and the "Use F1,
+F2, etc. keys as standard function keys" setting). If F11/F12 do not reach the
+emulator, disable those shortcuts there, or move the hotkeys with `hotkeys` in
+`py_emulator.yaml`.
 
 **Note (JIS BIOS machines):** the HB-F1XD and other Japanese MSX machines run a
 Japanese BIOS ROM. The character-decode table of that ROM is always the JIS

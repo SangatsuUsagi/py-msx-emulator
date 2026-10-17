@@ -104,3 +104,18 @@ keyboard_joystick:
 mouse:
   enabled: false
   port: 2   # 1 (Joy1) or 2 (Joy2)
+
+# SDL2 frontend hotkeys: action -> key. Keys are f1..f12, optionally prefixed
+# with "shift+". Each entry replaces that action's built-in key (shown below).
+# Rejected at startup: a key used by two actions, an MSX key (f1..f5 and
+# shift+f1..shift+f5 -- Shift+F1..F5 are MSX F6..F10), or a fixed hotkey key
+# (f8 save state, f9 load state, f10 screenshot). Ctrl+Q and Ctrl+C are fixed.
+# hotkeys:
+#   disk_next: f6               # next --fdd1 disk image in drive A
+#   disk_eject: shift+f6        # eject / re-insert the drive A disk
+#   fast_forward_hold: f7       # fast-forward while held
+#   fast_forward_lock: shift+f7 # latch fast-forward on/off
+#   pause: f11                  # pause / resume
+#   fullscreen: shift+f11       # toggle fullscreen
+#   mute: f12                   # mute / unmute (sound chips keep running)
+#   reset: shift+f12            # reset the machine
