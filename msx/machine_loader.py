@@ -2024,15 +2024,20 @@ def _wire_post_construction_attrs(
 ) -> None:
     """Wire closures and device/save-path attributes onto an already-built
     Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
-    Majutsushi DAC needs, and the SRAM/FM-PAC/Halnote/Kanji attributes
+    Majutsushi DAC and the PPI key click need, and the SRAM/FM-PAC/Halnote/Kanji attributes
     `build_machine`'s cartridge-slot/extension-overlay resolution produced.
     `wiring.fmpac_sram_save_path`/`wiring.halnote_sram_save_path` are each
     already slot-agnostic (`_wire_extension_overlay` resolves them from
     whichever slot's overlay actually produced the device), so no per-slot
     distinction is needed here."""
     io._get_pc = lambda: machine.cpu.registers.PC
+    # PORT-NOTE: these cycle closures capture `machine`, which owns the
+    #   devices -- a cycle in Rust/C++. A port should pass the cycle into the
+    #   write call (or share a narrow cycle counter) instead.
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
+    if machine.ppi is not None:
+        machine.ppi._get_cycle = lambda: machine.cycle_count
     # PSG software PCM: timestamp register writes so generate_samples can place
     # them at their sub-frame sample positions (mirrors the DAC wiring).
     machine.psg._machine = machine

@@ -378,10 +378,19 @@ XOR, NOT) per pixel.
 ## Audio
 
 The PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the OPLL of the FM-PAC
-(`msx/opll.py`), and the Majutsushi DAC each render signed 16-bit mono PCM at
-44,100 Hz, 735 samples per frame. The `_mix_audio()` function of the SDL2
-frontend adds the outputs of the chips that the machine has. It clamps the
-result to 16 bits and queues the buffer to SDL.
+(`msx/opll.py`), the Majutsushi DAC, and the PPI key click each render signed
+16-bit mono PCM at 44,100 Hz, 735 samples per frame. The `_mix_audio()`
+function of the SDL2 frontend adds the outputs of the chips that the machine
+has. It clamps the result to 16 bits and queues the buffer to SDL.
+
+The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
+DAC channel, `EventDac` in `msx/dac.py`. The owner converts each write to a
+signed 16-bit level and passes it with the cycle of the write. A write that
+does not change the level records nothing. `generate_samples` places each
+change at sample `(cycle - frame_start) * n // (frame_end - frame_start)` and
+holds the level until the next change. When a frame has no change and the
+level is 0, it returns `None`, and `_mix_audio()` mixes nothing for that
+channel.
 
 ### Sub-frame software PCM
 

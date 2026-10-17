@@ -2,7 +2,7 @@
 
 機械可読なコンポーネント仕様書によって駆動される、純粋な Python 3.10+ で書かれた機能的に正確な MSX1/MSX2 エミュレータです。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3548%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3580%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -95,6 +95,14 @@
 
 - 実装：`msx/psg.py`
 
+### キークリック — PPI ポートC bit 7
+
+PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動します。bit が変わるたびに、出力は 0 か一定のレベルに切り替わります。エミュレータは変化ごとにサイクルを記録し、Majutsushi カートリッジの DAC と同じ方法でフレーム内のサンプル位置に配置します。このため BIOS のキークリック音が鳴り、bit を切り替えて鳴らす 1 ビット PCM も再生されます。PSG に対する音量の比は openMSX のマシン設定に合わせています。
+
+- 実装：`msx/ppi.py`、`msx/dac.py`（キークリックと Majutsushi DAC が共有する書き込み駆動型の DAC チャンネル）
+- 既知の制限：
+  - ミキサーに直流成分を除去する段がない。実機ではクリックは変化のたびに減衰して無音に戻るが、本エミュレータでは bit を 1 のまま保持すると、次に変化するまで一定のオフセットとして残る。
+
 ### SCC — Konami SCC（Sound Creative Chip）
 
 5 チャンネルウェーブテーブルシンセサイザで、PSG と混合してオーディオ出力。2 つのモードに対応：
@@ -155,7 +163,7 @@
 
 ### オーディオ出力フィルタ
 
-実機 MSX の音声出力段の RC フィルタを模したアナログ的な出力ローパス（2 極バターワース）で、混合後の PSG/SCC/DAC/OPLL 信号から残留イメージング/エイリアシングを除去します。
+実機 MSX の音声出力段の RC フィルタを模したアナログ的な出力ローパス（2 極バターワース）で、混合後の PSG/SCC/DAC/OPLL/キークリック信号から残留イメージング/エイリアシングを除去します。
 
 - 実装：`msx/audio_filter.py`
 
@@ -164,7 +172,7 @@
 スロット選択レジスタ（ポート 0xA8）、11 行 × 8 ビット MSX キーボードマトリクス（ポート 0xA9）、行選択（ポート 0xAA）。書き込み専用の制御ポート 0xAB を読んだときの値はマシンの PPI によって異なり、マシンごとに `control_read` で設定する：最後のモード設定値（デフォルト、CMOS 82C55A と同じ）、0xFF（`open_bus`、S1985 搭載マシン。実機 HB-F1XD で確認）、最後の PPI アクセスでラッチされたバイト（`bus_latch`、`hb_10` / `hb_10_64k` の S3527。実機 HB-10 で確認）。
 
 - 実装：`msx/ppi.py`
-- 既知の制限：カセットインターフェース（ポート 0xAA のビット 4–7）は実装されていない。
+- 既知の制限：カセットインターフェース（ポート 0xAA のビット 4–5）と CAPS LED（ビット 6）は実装されていない。ビット 7 はキークリックを駆動する（「キークリック — PPI ポートC bit 7」を参照）。
 
 ### メモリバス / スロットシステム
 
@@ -750,7 +758,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3548 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
+テストスイートは 3580 個のテストで構成されており、個々のオペコードやハードウェアレジスタを対象としたユニットテスト、複数コンポーネントを組み合わせた統合テスト、仕様書のシナリオから直接導出したシナリオレベルのテストが含まれます。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -791,10 +799,11 @@ py-msx-emulator/
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
 │   ├── audio_filter.py    # アナログ的な出力ローパス（BiquadLowPass）
+│   ├── dac.py             # 書き込み駆動型の DAC チャンネル（Majutsushi DAC、キークリック）
 │   ├── scc.py             # Konami SCC ウェーブテーブルシンセサイザ
 │   ├── fmpac.py           # FM-PAC カートリッジ（バンク ROM、SRAM、OPLL ルーティング）
 │   ├── opll.py            # YM2413（OPLL）FM 音源チップ
-│   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード）
+│   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
 │   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
@@ -817,7 +826,7 @@ py-msx-emulator/
 ├── allium/                # Allium 振る舞い仕様書。仕様と実装の整合性を検証（公開リポジトリには含まれていません）
 ├── openspec/
 │   └── specs/             # コンポーネント仕様書（公開リポジトリには含まれていません）
-├── tests/                 # テストスイート — 3548 テスト
+├── tests/                 # テストスイート — 3580 テスト
 ├── requirements.txt       # ランタイム依存関係
 ├── requirements-dev.txt   # 開発用依存関係
 └── pyproject.toml         # プロジェクトメタデータとツール設定
