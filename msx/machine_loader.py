@@ -2031,6 +2031,9 @@ def _wire_post_construction_attrs(
     whichever slot's overlay actually produced the device), so no per-slot
     distinction is needed here."""
     io._get_pc = lambda: machine.cpu.registers.PC
+    # PORT-NOTE: these cycle closures capture `machine`, which owns the
+    #   devices -- a cycle in Rust/C++. A port should pass the cycle into the
+    #   write call (or share a narrow cycle counter) instead.
     if dac is not None:
         dac._get_cycle = lambda: machine.cycle_count
     if machine.ppi is not None:
