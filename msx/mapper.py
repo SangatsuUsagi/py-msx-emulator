@@ -1426,6 +1426,11 @@ class KonamiMapper(BankTracingMapper):
             self._sync_window(window)
 
 
+def _dac_level(value: int) -> int:
+    """8-bit unsigned DAC byte to a signed 16-bit level, as openMSX DACSound8U."""
+    return (value - 0x80) * 256
+
+
 class MajutsushiMapperState(KonamiMapperState):
     last_dac: int
 
@@ -1473,8 +1478,7 @@ class MajutsushiMapper(KonamiMapper):
             cycle = self._get_cycle() if self._get_cycle else 0
             value = value & 0xFF
             self._last_dac = value
-            # 8-bit unsigned to signed 16-bit, as openMSX DACSound8U.
-            self.pcm.write(cycle, (value - 0x80) * 256)
+            self.pcm.write(cycle, _dac_level(value))
         else:
             super().write(addr, value)
 
@@ -1498,7 +1502,7 @@ class MajutsushiMapper(KonamiMapper):
         st = cast(MajutsushiMapperState, state)
         super().apply_state(st)
         self._last_dac = st["last_dac"]
-        self.pcm.reset((self._last_dac - 0x80) * 256)
+        self.pcm.reset(_dac_level(self._last_dac))
 
 
 class KonamiSCCMapperState(TypedDict):

@@ -20,6 +20,8 @@ EVENT_DAC_MAX_EVENTS: int = 4096
 
 @dataclass
 class EventDac:
+    """One mono DAC output driven by timestamped signed 16-bit level writes."""
+
     # Current output level; follows every write, even one the bound drops.
     _level: int = field(default=0, repr=False)
     # Level at the start of the next rendered frame.
@@ -28,6 +30,7 @@ class EventDac:
     _events: list[tuple[int, int]] = field(default_factory=list, repr=False)
 
     def write(self, cycle: int, level: int) -> None:
+        """Record `level` at `cycle`; a write that does not change the level is dropped."""
         if level == self._level:
             return
         self._level = level
@@ -47,7 +50,10 @@ class EventDac:
         if not events and value == 0:
             return None
         self._events = []
+        if not events:
+            return bytearray(value.to_bytes(2, "little", signed=True) * n)
 
+        # PORT-NOTE: `i * cycles` exceeds 32 bits for long frames; use i64/u64.
         cycles = frame_end - frame_start if frame_end > frame_start else 1
         out = bytearray(n * 2)
         ev_idx = 0
@@ -56,6 +62,8 @@ class EventDac:
             while ev_idx < len(events) and events[ev_idx][0] <= threshold:
                 value = events[ev_idx][1]
                 ev_idx += 1
+            # PORT-NOTE: relies on an arithmetic shift of a negative level; a
+            #   port should encode via i16 little-endian bytes instead.
             out[i * 2] = value & 0xFF
             out[i * 2 + 1] = (value >> 8) & 0xFF
 
