@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3580%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3662%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -15,10 +15,14 @@ Every hardware component is pure Python. A machine-readable specification
 defines each component before its implementation, and these specs drive the
 test suite. See [Spec-driven architecture](#spec-driven-architecture) for
 details. The component wiring is explicit: `build_machine()` connects the
-components by hand, with no reflection or dependency-injection magic. The only
+components by hand, with no reflection or dependency injection. The only
 platform-specific dependency is pysdl2, for the display and audio frontend.
 [`docs/technical-implementation.md`](docs/technical-implementation.md)
 describes the internals.
+
+The emulator needs BIOS ROMs, which the repository does not include. The free
+[C-BIOS](https://cbios.sourceforge.net/) works for the generic machines.
+[QUICK_START.md](QUICK_START.md) explains the setup.
 
 ### Verified hardware and software
 
@@ -134,7 +138,7 @@ palette changes.
     real chip splits these modes across two VRAM ICs by even/odd byte. The
     emulator uses a linear addressing model instead. The result differs in
     only one case: a program writes VRAM in a planar mode, switches to a
-    non-planar mode without a clear, and then reads the data back.
+    non-planar mode without a clear, and reads the data back.
   - The R#13 blink timer advances once per frame. This timer controls the
     TEXT2 character blink with R#12 colors and the GRAPHIC4-7 automatic page
     alternation. Thus a mid-frame R#13 write takes effect for the whole frame.
@@ -143,17 +147,15 @@ palette changes.
     alternation, as on a real V9938. The half-scanline CRT field-fusion shift
     that gives true interlaced output (double vertical resolution) is a
     deliberate non-goal, to keep the renderer simple and fast.
-  - During frame skip, the emulator does not update the 5th-sprite and
-    coincidence status on a skipped frame. A ROM that polls for collisions in
-    turbo mode thus sees stale status from the last rendered frame.
+  - The frame-skip limitation of the TMS9918A (above) applies here too.
 
 ### PSG (Programmable Sound Generator): AY-3-8910
 
 The PSG has 16 registers, 3 tone channels, a noise channel, and an envelope
 generator with 8 waveform shapes. Its amplitude table comes from measured
 silicon. It uses the oscilloscope-measured AY-3-8910 DAC curve from ayumi, not
-an idealized geometric curve. The output is 44100 Hz PCM at 735 samples per
-frame.
+an idealized geometric curve. The output is 44100 Hz PCM: 735 samples per
+frame on NTSC machines (60 fps) and 882 on PAL machines (50 fps).
 
 **Sub-frame software-PCM** reproduction records the cycle timestamp of each
 volume-register write. It then replays each write at its sample position in
@@ -167,8 +169,8 @@ not alias to a full/zero chop.
 
 PPI Port C bit 7 (I/O port 0xAA) drives a 1-bit DAC. Each change of the bit
 sets the output to 0 or to a fixed level. The emulator records the cycle of
-each change and places it at its sample position in the frame, in the same way
-as the Majutsushi cartridge DAC. Thus the BIOS key click is audible, and
+each change and places the change at its sample position in the frame. The
+Majutsushi cartridge DAC works in the same way. Thus the BIOS key click is audible, and
 software that toggles the bit plays 1-bit PCM. The level relative to the PSG
 follows openMSX's machine configurations.
 
@@ -298,11 +300,13 @@ from the mixed PSG/SCC/DAC/OPLL/key-click signal.
 
 The PPI has the slot-select register (port 0xA8), the 11-row × 8-bit MSX
 keyboard matrix (port 0xA9), and row selection (port 0xAA). A read of the
-write-only control port 0xAB depends on the machine's PPI, set per machine
-with `control_read`: the last mode word (default, as a CMOS 82C55A), 0xFF
-(`open_bus`, the S1985 machines, checked on a real HB-F1XD), or a byte
-latched from the last PPI access (`bus_latch`, the S3527 in `hb_10` /
-`hb_10_64k`, checked on a real HB-10).
+write-only control port 0xAB depends on the PPI chip of the machine. The
+`control_read` setting of each machine selects one of these values:
+
+- `control` (default): the last mode word, as on a CMOS 82C55A.
+- `open_bus`: 0xFF, as on the S1985 machines. Checked on a real HB-F1XD.
+- `bus_latch`: a byte latched from the last PPI access, as on the S3527 in
+  `hb_10` and `hb_10_64k`. Checked on a real HB-10.
 
 - Implementation: `msx/ppi.py`
 - Known limitations: the emulator does not implement the cassette interface
@@ -314,7 +318,7 @@ latched from the last PPI access (`bus_latch`, the S3527 in `hb_10` /
 MSX1 uses a 4-page × 4-slot dispatch. Slot 0 holds the BIOS ROM, slot 1 a
 cartridge, slot 2 an optional second cartridge, and slot 3 32 KB of RAM. On
 MSX2, primary slot 3 expands into 4 secondary slots. Sub-slot 3-0 holds the
-sub-ROM, and sub-slot 3-2 holds the 128 KB RAM mapper.
+sub-ROM, and sub-slot 3-2 holds the RAM mapper.
 
 `--extension1`/`--extension2` can also expand primary slot 1 and slot 2, each
 independently. These expansions coexist with the slot 3 expansion on the same
@@ -333,12 +337,14 @@ the emulator rejects the same ROM or extension id on both cartridge slots.
 | Slot 1 | Cartridge ROM via mapper. Open bus (0xFF on read, writes ignored) when no slot 1 ROM is present. `--extension1` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 2 | Second cartridge ROM via `_mapper2`. Open bus (0xFF on read, writes ignored) when no slot 2 ROM is present. `--extension2` expands it into sub-slots, see [`docs/README_extension.md`](docs/README_extension.md#slot-model) |
 | Slot 3 (MSX1) | 32 KB RAM at 0x8000-0xFFFF by default. Each machine sets the size (64 KB across all pages on `hb_10_64k`, unpopulated open bus on `hb_10`) |
-| Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, 128 KB RAM mapper in 3-2 |
+| Slot 3 (MSX2) | Expanded into 4 secondary slots: sub-ROM in 3-0, RAM mapper in 3-2 |
 
 ### RAM mapper
 
-128 KB main RAM (8 × 16 KB segments), with segment registers at ports
-0xFC-0xFF.
+Main RAM in 16 KB segments, with segment registers at ports 0xFC-0xFF. The
+standard MSX2 machines have 128 KB (8 segments). `hb_f1xd_256k` has 256 KB,
+and the 512 KB extensions in
+[`docs/README_extension.md`](docs/README_extension.md) add more.
 
 - Implementation: `msx/ram_mapper.py`
 
@@ -400,7 +406,8 @@ implements a WD2793 controller with the Sony/Philips connection style, as used
 by the Sony HB-F1XD. The registers are memory-mapped in slot 3 sub-slot 0.
 `--fdd1` mounts a `*.dsk` image. The emulator supports Disk BASIC boot,
 `CALL FORMAT`, and file read/write with write-back on exit. You can swap disks
-at runtime from the debugger REPL (`fdd1`/`fdd2`).
+at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
+or from the debugger REPL (`fdd1`/`fdd2`).
 
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
@@ -438,7 +445,7 @@ sufficient for the boot and sector-I/O path of the MSX DISK ROM and for
     bytes. It only blanks every sector of the current track and side. It does
     not write real gap, sync, ID, or CRC bytes.
   - Every shipped machine configures exactly one drive, so multi-drive support
-    is untested. A runtime disk-swap abort tracks only drive 0 correctly. Drive
+    is not tested. A runtime disk-swap abort tracks only drive 0 correctly. Drive
     routing reads the target drive from the parameter byte of each command,
     not from a persistent Control Register 0 selection. Both behaviors match
     single-drive operation, as seen in real DISK ROM traffic.
@@ -451,7 +458,7 @@ SHA1 title lookup for automatic game-title detection and mapper selection.
 | --- | --- |
 | Implementation | `msx/romdb.py` |
 | Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (reference only. This project compiled all entries independently as factual data) |
-| Fallback | If PyYAML is not installed, or the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
+| Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
 
 ### I/O bus
 
@@ -484,9 +491,10 @@ registered handler.
 
 An optional MSX mouse that follows the host mouse. It connects to a joystick
 port in place of the physical or keyboard joystick on that port. It reproduces
-the real protocol. The MSX toggles pin 8 (normally the always-high strobe
-output of the PSG) to clock a 4-bit nibble sequence of signed relative motion:
-X high, X low, Y high, Y low. A zero-delta alternate cycle follows, so the MSX
+the real protocol. The MSX toggles pin 8 of the port, which is
+normally the always-high strobe output of the PSG. Each toggle clocks out one
+4-bit nibble of signed relative motion, in the order X high, X low, Y high, Y
+low. A zero-delta alternate cycle follows, so the MSX
 BIOS mouse detection identifies the device as a mouse, not a trackball. The
 left and right buttons drive the trigger A/B lines of the port.
 
@@ -509,10 +517,14 @@ A fixed 768×636 window (256×212 × scale 3) for every machine and mode. The
 rendered frame is always 212 lines. The renderer centers 192-line SCREEN modes
 with border rows, so the 4:3 CRT aspect stays the same for all values of R#9
 LN. SCREEN 6/7 (512 pixels wide) scale down to the same window width to keep
-the pixel aspect. The frontend also gives the hardware palette, mono audio at
+the pixel aspect.
+
+The frontend also gives the hardware palette, mono audio at
 44100 Hz through the analog-style low-pass filter, a fullscreen toggle,
-screenshots, and state save/load. Automatic frame skip suppresses the VDP pixel
-render on late frames, but the VBlank interrupt still fires every frame.
+screenshots, state save/load, pause, fast-forward, mute, and reset. The window
+title shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk.
+Fast-forward does not play audio. For automatic frame skip, see
+[Performance](#performance).
 
 - Implementation: `frontend/sdl2_frontend.py`
 - Known limitations: when no audio device is open (e.g. headless or
@@ -559,8 +571,8 @@ a second, behavior-focused specification layer (`allium/*.allium`). This layer
 verifies that the implementation of each component stays aligned with its
 specification.
 
-The specs are in `openspec/specs/<spec-id>/spec.md`, with one directory per
-component. Each ID has a domain prefix (`cpu-z80`, `vdp-tms9918a`,
+The `openspec/` and `allium/` specs are not published yet. They are in
+`openspec/specs/<spec-id>/spec.md`, with one directory per component. Each ID has a domain prefix (`cpu-z80`, `vdp-tms9918a`,
 `audio-psg`, `fdc-wd2793`, and so on). Each file interleaves natural-language
 requirements with concrete WHEN/THEN scenarios. This is the start of
 `vdp-tms9918a`:
@@ -626,11 +638,8 @@ audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative
 that increases throughput significantly on slower hardware. It is the
 recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
 
-The PyPy numbers above vary more from run to run than the CPython numbers.
-Some runs are far outside the usual range for a given (platform, game) pair.
-The probable cause is OS or hardware scheduling (e.g. core migration or thermal
-throttling), not the emulator itself. Use the PyPy figures as approximate
-values, not exact values.
+The PyPy numbers vary more from run to run than the CPython numbers, probably
+because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
@@ -665,7 +674,7 @@ BIOS setup.
 ### Running the emulator
 
 ```bash
-# With a cartridge — machine auto-detected from ROM database
+# With a cartridge (the ROM database selects the machine)
 python . path/to/game.rom
 
 # Explicitly select MSX1 (Japan)
@@ -698,8 +707,8 @@ python . path/to/game.rom --mapper KonamiSCC
 # Add an FM-PAC (MSX-MUSIC) cartridge in slot 2 alongside a game in slot 1
 python . path/to/game.rom --extension2 fmpac
 
-# Connect an SCC-I (SCC+) cartridge in slot 2 (no cartridge ROM argument);
-# boot from floppy instead
+# Connect an SCC-I (SCC+) cartridge in slot 2 (no cartridge ROM argument).
+# Boot from floppy instead
 python . --machine hb_f1xd --extension2 scc_plus --fdd1 path/to/disk.dsk
 
 # Attach the Sony HBI-J1 Kanji-ROM/MSX-JE cartridge (expands slot 2)
@@ -754,7 +763,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1. The emulator rejects it if slot 1 also resolves to KonamiSCC, or if slot 1 selects `--extension1 scc_plus` |
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive A (machines with an FDC, e.g. `hb_f1xd`). Writes go back to the file on exit |
+| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
@@ -797,6 +806,7 @@ scale: 3                 # integer window scale over the 256x212 base
 # mapper1/mapper2 are CLI-only (--mapper / --mapper1 / --mapper2); not configurable here
 # extension1: fmpac        # overlay a slot 1 extension -- see docs/README_extension.md
 # extension2: hbi_j1       # overlay a slot 2 extension ('extension' also still works, as a legacy alias for extension2)
+# fdd1: [disks/a.dsk, disks/b.dsk]  # drive A disk list (one path or a list); F6 steps through it
 frame_skip: true         # true = auto (default), false = none (disable)
 
 rpc:
@@ -818,8 +828,8 @@ joystick:
 keyboard_joystick:
   buttons: {}             # Joy1 key overrides, e.g. { trigger_a: j }
     # up: i               # (each entry replaces that function's default
-    # down: k             #  key(s) entirely — no partial/alternate merge;
-    # left: j             #  see py_emulator.example.yaml for the full
+    # down: k             #  key(s) entirely, with no partial merge.
+    # left: j             #  See py_emulator.example.yaml for the full
     # right: l            #  key-name vocabulary)
     # trigger_a: n
     # trigger_b: m
@@ -827,11 +837,21 @@ keyboard_joystick:
 mouse:
   enabled: false         # attach an MSX mouse driven by the host mouse
   port: 2                # 1 (Joy1) or 2 (Joy2); default 2 when enabled
+
+hotkeys: {}              # frontend hotkey overrides, e.g. { pause: f6, disk_next: f11 }
+  # disk_next: f6         # built-in defaults; each entry replaces one action's key
+  # disk_eject: shift+f6  # keys: f1..f12, optionally "shift+"; not f1-f5,
+  # fast_forward_hold: f7 # shift+f1-f5 (MSX keys) or f8-f10 (fixed hotkeys)
+  # fast_forward_lock: shift+f7
+  # pause: f11
+  # fullscreen: shift+f11
+  # mute: f12
+  # reset: shift+f12
 ```
 
 These settings are configurable: `machine`, `speed`, `scale`, `slot1`,
-`slot2`, `extension1`, `extension2`, `frame_skip`, `mouse`, and the RPC,
-gamepad, and keyboard-joystick settings. `extension` also still works, as a
+`slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, `hotkeys`,
+and the RPC, gamepad, and keyboard-joystick settings. `extension` also still works, as a
 legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
 
@@ -839,6 +859,12 @@ legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
   share one map.
 - `keyboard_joystick.buttons` applies only to the Joy1 keyboard emulation.
 - `--mouse` on the command line always overrides `mouse.enabled`/`mouse.port`.
+- `fdd1` takes one path or a list of paths. `--fdd1` on the command line
+  replaces the whole list.
+- `hotkeys` moves a frontend hotkey to another function key. The emulator
+  stops at startup with an error in these cases: two actions use one key, a
+  key is an MSX key (F1-F5, Shift+F1..F5), or a key is a fixed hotkey
+  (F8-F10).
 
 See `py_emulator.example.yaml` for the full annotated list and the valid
 button and key-name labels.
@@ -848,11 +874,18 @@ button and key-name labels.
 | Key | Action |
 | --- | --- |
 | Ctrl + Q | Quit |
+| F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
+| Shift + F6 | Eject the drive A disk, or insert the current list image again |
+| F7 (hold) | Fast-forward: run without the speed limit while the key is held |
+| Shift + F7 | Turn fast-forward on or off (latched) |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
-| F11 | Toggle fullscreen |
-| Esc, F1-F5 | Passed through to the MSX keyboard matrix |
+| F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
+| Shift + F11 | Toggle fullscreen |
+| F12 | Mute or unmute the audio (the sound chips keep running) |
+| Shift + F12 | Reset the machine |
+| Esc, F1-F5 | Passed through to the MSX keyboard matrix. Shift+F1..F5 give MSX F6-F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
 | Ctrl + F3 | MSX DEL |
@@ -865,16 +898,24 @@ button and key-name labels.
 \* `<title>` is the game title from the ROM database. If the database has no
 entry for the cartridge, `<title>` is `"py-msx-emulator"`.
 
-**Note (macOS):** macOS can reserve `^F1`-`^F5` (Ctrl+F1..F5) as system-wide
-shortcuts (System Settings → Keyboard → Keyboard Shortcuts → Keyboard, e.g.
-"Move focus to the menu bar" = `^F2`). If Ctrl+F1..F5 does not reach the
-emulator, disable those shortcuts there.
+F6, F7, F11, F12 and their Shift combinations are the built-in defaults. To
+assign other keys, set `hotkeys` in `py_emulator.yaml` (see
+[Configuration file](#configuration-file-py_emulatoryaml)). These hotkeys never
+reach the MSX keyboard. While you hold Shift for one of them, the MSX does not
+see SHIFT either.
+
+**Note (macOS):** macOS can reserve some of these keys as system-wide
+shortcuts: `^F1`-`^F5` (Ctrl+F1..F5, e.g. "Move focus to the menu bar" =
+`^F2`), F11 ("Show Desktop") and F12. See System Settings → Keyboard →
+Keyboard Shortcuts, and the "Use F1, F2, etc. keys as standard function keys"
+setting. If a key does not reach the emulator, disable the shortcut there. You
+can also move F6, F7, F11 and F12 with `hotkeys` in `py_emulator.yaml`.
 
 **Note (JIS BIOS machines):** the HB-F1XD and other Japanese MSX machines run a
 Japanese BIOS ROM. The character-decode table of that ROM is always the JIS
 table, whatever the `keyboard_type` setting in the machine config is.
 `keyboard_type` controls only which host key maps to which cell of the MSX
-keyboard matrix, not the character that the BIOS assigns to that cell. Thus,
+keyboard matrix. The BIOS decides the character for each cell. Thus,
 with an International host keyboard on one of these machines, the keytop and
 the typed character do not always match. `"_"` is the only character with no
 key on an International keyboard, so Shift+0 types it (see the table above).
@@ -911,14 +952,11 @@ For full usage, options, and examples for every script, see
 
 ## Remote control (Socket RPC & MCP)
 
-The emulator can expose a small local control surface. This surface is a
-Unix-socket JSON-RPC server in the emulator (`--rpc`) plus an MCP server that
-wraps it (`tools/mcp_server.py`). With it, external tools, a test harness, or
-an AI coding agent such as Claude Code can pause, inspect, and control a
-running instance.
-
-For the architecture, how to enable the RPC server, how to register the MCP
-server, the RPC method reference, and security notes, see
+With `--rpc`, the emulator opens a local Unix-socket JSON-RPC server, and
+`tools/mcp_server.py` wraps it as an MCP server. External tools, a test
+harness, or an AI coding agent such as Claude Code can then pause, inspect,
+and control a running instance. For setup, the method reference, and security
+notes, see
 [`tools/README_tools.md`](tools/README_tools.md#remote-control-socket-rpc--mcp)
 / [`tools/README_tools_ja.md`](tools/README_tools_ja.md#リモート制御socket-rpc--mcp).
 
@@ -950,11 +988,11 @@ by ID. When you omit it, the ROM database selects the generation automatically
 | `fs_a1f` | MSX2 | Japan | V9938 |
 
 `hb_10` (Sony HB-10) uses the real machine ROM, with 16 KB of RAM in slot 0
-next to the BIOS. Slot 3 is unpopulated, as on real hardware. Put its
+next to the BIOS. Slot 3 is empty, as on real hardware. Put its
 `hb-10_basic-bios1.rom` in `roms/hb_10/`.
 
-> **Note**: the VDP of the HB-10 is a TMS9118NL. This emulator implements it as
-> the functionally equivalent TMS9918A.
+The VDP of the HB-10 is a TMS9118NL. The emulator implements it as the
+functionally equivalent TMS9918A.
 
 `hb_10_64k` models an HB-10 with the 64 KB RAM modification that the
 [Sony HB-10 category page](https://www.msx.org/wiki/Category:Sony_HB-10)
@@ -1058,7 +1096,7 @@ Key fields:
 | `slots.primary.N` | Primary slot N: `{type: cartridge}`, `{type: ram, ...}`, or inline ROM `content` |
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
-| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`; it accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
+| `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
 | `sha1` | `null` means load without hash verification |
 
 To use a custom machine definition, add a new YAML file to `config/machines/`
@@ -1069,7 +1107,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3580 tests and covers all major components. It includes
+The test suite has 3662 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1109,7 +1147,7 @@ py-msx-emulator/
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
 │   ├── kanji.py           # JIS Kanji font ROM I/O device
-│   ├── ram_mapper.py      # MSX2 RAM mapper (128 KB, 8 segments)
+│   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
 │   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
@@ -1122,7 +1160,7 @@ py-msx-emulator/
 │   ├── input.py           # Keyboard matrix + joystick input state
 │   ├── joystick.py        # Physical joystick manager (SDL2)
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
-│   ├── frame_timer.py     # 60 fps pacing + FPS measurement
+│   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
@@ -1131,16 +1169,20 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server — see tools/README_tools.md
+├── scripts/               # Benchmarks, ROM database build, profiling helpers
+├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server (see tools/README_tools.md)
 ├── docs/                  # Debugger guide, socket RPC / MCP reference
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/
 │   └── cbios/             # C-BIOS ROM files (not in version control)
 ├── saves/                 # Save states and screenshots (created at runtime)
-├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not included in the public repository)
+├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
-│   └── specs/             # Component specifications (not included in the public repository)
-├── tests/                 # Test suite — 3580 tests
+│   └── specs/             # Component specifications (not published yet)
+├── tests/                 # Test suite (3662 tests)
+├── py_emulator.example.yaml # Annotated example of the optional config file
+├── QUICK_START.md         # Requirements, installation, BIOS setup
+├── CHANGELOG.md           # Version history
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
 └── pyproject.toml         # Project metadata and tool configuration
@@ -1150,21 +1192,19 @@ py-msx-emulator/
 
 ## Contributing
 
-### Spec-first rule
-
-Every new hardware component or significant behavior change must have a
-specification in `openspec/specs/<spec-id>/spec.md` before any implementation
-code. Add or update the spec first. A new spec uses an existing domain prefix
-and does not invent a new one. The scenarios in the spec are the source of
-truth for test cases. The project does not merge a PR that adds implementation
-without a matching spec update.
+Issues and pull requests are welcome. The specs (`openspec/`, `allium/`) are
+not published yet, and development is currently AI-assisted ("vibe coding").
+So contributors do not need to write specs. The author reviews each issue or
+pull request and then updates the OpenSpec specification and the Allium
+contracts to match.
 
 ### Coding conventions
 
 - **Pure Python only**: no C extensions, no Cython, and no ctypes beyond the
   ctypes use in the SDL2 frontend
-- **Python 3.10+**: use dataclasses, `match`/`case`, and modern type
-  annotation syntax
+- **Python 3.10+**: dataclasses and modern type annotation syntax. Keep the
+  core easy to port to Rust/C/JS: explicit `for` loops, no walrus operator, no
+  complex comprehensions or generators
 - **Type hints everywhere**: mypy checks the project in strict mode
 - **Linting**: ruff with `line-length = 99`. Run `python -m ruff check .`
   before you commit
@@ -1173,7 +1213,7 @@ without a matching spec update.
 
 ### Issues and pull requests
 
-There is no formal CONTRIBUTING.md at present. Before you submit a PR with
+There is no CONTRIBUTING.md at present. Before you submit a PR with
 significant changes, open a
 [GitHub issue](https://github.com/SangatsuUsagi/py-msx-emulator/issues) to
 discuss them. Bug reports for ROMs other than the listed target titles are

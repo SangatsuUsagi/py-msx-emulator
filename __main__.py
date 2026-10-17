@@ -147,8 +147,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Slot 2 mapper type (default: auto; KonamiSCC builds its own "
                              "SCC chip, rejected if the other slot also resolves to "
                              "KonamiSCC or selects --extensionN scc_plus)")
-    parser.add_argument("--fdd1", default=None, metavar="DSK",
-                        help="Floppy disk image (*.dsk) to mount in drive A")
+    parser.add_argument("--fdd1", nargs="+", default=None, metavar="DSK",
+                        help="Floppy disk image(s) (*.dsk) for drive A. The first is mounted "
+                             "at startup; F6 steps through the list. Put a positional "
+                             "cartridge before --fdd1 (or use --slot1), or it is read as "
+                             "one more disk image")
     parser.add_argument("--fdd2", default=None, metavar="DSK",
                         help="Floppy disk image (*.dsk) to mount in drive B")
     parser.add_argument("--resume", nargs="?", const="", default=None, metavar="STATE_FILE",
@@ -195,20 +198,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 class _ResolvedPaths(NamedTuple):
     cart_path: Path | None
     slot2_path: Path | None
-    fdd1_path: Path | None
+    fdd1_paths: list[Path]
     fdd2_path: Path | None
     cartridge: bytes | None
     cartridge2: bytes | None
 
 
 def _resolve_paths(
-    args: argparse.Namespace, slot1: str | None, slot2: str | None
+    args: argparse.Namespace, slot1: str | None, slot2: str | None, fdd1: list[str] | None
 ) -> _ResolvedPaths:
     """Validate the slot-1/slot-2/floppy paths and read the ROM bytes.
 
     `slot1` is the already-resolved effective slot 1 path (positional
     cartridge argument, `--slot1`, or `py_emulator.yaml`'s `slot1` key --
-    see `_resolve_effective_options`), not `args.cartridge` directly.
+    see `_resolve_effective_options`), not `args.cartridge` directly. `fdd1` is
+    likewise the resolved drive A disk list (`--fdd1` or the `fdd1` key).
 
     Exits the process with an error if any given path does not exist.
     """
@@ -221,16 +225,19 @@ def _resolve_paths(
         print(f"error: slot 2 ROM not found: {slot2_path}", file=sys.stderr)
         sys.exit(1)
 
-    fdd1_path = Path(args.fdd1) if args.fdd1 else None
+    fdd1_paths = [Path(p) for p in fdd1] if fdd1 else []
     fdd2_path = Path(args.fdd2) if args.fdd2 else None
-    for label, fdd_path in (("--fdd1", fdd1_path), ("--fdd2", fdd2_path)):
-        if fdd_path is not None and not fdd_path.exists():
+    fdd_checks = [("--fdd1", p) for p in fdd1_paths]
+    if fdd2_path is not None:
+        fdd_checks.append(("--fdd2", fdd2_path))
+    for label, fdd_path in fdd_checks:
+        if not fdd_path.exists():
             print(f"error: disk image not found ({label}): {fdd_path}", file=sys.stderr)
             sys.exit(1)
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return _ResolvedPaths(cart_path, slot2_path, fdd1_path, fdd2_path, cartridge, cartridge2)
+    return _ResolvedPaths(cart_path, slot2_path, fdd1_paths, fdd2_path, cartridge, cartridge2)
 
 
 def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | None) -> None:
@@ -297,7 +304,7 @@ def _print_extension_summary_line(
 
 
 def _print_startup_summary(
-    spec: "MachineSpec", display_mapper: str, fdd1_path: Path | None, fdd2_path: Path | None,
+    spec: "MachineSpec", display_mapper: str, fdd1_paths: list[Path], fdd2_path: Path | None,
     extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
@@ -307,8 +314,8 @@ def _print_startup_summary(
     print(f"bios    : {spec.main_rom_entry.file}")
     if spec.generation == "msx2" and spec.sub_rom_entry is not None:
         print(f"ext     : {spec.sub_rom_entry.file}")
-    if fdd1_path is not None:
-        print(f"fdd1    : {fdd1_path}")
+    if fdd1_paths:
+        print(f"fdd1    : {', '.join(str(p) for p in fdd1_paths)}")
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
     _print_extension_summary_line(1, extension_overlay1, args.extension1)
@@ -390,6 +397,7 @@ class _EffectiveOptions(NamedTuple):
     mouse_port: int | None
     slot1: str | None
     slot2: str | None
+    fdd1: list[str] | None
     mapper2: str
     extension2: str | None
     frame_skip: str
@@ -437,6 +445,8 @@ def _resolve_effective_options(
         # two are mutually exclusive in practice -- see _validate_options).
         slot1=_first_set(args.slot1, args.cartridge, app_cfg.slot1, default=None),
         slot2=_first_set(args.slot2, app_cfg.slot2, default=None),
+        # A CLI --fdd1 list replaces the config list whole, not merged.
+        fdd1=_first_set(args.fdd1, app_cfg.fdd1, default=None),
         mapper2=_first_set(args.mapper2, default="auto"),
         extension2=_resolve_extension(args.extension2, app_cfg.extension2),
         frame_skip=_first_set(args.frame_skip, frame_skip_cfg, default="auto"),
@@ -502,8 +512,8 @@ def main() -> None:
 
     from msx.romdb import lookup, lookup_system, lookup_title
 
-    paths = _resolve_paths(args, opts.slot1, opts.slot2)
-    fdd1_path = paths.fdd1_path
+    paths = _resolve_paths(args, opts.slot1, opts.slot2, opts.fdd1)
+    fdd1_paths = paths.fdd1_paths
     fdd2_path = paths.fdd2_path
     cartridge = paths.cartridge
     cartridge2 = paths.cartridge2
@@ -535,10 +545,10 @@ def main() -> None:
         _fail(str(exc))
 
     # --- Disk image only applies to machines with a floppy interface ---
-    if (fdd1_path is not None or fdd2_path is not None) and spec.fdc is None:
+    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
         print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
               "ignoring", file=sys.stderr)
-        fdd1_path = None
+        fdd1_paths = []
         fdd2_path = None
 
     # --- Resolve display mapper for summary ---
@@ -553,7 +563,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_path, fdd2_path, extension_overlay1, extension_overlay,
+        spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay,
         opts.mouse_port, args,
     )
 
@@ -583,7 +593,7 @@ def main() -> None:
                 mapper2=opts.mapper2,
                 logger=logger,
                 tracer=tracer,
-                fdd1=fdd1_path,
+                fdd1=fdd1_paths[0] if fdd1_paths else None,
                 fdd2=fdd2_path,
                 extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
@@ -627,7 +637,8 @@ def main() -> None:
             run(machine, scale=opts.scale, speed=opts.speed, game_title=game_title,
                 resume=args.resume, frame_skip=opts.frame_skip, rpc_server=rpc_server,
                 gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
-                mouse_port=opts.mouse_port)
+                mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
+                hotkey_bindings=app_cfg.hotkey_bindings())
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
 

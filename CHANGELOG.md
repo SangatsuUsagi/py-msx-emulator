@@ -2,6 +2,26 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.7** (2026-10-17): SDL2 frontend hotkeys for disk swap, pause, fast-forward, mute and reset.
+  - New: `--fdd1` and the new `py_emulator.yaml` key `fdd1` take a list of disk images for drive A. F6 mounts the next
+    image (it wraps to the first), and Shift+F6 ejects the disk or inserts it again. Both use the same disk swap as the
+    RPC `fdd.swap` method and the debugger, and do nothing on a machine without an FDC.
+  - Shift+hotkey combos do not reach the MSX keyboard matrix: the MSX SHIFT key is released while the combo is held.
+    Shift+F1..F5 still give MSX F6-F10.
+  - New: F7 fast-forwards while held and Shift+F7 latches it. Fast-forward runs without frame pacing, presents at
+    most at the machine frame rate, and plays no audio. F12 mutes (the sound chips keep running), and Shift+F12 resets
+    the machine.
+  - New: F11 pauses and resumes. This pause is separate from the RPC pause: neither one resumes the other, and
+    emulation runs only when neither is set. The audio device is paused while either is set.
+  - **Changed:** fullscreen moves from F11 to Shift+F11.
+  - New: the `py_emulator.yaml` section `hotkeys` assigns other function keys (`f1`..`f12`, optionally `shift+`) to
+    these hotkeys. A key used twice, an MSX key (F1-F5, Shift+F1..F5) or a fixed hotkey (F8-F10) stops startup with an
+    error.
+  - The window title shows `[PAUSED]`, `[FF]`, `[MUTE]` and the drive A disk position, e.g.
+    `py-msx-emulator — <title> [60 fps] [MUTE] disk 2/3: b.dsk`.
+  - Docs: README and `docs/technical-implementation.md` (and their Japanese versions) are revised. They now cover PAL
+    timing, the configurable RAM mapper size, the FM-PAC and Kanji ROM ports, and the new hotkeys, and state that the
+    `openspec/` and `allium/` specs are not published yet.
 - **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.
   - New: each change of PPI Port C bit 7 (port 0xAA write or 0xAB bit set/reset) drives a 1-bit DAC, so the BIOS key
     click is audible and software that toggles the bit plays 1-bit PCM. The level relative to the PSG follows openMSX's

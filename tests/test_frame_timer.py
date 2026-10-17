@@ -78,3 +78,29 @@ def test_speed_multiplier_sets_frame_interval() -> None:
     timer = FrameTimer(fps=60.0, speed=2.0)
     assert timer.speed == 2.0
     assert abs(timer._frame_interval - 1.0 / 120.0) < 1e-9
+
+
+def test_tick_unpaced_does_not_wait() -> None:
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    timer.tick()
+    t0 = time.perf_counter()
+    timer.tick_unpaced()
+    assert time.perf_counter() - t0 < 0.005
+
+
+def test_tick_unpaced_counts_frames() -> None:
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    for _ in range(10):
+        timer.tick_unpaced()
+    assert timer.fps_measured == 0.0
+    timer._fps_last_time -= 1.0  # pretend the 1 s measurement window elapsed
+    timer.tick_unpaced()  # 11th frame closes the window
+    assert 10.0 < timer.fps_measured <= 11.0
+
+
+def test_tick_after_tick_unpaced_waits_a_full_interval() -> None:
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    timer.tick_unpaced()
+    t0 = time.perf_counter()
+    timer.tick()
+    assert 0.010 < time.perf_counter() - t0 < 0.030
