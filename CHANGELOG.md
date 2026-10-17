@@ -2,6 +2,14 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behaviour that did not match the specs.
+  - Keyboard: SHIFT+"0" reaches the "_" cell on the Japanese (JIS) layout only. On the International layout it now
+    types ")" as on real hardware.
+  - V9938: a register or palette write that takes effect only after the last visible line no longer changes the frame
+    being drawn. S#9 reads its unused bits 7-1 as 1, also before any SRCH command has run.
+  - Machine loader: a slot-0 `ram` entry must declare one page (0-3) and 16 KB, and must not share page 2 with the
+    logo ROM; other shapes stop loading with an error. MSX2 machines now wire a slot-0 RAM entry too (before, only
+    MSX1 machines did).
 - **v2.7.7** (2026-10-17): SDL2 frontend hotkeys for disk swap, pause, fast-forward, mute and reset.
   - New: `--fdd1` and the new `py_emulator.yaml` key `fdd1` take a list of disk images for drive A. F6 mounts the next
     image (it wraps to the first), and Shift+F6 ejects the disk or inserts it again. Both use the same disk swap as the
