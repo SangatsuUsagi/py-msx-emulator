@@ -390,20 +390,31 @@ def test_jp_ro_key_reaches_underscore_cell() -> None:
     assert kjp.matrix[2] & (1 << 5) != 0
 
 
-def test_shift_zero_reaches_underscore_cell() -> None:
-    # Host-only escape hatch, independent of keyboard_type: SHIFT+"0"
-    # asserts the "_" cell (row-2 bit-5) instead of "0"'s own cell (row-0
-    # bit-0). Confirmed safe against openMSX's unicodemap.int/jp_jis: row-0
-    # bit-0 has no plain-SHIFT entry in either map.
-    for keyboard_type in ("int", "jp"):
-        state = InputState(keyboard_type=keyboard_type)
-        state.key_down(_K_LSHIFT)
-        state.key_down(_K_0)
-        assert state.matrix[2] & (1 << 5) == 0    # "_" cell asserted
-        assert state.matrix[0] & (1 << 0) != 0    # "0" cell NOT asserted
-        state.key_up(_K_0)
-        assert state.matrix[2] & (1 << 5) != 0    # "_" cell released
-        state.key_up(_K_LSHIFT)
+def test_shift_zero_reaches_underscore_cell_on_jp() -> None:
+    # JIS-only escape hatch: SHIFT+"0" asserts the "_" cell (row-2 bit-5)
+    # instead of "0"'s own cell (row-0 bit-0). Safe on JIS: openMSX's
+    # unicodemap.jp_jis has no SHIFT entry for row-0 bit-0.
+    state = InputState(keyboard_type="jp")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    assert state.matrix[2] & (1 << 5) == 0    # "_" cell asserted
+    assert state.matrix[0] & (1 << 0) != 0    # "0" cell NOT asserted
+    state.key_up(_K_0)
+    assert state.matrix[2] & (1 << 5) != 0    # "_" cell released
+    state.key_up(_K_LSHIFT)
+
+
+def test_shift_zero_types_right_paren_on_int() -> None:
+    # International: SHIFT+"0" is ")" (openMSX unicodemap.int row-0 bit-0
+    # with SHIFT), so the "0" cell must be asserted, not redirected.
+    state = InputState(keyboard_type="int")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    assert state.matrix[0] & (1 << 0) == 0    # "0" cell asserted
+    assert state.matrix[2] & (1 << 5) != 0    # "_" cell untouched
+    state.key_up(_K_0)
+    assert state.matrix[0] & (1 << 0) != 0
+    state.key_up(_K_LSHIFT)
 
 
 def test_shift_zero_release_after_shift_released_still_hits_underscore_cell() -> None:

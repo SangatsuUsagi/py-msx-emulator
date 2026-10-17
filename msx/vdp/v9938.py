@@ -1032,7 +1032,8 @@ class V9938:
             # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
             # readStatusReg case 9 → resetBD); a SRCH that finds nothing
             # leaves the previous flag standing.
-            result = self._status9
+            # Bits 7-1 are unused and read as 1, also before any SRCH.
+            result = self._status9 | 0xFE
             self._status2 &= ~_S2_BD
             return result
         if self.regs[15] == 3:

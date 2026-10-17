@@ -151,14 +151,6 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
     # Row 0: digits 0-7
     _K_0: (0, 0), _K_1: (0, 1), _K_2: (0, 2), _K_3: (0, 3),
     _K_4: (0, 4), _K_5: (0, 5), _K_6: (0, 6), _K_7: (0, 7),
-    # Host-only escape hatch: InputState.key_down redirects "0" to this
-    # synthetic key instead of _K_0 when SHIFT is held. Row 2 bit 5 is the
-    # JIS "_" key's own cell (see _JP_SYMBOLS' SDLK_JIS_RO entry) -- not a
-    # real MSX key combination on either layout, confirmed against openMSX's
-    # unicodemap.int and unicodemap.jp_jis: row 0 bit 0 (digit "0") has no
-    # plain-SHIFT entry in either map, so SHIFT+"0" produces no character on
-    # real hardware and cannot collide with a genuine keystroke.
-    _K_ZERO_SHIFT: (2, 5),
     # Row 1: 8, 9 and the symbols common to both layouts
     _K_8: (1, 0),
     _K_9: (1, 1),
@@ -207,8 +199,8 @@ _COMMON_MATRIX: dict[int, tuple[int, int]] = {
 
 # International layout: '=' [ ] ' ` occupy row-1/row-2 cells; apostrophe is a
 # dedicated key (JIS has none — there it is Shift+7). Row 2 bit 5 (the
-# International DEAD/£/accent-composer key, per allium/ppi.allium's Open
-# Questions) is left unmapped: it has no single corresponding ASCII
+# International DEAD/£/accent-composer key, per allium/ppi.allium's
+# Deferred Specifications) is left unmapped: it has no single corresponding ASCII
 # character on any host layout, unlike every other cell here, so there is
 # no SDL keycode to bind it to.
 #
@@ -294,6 +286,12 @@ _JP_SYMBOLS: dict[int, tuple[int, int]] = {
     _K_APOSTROPHE_KEY: (2, 0),   # : / * (repurposed host apostrophe key; see above)
     _K_BACKQUOTE: (1, 3),        # ^ / ~ (repurposed host `/~ key; see above)
     _K_RO: (2, 5),               # \ / _ (real JIS key, scancode fallback; see above)
+    # Host-only escape hatch, JIS only: InputState.key_down redirects "0" to
+    # this synthetic key when SHIFT is held, reaching the "_" cell. Safe here
+    # because row 0 bit 0 has no SHIFT character on JIS (openMSX
+    # unicodemap.jp_jis); on International SHIFT+"0" is ")" (unicodemap.int),
+    # so KEY_MATRIX_INT has no entry and the redirect does not apply there.
+    _K_ZERO_SHIFT: (2, 5),
 }
 
 KEY_MATRIX_INT: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_INT_SYMBOLS}
@@ -422,7 +420,7 @@ class InputState:
         # _zero_shift_redirect so the matching key_up releases the same cell
         # regardless of what SHIFT is doing by then.
         matrix_key = key
-        if key == _K_0 and self._shift_held():
+        if key == _K_0 and self._shift_held() and _K_ZERO_SHIFT in self._matrix_map:
             matrix_key = _K_ZERO_SHIFT
             self._zero_shift_redirect = True
         if matrix_key in self._matrix_map:
