@@ -98,7 +98,7 @@ _KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
 
 _KNOWN_TOP_KEYS = frozenset({
     "machine", "speed", "scale", "extension", "extension1", "extension2",
-    "slot1", "slot2",
+    "slot1", "slot2", "fdd1",
     "frame_skip", "rpc", "joystick", "keyboard_joystick", "mouse",
 })
 _KNOWN_RPC_KEYS = frozenset({"enabled", "socket"})
@@ -131,6 +131,8 @@ class AppConfig:
     extension2: str | None = None
     slot1: str | None = None
     slot2: str | None = None
+    # Drive A disk list; a single path in the file becomes a one-element list.
+    fdd1: list[str] | None = None
     frame_skip: bool | None = None
     rpc_enabled: bool | None = None
     rpc_socket: str | None = None
@@ -266,6 +268,7 @@ def load_app_config(root: Path) -> AppConfig:
     cfg.extension2 = _opt_extension(raw, "extension2", legacy_alias="extension")
     cfg.slot1 = _opt_rom_path(raw, "slot1", root)
     cfg.slot2 = _opt_rom_path(raw, "slot2", root)
+    cfg.fdd1 = _opt_path_list(raw, "fdd1", root)
     cfg.frame_skip = _opt_bool(raw, "frame_skip")
     _parse_rpc(raw.get("rpc"), cfg)
     _parse_joystick(raw.get("joystick"), cfg)
@@ -335,6 +338,21 @@ def _opt_rom_path(raw: dict[str, Any], key: str, root: Path) -> str | None:
     if value is not None and not (root / value).exists():
         raise AppConfigError(f"{CONFIG_FILENAME}: {key}: file not found: {value}")
     return value
+
+
+def _opt_path_list(raw: dict[str, Any], key: str, root: Path) -> list[str] | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    paths = [value] if isinstance(value, str) else value
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+        raise AppConfigError(
+            f"{CONFIG_FILENAME}: {key} must be a path string or a non-empty list of them"
+        )
+    for path in paths:
+        if not (root / path).exists():
+            raise AppConfigError(f"{CONFIG_FILENAME}: {key}: file not found: {path}")
+    return list(paths)
 
 
 def _parse_rpc(rpc: Any, cfg: AppConfig) -> None:
