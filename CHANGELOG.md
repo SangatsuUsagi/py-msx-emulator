@@ -8,7 +8,13 @@
     RPC `fdd.swap` method and the debugger, and do nothing on a machine without an FDC.
   - Shift+hotkey combos do not reach the MSX keyboard matrix: the MSX SHIFT key is released while the combo is held.
     Shift+F1..F5 still give MSX F6-F10.
-  - The window title shows the drive A disk position, e.g. `py-msx-emulator — <title> [60 fps] disk 2/3: b.dsk`.
+  - New: F7 fast-forwards while held and Shift+F7 latches it. Fast-forward runs without frame pacing, presents at
+    most at the machine frame rate, and plays no audio. F12 mutes (the sound chips keep running), and Shift+F12 resets
+    the machine.
+  - New: a frontend pause, separate from the RPC pause. Neither one resumes the other, and emulation runs only when
+    neither is set. The audio device is paused while either is set.
+  - The window title shows `[PAUSED]`, `[FF]`, `[MUTE]` and the drive A disk position, e.g.
+    `py-msx-emulator — <title> [60 fps] [MUTE] disk 2/3: b.dsk`.
 - **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.
   - New: each change of PPI Port C bit 7 (port 0xAA write or 0xAB bit set/reset) drives a 1-bit DAC, so the BIOS key
     click is audible and software that toggles the bit plays 1-bit PCM. The level relative to the PSG follows openMSX's
