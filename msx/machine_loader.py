@@ -776,9 +776,26 @@ def _parse_slot0(
                     f"{context}: 'ram' content item must declare exactly one page, "
                     f"got {pages!r}"
                 )
+            if not 0 <= pages[0] <= 3:
+                raise MachineLoadError(
+                    f"{context}: 'ram' content item page must be 0-3, got {pages[0]}"
+                )
             size_kb = int(ram_data.get("size_kb", 0))
+            if size_kb != 16:
+                raise MachineLoadError(
+                    f"{context}: 'ram' content item must be 16 KB (one page), got {size_kb}"
+                )
             ram_entry = _Slot0RamEntry(size_kb=size_kb, page=pages[0])
+    if ram_entry is not None and ram_entry.page == 2 and logo_rom is not None:
+        raise MachineLoadError(f"{context}: page-2 'ram' conflicts with the page-2 ROM")
     return main_rom, logo_rom, ram_entry
+
+
+def _slot0_ram_buffer(spec: MachineSpec) -> tuple[bytearray | None, int]:
+    """Slot-0 flat RAM buffer and page for Memory; (None, 3) when undeclared."""
+    if spec.slot0_ram_entry is None:
+        return None, 3
+    return bytearray(spec.slot0_ram_entry.size_kb * 1024), spec.slot0_ram_entry.page
 
 
 def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
@@ -2237,11 +2254,7 @@ def _build_msx1(
     slot2_sub_slot_enabled: bool = False,
     mapper2_subslots: list[Mapper | None] | None = None,
 ) -> "Machine":
-    slot0_ram: bytearray | None = None
-    slot0_ram_page = 3
-    if spec.slot0_ram_entry is not None:
-        slot0_ram = bytearray(spec.slot0_ram_entry.size_kb * 1024)
-        slot0_ram_page = spec.slot0_ram_entry.page
+    slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
     memory = Memory(
         rom=main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
@@ -2360,6 +2373,7 @@ def _build_msx2(
         _build_fdc(spec, fdd_images or [], disk_rom_override)
         if spec.fdc is not None else None
     )
+    slot0_ram, slot0_ram_page = _slot0_ram_buffer(spec)
     memory = Memory(
         rom=main_bytes,
         ram=ram_bytes,
@@ -2377,6 +2391,8 @@ def _build_msx2(
         fdc_subslot=spec.fdc_subslot,
         rom_name=spec.main_rom_entry.file,
         sub0_rom_name=spec.sub_rom_entry.file if spec.sub_rom_entry is not None else "",
+        slot0_ram=slot0_ram,
+        slot0_ram_page=slot0_ram_page,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
         else _empty_subslots(),

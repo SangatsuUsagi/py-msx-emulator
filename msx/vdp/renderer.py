@@ -48,8 +48,8 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
     """Render one TMS9918A frame to a border-padded palette-index buffer.
 
     Dispatches on the M1-M3 mode bits (R#1/R#0, TMS9918A datasheet naming) to
-    pick a screen-mode renderer; `skip_render` (frame skipped for a headless
-    benchmark run) returns an empty buffer. The only VDP state a render
+    pick a screen-mode renderer; `skip_render` (a frame the frontend skips
+    under frame-skip or fast-forward) returns an empty buffer. The only VDP state a render
     changes is the sprite status in S#0 (5S / index / C); VBlank is raised by
     VDP.begin_vblank(), which Machine.run_frame calls.
     """

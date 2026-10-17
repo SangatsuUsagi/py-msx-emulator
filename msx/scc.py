@@ -248,8 +248,8 @@ class SCC:
         Hot path (audio callback, 735 or 882 samples/frame): the registers are constant
         across a buffer (the CPU only writes SCC registers between buffers), so
         the per-channel period / volume / enable / waveform bank are precomputed
-        once, and the phase state is bound to locals — mirroring PSG.generate_
-        samples, including that function's own per-channel loop unrolling
+        once, and the phase state is bound to locals — mirroring PSG._render
+        (the PSG's hot loop), including its own per-channel loop unrolling
         ("channels 1 and 2: identical integration, unrolled for the hot loop").
         Phase still advances for every channel each sample (even disabled
         ones); only the accumulation is gated by enable. Behaviour is

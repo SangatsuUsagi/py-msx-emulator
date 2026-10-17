@@ -215,7 +215,8 @@ def test_r18_only_change_does_not_split_a_band() -> None:
     vdp.begin_scanline(0)
     vdp._reg_write_log = [_RegChange(96, 18, 0x0D)]  # R#18 write mid-frame
     bands = _build_bands(vdp)
-    assert bands == [], "an R#18-only log entry must not produce a band split"
+    assert len(bands) == 1, "an R#18-only log entry must not produce a band split"
+    assert (bands[0].y0, bands[0].y1) == (0, vdp.display_height)
 
 
 def test_r18_change_alongside_other_reg_still_splits_on_the_other_reg_only() -> None:
@@ -282,3 +283,21 @@ def test_each_band_renderer_gets_that_bands_registers(monkeypatch) -> None:
     # The palette change at line 100 opens a third band (same registers).
     assert [(y, r7) for y, r7, _, _ in calls] == [(0, 0x05), (65, 0x09), (101, 0x09)]
     assert all(is_live and live_r7 == 0x09 for _, _, is_live, live_r7 in calls)
+
+
+# ---------------------------------------------------------------------------
+# A write that takes effect at/after display_height does not leak into the frame
+# ---------------------------------------------------------------------------
+
+def test_late_write_only_keeps_frame_start_registers() -> None:
+    vdp = make_g4_vdp()
+    vdp.regs[7] = 0x04
+    vdp.begin_scanline(0)                  # captures frame-start R#7 = 4
+    expected = render_frame(vdp)           # empty log: single pass, backdrop 4
+    vdp.regs[7] = 0x09                     # written in the last line's CPU window
+    vdp._reg_write_log = [_RegChange(vdp.display_height - 1, 7, 0x09)]
+    # Compare the active area only: the output-height padding rows take the
+    # live (end-of-frame) border, which is outside this rule.
+    top = (212 - vdp.display_height) // 2 * _W
+    active = slice(top, top + vdp.display_height * _W)
+    assert render_frame(vdp)[active] == expected[active]
