@@ -118,6 +118,13 @@ def test_reset_clears_command_engine_state() -> None:
     assert vdp._cmd_code == 0
 
 
+def test_s9_reads_0xfe_before_any_srch() -> None:
+    vdp = _make_vdp()
+    assert _read_status(vdp, 9) == 0xFE
+    vdp.reset()
+    assert _read_status(vdp, 9) == 0xFE
+
+
 def test_reset_retains_vram_written_by_a_command() -> None:
     vdp = _make_vdp()
     _dispatch(vdp, cmd_code=0xC, dx=0, dy=0, nx=2, ny=1, clr=0xAB)  # HMMV

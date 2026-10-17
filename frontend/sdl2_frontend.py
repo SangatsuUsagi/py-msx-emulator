@@ -1058,7 +1058,7 @@ def _run_frame(
         if not state.running:
             return
 
-    # Generate audio (PSG + SCC + DAC mixed as present) every frame so the
+    # Generate audio (PSG + SCC + OPLL + DAC + key click, as present) every frame so the
     # chips advance; queue it unless fast-forwarding, as silence when muted.
     if audio_dev > 0:
         audio_buf = _mix_audio(

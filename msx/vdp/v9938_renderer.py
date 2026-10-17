@@ -396,7 +396,13 @@ def _build_bands(vdp: "V9938") -> list[_Band]:
             change_lines.setdefault(effective, []).append(entry)
 
     if not change_lines:
-        return []
+        if not log:
+            return []
+        # Every logged write takes effect after the visible frame (or is R#18):
+        # one band with the frame-start state, not the live (already written)
+        # registers a single-pass render would use.
+        return [_Band(0, display_height, list(vdp._frame_start_regs),
+                      list(vdp._frame_start_palette))]
 
     bands: list[_Band] = []
     cur_regs = list(vdp._frame_start_regs)
