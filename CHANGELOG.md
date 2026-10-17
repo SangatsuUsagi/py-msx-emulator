@@ -11,8 +11,12 @@
   - New: F7 fast-forwards while held and Shift+F7 latches it. Fast-forward runs without frame pacing, presents at
     most at the machine frame rate, and plays no audio. F12 mutes (the sound chips keep running), and Shift+F12 resets
     the machine.
-  - New: a frontend pause, separate from the RPC pause. Neither one resumes the other, and emulation runs only when
-    neither is set. The audio device is paused while either is set.
+  - New: F11 pauses and resumes. This pause is separate from the RPC pause: neither one resumes the other, and
+    emulation runs only when neither is set. The audio device is paused while either is set.
+  - **Changed:** fullscreen moves from F11 to Shift+F11.
+  - New: the `py_emulator.yaml` section `hotkeys` assigns other function keys (`f1`..`f12`, optionally `shift+`) to
+    these hotkeys. A key used twice, an MSX key (F1-F5, Shift+F1..F5) or a fixed hotkey (F8-F10) stops startup with an
+    error.
   - The window title shows `[PAUSED]`, `[FF]`, `[MUTE]` and the drive A disk position, e.g.
     `py-msx-emulator — <title> [60 fps] [MUTE] disk 2/3: b.dsk`.
 - **v2.7.6** (2026-10-17): Emulate the key click on PPI Port C bit 7.

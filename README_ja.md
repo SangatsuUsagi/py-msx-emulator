@@ -556,16 +556,28 @@ keyboard_joystick:
 mouse:
   enabled: false         # ホストのマウスで駆動する MSX マウスを接続する
   port: 2                # 1（Joy1）または 2（Joy2）；有効時のデフォルトは 2
+
+hotkeys: {}              # フロントエンドのホットキーの上書き（例：{ pause: f6, disk_next: f11 }）
+  # disk_next: f6         # 組み込みのデフォルト。各項目はその動作のキーを置き換える
+  # disk_eject: shift+f6  # キー：f1〜f12、"shift+" も可。f1〜f5、shift+f1〜f5（MSX のキー）
+  # fast_forward_hold: f7 # と f8〜f10（固定のホットキー）は使えない
+  # fast_forward_lock: shift+f7
+  # pause: f11
+  # fullscreen: shift+f11
+  # mute: f12
+  # reset: shift+f12
 ```
 
 設定できるのは `machine`・`speed`・`scale`・`slot1`・`slot2`・`extension1`・
 `extension2`（`extension` も `extension2` のレガシー別名として使えます）・
-`fdd1`・`frame_skip`・`mouse` と RPC / ゲームパッド / キーボードジョイスティック設定です
+`fdd1`・`frame_skip`・`mouse`・`hotkeys` と RPC / ゲームパッド / キーボードジョイスティック設定です
 （`mapper1`・`mapper2` は CLI 専用。上記の `--mapper`/`--mapper1`/`--mapper2` を参照）。
 ボタン割り当ては SDL GameController 経路に適用され、両ポート共通です。
 `keyboard_joystick.buttons` は Joy1 のキーボードエミュレーションのみに適用されます。
 コマンドラインの `--mouse` は常に `mouse.enabled`/`mouse.port` より優先されます。
 `fdd1` には 1 つのパスかパスのリストを書けます。コマンドラインの `--fdd1` は一覧全体を置き換えます。
+`hotkeys` でフロントエンドのホットキーを別のファンクションキーに移せます。同じキーを 2 回使う、
+MSX のキー（F1〜F5、Shift+F1〜F5）を使う、固定のホットキー（F8〜F10）を使う設定は、起動時にエラーになります。
 全項目と有効なボタン/キー名は `py_emulator.example.yaml` を参照してください。
 
 ### エミュレータ内のキー操作
@@ -579,10 +591,16 @@ mouse:
 | Shift + F7 | 早送りの固定 ON/OFF |
 | F12 | ミュートの切り替え（音源は動き続ける） |
 | Shift + F12 | マシンをリセット |
+
+F6・F7・F11・F12 とその Shift 付きは組み込みのデフォルトです。別のキーに割り当てるには
+`py_emulator.yaml` の `hotkeys` を設定します（[設定ファイル](#設定ファイルpy_emulatoryaml)参照）。
+これらのホットキーは MSX のキーボードには渡りません。Shift 付きのホットキーを押している間は、
+MSX 側から見た SHIFT も離した状態になります。
 | F8 | ステートセーブ（`saves/states/<title>_YYYYMMDD_HHMMSS.state` に保存）* |
 | F9 | 最新のステートセーブを読み込む |
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
-| F11 | フルスクリーン切り替え |
+| F11 | 一時停止/再開（RPC の一時停止とは別。どちらも相手の一時停止は解除しない） |
+| Shift + F11 | フルスクリーン切り替え |
 | Esc, F1–F5 | MSX キーボードマトリクスにそのまま渡す。Shift+F1〜F5 は MSX の F6〜F10 |
 | Ctrl + F1 | MSX HOME |
 | Ctrl + F2 | MSX INS |
@@ -600,6 +618,13 @@ mouse:
 「メニューバーにフォーカスを移動」= `^F2`）として予約されている場合がありま
 す。Ctrl+F1〜F5 がエミュレータに届かないようであれば、そちらを無効化してくだ
 さい。
+
+**注記（macOS）:** F11（「デスクトップを表示」）と F12 は macOS のシステム全体の
+ショートカット（システム設定 → キーボード → キーボードショートカット、および
+「F1、F2 などのキーを標準のファンクションキーとして使用」の設定）として予約され
+ている場合があります。F11/F12 がエミュレータに届かないようであれば、そちらを無
+効化するか、`py_emulator.yaml` の `hotkeys` でホットキーを別のキーに移してくださ
+い。
 
 **注記（JIS BIOS機種）:** HB-F1XD など日本の MSX 機は日本語 BIOS ROM を使用し
 ており、config の `keyboard_type` の設定に関係なく、BIOS の文字デコードテー

@@ -50,8 +50,8 @@ class _FakeSDL:
     ever send KEYDOWN/KEYUP events, so joystick/controller `SDL_*` event-type
     constants are intentionally omitted: that branch is never reached for
     these event types, and `window`/`joy_manager` are passed as `None` by
-    `_Harness` on the same basis (only exercised by the F11 and joystick
-    branches, neither of which any test here triggers).
+    `_Harness` on the same basis (only exercised by the fullscreen and
+    joystick branches; the fullscreen tests use `_FullscreenSDL`).
     """
 
     SDL_QUIT = 1
@@ -66,10 +66,10 @@ class _FakeSDL:
     SDLK_F6 = 1073741887
     SDLK_F7 = 1073741888
     SDLK_F12 = 1073741893
-    SDLK_F8 = -8
-    SDLK_F9 = -9
-    SDLK_F10 = -10
-    SDLK_F11 = -11
+    SDLK_F8 = 1073741889
+    SDLK_F9 = 1073741890
+    SDLK_F10 = 1073741891
+    SDLK_F11 = 1073741892
     SDLK_c = ord("c")
     SDLK_q = ord("q")
     SDLK_LCTRL = 1073742048
@@ -80,7 +80,7 @@ class _FakeSDL:
     SDLK_RALT = 1073742054
     KMOD_CTRL = 0x0040
     # JIS ¥-key scancode (see `_resolve_key_sym` in frontend/sdl2_frontend.py):
-    # the real SDL2 value, not an arbitrary sentinel like SDLK_F8..F11 above,
+    # the real SDL2 value, like the F-key keycodes above,
     # since a dedicated test pins it against the real pysdl2 library.
     SDL_SCANCODE_INTERNATIONAL3 = 137
     # Host apostrophe/quote key scancode (see `_resolve_key_sym`), same
@@ -140,7 +140,10 @@ class _Harness:
     """Drives `_handle_events` across multiple scripted event batches while
     keeping the same machine/ctrl-combo/event state, like consecutive frames."""
 
-    def __init__(self, hotkeys: _HotkeyState | None = None) -> None:
+    def __init__(
+        self, hotkeys: _HotkeyState | None = None, sdl_cls: type[_FakeSDL] = _FakeSDL
+    ) -> None:
+        self.sdl_cls = sdl_cls
         self.machine = _FakeMachine()
         self.ctrl_combo = _CtrlComboState()
         self.hotkeys = hotkeys
@@ -148,10 +151,10 @@ class _Harness:
         self.running = True
 
     def send(self, script: list[tuple[int, ...]]) -> None:
-        sdl = _FakeSDL(script, self._event)
-        self.running, _ = _handle_events(
+        sdl = self.sdl_cls(script, self._event)
+        self.running = _handle_events(
             sdl, self._event, self.machine, None, None, self.ctrl_combo,
-            _CTRL_FKEY_CELLS, "", b"", 0, 0, False, None, self.hotkeys,
+            _CTRL_FKEY_CELLS, "", b"", 0, 0, None, self.hotkeys,
         )
 
     def keydown(self, sym: int, mod: int = 0, scancode: int = 0, repeat: int = 0) -> None:
@@ -294,7 +297,7 @@ def test_second_ctrl_side_during_active_combo_does_not_reassert_ctrl() -> None:
 
 
 # --- allium/frontend.allium: PlainKeyPressed (reserved-hotkey precedence) --
-# config.reserved_hotkey_keys claims F8/F9/F10/F11 for non-MSX app commands
+# config.reserved_hotkey_keys claims F8/F9/F10 for non-MSX app commands
 # before PlainKeyPressed's matrix routing ever sees them. ESC is not in that
 # set -- it is an ordinary MSX key (row 7, col 2) -- and quit is bound to
 # Ctrl-Q instead (modifier-gated, same treatment as Ctrl-C).
@@ -368,19 +371,19 @@ def test_ctrl_plus_non_fkey_goes_through_plain_path_not_combo() -> None:
 
 def test_reserved_hotkey_keycodes_match_real_sdl2_constants() -> None:
     # Pins allium/frontend.allium's config.reserved_hotkey_keys literal
-    # values against the real pysdl2 library, not just this file's fake
-    # (whose own SDLK_F8..F11 sentinels are deliberately unrelated integers
-    # -- see _FakeSDL's docstring). Also guards against the reserved set
-    # drifting out of sync with the real SDL2 F8-F11 keycodes (SDL_SCANCODE_
-    # F8..F11 = 65..68, so SDLK = 0x40000000 | scancode = 1073741889..92).
+    # values against the real pysdl2 library and this file's fake. Also
+    # guards against the reserved set drifting out of sync with the real
+    # SDL2 F8-F10 keycodes (SDL_SCANCODE_F8..F10 = 65..67, so SDLK =
+    # 0x40000000 | scancode = 1073741889..91).
     # ESC/Ctrl-Q are deliberately excluded: ESC has its own MSX matrix cell
     # and is not reserved, and Ctrl-Q is modifier-gated rather than a bare
     # keycode (see reserved_hotkey_keys's own comment).
     import sdl2
 
-    assert {
-        sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10, sdl2.SDLK_F11,
-    } == {1073741889, 1073741890, 1073741891, 1073741892}
+    assert (sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10) == (1073741889, 1073741890, 1073741891)
+    assert (_FakeSDL.SDLK_F8, _FakeSDL.SDLK_F9, _FakeSDL.SDLK_F10) == (
+        1073741889, 1073741890, 1073741891,
+    )
 
 
 def test_ctrl_keycodes_match_real_sdl2_constants() -> None:
@@ -1019,7 +1022,7 @@ class _Loop:
         self.hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]))
         self.rpc = None if rpc_paused is None else _LoopRpc(rpc_paused)
         self.state = _LoopState(
-            running=True, fullscreen=False, texture=object(), tex_w=256, tex_h=212,
+            running=True, texture=object(), tex_w=256, tex_h=212,
             rgb_buf=b"", skip_counter=0,
         )
 
@@ -1133,3 +1136,85 @@ def test_muted_frame_queues_silence(monkeypatch: pytest.MonkeyPatch) -> None:
     loop.hotkeys.muted = False
     loop.step()
     assert loop.sdl.queued[1] == b"\x10\x00" * _SAMPLES
+
+
+
+# ---------------------------------------------------------------------------
+# F11 pause, Shift+F11 fullscreen, bindings from the config
+# ---------------------------------------------------------------------------
+
+class _FullscreenSDL(_FakeSDL):
+    SDL_WINDOW_FULLSCREEN_DESKTOP = 0x1001
+    calls: list[int] = []
+
+    def SDL_SetWindowFullscreen(self, _window: object, flags: int) -> int:
+        _FullscreenSDL.calls.append(flags)
+        return 0
+
+
+def _default_harness(monkeypatch: pytest.MonkeyPatch, hotkeys: dict[str, str] | None = None
+                     ) -> _Harness:
+    import frontend.sdl2_frontend as fe
+    from msx.app_config import AppConfig
+
+    _FullscreenSDL.calls = []
+    monkeypatch.setattr(fe, "save_state", lambda *_a: pytest.fail("F8 save ran"))
+    bindings = AppConfig(hotkeys=dict(hotkeys or {})).hotkey_bindings()
+    return _Harness(_HotkeyState(bindings=bindings, disks=_DiskList([])), _FullscreenSDL)
+
+
+def test_f11_pauses_and_resumes(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _default_harness(monkeypatch)
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_F11)
+    h.keyup(_FakeSDL.SDLK_F11)
+    assert h.hotkeys.user_paused
+    h.keydown(_FakeSDL.SDLK_F11)
+    h.keyup(_FakeSDL.SDLK_F11)
+    assert not h.hotkeys.user_paused
+    assert _no_cell_asserted(h)
+    assert _FullscreenSDL.calls == []
+
+
+def test_shift_f11_enters_and_leaves_fullscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _default_harness(monkeypatch)
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F11)
+    h.keyup(_FakeSDL.SDLK_F11)
+    h.keydown(_FakeSDL.SDLK_F11)
+    h.keyup(_FakeSDL.SDLK_F11)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    assert _FullscreenSDL.calls == [_FullscreenSDL.SDL_WINDOW_FULLSCREEN_DESKTOP, 0]
+    assert h.hotkeys is not None and not h.hotkeys.user_paused
+    assert _no_cell_asserted(h)
+
+
+def test_plain_f11_does_not_toggle_fullscreen(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _default_harness(monkeypatch)
+    h.keydown(_FakeSDL.SDLK_F11)
+    assert _FullscreenSDL.calls == []
+
+
+def test_remapped_action_fires_on_its_new_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _default_harness(monkeypatch, {"mute": "shift+f8"})
+    assert h.hotkeys is not None
+    h.keydown(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F8)             # save_state would fail the test
+    assert h.hotkeys.muted
+    h.keyup(_FakeSDL.SDLK_F8)
+    h.keyup(_FakeSDL.SDLK_LSHIFT)
+    h.keydown(_FakeSDL.SDLK_F12)            # F12 is no longer bound
+    assert h.hotkeys.muted
+
+
+def test_built_in_table_with_no_config() -> None:
+    from msx.app_config import AppConfig
+
+    f6, f7, f11, f12 = (_FakeSDL.SDLK_F6, _FakeSDL.SDLK_F7, _FakeSDL.SDLK_F11,
+                        _FakeSDL.SDLK_F12)
+    assert AppConfig().hotkey_bindings() == {
+        (f6, False): "disk_next", (f6, True): "disk_eject",
+        (f7, False): "fast_forward_hold", (f7, True): "fast_forward_lock",
+        (f11, False): "pause", (f11, True): "fullscreen",
+        (f12, False): "mute", (f12, True): "reset",
+    }
