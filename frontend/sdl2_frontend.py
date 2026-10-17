@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import time
 from array import array
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -254,6 +255,17 @@ class _HotkeyState:
     bindings: dict[tuple[int, bool], str]
     disks: _DiskList
     shift: _ShiftComboState = field(default_factory=_ShiftComboState)
+    # Frontend pause, separate from the RPC pause_state: emulation runs only
+    # when neither is set, and neither side clears the other.
+    user_paused: bool = False
+    # Fast-forward is on while the hold key is down or the latch is set.
+    ff_hold_key: int | None = None
+    ff_locked: bool = False
+    muted: bool = False
+
+    @property
+    def fast_forward(self) -> bool:
+        return self.ff_hold_key is not None or self.ff_locked
 
 
 class _EventApi(Protocol):
@@ -269,10 +281,12 @@ class _EventApi(Protocol):
     SDLK_LSHIFT: int
     SDLK_RSHIFT: int
     SDLK_F6: int
+    SDLK_F7: int
     SDLK_F8: int
     SDLK_F9: int
     SDLK_F10: int
     SDLK_F11: int
+    SDLK_F12: int
     SDLK_c: int
     SDLK_q: int
     KMOD_CTRL: int
@@ -409,11 +423,23 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
         machine.fdc.swap(0, None)
 
 
-def _run_hotkey_action(action: str, machine: Machine, hotkeys: _HotkeyState) -> None:
+def _run_hotkey_action(
+    action: str, sym: int, machine: Machine, hotkeys: _HotkeyState
+) -> None:
     if action == "disk_next":
         _disk_next(machine, hotkeys.disks)
     elif action == "disk_eject":
         _disk_toggle_eject(machine, hotkeys.disks)
+    elif action == "pause":
+        hotkeys.user_paused = not hotkeys.user_paused
+    elif action == "fast_forward_hold":
+        hotkeys.ff_hold_key = sym
+    elif action == "fast_forward_lock":
+        hotkeys.ff_locked = not hotkeys.ff_locked
+    elif action == "mute":
+        hotkeys.muted = not hotkeys.muted
+    elif action == "reset":
+        machine.reset()
 
 
 def _handle_bound_hotkey_keydown(
@@ -445,15 +471,20 @@ def _handle_bound_hotkey_keydown(
         if shift.rshift_held:
             machine.input.key_up(sdl2.SDLK_RSHIFT)
         shift.active_key = sym
-    _run_hotkey_action(action, machine, hotkeys)
+    _run_hotkey_action(action, sym, machine, hotkeys)
     return True
 
 
 def _handle_bound_hotkey_keyup(
     sdl2: _EventApi, sym: int, machine: Machine, hotkeys: _HotkeyState,
 ) -> bool:
-    """Shift tracking and Shift+hotkey KEYUP handling. Returns True if `sym`
-    was consumed."""
+    """Shift tracking, fast-forward hold release and Shift+hotkey KEYUP
+    handling. Returns True if `sym` was consumed."""
+    consumed = False
+    if hotkeys.ff_hold_key is not None and sym == hotkeys.ff_hold_key:
+        # Ends the hold whether or not Shift was pressed since.
+        hotkeys.ff_hold_key = None
+        consumed = True
     shift = hotkeys.shift
     if sym == sdl2.SDLK_LSHIFT or sym == sdl2.SDLK_RSHIFT:
         if sym == sdl2.SDLK_LSHIFT:
@@ -471,7 +502,7 @@ def _handle_bound_hotkey_keyup(
         if shift.rshift_held:
             machine.input.key_down(sdl2.SDLK_RSHIFT)
         return True
-    return False
+    return consumed
 
 
 def _handle_hotkey_keydown(
@@ -878,6 +909,7 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     ) -> int: ...
     def SDL_RenderPresent(self, renderer: object) -> None: ...
     def SDL_QueueAudio(self, dev: int, data: bytes, len_: int) -> int: ...
+    def SDL_ClearQueuedAudio(self, dev: int) -> None: ...
     def SDL_SetWindowTitle(self, window: object, title: bytes) -> None: ...
     def SDL_CloseAudioDevice(self, dev: int) -> None: ...
 
@@ -895,12 +927,21 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
     return f"disk -/{count}: {image.path.name}"
 
 
-def _window_title(game_title: str, fps: float, machine: Machine, disks: _DiskList) -> str:
-    """Window title: app/game name, measured fps, drive A status."""
+def _window_title(
+    game_title: str, fps: float, machine: Machine, hotkeys: _HotkeyState, paused: bool
+) -> str:
+    """Window title: app/game name, measured fps, status flags, drive A status.
+    `paused` covers both the frontend and the RPC pause."""
     parts = [_APP_NAME if game_title == _APP_NAME else f"{_APP_NAME} — {game_title}"]
     if fps > 0:
         parts.append(f"[{fps:.0f} fps]")
-    disk = _disk_status(machine, disks)
+    if paused:
+        parts.append("[PAUSED]")
+    if hotkeys.fast_forward:
+        parts.append("[FF]")
+    if hotkeys.muted:
+        parts.append("[MUTE]")
+    disk = _disk_status(machine, hotkeys.disks)
     if disk:
         parts.append(disk)
     return " ".join(parts)
@@ -928,6 +969,22 @@ class _LoopState:
     tex_h: int
     rgb_buf: bytes
     skip_counter: int
+    # Last pause state sent to SDL_PauseAudioDevice.
+    audio_paused: bool = False
+    # Fast-forward state of the previous iteration, to act on transitions.
+    fast_forward: bool = False
+    # perf_counter() of the last present, for the fast-forward present limit.
+    last_present: float = 0.0
+
+
+def _is_paused(hotkeys: _HotkeyState, rpc_server: "DebugServer | None") -> bool:
+    return hotkeys.user_paused or (rpc_server is not None and rpc_server.pause_state.paused)
+
+
+def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
+    sdl2.SDL_RenderClear(renderer)
+    sdl2.SDL_RenderCopy(renderer, texture, None, None)
+    sdl2.SDL_RenderPresent(renderer)
 
 
 def _run_frame(
@@ -956,19 +1013,37 @@ def _run_frame(
     joy_manager.tick()
 
     # Service RPC calls between frames (on this, the emulator thread).
-    # While paused, keep the window and socket alive but freeze the
-    # CPU: redisplay the last frame, pace, and skip emulation.
     if rpc_server is not None:
         rpc_server.drain()
-        if rpc_server.pause_state.paused:
-            sdl2.SDL_RenderClear(renderer)
-            sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
-            sdl2.SDL_RenderPresent(renderer)
-            frame_timer.tick()
-            return
 
-    # Run one frame (skip VDP pixel rendering when behind schedule)
-    skip_this_frame = state.skip_counter > 0
+    # While paused (frontend or RPC), keep the window and socket alive but
+    # freeze the CPU and the audio device: redisplay the last frame, pace,
+    # and skip emulation.
+    paused = _is_paused(hotkeys, rpc_server)
+    if audio_dev > 0 and paused != state.audio_paused:
+        sdl2.SDL_PauseAudioDevice(audio_dev, 1 if paused else 0)
+        state.audio_paused = paused
+    if paused:
+        _present(sdl2, renderer, state.texture)
+        frame_timer.tick()
+        return
+
+    fast_forward = hotkeys.fast_forward
+    if fast_forward != state.fast_forward:
+        state.fast_forward = fast_forward
+        state.skip_counter = 0
+        if audio_dev > 0:
+            # Drop the backlog so no stale audio plays across the change.
+            sdl2.SDL_ClearQueuedAudio(audio_dev)
+
+    # Run one frame. Skip VDP pixel rendering when behind schedule, or under
+    # fast-forward when less than one display interval passed since the last
+    # present.
+    if fast_forward:
+        since_present = time.perf_counter() - state.last_present
+        skip_this_frame = since_present < 1.0 / frame_timer.fps
+    else:
+        skip_this_frame = state.skip_counter > 0
     frame_start_cycle = machine.cycle_count
     index_buf = machine.run_frame(skip_render=skip_this_frame)
     frame_end_cycle = machine.cycle_count
@@ -984,29 +1059,36 @@ def _run_frame(
         if not state.running:
             return
 
-    # Generate and queue audio (PSG + SCC + DAC mixed as present) — always runs
+    # Generate audio (PSG + SCC + DAC mixed as present) every frame so the
+    # chips advance; queue it unless fast-forwarding, as silence when muted.
     if audio_dev > 0:
         audio_buf = _mix_audio(
             machine, frame_start_cycle, frame_end_cycle, audio_filter
         )
-        sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
+        if hotkeys.muted:
+            audio_buf = bytes(len(audio_buf))
+        if not fast_forward:
+            sdl2.SDL_QueueAudio(audio_dev, audio_buf, len(audio_buf))
 
     # Upload to texture only when frame was rendered
     if not skip_this_frame:
         _upload_to_texture(sdl2, state.texture, state.rgb_buf, state.tex_w, state.tex_h)
 
-    # Render (always — redisplays previous texture on skipped frames)
-    sdl2.SDL_RenderClear(renderer)
-    sdl2.SDL_RenderCopy(renderer, state.texture, None, None)
-    sdl2.SDL_RenderPresent(renderer)
+    # Render (always when paced -- redisplays the previous texture on skipped
+    # frames; only rendered frames under fast-forward)
+    if not (fast_forward and skip_this_frame):
+        _present(sdl2, renderer, state.texture)
+        state.last_present = time.perf_counter()
 
     # Frame pacing + skip counter update
+    if fast_forward:
+        frame_timer.tick_unpaced()
+        return
     elapsed = frame_timer.tick()
     if frame_skip == "auto":
         state.skip_counter = _update_skip_counter(
             state.skip_counter, elapsed, frame_timer.frame_interval
         )
-
 
 
 def run(
@@ -1045,7 +1127,8 @@ def run(
             first entry is the one build_machine already mounted.
 
     Runtime hotkeys: Ctrl-Q quit, F6 next disk, Shift+F6 eject/re-insert disk,
-    F8 save state, F9 load state, F10 screenshot, F11 toggle fullscreen,
+    F7 fast-forward while held, Shift+F7 latch fast-forward, F12 mute,
+    Shift+F12 reset, F8 save state, F9 load state, F10 screenshot, F11 toggle fullscreen,
     Ctrl-C break into the debugger (if attached),
     Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (see `_CtrlComboState`).
     ESC now reaches the MSX matrix (row 7, column 2) like any other key.
@@ -1116,6 +1199,10 @@ def run(
         bindings={
             (sdl2.SDLK_F6, False): "disk_next",
             (sdl2.SDLK_F6, True): "disk_eject",
+            (sdl2.SDLK_F7, False): "fast_forward_hold",
+            (sdl2.SDLK_F7, True): "fast_forward_lock",
+            (sdl2.SDLK_F12, False): "mute",
+            (sdl2.SDLK_F12, True): "reset",
         },
         disks=_DiskList(list(fdd1_images) if fdd1_images else []),
     )
@@ -1144,7 +1231,10 @@ def run(
                 )
                 last_title = _update_window_title(
                     sdl2, window,
-                    _window_title(game_title, frame_timer.fps_measured, machine, hotkeys.disks),
+                    _window_title(
+                        game_title, frame_timer.fps_measured, machine, hotkeys,
+                        _is_paused(hotkeys, rpc_server),
+                    ),
                     last_title,
                 )
 
