@@ -186,7 +186,7 @@ _CMD_YMMM = 0xE
 _CMD_HMMC = 0xF
 
 # S2 status bits
-_S2_CE = 0x01  # command executing (S#2 bit 1, EO, lives in msx/vdp/_v9938_defs.py)
+_S2_CE = 0x01  # S#2 bit 0: command executing (bit 1, EO, is in msx/vdp/_v9938_defs.py)
 _S2_BD = 0x10  # border/colour detected (SRCH result)
 _S2_TR = 0x80  # transfer ready (CPU may send next byte)
 
@@ -200,8 +200,10 @@ _ARG_EQ = 0x02   # SRCH: 0=stop on equal, 1=stop on not-equal
 _ARG_DIX = 0x04  # X direction (0=right, 1=left)
 _ARG_DIY = 0x08  # Y direction (0=down, 1=up)
 # Expansion-VRAM select. This machine has 128 KB and no expansion RAM, so a
-# source marked MXS reads as 0xFF and a destination marked MXD swallows the
-# write (openMSX: doPoint/doPset are gated on hasExtendedVRAM, false for 128 KB).
+# source marked MXS reads as the all-ones dot value (0xFF masked to the dot
+# width; SRCH compares and HMMM copies an unmasked 0xFF) and a destination
+# marked MXD swallows the write (openMSX: doPoint/doPset are gated on
+# hasExtendedVRAM, false for 128 KB).
 _ARG_MXS = 0x10  # source in expansion RAM
 _ARG_MXD = 0x20  # destination in expansion RAM
 
@@ -1061,7 +1063,8 @@ class V9938:
         # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
         # sprite number. The renderer already stores the real overflowing
         # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
-        # `(vdp.status & 0xA0) | 0x40 | (i & 0x1F)`), so preserve it here
+        # `(st.status & 0xA0) | 0x40 | (i & 0x1F)`, committed to vdp.status
+        # by commit_render_status), so preserve it here
         # when 5S is set. When idle (no 5th/9th sprite this frame), fall
         # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
         # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
