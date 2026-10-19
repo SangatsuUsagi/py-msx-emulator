@@ -266,7 +266,7 @@ def test_unknown_esc_consumes_two_bytes() -> None:
 
 
 def test_font_select_logged_default_reselect_silent() -> None:
-    _, _, log = _make(b"\x1b\x70\x41\x1b\x70\x30")
+    _, _, log = _make(b"\x1b\x70\x41\x1b\x70\x40")
     assert _log_lines(log) == [["0", "1B 70 41", "ESC pA (font)"]]
 
 
@@ -277,10 +277,10 @@ def test_page_length_sequence_skipped() -> None:
 
 
 def test_summary_on_close() -> None:
-    printer, _, log = _make(b"\x1b\x21\x1b\x21\x1b\x58")
+    printer, _, log = _make(b"\x1b\x21\x1b\x21\x1b\x32")
     printer.close()
     summary = log.getvalue().split("# summary\n")[1].splitlines()
-    assert summary == ["2\tESC ! (emphasis)", "1\tESC X (underline)"]
+    assert summary == ["2\tESC ! (emphasis)", "1\tESC 2 (clear tabs)"]
 
 
 # --- PNG output --------------------------------------------------------------
@@ -297,3 +297,88 @@ def test_pages_numbered_in_order(tmp_path: Path) -> None:
         assert image.getpixel((0, ANK_TOP)) == 0  # ink is black
         assert image.getpixel((5, ANK_TOP)) == 255
         assert round(image.info["dpi"][0]) == 180
+
+
+# --- decoration, underline, vertical double ----------------------------------
+
+def _bar_font() -> bytearray:
+    # A: a left-edge vertical bar (column 0 on every row).
+    font = bytearray(2048)
+    for r in range(8):
+        font[0x41 * 8 + r] = 0x80
+    return font
+
+
+def _ink_row(page: PrinterPage, y: int, width: int) -> list[int]:
+    return [x for x in range(width) if page.get(x, y)]
+
+
+def test_bold_thickens_strokes() -> None:
+    printer, _, _ = _make(b"\x1b\x70\x33\x41")
+    assert _ink_row(printer.page, ANK_TOP, 18) == [0, 1, 2, 3, 4]
+
+
+def test_italic_slants_toward_the_top() -> None:
+    printer, _, _ = _make(b"\x1b\x70\x32\x41", font=_bar_font())
+    assert _ink_row(printer.page, 23, 18)[0] == 0
+    assert _ink_row(printer.page, ANK_TOP, 18)[0] == 4
+
+
+def test_outline_draws_a_ring_around_the_glyph() -> None:
+    font = bytearray(2048)
+    for r in range(8):
+        font[0x41 * 8 + r] = 0xFF
+    printer, _, _ = _make(b"\x1b\x70\x31\x41", font=font)
+    page = printer.page
+    assert page.get(5, 10) == 0
+    assert page.get(18, 10) == 1 and page.get(5, 5) == 1
+    assert _ink_row(page, 24, 40) == []
+
+
+def test_a_new_decoration_replaces_the_old() -> None:
+    printer, _, _ = _make(b"\x1b\x70\x33\x1b\x70\x32\x41", font=_bar_font())
+    assert _ink_row(printer.page, ANK_TOP, 18) == [4, 5, 6]
+
+
+def test_decoration_off() -> None:
+    printer, _, log = _make(b"\x1b\x70\x33\x1b\x70\x30\x41")
+    assert _ink_row(printer.page, ANK_TOP, 18) == [0, 1, 2]
+    assert log.getvalue() == ""
+
+
+def test_underline_spans_the_underlined_cells() -> None:
+    printer, _, _ = _make(b"\x1b\x58\x41\x41\x1b\x59\x41")
+    assert _ink_row(printer.page, 23, 60) == list(range(36))
+
+
+def test_underline_in_kanji_mode() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1b\x58\x00\x41")
+    assert _ink_row(printer.page, 23, 30) == list(range(12))
+
+
+def test_ank_glyph_doubled_downward() -> None:
+    printer, _, _ = _make(b"\x1a\x56\x41", font=_bar_font())
+    column = [y for y in range(60) if printer.page.get(0, y)]
+    assert column == list(range(12, 48))
+
+
+def test_half_width_glyph_doubled() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1a\x56\x00\x41", font=_bar_font())
+    column = [y for y in range(60) if printer.page.get(0, y)]
+    assert column == list(range(48))
+
+
+def test_next_line_clears_the_doubled_glyph() -> None:
+    printer, _, _ = _make(b"\x1a\x56\x41\x1a\x57" + LF + b"\x41")
+    assert _starts(printer.page, 54 + ANK_TOP) == [0]
+
+
+def test_underline_under_a_doubled_glyph() -> None:
+    printer, _, _ = _make(b"\x1a\x56\x1b\x58\x41")
+    assert _ink_row(printer.page, 47, 30) == list(range(18))
+    assert _ink_row(printer.page, 23, 30) == []
+
+
+def test_reset_clears_decoration() -> None:
+    printer, _, _ = _make(b"\x1b\x70\x33\x1b\x63\x31\x41")
+    assert _ink_row(printer.page, ANK_TOP, 18) == [0, 1, 2]

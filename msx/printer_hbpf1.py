@@ -39,6 +39,11 @@ _POWER_ON_RIGHT_MARGIN = 80 * _PICA
 
 _KANJI_LEVEL2_BASE = 0x20000
 
+_NO_DECORATION = 0
+_OUTLINE = 1  # ESC p1
+_ITALIC = 2  # ESC p2
+_BOLD = 3  # ESC p3
+
 _ESC = 0x1B
 _SUB = 0x1A
 
@@ -140,18 +145,85 @@ def kanji_glyph(fonts: PrinterFonts, hi: int, lo: int) -> list[int] | None:
     return rows
 
 
-def blit(page: PrinterPage, rows: list[int], src_w: int, x0: int, y0: int,
-         dst_w: int, dst_h: int) -> None:
-    """Nearest-neighbour scale a glyph (MSB-left row masks) onto the page."""
+@dataclass
+class GlyphMask:
+    """A scaled glyph as dot rows; bit (width - 1 - x) of a row is dot x.
+
+    The offsets place mask column/row 0 relative to the glyph box origin, so
+    decorations can spill outside the box (italic right, outline all round).
+    """
+
+    width: int
+    height: int
+    rows: list[int]
+    x_offset: int = 0
+    y_offset: int = 0
+
+
+def scale_glyph(rows: list[int], src_w: int, dst_w: int, dst_h: int) -> GlyphMask:
+    """Nearest-neighbour scale MSB-left source rows to a dst_w x dst_h mask."""
     src_h = len(rows)
+    out = []
     for dy in range(dst_h):
         row = rows[dy * src_h // dst_h]
-        if row == 0:
+        dst = 0
+        if row:
+            for dx in range(dst_w):
+                sx = dx * src_w // dst_w
+                dst = (dst << 1) | ((row >> (src_w - 1 - sx)) & 1)
+        out.append(dst)
+    return GlyphMask(dst_w, dst_h, out)
+
+
+def embolden(rows: list[int]) -> list[int]:
+    """Bold: OR each source row with itself one source dot to the right."""
+    out = []
+    for row in rows:
+        out.append(row | (row >> 1))
+    return out
+
+
+def italicise(mask: GlyphMask) -> GlyphMask:
+    """Shear right: row dy moves (height - 1 - dy) // 4 dots; the bottom stays."""
+    max_shift = (mask.height - 1) // 4
+    out = []
+    for dy in range(mask.height):
+        shift = (mask.height - 1 - dy) // 4
+        out.append((mask.rows[dy] << max_shift) >> shift)
+    return GlyphMask(mask.width + max_shift, mask.height, out,
+                     mask.x_offset, mask.y_offset)
+
+
+def outline(mask: GlyphMask) -> GlyphMask:
+    """白抜き: the dots 8-adjacent to the glyph but not in it (a 1-dot ring)."""
+    padded = [0]
+    for row in mask.rows:
+        padded.append(row << 1)
+    padded.append(0)
+    out = []
+    for i in range(len(padded)):
+        grown = 0
+        for j in range(i - 1, i + 2):
+            if 0 <= j < len(padded):
+                p = padded[j]
+                grown |= p | (p << 1) | (p >> 1)
+        out.append(grown & ~padded[i])
+    return GlyphMask(mask.width + 2, mask.height + 2, out,
+                     mask.x_offset - 1, mask.y_offset - 1)
+
+
+def draw_mask(page: PrinterPage, mask: GlyphMask, x0: int, y0: int,
+              clip_top: int, clip_bottom: int) -> None:
+    """OR a mask onto the page at box origin (x0, y0), rows clipped to
+    [clip_top, clip_bottom) -- the line band the head can reach."""
+    for i in range(mask.height):
+        row = mask.rows[i]
+        y = y0 + mask.y_offset + i
+        if row == 0 or y < clip_top or y >= clip_bottom:
             continue
-        for dx in range(dst_w):
-            sx = dx * src_w // dst_w
-            if (row >> (src_w - 1 - sx)) & 1:
-                page.set(x0 + dx, y0 + dy)
+        for dx in range(mask.width):
+            if (row >> (mask.width - 1 - dx)) & 1:
+                page.set(x0 + mask.x_offset + dx, y)
 
 
 class HbpF1Printer:
@@ -226,6 +298,10 @@ class HbpF1Printer:
         self._unit_120 = True
         self._reverse = False
         self._double = False
+        self._vertical_double = False
+        self._underline = False
+        self._decoration = _NO_DECORATION
+        self._extra_feed = 0
         self._left = 0
         self._right = _POWER_ON_RIGHT_MARGIN
         self._x = self._left
@@ -321,6 +397,10 @@ class HbpF1Printer:
             self._collect(3, self._esc_right_margin)
         elif c == 0x52:  # R
             self._collect(4, self._esc_repeat)
+        elif c == 0x58:  # X
+            self._underline = True
+        elif c == 0x59:  # Y
+            self._underline = False
         elif c == 0x72:  # r
             self._reverse = True
         elif c == 0x66:  # f
@@ -337,7 +417,7 @@ class HbpF1Printer:
             self._esc_unsupported(c)
 
     def _esc_unsupported(self, c: int) -> None:
-        if c in (0x59, 0x22):  # ESC Y, ESC ": default re-selects
+        if c == 0x22:  # ESC ": emphasis off, a default re-select
             return
         if c in (0x53, 0x49, 0x4A):  # S, I, J: N columns of 1/2/3 bytes
             self._collect(4, self._bit_image_handler(c))
@@ -352,7 +432,6 @@ class HbpF1Printer:
             self._collect_until(0x2E, self._log_handler(f"ESC {chr(c)} (horizontal tab)"))
         else:
             names = {
-                0x58: "ESC X (underline)",
                 0x21: "ESC ! (emphasis)",
                 0x32: "ESC 2 (clear tabs)",
                 0x71: "ESC q (half-width vertical pair)",
@@ -437,10 +516,10 @@ class HbpF1Printer:
 
     def _esc_p(self) -> None:
         c = self._cmd[2]
-        if c in (0x30, 0x40, 0x60):  # decoration off, standard kana/ANK fonts
+        if 0x30 <= c <= 0x33:  # p0 off, p1 outline, p2 italic, p3 bold
+            self._decoration = c - 0x30
+        elif c in (0x40, 0x60):  # standard kana/ANK fonts
             return
-        if 0x31 <= c <= 0x33:
-            self._unsupported(f"ESC p{chr(c)} (decoration)")
         elif c in (0x41, 0x42, 0x61, 0x62, 0x5A):
             self._unsupported(f"ESC p{chr(c)} (font)")
         else:
@@ -464,16 +543,16 @@ class HbpF1Printer:
             self._unit_120 = True
         elif c == 0x47:  # G
             self._unit_120 = False
-        elif c == 0x57:  # W: vertical double off, the only size rendered
-            return
+        elif c == 0x56:  # V
+            self._vertical_double = True
+        elif c == 0x57:  # W
+            self._vertical_double = False
         elif c == 0x55:
             self._select_ank(_PICA)
             self._unsupported("SUB U (superscript)")
         elif c == 0x4C:
             self._select_ank(_PICA)
             self._unsupported("SUB L (subscript)")
-        elif c == 0x56:
-            self._unsupported("SUB V (vertical double)")
         elif c == 0x32:
             self._unsupported("SUB 2 (clear gaiji)")
         else:
@@ -501,9 +580,8 @@ class HbpF1Printer:
         width = self._ank_pitch * (2 if self._double else 1)
         self._make_room(width)
         if code not in (0x7F, 0xFE, 0xFF):
-            blit(self.page, ank_glyph(self._fonts, code), 8, self._x,
-                 self._y + _BAND - _ANK_HEIGHT, width, _ANK_HEIGHT)
-        self._x += width
+            self._draw_glyph(ank_glyph(self._fonts, code), 8, width, _ANK_HEIGHT)
+        self._finish_cell(width)
 
     def _print_half(self, code: int, blank: bool = False) -> None:
         advance = (self._kanji_pitch + self._half_phase) // 2
@@ -511,9 +589,8 @@ class HbpF1Printer:
         scale = 2 if self._double else 1
         self._make_room(advance * scale)
         if not blank and code not in (0x7F, 0xFE, 0xFF):
-            blit(self.page, ank_glyph(self._fonts, code), 8, self._x, self._y,
-                 _HALF_WIDTH * scale, _BAND)
-        self._x += advance * scale
+            self._draw_glyph(ank_glyph(self._fonts, code), 8, _HALF_WIDTH * scale, _BAND)
+        self._finish_cell(advance * scale)
 
     def _half_pair(self) -> None:
         self._print_half(self._cmd[1])
@@ -539,7 +616,34 @@ class HbpF1Printer:
         if rows is None:
             self._unsupported("kanji glyph missing")
         else:
-            blit(self.page, rows, 16, self._x, self._y, _FULL_WIDTH * scale, _BAND)
+            self._draw_glyph(rows, 16, _FULL_WIDTH * scale, _BAND)
+        self._finish_cell(advance)
+
+    def _band_height(self) -> int:
+        return _BAND * (2 if self._vertical_double else 1)
+
+    def _draw_glyph(self, rows: list[int], src_w: int, box_w: int, box_h: int) -> None:
+        """Scale, decorate and draw a glyph at the current x, bottom-aligned
+        in the line band (box height doubled under vertical double)."""
+        band = self._band_height()
+        if self._vertical_double:
+            box_h *= 2
+        if self._decoration == _BOLD:
+            rows = embolden(rows)
+        mask = scale_glyph(rows, src_w, box_w, box_h)
+        if self._decoration == _ITALIC:
+            mask = italicise(mask)
+        elif self._decoration == _OUTLINE:
+            mask = outline(mask)
+        draw_mask(self.page, mask, self._x, self._y + band - box_h, self._y, self._y + band)
+
+    def _finish_cell(self, advance: int) -> None:
+        band = self._band_height()
+        if self._underline:
+            for dx in range(advance):
+                self.page.set(self._x + dx, self._y + band - 1)
+        if self._vertical_double:
+            self._extra_feed = band - _BAND
         self._x += advance
 
     def _make_room(self, advance: int) -> None:
@@ -550,6 +654,10 @@ class HbpF1Printer:
     # --- movement ------------------------------------------------------------
 
     def _carriage_return(self) -> None:
+        # The lower half of a vertically doubled line is fed past once
+        # (X88000 PC-PR201 model: head height x (zoom - 1) on the next CR/LF).
+        self._y += self._extra_feed
+        self._extra_feed = 0
         self._x = self._left
         self._half_phase = 0
 
@@ -566,6 +674,7 @@ class HbpF1Printer:
     def _form_feed(self) -> None:
         self._emit_page()
         self._y = 0
+        self._extra_feed = 0
         self._carriage_return()
 
     def _emit_page(self) -> None:
