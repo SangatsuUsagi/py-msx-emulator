@@ -79,6 +79,7 @@ from msx.mapper import (
 from msx.memory import Memory
 from msx.opll import Opll
 from msx.ppi import PPI, PpiControlRead
+from msx.printer import PrinterPort, RawPrinterLogger
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
@@ -2084,6 +2085,7 @@ def build_machine(
     extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
+    printer_log: Path | None = None,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
@@ -2103,6 +2105,9 @@ def build_machine(
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
         joy_map: Optional Joy1 keyboard key map override for InputState
             (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
+        printer_log: If given, attach a raw printer logger writing every
+            strobed byte to this file (created/truncated); otherwise the
+            printer port has nothing plugged in.
         extension_overlay: Resolved --extension2 overlay (see
             load_extension_overlay), or None for no extension on slot 2. A
             flat (_ExtensionOverlay) overlay unconditionally occupies
@@ -2176,6 +2181,9 @@ def build_machine(
     if wiring.kanji_device is not None:
         io.register_read(0xD8, 0xDB, wiring.kanji_device.read_port)
         io.register_write(0xD8, 0xDB, wiring.kanji_device.write_port)
+    printer = PrinterPort()
+    io.register_read(0x90, 0x91, printer.read_port)
+    io.register_write(0x90, 0x91, printer.write_port)
     # An expanded slot's ram_mapper sub-slot (--extensionN memory_512k/
     # msxdos2_512k*) registers on the same standard memory-mapper ports
     # slot 3's own RamMapper would use -- safe because _wire_extension_overlay
@@ -2232,6 +2240,10 @@ def build_machine(
         )
 
     _wire_post_construction_attrs(machine, io, dac, sram_save_path, sram_save_path2, wiring)
+    # Opened last so a failed build leaves no truncated/leaked log file.
+    if printer_log is not None:
+        printer.device = RawPrinterLogger(output=open(printer_log, "wb"))
+    machine.printer = printer
     return machine
 
 

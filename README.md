@@ -774,6 +774,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--vdp-trace-out FILE` | stdout | Write VDP trace to FILE instead of stdout |
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
+| `--printer-log FILE` | _(none)_ | Attach a printer to the printer port (I/O 0x90/0x91) and write every byte it receives to FILE, unmodified. Without it, the port reports no printer connected |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
 | `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |

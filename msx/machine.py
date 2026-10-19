@@ -15,6 +15,7 @@ from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.ppi import PPI
+from msx.printer import PrinterPort
 from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.vdp._geometry import VideoStandard
@@ -89,6 +90,7 @@ class Machine:
     fmpac: "FmPac | None" = field(default=None, repr=False)
     halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
+    printer: PrinterPort = field(default_factory=PrinterPort, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
@@ -202,6 +204,7 @@ class Machine:
             self.fdc.reset()
         if self.kanji is not None:
             self.kanji.reset()
+        self.printer.reset()
         if self.ppi is not None:
             self.ppi.reset()
         # Power-on slot state: all pages select slot 0 (matches construction).

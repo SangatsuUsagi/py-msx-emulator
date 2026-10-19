@@ -173,6 +173,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mapper-trace-out", metavar="FILE", dest="mapper_trace_out",
                         default=None,
                         help="Write mapper trace to FILE instead of stdout")
+    parser.add_argument("--printer-log", metavar="FILE", dest="printer_log", default=None,
+                        help="Attach a printer to the printer port and write the raw bytes "
+                             "it receives to FILE")
     parser.add_argument("--count-frame", type=int, default=None, metavar="N",
                         dest="count_frame",
                         help="Run exactly N frames headlessly and exit (no SDL window)")
@@ -374,6 +377,7 @@ def _cleanup(
     if mapper_trace_file is not None:
         mapper_trace_file.close()
     if machine is not None:
+        machine.printer.close()
         # machine.sram_sources() -- one generic list instead of one
         # _save_sram_if_present call per SRAM-backed device (see
         # design.md Decision D2 Option B).
@@ -598,6 +602,7 @@ def main() -> None:
                 extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
                 joy_map=app_cfg.keyboard_joy_map(),
+                printer_log=Path(args.printer_log) if args.printer_log else None,
             )
         except MachineLoadError as exc:
             _fail(str(exc))
