@@ -173,9 +173,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mapper-trace-out", metavar="FILE", dest="mapper_trace_out",
                         default=None,
                         help="Write mapper trace to FILE instead of stdout")
-    parser.add_argument("--printer-log", metavar="FILE", dest="printer_log", default=None,
-                        help="Attach a printer to the printer port and write the raw bytes "
-                             "it receives to FILE")
+    printer_group = parser.add_mutually_exclusive_group()
+    printer_group.add_argument("--printer-log", metavar="FILE", dest="printer_log",
+                               default=None,
+                               help="Attach a printer to the printer port and write the raw "
+                                    "bytes it receives to FILE")
+    printer_group.add_argument("--printer-out", metavar="DIR", dest="printer_out",
+                               default=None,
+                               help="Attach an HBP-F1 printer and write its pages as PNG "
+                                    "files (plus unsupported.log) into DIR")
     parser.add_argument("--count-frame", type=int, default=None, metavar="N",
                         dest="count_frame",
                         help="Run exactly N frames headlessly and exit (no SDL window)")
@@ -603,6 +609,7 @@ def main() -> None:
                 extension_overlay1=extension_overlay1,
                 joy_map=app_cfg.keyboard_joy_map(),
                 printer_log=Path(args.printer_log) if args.printer_log else None,
+                printer_out=Path(args.printer_out) if args.printer_out else None,
             )
         except MachineLoadError as exc:
             _fail(str(exc))

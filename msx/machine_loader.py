@@ -80,6 +80,7 @@ from msx.memory import Memory
 from msx.opll import Opll
 from msx.ppi import PPI, PpiControlRead
 from msx.printer import PrinterPort, RawPrinterLogger
+from msx.printer_hbpf1 import HbpF1Printer, PngPageWriter, PrinterFonts
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
@@ -2068,6 +2069,12 @@ def _wire_post_construction_attrs(
     machine.halnote_sram_save_path = wiring.halnote_sram_save_path
 
 
+def _main_rom_font(main_bytes: bytes) -> bytes:
+    """The 2 KB MSX font the main ROM's CGTABL (0x0004) points at."""
+    offset = main_bytes[4] | (main_bytes[5] << 8)
+    return bytes(main_bytes[offset:offset + 2048]).ljust(2048, b"\x00")
+
+
 def build_machine(
     spec: MachineSpec,
     cartridge: bytes | None = None,
@@ -2086,6 +2093,7 @@ def build_machine(
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     joy_map: Mapping[int, tuple[int, int]] | None = None,
     printer_log: Path | None = None,
+    printer_out: Path | None = None,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
@@ -2108,6 +2116,9 @@ def build_machine(
         printer_log: If given, attach a raw printer logger writing every
             strobed byte to this file (created/truncated); otherwise the
             printer port has nothing plugged in.
+        printer_out: If given, attach the HBP-F1 printer, writing page PNGs
+            and `unsupported.log` into this directory (created if needed).
+            Mutually exclusive with printer_log.
         extension_overlay: Resolved --extension2 overlay (see
             load_extension_overlay), or None for no extension on slot 2. A
             flat (_ExtensionOverlay) overlay unconditionally occupies
@@ -2137,6 +2148,8 @@ def build_machine(
     """
     from msx.machine import Machine  # local import to avoid circular dependency
 
+    if printer_log is not None and printer_out is not None:
+        raise ValueError("printer_log and printer_out are mutually exclusive")
     bios = _load_bios_roms(spec, bios_override, logo_override)
     main_bytes = bios.main_bytes
     logo_bytes = bios.logo_bytes
@@ -2243,6 +2256,14 @@ def build_machine(
     # Opened last so a failed build leaves no truncated/leaked log file.
     if printer_log is not None:
         printer.device = RawPrinterLogger(output=open(printer_log, "wb"))
+    if printer_out is not None:
+        kanji_rom = wiring.kanji_device.rom if wiring.kanji_device is not None else None
+        printer_out.mkdir(parents=True, exist_ok=True)
+        printer.device = HbpF1Printer(
+            PrinterFonts(ank=_main_rom_font(main_bytes), kanji=kanji_rom),
+            PngPageWriter(printer_out),
+            open(printer_out / "unsupported.log", "w", encoding="utf-8"),
+        )
     machine.printer = printer
     return machine
 

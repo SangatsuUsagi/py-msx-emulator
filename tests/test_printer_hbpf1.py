@@ -1,0 +1,299 @@
+"""Tests for the HBP-F1 printer renderer (spec io-printer)."""
+from __future__ import annotations
+
+import io
+from pathlib import Path
+
+from PIL import Image
+
+from msx.printer import PrinterPort
+from msx.printer_hbpf1 import (
+    PAGE_HEIGHT,
+    PAGE_WIDTH,
+    HbpF1Printer,
+    PngPageWriter,
+    PrinterFonts,
+    PrinterPage,
+)
+
+
+class _Log(io.StringIO):
+    """StringIO that survives the device closing it."""
+
+    def close(self) -> None:
+        pass
+
+
+def _marker_font() -> bytearray:
+    # Every glyph: one dot at its top-left, so each glyph's x is the start of
+    # an ink run on its top row.
+    font = bytearray(2048)
+    for code in range(256):
+        font[code * 8] = 0x80
+    return font
+
+
+def _make(data: bytes, font: bytes | None = None,
+          kanji: bytes | None = None) -> tuple[HbpF1Printer, list[PrinterPage], _Log]:
+    pages: list[PrinterPage] = []
+    log = _Log()
+    printer = HbpF1Printer(PrinterFonts(ank=bytes(font if font else _marker_font()),
+                                        kanji=kanji),
+                           pages.append, log)
+    for b in data:
+        printer.write_byte(b)
+    return printer, pages, log
+
+
+def _starts(page: PrinterPage, y: int) -> list[int]:
+    """x of each ink run's first dot on row y."""
+    starts = []
+    prev = 0
+    for x in range(PAGE_WIDTH):
+        dot = page.get(x, y)
+        if dot and not prev:
+            starts.append(x)
+        prev = dot
+    return starts
+
+
+ANK_TOP = 24 - 18  # ANK glyph top row within a line band
+LF = b"\x0a"
+
+
+def _log_lines(log: _Log) -> list[list[str]]:
+    lines = []
+    for line in log.getvalue().splitlines():
+        if line.startswith("# summary"):
+            break
+        lines.append(line.split("\t"))
+    return lines
+
+
+# --- device and pages --------------------------------------------------------
+
+def test_device_is_always_ready() -> None:
+    printer, _, _ = _make(b"")
+    assert PrinterPort(device=printer).read_port(0x90) == 0xFD
+
+
+def test_ff_emits_a_page() -> None:
+    _, pages, _ = _make(b"\x41\x0c")
+    assert len(pages) == 1 and pages[0].has_ink()
+
+
+def test_close_emits_only_an_inked_page() -> None:
+    printer, pages, _ = _make(b"\x41\x0c")
+    printer.close()
+    assert len(pages) == 1
+
+
+def test_close_with_pending_ink() -> None:
+    printer, pages, _ = _make(b"\x41")
+    printer.close()
+    assert len(pages) == 1 and pages[0].has_ink()
+
+
+# --- power-on state and ANK --------------------------------------------------
+
+def test_first_character_position() -> None:
+    printer, _, _ = _make(b"\x41")
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_reset_restores_pica_after_kanji_mode() -> None:
+    printer, _, log = _make(b"\x1b\x4b\x1b\x63\x31\x41\x42")
+    assert _starts(printer.page, ANK_TOP) == [0, 18]
+    assert log.getvalue() == ""
+
+
+def test_pitch_per_mode() -> None:
+    printer, _, _ = _make(b"\x41\x41\x1b\x45\x41\x41\x1b\x51\x41\x41")
+    assert _starts(printer.page, ANK_TOP) == [0, 18, 36, 51, 66, 76]
+
+
+def test_0x7f_prints_as_space() -> None:
+    printer, _, _ = _make(b"\x7f\x41")
+    assert _starts(printer.page, ANK_TOP) == [18]
+
+
+def test_graphic_character() -> None:
+    font = bytearray(2048)
+    font[0x01 * 8] = 0xFF
+    printer, _, _ = _make(b"\x01\x41", font=font)
+    row = [printer.page.get(x, ANK_TOP) for x in range(20)]
+    assert row == [1] * 18 + [0, 0]
+
+
+# --- kanji mode --------------------------------------------------------------
+
+def _kanji_rom() -> bytes:
+    rom = bytearray(262144)
+    # JIS 0x3441: ku 20, ten 33 -> glyph number 20*96 + 33 - 512.
+    address = (20 * 96 + 33 - 512) * 32
+    rom[address] = 0x80  # top-left block, row 0: dot (0, 0)
+    rom[address + 31] = 0x01  # bottom-right block, row 7: dot (15, 15)
+    return bytes(rom)
+
+
+def test_jis_kanji_from_the_kanji_rom() -> None:
+    printer, _, log = _make(b"\x1b\x4b\x34\x41", kanji=_kanji_rom())
+    page = printer.page
+    inked = [(x, y) for y in range(24) for x in range(30) if page.get(x, y)]
+    assert inked == [(0, 0), (1, 0), (0, 1), (1, 1), (23, 23)]  # 16 -> 24 scaling
+    assert log.getvalue() == ""
+
+
+def test_missing_kanji_glyph() -> None:
+    printer, _, log = _make(b"\x1b\x4b\x34\x41\x00\x41")
+    assert _starts(printer.page, 0) == [24]
+    assert _log_lines(log) == [["2", "34 41", "kanji glyph missing"]]
+
+
+def test_half_width_kanji_rows_are_unsupported() -> None:
+    printer, _, log = _make(b"\x1b\x4b\x29\x41\x00\x41")
+    assert _starts(printer.page, 0) == [12]
+    assert _log_lines(log) == [["2", "29 41", "half-width kanji code"]]
+
+
+def test_half_width_pair() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x00\x41\x00\x42")
+    assert _starts(printer.page, 0) == [0, 12]
+    # 12 x 24 cell: the 8x8 glyph's top-left dot covers 3 rows (24/8).
+    assert [printer.page.get(0, y) for y in range(4)] == [1, 1, 1, 0]
+
+
+def test_kanji_pitch_27_half_width_alternation() -> None:
+    printer, _, _ = _make(b"\x1a\x4e\x1b\x4b\x00\x41\x00\x41\x00\x41")
+    assert _starts(printer.page, 0) == [0, 13, 27]
+
+
+def test_ank_mode_select_leaves_kanji_mode() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1b\x48\x41\x42")
+    assert _starts(printer.page, ANK_TOP) == [0, 18]
+
+
+def test_vertical_kanji_mode_is_drawn_horizontally() -> None:
+    printer, _, log = _make(b"\x1b\x74\x00\x41\x00\x42")
+    assert _starts(printer.page, 0) == [0, 12]
+    assert _log_lines(log) == [["0", "1B 74", "ESC t (vertical kanji mode)"]]
+
+
+# --- line and page movement --------------------------------------------------
+
+def test_line_pitch_in_1_180_units() -> None:
+    printer, _, _ = _make(b"\x1a\x47\x1b\x54\x33\x30" + LF + b"\x41")
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+
+
+def test_line_pitch_in_1_120_units() -> None:
+    printer, _, _ = _make(b"\x1b\x54\x32\x30" + LF + b"\x41")
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+
+
+def test_cr_returns_without_feeding() -> None:
+    printer, _, _ = _make(b"\x41\x0d\x42")
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_reverse_feed_stops_at_the_page_top() -> None:
+    printer, _, _ = _make(b"\x1b\x72" + LF + LF + b"\x1b\x66" + LF + b"\x41")
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+    assert _starts(printer.page, ANK_TOP) == []
+
+
+def test_line_full_wraps() -> None:
+    printer, _, _ = _make(b"\x41" * 81)
+    assert len(_starts(printer.page, ANK_TOP)) == 80
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+
+
+def test_page_overflow_continues_on_a_new_page() -> None:
+    printer, pages, _ = _make(LF * 66 + b"\x41")
+    assert len(pages) == 1
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+# --- margins -----------------------------------------------------------------
+
+def test_left_margin_in_pica() -> None:
+    printer, _, _ = _make(b"\x1b\x4c\x30\x31\x30\x41")
+    assert _starts(printer.page, ANK_TOP) == [180]
+
+
+def test_left_margin_set_in_kanji_mode_uses_the_ank_pitch() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1b\x4c\x30\x31\x30\x0d\x00\x41")
+    assert _starts(printer.page, 0) == [180]
+
+
+def test_margin_leaving_under_72_dots_is_ignored() -> None:
+    printer, _, _ = _make(b"\x1b\x4c\x30\x37\x39\x41")
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+# --- character modifiers -----------------------------------------------------
+
+def test_double_width() -> None:
+    font = bytearray(2048)
+    font[0x41 * 8] = 0xFE  # 7 of 8 columns: ink ends 4 dots before a 36-dot cell edge
+    printer, _, _ = _make(b"\x0e\x41\x0f\x41", font=font)
+    row = [printer.page.get(x, ANK_TOP) for x in range(40)]
+    assert row[0:32] == [1] * 32 and row[32:36] == [0] * 4 and row[36] == 1
+
+
+def test_dot_space_in_kanji_mode() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1b\x05\x00\x41")
+    assert _starts(printer.page, 0) == [5]
+
+
+def test_repeat() -> None:
+    printer, _, _ = _make(b"\x1b\x52\x30\x30\x33\x41")
+    assert _starts(printer.page, ANK_TOP) == [0, 18, 36]
+
+
+# --- unsupported-code log ----------------------------------------------------
+
+def test_bit_image_skipped_with_its_data() -> None:
+    printer, _, log = _make(b"\x1b\x4a\x30\x30\x30\x32" + b"\x41" * 6 + b"\x41")
+    assert _log_lines(log) == [["0", "1B 4A 30 30 30 32 (+6 data)", "ESC J (bit image)"]]
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_unknown_esc_consumes_two_bytes() -> None:
+    printer, _, log = _make(b"\x1b\x7a\x41")
+    assert _log_lines(log) == [["0", "1B 7A", "unknown ESC"]]
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_font_select_logged_default_reselect_silent() -> None:
+    _, _, log = _make(b"\x1b\x70\x41\x1b\x70\x30")
+    assert _log_lines(log) == [["0", "1B 70 41", "ESC pA (font)"]]
+
+
+def test_page_length_sequence_skipped() -> None:
+    printer, _, log = _make(b"\x1d\x41\x40\x40\x40\x1e\x41")
+    assert _log_lines(log) == [["0", "1D 41 40 40 40 1E", "GS..RS (page length)"]]
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_summary_on_close() -> None:
+    printer, _, log = _make(b"\x1b\x21\x1b\x21\x1b\x58")
+    printer.close()
+    summary = log.getvalue().split("# summary\n")[1].splitlines()
+    assert summary == ["2\tESC ! (emphasis)", "1\tESC X (underline)"]
+
+
+# --- PNG output --------------------------------------------------------------
+
+def test_pages_numbered_in_order(tmp_path: Path) -> None:
+    printer = HbpF1Printer(PrinterFonts(ank=bytes(_marker_font())),
+                           PngPageWriter(tmp_path), _Log())
+    for b in b"\x41\x0c\x42\x0c":
+        printer.write_byte(b)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["page-001.png", "page-002.png"]
+    with Image.open(tmp_path / "page-001.png") as image:
+        assert image.size == (PAGE_WIDTH, PAGE_HEIGHT)
+        assert image.mode == "1"
+        assert image.getpixel((0, ANK_TOP)) == 0  # ink is black
+        assert image.getpixel((5, ANK_TOP)) == 255
+        assert round(image.info["dpi"][0]) == 180

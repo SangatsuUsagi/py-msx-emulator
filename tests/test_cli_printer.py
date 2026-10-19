@@ -1,10 +1,12 @@
-"""--printer-log CLI option and printer-port wiring (specs app-cli, io-printer)."""
+"""--printer-log / --printer-out CLI options and printer-port wiring (app-cli, io-printer)."""
 from __future__ import annotations
 
 import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from msx.machine import Machine
 from msx.machine_loader import build_machine
@@ -36,13 +38,13 @@ def test_option_omitted(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
-def _run_main(argv: list[str]) -> list[Path | None]:
-    seen: list[Path | None] = []
+def _run_main(argv: list[str]) -> list[tuple[object, object]]:
+    seen: list[tuple[object, object]] = []
 
     def fake_build_machine(*args: object, **kwargs: object) -> Machine:
         printer_log = kwargs.pop("printer_log", None)
-        assert printer_log is None or isinstance(printer_log, Path)
-        seen.append(printer_log)
+        printer_out = kwargs.pop("printer_out", None)
+        seen.append((printer_log, printer_out))
         return build_machine(*args, **kwargs)  # type: ignore[arg-type]
 
     with patch.object(sys, "argv", [".", "--machine", "cbios_msx2", *argv]), \
@@ -61,9 +63,36 @@ def _run_main(argv: list[str]) -> list[Path | None]:
 
 
 def test_cli_passes_printer_log_path() -> None:
-    assert _run_main(["--count-frame", "1", "--printer-log", "out.prn"]) == [Path("out.prn")]
+    assert _run_main(["--count-frame", "1", "--printer-log", "out.prn"]) == [
+        (Path("out.prn"), None)]
 
 
 def test_cli_without_printer_log_passes_none() -> None:
-    assert _run_main(["--count-frame", "1"]) == [None]
+    assert _run_main(["--count-frame", "1"]) == [(None, None)]
+
+
+def test_option_attaches_the_hbp_f1_printer(tmp_path: Path) -> None:
+    out = tmp_path / "pages"
+    m = build_machine(_msx1_spec(), bios_override=bytes(32768), printer_out=out)
+    assert m.io.read_port(0x90) == 0xFD
+    assert (out / "unsupported.log").exists()
+    m.printer.close()
+
+
+def test_build_machine_rejects_both_printer_options(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        build_machine(_msx1_spec(), bios_override=bytes(32768),
+                      printer_log=tmp_path / "out.prn", printer_out=tmp_path / "pages")
+
+
+def test_cli_passes_printer_out_path() -> None:
+    assert _run_main(["--count-frame", "1", "--printer-out", "pages"]) == [
+        (None, Path("pages"))]
+
+
+def test_options_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit) as exc:
+        _run_main(["--count-frame", "1", "--printer-out", "pages",
+                   "--printer-log", "out.prn"])
+    assert exc.value.code == 2
 

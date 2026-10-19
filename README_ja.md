@@ -525,6 +525,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace` | オフ | カートリッジマッパーのバンク切り替えトレースを出力（MAP\_BANK レコード） |
 | `--mapper-trace-out FILE` | stdout | マッパートレースを FILE に書き出す |
 | `--printer-log FILE` | _（なし）_ | プリンタポート（I/O 0x90/0x91）にプリンタを接続し、受け取ったバイトを無変換で FILE に書き出す。指定しない場合、プリンタは未接続として扱われる |
+| `--printer-out DIR` | _（なし）_ | エミュレートした Sony HBP-F1 プリンタを接続し、受け取った内容を 180dpi の PNG ページ（`page-001.png` など）として DIR に描画する。ANK は MSX メイン ROM のフォント、漢字は漢字 ROM（マシンにある場合）で描く。実装していないコントロールコードは回数付きで `DIR/unsupported.log` に記録される。`--printer-log` とは同時に指定できない |
 | `--count-frame N` | _（なし）_ | N フレームをヘッドレスで実行して終了（SDL ウィンドウなし） |
 | `--benchmark [FRAMES]` | _（なし）_ | FRAMES フレーム（デフォルト 10000）をヘッドレス・速度制限なしで動かし、平均 FPS を表示する。`--resume` と組み合わせると、保存した場面から計測できる。`--count-frame` とは併用できない |
 | `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個） |

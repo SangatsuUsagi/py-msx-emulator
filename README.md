@@ -775,6 +775,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--printer-log FILE` | _(none)_ | Attach a printer to the printer port (I/O 0x90/0x91) and write every byte it receives to FILE, unmodified. Without it, the port reports no printer connected |
+| `--printer-out DIR` | _(none)_ | Attach an emulated Sony HBP-F1 printer and render what it receives to 180 dpi PNG pages (`page-001.png`, ...) in DIR, using the MSX main ROM font for ANK and the Kanji ROM (if the machine has one) for kanji. Control codes it does not implement are listed with counts in `DIR/unsupported.log`. Cannot be combined with `--printer-log` |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
 | `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
