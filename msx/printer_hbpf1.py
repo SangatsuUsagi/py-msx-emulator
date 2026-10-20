@@ -42,6 +42,7 @@ _LINE_PITCH_ESC_B = 24  # 1/8 inch, 22.5 dots corrected to 24 (p.98 note 1)
 
 _SUB_KANJI_PITCHES = {0x51: 24, 0x4E: 27, 0x45: 30, 0x50: 36}  # SUB Q, N, E, P
 _BIT_IMAGE_BYTES_PER_COLUMN = {0x53: 1, 0x49: 2, 0x4A: 3}  # ESC S, I, J
+_MAX_UNTIL_BYTES = 256  # cap on GS..RS / ESC ( ... . before giving up
 _GAIJI_TRAILER_BYTES = 72 + 1  # pattern bytes + EOT after ESC + m1 m2
 _BLANK_CODES = (0x7F, 0xFE, 0xFF)  # print as a space (p.106)
 
@@ -379,10 +380,14 @@ class HbpF1Printer:
         self._collect_mode = _Collect.IDLE
         self._remaining = 0
         self._terminator = 0
+        self._head_length = 0
         self._pending = _Pending.NONE
         self._pending_name = ""
         self.page = PrinterPage()
+        # Paper position; ESC c1 (`_power_on`) leaves both alone, so a pending
+        # vertical-double feed survives a reset (manual p.76).
         self._y = 0
+        self._extra_feed = 0
         self._power_on()
 
     # --- PrinterDevice -------------------------------------------------------
@@ -404,6 +409,8 @@ class HbpF1Printer:
             self._cmd.append(value)
             if value == self._terminator:
                 self._finish()
+            elif len(self._cmd) >= _MAX_UNTIL_BYTES:
+                self._abandon_unterminated()
             return
         if mode == _Collect.COUNT:
             self._cmd.append(value)
@@ -438,7 +445,6 @@ class HbpF1Printer:
         self._vertical_double = False
         self._underline = False
         self._decoration = _NO_DECORATION
-        self._extra_feed = 0
         self._ink = INK_BLACK
         self._left = 0
         self._right = _POWER_ON_RIGHT_MARGIN
@@ -455,6 +461,7 @@ class HbpF1Printer:
     def _collect_until(self, terminator: int, pending: _Pending, name: str = "") -> None:
         self._collect_mode = _Collect.UNTIL
         self._terminator = terminator
+        self._head_length = len(self._cmd)
         self._pending = pending
         self._pending_name = name
 
@@ -469,6 +476,13 @@ class HbpF1Printer:
         self._collect_mode = _Collect.IDLE
         self._pending = _Pending.NONE
         _FINISH_HANDLERS[pending](self)
+
+    def _abandon_unterminated(self) -> None:
+        data = len(self._cmd) - self._head_length
+        del self._cmd[self._head_length:]
+        self._unsupported(f"{self._pending_name} (unterminated)", data)
+        self._collect_mode = _Collect.IDLE
+        self._pending = _Pending.NONE
 
     def _log_pending(self) -> None:
         self._unsupported(self._pending_name)
@@ -526,9 +540,11 @@ class HbpF1Printer:
 
     def _dot_space(self, dots: int) -> None:
         # ESC 1-8 takes effect in kanji mode only; proportional mode prints as
-        # pica here, so it is ignored there too.
+        # pica here, so it is ignored (and logged) there too.
         if self._kanji:
             self._x += dots * self._width_scale()
+        else:
+            self._unsupported("ESC n (dot space outside kanji mode)")
 
     def _esc_mode(self, letter: int) -> bool:
         """Print-mode selects; True if `letter` was one."""

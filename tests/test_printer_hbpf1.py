@@ -470,3 +470,23 @@ def test_colours_in_the_png(tmp_path: Path) -> None:
         rgb = image.convert("RGB")
         assert rgb.getpixel((0, ANK_TOP)) == (255, 230, 0)  # yellow
         assert rgb.getpixel((5, ANK_TOP)) == (255, 255, 255)  # paper
+
+
+# --- edge cases (review Q1-Q3) -----------------------------------------------
+
+def test_dot_space_outside_kanji_mode_is_logged() -> None:
+    printer, _, log = _make(b"\x1b\x05\x41")
+    assert _starts(printer.page, ANK_TOP) == [0]
+    assert _log_lines(log) == [["0", "1B 05", "ESC n (dot space outside kanji mode)"]]
+
+
+def test_reset_keeps_a_pending_extra_feed() -> None:
+    printer, _, _ = _make(b"\x1a\x56\x41\x1b\x63\x31" + LF + b"\x41")
+    # 54 = 24 (lower half of the doubled line) + 30 (line pitch)
+    assert _starts(printer.page, 54 + ANK_TOP) == [0]
+
+
+def test_unterminated_page_length_is_abandoned() -> None:
+    printer, _, log = _make(b"\x1d" + b"\x40" * 255 + b"\x41")
+    assert _log_lines(log) == [["0", "1D (+255 data)", "GS..RS (page length) (unterminated)"]]
+    assert _starts(printer.page, ANK_TOP) == [0]
