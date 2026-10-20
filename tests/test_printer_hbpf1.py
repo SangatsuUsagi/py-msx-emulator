@@ -177,6 +177,11 @@ def test_kanji_pitch_27_half_width_alternation() -> None:
     assert _starts(printer.page, 0) == [0, 13, 27]
 
 
+def test_wrapped_line_restarts_the_alternation() -> None:
+    printer, _, _ = _make(b"\x1a\x4e\x1b\x4b" + b"\x00\x41" * 109)
+    assert _starts(printer.page, 30) == [0, 13, 27]
+
+
 def test_ank_mode_select_leaves_kanji_mode() -> None:
     printer, _, _ = _make(b"\x1b\x4b\x1b\x48\x41\x42")
     assert _starts(printer.page, ANK_TOP) == [0, 18]

@@ -724,10 +724,12 @@ class HbpF1Printer:
         self._finish_cell(width)
 
     def _print_half(self, code: int, blank: bool = False) -> None:
-        advance = (self._kanji_pitch + self._half_phase) // 2
-        self._half_phase ^= 1
         scale = self._width_scale()
-        self._make_room(advance * scale)
+        advance = (self._kanji_pitch + self._half_phase) // 2
+        if self._make_room(advance * scale):
+            # The wrap's CR reset the phase: a new line starts from 13 at pitch 27.
+            advance = (self._kanji_pitch + self._half_phase) // 2
+        self._half_phase ^= 1
         if not blank and code not in _BLANK_CODES:
             self._draw_glyph(ank_glyph(self._fonts, code), 8, _HALF_WIDTH * scale, _BAND)
         self._finish_cell(advance * scale)
@@ -790,9 +792,12 @@ class HbpF1Printer:
             self._extra_feed = band - _BAND
         self._x += advance
 
-    def _make_room(self, advance: int) -> None:
+    def _make_room(self, advance: int) -> bool:
+        """Wrap (CR + LF) if the cell would pass the right margin; True if it did."""
         if self._x + advance > self._right and self._x > self._left:
-            self._line_feed()  # CR + LF
+            self._line_feed()
+            return True
+        return False
 
     # --- movement ------------------------------------------------------------
 
