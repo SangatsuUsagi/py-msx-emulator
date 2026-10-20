@@ -490,3 +490,11 @@ def test_unterminated_page_length_is_abandoned() -> None:
     printer, _, log = _make(b"\x1d" + b"\x40" * 255 + b"\x41")
     assert _log_lines(log) == [["0", "1D (+255 data)", "GS..RS (page length) (unterminated)"]]
     assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_cr_extra_feed_past_the_page_bottom_continues_on_a_new_page() -> None:
+    # 65 LF -> y = 1950; the doubled A leaves a 24-dot feed that CR applies,
+    # crossing the 1980-dot page bottom.
+    printer, pages, _ = _make(LF * 65 + b"\x1a\x56\x41\x1a\x57\x0d\x41")
+    assert len(pages) == 1
+    assert _starts(printer.page, ANK_TOP) == [0]

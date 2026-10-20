@@ -797,19 +797,33 @@ class HbpF1Printer:
     # --- movement ------------------------------------------------------------
 
     def _carriage_return(self) -> None:
+        self._apply_extra_feed()
+        self._overflow_page()
+        self._return_head()
+
+    def _line_feed(self) -> None:
+        self._apply_extra_feed()
+        self._return_head()
+        if self._reverse:
+            self._y = max(0, self._y - self._line_pitch)
+            return
+        # One overflow check after the whole movement (extra feed + pitch).
+        self._y += self._line_pitch
+        self._overflow_page()
+
+    def _apply_extra_feed(self) -> None:
         # The lower half of a vertically doubled line is fed past once
         # (X88000 PC-PR201 model: head height x (zoom - 1) on the next CR/LF).
         self._y += self._extra_feed
         self._extra_feed = 0
+
+    def _return_head(self) -> None:
         self._x = self._left
         self._half_phase = 0
 
-    def _line_feed(self) -> None:
-        self._carriage_return()
-        if self._reverse:
-            self._y = max(0, self._y - self._line_pitch)
-            return
-        self._y += self._line_pitch
+    def _overflow_page(self) -> None:
+        # Continuous paper: a band crossing the page bottom continues on the
+        # next page.
         if self._y + _BAND > PAGE_HEIGHT:
             self._emit_page()
             self._y = max(0, self._y - PAGE_HEIGHT)
@@ -818,7 +832,7 @@ class HbpF1Printer:
         self._emit_page()
         self._y = 0
         self._extra_feed = 0
-        self._carriage_return()
+        self._return_head()
 
     def _emit_page(self) -> None:
         self._on_page(self.page)
