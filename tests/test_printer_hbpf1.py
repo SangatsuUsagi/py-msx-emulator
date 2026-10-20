@@ -140,7 +140,8 @@ def test_jis_kanji_from_the_kanji_rom() -> None:
     printer, _, log = _make(b"\x1b\x4b\x34\x41", kanji=_kanji_rom())
     page = printer.page
     inked = [(x, y) for y in range(24) for x in range(30) if page.get(x, y)]
-    assert inked == [(0, 0), (1, 0), (0, 1), (1, 1), (23, 23)]  # 16 -> 24 scaling
+    # Each source dot becomes a 2x2 pen dot at (1.5 sx, 1.5 sy).
+    assert inked == [(0, 0), (1, 0), (0, 1), (1, 1), (22, 22), (23, 22), (22, 23), (23, 23)]
     assert log.getvalue() == ""
 
 
@@ -382,3 +383,30 @@ def test_underline_under_a_doubled_glyph() -> None:
 def test_reset_clears_decoration() -> None:
     printer, _, _ = _make(b"\x1b\x70\x33\x1b\x63\x31\x41")
     assert _ink_row(printer.page, ANK_TOP, 18) == [0, 1, 2]
+
+
+# --- pen glyph scaling -------------------------------------------------------
+
+def test_kanji_one_dot_strokes_are_two_dots_wide() -> None:
+    rom = bytearray(262144)
+    address = (20 * 96 + 33 - 512) * 32  # JIS 0x3441
+    for block in (0, 16):  # top-left and bottom-left 8x8 blocks
+        for r in range(8):
+            rom[address + block + r] = 0x50  # source columns 1 and 3
+    printer, _, _ = _make(b"\x1b\x4b\x34\x41", kanji=bytes(rom))
+    for y in range(24):
+        assert _ink_row(printer.page, y, 24) == [1, 2, 4, 5]
+
+
+def test_pica_one_dot_stroke_is_three_dots_wide() -> None:
+    font = bytearray(2048)
+    font[0x41 * 8] = 0x40  # column 1 of row 0
+    printer, _, _ = _make(b"\x41", font=font)
+    assert _ink_row(printer.page, ANK_TOP, 18) == [2, 3, 4]
+
+
+def test_condensed_width_falls_back_to_nearest_neighbour() -> None:
+    font = bytearray(2048)
+    font[0x41 * 8] = 0xA0  # columns 0 and 2 of row 0
+    printer, _, _ = _make(b"\x1b\x51\x41", font=font)
+    assert _ink_row(printer.page, ANK_TOP, 10) == [0, 1, 3]

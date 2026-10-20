@@ -160,18 +160,43 @@ class GlyphMask:
     y_offset: int = 0
 
 
+def _axis_spans(src: int, dst: int) -> list[tuple[int, int]]:
+    """(start, length) in the box for each source index along one axis.
+
+    A pen of ceil(dst/src) dots from floor(s*dst/src) makes every one-dot
+    stroke pen-wide. When that pen would close a one-dot source gap
+    (floor(2*dst/src) < pen + 1), nearest-neighbour spans are used instead.
+    """
+    pen = (dst + src - 1) // src
+    spans = []
+    if (2 * dst) // src >= pen + 1:
+        for s in range(src):
+            spans.append((s * dst // src, pen))
+    else:
+        for s in range(src):
+            start = (s * dst + src - 1) // src
+            end = ((s + 1) * dst + src - 1) // src
+            spans.append((start, end - start))
+    return spans
+
+
 def scale_glyph(rows: list[int], src_w: int, dst_w: int, dst_h: int) -> GlyphMask:
-    """Nearest-neighbour scale MSB-left source rows to a dst_w x dst_h mask."""
-    src_h = len(rows)
-    out = []
-    for dy in range(dst_h):
-        row = rows[dy * src_h // dst_h]
-        dst = 0
-        if row:
-            for dx in range(dst_w):
-                sx = dx * src_w // dst_w
-                dst = (dst << 1) | ((row >> (src_w - 1 - sx)) & 1)
-        out.append(dst)
+    """Scale MSB-left source rows to a dst_w x dst_h mask with per-axis pens."""
+    columns = _axis_spans(src_w, dst_w)
+    row_spans = _axis_spans(len(rows), dst_h)
+    out = [0] * dst_h
+    for sy in range(len(rows)):
+        row = rows[sy]
+        if row == 0:
+            continue
+        expanded = 0
+        for sx in range(src_w):
+            if (row >> (src_w - 1 - sx)) & 1:
+                start, length = columns[sx]
+                expanded |= ((1 << length) - 1) << (dst_w - start - length)
+        start, length = row_spans[sy]
+        for dy in range(start, start + length):
+            out[dy] |= expanded
     return GlyphMask(dst_w, dst_h, out)
 
 
