@@ -36,6 +36,7 @@ work. Bug reports for other titles are welcome, but support is best-effort.
 - [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX Standard Japanese Cartridge HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
+- [Sony HBP-F1C](https://www.msx.org/wiki/Sony_HBP-F1C) (thermal colour printer; the emulated printer is a feature-level implementation from its manual, see [Printer](#printer-sony-hbp-f1--hbp-f1c))
 - [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **Software:**
@@ -45,6 +46,7 @@ work. Bug reports for other titles are welcome, but support is best-effort.
   - [Nemesis 2 (グラディウス2) by KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
   - [Penguin Adventure (夢大陸アドベンチャー) by KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
   - [Game Master 2 (コナミの新10倍カートリッジ) by KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
+  - [Mahjong Friend (雀フレンド) by TAITO](https://generation-msx.nl/software/taito/mahjong-friend/504)
 - **MSX2:**
   - [Dragon Slayer IV - Drasle Family (ドラゴンスレイヤーIVドラスレファミリー) by Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
   - [Romancia - Dragon Slayer Jr. (ロマンシア) by Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
@@ -287,6 +289,29 @@ hardware, not only documentation.
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
 | SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit |
 | Known limitations | The real-hardware behavior after 32 consecutive Kanji-ROM reads without an address rewrite is unverified. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
+
+### Printer: Sony HBP-F1 / HBP-F1C
+
+The MSX parallel printer port, with two devices you can attach to it: a raw
+byte logger (`--printer-log`) and an emulated Sony HBP-F1/HBP-F1C printer that
+renders what it receives to page images (`--printer-out`). Without either
+option the port reads as an empty connector (BUSY), so BIOS printing behaves as
+on a machine with no printer attached.
+
+The emulated printer is a feature-level implementation of the control codes
+published in the HBP-F1C user's manual. It is not a complete emulation of the
+printer. The author owns a real HBP-F1C, but the output has not been compared
+dot for dot with real printouts.
+
+| Item | Detail |
+| --- | --- |
+| Implementation | `msx/printer.py` (printer port, raw logger), `msx/printer_hbpf1.py` (HBP-F1/HBP-F1C printer) |
+| Port | `0x91` write latches the data byte; a `0x90` bit 0 STROBE falling edge sends it to the printer; a `0x90` read returns `0xFD` (ready) or `0xFF` (busy / no printer) |
+| Output | PNG only: one 1586 × 1980-dot page at 180 dpi (the head's line width × an 11-inch page) per form feed, written as `page-001.png`, `page-002.png`, ... with an 8-colour palette. Control codes it does not render go to `unsupported.log`, one line per occurrence plus per-code counts, so you can see which missing features software actually uses |
+| Fonts | The real printer prints from fonts built into it. This implementation has no printer font ROM. It uses the MSX main ROM font for ANK and graphic characters and the Kanji ROM font data for kanji (the HBI-J1's, attached with `--extension1`/`--extension2 hbi_j1`). Glyphs are scaled to the printer's character cells, so they look different from real printouts. Without a Kanji ROM, kanji print as blank cells |
+| Implemented | Pica / elite / condensed ANK; kanji mode with JIS kanji, `00 xx` half-width pairs and kanji pitch; CR, LF, FF, reverse feed and line pitch; left and right margins; double width and double height; outline / italic / bold decoration; underline; seven colours (ESC C); dot space, character repeat, SOH graphic characters, printer reset |
+| Not implemented | Font selection (ESC p@/A/B/\`/a/b/Z); vertical writing (ESC t prints horizontally, ESC h1, ESC q); hagaki (postcard) mode (STX K); gaiji registration (ESC +, SUB 2); bit images (ESC S/I/J/V/W/U, ESC D/M) and dot addressing (ESC F); proportional, superscript and subscript glyph shapes (printed as pica); emphasis (ESC !); tabs (HT, VT, ESC ( ) 2); page length (GS…RS) and VFU (US); CAN; test print (ESC CT); half-width kanji codes 0x2921-0x2B7E; the colour/mono switch; output other than PNG. All of these are consumed with their documented parameter lengths and logged |
+| Known limitations | Ink colours are display approximations, and the overprint mixing (e.g. yellow + purple = black) is an unverified model, because no colour ribbon was available to test. Decoration and underline dot patterns are this implementation's own; the manual does not show them. No print timing: the printer is always ready |
 
 ### Audio output filter
 
@@ -722,6 +747,13 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # More --extension1/--extension2 ids (MSX-DOS2 + RAM expansion, Kanji font,
 # View font) are documented in docs/README_extension.md
 
+# Print to PNG pages with the emulated HBP-F1 printer (kanji need a Kanji ROM,
+# here from the HBI-J1); pages and unsupported.log go to prints/
+python . --machine hb_f1xd --extension2 hbi_j1 --printer-out prints
+
+# Capture the raw bytes software sends to the printer port
+python . --machine hb_f1xd --printer-log printer.prn
+
 # Attach an MSX mouse to Joy2 (default port), driven by the host mouse
 python . path/to/game.rom --mouse
 
@@ -775,7 +807,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--printer-log FILE` | _(none)_ | Attach a printer to the printer port (I/O 0x90/0x91) and write every byte it receives to FILE, unmodified. Without it, the port reports no printer connected |
-| `--printer-out DIR` | _(none)_ | Attach an emulated Sony HBP-F1 printer and render what it receives to 180 dpi PNG pages (`page-001.png`, ...) in DIR, using the MSX main ROM font for ANK and the Kanji ROM (if the machine has one) for kanji. Control codes it does not implement are listed with counts in `DIR/unsupported.log`. Cannot be combined with `--printer-log` |
+| `--printer-out DIR` | _(none)_ | Attach an emulated Sony HBP-F1/HBP-F1C printer and render what it receives to 180 dpi colour PNG pages (`page-001.png`, ...) in DIR (created if needed). ANK uses the MSX main ROM font and kanji the Kanji ROM (e.g. `--extension2 hbi_j1`); without one, kanji print blank. Control codes it does not implement are listed with counts in `DIR/unsupported.log`. See [Printer](#printer-sony-hbp-f1--hbp-f1c). Cannot be combined with `--printer-log` |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
 | `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
@@ -1149,6 +1181,8 @@ py-msx-emulator/
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
 │   ├── kanji.py           # JIS Kanji font ROM I/O device
+│   ├── printer.py         # Printer port (0x90/0x91) + raw byte logger
+│   ├── printer_hbpf1.py   # Sony HBP-F1/HBP-F1C printer → PNG pages
 │   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
