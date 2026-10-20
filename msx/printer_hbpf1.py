@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import IntEnum
 from pathlib import Path
 from typing import TextIO
 
@@ -41,7 +42,6 @@ _LINE_PITCH_ESC_B = 24  # 1/8 inch, 22.5 dots corrected to 24 (p.98 note 1)
 
 _SUB_KANJI_PITCHES = {0x51: 24, 0x4E: 27, 0x45: 30, 0x50: 36}  # SUB Q, N, E, P
 _BIT_IMAGE_BYTES_PER_COLUMN = {0x53: 1, 0x49: 2, 0x4A: 3}  # ESC S, I, J
-_BIT_IMAGE_REPEAT_BYTES = {0x56: 1, 0x57: 2, 0x55: 3}  # ESC V, W, U
 _GAIJI_TRAILER_BYTES = 72 + 1  # pattern bytes + EOT after ESC + m1 m2
 _BLANK_CODES = (0x7F, 0xFE, 0xFF)  # print as a space (p.106)
 
@@ -308,6 +308,60 @@ def draw_mask(page: PrinterPage, mask: GlyphMask, x0: int, y0: int,
                 page.set(x0 + mask.x_offset + dx, y, ink)
 
 
+class _Collect(IntEnum):
+    """What the parser does with the next received byte."""
+
+    IDLE = 0  # start a new command
+    COUNT = 1  # append to the command; finish after `_remaining` bytes
+    UNTIL = 2  # append to the command; finish on `_terminator`
+    SKIP = 3  # drop `_remaining` bulk data bytes unbuffered
+
+
+class _Pending(IntEnum):
+    """The command handler to run once its bytes are collected."""
+
+    NONE = 0
+    JIS_PAIR = 1
+    HALF_PAIR = 2
+    GRAPHIC = 3
+    ESC = 4
+    SUB = 5
+    STX = 6
+    ESC_T = 7
+    ESC_LEFT_MARGIN = 8
+    ESC_RIGHT_MARGIN = 9
+    ESC_REPEAT = 10
+    ESC_C = 11
+    ESC_COLOR_OR_SCRIPT = 12
+    ESC_P = 13
+    ESC_H = 14
+    GAIJI = 15
+    BIT_IMAGE = 16
+    LOG = 17  # only log the collected command under `_pending_name`
+
+
+# ESC letters that take a fixed number of parameter bytes:
+# letter -> (parameter bytes, handler, log name for _Pending.LOG).
+_ESC_PARAMETERS: dict[int, tuple[int, _Pending, str]] = {
+    0x54: (2, _Pending.ESC_T, ""),  # T
+    0x4C: (3, _Pending.ESC_LEFT_MARGIN, ""),  # L
+    0x2F: (3, _Pending.ESC_RIGHT_MARGIN, ""),  # /
+    0x52: (4, _Pending.ESC_REPEAT, ""),  # R
+    0x63: (1, _Pending.ESC_C, ""),  # c
+    0x43: (1, _Pending.ESC_COLOR_OR_SCRIPT, ""),  # C
+    0x70: (1, _Pending.ESC_P, ""),  # p
+    0x68: (1, _Pending.ESC_H, ""),  # h
+    0x2B: (2, _Pending.GAIJI, ""),  # +: m1 m2, then the gaiji trailer
+    0x53: (4, _Pending.BIT_IMAGE, ""),  # S: N columns of 1 byte
+    0x49: (4, _Pending.BIT_IMAGE, ""),  # I: N columns of 2 bytes
+    0x4A: (4, _Pending.BIT_IMAGE, ""),  # J: N columns of 3 bytes
+    0x56: (4 + 1, _Pending.LOG, "ESC V (bit image repeat)"),  # one 1-byte column
+    0x57: (4 + 2, _Pending.LOG, "ESC W (bit image repeat)"),  # one 2-byte column
+    0x55: (4 + 3, _Pending.LOG, "ESC U (bit image repeat)"),  # one 3-byte column
+    0x46: (4, _Pending.LOG, "ESC F (dot addressing)"),  # F
+}
+
+
 class HbpF1Printer:
     """HBP-F1 printer device for `PrinterPort`; always ready."""
 
@@ -318,15 +372,15 @@ class HbpF1Printer:
         self._log = log
         self._counts: dict[str, int] = {}
         self._offset = 0
-        # Command collection: bytes of the command in progress, how many more
-        # to collect (or a terminator byte to collect up to), the handler to
-        # run when complete, and a count of bulk bytes to drop unbuffered.
+        # Command collection: the bytes of the command in progress, what to
+        # do with the next byte, and the handler to run once it is complete.
         self._cmd = bytearray()
         self._cmd_offset = 0
-        self._need = 0
-        self._terminator = -1
-        self._handler: Callable[[], None] | None = None
-        self._skip = 0
+        self._collect_mode = _Collect.IDLE
+        self._remaining = 0
+        self._terminator = 0
+        self._pending = _Pending.NONE
+        self._pending_name = ""
         self.page = PrinterPage()
         self._y = 0
         self._power_on()
@@ -340,19 +394,21 @@ class HbpF1Printer:
         value &= 0xFF
         offset = self._offset
         self._offset += 1
-        if self._skip > 0:
-            self._skip -= 1
+        mode = self._collect_mode
+        if mode == _Collect.SKIP:
+            self._remaining -= 1
+            if self._remaining == 0:
+                self._collect_mode = _Collect.IDLE
             return
-        if self._terminator >= 0:
+        if mode == _Collect.UNTIL:
             self._cmd.append(value)
             if value == self._terminator:
-                self._terminator = -1
                 self._finish()
             return
-        if self._need > 0:
+        if mode == _Collect.COUNT:
             self._cmd.append(value)
-            self._need -= 1
-            if self._need == 0:
+            self._remaining -= 1
+            if self._remaining == 0:
                 self._finish()
             return
         self._cmd = bytearray((value,))
@@ -390,26 +446,39 @@ class HbpF1Printer:
 
     # --- byte dispatch -------------------------------------------------------
 
-    def _collect(self, count: int, handler: Callable[[], None]) -> None:
-        self._need = count
-        self._handler = handler
+    def _collect(self, count: int, pending: _Pending, name: str = "") -> None:
+        self._collect_mode = _Collect.COUNT
+        self._remaining = count
+        self._pending = pending
+        self._pending_name = name
 
-    def _collect_until(self, terminator: int, handler: Callable[[], None]) -> None:
+    def _collect_until(self, terminator: int, pending: _Pending, name: str = "") -> None:
+        self._collect_mode = _Collect.UNTIL
         self._terminator = terminator
-        self._handler = handler
+        self._pending = pending
+        self._pending_name = name
+
+    def _skip(self, count: int) -> None:
+        if count > 0:
+            self._collect_mode = _Collect.SKIP
+            self._remaining = count
 
     def _finish(self) -> None:
-        handler = self._handler
-        self._handler = None
-        if handler is not None:
-            handler()
+        # Reset first: a handler may start collecting its own parameters.
+        pending = self._pending
+        self._collect_mode = _Collect.IDLE
+        self._pending = _Pending.NONE
+        _FINISH_HANDLERS[pending](self)
+
+    def _log_pending(self) -> None:
+        self._unsupported(self._pending_name)
 
     def _start(self, value: int) -> None:
         if value < 0x20:
             self._control(value)
         elif self._kanji:
             if 0x21 <= value <= 0x7E:
-                self._collect(1, self._jis_pair)
+                self._collect(1, _Pending.JIS_PAIR)
             else:
                 self._unsupported("invalid kanji first byte")
         else:
@@ -427,33 +496,43 @@ class HbpF1Printer:
         elif value == _SI:
             self._double = False
         elif value == _NUL and self._kanji:
-            self._collect(1, self._half_pair)
+            self._collect(1, _Pending.HALF_PAIR)
         elif value == _SOH:
-            self._collect(1, self._graphic)
+            self._collect(1, _Pending.GRAPHIC)
         elif value == _ESC:
-            self._collect(1, self._esc)
+            self._collect(1, _Pending.ESC)
         elif value == _SUB:
-            self._collect(1, self._sub)
+            self._collect(1, _Pending.SUB)
         elif value == _STX:
-            self._collect(1, self._stx)
+            self._collect(1, _Pending.STX)
         elif value == _GS:
-            self._collect_until(_RS, self._log_handler("GS..RS (page length)"))
+            self._collect_until(_RS, _Pending.LOG, "GS..RS (page length)")
         elif value == _US:
-            self._collect(1, self._log_handler("US (VFU feed)"))
+            self._collect(1, _Pending.LOG, "US (VFU feed)")
         else:
             self._unsupported(_CONTROL_NAMES.get(value, f"control {value:02X}"))
-
-    def _log_handler(self, name: str) -> Callable[[], None]:
-        def handler() -> None:
-            self._unsupported(name)
-        return handler
 
     def _esc(self) -> None:
         letter = self._cmd[1]
         if 0x01 <= letter <= 0x08:
-            if self._kanji:
-                self._x += letter * self._width_scale()
-        elif letter in (0x4E, 0x48):  # N, H
+            self._dot_space(letter)
+        elif letter in _ESC_PARAMETERS:
+            count, pending, name = _ESC_PARAMETERS[letter]
+            self._collect(count, pending, name)
+        elif letter in (0x28, 0x29):  # ( ): tab positions up to "."
+            self._collect_until(0x2E, _Pending.LOG, f"ESC {chr(letter)} (horizontal tab)")
+        elif not (self._esc_mode(letter) or self._esc_setting(letter)):
+            self._unsupported(_ESC_LOG_NAMES.get(letter, "unknown ESC"))
+
+    def _dot_space(self, dots: int) -> None:
+        # ESC 1-8 takes effect in kanji mode only; proportional mode prints as
+        # pica here, so it is ignored there too.
+        if self._kanji:
+            self._x += dots * self._width_scale()
+
+    def _esc_mode(self, letter: int) -> bool:
+        """Print-mode selects; True if `letter` was one."""
+        if letter in (0x4E, 0x48):  # N, H
             self._select_ank(_PICA)
         elif letter == 0x45:  # E
             self._select_ank(_ELITE)
@@ -463,22 +542,20 @@ class HbpF1Printer:
             self._select_ank(_PICA)
             self._unsupported("ESC P (proportional)")
         elif letter == 0x4B:  # K
-            self._enter_kanji()
+            self._kanji = True
         elif letter == 0x74:  # t
-            self._enter_kanji()
+            self._kanji = True
             self._unsupported("ESC t (vertical kanji mode)")
-        elif letter == 0x41:  # A
+        else:
+            return False
+        return True
+
+    def _esc_setting(self, letter: int) -> bool:
+        """Parameterless settings; True if `letter` was one."""
+        if letter == 0x41:  # A
             self._line_pitch = _LINE_PITCH_ESC_A
         elif letter == 0x42:  # B
             self._line_pitch = _LINE_PITCH_ESC_B
-        elif letter == 0x54:  # T
-            self._collect(2, self._esc_t)
-        elif letter == 0x4C:  # L
-            self._collect(3, self._esc_left_margin)
-        elif letter == 0x2F:  # /
-            self._collect(3, self._esc_right_margin)
-        elif letter == 0x52:  # R
-            self._collect(4, self._esc_repeat)
         elif letter == 0x58:  # X
             self._underline = True
         elif letter == 0x59:  # Y
@@ -487,46 +564,22 @@ class HbpF1Printer:
             self._reverse = True
         elif letter == 0x66:  # f
             self._reverse = False
-        elif letter == 0x63:  # c
-            self._collect(1, self._esc_c)
-        elif letter == 0x43:  # C
-            self._collect(1, self._esc_color_or_script)
-        elif letter == 0x70:  # p
-            self._collect(1, self._esc_p)
-        elif letter == 0x68:  # h
-            self._collect(1, self._esc_h)
+        elif letter == 0x22:  # ": emphasis off, a default re-select
+            pass
         else:
-            self._esc_unsupported(letter)
+            return False
+        return True
 
-    def _esc_unsupported(self, letter: int) -> None:
-        if letter == 0x22:  # ESC ": emphasis off, a default re-select
-            return
-        if letter in (0x53, 0x49, 0x4A):  # S, I, J: N columns of 1/2/3 bytes
-            self._collect(4, self._bit_image_handler(letter))
-        elif letter in (0x56, 0x57, 0x55):  # V, W, U: one 1/2/3-byte column repeated
-            per = _BIT_IMAGE_REPEAT_BYTES[letter]
-            self._collect(4 + per, self._log_handler(f"ESC {chr(letter)} (bit image repeat)"))
-        elif letter == 0x46:  # F
-            self._collect(4, self._log_handler("ESC F (dot addressing)"))
-        elif letter == 0x2B:  # +: m1 m2, 72 data bytes, EOT
-            self._collect(2, self._gaiji)
-        elif letter in (0x28, 0x29):  # ( ): tab positions up to "."
-            self._collect_until(0x2E, self._log_handler(f"ESC {chr(letter)} (horizontal tab)"))
-        else:
-            self._unsupported(_ESC_LOG_NAMES.get(letter, "unknown ESC"))
-
-    def _bit_image_handler(self, letter: int) -> Callable[[], None]:
-        def handler() -> None:
-            count = _digits(self._cmd[2:6])
-            per = _BIT_IMAGE_BYTES_PER_COLUMN[letter]
-            data = per * count if count is not None else 0
-            self._unsupported(f"ESC {chr(letter)} (bit image)", data)
-            self._skip = data
-        return handler
+    def _bit_image(self) -> None:
+        letter = self._cmd[1]
+        count = _digits(self._cmd[2:6])
+        data = _BIT_IMAGE_BYTES_PER_COLUMN[letter] * count if count is not None else 0
+        self._unsupported(f"ESC {chr(letter)} (bit image)", data)
+        self._skip(data)
 
     def _gaiji(self) -> None:
         self._unsupported("ESC + (gaiji)", _GAIJI_TRAILER_BYTES)
-        self._skip = _GAIJI_TRAILER_BYTES
+        self._skip(_GAIJI_TRAILER_BYTES)
 
     def _esc_t(self) -> None:
         n = _digits(self._cmd[2:4])
@@ -634,16 +687,13 @@ class HbpF1Printer:
 
     def _stx(self) -> None:
         if self._cmd[1] == 0x4B:  # K
-            self._collect(1, self._log_handler("STX K (hagaki mode)"))
+            self._collect(1, _Pending.LOG, "STX K (hagaki mode)")
         else:
             self._unsupported("unknown STX")
 
     def _select_ank(self, pitch: int) -> None:
         self._ank_pitch = pitch
         self._kanji = False
-
-    def _enter_kanji(self) -> None:
-        self._kanji = True
 
     # --- printing ------------------------------------------------------------
 
@@ -766,6 +816,27 @@ class HbpF1Printer:
             hex_bytes += f" (+{data} data)"
         self._log.write(f"{self._cmd_offset}\t{hex_bytes}\t{name}\n")
         self._counts[name] = self._counts.get(name, 0) + 1
+
+
+_FINISH_HANDLERS: dict[_Pending, Callable[[HbpF1Printer], None]] = {
+    _Pending.JIS_PAIR: HbpF1Printer._jis_pair,
+    _Pending.HALF_PAIR: HbpF1Printer._half_pair,
+    _Pending.GRAPHIC: HbpF1Printer._graphic,
+    _Pending.ESC: HbpF1Printer._esc,
+    _Pending.SUB: HbpF1Printer._sub,
+    _Pending.STX: HbpF1Printer._stx,
+    _Pending.ESC_T: HbpF1Printer._esc_t,
+    _Pending.ESC_LEFT_MARGIN: HbpF1Printer._esc_left_margin,
+    _Pending.ESC_RIGHT_MARGIN: HbpF1Printer._esc_right_margin,
+    _Pending.ESC_REPEAT: HbpF1Printer._esc_repeat,
+    _Pending.ESC_C: HbpF1Printer._esc_c,
+    _Pending.ESC_COLOR_OR_SCRIPT: HbpF1Printer._esc_color_or_script,
+    _Pending.ESC_P: HbpF1Printer._esc_p,
+    _Pending.ESC_H: HbpF1Printer._esc_h,
+    _Pending.GAIJI: HbpF1Printer._gaiji,
+    _Pending.BIT_IMAGE: HbpF1Printer._bit_image,
+    _Pending.LOG: HbpF1Printer._log_pending,
+}
 
 
 class PngPageWriter:
