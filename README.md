@@ -36,7 +36,7 @@ work. Bug reports for other titles are welcome, but support is best-effort.
 - [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX Standard Japanese Cartridge HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
-- [Sony HBP-F1C](https://www.msx.org/wiki/Sony_HBP-F1C) (thermal colour printer; the emulated printer is a feature-level implementation from its manual, see [Printer](#printer-sony-hbp-f1--hbp-f1c))
+- [Sony HBP-F1C](https://www.msx.org/wiki/Sony_HBP-F1C): a thermal color printer. The emulated printer is a feature-level implementation from its manual (see [Printer](#printer-sony-hbp-f1--hbp-f1c)).
 - [FM-PAC (FM Pana Amusement Cartridge)](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **Software:**
@@ -124,9 +124,9 @@ and the VBlank interrupt.
 
 The VDP has 128 KB of VRAM, 28 control registers, and a programmable 16-color
 palette (9-bit GRB333). It implements Screen modes 0-8 (SCREEN 0 through
-SCREEN 8) and the hardware command engine (HMMV, HMMM, HMMC, LMMV, LMMM, LMCM,
-LMMC, YMMM, LINE, PSET, POINT, SRCH). It also implements the horizontal line
-interrupt (R#19/R#23, IE1). A banded renderer handles mid-frame register and
+SCREEN 8). It also implements the hardware command engine and the horizontal
+line interrupt (R#19/R#23, IE1). The command engine has HMMV, HMMM, HMMC,
+LMMV, LMMM, LMCM, LMMC, YMMM, LINE, PSET, POINT and SRCH. A banded renderer handles mid-frame register and
 palette changes.
 
 - Implementation: `msx/vdp/v9938.py`, `msx/vdp/v9938_renderer.py`
@@ -135,11 +135,11 @@ palette changes.
     faithfully reproduce beam-raced blits or double-buffered VRAM updates
     within a single frame. Each block command has one cost per byte or dot,
     measured on a real HB-F1XD with the display and sprites on. The speed-up
-    with less display or sprite VRAM traffic is not modelled.
+    with less display or sprite VRAM traffic is not modeled.
   - The emulator does not model the GRAPHIC 6/7 planar VRAM interleave. The
     real chip splits these modes across two VRAM ICs by even/odd byte. The
     emulator uses a linear addressing model instead. The result differs in
-    only one case: a program writes VRAM in a planar mode, switches to a
+    only one case. A program writes VRAM in a planar mode, switches to a
     non-planar mode without a clear, and reads the data back.
   - The R#13 blink timer advances once per frame. This timer controls the
     TEXT2 character blink with R#12 colors and the GRAPHIC4-7 automatic page
@@ -238,9 +238,9 @@ An optional overlay cartridge. Enable it with `--extension1`/`--extension2
 fmpac`. See [`docs/README_extension.md`](docs/README_extension.md#fm-pac) for
 activation and ROM requirements. The cartridge has a 64 KB banked ROM, 8 KB of
 battery-backed SRAM with an openMSX-compatible magic-value unlock, and a YM2413
-(OPLL) FM sound chip. The chip gives 9-channel 2-operator melody
-synthesis (15 built-in instruments plus a user-defined tone), ADSR envelopes,
-and rhythm mode (bass drum, snare, tom, top cymbal, hi-hat). The emulator
+(OPLL) FM sound chip. The chip gives 9-channel 2-operator melody synthesis
+with 15 built-in instruments plus a user-defined tone. It also gives ADSR
+envelopes and rhythm mode (bass drum, snare, tom, top cymbal, hi-hat). The emulator
 mixes the chip output into the audio output with PSG/SCC.
 
 | Item | Detail |
@@ -250,7 +250,7 @@ mixes the chip output into the audio output with PSG/SCC.
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by bit 0 of the enable register |
 | SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit |
-| OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
+| OPLL synthesis | Faithful port of emu2413 v1.5.9. It has log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, the AM/PM LFO and the YM2413 instrument ROM. Rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) uses the real short-noise / LFSR taps |
 
 - Known limitations:
   - Output rate conversion uses an accumulate-and-average decimator (chip
@@ -288,30 +288,30 @@ hardware, not only documentation.
 | Sub-slot 0 | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
 | SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit |
-| Known limitations | The real-hardware behavior after 32 consecutive Kanji-ROM reads without an address rewrite is unverified. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
+| Known limitations | The author has not checked how real hardware behaves after 32 consecutive Kanji-ROM reads without an address rewrite. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
 
 ### Printer: Sony HBP-F1 / HBP-F1C
 
-The MSX parallel printer port, with two devices you can attach to it: a raw
-byte logger (`--printer-log`) and an emulated Sony HBP-F1/HBP-F1C printer that
-renders what it receives to page images (`--printer-out`). Without either
-option the port reads as an empty connector (BUSY), so BIOS printing behaves as
-on a machine with no printer attached.
+The emulator has the MSX parallel printer port and two devices for it. A raw
+byte logger (`--printer-log`) records what the port receives. An emulated Sony
+HBP-F1/HBP-F1C printer (`--printer-out`) draws what it receives as page
+images. Without either option, the port reads as an empty connector (BUSY).
+BIOS printing then behaves as on a machine with no printer.
 
-The emulated printer is a feature-level implementation of the control codes
-published in the HBP-F1C user's manual. It is not a complete emulation of the
-printer. The author owns a real HBP-F1C, but the output has not been compared
-dot for dot with real printouts.
+The emulated printer is a feature-level implementation of the control codes in
+the HBP-F1C user's manual. It is not a complete emulation of the printer. The
+author owns a real HBP-F1C, but has not compared the output dot for dot with
+real printouts.
 
 | Item | Detail |
 | --- | --- |
 | Implementation | `msx/printer.py` (printer port, raw logger), `msx/printer_hbpf1.py` (HBP-F1/HBP-F1C printer) |
-| Port | `0x91` write latches the data byte; a `0x90` bit 0 STROBE falling edge sends it to the printer; a `0x90` read returns `0xFD` (ready) or `0xFF` (busy / no printer) |
-| Output | PNG only: one 1586 × 1980-dot page at 180 dpi (the head's line width × an 11-inch page) per form feed, written as `page-001.png`, `page-002.png`, ... with an 8-colour palette. Control codes it does not render go to `unsupported.log`, one line per occurrence plus per-code counts, so you can see which missing features software actually uses |
-| Fonts | The real printer prints from fonts built into it. This implementation has no printer font ROM. It uses the MSX main ROM font for ANK and graphic characters and the Kanji ROM font data for kanji (the HBI-J1's, attached with `--extension1`/`--extension2 hbi_j1`). Glyphs are scaled to the printer's character cells, so they look different from real printouts. Without a Kanji ROM, kanji print as blank cells |
-| Implemented | Pica / elite / condensed ANK; kanji mode with JIS kanji, `00 xx` half-width pairs and kanji pitch; CR, LF, FF, reverse feed and line pitch; left and right margins; double width and double height; outline / italic / bold decoration; underline; seven colours (ESC C); dot space, character repeat, SOH graphic characters, printer reset |
-| Not implemented | Font selection (ESC p@/A/B/\`/a/b/Z); vertical writing (ESC t prints horizontally, ESC h1, ESC q); hagaki (postcard) mode (STX K); gaiji registration (ESC +, SUB 2); bit images (ESC S/I/J/V/W/U, ESC D/M) and dot addressing (ESC F); proportional, superscript and subscript glyph shapes (printed as pica); emphasis (ESC !); tabs (HT, VT, ESC ( ) 2); page length (GS…RS) and VFU (US); CAN; test print (ESC CT); half-width kanji codes 0x2921-0x2B7E; the colour/mono switch; output other than PNG. All of these are consumed with their documented parameter lengths and logged |
-| Known limitations | Ink colours are display approximations, and the overprint mixing (e.g. yellow + purple = black) is an unverified model, because no colour ribbon was available to test. Decoration and underline dot patterns are this implementation's own; the manual does not show them. No print timing: the printer is always ready |
+| Port | A `0x91` write latches the data byte. A falling edge of STROBE (`0x90` bit 0) sends the byte to the printer. A `0x90` read returns `0xFD` (ready) or `0xFF` (busy, or no printer) |
+| Output | PNG only. Each form feed gives one 1586 × 1980-dot page at 180 dpi: the line width of the head × an 11-inch page. The files are `page-001.png`, `page-002.png` and so on, with an 8-color palette. `unsupported.log` lists each control code that the printer does not draw, one line per occurrence, plus a count per code. The counts show which missing features software uses |
+| Fonts | The real printer prints from its built-in fonts. This implementation has no printer font ROM. ANK and graphic characters use the MSX main ROM font. Kanji use the font data of the Kanji ROM, from the HBI-J1 that `--extension1`/`--extension2 hbi_j1` attaches. The printer scales each glyph to its character cell, so the output looks different from real printouts. Without a Kanji ROM, kanji print as blank cells |
+| Implemented | ANK in pica, elite and condensed. Kanji mode with JIS kanji, `00 xx` half-width pairs and kanji pitch. CR, LF, FF, reverse feed and line pitch. Left and right margins. Double width and double height. Outline, italic and bold decoration. Underline. Seven colors (ESC C). Dot space, character repeat, SOH graphic characters and printer reset |
+| Not implemented | Font selection (ESC p@/A/B/\`/a/b/Z). Vertical writing (ESC t prints horizontally, ESC h1, ESC q). Hagaki (postcard) mode (STX K). Gaiji registration (ESC +, SUB 2). Bit images (ESC S/I/J/V/W/U, ESC D/M) and dot addressing (ESC F). Proportional, superscript and subscript glyph shapes (the printer uses pica). Emphasis (ESC !). Tabs (HT, VT, ESC ( ) 2). Page length (GS…RS) and VFU (US). CAN. Test print (ESC CT). Half-width kanji codes 0x2921-0x2B7E. The color/mono switch. Output other than PNG. The printer skips each of these with its documented parameter length and logs it |
+| Known limitations | The ink colors are display approximations. The overprint mixing (for example, yellow + purple = black) is an unverified model, because no color ribbon was available for a test. The dot patterns of the decorations and the underline are this implementation's own. The manual does not show them. The emulation has no print timing: the printer is always ready |
 
 ### Audio output filter
 
@@ -544,8 +544,8 @@ with border rows, so the 4:3 CRT aspect stays the same for all values of R#9
 LN. SCREEN 6/7 (512 pixels wide) scale down to the same window width to keep
 the pixel aspect.
 
-The frontend also gives the hardware palette, mono audio at
-44100 Hz through the analog-style low-pass filter, a fullscreen toggle,
+The frontend also gives the hardware palette and mono audio at 44100 Hz
+through the analog-style low-pass filter. It also has a fullscreen toggle,
 screenshots, state save/load, pause, fast-forward, mute, and reset. The window
 title shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk.
 Fast-forward does not play audio. For automatic frame skip, see
@@ -807,7 +807,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--mapper-trace` | off | Enable cartridge mapper bank-switch tracing (MAP\_BANK records) |
 | `--mapper-trace-out FILE` | stdout | Write mapper trace to FILE instead of stdout |
 | `--printer-log FILE` | _(none)_ | Attach a printer to the printer port (I/O 0x90/0x91) and write every byte it receives to FILE, unmodified. Without it, the port reports no printer connected |
-| `--printer-out DIR` | _(none)_ | Attach an emulated Sony HBP-F1/HBP-F1C printer and render what it receives to 180 dpi colour PNG pages (`page-001.png`, ...) in DIR (created if needed). ANK uses the MSX main ROM font and kanji the Kanji ROM (e.g. `--extension2 hbi_j1`); without one, kanji print blank. Control codes it does not implement are listed with counts in `DIR/unsupported.log`. See [Printer](#printer-sony-hbp-f1--hbp-f1c). Cannot be combined with `--printer-log` |
+| `--printer-out DIR` | _(none)_ | Attach an emulated Sony HBP-F1/HBP-F1C printer. It draws what it receives as 180 dpi color PNG pages (`page-001.png`, ...) in DIR, and makes DIR if it does not exist. ANK uses the MSX main ROM font, and kanji use the Kanji ROM (e.g. `--extension2 hbi_j1`). Without a Kanji ROM, kanji print blank. `DIR/unsupported.log` lists the control codes that the printer does not implement, with counts. See [Printer](#printer-sony-hbp-f1--hbp-f1c). You cannot use it together with `--printer-log` |
 | `--count-frame N` | _(none)_ | Run exactly N frames headlessly and exit (no SDL window) |
 | `--benchmark [FRAMES]` | _(none)_ | Run headlessly, unthrottled, for FRAMES frames (default: 10000) and report average FPS. Combine with `--resume` to benchmark from a saved scene. Mutually exclusive with `--count-frame` |
 | `--break-point ADDRS` | _(none)_ | Comma-separated hex breakpoint addresses, max 4 |
@@ -896,7 +896,7 @@ legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 - `fdd1` takes one path or a list of paths. `--fdd1` on the command line
   replaces the whole list.
 - `hotkeys` moves a frontend hotkey to another function key. The emulator
-  stops at startup with an error in these cases: two actions use one key, a
+  stops at startup with an error in three cases. Two actions use one key, a
   key is an MSX key (F1-F5, Shift+F1..F5), or a key is a fixed hotkey
   (F8-F10).
 
@@ -910,7 +910,7 @@ button and key-name labels.
 | Ctrl + Q | Quit |
 | F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
 | Shift + F6 | Eject the drive A disk, or insert the current list image again |
-| F7 (hold) | Fast-forward: run without the speed limit while the key is held |
+| F7 (hold) | Fast-forward: run without the speed limit while you hold the key |
 | Shift + F7 | Turn fast-forward on or off (latched) |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state |
@@ -1047,8 +1047,8 @@ size.
 
 > **Note**: no real HB-F1XD variant with a 256 KB RAM mapper ever existed. Real
 > HB-F1XD hardware always has a fixed 64 KB of flat RAM, not a RAM mapper.
-> `hb_f1xd_256k` is an invented configuration, not an unverified claim about
-> real hardware. Its only purpose is to give MSX-DOS2 the memory layout that it
+> `hb_f1xd_256k` is an invented configuration. It is not an unverified claim
+> about real hardware. Its only purpose is to give MSX-DOS2 the memory layout that it
 > needs. It keeps all other real-hardware HB-F1XD declarations unchanged.
 
 `fs_a1f` (Panasonic FS-A1F) uses the real machine ROMs and adds a TC8566AF
@@ -1212,7 +1212,7 @@ py-msx-emulator/
 ├── roms/
 │   └── cbios/             # C-BIOS ROM files (not in version control)
 ├── saves/                 # Save states and screenshots (created at runtime)
-├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
+├── allium/                # Allium behavior specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
 ├── tests/                 # Test suite (3782 tests)

@@ -112,9 +112,10 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
 boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
-documented per-instruction rules. Three sources of Y and X are not modelled:
-the internal MEMPTR register (`BIT n,(HL)` leaves them clear), the PC of a
-repeating block instruction, and the previous instruction (`SCF`/`CCF`).
+documented per-instruction rules. The core does not model three sources of Y
+and X. These are the internal MEMPTR register (`BIT n,(HL)` leaves them
+clear), the PC of a repeating block instruction, and the previous instruction
+(`SCF`/`CCF`).
 
 ---
 
@@ -220,8 +221,8 @@ return 0xFF (open bus).
 
 ### Logging
 
-When a `_logger` is attached, the bus logs a read after the handler returns,
-because the value is known only then. It logs a write before the dispatch,
+When the bus has a `_logger`, it logs a read after the handler returns,
+because the value exists only then. It logs a write before the dispatch,
 because the call site already sets the value. Both log entries record the port,
 the value, and the current instruction PC.
 
@@ -233,7 +234,7 @@ the value, and the current instruction PC.
 | 0x9A      | V9938 palette (MSX2 only)                |
 | 0xA0-0xA2 | PSG (AY-3-8910)                          |
 | 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)  |
-| 0x90-0x91 | Printer port (always registered; a device only with `--printer-log` / `--printer-out`) |
+| 0x90-0x91 | Printer port. Always registered, with a device only for `--printer-log` / `--printer-out` |
 | 0xA8-0xAB | PPI (i8255)                              |
 | 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                  |
 | 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions) |
@@ -600,14 +601,14 @@ says what the next byte is for:
 `_Pending` names the handler to run once the command is complete. The
 module-level `_FINISH_HANDLERS` table maps it to a plain function, and
 `_ESC_PARAMETERS` gives each ESC letter's parameter length and handler.
-Commands the renderer does not draw are consumed with their documented
-lengths and written to the unsupported-code log, so the stream never goes out
-of sync.
+The interpreter consumes each command that the renderer does not draw with
+its documented length, and writes it to the unsupported-code log. The stream
+thus stays in sync.
 
 The page is 1586 × 1980 dots at 180 dpi (`PrinterPage`). One byte per dot
-holds a 3-bit set of ribbon inks (Y, M, C). The seven `ESC C` colours are the
-non-empty sets, and printing ORs the current colour into each dot, so
-overprints mix.
+holds a 3-bit set of ribbon inks (Y, M, C). The seven `ESC C` colors are the
+non-empty sets. Printing ORs the current color into each dot, so overprints
+mix.
 
 A glyph goes through this pipeline:
 
@@ -617,7 +618,7 @@ A glyph goes through this pipeline:
 2. `scale_glyph` scales each axis on its own. It draws source dot `s` from
    `⌊s·dst/src⌋` for `⌈dst/src⌉` dots (a pen), so one-dot strokes keep one
    width. An axis whose pen would close a one-dot gap (the 8 → 10 condensed
-   width) falls back to nearest-neighbour.
+   width) falls back to nearest-neighbor.
 3. `italicise` (a shear of `(height − 1 − dy) / 4` dots) or `outline` (a
    one-dot ring) changes the scaled `GlyphMask`.
 4. `draw_mask` ORs the mask into the page at the cell origin. It is
@@ -642,7 +643,7 @@ of the layout works as follows:
 
 The CLI's page sink, `PngPageWriter`, writes each page as `page-NNN.png`. The
 PNG is an 8-entry palette image indexed by the ink set, with approximate
-colours and 180 dpi metadata. This class is the only place that uses Pillow.
+colors and 180 dpi metadata. This class is the only place that uses Pillow.
 
 `unsupported.log` has one line per unrendered command: `<stream offset>\t<hex
 bytes>\t<name>`, with bulk data abbreviated as `(+N data)`. `close()` appends
@@ -1110,9 +1111,9 @@ remove the per-call dispatch in release builds.
 
 `msx/printer_hbpf1.py` stores each row of a `GlyphMask` as one Python `int`,
 with the leftmost dot in the most significant bit. `scale_glyph`, `italicise`
-and `outline` work on these rows with shifts, `|`, and `& ~row`, and the
-dot coordinates can go negative (an outline at x = 0 starts at x = −1;
-`PrinterPage.set` clips it). The widest row any current box size produces is
+and `outline` work on these rows with shifts, `|`, and `& ~row`. The dot
+coordinates can go negative. An outline at x = 0 starts at x = −1, and
+`PrinterPage.set` clips it. The widest row any current box size produces is
 59 bits, so a port can use `u64` rows and signed coordinates. A wider box,
 or italic and outline together, would pass 64 bits. In that case, a port
 needs a check or a multi-word row.
@@ -1123,8 +1124,8 @@ needs a check or a multi-word row.
 it through the module-level `_FINISH_HANDLERS` dict of plain functions. It
 uses no stored bound methods or closures, so a port maps it to a `match` on
 the enum. The page sink `on_page` is a `Callable[[PrinterPage], None]`
-(`PngPageWriter`, or `list.append` in tests). A port maps it to a trait,
-with the page moved into the sink when it is emitted.
+(`PngPageWriter`, or `list.append` in tests). A port maps it to a trait.
+When the printer emits a page, it moves the page into the sink.
 
 #### Spin loop in the frame timer
 
