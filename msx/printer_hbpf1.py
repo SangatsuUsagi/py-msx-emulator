@@ -1,0 +1,891 @@
+"""Sony HBP-F1 printer: renders the PC-PR201-style command stream to pages.
+
+A minimal interpreter of the HBP-F1C control codes (manual excerpt at
+references/docs/HBP-F1C 取扱説明書.md): ANK pica/elite/condensed, kanji mode
+with JIS pairs and `00 xx` half-width pairs, line/page movement, margins,
+double width, dot space and repeat. Every other control code is consumed with
+its documented parameter length and written to an unsupported-code log, so
+the stream never desynchronises and the log ranks what to implement next.
+
+No printer font ROM is used: ANK glyphs come from the MSX main ROM font and
+kanji from the MSX Kanji ROM, scaled nearest-neighbour to the head's cells.
+One dot is 1/180 inch in both directions.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import IntEnum
+from pathlib import Path
+from typing import TextIO
+
+from PIL import Image as _PIL_Image
+
+PAGE_WIDTH = 1586  # head line width in dots (manual p.86)
+PAGE_HEIGHT = 1980  # 11-inch power-on page length at 180 dpi (p.105)
+DPI = 180
+
+_BAND = 24  # line band height: the 24-dot head
+_ANK_HEIGHT = 18
+_FULL_WIDTH = 24
+_HALF_WIDTH = 12
+_MIN_PRINT_WIDTH = 72  # ESC L / ESC / ignored below this (p.100)
+
+_PICA = 18
+_ELITE = 15
+_CONDENSED = 10
+
+_POWER_ON_LINE_PITCH = 30  # 1/6 inch
+_POWER_ON_RIGHT_MARGIN = 80 * _PICA
+_LINE_PITCH_ESC_A = _POWER_ON_LINE_PITCH  # 1/6 inch
+_LINE_PITCH_ESC_B = 24  # 1/8 inch, 22.5 dots corrected to 24 (p.98 note 1)
+
+_SUB_KANJI_PITCHES = {0x51: 24, 0x4E: 27, 0x45: 30, 0x50: 36}  # SUB Q, N, E, P
+_BIT_IMAGE_BYTES_PER_COLUMN = {0x53: 1, 0x49: 2, 0x4A: 3}  # ESC S, I, J
+_MAX_UNTIL_BYTES = 256  # cap on GS..RS / ESC ( ... . before giving up
+_GAIJI_TRAILER_BYTES = 72 + 1  # pattern bytes + EOT after ESC + m1 m2
+_BLANK_CODES = (0x7F, 0xFE, 0xFF)  # print as a space (p.106)
+
+_KANJI_LEVEL2_BASE = 0x20000
+
+# Ink sets: the seven colours read as combinations of three ribbon inks.
+INK_Y = 0b001
+INK_M = 0b010
+INK_C = 0b100
+INK_BLACK = INK_Y | INK_M | INK_C
+
+# ESC C n, n = '0'..'6' (manual p.52, p.76).
+_COLOR_INKS = (
+    INK_BLACK,  # 0 black
+    INK_M | INK_C,  # 1 purple
+    INK_Y | INK_M,  # 2 red
+    INK_M,  # 3 red-purple
+    INK_Y | INK_C,  # 4 green
+    INK_C,  # 5 blue
+    INK_Y,  # 6 yellow
+)
+
+# PNG palette indexed by ink set; display approximations, not measured inks.
+_PALETTE = (
+    (255, 255, 255),  # paper
+    (255, 230, 0),  # Y: yellow
+    (230, 0, 126),  # M: red-purple
+    (230, 30, 30),  # Y+M: red
+    (0, 140, 220),  # C: blue
+    (0, 150, 70),  # Y+C: green
+    (100, 40, 150),  # M+C: purple
+    (0, 0, 0),  # Y+M+C: black
+)
+
+_NO_DECORATION = 0
+_OUTLINE = 1  # ESC p1
+_ITALIC = 2  # ESC p2
+_BOLD = 3  # ESC p3
+
+_NUL = 0x00
+_SOH = 0x01
+_STX = 0x02
+_LF = 0x0A
+_FF = 0x0C
+_CR = 0x0D
+_SO = 0x0E
+_SI = 0x0F
+_SUB = 0x1A
+_ESC = 0x1B
+_GS = 0x1D
+_RS = 0x1E
+_US = 0x1F
+
+# Logged ESC codes that take no parameters.
+_ESC_LOG_NAMES = {
+    0x21: "ESC ! (emphasis)",
+    0x32: "ESC 2 (clear tabs)",
+    0x71: "ESC q (half-width vertical pair)",
+    0x44: "ESC D (bit image pitch)",
+    0x4D: "ESC M (bit image pitch)",
+}
+
+_CONTROL_NAMES = {
+    0x00: "NUL",
+    0x03: "ETX",
+    0x04: "EOT",
+    0x05: "ENQ",
+    0x06: "ACK",
+    0x07: "BEL",
+    0x08: "BS",
+    0x09: "HT (horizontal tab)",
+    0x0B: "VT (vertical tab)",
+    0x11: "DC1",
+    0x18: "CAN (cancel line)",
+}
+
+
+def _digits(data: bytes | bytearray) -> int | None:
+    """ASCII decimal digits -> int, or None if any byte is not a digit."""
+    value = 0
+    for b in data:
+        if b < 0x30 or b > 0x39:
+            return None
+        value = value * 10 + (b - 0x30)
+    return value
+
+
+@dataclass
+class PrinterFonts:
+    """Glyph sources: the MSX 8x8 font and an optional Kanji ROM image."""
+
+    ank: bytes  # 2048 bytes, 8 bytes per code 0x00-0xFF, bit 7 = leftmost dot
+    kanji: bytes | None = None  # 128 KB or 256 KB MSX Kanji ROM
+
+
+@dataclass
+class PrinterPage:
+    """One page of dots; each holds its ink set (0 = paper)."""
+
+    width: int = PAGE_WIDTH
+    height: int = PAGE_HEIGHT
+    pixels: bytearray = field(default_factory=bytearray)
+    _inked: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.pixels:
+            self.pixels = bytearray(self.width * self.height)
+
+    def get(self, x: int, y: int) -> int:
+        return self.pixels[y * self.width + x]
+
+    def set(self, x: int, y: int, ink: int = INK_BLACK) -> None:
+        """Add `ink` to the dot: overprinting mixes inks, never removes them."""
+        if 0 <= x < self.width and 0 <= y < self.height:
+            self.pixels[y * self.width + x] |= ink
+            self._inked = True
+
+    def has_ink(self) -> bool:
+        return self._inked
+
+
+def ank_glyph(fonts: PrinterFonts, code: int) -> list[int]:
+    """8 rows of 8-bit masks for an MSX font code."""
+    base = (code & 0xFF) * 8
+    rows = []
+    for r in range(8):
+        rows.append(fonts.ank[base + r] if base + r < len(fonts.ank) else 0)
+    return rows
+
+
+def kanji_glyph(fonts: PrinterFonts, hi: int, lo: int) -> list[int] | None:
+    """16 rows of 16-bit masks for a JIS code, or None when the ROM has none.
+
+    Glyph number per the MSX Kanji ROM layout (references/docs/Kanji display
+    - MSX Wiki.md, MSX Datapack 6.5.2). Rows 0x29-0x2F (ku 9-15) are not in
+    the ROM: their numbers would overlap level-1 kanji, so they count as
+    missing.
+    """
+    rom = fonts.kanji
+    if rom is None:
+        return None
+    ku = hi - 0x20
+    ten = lo - 0x20
+    if ten < 1 or ten > 94 or ku < 1 or ku > 84 or 9 <= ku <= 15:
+        return None
+    if ku < 16:
+        address = (ku * 96 + ten) * 32
+    elif ku < 48:
+        address = (ku * 96 + ten - 512) * 32
+    else:
+        address = _KANJI_LEVEL2_BASE + ((ku - 48) * 96 + ten) * 32
+    if address + 32 > len(rom):
+        return None
+    rows = []
+    for r in range(16):
+        block = (r // 8) * 16 + (r % 8)
+        rows.append((rom[address + block] << 8) | rom[address + block + 8])
+    return rows
+
+
+@dataclass
+class GlyphMask:
+    """A scaled glyph as dot rows; bit (width - 1 - x) of a row is dot x.
+
+    The offsets place mask column/row 0 relative to the glyph box origin, so
+    decorations can spill outside the box (italic right, outline all round).
+    """
+
+    width: int
+    height: int
+    rows: list[int]
+    x_offset: int = 0
+    y_offset: int = 0
+
+
+def _axis_spans(src: int, dst: int) -> list[tuple[int, int]]:
+    """(start, length) in the box for each source index along one axis.
+
+    A pen of ceil(dst/src) dots from floor(s*dst/src) makes every one-dot
+    stroke pen-wide. When that pen would close a one-dot source gap
+    (floor(2*dst/src) < pen + 1), nearest-neighbour spans are used instead.
+    """
+    pen = (dst + src - 1) // src
+    spans = []
+    if (2 * dst) // src >= pen + 1:
+        for s in range(src):
+            spans.append((s * dst // src, pen))
+    else:
+        for s in range(src):
+            start = (s * dst + src - 1) // src
+            end = ((s + 1) * dst + src - 1) // src
+            spans.append((start, end - start))
+    return spans
+
+
+def scale_glyph(rows: list[int], src_w: int, dst_w: int, dst_h: int) -> GlyphMask:
+    """Scale MSB-left source rows to a dst_w x dst_h mask with per-axis pens."""
+    columns = _axis_spans(src_w, dst_w)
+    row_spans = _axis_spans(len(rows), dst_h)
+    out = [0] * dst_h
+    for sy in range(len(rows)):
+        row = rows[sy]
+        if row == 0:
+            continue
+        expanded = 0
+        for sx in range(src_w):
+            if (row >> (src_w - 1 - sx)) & 1:
+                start, length = columns[sx]
+                expanded |= ((1 << length) - 1) << (dst_w - start - length)
+        start, length = row_spans[sy]
+        for dy in range(start, start + length):
+            out[dy] |= expanded
+    return GlyphMask(dst_w, dst_h, out)
+
+
+def embolden(rows: list[int]) -> list[int]:
+    """Bold: OR each source row with itself one source dot to the right."""
+    out = []
+    for row in rows:
+        out.append(row | (row >> 1))
+    return out
+
+
+def italicise(mask: GlyphMask) -> GlyphMask:
+    """Shear right: row dy moves (height - 1 - dy) // 4 dots; the bottom stays."""
+    max_shift = (mask.height - 1) // 4
+    out = []
+    for dy in range(mask.height):
+        shift = (mask.height - 1 - dy) // 4
+        out.append((mask.rows[dy] << max_shift) >> shift)
+    return GlyphMask(mask.width + max_shift, mask.height, out,
+                     mask.x_offset, mask.y_offset)
+
+
+def outline(mask: GlyphMask) -> GlyphMask:
+    """白抜き: the dots 8-adjacent to the glyph but not in it (a 1-dot ring)."""
+    padded = [0]
+    for row in mask.rows:
+        padded.append(row << 1)
+    padded.append(0)
+    out = []
+    for i in range(len(padded)):
+        grown = 0
+        for j in range(i - 1, i + 2):
+            if 0 <= j < len(padded):
+                p = padded[j]
+                grown |= p | (p << 1) | (p >> 1)
+        out.append(grown & ~padded[i])
+    return GlyphMask(mask.width + 2, mask.height + 2, out,
+                     mask.x_offset - 1, mask.y_offset - 1)
+
+
+def draw_mask(page: PrinterPage, mask: GlyphMask, x0: int, y0: int,
+              clip_top: int, clip_bottom: int, ink: int = INK_BLACK) -> None:
+    """OR a mask onto the page at box origin (x0, y0), rows clipped to
+    [clip_top, clip_bottom) -- the line band the head can reach."""
+    for i in range(mask.height):
+        row = mask.rows[i]
+        y = y0 + mask.y_offset + i
+        if row == 0 or y < clip_top or y >= clip_bottom:
+            continue
+        for dx in range(mask.width):
+            if (row >> (mask.width - 1 - dx)) & 1:
+                page.set(x0 + mask.x_offset + dx, y, ink)
+
+
+class _Collect(IntEnum):
+    """What the parser does with the next received byte."""
+
+    IDLE = 0  # start a new command
+    COUNT = 1  # append to the command; finish after `_remaining` bytes
+    UNTIL = 2  # append to the command; finish on `_terminator`
+    SKIP = 3  # drop `_remaining` bulk data bytes unbuffered
+
+
+class _Pending(IntEnum):
+    """The command handler to run once its bytes are collected."""
+
+    NONE = 0
+    JIS_PAIR = 1
+    HALF_PAIR = 2
+    GRAPHIC = 3
+    ESC = 4
+    SUB = 5
+    STX = 6
+    ESC_T = 7
+    ESC_LEFT_MARGIN = 8
+    ESC_RIGHT_MARGIN = 9
+    ESC_REPEAT = 10
+    ESC_C = 11
+    ESC_COLOR_OR_SCRIPT = 12
+    ESC_P = 13
+    ESC_H = 14
+    GAIJI = 15
+    BIT_IMAGE = 16
+    LOG = 17  # only log the collected command under `_pending_name`
+
+
+# ESC letters that take a fixed number of parameter bytes:
+# letter -> (parameter bytes, handler, log name for _Pending.LOG).
+_ESC_PARAMETERS: dict[int, tuple[int, _Pending, str]] = {
+    0x54: (2, _Pending.ESC_T, ""),  # T
+    0x4C: (3, _Pending.ESC_LEFT_MARGIN, ""),  # L
+    0x2F: (3, _Pending.ESC_RIGHT_MARGIN, ""),  # /
+    0x52: (4, _Pending.ESC_REPEAT, ""),  # R
+    0x63: (1, _Pending.ESC_C, ""),  # c
+    0x43: (1, _Pending.ESC_COLOR_OR_SCRIPT, ""),  # C
+    0x70: (1, _Pending.ESC_P, ""),  # p
+    0x68: (1, _Pending.ESC_H, ""),  # h
+    0x2B: (2, _Pending.GAIJI, ""),  # +: m1 m2, then the gaiji trailer
+    0x53: (4, _Pending.BIT_IMAGE, ""),  # S: N columns of 1 byte
+    0x49: (4, _Pending.BIT_IMAGE, ""),  # I: N columns of 2 bytes
+    0x4A: (4, _Pending.BIT_IMAGE, ""),  # J: N columns of 3 bytes
+    0x56: (4 + 1, _Pending.LOG, "ESC V (bit image repeat)"),  # one 1-byte column
+    0x57: (4 + 2, _Pending.LOG, "ESC W (bit image repeat)"),  # one 2-byte column
+    0x55: (4 + 3, _Pending.LOG, "ESC U (bit image repeat)"),  # one 3-byte column
+    0x46: (4, _Pending.LOG, "ESC F (dot addressing)"),  # F
+}
+
+
+class HbpF1Printer:
+    """HBP-F1 printer device for `PrinterPort`; always ready."""
+
+    def __init__(self, fonts: PrinterFonts, on_page: Callable[[PrinterPage], None],
+                 log: TextIO) -> None:
+        self._fonts = fonts
+        self._on_page = on_page
+        self._log = log
+        self._counts: dict[str, int] = {}
+        self._offset = 0
+        # Command collection: the bytes of the command in progress, what to
+        # do with the next byte, and the handler to run once it is complete.
+        self._cmd = bytearray()
+        self._cmd_offset = 0
+        self._collect_mode = _Collect.IDLE
+        self._remaining = 0
+        self._terminator = 0
+        self._head_length = 0
+        self._pending = _Pending.NONE
+        self._pending_name = ""
+        self.page = PrinterPage()
+        # Paper position; ESC c1 (`_power_on`) leaves both alone, so a pending
+        # vertical-double feed survives a reset (manual p.76).
+        self._y = 0
+        self._extra_feed = 0
+        self._power_on()
+
+    # --- PrinterDevice -------------------------------------------------------
+
+    def is_busy(self) -> bool:
+        return False
+
+    def write_byte(self, value: int) -> None:
+        value &= 0xFF
+        offset = self._offset
+        self._offset += 1
+        mode = self._collect_mode
+        if mode == _Collect.SKIP:
+            self._remaining -= 1
+            if self._remaining == 0:
+                self._collect_mode = _Collect.IDLE
+            return
+        if mode == _Collect.UNTIL:
+            self._cmd.append(value)
+            if value == self._terminator:
+                self._finish()
+            elif len(self._cmd) >= _MAX_UNTIL_BYTES:
+                self._abandon_unterminated()
+            return
+        if mode == _Collect.COUNT:
+            self._cmd.append(value)
+            self._remaining -= 1
+            if self._remaining == 0:
+                self._finish()
+            return
+        self._cmd = bytearray((value,))
+        self._cmd_offset = offset
+        self._start(value)
+
+    def close(self) -> None:
+        if self.page.has_ink():
+            self._emit_page()
+        self._log.write("# summary\n")
+        ranked = sorted(self._counts.items(), key=lambda item: (-item[1], item[0]))
+        for name, count in ranked:
+            self._log.write(f"{count}\t{name}\n")
+        self._log.close()
+
+    # --- state ---------------------------------------------------------------
+
+    def _power_on(self) -> None:
+        self._ank_pitch = _PICA
+        self._kanji = False
+        self._kanji_pitch = _FULL_WIDTH
+        self._half_phase = 0
+        self._line_pitch = _POWER_ON_LINE_PITCH
+        self._unit_120 = True
+        self._reverse = False
+        self._double = False
+        self._vertical_double = False
+        self._underline = False
+        self._decoration = _NO_DECORATION
+        self._ink = INK_BLACK
+        self._left = 0
+        self._right = _POWER_ON_RIGHT_MARGIN
+        self._x = self._left
+
+    # --- byte dispatch -------------------------------------------------------
+
+    def _collect(self, count: int, pending: _Pending, name: str = "") -> None:
+        self._collect_mode = _Collect.COUNT
+        self._remaining = count
+        self._pending = pending
+        self._pending_name = name
+
+    def _collect_until(self, terminator: int, pending: _Pending, name: str = "") -> None:
+        self._collect_mode = _Collect.UNTIL
+        self._terminator = terminator
+        self._head_length = len(self._cmd)
+        self._pending = pending
+        self._pending_name = name
+
+    def _skip(self, count: int) -> None:
+        if count > 0:
+            self._collect_mode = _Collect.SKIP
+            self._remaining = count
+
+    def _finish(self) -> None:
+        # Reset first: a handler may start collecting its own parameters.
+        pending = self._pending
+        self._collect_mode = _Collect.IDLE
+        self._pending = _Pending.NONE
+        _FINISH_HANDLERS[pending](self)
+
+    def _abandon_unterminated(self) -> None:
+        data = len(self._cmd) - self._head_length
+        del self._cmd[self._head_length:]
+        self._unsupported(f"{self._pending_name} (unterminated)", data)
+        self._collect_mode = _Collect.IDLE
+        self._pending = _Pending.NONE
+
+    def _log_pending(self) -> None:
+        self._unsupported(self._pending_name)
+
+    def _start(self, value: int) -> None:
+        if value < 0x20:
+            self._control(value)
+        elif self._kanji:
+            if 0x21 <= value <= 0x7E:
+                self._collect(1, _Pending.JIS_PAIR)
+            else:
+                self._unsupported("invalid kanji first byte")
+        else:
+            self._print_ank(value)
+
+    def _control(self, value: int) -> None:
+        if value == _CR:
+            self._carriage_return()
+        elif value == _LF:
+            self._line_feed()
+        elif value == _FF:
+            self._form_feed()
+        elif value == _SO:
+            self._double = True
+        elif value == _SI:
+            self._double = False
+        elif value == _NUL and self._kanji:
+            self._collect(1, _Pending.HALF_PAIR)
+        elif value == _SOH:
+            self._collect(1, _Pending.GRAPHIC)
+        elif value == _ESC:
+            self._collect(1, _Pending.ESC)
+        elif value == _SUB:
+            self._collect(1, _Pending.SUB)
+        elif value == _STX:
+            self._collect(1, _Pending.STX)
+        elif value == _GS:
+            self._collect_until(_RS, _Pending.LOG, "GS..RS (page length)")
+        elif value == _US:
+            self._collect(1, _Pending.LOG, "US (VFU feed)")
+        else:
+            self._unsupported(_CONTROL_NAMES.get(value, f"control {value:02X}"))
+
+    def _esc(self) -> None:
+        letter = self._cmd[1]
+        if 0x01 <= letter <= 0x08:
+            self._dot_space(letter)
+        elif letter in _ESC_PARAMETERS:
+            count, pending, name = _ESC_PARAMETERS[letter]
+            self._collect(count, pending, name)
+        elif letter in (0x28, 0x29):  # ( ): tab positions up to "."
+            self._collect_until(0x2E, _Pending.LOG, f"ESC {chr(letter)} (horizontal tab)")
+        elif not (self._esc_mode(letter) or self._esc_setting(letter)):
+            self._unsupported(_ESC_LOG_NAMES.get(letter, "unknown ESC"))
+
+    def _dot_space(self, dots: int) -> None:
+        # ESC 1-8 takes effect in kanji mode only; proportional mode prints as
+        # pica here, so it is ignored (and logged) there too.
+        if self._kanji:
+            self._x += dots * self._width_scale()
+        else:
+            self._unsupported("ESC n (dot space outside kanji mode)")
+
+    def _esc_mode(self, letter: int) -> bool:
+        """Print-mode selects; True if `letter` was one."""
+        if letter in (0x4E, 0x48):  # N, H
+            self._select_ank(_PICA)
+        elif letter == 0x45:  # E
+            self._select_ank(_ELITE)
+        elif letter == 0x51:  # Q
+            self._select_ank(_CONDENSED)
+        elif letter == 0x50:  # P
+            self._select_ank(_PICA)
+            self._unsupported("ESC P (proportional)")
+        elif letter == 0x4B:  # K
+            self._kanji = True
+        elif letter == 0x74:  # t
+            self._kanji = True
+            self._unsupported("ESC t (vertical kanji mode)")
+        else:
+            return False
+        return True
+
+    def _esc_setting(self, letter: int) -> bool:
+        """Parameterless settings; True if `letter` was one."""
+        if letter == 0x41:  # A
+            self._line_pitch = _LINE_PITCH_ESC_A
+        elif letter == 0x42:  # B
+            self._line_pitch = _LINE_PITCH_ESC_B
+        elif letter == 0x58:  # X
+            self._underline = True
+        elif letter == 0x59:  # Y
+            self._underline = False
+        elif letter == 0x72:  # r
+            self._reverse = True
+        elif letter == 0x66:  # f
+            self._reverse = False
+        elif letter == 0x22:  # ": emphasis off, a default re-select
+            pass
+        else:
+            return False
+        return True
+
+    def _bit_image(self) -> None:
+        letter = self._cmd[1]
+        count = _digits(self._cmd[2:6])
+        data = _BIT_IMAGE_BYTES_PER_COLUMN[letter] * count if count is not None else 0
+        self._unsupported(f"ESC {chr(letter)} (bit image)", data)
+        self._skip(data)
+
+    def _gaiji(self) -> None:
+        self._unsupported("ESC + (gaiji)", _GAIJI_TRAILER_BYTES)
+        self._skip(_GAIJI_TRAILER_BYTES)
+
+    def _esc_t(self) -> None:
+        n = _digits(self._cmd[2:4])
+        if n is None:
+            self._unsupported("ESC T (malformed)")
+        elif self._unit_120:
+            self._line_pitch = (3 * n + 1) // 2
+        else:
+            self._line_pitch = n
+
+    def _esc_left_margin(self) -> None:
+        n = _digits(self._cmd[2:5])
+        if n is None:
+            self._unsupported("ESC L (malformed)")
+            return
+        left = n * self._ank_pitch
+        if self._right - left < _MIN_PRINT_WIDTH:
+            return
+        if self._x == self._left:
+            self._x = left
+        self._left = left
+
+    def _esc_right_margin(self) -> None:
+        n = _digits(self._cmd[2:5])
+        if n is None:
+            self._unsupported("ESC / (malformed)")
+            return
+        right = min(n * self._ank_pitch, PAGE_WIDTH)
+        if right - self._left < _MIN_PRINT_WIDTH:
+            return
+        self._right = right
+
+    def _esc_repeat(self) -> None:
+        n = _digits(self._cmd[2:5])
+        if n is None:
+            self._unsupported("ESC R (malformed)")
+            return
+        code = self._cmd[5]
+        for _ in range(n):
+            self._print_ank(code)
+
+    def _esc_c(self) -> None:
+        if self._cmd[2] == 0x31:
+            self._power_on()
+        else:
+            self._unsupported("unknown ESC c")
+
+    def _esc_color_or_script(self) -> None:
+        param = self._cmd[2]
+        if param == 0x53:  # S
+            self._select_ank(_PICA)
+            self._unsupported("ESC CS (superscript)")
+        elif param == 0x73:  # s
+            self._select_ank(_PICA)
+            self._unsupported("ESC Cs (subscript)")
+        elif param == 0x54:  # T
+            self._unsupported("ESC CT (test print)")
+        elif 0x30 <= param <= 0x36:
+            self._ink = _COLOR_INKS[param - 0x30]
+        else:
+            self._unsupported("ESC C (invalid colour)")
+
+    def _esc_p(self) -> None:
+        param = self._cmd[2]
+        if 0x30 <= param <= 0x33:  # p0 off, p1 outline, p2 italic, p3 bold
+            self._decoration = param - 0x30
+        elif param in (0x40, 0x60):  # standard kana/ANK fonts
+            return
+        elif param in (0x41, 0x42, 0x61, 0x62, 0x5A):
+            self._unsupported(f"ESC p{chr(param)} (font)")
+        else:
+            self._unsupported("unknown ESC p")
+
+    def _esc_h(self) -> None:
+        param = self._cmd[2]
+        if param == 0x30:  # h0: half-width horizontal, the only layout rendered
+            return
+        if param == 0x31:
+            self._unsupported("ESC h1 (half-width vertical)")
+        else:
+            self._unsupported("unknown ESC h")
+
+    def _sub(self) -> None:
+        letter = self._cmd[1]
+        if letter in _SUB_KANJI_PITCHES:
+            self._kanji_pitch = _SUB_KANJI_PITCHES[letter]
+        elif letter == 0x46:  # F
+            self._unit_120 = True
+        elif letter == 0x47:  # G
+            self._unit_120 = False
+        elif letter == 0x56:  # V
+            self._vertical_double = True
+        elif letter == 0x57:  # W
+            self._vertical_double = False
+        elif letter == 0x55:  # U
+            self._select_ank(_PICA)
+            self._unsupported("SUB U (superscript)")
+        elif letter == 0x4C:  # L
+            self._select_ank(_PICA)
+            self._unsupported("SUB L (subscript)")
+        elif letter == 0x32:  # 2
+            self._unsupported("SUB 2 (clear gaiji)")
+        else:
+            self._unsupported("unknown SUB")
+
+    def _stx(self) -> None:
+        if self._cmd[1] == 0x4B:  # K
+            self._collect(1, _Pending.LOG, "STX K (hagaki mode)")
+        else:
+            self._unsupported("unknown STX")
+
+    def _select_ank(self, pitch: int) -> None:
+        self._ank_pitch = pitch
+        self._kanji = False
+
+    # --- printing ------------------------------------------------------------
+
+    def _print_ank(self, code: int) -> None:
+        if self._kanji:
+            self._print_half(code)
+            return
+        width = self._ank_pitch * self._width_scale()
+        self._make_room(width)
+        if code not in _BLANK_CODES:
+            self._draw_glyph(ank_glyph(self._fonts, code), 8, width, _ANK_HEIGHT)
+        self._finish_cell(width)
+
+    def _print_half(self, code: int, blank: bool = False) -> None:
+        scale = self._width_scale()
+        advance = (self._kanji_pitch + self._half_phase) // 2
+        if self._make_room(advance * scale):
+            # The wrap's CR reset the phase: a new line starts from 13 at pitch 27.
+            advance = (self._kanji_pitch + self._half_phase) // 2
+        self._half_phase ^= 1
+        if not blank and code not in _BLANK_CODES:
+            self._draw_glyph(ank_glyph(self._fonts, code), 8, _HALF_WIDTH * scale, _BAND)
+        self._finish_cell(advance * scale)
+
+    def _half_pair(self) -> None:
+        self._print_half(self._cmd[1])
+
+    def _graphic(self) -> None:
+        param = self._cmd[1]
+        if 0x40 <= param <= 0x5F:
+            self._print_ank(param - 0x40)
+        else:
+            self._unsupported("SOH (invalid graphic code)")
+
+    def _jis_pair(self) -> None:
+        hi = self._cmd[0]
+        lo = self._cmd[1]
+        if 0x29 <= hi <= 0x2B:
+            self._unsupported("half-width kanji code")
+            self._print_half(0, blank=True)
+            return
+        scale = self._width_scale()
+        advance = self._kanji_pitch * scale
+        self._make_room(advance)
+        rows = kanji_glyph(self._fonts, hi, lo)
+        if rows is None:
+            self._unsupported("kanji glyph missing")
+        else:
+            self._draw_glyph(rows, 16, _FULL_WIDTH * scale, _BAND)
+        self._finish_cell(advance)
+
+    def _width_scale(self) -> int:
+        return 2 if self._double else 1
+
+    def _band_height(self) -> int:
+        return _BAND * (2 if self._vertical_double else 1)
+
+    def _draw_glyph(self, rows: list[int], src_w: int, box_w: int, box_h: int) -> None:
+        """Scale, decorate and draw a glyph at the current x, bottom-aligned
+        in the line band (box height doubled under vertical double)."""
+        band = self._band_height()
+        if self._vertical_double:
+            box_h *= 2
+        if self._decoration == _BOLD:
+            rows = embolden(rows)
+        mask = scale_glyph(rows, src_w, box_w, box_h)
+        if self._decoration == _ITALIC:
+            mask = italicise(mask)
+        elif self._decoration == _OUTLINE:
+            mask = outline(mask)
+        draw_mask(self.page, mask, self._x, self._y + band - box_h, self._y, self._y + band,
+                  self._ink)
+
+    def _finish_cell(self, advance: int) -> None:
+        band = self._band_height()
+        if self._underline:
+            for dx in range(advance):
+                self.page.set(self._x + dx, self._y + band - 1, self._ink)
+        if self._vertical_double:
+            self._extra_feed = band - _BAND
+        self._x += advance
+
+    def _make_room(self, advance: int) -> bool:
+        """Wrap (CR + LF) if the cell would pass the right margin; True if it did."""
+        if self._x + advance > self._right and self._x > self._left:
+            self._line_feed()
+            return True
+        return False
+
+    # --- movement ------------------------------------------------------------
+
+    def _carriage_return(self) -> None:
+        self._apply_extra_feed()
+        self._overflow_page()
+        self._return_head()
+
+    def _line_feed(self) -> None:
+        self._apply_extra_feed()
+        self._return_head()
+        if self._reverse:
+            self._y = max(0, self._y - self._line_pitch)
+            return
+        # One overflow check after the whole movement (extra feed + pitch).
+        self._y += self._line_pitch
+        self._overflow_page()
+
+    def _apply_extra_feed(self) -> None:
+        # The lower half of a vertically doubled line is fed past once
+        # (X88000 PC-PR201 model: head height x (zoom - 1) on the next CR/LF).
+        self._y += self._extra_feed
+        self._extra_feed = 0
+
+    def _return_head(self) -> None:
+        self._x = self._left
+        self._half_phase = 0
+
+    def _overflow_page(self) -> None:
+        # Continuous paper: a band crossing the page bottom continues on the
+        # next page.
+        if self._y + _BAND > PAGE_HEIGHT:
+            self._emit_page()
+            self._y = max(0, self._y - PAGE_HEIGHT)
+
+    def _form_feed(self) -> None:
+        self._emit_page()
+        self._y = 0
+        self._extra_feed = 0
+        self._return_head()
+
+    def _emit_page(self) -> None:
+        self._on_page(self.page)
+        self.page = PrinterPage()
+
+    # --- unsupported-code log ------------------------------------------------
+
+    def _unsupported(self, name: str, data: int = 0) -> None:
+        hex_bytes = " ".join(f"{b:02X}" for b in self._cmd)
+        if data:
+            hex_bytes += f" (+{data} data)"
+        self._log.write(f"{self._cmd_offset}\t{hex_bytes}\t{name}\n")
+        self._counts[name] = self._counts.get(name, 0) + 1
+
+
+_FINISH_HANDLERS: dict[_Pending, Callable[[HbpF1Printer], None]] = {
+    _Pending.JIS_PAIR: HbpF1Printer._jis_pair,
+    _Pending.HALF_PAIR: HbpF1Printer._half_pair,
+    _Pending.GRAPHIC: HbpF1Printer._graphic,
+    _Pending.ESC: HbpF1Printer._esc,
+    _Pending.SUB: HbpF1Printer._sub,
+    _Pending.STX: HbpF1Printer._stx,
+    _Pending.ESC_T: HbpF1Printer._esc_t,
+    _Pending.ESC_LEFT_MARGIN: HbpF1Printer._esc_left_margin,
+    _Pending.ESC_RIGHT_MARGIN: HbpF1Printer._esc_right_margin,
+    _Pending.ESC_REPEAT: HbpF1Printer._esc_repeat,
+    _Pending.ESC_C: HbpF1Printer._esc_c,
+    _Pending.ESC_COLOR_OR_SCRIPT: HbpF1Printer._esc_color_or_script,
+    _Pending.ESC_P: HbpF1Printer._esc_p,
+    _Pending.ESC_H: HbpF1Printer._esc_h,
+    _Pending.GAIJI: HbpF1Printer._gaiji,
+    _Pending.BIT_IMAGE: HbpF1Printer._bit_image,
+    _Pending.LOG: HbpF1Printer._log_pending,
+}
+
+
+class PngPageWriter:
+    """`on_page` sink writing page-001.png, page-002.png, ... into a directory."""
+
+    def __init__(self, out_dir: Path) -> None:
+        self._out_dir = out_dir
+        self._count = 0
+
+    def __call__(self, page: PrinterPage) -> None:
+        self._count += 1
+        image = _PIL_Image.frombytes("P", (page.width, page.height), bytes(page.pixels))
+        palette: list[int] = []
+        for rgb in _PALETTE:
+            palette.extend(rgb)
+        image.putpalette(palette)
+        image.save(self._out_dir / f"page-{self._count:03d}.png", dpi=(DPI, DPI))

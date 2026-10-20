@@ -2,6 +2,26 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.7.9** (2026-10-20): Emulate the printer port and a Sony HBP-F1/HBP-F1C printer that prints to PNG pages.
+  - New: the MSX printer port (I/O 0x90/0x91). Software sends a byte by latching it on 0x91 and pulsing STROBE (bit 0
+    of 0x90). With no printer attached, the status port reads busy (0xFF), as on a machine with an empty connector.
+  - New: `--printer-log FILE` attaches a logger that writes every byte the printer receives to FILE, unmodified.
+  - New: `--printer-out DIR` attaches an emulated HBP-F1/HBP-F1C. It renders each page as a 1586 x 1980-dot, 180 dpi
+    color PNG (`page-001.png`, ...). It is a feature-level implementation of the control codes in the HBP-F1C manual,
+    not a complete emulation of the printer:
+    - pica, elite and condensed ANK; kanji mode with JIS kanji, `00 xx` half-width pairs and kanji pitch;
+    - CR, LF, FF, reverse feed, line pitch and margins; a page that runs past the bottom continues on the next page;
+    - double width and double height, outline/italic/bold decoration, underline;
+    - seven colors (ESC C), with overprinted inks mixing (e.g. yellow over purple gives black). The mixing and the ink
+      colors are approximations.
+  - Fonts: the real printer has its own fonts. The emulation uses the MSX main ROM font for ANK and the Kanji ROM
+    (e.g. `--extension2 hbi_j1`) for kanji, scaled to the printer's cells with a fixed-width pen so that strokes keep
+    one width. Without a Kanji ROM, kanji print blank.
+  - Not implemented: font selection, vertical writing (ESC t prints horizontally), hagaki mode, gaiji, bit images,
+    emphasis, tabs, page length and other codes. Each is skipped with its documented parameter length and listed in
+    `DIR/unsupported.log`, with a count per code at the end, so you can see which missing features software uses.
+  - Docs: README has a Printer section, and `docs/technical-implementation.md` describes the printer internals. The
+    verified hardware now includes the Sony HBP-F1C, and the verified software includes Mahjong Friend (雀フレンド).
 - **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behaviour that did not match the specs.
   - Keyboard: SHIFT+"0" reaches the "_" cell on the Japanese (JIS) layout only. On the International layout it now
     types ")" as on real hardware.
@@ -53,10 +73,10 @@
     and history charts updated to v2.7.5.
 - **v2.7.4** (2026-10-07): Emulate the V9938 R#13 blink, and fix V9938, Z80 and PPI behaviour found by tests on the
   author's real Sony HB-F1XD.
-  - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colours during
+  - New: R#13 blink. In TEXT2 (SCREEN 0, WIDTH 80), characters marked in the blink table use the R#12 colors during
     the ON period. In GRAPHIC 4-7 the display alternates between the page R#2 selects and the even page. Every R#13
-    write restarts the timer; when one time nibble is 0, the state set by the write holds. A blink text colour 0 shows
-    the blink background (as on the HB-F1XD; MAME draws colour 0). The timer is in the save state (format version still
+    write restarts the timer; when one time nibble is 0, the state set by the write holds. A blink text color 0 shows
+    the blink background (as on the HB-F1XD; MAME draws color 0). The timer is in the save state (format version still
     15; re-save older version-15 files).
   - V9938 status and addressing:
     - S#6 bit 1 is the display field (EO), as the status-register summary of the data book says, not collision Y bit 9.

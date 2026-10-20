@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータ。機械可読なコンポーネント仕様に基づいて実装している。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3672%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3782%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -21,6 +21,7 @@
 - [Sony HB-10](https://www.msx.org/wiki/Sony_HB-10)
 - [Sony HB-F1XD](https://www.msx.org/wiki/Sony_HB-F1XD)
 - [MSX標準日本語カートリッジ HBI-J1](https://www.msx.org/wiki/Sony_HBI-J1)
+- [Sony HBP-F1C](https://www.msx.org/wiki/Sony_HBP-F1C)（熱転写カラープリンタ。エミュレートしているプリンタは、取扱説明書をもとにした機能単位の実装。後述の「プリンタ」節を参照）
 - [FM-PAC（ＦＭパナアミューズメントカートリッジ）](https://generation-msx.nl/software/matsushita-electric-industrial/fm-pana-amusement-cartridge/1072)
 
 **ソフトウェア:**
@@ -30,6 +31,7 @@
   - [グラディウス2（Nemesis 2）、KONAMI](https://generation-msx.nl/software/konami/nemesis-2/932)
   - [夢大陸アドベンチャー（Penguin Adventure）、KONAMI](https://generation-msx.nl/software/konami/penguin-adventure/873)
   - [コナミの新10倍カートリッジ（Game Master 2）、KONAMI](https://generation-msx.nl/software/konami/game-master-2/937)
+  - [雀フレンド（Mahjong Friend）、TAITO](https://generation-msx.nl/software/taito/mahjong-friend/504)
 - **MSX2:**
   - [ドラゴンスレイヤーIVドラスレファミリー（Dragon Slayer IV - Drasle Family）、Falcom](https://generation-msx.nl/software/falcom/dragon-slayer-iv-drasle-family/979)
   - [ロマンシア（Romancia - Dragon Slayer Jr.）、Falcom](https://generation-msx.nl/software/falcom/romancia-dragon-slayer-jr/881)
@@ -82,7 +84,7 @@
 
 ### VDP：Yamaha V9938（MSX2）
 
-128 KB の VRAM、28 個のコントロールレジスタ、16 色のプログラマブルパレット（9 ビット GRB333）を持つ。スクリーンモード 0〜8（SCREEN 0〜SCREEN 8）、ハードウェアコマンド（HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH）、水平ライン割り込み（R#19/R#23、IE1）を実装している。フレーム途中のレジスタとパレットの変更は、バンド単位のレンダラで処理する。
+128 KB の VRAM、28 個のコントロールレジスタ、16 色のプログラマブルパレット（9 ビット GRB333）を持つ。スクリーンモード 0〜8（SCREEN 0〜SCREEN 8）を実装している。ハードウェアコマンドエンジンと水平ライン割り込み（R#19/R#23、IE1）も実装している。コマンドは HMMV、HMMM、HMMC、LMMV、LMMM、LMCM、LMMC、YMMM、LINE、PSET、POINT、SRCH。フレーム途中のレジスタとパレットの変更は、バンド単位のレンダラで処理する。
 
 - 実装：`msx/vdp/v9938.py`、`msx/vdp/v9938_renderer.py`
 - 既知の制限：
@@ -137,7 +139,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 ### FM-PAC：MSX-MUSIC カートリッジ（YM2413/OPLL）
 
-追加で挿せるカートリッジ。`--extension1`/`--extension2 fmpac` で有効にする。有効化と必要な ROM は [`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac) を参照。64 KB のバンク切り替え ROM、openMSX 互換のマジック値でロックを外す 8 KB のバッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップを持つ。チップは 9 チャンネル 2 オペレータのメロディ合成（内蔵 15 音色とユーザー定義音色）、ADSR エンベロープ、リズムモード（バスドラム、スネア、タム、トップシンバル、ハイハット）を備える。出力は PSG/SCC と一緒にミックスする。
+追加で挿せるカートリッジ。`--extension1`/`--extension2 fmpac` で有効にする。有効化と必要な ROM は [`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac) を参照。64 KB のバンク切り替え ROM、openMSX 互換のマジック値でロックを外す 8 KB のバッテリーバックアップ SRAM、YM2413（OPLL）FM 音源チップを持つ。チップは 9 チャンネル 2 オペレータのメロディ合成を備え、音色は内蔵の 15 種類とユーザー定義の 1 つ。ほかに ADSR エンベロープと、リズムモード（バスドラム、スネア、タム、トップシンバル、ハイハット）がある。出力は PSG/SCC と一緒にミックスする。
 
 | 項目 | 詳細 |
 | --- | --- |
@@ -173,6 +175,22 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM。`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
 | SRAM 永続化 | `saves/sram/hbi-j1_msx-je.sram`。起動時にロード、終了時に保存 |
 | 既知の制限 | アドレスを書き換えずに漢字 ROM を 32 回続けて読んだ後の実機の動作は確認していない。この実装は openMSX の動作（同じ文字のバイト 0 に戻る）を正解として扱う |
+
+### プリンタ：Sony HBP-F1 / HBP-F1C
+
+MSX のパラレルプリンタポートと、そこに接続できる 2 つの機器。受け取ったバイトをそのまま記録するロガー（`--printer-log`）と、受け取った内容をページ画像に描画する Sony HBP-F1/HBP-F1C プリンタのエミュレーション（`--printer-out`）がある。どちらも指定しない場合、ポートは何も接続されていないコネクタ（BUSY）として読めるので、BIOS の印字はプリンタのないマシンと同じ動作になる。
+
+エミュレートしているプリンタは、HBP-F1C の取扱説明書で公開されているコントロールコードを、機能単位で実装したもの。プリンタの完全なエミュレーションではない。作者は HBP-F1C の実機を持っているが、出力を実機の印字とドット単位では比べていない。
+
+| 項目 | 詳細 |
+| --- | --- |
+| 実装 | `msx/printer.py`（プリンタポート、ロガー）、`msx/printer_hbpf1.py`（HBP-F1/HBP-F1C プリンタ） |
+| ポート | `0x91` への書き込みでデータをラッチし、`0x90` の bit 0（STROBE）の立ち下がりでプリンタに渡す。`0x90` の読み出しは `0xFD`（レディ）か `0xFF`（ビジー、またはプリンタなし） |
+| 出力 | PNG のみ。改ページごとに、180dpi で 1586 × 1980 ドット（ヘッドの 1 行の幅 × 11 インチのページ）の 1 ページを、8 色パレットの `page-001.png`、`page-002.png` … として書き出す。描画しないコントロールコードは `unsupported.log` に 1 回ごとに 1 行と、コード別の回数を記録する。ソフトが実際に使っている未実装機能がわかる |
+| フォント | 実機のプリンタは本体に内蔵したフォントで印字する。この実装はプリンタのフォント ROM を持たず、ANK とグラフィック文字には MSX メイン ROM のフォントを、漢字には漢字 ROM のフォントデータ（`--extension1`/`--extension2 hbi_j1` で接続する HBI-J1 のもの）を使う。字形をプリンタの文字の大きさに拡大して描くので、実機の印字とは見た目が異なる。漢字 ROM がない場合、漢字は空白になる |
+| 実装済み | パイカ／エリート／コンデンスの ANK。漢字モード（JIS 漢字、`00 xx` 形式の半角、漢字ピッチ）。CR、LF、FF、逆方向改行、改行幅。左右マージン。横倍と縦倍。白抜き／斜体／太字の飾り文字。下線。7 色のカラー印字（ESC C）。ドットスペース、文字の繰り返し、SOH によるグラフィック文字、プリンタリセット |
+| 未実装 | フォント選択（ESC p@/A/B/\`/a/b/Z）。縦書き（ESC t は横書きで印字する。ESC h1、ESC q）。はがき印字モード（STX K）。外字登録（ESC +、SUB 2）。ビットイメージ（ESC S/I/J/V/W/U、ESC D/M）とドットアドレッシング（ESC F）。プロポーショナル、上付き、下付きの字形（パイカで印字する）。強調印字（ESC !）。タブ（HT、VT、ESC ( ) 2）。ページ長（GS…RS）と VFU（US）。CAN。テスト印字（ESC CT）。半角文字漢字コード 0x2921-0x2B7E。カラー/モノクロ切り換えスイッチ。PNG 以外の出力。これらはすべて、説明書どおりの長さのパラメータごと読み飛ばし、ログに記録する |
+| 既知の制限 | インクの色は画面表示用の近似値で、重ね打ちしたときの混色（例：黄色 + 紫 = 黒）は確認していないモデルになっている。カラーリボンを入手できず、検証できなかったため。飾り文字と下線のドットパターンはこの実装独自のもので、説明書には載っていない。印字時間は再現しておらず、プリンタは常にレディになる |
 
 ### オーディオ出力フィルタ
 
@@ -320,9 +338,9 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 ### SDL2 フロントエンド
 
-ウィンドウは全マシン・全モードで 768×636（256×212 の 3 倍）に固定。描画するフレームは常に 212 ラインで、192 ラインの SCREEN モードは上下にボーダーを足して中央に置くので、R#9 の LN に関係なく 4:3 の CRT の比率が保たれる。SCREEN 6/7（横 512 ドット）は同じウィンドウ幅に縮小してドットの比率を保つ。
+ウィンドウは全マシン・全モードで 768×636（256×212 の 3 倍）に固定。描画するフレームは常に 212 ライン。192 ラインの SCREEN モードは上下にボーダーを足して中央に置くので、R#9 の LN に関係なく 4:3 の CRT の比率が保たれる。SCREEN 6/7（横 512 ドット）は同じウィンドウ幅に縮小してドットの比率を保つ。
 
-ほかに、ハードウェアパレット、アナログ風ローパスを通した 44100 Hz モノラル音声、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットがある。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示する。早送り中は音声を再生しない。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照。
+ほかに、ハードウェアパレットと、アナログ風ローパスを通した 44100 Hz のモノラル音声がある。フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットも使える。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示する。早送り中は音声を再生しない。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照。
 
 - 実装：`frontend/sdl2_frontend.py`
 - 既知の制限：音声デバイスが開いていないとき（ヘッドレスや `--benchmark` の実行など）は PSG/SCC/OPLL の合成が呼ばれないので、その間はエンベロープや LFO の状態が進まない。
@@ -472,6 +490,13 @@ python . path/to/game.rom --extension1 fmpac --extension2 hbi_j1
 # 他の --extension1/--extension2 id（MSX-DOS2 + RAM 拡張、漢字フォント、
 # View フォント）は docs/README_extension_ja.md に記載
 
+# エミュレートした HBP-F1 プリンタで PNG に印字する（漢字には漢字 ROM が必要。
+# ここでは HBI-J1 のもの）。ページと unsupported.log は prints/ に出る
+python . --machine hb_f1xd --extension2 hbi_j1 --printer-out prints
+
+# ソフトがプリンタポートに送るバイトをそのまま記録する
+python . --machine hb_f1xd --printer-log printer.prn
+
 # ホストのマウスで駆動する MSX マウスを Joy2（デフォルトポート）に接続
 python . path/to/game.rom --mouse
 
@@ -524,6 +549,8 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--vdp-trace-out FILE` | stdout | VDP トレースを FILE に書き出す |
 | `--mapper-trace` | オフ | カートリッジマッパーのバンク切り替えトレースを出力（MAP\_BANK レコード） |
 | `--mapper-trace-out FILE` | stdout | マッパートレースを FILE に書き出す |
+| `--printer-log FILE` | _（なし）_ | プリンタポート（I/O 0x90/0x91）にプリンタを接続し、受け取ったバイトを無変換で FILE に書き出す。指定しない場合、プリンタは未接続として扱われる |
+| `--printer-out DIR` | _（なし）_ | エミュレートした Sony HBP-F1/HBP-F1C プリンタを接続し、受け取った内容を 180dpi のカラー PNG ページ（`page-001.png` など）として DIR に描画する（DIR がなければ作る）。ANK は MSX メイン ROM のフォント、漢字は漢字 ROM（例：`--extension2 hbi_j1`）で描く。漢字 ROM がない場合、漢字は空白になる。実装していないコントロールコードは回数付きで `DIR/unsupported.log` に記録される。詳細は「プリンタ」節を参照。`--printer-log` とは同時に指定できない |
 | `--count-frame N` | _（なし）_ | N フレームをヘッドレスで実行して終了（SDL ウィンドウなし） |
 | `--benchmark [FRAMES]` | _（なし）_ | FRAMES フレーム（デフォルト 10000）をヘッドレス・速度制限なしで動かし、平均 FPS を表示する。`--resume` と組み合わせると、保存した場面から計測できる。`--count-frame` とは併用できない |
 | `--break-point ADDRS` | _（なし）_ | カンマ区切りの 16 進ブレークポイントアドレス（最大 4 個） |
@@ -812,7 +839,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3672 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 3782 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -849,6 +876,8 @@ py-msx-emulator/
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
 │   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス
+│   ├── printer.py         # プリンタポート（0x90/0x91）+ バイトロガー
+│   ├── printer_hbpf1.py   # Sony HBP-F1/HBP-F1C プリンタ → PNG ページ
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（16 KB セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
@@ -881,7 +910,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（3672 テスト）
+├── tests/                 # テストスイート（3782 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴
@@ -918,6 +947,7 @@ Issue とプルリクエストは歓迎する。仕様（`openspec/`、`allium/`
 - **[openMSX](https://openmsx.org/)**：ROM の識別データは openMSX の softwaredb.xml（https://github.com/openMSX/openMSX）を参考にしたが、エントリはすべて事実情報として独自に集めた。openMSX のライセンスは GNU GPL v2。
 - **[emu2413](https://github.com/digital-sound-antiques/emu2413)**（Mitsutaka Okazaki 氏）：`msx/opll.py` の YM2413（OPLL）は emu2413 v1.5.9 を Python に移植したもの。emu2413 のライセンスは MIT。
 - **[C-BIOS](https://cbios.sourceforge.net/)**：無償の MSX BIOS の代替。テストに使っており、利用を勧める。
+- **[Project X88000](https://quagma.sakura.ne.jp/manuke/x88000.html)**（Manuke 氏）：`msx/printer_hbpf1.py` の HBP-F1C プリンタエミュレーションは、HBP-F1C のマニュアルに記載のない動作について X88000 の PC-PR201 エミュレーションを一部参考にした。X88000 のソースはパブリックドメイン（PDS）。
 
 ---
 

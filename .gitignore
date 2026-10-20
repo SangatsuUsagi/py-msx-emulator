@@ -15,6 +15,7 @@ references/emu2149/
 references/emu2413/
 references/msx-msxlib/
 references/openMSX/
+references/x88_1_5_3_src/
 references/z80/
 roms/**/*.lzh
 roms/**/*.rom
