@@ -36,6 +36,14 @@ _CONDENSED = 10
 
 _POWER_ON_LINE_PITCH = 30  # 1/6 inch
 _POWER_ON_RIGHT_MARGIN = 80 * _PICA
+_LINE_PITCH_ESC_A = _POWER_ON_LINE_PITCH  # 1/6 inch
+_LINE_PITCH_ESC_B = 24  # 1/8 inch, 22.5 dots corrected to 24 (p.98 note 1)
+
+_SUB_KANJI_PITCHES = {0x51: 24, 0x4E: 27, 0x45: 30, 0x50: 36}  # SUB Q, N, E, P
+_BIT_IMAGE_BYTES_PER_COLUMN = {0x53: 1, 0x49: 2, 0x4A: 3}  # ESC S, I, J
+_BIT_IMAGE_REPEAT_BYTES = {0x56: 1, 0x57: 2, 0x55: 3}  # ESC V, W, U
+_GAIJI_TRAILER_BYTES = 72 + 1  # pattern bytes + EOT after ESC + m1 m2
+_BLANK_CODES = (0x7F, 0xFE, 0xFF)  # print as a space (p.106)
 
 _KANJI_LEVEL2_BASE = 0x20000
 
@@ -73,12 +81,31 @@ _OUTLINE = 1  # ESC p1
 _ITALIC = 2  # ESC p2
 _BOLD = 3  # ESC p3
 
-_ESC = 0x1B
+_NUL = 0x00
+_SOH = 0x01
+_STX = 0x02
+_LF = 0x0A
+_FF = 0x0C
+_CR = 0x0D
+_SO = 0x0E
+_SI = 0x0F
 _SUB = 0x1A
+_ESC = 0x1B
+_GS = 0x1D
+_RS = 0x1E
+_US = 0x1F
+
+# Logged ESC codes that take no parameters.
+_ESC_LOG_NAMES = {
+    0x21: "ESC ! (emphasis)",
+    0x32: "ESC 2 (clear tabs)",
+    0x71: "ESC q (half-width vertical pair)",
+    0x44: "ESC D (bit image pitch)",
+    0x4D: "ESC M (bit image pitch)",
+}
 
 _CONTROL_NAMES = {
     0x00: "NUL",
-    0x02: "STX",
     0x03: "ETX",
     0x04: "EOT",
     0x05: "ENQ",
@@ -334,8 +361,7 @@ class HbpF1Printer:
 
     def close(self) -> None:
         if self.page.has_ink():
-            self._on_page(self.page)
-            self.page = PrinterPage()
+            self._emit_page()
         self._log.write("# summary\n")
         ranked = sorted(self._counts.items(), key=lambda item: (-item[1], item[0]))
         for name, count in ranked:
@@ -390,29 +416,29 @@ class HbpF1Printer:
             self._print_ank(value)
 
     def _control(self, value: int) -> None:
-        if value == 0x0D:
+        if value == _CR:
             self._carriage_return()
-        elif value == 0x0A:
+        elif value == _LF:
             self._line_feed()
-        elif value == 0x0C:
+        elif value == _FF:
             self._form_feed()
-        elif value == 0x0E:
+        elif value == _SO:
             self._double = True
-        elif value == 0x0F:
+        elif value == _SI:
             self._double = False
-        elif value == 0x00 and self._kanji:
+        elif value == _NUL and self._kanji:
             self._collect(1, self._half_pair)
-        elif value == 0x01:
+        elif value == _SOH:
             self._collect(1, self._graphic)
         elif value == _ESC:
             self._collect(1, self._esc)
         elif value == _SUB:
             self._collect(1, self._sub)
-        elif value == 0x02:
+        elif value == _STX:
             self._collect(1, self._stx)
-        elif value == 0x1D:
-            self._collect_until(0x1E, self._log_handler("GS..RS (page length)"))
-        elif value == 0x1F:
+        elif value == _GS:
+            self._collect_until(_RS, self._log_handler("GS..RS (page length)"))
+        elif value == _US:
             self._collect(1, self._log_handler("US (VFU feed)"))
         else:
             self._unsupported(_CONTROL_NAMES.get(value, f"control {value:02X}"))
@@ -423,91 +449,84 @@ class HbpF1Printer:
         return handler
 
     def _esc(self) -> None:
-        c = self._cmd[1]
-        if 0x01 <= c <= 0x08:
+        letter = self._cmd[1]
+        if 0x01 <= letter <= 0x08:
             if self._kanji:
-                self._x += c * (2 if self._double else 1)
-        elif c in (0x4E, 0x48):  # N, H
+                self._x += letter * self._width_scale()
+        elif letter in (0x4E, 0x48):  # N, H
             self._select_ank(_PICA)
-        elif c == 0x45:  # E
+        elif letter == 0x45:  # E
             self._select_ank(_ELITE)
-        elif c == 0x51:  # Q
+        elif letter == 0x51:  # Q
             self._select_ank(_CONDENSED)
-        elif c == 0x50:  # P
+        elif letter == 0x50:  # P
             self._select_ank(_PICA)
             self._unsupported("ESC P (proportional)")
-        elif c == 0x4B:  # K
+        elif letter == 0x4B:  # K
             self._enter_kanji()
-        elif c == 0x74:  # t
+        elif letter == 0x74:  # t
             self._enter_kanji()
             self._unsupported("ESC t (vertical kanji mode)")
-        elif c == 0x41:  # A
-            self._line_pitch = 30
-        elif c == 0x42:  # B
-            self._line_pitch = 24
-        elif c == 0x54:  # T
+        elif letter == 0x41:  # A
+            self._line_pitch = _LINE_PITCH_ESC_A
+        elif letter == 0x42:  # B
+            self._line_pitch = _LINE_PITCH_ESC_B
+        elif letter == 0x54:  # T
             self._collect(2, self._esc_t)
-        elif c == 0x4C:  # L
+        elif letter == 0x4C:  # L
             self._collect(3, self._esc_left_margin)
-        elif c == 0x2F:  # /
+        elif letter == 0x2F:  # /
             self._collect(3, self._esc_right_margin)
-        elif c == 0x52:  # R
+        elif letter == 0x52:  # R
             self._collect(4, self._esc_repeat)
-        elif c == 0x58:  # X
+        elif letter == 0x58:  # X
             self._underline = True
-        elif c == 0x59:  # Y
+        elif letter == 0x59:  # Y
             self._underline = False
-        elif c == 0x72:  # r
+        elif letter == 0x72:  # r
             self._reverse = True
-        elif c == 0x66:  # f
+        elif letter == 0x66:  # f
             self._reverse = False
-        elif c == 0x63:  # c
+        elif letter == 0x63:  # c
             self._collect(1, self._esc_c)
-        elif c == 0x43:  # C
+        elif letter == 0x43:  # C
             self._collect(1, self._esc_color_or_script)
-        elif c == 0x70:  # p
+        elif letter == 0x70:  # p
             self._collect(1, self._esc_p)
-        elif c == 0x68:  # h
+        elif letter == 0x68:  # h
             self._collect(1, self._esc_h)
         else:
-            self._esc_unsupported(c)
+            self._esc_unsupported(letter)
 
-    def _esc_unsupported(self, c: int) -> None:
-        if c == 0x22:  # ESC ": emphasis off, a default re-select
+    def _esc_unsupported(self, letter: int) -> None:
+        if letter == 0x22:  # ESC ": emphasis off, a default re-select
             return
-        if c in (0x53, 0x49, 0x4A):  # S, I, J: N columns of 1/2/3 bytes
-            self._collect(4, self._bit_image_handler(c))
-        elif c in (0x56, 0x57, 0x55):  # V, W, U: one 1/2/3-byte column repeated
-            per = {0x56: 1, 0x57: 2, 0x55: 3}[c]
-            self._collect(4 + per, self._log_handler(f"ESC {chr(c)} (bit image repeat)"))
-        elif c == 0x46:  # F
+        if letter in (0x53, 0x49, 0x4A):  # S, I, J: N columns of 1/2/3 bytes
+            self._collect(4, self._bit_image_handler(letter))
+        elif letter in (0x56, 0x57, 0x55):  # V, W, U: one 1/2/3-byte column repeated
+            per = _BIT_IMAGE_REPEAT_BYTES[letter]
+            self._collect(4 + per, self._log_handler(f"ESC {chr(letter)} (bit image repeat)"))
+        elif letter == 0x46:  # F
             self._collect(4, self._log_handler("ESC F (dot addressing)"))
-        elif c == 0x2B:  # +: m1 m2, 72 data bytes, EOT
+        elif letter == 0x2B:  # +: m1 m2, 72 data bytes, EOT
             self._collect(2, self._gaiji)
-        elif c in (0x28, 0x29):  # ( ): tab positions up to "."
-            self._collect_until(0x2E, self._log_handler(f"ESC {chr(c)} (horizontal tab)"))
+        elif letter in (0x28, 0x29):  # ( ): tab positions up to "."
+            self._collect_until(0x2E, self._log_handler(f"ESC {chr(letter)} (horizontal tab)"))
         else:
-            names = {
-                0x21: "ESC ! (emphasis)",
-                0x32: "ESC 2 (clear tabs)",
-                0x71: "ESC q (half-width vertical pair)",
-                0x44: "ESC D (bit image pitch)",
-                0x4D: "ESC M (bit image pitch)",
-            }
-            self._unsupported(names.get(c, "unknown ESC"))
+            self._unsupported(_ESC_LOG_NAMES.get(letter, "unknown ESC"))
 
-    def _bit_image_handler(self, c: int) -> Callable[[], None]:
+    def _bit_image_handler(self, letter: int) -> Callable[[], None]:
         def handler() -> None:
             count = _digits(self._cmd[2:6])
-            per = {0x53: 1, 0x49: 2, 0x4A: 3}[c]
+            per = _BIT_IMAGE_BYTES_PER_COLUMN[letter]
             data = per * count if count is not None else 0
-            self._unsupported(f"ESC {chr(c)} (bit image)", data)
+            self._unsupported(f"ESC {chr(letter)} (bit image)", data)
             self._skip = data
         return handler
 
     def _gaiji(self) -> None:
-        self._unsupported("ESC + (gaiji)", 73)
-        self._skip = 73
+        self._unsupported("ESC + (gaiji)", _GAIJI_TRAILER_BYTES)
+        self._skip = _GAIJI_TRAILER_BYTES
 
     def _esc_t(self) -> None:
         n = _digits(self._cmd[2:4])
@@ -556,66 +575,65 @@ class HbpF1Printer:
             self._unsupported("unknown ESC c")
 
     def _esc_color_or_script(self) -> None:
-        c = self._cmd[2]
-        if c == 0x53:
+        param = self._cmd[2]
+        if param == 0x53:  # S
             self._select_ank(_PICA)
             self._unsupported("ESC CS (superscript)")
-        elif c == 0x73:
+        elif param == 0x73:  # s
             self._select_ank(_PICA)
             self._unsupported("ESC Cs (subscript)")
-        elif c == 0x54:
+        elif param == 0x54:  # T
             self._unsupported("ESC CT (test print)")
-        elif 0x30 <= c <= 0x36:
-            self._ink = _COLOR_INKS[c - 0x30]
+        elif 0x30 <= param <= 0x36:
+            self._ink = _COLOR_INKS[param - 0x30]
         else:
             self._unsupported("ESC C (invalid colour)")
 
     def _esc_p(self) -> None:
-        c = self._cmd[2]
-        if 0x30 <= c <= 0x33:  # p0 off, p1 outline, p2 italic, p3 bold
-            self._decoration = c - 0x30
-        elif c in (0x40, 0x60):  # standard kana/ANK fonts
+        param = self._cmd[2]
+        if 0x30 <= param <= 0x33:  # p0 off, p1 outline, p2 italic, p3 bold
+            self._decoration = param - 0x30
+        elif param in (0x40, 0x60):  # standard kana/ANK fonts
             return
-        elif c in (0x41, 0x42, 0x61, 0x62, 0x5A):
-            self._unsupported(f"ESC p{chr(c)} (font)")
+        elif param in (0x41, 0x42, 0x61, 0x62, 0x5A):
+            self._unsupported(f"ESC p{chr(param)} (font)")
         else:
             self._unsupported("unknown ESC p")
 
     def _esc_h(self) -> None:
-        c = self._cmd[2]
-        if c == 0x30:
+        param = self._cmd[2]
+        if param == 0x30:  # h0: half-width horizontal, the only layout rendered
             return
-        if c == 0x31:
+        if param == 0x31:
             self._unsupported("ESC h1 (half-width vertical)")
         else:
             self._unsupported("unknown ESC h")
 
     def _sub(self) -> None:
-        c = self._cmd[1]
-        pitches = {0x51: 24, 0x4E: 27, 0x45: 30, 0x50: 36}
-        if c in pitches:
-            self._kanji_pitch = pitches[c]
-        elif c == 0x46:  # F
+        letter = self._cmd[1]
+        if letter in _SUB_KANJI_PITCHES:
+            self._kanji_pitch = _SUB_KANJI_PITCHES[letter]
+        elif letter == 0x46:  # F
             self._unit_120 = True
-        elif c == 0x47:  # G
+        elif letter == 0x47:  # G
             self._unit_120 = False
-        elif c == 0x56:  # V
+        elif letter == 0x56:  # V
             self._vertical_double = True
-        elif c == 0x57:  # W
+        elif letter == 0x57:  # W
             self._vertical_double = False
-        elif c == 0x55:
+        elif letter == 0x55:  # U
             self._select_ank(_PICA)
             self._unsupported("SUB U (superscript)")
-        elif c == 0x4C:
+        elif letter == 0x4C:  # L
             self._select_ank(_PICA)
             self._unsupported("SUB L (subscript)")
-        elif c == 0x32:
+        elif letter == 0x32:  # 2
             self._unsupported("SUB 2 (clear gaiji)")
         else:
             self._unsupported("unknown SUB")
 
     def _stx(self) -> None:
-        if self._cmd[1] == 0x4B:
+        if self._cmd[1] == 0x4B:  # K
             self._collect(1, self._log_handler("STX K (hagaki mode)"))
         else:
             self._unsupported("unknown STX")
@@ -633,18 +651,18 @@ class HbpF1Printer:
         if self._kanji:
             self._print_half(code)
             return
-        width = self._ank_pitch * (2 if self._double else 1)
+        width = self._ank_pitch * self._width_scale()
         self._make_room(width)
-        if code not in (0x7F, 0xFE, 0xFF):
+        if code not in _BLANK_CODES:
             self._draw_glyph(ank_glyph(self._fonts, code), 8, width, _ANK_HEIGHT)
         self._finish_cell(width)
 
     def _print_half(self, code: int, blank: bool = False) -> None:
         advance = (self._kanji_pitch + self._half_phase) // 2
         self._half_phase ^= 1
-        scale = 2 if self._double else 1
+        scale = self._width_scale()
         self._make_room(advance * scale)
-        if not blank and code not in (0x7F, 0xFE, 0xFF):
+        if not blank and code not in _BLANK_CODES:
             self._draw_glyph(ank_glyph(self._fonts, code), 8, _HALF_WIDTH * scale, _BAND)
         self._finish_cell(advance * scale)
 
@@ -652,9 +670,9 @@ class HbpF1Printer:
         self._print_half(self._cmd[1])
 
     def _graphic(self) -> None:
-        b = self._cmd[1]
-        if 0x40 <= b <= 0x5F:
-            self._print_ank(b - 0x40)
+        param = self._cmd[1]
+        if 0x40 <= param <= 0x5F:
+            self._print_ank(param - 0x40)
         else:
             self._unsupported("SOH (invalid graphic code)")
 
@@ -665,7 +683,7 @@ class HbpF1Printer:
             self._unsupported("half-width kanji code")
             self._print_half(0, blank=True)
             return
-        scale = 2 if self._double else 1
+        scale = self._width_scale()
         advance = self._kanji_pitch * scale
         self._make_room(advance)
         rows = kanji_glyph(self._fonts, hi, lo)
@@ -674,6 +692,9 @@ class HbpF1Printer:
         else:
             self._draw_glyph(rows, 16, _FULL_WIDTH * scale, _BAND)
         self._finish_cell(advance)
+
+    def _width_scale(self) -> int:
+        return 2 if self._double else 1
 
     def _band_height(self) -> int:
         return _BAND * (2 if self._vertical_double else 1)
@@ -705,8 +726,7 @@ class HbpF1Printer:
 
     def _make_room(self, advance: int) -> None:
         if self._x + advance > self._right and self._x > self._left:
-            self._carriage_return()
-            self._line_feed()
+            self._line_feed()  # CR + LF
 
     # --- movement ------------------------------------------------------------
 
