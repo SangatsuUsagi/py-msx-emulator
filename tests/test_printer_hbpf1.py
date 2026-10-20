@@ -4,6 +4,8 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from PIL import Image
 
 from msx.printer import PrinterPort
@@ -175,6 +177,12 @@ def test_half_width_pair() -> None:
 def test_kanji_pitch_27_half_width_alternation() -> None:
     printer, _, _ = _make(b"\x1a\x4e\x1b\x4b\x00\x41\x00\x41\x00\x41")
     assert _starts(printer.page, 0) == [0, 13, 27]
+
+
+def test_full_width_kanji_wraps_to_the_next_line() -> None:
+    # PrintJisKanjiWraps: 60 kanji fill 1440 dots; the 61st starts line 2.
+    printer, _, _ = _make(b"\x1b\x4b" + b"\x34\x41" * 61 + b"\x00\x41")
+    assert _starts(printer.page, 30) == [24]  # half-width A after the wrapped kanji
 
 
 def test_wrapped_line_restarts_the_alternation() -> None:
@@ -497,9 +505,222 @@ def test_unterminated_page_length_is_abandoned() -> None:
     assert _starts(printer.page, ANK_TOP) == [0]
 
 
+# ---------------------------------------------------------------------------
+# allium/hbp-f1-printer.allium obligations not covered by the scenarios above
+# ---------------------------------------------------------------------------
+
+def test_hbp_f1_constants() -> None:
+    # config block: page geometry and the cell sizes of manual p.86 / p.105
+    from msx import printer_hbpf1 as m
+    assert (m.PAGE_WIDTH, m.PAGE_HEIGHT, m.DPI) == (1586, 1980, 180)
+    assert (m._BAND, m._ANK_HEIGHT, m._FULL_WIDTH, m._HALF_WIDTH) == (24, 18, 24, 12)
+    assert (m._PICA, m._ELITE, m._CONDENSED) == (18, 15, 10)
+    assert m._MIN_PRINT_WIDTH == 72
+    assert (m._POWER_ON_LINE_PITCH, m._POWER_ON_RIGHT_MARGIN) == (30, 1440)
+    assert (m._LINE_PITCH_ESC_A, m._LINE_PITCH_ESC_B) == (30, 24)
+    assert (m._MAX_UNTIL_BYTES, m._GAIJI_TRAILER_BYTES) == (256, 73)
+
+
+# --- contract GlyphScaler / GlyphDecorator -----------------------------------
+
+def test_scaler_fits_the_box() -> None:
+    # FitsBox: a solid glyph fills exactly the box, at every size in use.
+    from msx.printer_hbpf1 import scale_glyph
+    for src, rows, dst_w, dst_h in ((8, [0xFF] * 8, 18, 18), (8, [0xFF] * 8, 10, 18),
+                                    (8, [0xFF] * 8, 12, 24), (16, [0xFFFF] * 16, 24, 24),
+                                    (16, [0xFFFF] * 16, 48, 48)):
+        mask = scale_glyph(rows, src, dst_w, dst_h)
+        assert (mask.width, mask.height, mask.x_offset, mask.y_offset) == (dst_w, dst_h, 0, 0)
+        assert mask.rows == [(1 << dst_w) - 1] * dst_h
+        assert mask == scale_glyph(rows, src, dst_w, dst_h)  # value equality
+
+
+def test_embolden_widens_by_one_source_dot() -> None:
+    # BoldAtSourceResolution
+    from msx.printer_hbpf1 import embolden
+    assert embolden([0x80, 0x10, 0x00]) == [0xC0, 0x18, 0x00]
+
+
+def test_italicise_shears_from_the_bottom() -> None:
+    # ItalicShear: row dy moves (height-1-dy)//4 right; the mask widens by the max.
+    from msx.printer_hbpf1 import GlyphMask, italicise
+    mask = italicise(GlyphMask(4, 9, [0b1000] * 9))
+    assert mask.width == 4 + 2
+    assert mask.rows[8] == 0b100000  # bottom row unmoved (in the wider mask)
+    assert mask.rows[0] == 0b001000  # top row moved 2 dots right
+
+
+def test_outline_is_a_ring_around_the_glyph() -> None:
+    # OutlineRing: one dot all round, the stroke itself blank, offsets -1.
+    from msx.printer_hbpf1 import GlyphMask, outline
+    mask = outline(GlyphMask(1, 1, [1]))
+    assert (mask.width, mask.height, mask.x_offset, mask.y_offset) == (3, 3, -1, -1)
+    assert mask.rows == [0b111, 0b101, 0b111]
+
+
+# --- kanji ROM coverage -------------------------------------------------------
+
+def test_kanji_rows_not_in_the_rom_are_missing() -> None:
+    # PrintJisKanji guidance: rows 0x2C-0x2F and level 2 on a 128 KB ROM.
+    from msx.printer_hbpf1 import kanji_glyph
+    full = PrinterFonts(ank=bytes(2048), kanji=bytes(262144))
+    level1_only = PrinterFonts(ank=bytes(2048), kanji=bytes(131072))
+    assert kanji_glyph(full, 0x2D, 0x21) is None
+    assert kanji_glyph(full, 0x30, 0x21) is not None
+    assert kanji_glyph(full, 0x50, 0x21) is not None
+    assert kanji_glyph(level1_only, 0x50, 0x21) is None
+    assert kanji_glyph(full, 0x75, 0x21) is None  # past row 0x74
+
+
+def test_invalid_kanji_first_byte_is_logged_and_dropped() -> None:
+    printer, _, log = _make(b"\x1b\x4b\x20\x80\x00\x41")
+    assert [line[2] for line in _log_lines(log)] == ["invalid kanji first byte"] * 2
+    assert _starts(printer.page, 0) == [0]  # the 00 41 pair still lands at x = 0
+
+
+# --- modes, pitches, framing ---------------------------------------------------
+
+def test_partly_rendered_mode_selects_print_pica_and_log() -> None:
+    # SelectAnkMode: ESC P, SUB U, SUB L, ESC CS, ESC Cs leave kanji mode, print
+    # pica, and are logged; ESC CT is logged as test print, not as a colour.
+    for command, name in ((b"\x1b\x50", "ESC P (proportional)"),
+                          (b"\x1a\x55", "SUB U (superscript)"),
+                          (b"\x1a\x4c", "SUB L (subscript)"),
+                          (b"\x1b\x43\x53", "ESC CS (superscript)"),
+                          (b"\x1b\x43\x73", "ESC Cs (subscript)")):
+        printer, _, log = _make(b"\x1b\x4b" + command + b"\x41\x41")
+        assert _starts(printer.page, ANK_TOP) == [0, 18], name
+        assert [line[2] for line in _log_lines(log)] == [name]
+    _, _, log = _make(b"\x1b\x43\x54")
+    assert [line[2] for line in _log_lines(log)] == ["ESC CT (test print)"]
+
+
+def test_kanji_pitches() -> None:
+    # SetKanjiPitch: SUB Q / E / P = 24 / 30 / 36 full-width advances.
+    for letter, pitch in ((0x51, 24), (0x45, 30), (0x50, 36)):
+        printer, _, log = _make(bytes((0x1A, letter)) + b"\x1b\x4b\x29\x41\x29\x41\x00\x41")
+        # two blank half-width cells (rows 0x29) advance pitch/2 each
+        assert _starts(printer.page, 0) == [pitch], letter
+
+
+def test_line_pitch_esc_a_and_b() -> None:
+    # SetLinePitchFixed: ESC B = 24 dots, ESC A = 30.
+    printer, _, _ = _make(b"\x1b\x42" + LF + b"\x41\x1b\x41" + LF + b"\x41")
+    assert _starts(printer.page, 24 + ANK_TOP) == [0]
+    assert _starts(printer.page, 54 + ANK_TOP) == [0]
+
+
+def test_line_unit_back_to_1_120() -> None:
+    # SelectLineUnit: SUB F after SUB G restores the 1/120-inch unit.
+    printer, _, _ = _make(b"\x1a\x47\x1a\x46\x1b\x54\x32\x30" + LF + b"\x41")
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+
+
+def test_malformed_line_pitch_is_logged() -> None:
+    printer, _, log = _make(b"\x1b\x54\x33\x58" + LF + b"\x41")
+    assert [line[2] for line in _log_lines(log)] == ["ESC T (malformed)"]
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]  # pitch unchanged
+
+
+def test_right_margin_wraps_earlier() -> None:
+    # SetRightMargin: ESC /010 (180 dots) wraps the 11th pica character.
+    printer, _, _ = _make(b"\x1b\x2f\x30\x31\x30" + b"\x41" * 11)
+    assert len(_starts(printer.page, ANK_TOP)) == 10
+    assert _starts(printer.page, 30 + ANK_TOP) == [0]
+
+
+def test_right_margin_under_72_dots_is_ignored() -> None:
+    printer, _, _ = _make(b"\x1b\x2f\x30\x30\x33" + b"\x41" * 11)
+    assert len(_starts(printer.page, ANK_TOP)) == 11
+
+
+def test_invalid_graphic_code_is_logged() -> None:
+    printer, _, log = _make(b"\x01\x20\x41")
+    assert [line[2] for line in _log_lines(log)] == ["SOH (invalid graphic code)"]
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_repeat_in_kanji_mode_prints_half_width() -> None:
+    printer, _, _ = _make(b"\x1b\x4b\x1b\x52\x30\x30\x32\x41")
+    assert _starts(printer.page, 0) == [0, 12]
+
+
+def test_default_reselects_are_silent() -> None:
+    # DefaultReselectIsSilent: ESC p@, ESC p`, ESC h0, ESC ".
+    _, _, log = _make(b"\x1b\x70\x40\x1b\x70\x60\x1b\x68\x30\x1b\x22")
+    assert log.getvalue() == ""
+
+
+def test_terminated_tab_list_is_logged_once() -> None:
+    # UnsupportedCodeConsumed: ESC ( ... "." consumed up to the terminator.
+    printer, _, log = _make(b"\x1b\x28\x30\x31\x30\x2c\x30\x32\x30\x2e\x41")
+    assert _log_lines(log) == [["0", "1B 28 30 31 30 2C 30 32 30 2E",
+                                "ESC ( (horizontal tab)"]]
+    assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_summary_ties_sorted_by_name() -> None:
+    # UnsupportedCodeLog SummaryOrder: most frequent first, ties by name.
+    printer, _, log = _make(b"\x1b\x58\x1b\x21\x1b\x32")  # X is underline (supported)
+    printer.close()
+    summary = log.getvalue().split("# summary\n")[1].splitlines()
+    assert summary == ["1\tESC ! (emphasis)", "1\tESC 2 (clear tabs)"]
+
+
+# --- reset, carriage return, page movement ---------------------------------------
+
+def test_reset_restores_every_formatting_setting() -> None:
+    # FormattingRestored: margins, pitches, enlargements, underline, colour.
+    printer, _, _ = _make(b"\x1b\x4c\x30\x30\x35\x1b\x45\x0e\x1a\x56\x1b\x58"
+                          b"\x1b\x43\x32\x1a\x50\x1b\x42\x1b\x72\x1b\x63\x31\x41\x41")
+    assert printer._left == 0 and printer._right == 1440
+    assert (printer._ank_pitch, printer._kanji_pitch, printer._line_pitch) == (18, 24, 30)
+    assert not (printer._double or printer._vertical_double or printer._underline)
+    assert printer._ink == INK_BLACK and printer._unit_120 and not printer._reverse
+    assert _starts(printer.page, ANK_TOP) == [0, 18]
+
+
+def test_bare_cr_applies_the_extra_feed() -> None:
+    # CarriageReturn: the pending lower-half feed is applied by CR alone.
+    printer, _, _ = _make(b"\x1a\x56\x41\x1a\x57\x0d\x41")
+    assert _starts(printer.page, 24 + ANK_TOP) == [0]
+
+
 def test_cr_extra_feed_past_the_page_bottom_continues_on_a_new_page() -> None:
     # 65 LF -> y = 1950; the doubled A leaves a 24-dot feed that CR applies,
     # crossing the 1980-dot page bottom.
     printer, pages, _ = _make(LF * 65 + b"\x1a\x56\x41\x1a\x57\x0d\x41")
     assert len(pages) == 1
     assert _starts(printer.page, ANK_TOP) == [0]
+
+
+def test_form_feed_returns_to_the_left_margin() -> None:
+    printer, _, _ = _make(b"\x1b\x4c\x30\x31\x30\x41\x41\x0c\x41")
+    assert _starts(printer.page, ANK_TOP) == [180]
+
+
+# --- invariants ---------------------------------------------------------------
+
+_COMMANDS = st.sampled_from([
+    b"A", b"\x0d", b"\x0a", b"\x0c", b"\x0e", b"\x0f", b"\x1b\x4b", b"\x1b\x48",
+    b"\x1b\x45", b"\x1b\x51", b"\x00\x41", b"\x34\x41", b"\x1a\x56", b"\x1a\x57",
+    b"\x1a\x47", b"\x1a\x46", b"\x1b\x54\x39\x39", b"\x1b\x54\x30\x30", b"\x1b\x72",
+    b"\x1b\x66", b"\x1b\x4c\x30\x37\x30", b"\x1b\x4c\x30\x30\x30",
+    b"\x1b\x2f\x30\x31\x30", b"\x1b\x2f\x30\x38\x30", b"\x1b\x63\x31",
+    b"\x1b\x70\x31", b"\x1b\x70\x32", b"\x1b\x58", b"\x1b\x43\x35",
+    b"\x1b\x52\x30\x32\x30\x41",
+    b"\x0a" * 60,  # reach the page bottom within a short example
+])
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.lists(_COMMANDS, max_size=80))
+def test_printer_invariants_property(commands: list[bytes]) -> None:
+    # HeadStaysOnPage, MarginsLeaveRoom, PendingFeedIsOneBand after every command.
+    printer, _, _ = _make(b"")
+    for command in commands:
+        for b in command:
+            printer.write_byte(b)
+        assert 0 <= printer._y and printer._y + 24 <= PAGE_HEIGHT
+        assert printer._right - printer._left >= 72 and printer._right <= PAGE_WIDTH
+        assert printer._extra_feed in (0, 24)
