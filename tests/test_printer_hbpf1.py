@@ -8,6 +8,10 @@ from PIL import Image
 
 from msx.printer import PrinterPort
 from msx.printer_hbpf1 import (
+    INK_BLACK,
+    INK_C,
+    INK_M,
+    INK_Y,
     PAGE_HEIGHT,
     PAGE_WIDTH,
     HbpF1Printer,
@@ -43,6 +47,10 @@ def _make(data: bytes, font: bytes | None = None,
     for b in data:
         printer.write_byte(b)
     return printer, pages, log
+
+
+def _has_ink(page: PrinterPage, x: int, y: int) -> int:
+    return 1 if page.get(x, y) else 0
 
 
 def _starts(page: PrinterPage, y: int) -> list[int]:
@@ -121,7 +129,7 @@ def test_graphic_character() -> None:
     font = bytearray(2048)
     font[0x01 * 8] = 0xFF
     printer, _, _ = _make(b"\x01\x41", font=font)
-    row = [printer.page.get(x, ANK_TOP) for x in range(20)]
+    row = [_has_ink(printer.page, x, ANK_TOP) for x in range(20)]
     assert row == [1] * 18 + [0, 0]
 
 
@@ -161,7 +169,7 @@ def test_half_width_pair() -> None:
     printer, _, _ = _make(b"\x1b\x4b\x00\x41\x00\x42")
     assert _starts(printer.page, 0) == [0, 12]
     # 12 x 24 cell: the 8x8 glyph's top-left dot covers 3 rows (24/8).
-    assert [printer.page.get(0, y) for y in range(4)] == [1, 1, 1, 0]
+    assert [_has_ink(printer.page, 0, y) for y in range(4)] == [1, 1, 1, 0]
 
 
 def test_kanji_pitch_27_half_width_alternation() -> None:
@@ -238,7 +246,7 @@ def test_double_width() -> None:
     font = bytearray(2048)
     font[0x41 * 8] = 0xFE  # 7 of 8 columns: ink ends 4 dots before a 36-dot cell edge
     printer, _, _ = _make(b"\x0e\x41\x0f\x41", font=font)
-    row = [printer.page.get(x, ANK_TOP) for x in range(40)]
+    row = [_has_ink(printer.page, x, ANK_TOP) for x in range(40)]
     assert row[0:32] == [1] * 32 and row[32:36] == [0] * 4 and row[36] == 1
 
 
@@ -294,9 +302,10 @@ def test_pages_numbered_in_order(tmp_path: Path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == ["page-001.png", "page-002.png"]
     with Image.open(tmp_path / "page-001.png") as image:
         assert image.size == (PAGE_WIDTH, PAGE_HEIGHT)
-        assert image.mode == "1"
-        assert image.getpixel((0, ANK_TOP)) == 0  # ink is black
-        assert image.getpixel((5, ANK_TOP)) == 255
+        assert image.mode == "P"
+        rgb = image.convert("RGB")
+        assert rgb.getpixel((0, ANK_TOP)) == (0, 0, 0)  # black ink
+        assert rgb.getpixel((5, ANK_TOP)) == (255, 255, 255)  # paper
         assert round(image.info["dpi"][0]) == 180
 
 
@@ -332,7 +341,7 @@ def test_outline_draws_a_ring_around_the_glyph() -> None:
     printer, _, _ = _make(b"\x1b\x70\x31\x41", font=font)
     page = printer.page
     assert page.get(5, 10) == 0
-    assert page.get(18, 10) == 1 and page.get(5, 5) == 1
+    assert _has_ink(page, 18, 10) and _has_ink(page, 5, 5)
     assert _ink_row(page, 24, 40) == []
 
 
@@ -410,3 +419,54 @@ def test_condensed_width_falls_back_to_nearest_neighbour() -> None:
     font[0x41 * 8] = 0xA0  # columns 0 and 2 of row 0
     printer, _, _ = _make(b"\x1b\x51\x41", font=font)
     assert _ink_row(printer.page, ANK_TOP, 10) == [0, 1, 3]
+
+
+# --- colour ------------------------------------------------------------------
+
+def _inks_in(page: PrinterPage, x0: int, x1: int, y0: int, y1: int) -> set[int]:
+    inks = set()
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            if page.get(x, y):
+                inks.add(page.get(x, y))
+    return inks
+
+
+def test_colour_applies_to_later_glyphs() -> None:
+    printer, _, _ = _make(b"\x1b\x43\x32\x41")
+    assert _inks_in(printer.page, 0, 18, 0, 24) == {INK_Y | INK_M}
+
+
+def test_colour_applies_to_the_underline() -> None:
+    printer, _, _ = _make(b"\x1b\x43\x35\x1b\x58\x41")
+    assert _inks_in(printer.page, 0, 18, 23, 24) == {INK_C}
+
+
+def test_invalid_colour_is_ignored_and_logged() -> None:
+    printer, _, log = _make(b"\x1b\x43\x32\x1b\x43\x37\x41")
+    assert _inks_in(printer.page, 0, 18, 0, 24) == {INK_Y | INK_M}
+    assert _log_lines(log) == [["3", "1B 43 37", "ESC C (invalid colour)"]]
+
+
+def test_overprint_mixes_inks() -> None:
+    font = bytearray(2048)
+    for r in range(8):
+        font[0x41 * 8 + r] = 0xFF
+    printer, _, _ = _make(b"\x1b\x43\x36\x41\x0d\x1b\x43\x31\x41", font=font)
+    assert _inks_in(printer.page, 0, 18, 0, 24) == {INK_BLACK}
+
+
+def test_reset_restores_black() -> None:
+    printer, _, _ = _make(b"\x1b\x43\x32\x1b\x63\x31\x41")
+    assert _inks_in(printer.page, 0, 18, 0, 24) == {INK_BLACK}
+
+
+def test_colours_in_the_png(tmp_path: Path) -> None:
+    printer = HbpF1Printer(PrinterFonts(ank=bytes(_marker_font())),
+                           PngPageWriter(tmp_path), _Log())
+    for b in b"\x1b\x43\x36\x41\x0c":
+        printer.write_byte(b)
+    with Image.open(tmp_path / "page-001.png") as image:
+        rgb = image.convert("RGB")
+        assert rgb.getpixel((0, ANK_TOP)) == (255, 230, 0)  # yellow
+        assert rgb.getpixel((5, ANK_TOP)) == (255, 255, 255)  # paper

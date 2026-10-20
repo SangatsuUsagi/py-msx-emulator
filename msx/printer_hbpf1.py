@@ -39,6 +39,35 @@ _POWER_ON_RIGHT_MARGIN = 80 * _PICA
 
 _KANJI_LEVEL2_BASE = 0x20000
 
+# Ink sets: the seven colours read as combinations of three ribbon inks.
+INK_Y = 0b001
+INK_M = 0b010
+INK_C = 0b100
+INK_BLACK = INK_Y | INK_M | INK_C
+
+# ESC C n, n = '0'..'6' (manual p.52, p.76).
+_COLOR_INKS = (
+    INK_BLACK,  # 0 black
+    INK_M | INK_C,  # 1 purple
+    INK_Y | INK_M,  # 2 red
+    INK_M,  # 3 red-purple
+    INK_Y | INK_C,  # 4 green
+    INK_C,  # 5 blue
+    INK_Y,  # 6 yellow
+)
+
+# PNG palette indexed by ink set; display approximations, not measured inks.
+_PALETTE = (
+    (255, 255, 255),  # paper
+    (255, 230, 0),  # Y: yellow
+    (230, 0, 126),  # M: red-purple
+    (230, 30, 30),  # Y+M: red
+    (0, 140, 220),  # C: blue
+    (0, 150, 70),  # Y+C: green
+    (100, 40, 150),  # M+C: purple
+    (0, 0, 0),  # Y+M+C: black
+)
+
 _NO_DECORATION = 0
 _OUTLINE = 1  # ESC p1
 _ITALIC = 2  # ESC p2
@@ -83,7 +112,7 @@ class PrinterFonts:
 
 @dataclass
 class PrinterPage:
-    """One page of dots; 1 = ink."""
+    """One page of dots; each holds its ink set (0 = paper)."""
 
     width: int = PAGE_WIDTH
     height: int = PAGE_HEIGHT
@@ -97,9 +126,10 @@ class PrinterPage:
     def get(self, x: int, y: int) -> int:
         return self.pixels[y * self.width + x]
 
-    def set(self, x: int, y: int) -> None:
+    def set(self, x: int, y: int, ink: int = INK_BLACK) -> None:
+        """Add `ink` to the dot: overprinting mixes inks, never removes them."""
         if 0 <= x < self.width and 0 <= y < self.height:
-            self.pixels[y * self.width + x] = 1
+            self.pixels[y * self.width + x] |= ink
             self._inked = True
 
     def has_ink(self) -> bool:
@@ -238,7 +268,7 @@ def outline(mask: GlyphMask) -> GlyphMask:
 
 
 def draw_mask(page: PrinterPage, mask: GlyphMask, x0: int, y0: int,
-              clip_top: int, clip_bottom: int) -> None:
+              clip_top: int, clip_bottom: int, ink: int = INK_BLACK) -> None:
     """OR a mask onto the page at box origin (x0, y0), rows clipped to
     [clip_top, clip_bottom) -- the line band the head can reach."""
     for i in range(mask.height):
@@ -248,7 +278,7 @@ def draw_mask(page: PrinterPage, mask: GlyphMask, x0: int, y0: int,
             continue
         for dx in range(mask.width):
             if (row >> (mask.width - 1 - dx)) & 1:
-                page.set(x0 + mask.x_offset + dx, y)
+                page.set(x0 + mask.x_offset + dx, y, ink)
 
 
 class HbpF1Printer:
@@ -327,6 +357,7 @@ class HbpF1Printer:
         self._underline = False
         self._decoration = _NO_DECORATION
         self._extra_feed = 0
+        self._ink = INK_BLACK
         self._left = 0
         self._right = _POWER_ON_RIGHT_MARGIN
         self._x = self._left
@@ -534,10 +565,10 @@ class HbpF1Printer:
             self._unsupported("ESC Cs (subscript)")
         elif c == 0x54:
             self._unsupported("ESC CT (test print)")
-        elif c == 0x30:
-            return  # black: the only ink rendered
+        elif 0x30 <= c <= 0x36:
+            self._ink = _COLOR_INKS[c - 0x30]
         else:
-            self._unsupported("ESC C (color)")
+            self._unsupported("ESC C (invalid colour)")
 
     def _esc_p(self) -> None:
         c = self._cmd[2]
@@ -660,13 +691,14 @@ class HbpF1Printer:
             mask = italicise(mask)
         elif self._decoration == _OUTLINE:
             mask = outline(mask)
-        draw_mask(self.page, mask, self._x, self._y + band - box_h, self._y, self._y + band)
+        draw_mask(self.page, mask, self._x, self._y + band - box_h, self._y, self._y + band,
+                  self._ink)
 
     def _finish_cell(self, advance: int) -> None:
         band = self._band_height()
         if self._underline:
             for dx in range(advance):
-                self.page.set(self._x + dx, self._y + band - 1)
+                self.page.set(self._x + dx, self._y + band - 1, self._ink)
         if self._vertical_double:
             self._extra_feed = band - _BAND
         self._x += advance
@@ -725,8 +757,9 @@ class PngPageWriter:
 
     def __call__(self, page: PrinterPage) -> None:
         self._count += 1
-        # 1 = ink -> black (0), 0 -> white (255).
-        table = bytes([255, 0] + [0] * 254)
-        gray = bytes(page.pixels).translate(table)
-        image = _PIL_Image.frombytes("L", (page.width, page.height), gray).convert("1")
+        image = _PIL_Image.frombytes("P", (page.width, page.height), bytes(page.pixels))
+        palette: list[int] = []
+        for rgb in _PALETTE:
+            palette.extend(rgb)
+        image.putpalette(palette)
         image.save(self._out_dir / f"page-{self._count:03d}.png", dpi=(DPI, DPI))
