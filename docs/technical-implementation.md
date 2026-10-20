@@ -13,6 +13,7 @@ subsystem.
 - [Audio](#audio)
 - [Memory and slot system](#memory-and-slot-system)
 - [Floppy disk (FDC)](#floppy-disk-fdc)
+- [Printer](#printer)
 - [Machine and extension YAML schema](#machine-and-extension-yaml-schema)
 - [Machine YAML loader](#machine-yaml-loader)
 - [Portability](#portability)
@@ -232,6 +233,7 @@ the value, and the current instruction PC.
 | 0x9A      | V9938 palette (MSX2 only)                |
 | 0xA0-0xA2 | PSG (AY-3-8910)                          |
 | 0x7C-0x7D | FM-PAC OPLL (with `--extensionN fmpac`)  |
+| 0x90-0x91 | Printer port (always registered; a device only with `--printer-log` / `--printer-out`) |
 | 0xA8-0xAB | PPI (i8255)                              |
 | 0xB4-0xB5 | RTC (RP5C01, MSX2 only)                  |
 | 0xD8-0xDB | Kanji ROM (`hbi_j1` and similar extensions) |
@@ -542,6 +544,109 @@ images. Three paths swap disks at runtime, and all of them call
 The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and
 writes files with write-back on exit.
 `machine.fdc` is `None` on machines with no floppy interface.
+
+## Printer
+
+The printer is two layers: the printer port in `msx/printer.py` and the device
+plugged into it. The two devices are `RawPrinterLogger` (`--printer-log`) and
+`HbpF1Printer` in `msx/printer_hbpf1.py` (`--printer-out`).
+
+### Printer port
+
+`PrinterPort` decodes I/O ports 0x90-0x91, which `build_machine()` registers on
+every machine:
+
+- A write to 0x91 latches the data byte.
+- A write to 0x90 sets STROBE from bit 0. A 1 → 0 transition (falling edge, as
+  openMSX's `PrinterPortLogger` records it) hands the latched byte to the
+  device, once per pulse.
+- A read of 0x90 returns 0xFF with bit 1 = BUSY. With no device attached it
+  reads busy, like an empty connector, so BIOS printing behaves as on a
+  machine without a printer. A read of 0x91 returns 0xFF.
+- `reset()` (from `Machine.reset()`) restores STROBE to 1 and clears the latch,
+  and keeps the device.
+
+A device implements the `PrinterDevice` protocol: `is_busy()`,
+`write_byte(value)` and `close()`. Both devices are always ready. At exit,
+`__main__._cleanup` calls `PrinterPort.close()`, which closes the output the
+device owns.
+
+### Wiring
+
+`build_machine(..., printer_log=..., printer_out=...)` accepts at most one of
+the two (the CLI enforces the same with a mutually exclusive group). It opens
+the output last, so a failed build leaves no truncated file. For
+`printer_out`, it creates the directory and gives `HbpF1Printer` its glyph
+sources:
+
+- The 2 KB ANK font from the main ROM, at the address in CGTABL (0x0004). This
+  is the font that the machine itself displays.
+- The ROM image of the wired Kanji-ROM device (e.g. `--extension2 hbi_j1`), or
+  none.
+
+The real printer has fonts of its own. The emulation has no printer font ROM.
+
+### HBP-F1/HBP-F1C interpreter
+
+`HbpF1Printer.write_byte()` is a byte-at-a-time state machine. `_Collect`
+says what the next byte is for:
+
+- `IDLE`: start a new command.
+- `COUNT`: append to the command until N parameter bytes are in.
+- `UNTIL`: append up to a terminator (GS…RS, ESC ( … .). The command is
+  abandoned at 256 bytes and logged as unterminated.
+- `SKIP`: drop bulk data unbuffered (bit images, gaiji).
+
+`_Pending` names the handler to run once the command is complete. The
+module-level `_FINISH_HANDLERS` table maps it to a plain function, and
+`_ESC_PARAMETERS` gives each ESC letter's parameter length and handler.
+Commands the renderer does not draw are consumed with their documented
+lengths and written to the unsupported-code log, so the stream never goes out
+of sync.
+
+The page is 1586 × 1980 dots at 180 dpi (`PrinterPage`). One byte per dot
+holds a 3-bit set of ribbon inks (Y, M, C). The seven `ESC C` colours are the
+non-empty sets, and printing ORs the current colour into each dot, so
+overprints mix.
+
+A glyph goes through this pipeline:
+
+1. The source glyph comes from `ank_glyph` (8×8) or `kanji_glyph` (16×16,
+   Kanji ROM layout). Bold (`embolden`) ORs each row with itself shifted one
+   dot right, at source resolution.
+2. `scale_glyph` scales each axis on its own. It draws source dot `s` from
+   `⌊s·dst/src⌋` for `⌈dst/src⌉` dots (a pen), so one-dot strokes keep one
+   width. An axis whose pen would close a one-dot gap (the 8 → 10 condensed
+   width) falls back to nearest-neighbour.
+3. `italicise` (a shear of `(height − 1 − dy) / 4` dots) or `outline` (a
+   one-dot ring) changes the scaled `GlyphMask`.
+4. `draw_mask` ORs the mask into the page at the cell origin. It is
+   bottom-aligned in the 24-dot line band (48 under double height) and clipped
+   to that band and to the page.
+
+There is no line buffer: characters go onto the page as they arrive. The rest
+of the layout works as follows:
+
+- A character whose cell would pass the right margin first does CR + LF (the
+  line-full wrap). A wrapped half-width character recomputes its advance, so
+  the 13/14 alternation at kanji pitch 27 restarts.
+- After a vertically doubled glyph, the next CR, LF or FF first feeds 24
+  extra dots once (`_apply_extra_feed`).
+- `_overflow_page` emits the page when the line band would cross the page
+  bottom, after an LF or after a CR that applied that feed. Printing then
+  continues on the next page.
+- FF always emits the page. `close()` emits the last page only if it has ink,
+  then writes the unsupported-code summary.
+
+### Output
+
+The CLI's page sink, `PngPageWriter`, writes each page as `page-NNN.png`. The
+PNG is an 8-entry palette image indexed by the ink set, with approximate
+colours and 180 dpi metadata. This class is the only place that uses Pillow.
+
+`unsupported.log` has one line per unrendered command: `<stream offset>\t<hex
+bytes>\t<name>`, with bulk data abbreviated as `(+N data)`. `close()` appends
+a `# summary` with the count of each name, most frequent first.
 
 ## Machine and extension YAML schema
 
@@ -1000,6 +1105,26 @@ VDP calls them on each related event. Python types these fields as
 A Rust/C++ port models them as `Option<Box<dyn Fn()>>` trait objects (or an
 equivalent). Another option is feature-flagged compile-time generics, which
 remove the per-call dispatch in release builds.
+
+#### Printer glyph masks as unbounded row integers
+
+`msx/printer_hbpf1.py` stores each row of a `GlyphMask` as one Python `int`,
+with the leftmost dot in the most significant bit. `scale_glyph`, `italicise`
+and `outline` work on these rows with shifts, `|`, and `& ~row`, and the
+dot coordinates can go negative (an outline at x = 0 starts at x = −1;
+`PrinterPage.set` clips it). The widest row any current box size produces is
+59 bits, so a port can use `u64` rows and signed coordinates. A wider box,
+or italic and outline together, would pass 64 bits. In that case, a port
+needs a check or a multi-word row.
+
+#### Printer command handlers and page sink
+
+`HbpF1Printer` keeps the pending command as a `_Pending` enum value, and runs
+it through the module-level `_FINISH_HANDLERS` dict of plain functions. It
+uses no stored bound methods or closures, so a port maps it to a `match` on
+the enum. The page sink `on_page` is a `Callable[[PrinterPage], None]`
+(`PngPageWriter`, or `list.append` in tests). A port maps it to a trait,
+with the page moved into the sink when it is emitted.
 
 #### Spin loop in the frame timer
 

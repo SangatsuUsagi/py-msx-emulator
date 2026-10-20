@@ -20,8 +20,8 @@
   - Not implemented: font selection, vertical writing (ESC t prints horizontally), hagaki mode, gaiji, bit images,
     emphasis, tabs, page length and other codes. Each is skipped with its documented parameter length and listed in
     `DIR/unsupported.log`, with a count per code at the end, so you can see which missing features software uses.
-  - Docs: README has a Printer section. The verified hardware now includes the Sony HBP-F1C, and the verified software
-    includes Mahjong Friend (雀フレンド).
+  - Docs: README has a Printer section, and `docs/technical-implementation.md` describes the printer internals. The
+    verified hardware now includes the Sony HBP-F1C, and the verified software includes Mahjong Friend (雀フレンド).
 - **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behaviour that did not match the specs.
   - Keyboard: SHIFT+"0" reaches the "_" cell on the Japanese (JIS) layout only. On the International layout it now
     types ")" as on real hardware.
