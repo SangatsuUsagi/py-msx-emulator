@@ -391,9 +391,13 @@ XOR, NOT) per pixel.
 Five sources render audio: the PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the
 OPLL of the FM-PAC (`msx/opll.py`), the Majutsushi DAC, and the PPI key click.
 Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples
-on NTSC machines and 882 on PAL machines. The `_mix_audio()` function of the
-SDL2 frontend adds the outputs of the chips that the machine
-has. It clamps the result to 16 bits and queues the buffer to SDL.
+on NTSC machines and 882 on PAL machines. At the end of every
+`Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of
+the chips that the machine has, clamps the result to 16 bits, and passes it
+through the output low-pass filter. This happens with or without a frontend,
+so the chips advance the same way in a headless run. The SDL2 frontend takes
+the buffer with `Machine.take_audio()` and queues it to SDL. The machine holds
+only the latest frame, so audio that nobody takes does not accumulate.
 
 The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
 DAC channel, `EventDac` in `msx/dac.py`. The owner converts each write to a
@@ -401,7 +405,7 @@ signed 16-bit level and passes it with the cycle of the write. A write that
 does not change the level records nothing. `generate_samples` places each
 change at sample `(cycle - frame_start) * n // (frame_end - frame_start)` and
 holds the level until the next change. When a frame has no change and the
-level is 0, it returns `None`, and `_mix_audio()` mixes nothing for that
+level is 0, it returns `None`, and the mixer mixes nothing for that
 channel.
 
 ### Sub-frame software PCM
@@ -440,11 +444,10 @@ ultrasonic carrier changes: it becomes its band-limited duty average.
 ### Output low-pass filter
 
 `msx/audio_filter.py` (`BiquadLowPass`) is a stateful 2-pole Butterworth
-low-pass filter (8 kHz, RBJ coefficients, Direct Form I). The frontend applies
-it to the final mixed buffer before `SDL_QueueAudio`. It models the analog RC
-filter on the real MSX audio output. A single instance carries its
-`x1/x2/y1/y2` state across frames, and the frontend resets it when the audio
-device opens.
+low-pass filter (8 kHz, RBJ coefficients, Direct Form I). The core mixer
+applies it to the final mixed buffer of each frame. It models the analog RC
+filter on the real MSX audio output. The machine owns a single instance, which
+carries its `x1/x2/y1/y2` state across frames. A machine reset clears it.
 
 The filter removes the residual high-frequency imaging and aliasing that
 point-sampling synthesis leaves near Nyquist. Its cost is ~1 % of the

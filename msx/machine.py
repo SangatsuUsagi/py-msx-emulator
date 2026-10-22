@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from msx.audio_mixer import AudioMixer
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
@@ -15,7 +16,7 @@ from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import MouseDevice
 from msx.ppi import PPI
-from msx.psg import PSG, JoystickPort
+from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
 from msx.vdp._geometry import VideoStandard
 from msx.vdp.renderer import render_frame
@@ -92,6 +93,8 @@ class Machine:
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
     input: InputState = field(default_factory=InputState)
+    # Per-frame audio mix, produced by run_frame() and read with take_audio().
+    audio: AudioMixer = field(default_factory=AudioMixer, repr=False)
     video_standard: VideoStandard = VideoStandard.NTSC
     # Free-running T-state clock, never reset.
     #
@@ -193,6 +196,7 @@ class Machine:
         wire-cartridge-mapper-and-ppi-reset."""
         self.cpu.reset()
         self.psg.reset()
+        self.audio.reset()
         if self.scc is not None:
             self.scc.reset()
         if self.fmpac is not None:
@@ -458,9 +462,11 @@ class Machine:
 
         Returns a `width * OUTPUT_H` buffer (the frame's width, see
         v9938_renderer.render_frame), or an empty bytearray when
-        `skip_render` is set. Advances the VDP frame counter either way. A break
+        `skip_render` is set. Advances the VDP frame counter and mixes the
+        frame's audio (read it with take_audio()) either way. A break
         (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
-        is still rendered and counted, and the next call restarts at line 0.
+        is still rendered, counted and mixed, and the next call restarts at
+        line 0.
 
         Both VDP variants render at the start of vertical blanking, not at the
         end of the scanline loop, and both raise their VBlank flag/interrupt at
@@ -475,6 +481,7 @@ class Machine:
         right after the render.
         """
         self._frame_interrupted = False
+        frame_start_cycle = self.cycle_count
         lpf = self.lines_per_frame
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
         # begin_scanline(line) runs *after* that line's cycles, so the
@@ -496,6 +503,7 @@ class Machine:
             self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
+        self._mix_frame_audio(frame_start_cycle)
         # Frame breakpoint (debugger 'gf'): checked once per frame, after the
         # frame is fully rendered and counted, so it never forces the slower
         # per-instruction debug loop the way a PC breakpoint does.
@@ -503,6 +511,28 @@ class Machine:
             self._frame_breakpoint = None
             self._enter_break(PauseReason.BREAKPOINT)
         return result
+
+    def samples_per_frame(self) -> int:
+        """Audio samples per frame: the output rate over the pacing rate (735 at
+        60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
+        return int(SAMPLE_RATE // self.video_standard.target_fps)
+
+    def take_audio(self) -> bytes:
+        """Return the mixed PCM of the most recent run_frame() and clear it."""
+        return self.audio.take()
+
+    def _mix_frame_audio(self, frame_start_cycle: int) -> None:
+        """Synthesize this frame's audio from every present sound source."""
+        self.audio.mix_frame(
+            self.samples_per_frame(),
+            frame_start_cycle,
+            self.cycle_count,
+            self.psg,
+            self.scc,
+            self.dac,
+            self.ppi.click if self.ppi is not None else None,
+            self.fmpac.opll if self.fmpac is not None else None,
+        )
 
     def _on_frame_interrupt(self) -> None:
         """Ctrl-C handling shared by the frame loops: notify the pause hook or
