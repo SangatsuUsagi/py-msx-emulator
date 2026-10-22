@@ -526,10 +526,9 @@ title shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk.
 Fast-forward does not play audio. For automatic frame skip, see
 [Performance](#performance).
 
-- Implementation: `frontend/sdl2_frontend.py`
-- Known limitations: when no audio device is open (e.g. headless or
-  `--benchmark` runs), PSG/SCC/OPLL get no synthesis tick. Their internal
-  envelope and LFO state thus does not advance during that time.
+- Implementation: `frontend/sdl2_frontend.py`. The core mixes the audio
+  every frame (`msx/audio_mixer.py`), also in headless runs. The frontend
+  only queues it.
 
 ### State save/load
 
@@ -602,9 +601,10 @@ The `--benchmark` CLI flag gives these measurements. It does a headless,
 unthrottled run (no `FrameTimer` pacing) from a cold boot through the full
 frame count. The measurement thus includes the BIOS boot time. Every frame
 still runs full CPU emulation and renders the VDP output to an offscreen
-buffer, as in interactive play. But `--benchmark` never opens an SDL window,
-generates audio samples, or uploads and blits textures. Real interactive
-sessions thus run somewhat slower than the numbers below.
+buffer, as in interactive play, and mixes the frame's audio. But
+`--benchmark` never opens an SDL window, queues audio, or uploads and blits
+textures. Real interactive sessions thus run somewhat slower than the numbers
+below.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames
 each. The score is the average of the remaining 8 runs, after the removal of
@@ -1134,7 +1134,7 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI entry point (python .)
 ├── frontend/
-│   ├── sdl2_frontend.py   # SDL2 window, audio, event loop
+│   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
 │   └── sdl2_joystick.py   # Physical joystick manager (SDL2)
 ├── msx/                   # Core emulator package
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
@@ -1151,6 +1151,7 @@ py-msx-emulator/
 │   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
+│   ├── audio_mixer.py     # Per-frame audio mix (run by Machine.run_frame)
 │   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
 │   ├── dac.py             # Write-driven DAC channel (Majutsushi DAC, key click)
 │   ├── scc.py             # Konami SCC wavetable synthesiser

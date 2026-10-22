@@ -3,7 +3,6 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
-from array import array
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +15,6 @@ from frontend.sdl2_joystick import (
     JoystickManager,
 )
 from msx.app_config import AppConfig
-from msx.audio_filter import BiquadLowPass
 from msx.fdc.disk_image import DskDiskImage
 from msx.frame_timer import FrameTimer
 from msx.input import (
@@ -28,7 +26,7 @@ from msx.input import (
 )
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
-from msx.psg import JoystickPort
+from msx.psg import SAMPLE_RATE, JoystickPort
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
 from msx.vdp._geometry import OUTPUT_H
@@ -44,24 +42,14 @@ _SCREEN_WIDTH = 256
 _SCREEN_HEIGHT = OUTPUT_H
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format. Each emulated frame generates _AUDIO_SAMPLE_RATE /
-# target_fps samples (see _samples_per_frame_for).
-_AUDIO_SAMPLE_RATE: int = 44100
+# Audio output format: the core's mix rate (msx.psg.SAMPLE_RATE), mono S16LE.
+# Machine.run_frame() mixes each frame; the frontend only queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
-_S16_MAX: int = 32767   # signed 16-bit sample clamp range
-_S16_MIN: int = -32768
 
 # Auto frame-skip: bump the skip counter when a frame overruns its budget by
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
-
-def _samples_per_frame_for(machine: Machine) -> int:
-    """Audio samples to generate per emulated frame: the device rate over the
-    pacing rate, so the stream advances as fast as frames are paced (735 at
-    60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
-    return int(_AUDIO_SAMPLE_RATE // machine.video_standard.target_fps)
-
 
 def _target_fps_for(machine: Machine) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
@@ -182,7 +170,7 @@ def _init_sdl(
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     desired = sdl2.SDL_AudioSpec(
-        _AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+        SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
     )
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
@@ -688,72 +676,6 @@ def _handle_events(
     return running
 
 
-def _mix_audio(
-    machine: Machine,
-    frame_start_cycle: int,
-    frame_end_cycle: int,
-    audio_filter: BiquadLowPass | None = None,
-) -> bytes:
-    """Generate one frame of audio: PSG plus SCC/DAC/OPLL (FM-PAC) and the PPI
-    key click when present, mixed and clamped to signed 16-bit. A DAC or key
-    click that is silent for the frame returns None and is not mixed, so an
-    idle machine keeps the PSG-only path. When `audio_filter` is given,
-    the final mixed buffer is passed through it (modelling the analog output
-    low-pass) before being returned. Returns the PCM bytes to queue."""
-    samples = _samples_per_frame_for(machine)
-    psg_buf = machine.psg.generate_samples(samples, frame_start_cycle, frame_end_cycle)
-    extra_bufs = []
-    if machine.scc is not None:
-        extra_bufs.append(machine.scc.generate_samples(samples))
-    if machine.dac is not None:
-        dac_buf = machine.dac.generate_samples(samples, frame_start_cycle, frame_end_cycle)
-        if dac_buf is not None:
-            extra_bufs.append(dac_buf)
-    if machine.ppi is not None:
-        click_buf = machine.ppi.click.generate_samples(
-            samples, frame_start_cycle, frame_end_cycle
-        )
-        if click_buf is not None:
-            extra_bufs.append(click_buf)
-    if machine.fmpac is not None:
-        extra_bufs.append(machine.fmpac.opll.generate_samples(samples))
-    if not extra_bufs:
-        return audio_filter.filter(bytes(psg_buf)) if audio_filter else bytes(psg_buf)
-
-    # Batch-decode each PCM buffer to signed 16-bit samples via array("h") (one
-    # C call per buffer) instead of a per-sample struct.unpack_from/pack_into.
-    # Sums are taken in Python ints so the clamp applies to the full mix, then
-    # re-encoded once. (array("h") is native byte order, matching the LE PCM on
-    # LE hosts.)
-    #
-    # PORT-NOTE: benchmarked the per-sample clamp loop below (timeit, 735
-    #   samples/frame, 1-2 extra channels) against min()/max() clamping and a
-    #   zip()+sum() rewrite -- the if/elif clamp here is already at or near
-    #   the fastest of the three, and the whole loop costs ~40-55us/frame
-    #   against a 16.6ms (60fps) budget either way. Not worth restructuring
-    #   pre-port; a native port's per-sample loop is trivially fast regardless
-    #   of which of these shapes it's translated from.
-    psg_arr = array("h")
-    psg_arr.frombytes(psg_buf)
-    extra_arrs = []
-    for buf in extra_bufs:
-        chan_arr = array("h")
-        chan_arr.frombytes(buf)
-        extra_arrs.append(chan_arr)
-    out_arr = array("h", bytes(2 * samples))
-    for i in range(samples):
-        total = psg_arr[i]
-        for chan_arr in extra_arrs:
-            total += chan_arr[i]
-        if total > _S16_MAX:
-            total = _S16_MAX
-        elif total < _S16_MIN:
-            total = _S16_MIN
-        out_arr[i] = total
-    mixed = out_arr.tobytes()
-    return audio_filter.filter(mixed) if audio_filter else mixed
-
-
 class _UploadTextureApi(Protocol):
     """The `sdl2.*` surface `_upload_to_texture` uses: locking/unlocking a
     streaming texture for a raw pixel-buffer copy. `SDL_LockTexture`'s
@@ -993,7 +915,7 @@ def _run_frame(
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
     mouse_device: MouseDevice | None, event: _EventLike,
     rpc_server: "DebugServer | None", frame_timer: FrameTimer,
-    frame_skip: str, audio_dev: int, audio_filter: BiquadLowPass, scale: int,
+    frame_skip: str, audio_dev: int, scale: int,
     hotkeys: _HotkeyState,
 ) -> None:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
@@ -1043,9 +965,7 @@ def _run_frame(
         skip_this_frame = since_present < 1.0 / frame_timer.fps
     else:
         skip_this_frame = state.skip_counter > 0
-    frame_start_cycle = machine.cycle_count
     index_buf = machine.run_frame(skip_render=skip_this_frame)
-    frame_end_cycle = machine.cycle_count
     if not skip_this_frame:
         state.rgb_buf = machine.vdp.to_rgb24(index_buf)
         # The output height is constant (192-line frames are padded to
@@ -1058,12 +978,10 @@ def _run_frame(
         if not state.running:
             return
 
-    # Generate audio (PSG + SCC + OPLL + DAC + key click, as present) every frame so the
-    # chips advance; queue it unless fast-forwarding, as silence when muted.
+    # run_frame() already mixed the frame's audio; take it every frame (also
+    # with no device) and queue it unless fast-forwarding, as silence when muted.
+    audio_buf = machine.take_audio()
     if audio_dev > 0:
-        audio_buf = _mix_audio(
-            machine, frame_start_cycle, frame_end_cycle, audio_filter
-        )
         if hotkeys.muted:
             audio_buf = bytes(len(audio_buf))
         if not fast_forward:
@@ -1160,10 +1078,6 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
-    # Analog-style output low-pass; one persistent instance so IIR state carries
-    # across frames (it starts from the clean state __init__ already zeroes).
-    audio_filter = BiquadLowPass()
-
     # Falls back to the same default tables JoystickManager's own dataclass
     # fields would use, resolved here (not left to the field defaults)
     # because an explicit gamepad_map always needs `dict(...)`-copying into
@@ -1226,7 +1140,7 @@ def run(
                 _run_frame(
                     sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
                     ctrl_fkey_cells, game_title, mouse_device, event, rpc_server,
-                    frame_timer, frame_skip, audio_dev, audio_filter, scale, hotkeys,
+                    frame_timer, frame_skip, audio_dev, scale, hotkeys,
                 )
                 last_title = _update_window_title(
                     sdl2, window,

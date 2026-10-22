@@ -942,15 +942,6 @@ class _LoopSDL(_FakeSDL):
         self.clear_calls += 1
 
 
-class _LoopPSG:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def generate_samples(self, samples: int, _start: int, _end: int) -> bytes:
-        self.calls += 1
-        return b"\x10\x00" * samples
-
-
 class _LoopVDP:
     def to_rgb24(self, index_buf: bytearray) -> bytes:
         return bytes(len(index_buf) * 3)
@@ -965,15 +956,21 @@ class _LoopMachine(_FakeMachine):
         super().__init__()
         self.cycle_count = 0
         self.frames = 0
-        self.psg = _LoopPSG()
+        self.takes = 0
+        self._audio = b""
         self.vdp = _LoopVDP()
-        self.scc = self.dac = self.ppi = self.fmpac = None
         self.video_standard = _LoopStandard()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
         self.frames += 1
         self.cycle_count += 59736
+        self._audio = b"\x10\x00" * _SAMPLES
         return bytearray(256 * 212)
+
+    def take_audio(self) -> bytes:
+        self.takes += 1
+        pcm, self._audio = self._audio, b""
+        return pcm
 
 
 class _LoopTimer:
@@ -1021,6 +1018,7 @@ class _Loop:
         self.timer = _LoopTimer()
         self.hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]))
         self.rpc = None if rpc_paused is None else _LoopRpc(rpc_paused)
+        self.audio_dev = _AUDIO_DEV
         self.state = _LoopState(
             running=True, texture=object(), tex_w=256, tex_h=212,
             rgb_buf=b"", skip_counter=0,
@@ -1030,7 +1028,7 @@ class _Loop:
         _run_frame(
             self.sdl, self.machine, None, None, self.state, _LoopJoy(), _CtrlComboState(),
             _CTRL_FKEY_CELLS, "", None, _Event(), self.rpc, self.timer, "auto",
-            _AUDIO_DEV, None, 3, self.hotkeys,
+            self.audio_dev, 3, self.hotkeys,
         )
 
 
@@ -1040,7 +1038,7 @@ def test_pause_stops_emulation_and_audio(monkeypatch: pytest.MonkeyPatch) -> Non
     loop.step()
     loop.step()
     assert loop.machine.frames == 0
-    assert loop.machine.psg.calls == 0
+    assert loop.machine.takes == 0
     assert loop.sdl.queued == []
     assert loop.sdl.pause_calls == [1]        # paused once, not per iteration
     assert loop.sdl.presents == 2              # last frame still shown
@@ -1087,7 +1085,7 @@ def test_fast_forward_frame_is_unpaced_and_not_queued(monkeypatch: pytest.Monkey
     loop.step()
     assert loop.machine.frames == 1
     assert loop.timer.unpaced == 1 and loop.timer.ticks == 0
-    assert loop.machine.psg.calls == 1          # still mixed: chips advance
+    assert loop.machine.takes == 1              # still taken: the core mixed it
     assert loop.sdl.queued == []
 
 
@@ -1130,13 +1128,29 @@ def test_muted_frame_queues_silence(monkeypatch: pytest.MonkeyPatch) -> None:
     loop = _Loop(monkeypatch)
     loop.hotkeys.muted = True
     loop.step()
-    assert loop.machine.psg.calls == 1
+    assert loop.machine.takes == 1
     assert loop.sdl.pause_calls == []           # device keeps running
     assert loop.sdl.queued == [bytes(2 * _SAMPLES)]
     loop.hotkeys.muted = False
     loop.step()
     assert loop.sdl.queued[1] == b"\x10\x00" * _SAMPLES
 
+
+def test_queued_buffer_is_the_machines_pcm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # app-sdl2-audio "Queued buffer is the machine's PCM".
+    loop = _Loop(monkeypatch)
+    loop.step()
+    assert loop.machine.takes == 1
+    assert loop.sdl.queued == [b"\x10\x00" * _SAMPLES]
+
+
+def test_no_audio_device_still_takes_the_pcm(monkeypatch: pytest.MonkeyPatch) -> None:
+    # app-sdl2-audio "No audio device still takes the PCM".
+    loop = _Loop(monkeypatch)
+    loop.audio_dev = 0
+    loop.step()
+    assert loop.machine.takes == 1
+    assert loop.sdl.queued == []
 
 
 # ---------------------------------------------------------------------------
