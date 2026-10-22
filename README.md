@@ -472,7 +472,7 @@ registered handler.
 | Item | Detail |
 | --- | --- |
 | Keyboard | `msx/input.py`. 11 rows × 8 bits, active-low, as in the MSX Technical Handbook |
-| Physical joystick | `msx/joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
+| Physical joystick | `frontend/sdl2_joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
 | Keyboard emulation | WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
 
 - Known limitations:
@@ -1134,7 +1134,8 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI entry point (python .)
 ├── frontend/
-│   └── sdl2_frontend.py   # SDL2 window, audio, event loop
+│   ├── sdl2_frontend.py   # SDL2 window, audio, event loop
+│   └── sdl2_joystick.py   # Physical joystick manager (SDL2)
 ├── msx/                   # Core emulator package
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
@@ -1158,7 +1159,6 @@ py-msx-emulator/
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
-│   ├── joystick.py        # Physical joystick manager (SDL2)
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── app_config.py      # py_emulator.yaml startup defaults
