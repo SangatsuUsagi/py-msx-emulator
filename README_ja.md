@@ -294,7 +294,7 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 | 項目 | 詳細 |
 | --- | --- |
 | キーボード | `msx/input.py`。MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
-| 物理ジョイスティック | `msx/joystick.py`。SDL2 GameController API（優先）と生ジョイスティックのフォールバック。ホットプラグ対応 |
+| 物理ジョイスティック | `frontend/sdl2_joystick.py`。SDL2 GameController API（優先）と生ジョイスティックのフォールバック。ホットプラグ対応 |
 | キーボードエミュレーション | WASD = Joy1 方向。Z/X または ,/. = トリガ A/B。矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
 
 - 既知の制限：
@@ -836,7 +836,8 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI エントリポイント（python .）
 ├── frontend/
-│   └── sdl2_frontend.py   # SDL2 ウィンドウ、オーディオ、イベントループ
+│   ├── sdl2_frontend.py   # SDL2 ウィンドウ、オーディオ、イベントループ
+│   └── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
 ├── msx/                   # コアエミュレータパッケージ
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
@@ -860,7 +861,6 @@ py-msx-emulator/
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
-│   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
 │   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値

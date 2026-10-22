@@ -4,8 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from frontend.sdl2_joystick import JoystickManager
 from msx.input import InputState
-from msx.joystick import JoystickManager
 
 # ---------------------------------------------------------------------------
 # Helpers

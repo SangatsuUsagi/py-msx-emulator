@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from frontend.sdl2_joystick import (
+    _DEFAULT_GC_BUTTON_BIT,
+    _DEFAULT_GC_TURBO_BUTTON_BIT,
+    TURBO_PERIOD,
+    JoystickManager,
+)
 from msx.app_config import AppConfig
 from msx.audio_filter import BiquadLowPass
 from msx.fdc.disk_image import DskDiskImage
@@ -19,12 +25,6 @@ from msx.input import (
     SDLK_JIS_RO,
     SDLK_JIS_YEN,
     InputState,
-)
-from msx.joystick import (
-    _DEFAULT_GC_BUTTON_BIT,
-    _DEFAULT_GC_TURBO_BUTTON_BIT,
-    TURBO_PERIOD,
-    JoystickManager,
 )
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
