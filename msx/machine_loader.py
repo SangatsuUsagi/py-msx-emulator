@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 import msx.romdb as romdb
+from msx.boundary import RTC_DEFAULT_START, RtcTime
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
@@ -2082,6 +2083,7 @@ def build_machine(
     fdd2: Path | None = None,
     extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    rtc_initial_time: RtcTime | None = None,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
@@ -2114,6 +2116,8 @@ def build_machine(
             slot-2 placement exactly. An expanded (_ExpandedExtensionOverlay)
             overlay instead expands slot 1 into per-sub-slot devices, the
             same mechanism `extension_overlay` uses for slot 2.
+        rtc_initial_time: The RTC's start time, supplied by the host (the core
+            never reads the host clock); None starts at RTC_DEFAULT_START.
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -2204,6 +2208,7 @@ def build_machine(
             mapper1_subslots=mapper1_subslots,
             slot2_sub_slot_enabled=slot2_sub_slot_enabled,
             mapper2_subslots=mapper2_subslots,
+            rtc_initial_time=rtc_initial_time,
         )
     else:
         machine = _build_msx1(
@@ -2343,6 +2348,7 @@ def _build_msx2(
     mapper1_subslots: list[Mapper | None] | None = None,
     slot2_sub_slot_enabled: bool = False,
     mapper2_subslots: list[Mapper | None] | None = None,
+    rtc_initial_time: RtcTime | None = None,
 ) -> "Machine":
     if extrom_override is not None:
         sub_bytes: bytes | None = extrom_override
@@ -2400,7 +2406,10 @@ def _build_msx2(
     if spec.has_rtc:
         rtc_sram_save_path = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
         rtc_sram = _load_sram_or_warn(rtc_sram_save_path, RTC_SRAM_SIZE, label="RTC ")
-        rtc = RTC(sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE))
+        rtc = RTC(
+            sram=rtc_sram if rtc_sram is not None else bytearray(RTC_SRAM_SIZE),
+            start=rtc_initial_time if rtc_initial_time is not None else RTC_DEFAULT_START,
+        )
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
@@ -2430,6 +2439,9 @@ def _build_msx2(
         rtc_sram_save_path=rtc_sram_save_path,
         ppi=ppi,
     )
+    if rtc is not None:
+        rtc._get_cycle = lambda: machine.cycle_count
+        rtc._start_cycle = machine.cycle_count
     if tracer is not None and isinstance(vdp, V9938):
         vdp.tracer = tracer
         vdp._get_pc = lambda: machine.cpu.instruction_pc

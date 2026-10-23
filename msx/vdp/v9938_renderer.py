@@ -243,7 +243,7 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
     """Render a frame; return it with the status the render produces."""
     st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp.status2)
     if skip_render:
-        _update_field_parity(vdp, st)
+        _render_sprite_status_only(vdp, st)
         return bytearray(0), st
 
     log = vdp._reg_write_log
@@ -468,14 +468,7 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
     # sprites over just its status band (SPD=1 there, 0 in the play area). Build
     # it alongside row_vscroll so the sprite pass reads both per line.
-    row_vscroll = [0] * full_h
-    row_spd = [False] * full_h
-    for band in bands:
-        v = band.regs[23]
-        spd = bool(band.regs[8] & 0x02)
-        for y in range(band.y0, min(band.y1, full_h)):
-            row_vscroll[y] = v
-            row_spd[y] = spd
+    row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
 
     out = bytearray(frame_w * full_h)
     if len(runs) == 1:
@@ -491,6 +484,45 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
                 _widen_rows(out, frame_w, narrow, run_w, run[0].y0, min(run[-1].y1, full_h))
     _update_field_parity(vdp, st)
     return out
+
+
+def _per_line_vscroll_spd(bands: list[_Band], full_h: int) -> tuple[list[int], list[bool]]:
+    """Flatten the bands' R#23 (vscroll) and R#8 SPD into one value per scanline."""
+    row_vscroll = [0] * full_h
+    row_spd = [False] * full_h
+    for band in bands:
+        v = band.regs[23]
+        spd = bool(band.regs[8] & 0x02)
+        for y in range(band.y0, min(band.y1, full_h)):
+            row_vscroll[y] = v
+            row_spd[y] = spd
+    return row_vscroll, row_spd
+
+
+def _render_sprite_status_only(vdp: "V9938", st: _RenderStatus) -> None:
+    """Run a frame's sprite passes for their status only (a skipped frame).
+
+    Uses the same band split and sprite passes as a full render, plotting into
+    scratch buffers that are dropped, so S#0, the collision coordinates and S#2
+    never depend on whether the frame was presented. The background is not
+    rendered.
+    """
+    bands = _build_bands(vdp) if vdp._reg_write_log else []
+    if bands:
+        full_h = vdp.display_height
+        runs = _width_runs(bands)
+        row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
+        for run in runs:
+            scratch = bytearray(display_width_of(run[0].regs) * full_h)
+            _render_run_sprites(
+                vdp, st, scratch, run, full_h, row_vscroll, row_spd, len(runs) == 1
+            )
+    else:
+        regs = vdp.regs
+        h = display_height_of(regs)
+        scratch = bytearray(display_width_of(regs) * h)
+        _render_sprites_for_mode(vdp, regs, st, scratch, 0, h)
+    _update_field_parity(vdp, st)
 
 
 def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
@@ -539,7 +571,20 @@ def _render_band_run(
         _render_pass_range(
             vdp, band.regs, st, buf, band.y0, min(band.y1, full_h), draw_sprites=False
         )
+    _render_run_sprites(vdp, st, buf, run, full_h, row_vscroll, row_spd, whole_frame)
 
+
+def _render_run_sprites(
+    vdp: "V9938",
+    st: _RenderStatus,
+    buf: bytearray,
+    run: list[_Band],
+    full_h: int,
+    row_vscroll: list[int],
+    row_spd: list[bool],
+    whole_frame: bool,
+) -> None:
+    """Run one width run's sprite passes into `buf` (the run's own width)."""
     # Sprites are evaluated in as few passes as possible: one per distinct sprite
     # attribute table (R#5/R#11), using the registers of the largest band sharing
     # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to

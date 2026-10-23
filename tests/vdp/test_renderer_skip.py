@@ -77,3 +77,37 @@ def test_v9938_skip_render_still_updates_the_eo_field_bit() -> None:
     vdp.frame_count = 2
     render_frame_v9938(vdp, skip_render=True)
     assert not vdp._status2 & 0x02
+
+
+# --- A skipped frame sets the same sprite status as a full render -----------
+# vdp-renderer "TMS9918A skip sets the same sprite status as a full render",
+# vdp-v9938 / vdp-renderer "skip_render sets the same sprite status".
+
+def _tms_5s_and_collision() -> VDP:
+    vdp = VDP()
+    vdp.regs[1] = 0x60               # BL=1, IE0=1
+    vdp.regs[5] = 0x20               # SAT at 0x1000
+    for i in range(5):               # five sprites on line 1, overlapping
+        vdp.vram[0x1000 + i * 4] = 0
+        vdp.vram[0x1000 + i * 4 + 1] = i * 4
+        vdp.vram[0x1000 + i * 4 + 3] = 0x0F
+    vdp.vram[0x1000 + 5 * 4] = 0xD0
+    vdp.vram[0] = 0xFF               # sprite pattern 0 row 0
+    return vdp
+
+
+def test_tms_skip_sets_the_same_sprite_status_as_a_full_render() -> None:
+    full, skipped = _tms_5s_and_collision(), _tms_5s_and_collision()
+    render_frame(full)
+    render_frame(skipped, skip_render=True)
+    assert full.status & 0x60 == 0x60          # the case is not vacuous
+    assert skipped.status == full.status
+
+
+def test_tms_skip_in_text_mode_leaves_status_as_a_full_render() -> None:
+    full, skipped = _tms_5s_and_collision(), _tms_5s_and_collision()
+    for vdp in (full, skipped):
+        vdp.regs[1] |= 0x10              # M1: text mode has no sprites
+    render_frame(full)
+    render_frame(skipped, skip_render=True)
+    assert skipped.status == full.status == 0

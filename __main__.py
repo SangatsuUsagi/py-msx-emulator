@@ -10,6 +10,7 @@ from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
     from msx.app_config import AppConfig
+    from msx.boundary import RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
     from msx.machine_loader import (
@@ -342,6 +343,16 @@ def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | Non
         machine.run_frame()
 
 
+def _host_rtc_time() -> "RtcTime":
+    """The host's local time, handed to the core once to start the RTC."""
+    import datetime
+
+    from msx.boundary import RtcTime
+
+    now = datetime.datetime.now()
+    return RtcTime(now.year, now.month, now.day, now.hour, now.minute, now.second)
+
+
 def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
@@ -597,6 +608,7 @@ def main() -> None:
                 fdd2=fdd2_path,
                 extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
+                rtc_initial_time=_host_rtc_time(),
             )
         except MachineLoadError as exc:
             _fail(str(exc))

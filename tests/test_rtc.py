@@ -1,9 +1,9 @@
 """Tests for the RP-5C01 RTC (register banks + CMOS RAM + running clock)."""
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from msx.boundary import RtcTime
 from msx.machine_loader import MachineSpec, _RomEntry, build_machine
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
 from tests.factories import make_machine_msx2
@@ -148,10 +148,10 @@ def test_time_block_returns_valid_bcd() -> None:
 
 def test_block0_write_never_survives_read() -> None:
     """A write to a block-0 register is stored (subject to its mask), but
-    ReadDataPort unconditionally overwrites block 0 with the frozen epoch
-    snapshot on every read of block 0 or block 1 -- so the write is never
-    observable."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 30, 45))
+    ReadDataPort unconditionally overwrites block 0 with the current time on
+    every read of block 0 or block 1 -- so the write is never observable.
+    io-rtc "a block 0 write does not survive the next read"."""
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 30, 45))
     _set_block(rtc, 0)
     _select(rtc, 0)  # seconds units
     baseline = rtc.read_port(0xB5) & 0x0F
@@ -163,7 +163,7 @@ def test_leap_counter_write_never_survives_read() -> None:
     """Block 1 register 11 (leap-year counter) gets the same
     always-overwritten-on-read treatment as block 0: it always reads back
     epoch_leap, regardless of what was last written."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
+    rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
     _set_block(rtc, 1)
     _select(rtc, 11)
     assert rtc.read_port(0xB5) & 0x0F == 2
@@ -208,33 +208,33 @@ def test_sram_wrong_size_starts_fresh() -> None:
 
 def test_hour_encoding_24h_is_default() -> None:
     """Register 10 defaults to 24-hour when never written."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
     assert _read_hour(rtc) == (3, 1)  # 13 -> units 3, tens 1
 
 
 def test_hour_encoding_12h_am() -> None:
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 9, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 9, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (9, 0)
 
 
 def test_hour_encoding_12h_pm() -> None:
     """PM hours offset the tens digit by 2 (RP/RF5C01A datasheet)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (1, 2)  # 1 PM -> "21"
 
 
 def test_hour_encoding_12h_midnight() -> None:
     """Midnight (hour 0) is hour-of-12 12, AM (no +2 offset)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 0, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (2, 1)  # "12"
 
 
 def test_hour_encoding_12h_noon() -> None:
     """Noon (hour 12) is hour-of-12 12, PM (+2 offset)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 12, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 12, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (2, 3)  # "32"
 
@@ -311,3 +311,65 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     _set_block(reloaded_b.rtc, 2)
     _select(reloaded_b.rtc, 0)
     assert reloaded_b.rtc.read_port(0xB5) & 0x0F == 0x0  # not machine_a's 0x7
+
+
+# --- io-rtc: time from the host's start value, advanced by emulated cycles ---
+
+def _read_block0(rtc: RTC) -> list[int]:
+    _set_block(rtc, 0)
+    digits = []
+    for reg in range(13):
+        _select(rtc, reg)
+        digits.append(rtc.read_port(0xB5) & 0x0F)
+    return digits
+
+
+def _clocked(start: RtcTime) -> tuple[RTC, list[int]]:
+    cycle = [0]
+    rtc = RTC(start=start, _get_cycle=lambda: cycle[0])
+    return rtc, cycle
+
+
+def test_block0_reflects_the_supplied_start_time() -> None:
+    rtc = RTC(start=RtcTime(2026, 10, 23, 12, 34, 56))
+    d = _read_block0(rtc)
+    assert (d[2], d[3]) == (4, 3)                       # minute 34
+
+
+def test_no_start_time_gives_the_fixed_epoch() -> None:
+    d = _read_block0(RTC())
+    # 2000-01-01 00:00:00, Saturday (6); year register = 2000 - 1980 = 20
+    assert d == [0, 0, 0, 0, 0, 0, 6, 1, 0, 1, 0, 0, 2]
+
+
+def test_one_emulated_second_advances_the_seconds_digit() -> None:
+    rtc, cycle = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    cycle[0] = 3_579_545 - 1
+    assert _read_block0(rtc)[0:2] == [0, 0]
+    cycle[0] = 3_579_545
+    assert _read_block0(rtc)[0:2] == [1, 0]
+
+
+def test_midnight_carries_into_the_next_day() -> None:
+    rtc, cycle = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
+    before = _read_block0(rtc)
+    cycle[0] = 3_579_545
+    after = _read_block0(rtc)
+    # 2000-01-01 00:00:00; year register (2000 - 1980) % 100 = 20
+    assert after[0:6] == [0, 0, 0, 0, 0, 0]
+    assert after[7:13] == [1, 0, 1, 0, 0, 2]
+    assert after[6] == (before[6] + 1) % 7
+
+
+def test_rtc_never_reads_the_host_clock() -> None:
+    # Two RTCs with the same start and no elapsed cycles read the same digits.
+    a = RTC(start=RtcTime(2026, 10, 23, 1, 2, 3))
+    b = RTC(start=RtcTime(2026, 10, 23, 1, 2, 3))
+    assert _read_block0(a) == _read_block0(b)
+
+
+def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
+    machine = make_machine_msx2(bytes(0x8000), bytes(0x4000))
+    assert machine.rtc is not None
+    machine.cycle_count = 3 * 3_579_545
+    assert _read_block0(machine.rtc)[0:2] == [3, 0]
