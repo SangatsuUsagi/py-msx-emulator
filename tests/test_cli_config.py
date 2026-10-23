@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import host.machine_config as machine_config
-from msx.app_config import AppConfig
+from host.app_config import AppConfig
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
@@ -39,14 +39,14 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         patch.object(Path, "exists", lambda self: True),
         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768),
         patch("frontend.sdl2_frontend.run", run_mock),
-        patch("msx.debugger.prompt.Debugger"),
+        patch("host.debugger.prompt.Debugger"),
         patch("host.machine_config.load_machine_config", build_mock),
         patch("msx.machine_loader.build_machine", MagicMock(name="build_machine")),
         patch("host.machine_config.load_extension_overlay", extension_mock),
         patch("host.machine_config.load_machine_spec", spec_spy),
     ]
     if app_cfg is not None:
-        patches.append(patch("msx.app_config.load_app_config", lambda root: app_cfg))
+        patches.append(patch("host.app_config.load_app_config", lambda root: app_cfg))
 
     for p in patches:
         p.start()
@@ -534,7 +534,7 @@ def test_default_keyboard_joystick_passed_when_no_override() -> None:
 # ---------------------------------------------------------------------------
 
 def test_config_rpc_enabled_starts_server() -> None:
-    with patch("msx.rpc_server.DebugServer") as rpc_mock:
+    with patch("host.rpc_server.DebugServer") as rpc_mock:
         _run_main(["--machine", "cbios_msx1"],
                   app_cfg=AppConfig(rpc_enabled=True, rpc_socket="/tmp/cfg.sock"))
     rpc_mock.assert_called_once()
@@ -542,7 +542,7 @@ def test_config_rpc_enabled_starts_server() -> None:
 
 
 def test_cli_rpc_socket_overrides_config_socket() -> None:
-    with patch("msx.rpc_server.DebugServer") as rpc_mock:
+    with patch("host.rpc_server.DebugServer") as rpc_mock:
         _run_main(["--machine", "cbios_msx1", "--rpc", "--rpc-socket", "/tmp/cli.sock"],
                   app_cfg=AppConfig(rpc_enabled=True, rpc_socket="/tmp/cfg.sock"))
     assert rpc_mock.call_args.kwargs["sock_path"] == "/tmp/cli.sock"

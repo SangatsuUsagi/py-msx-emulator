@@ -1194,7 +1194,7 @@ class _FullscreenSDL(_FakeSDL):
 def _default_harness(monkeypatch: pytest.MonkeyPatch, hotkeys: dict[str, str] | None = None
                      ) -> _Harness:
     import frontend.sdl2_frontend as fe
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
 
     _FullscreenSDL.calls = []
     monkeypatch.setattr(fe, "save_state", lambda *_a: pytest.fail("F8 save ran"))
@@ -1249,7 +1249,7 @@ def test_remapped_action_fires_on_its_new_key(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_built_in_table_with_no_config() -> None:
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
 
     f6, f7, f11, f12 = (_FakeSDL.SDLK_F6, _FakeSDL.SDLK_F7, _FakeSDL.SDLK_F11,
                         _FakeSDL.SDLK_F12)

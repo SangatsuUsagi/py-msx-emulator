@@ -15,7 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from msx.rpc_server import DebugServer
+from host.rpc_server import DebugServer
 from tests.factories import make_machine
 
 

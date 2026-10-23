@@ -53,8 +53,8 @@ Gaps this file fills:
     both the debugger (_cmd_fdd) and the RPC handler (_h_fdd_swap) guard
     the index themselves before ever calling FloppyDisk.mount()/swap(), so
     no existing test reaches msx/fdc/interface.py's own (guardless) list
-    indexing; confirmed by reading msx/debugger/prompt.py:724 and
-    msx/rpc_server.py's _h_fdd_swap, neither of which delegates an
+    indexing; confirmed by reading host/debugger/prompt.py:724 and
+    host/rpc_server.py's _h_fdd_swap, neither of which delegates an
     out-of-range index down to the interface layer
   - ReadTrackFromController, ReadSectorFromController -- no test anywhere
     reads 0x7FF9/0x7FFA back through the memory window (existing tests

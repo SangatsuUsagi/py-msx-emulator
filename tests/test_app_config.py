@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from msx.app_config import (
+from host.app_config import (
     DEFAULT_TURBO_PERIOD,
     AppConfig,
     AppConfigError,
@@ -374,8 +374,8 @@ def test_mouse_port_index_honors_configured_port() -> None:
 def test_valid_mappers_match_supported_mappers() -> None:
     # app_config.VALID_MAPPERS duplicates machine_loader._SUPPORTED_MAPPERS
     # (plus "auto") to avoid an import cycle; guard against the two drifting.
+    from host.app_config import VALID_MAPPERS
     from host.machine_config import _SUPPORTED_MAPPERS
-    from msx.app_config import VALID_MAPPERS
     from msx.machine_loader import _MAPPER_BUILDERS
 
     assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
@@ -432,7 +432,7 @@ def test_hotkeys_group_parsed(tmp_path: Path) -> None:
 
 
 def test_unset_hotkeys_gives_the_built_in_table(tmp_path: Path) -> None:
-    from msx.app_config import DEFAULT_HOTKEYS
+    from host.app_config import DEFAULT_HOTKEYS
 
     _write(tmp_path, "speed: 1.0\n")
     bindings = load_app_config(tmp_path).hotkey_bindings()

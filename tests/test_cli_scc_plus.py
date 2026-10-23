@@ -29,7 +29,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_text(self: Path, encoding: str | None = None) -> str:
         # Isolate from the developer's own (git-ignored) py_emulator.yaml,
         # the only real caller of Path.read_text in this codebase
-        # (msx/app_config.py's load_app_config) -- an empty string parses
+        # (host/app_config.py's load_app_config) -- an empty string parses
         # to an all-unset AppConfig, the same as a genuinely absent file.
         return ""
 
@@ -104,7 +104,7 @@ def test_extension_scc_plus_rejected_when_slot1_is_konamiscc() -> None:
 # ---------------------------------------------------------------------------
 
 def _fake_app_config(**overrides: object) -> object:
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
     cfg = AppConfig()
     for key, value in overrides.items():
         setattr(cfg, key, value)
@@ -112,7 +112,7 @@ def _fake_app_config(**overrides: object) -> object:
 
 
 def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
-    with patch("msx.app_config.load_app_config",
+    with patch("host.app_config.load_app_config",
                return_value=_fake_app_config(extension2="scc_plus")):
         code, out, _err = _run_main(["--count-frame", "1"])
     assert code == 0
@@ -120,7 +120,7 @@ def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
 
 
 def test_cli_extension_overrides_config_extension() -> None:
-    with patch("msx.app_config.load_app_config",
+    with patch("host.app_config.load_app_config",
                return_value=_fake_app_config(extension2="fmpac")):
         code, out, _err = _run_main(["--extension2", "scc_plus", "--count-frame", "1"])
     assert code == 0

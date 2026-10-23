@@ -1,6 +1,6 @@
 """Tests for TEXT2 (SCREEN 0, WIDTH 80): MSX-DOS's MODE 80."""
 
-from msx.debugger.prompt import _decode_screen_mode
+from host.debugger.prompt import _decode_screen_mode
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
 from tests.render_geometry import active_region

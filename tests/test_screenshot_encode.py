@@ -5,7 +5,7 @@ import io
 
 from PIL import Image
 
-from msx.screenshot import encode_rgb24_png
+from host.screenshot import encode_rgb24_png
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 

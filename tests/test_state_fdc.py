@@ -7,13 +7,13 @@ from typing import cast
 import pytest
 
 from host.machine_config import build_machine_from_spec
+from host.state_files import load_state, save_state
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
-from msx.state import load_state, save_state
 from tests.disk_factories import dsk_image
 
 _2DD = 737280

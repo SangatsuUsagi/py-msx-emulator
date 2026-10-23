@@ -6,7 +6,7 @@ Raises MachineLoadError with specific file and field names on any validation fai
 PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   hand-rolled isinstance/.get() validation into typed dataclasses (MachineSpec
   et al.) used to be the largest source of `Any` in this codebase (same
-  pattern, at smaller scale, still applies to msx/app_config.py and
+  pattern, at smaller scale, still applies to host/app_config.py and
   host/romdb.py). RESOLVED for this file by
   openspec/changes/typed-machine-loader-yaml: every raw YAML mapping this
   file validates is now typed via `TypedDict` (`RomEntryYaml`,

@@ -40,12 +40,12 @@ class VdpDevice(Protocol):
     Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
     `debug_disable_sprites`) too -- both classes declare these identically
     (wired at machine-construction time by msx/machine_loader.py, consumed
-    by msx/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    by host/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
     Several callers (msx/machine.py, msx/state.py,
-    msx/rpc_server.py, msx/debugger/prompt.py, msx/machine_loader.py)
+    host/rpc_server.py, host/debugger/prompt.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
     `_reg_write_log`). For the Rust/C++ target of that narrowing pattern

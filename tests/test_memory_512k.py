@@ -18,13 +18,13 @@ from host.machine_config import (
     load_extension_overlay,
     load_machine_spec,
 )
+from host.state_files import load_state, save_state
 from msx.machine_spec import (
     MachineLoadError,
     _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
 )
 from msx.ram_mapper import RamMapper
-from msx.state import load_state, save_state
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"

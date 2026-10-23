@@ -444,7 +444,7 @@ def test_configured_button_map_rebinds_trigger() -> None:
 
 def test_resolve_gamepad_maps_defaults() -> None:
     from frontend.sdl2_joystick import resolve_gamepad_maps
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
 
     direct, turbo = resolve_gamepad_maps(AppConfig().gamepad_buttons_resolved())
     # dpad up/down/left/right -> bits 0-3, A -> 4, B -> 5 (direct)
@@ -456,7 +456,7 @@ def test_resolve_gamepad_maps_defaults() -> None:
 def test_resolve_gamepad_maps_custom_trigger() -> None:
     # app-config-file "Custom trigger assignment resolved".
     from frontend.sdl2_joystick import resolve_gamepad_maps
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
 
     cfg = AppConfig(gamepad_buttons={"trigger_a": "b", "trigger_b": "a"})
     direct, _turbo = resolve_gamepad_maps(cfg.gamepad_buttons_resolved())
@@ -466,7 +466,7 @@ def test_resolve_gamepad_maps_custom_trigger() -> None:
 def test_every_config_button_label_translates() -> None:
     # app-config-file "Every accepted name translates in the frontend" (buttons).
     from frontend.sdl2_joystick import GAMEPAD_FUNCTION_BITS, GC_BUTTON_NAME_TO_INDEX
-    from msx.app_config import GAMEPAD_FUNCTION_KEYS, GC_BUTTON_NAMES
+    from host.app_config import GAMEPAD_FUNCTION_KEYS, GC_BUTTON_NAMES
 
     assert set(GC_BUTTON_NAMES) == set(GC_BUTTON_NAME_TO_INDEX)
     assert set(GAMEPAD_FUNCTION_KEYS) == set(GAMEPAD_FUNCTION_BITS)

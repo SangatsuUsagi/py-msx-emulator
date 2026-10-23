@@ -56,10 +56,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from msx.debugger.disasm import disassemble
+from host.debugger.disasm import disassemble
+from host.screenshot import encode_rgb24_png, scale_rgb24
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import PauseReason
-from msx.screenshot import encode_rgb24_png, render_current_rgb24, scale_rgb24
+from msx.screenshot import render_current_rgb24
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -764,8 +765,8 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 # ── State save / load ────────────────────────────────────────────────────────
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    from host.state_files import save_state
     from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    from msx.state import save_state
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
@@ -779,7 +780,7 @@ def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
 
 
 def _h_state_load(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.state import load_state
+    from host.state_files import load_state
 
     path = params.get("path")
     if not isinstance(path, str) or not path:

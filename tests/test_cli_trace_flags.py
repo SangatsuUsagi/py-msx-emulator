@@ -66,7 +66,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
          patch.object(Path, "exists", lambda self: True), \
          patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768), \
          patch("frontend.sdl2_frontend.run"), \
-         patch("msx.debugger.prompt.Debugger"):
+         patch("host.debugger.prompt.Debugger"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
             assert spec is not None and spec.loader is not None
@@ -107,7 +107,9 @@ class TestCountFrameResume:
         def fake_step_frame(*_args: object, **_kwargs: object) -> None:
             calls.append(("step_frame", None))
 
-        with patch("msx.state.load_state", side_effect=fake_load_state) as load_state_mock, \
+        with patch(
+            "host.state_files.load_state", side_effect=fake_load_state
+        ) as load_state_mock, \
              patch.object(Machine, "step_frame", side_effect=fake_step_frame):
             code, _out, _err = _run_main(["--count-frame", "3", "--resume"])
         assert code == 0
@@ -118,7 +120,7 @@ class TestCountFrameResume:
         assert [c for c in calls if c[0] == "step_frame"] == [("step_frame", None)] * 3
 
     def test_resume_with_explicit_path_loads_that_state(self) -> None:
-        with patch("msx.state.load_state") as load_state_mock, \
+        with patch("host.state_files.load_state") as load_state_mock, \
              patch.object(Machine, "step_frame", return_value=None) as rf:
             code, _out, _err = _run_main(
                 ["--count-frame", "3", "--resume", "path/to/scene.state"])
@@ -128,7 +130,7 @@ class TestCountFrameResume:
         assert rf.call_count == 3
 
     def test_no_resume_flag_does_not_load_state(self) -> None:
-        with patch("msx.state.load_state") as load_state_mock, \
+        with patch("host.state_files.load_state") as load_state_mock, \
              patch.object(Machine, "step_frame", return_value=None):
             code, _out, _err = _run_main(["--count-frame", "3"])
         assert code == 0
