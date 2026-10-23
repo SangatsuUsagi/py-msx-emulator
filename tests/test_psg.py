@@ -240,7 +240,7 @@ def test_reg14_reads_input_state_when_other_port_selected() -> None:
 # ---------------------------------------------------------------------------
 
 def test_real_mouse_device_reports_motion_through_psg_ports() -> None:
-    mouse = MouseDevice(_scale=1)
+    mouse = MouseDevice()
     mouse.add_motion(5, -1)
     psg = PSG(_input=InputState())
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY2)
@@ -258,7 +258,7 @@ def test_real_mouse_device_reports_motion_through_psg_ports() -> None:
 
 
 def test_real_mouse_device_button_state_via_psg_port() -> None:
-    mouse = MouseDevice(_scale=1)
+    mouse = MouseDevice()
     mouse.set_button(4, True)  # left button (Trigger A, 0x10) pressed
     psg = PSG(_input=InputState())
     psg._mouse = MouseSlot(mouse, JoystickPort.JOY1)
