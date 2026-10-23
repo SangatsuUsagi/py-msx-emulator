@@ -607,17 +607,22 @@ existing component, the spec changes first and the implementation follows.
 The `--benchmark` CLI flag gives these measurements. It does a headless,
 unthrottled run (no `FrameTimer` pacing) from a cold boot through the full
 frame count. The measurement thus includes the BIOS boot time. Every frame
-still runs full CPU emulation and renders the VDP output to an offscreen
-buffer, as in interactive play, and mixes the frame's audio. But
+still runs full CPU emulation, renders the VDP output to an offscreen buffer
+and converts it to RGB, as in interactive play, and mixes the frame's audio.
+But
 `--benchmark` never opens an SDL window, queues audio, or uploads and blits
 textures. Real interactive sessions thus run somewhat slower than the numbers
 below.
 
 Since v2.7.9 the core and the frontend are separate, and the core synthesizes
-the sound chips every frame, also in headless runs. The `--benchmark` numbers
-thus include the cost of sound synthesis, and are closer to the real speed of
-interactive play. Up to v2.7.8, `--benchmark` did not synthesize audio. Do not
-compare the numbers below with numbers from v2.7.8 or earlier.
+the sound chips every frame, also in headless runs. `--benchmark` also
+converts every frame to RGB, as the frontend does for a shown frame. The
+`--benchmark` numbers thus include the cost of sound synthesis and of the RGB
+conversion, and are closer to the real speed of interactive play. Up to
+v2.7.8, `--benchmark` did neither. Do not compare the numbers below with
+numbers from v2.7.8 or earlier. Under PyPy the RGB conversion costs about as
+much as the emulation itself, so the PyPy numbers are about half of what the
+old method gave. The speed of interactive play did not change.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames
 each. The score is the average of the remaining 8 runs, after the removal of
@@ -625,23 +630,23 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 252.52 | ~4.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 612.03 | ~10.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.83 | ~1.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1001.47 | ~16.7× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1269.02 | ~21.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 720.83 | ~12.0× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 247.18 | ~4.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 543.03 | ~9.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.78 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 497.22 | ~8.3× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 544.26 | ~9.1× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 418.23 | ~7.0× |
 | Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.39 | ~1.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 161.73 | ~2.7× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.79 | ~0.45× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 255.04 | ~4.3× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 380.45 | ~6.3× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 158.41 | ~2.6× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 145.63 | ~2.4× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.16 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 125.42 | ~2.1× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 140.78 | ~2.3× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 95.78 | ~1.6× |
 
 Not every tested combination reaches the raw 60 fps target. The smallest
-margin is ~0.45×, below the target, on Raspberry Pi 5 with CPython and Dragon
+margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
 Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the
-target titles. PyPy increases the same case to ~2.6×. The other Raspberry Pi 5
+target titles. PyPy increases the same case to ~1.6×. The other Raspberry Pi 5
 and CPython combinations reach the target, Salamander only just (~1.1×).
 
 With CPython on a Raspberry Pi 5 and an FM-PAC title, on hardware slower than
@@ -668,7 +673,10 @@ continue into the v2.7.9 numbers above.
 
 Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel
 rendering on frames that miss the deadline. The VBlank interrupt still fires
-every frame. This makes the display smoother on hosts that are near but below
+every frame, and the sprite collision and 5th/9th-sprite flags are still
+computed, so a skipped frame never changes what the game sees. Frame skip
+saves only the drawing: on a title where sound synthesis dominates, such as an
+FM-PAC title, it gains little. This makes the display smoother on hosts that are near but below
 the 60 fps target. Frame skip has no effect on audio quality: underruns stay on
 any platform below 60 fps. To disable frame skip, use `--frame-skip none`.
 
