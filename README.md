@@ -294,7 +294,8 @@ An analog-style output low-pass filter (2-pole Butterworth) models the RC
 filter on the real MSX audio output. It removes residual imaging and aliasing
 from the mixed PSG/SCC/DAC/OPLL/key-click signal.
 
-- Implementation: `msx/audio_filter.py`
+- Implementation: `frontend/audio_filter.py`. The frontend applies it; the
+  core's audio output is the unfiltered mix
 
 ### PPI (Programmable Peripheral Interface): Intel i8255
 
@@ -1147,6 +1148,7 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI entry point (python .)
 ├── frontend/
+│   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
 │   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
 │   ├── sdl2_joystick.py   # Physical joystick manager (SDL2)
@@ -1167,7 +1169,6 @@ py-msx-emulator/
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
 │   ├── audio_mixer.py     # Per-frame audio mix (run by Machine.run_frame)
-│   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
 │   ├── dac.py             # Write-driven DAC channel (Majutsushi DAC, key click)
 │   ├── scc.py             # Konami SCC wavetable synthesiser
 │   ├── fmpac.py           # FM-PAC cartridge (banked ROM, SRAM, OPLL routing)

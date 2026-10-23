@@ -12,6 +12,7 @@ import ctypes
 import pytest
 
 import frontend.sdl2_frontend as fe
+from frontend.audio_filter import BiquadLowPass
 from frontend.sdl2_frontend import _CtrlComboState, _DiskList, _HotkeyState, _LoopState
 from frontend.sdl2_keyboard import SdlKeyboard
 from msx.machine import Machine
@@ -125,8 +126,11 @@ def test_same_pcm_and_snapshot_with_and_without_the_frontend(
     frontend_pcm = _run_through_frontend(via_frontend, _FRAMES)
     headless_pcm = _run_headless(headless, _FRAMES)
 
+    # The frontend queues the machine's PCM through its output filter; the
+    # machine's own (pre-filter) PCM is what both runs must agree on.
+    output_filter = BiquadLowPass()
     assert len(frontend_pcm) == _FRAMES
-    assert frontend_pcm == headless_pcm
+    assert frontend_pcm == [output_filter.filter(frame) for frame in headless_pcm]
     assert any(frame != bytes(len(frame)) for frame in headless_pcm)  # the PSG sounded
     assert headless.psg.snapshot_synth() != synth_at_start            # and its state moved
     assert _snapshot_from_machine(via_frontend) == _snapshot_from_machine(headless)

@@ -393,10 +393,10 @@ OPLL of the FM-PAC (`msx/opll.py`), the Majutsushi DAC, and the PPI key click.
 Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples
 on NTSC machines and 882 on PAL machines. At the end of every
 `Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of
-the chips that the machine has, clamps the result to 16 bits, and passes it
-through the output low-pass filter. This happens with or without a frontend,
-so the chips advance the same way in a headless run. The SDL2 frontend takes
-the buffer with `Machine.take_audio()` and queues it to SDL. The machine holds
+the chips that the machine has and clamps the result to 16 bits. This happens
+with or without a frontend, so the chips advance the same way in a headless
+run. The SDL2 frontend takes the buffer with `Machine.take_audio()`, passes
+it through the output low-pass filter, and queues it to SDL. The machine holds
 only the latest frame, so audio that nobody takes does not accumulate.
 
 The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
@@ -443,11 +443,13 @@ ultrasonic carrier changes: it becomes its band-limited duty average.
 
 ### Output low-pass filter
 
-`msx/audio_filter.py` (`BiquadLowPass`) is a stateful 2-pole Butterworth
-low-pass filter (8 kHz, RBJ coefficients, Direct Form I). The core mixer
-applies it to the final mixed buffer of each frame. It models the analog RC
-filter on the real MSX audio output. The machine owns a single instance, which
-carries its `x1/x2/y1/y2` state across frames. A machine reset clears it.
+`frontend/audio_filter.py` (`BiquadLowPass`) is a stateful 2-pole Butterworth
+low-pass filter (8 kHz, RBJ coefficients, Direct Form I). The frontend applies
+it to each frame's PCM from the machine. It models the analog RC filter on the
+real MSX audio output. It uses floating point, so it stays out of the core:
+the core's audio output is the same on every host. The frontend owns a single
+instance, which carries its `x1/x2/y1/y2` state across frames. The reset
+hotkey clears it.
 
 The filter removes the residual high-frequency imaging and aliasing that
 point-sampling synthesis leaves near Nyquist. Its cost is ~1 % of the

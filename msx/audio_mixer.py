@@ -1,15 +1,14 @@
-"""Per-frame audio mix: PSG plus the optional sources, clamped and low-passed.
+"""Per-frame audio mix: PSG plus the optional sources, summed and clamped.
 
 Machine.run_frame() calls mix_frame() once per frame, with or without a
 frontend, so every sound chip advances the same way headless and under SDL2.
-A frontend reads the result with take().
+A frontend reads the result with take(). The output low-pass filter is the
+frontend's (frontend/audio_filter.py): the core hands off the unfiltered mix.
 """
 from __future__ import annotations
 
 from array import array
 from typing import TYPE_CHECKING
-
-from msx.audio_filter import BiquadLowPass
 
 if TYPE_CHECKING:
     from msx.dac import EventDac
@@ -30,7 +29,6 @@ class AudioMixer:
     """
 
     def __init__(self) -> None:
-        self._filter = BiquadLowPass()
         self._pending = b""
 
     def mix_frame(
@@ -44,7 +42,7 @@ class AudioMixer:
         click: EventDac | None,
         opll: Opll | None,
     ) -> None:
-        """Mix n samples of every present source, filter them, and hold the result.
+        """Mix n samples of every present source and hold the result.
 
         frame_start/frame_end are the frame's cycle window for the
         cycle-stamped sources (PSG, DAC, key click). A DAC or key click that
@@ -66,9 +64,9 @@ class AudioMixer:
         if opll is not None:
             extra_bufs.append(opll.generate_samples(n))
         if not extra_bufs:
-            self._pending = self._filter.filter(bytes(psg_buf))
+            self._pending = bytes(psg_buf)
             return
-        self._pending = self._filter.filter(_sum_and_clamp(n, psg_buf, extra_bufs))
+        self._pending = _sum_and_clamp(n, psg_buf, extra_bufs)
 
     def take(self) -> bytes:
         """Return the held frame and clear it; b"" when nothing is held."""
@@ -77,8 +75,7 @@ class AudioMixer:
         return pcm
 
     def reset(self) -> None:
-        """Clear the filter history and any untaken frame."""
-        self._filter.reset()
+        """Drop any untaken frame."""
         self._pending = b""
 
 

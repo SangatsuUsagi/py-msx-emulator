@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from frontend.audio_filter import BiquadLowPass
 from frontend.frame_timer import FrameTimer
 from frontend.sdl2_joystick import (
     _DEFAULT_GC_BUTTON_BIT,
@@ -283,6 +284,9 @@ class _HotkeyState:
     ff_locked: bool = False
     muted: bool = False
     fullscreen: bool = False
+    # Output low-pass applied to the machine's PCM; one instance so its state
+    # carries across frames. The reset action clears it with the machine.
+    audio_filter: BiquadLowPass = field(default_factory=BiquadLowPass)
 
     @property
     def fast_forward(self) -> bool:
@@ -467,6 +471,7 @@ def _run_hotkey_action(
         hotkeys.muted = not hotkeys.muted
     elif action == "reset":
         machine.reset()
+        hotkeys.audio_filter.reset()
 
 
 def _handle_bound_hotkey_keydown(
@@ -1009,9 +1014,10 @@ def _run_frame(
         if not state.running:
             return
 
-    # run_frame() already mixed the frame's audio; take it every frame (also
-    # with no device) and queue it unless fast-forwarding, as silence when muted.
-    audio_buf = machine.take_audio()
+    # run_frame() already mixed the frame's audio; take and filter it every
+    # frame (also with no device, so the filter state stays continuous) and
+    # queue it unless fast-forwarding, as silence when muted.
+    audio_buf = hotkeys.audio_filter.filter(machine.take_audio())
     if audio_dev > 0:
         if hotkeys.muted:
             audio_buf = bytes(len(audio_buf))

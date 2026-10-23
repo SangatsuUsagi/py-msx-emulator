@@ -178,7 +178,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 
 実機 MSX の音声出力の RC フィルタを模した、アナログ風の出力ローパスフィルタ（2 極バターワース）。ミックス後の PSG/SCC/DAC/OPLL/キークリックの信号から、残ったイメージングとエイリアシングを取り除く。
 
-- 実装：`msx/audio_filter.py`
+- 実装：`frontend/audio_filter.py`。フロントエンドがかける。コアの音声出力はフィルタ前のミックス
 
 ### PPI（Programmable Peripheral Interface）：Intel i8255
 
@@ -838,6 +838,7 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI エントリポイント（python .）
 ├── frontend/
+│   ├── audio_filter.py    # アナログ的な出力ローパス（BiquadLowPass）
 │   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
 │   ├── sdl2_frontend.py   # SDL2 ウィンドウ、音声のキュー投入、イベントループ
 │   ├── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
@@ -858,7 +859,6 @@ py-msx-emulator/
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
 │   ├── audio_mixer.py     # フレームごとの音声ミックス（Machine.run_frame が実行）
-│   ├── audio_filter.py    # アナログ的な出力ローパス（BiquadLowPass）
 │   ├── dac.py             # 書き込み駆動型の DAC チャンネル（Majutsushi DAC、キークリック）
 │   ├── scc.py             # Konami SCC ウェーブテーブルシンセサイザ
 │   ├── fmpac.py           # FM-PAC カートリッジ（バンク ROM、SRAM、OPLL ルーティング）

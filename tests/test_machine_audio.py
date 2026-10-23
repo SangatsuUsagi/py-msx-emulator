@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-from msx.audio_filter import BiquadLowPass
 from msx.fmpac import FmPac
 from msx.machine import Machine
 from msx.opll import Opll
@@ -114,17 +113,13 @@ def test_psg_receives_the_frame_window(monkeypatch: pytest.MonkeyPatch) -> None:
     assert 59_736 <= frame_end - frame_start <= 59_736 + 22
 
 
-def test_reset_clears_the_filter_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    # audio-mixer "Machine reset clears the filter state".
+def test_machine_hands_off_the_unfiltered_mix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # audio-mixer "Handed-off audio is the unfiltered mix" (machine level).
     machine = make_machine(_NOP_ROM)
     loud = bytes(b"\x20\x4e" * 735)  # 20000 per sample
     monkeypatch.setattr(machine.psg, "generate_samples", lambda *_a: bytearray(loud))
     machine.run_frame()
-    machine.run_frame()
-    machine.reset()
-    machine.run_frame()
-    assert machine.take_audio() == BiquadLowPass().filter(loud)
-
+    assert machine.take_audio() == loud
 
 def test_run_frame_return_value_is_unchanged() -> None:
     # machine-core "run_frame return value is unchanged".
