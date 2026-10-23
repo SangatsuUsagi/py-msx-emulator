@@ -11,7 +11,8 @@ import json
 
 import pytest
 
-from msx.state import StateLoadError, load_state, save_state
+from host.state_files import load_state, save_state
+from msx.state import StateLoadError
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000

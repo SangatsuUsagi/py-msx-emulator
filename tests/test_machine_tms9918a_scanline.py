@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from host.state_files import load_state, save_state
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
-from msx.state import load_state, save_state
 from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
 from msx.vdp.vdp import VDP
 from tests.factories import make_machine

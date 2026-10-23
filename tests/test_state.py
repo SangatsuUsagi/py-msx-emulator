@@ -7,9 +7,10 @@ import pytest
 from PIL import Image
 
 from host.machine_config import build_machine_from_spec
+from host.state_files import load_state, save_state
 from msx.machine_spec import MachineSpec, _RomEntry, _Slot0RamEntry
 from msx.snapshot_schema import SnapshotMismatchError
-from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
+from msx.state import CURRENT_FORMAT_VERSION, StateLoadError
 from tests.factories import make_machine
 
 _CART_64K = b"\x00" * 0x10000

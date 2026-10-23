@@ -15,6 +15,7 @@ import pytest
 
 from host.machine_config import build_machine_from_spec, load_machine_config, sram_paths
 from host.media import persist_dirty_media
+from host.state_files import load_state, save_state
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
     MachineLoadError,
@@ -26,7 +27,6 @@ from msx.machine_spec import (
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
 from msx.ram_mapper import RamMapper
-from msx.state import load_state, save_state
 
 _HALNOTE_ROM_SIZE = 1048576
 _KANJIBASIC_ROM_SIZE = 32768

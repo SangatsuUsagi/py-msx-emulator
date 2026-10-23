@@ -55,7 +55,7 @@ _BIT_TRIGGER_A = 4
 _BIT_TRIGGER_B = 5
 
 # Default GameController button → bit index within the port's 6-bit joystick
-# state. Overridable per instance via py_emulator.yaml (see msx.app_config).
+# state. Overridable per instance via py_emulator.yaml (see host.app_config).
 _DEFAULT_GC_BUTTON_BIT = {
     0: 4,   # SDL_CONTROLLER_BUTTON_A  → Trigger A
     1: 5,   # SDL_CONTROLLER_BUTTON_B  → Trigger B
@@ -87,7 +87,7 @@ _JOY_TURBO_BUTTON_BIT = {2: _BIT_TRIGGER_A, 3: _BIT_TRIGGER_B}
 
 
 # SDL GameController button label -> SDL_CONTROLLER_BUTTON_* index, for the
-# labels msx/app_config.py's GC_BUTTON_NAMES accepts.
+# labels host/app_config.py's GC_BUTTON_NAMES accepts.
 GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {
     "a": 0, "b": 1, "x": 2, "y": 3,
     "back": 4, "guide": 5, "start": 6,
@@ -144,7 +144,7 @@ class JoystickManager:
     _sdl: _SdlJoystickApi = field(repr=False)
 
     # GameController button maps and turbo period; default to the built-in
-    # tables/rate but may be replaced from py_emulator.yaml (see msx.app_config).
+    # tables/rate but may be replaced from py_emulator.yaml (see host.app_config).
     _gc_button_bit: dict[int, int] = field(
         default_factory=lambda: dict(_DEFAULT_GC_BUTTON_BIT), repr=False
     )

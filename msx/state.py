@@ -7,15 +7,10 @@ as ``{"__b64__": "<base64>"}``. `format_version` guards compatibility.
 from __future__ import annotations
 
 import base64
-import datetime
 import json
-import os
-import re
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import MISSING, asdict, dataclass
 from dataclasses import fields as dataclass_fields
-from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from msx.mapper import MapperKind
@@ -562,7 +557,7 @@ def _parse_vdp9938(value: object, msx2: bool, vdp_latch: int | None) -> V9938Sta
     return state
 
 
-def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
+def _check_snapshot_keys(data: dict[str, object], resolved: str) -> None:
     """Refuse a file whose top-level keys are not MachineSnapshot's: an
     unknown key, or a missing key that has no default."""
     known: set[str] = set()
@@ -582,7 +577,7 @@ def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
         )
 
 
-def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
+def parse_snapshot(decoded: object, resolved: str) -> MachineSnapshot:
     """Turn a decoded state file into a MachineSnapshot, checking the format
     version, then the key set, then every top-level value's type, range and
     (where the snapshot fixes it) length. A bad value raises StateLoadError
@@ -901,27 +896,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         mouse.apply_state(parsed.mouse, machine.cycle_count)
 
 
-# --- symlink helper -----------------------------------------------------------
-
-def _update_symlink(link: Path, target: Path) -> None:
-    """Atomically update (or create) a symlink to point at target."""
-    tmp_link = link.with_suffix(link.suffix + ".tmp")
-    try:
-        if tmp_link.exists() or tmp_link.is_symlink():
-            tmp_link.unlink()
-        os.symlink(target.name, tmp_link)
-        os.replace(tmp_link, link)
-    except OSError as exc:
-        print(f"warning: could not update symlink {link}: {exc}", file=sys.stderr)
-
-
-# --- public API ---------------------------------------------------------------
-
-def _sanitise_title(title: str) -> str:
-    """Replace spaces with underscores and strip filesystem-unsafe characters."""
-    title = title.replace(" ", "_")
-    return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
-
+# --- encoding ---------------------------------------------------------------
 
 def _to_jsonable(node: object) -> object:
     """Recursively convert a snapshot dict to JSON-serialisable form.
@@ -949,86 +924,38 @@ def _from_jsonable(node: object) -> object:
     return node
 
 
-def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Path:
-    """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
+def save_state(machine: "Machine") -> bytes:
+    """Encode the machine's snapshot as the versioned JSON state format.
 
-    Args:
-        machine: Running machine to snapshot.
-        rgb_buf: Current frame as 256×192 RGB24 bytearray.
-        title: Human-readable title used in the filename.
-
-    Returns:
-        Path of the written .state file.
+    Chooses no file name and writes nothing: host/state_files.py stores the
+    bytes (with a screenshot and the latest.* links).
     """
-    saves_dir = Path("saves") / "states"
-    saves_dir.mkdir(parents=True, exist_ok=True)
-
-    stem = f"{_sanitise_title(title)}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    state_path = saves_dir / f"{stem}.state"
-    png_path = saves_dir / f"{stem}.png"
-
-    # Write pending disk writes back first so the disk-identity hash
-    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
-    # the .dsk file's own on-disk bytes. This file-level half of state.py
-    # moves to host/state_files.py in enforce-core-boundary phase 20.
-    from host.media import persist_dirty_media
-    persist_dirty_media(machine)
     snap = _snapshot_from_machine(machine)
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(_to_jsonable(asdict(snap)), f)
-
-    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    from msx.screenshot import write_rgb24_png
-    write_rgb24_png(rgb_buf, SCREEN_WIDTH, SCREEN_HEIGHT, png_path)
-
-    _update_symlink(saves_dir / "latest.state", state_path)
-    _update_symlink(saves_dir / "latest.png", png_path)
-
-    print(f"state saved: {state_path}")
-    return state_path
+    return json.dumps(_to_jsonable(asdict(snap))).encode("utf-8")
 
 
-def load_state(machine: "Machine", path: Path | None = None) -> None:
-    """Restore machine state from a save file.
-
-    Args:
-        machine: Running machine to restore into (callbacks remain intact).
-        path: Explicit .state file to load. When None, loads saves/states/latest.state.
+def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None:
+    """Restore a machine from save_state() bytes. `source` names the data in
+    error messages (the host passes the file path).
 
     Raises:
-        FileNotFoundError: If the target file does not exist.
         StateLoadError: If a field or producer object is malformed.
-        ValueError: If the file is not a state file of this format version and
+        ValueError: If the data is not a state of this format version and
             layout, or does not match the running machine (machine type,
             mapper kind, slot / FDC / SCC wiring). Nothing is restored then.
     """
-    if path is None:
-        link = Path("saves") / "states" / "latest.state"
-        if not link.exists():
-            raise FileNotFoundError(
-                "no save state found: saves/states/latest.state does not exist"
-            )
-        resolved = link.resolve()
-    else:
-        if not path.exists():
-            raise FileNotFoundError(f"save state not found: {path}")
-        resolved = path
-
-    with open(resolved, "rb") as f:
-        raw = f.read()
     # Legacy pickle files (format_version <= 4) start with a pickle opcode byte,
     # not JSON. Refuse to unpickle them; the format is now stdlib JSON.
-    stripped = raw.lstrip()
+    stripped = data.lstrip()
     if not stripped[:1] == b"{":
         raise ValueError(
             "legacy pickle save states are no longer supported; please re-save "
-            f"({resolved})"
+            f"({source})"
         )
     try:
-        data = json.loads(raw.decode("utf-8"))
+        decoded = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
+        raise ValueError(f"corrupt or unsupported save state: {source} ({exc})") from exc
 
-    snap = parse_snapshot(_from_jsonable(data), resolved)
+    snap = parse_snapshot(_from_jsonable(decoded), source)
     _restore_snapshot(machine, snap)
-    print(f"state loaded: {resolved}")

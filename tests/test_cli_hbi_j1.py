@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from host.machine_config import build_machine_from_spec, load_extension_overlay
+from host.state_files import load_state, save_state
 from msx.kanji import KanjiRom
 from msx.machine import Machine
 from msx.machine_spec import (
@@ -26,7 +27,6 @@ from msx.machine_spec import (
     _RomEntry,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
-from msx.state import load_state, save_state
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 _ROOT = Path(__file__).resolve().parent.parent

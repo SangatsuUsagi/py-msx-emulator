@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from host.debugger import prompt as debugger_prompt_module
 from msx.cpu.z80 import Z80
-from msx.debugger import prompt as debugger_prompt_module
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 

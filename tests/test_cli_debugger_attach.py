@@ -25,7 +25,7 @@ def _run_main_capture_debugger(machine_id: str):
          patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768), \
          patch.object(Machine, "run_frame", return_value=None), \
          patch("frontend.sdl2_frontend.run"), \
-         patch("msx.debugger.prompt.Debugger") as dbg:
+         patch("host.debugger.prompt.Debugger") as dbg:
         spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
         assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)

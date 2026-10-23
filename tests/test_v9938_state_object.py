@@ -14,8 +14,9 @@ import json
 
 import pytest
 
+from host.state_files import load_state, save_state
 from msx.snapshot_schema import SchemaError
-from msx.state import StateLoadError, load_state, save_state
+from msx.state import StateLoadError
 from msx.vdp.v9938 import V9938, parse_v9938_state
 from tests.factories import make_machine_msx2
 

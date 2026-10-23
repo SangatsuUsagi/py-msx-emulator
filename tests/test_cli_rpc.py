@@ -19,10 +19,10 @@ def _run_main(argv: list[str], rpc_mock=None):
         patch.object(Path, "exists", lambda self: True),
         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768),
         patch("frontend.sdl2_frontend.run"),
-        patch("msx.debugger.prompt.Debugger"),
+        patch("host.debugger.prompt.Debugger"),
     ]
     if rpc_mock is not None:
-        patches.append(patch("msx.rpc_server.DebugServer", rpc_mock))
+        patches.append(patch("host.rpc_server.DebugServer", rpc_mock))
     for p in patches:
         p.start()
     try:

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from msx.debugger.disasm import disassemble
+from host.debugger.disasm import disassemble
 from msx.mapper import BankTracingMapper
 
 try:
@@ -610,7 +610,7 @@ class Debugger:
         return render_current_rgb24(self._machine.vdp)
 
     def _cmd_screenshot(self) -> None:
-        from msx.screenshot import save_screenshot
+        from host.screenshot import save_screenshot
         try:
             rgb, w, h = self._render_rgb24()
         except Exception as exc:  # rendering is best-effort for a debug command
@@ -624,9 +624,9 @@ class Debugger:
         TITLE (a default is used when omitted) becomes the filename stem, matching
         the RPC `state.save` contract — it is not a file path. REPL stays open.
         """
+        from host.screenshot import scale_rgb24
+        from host.state_files import save_state
         from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-        from msx.screenshot import scale_rgb24
-        from msx.state import save_state
 
         title = args[0] if args else "msx_dbg_checkpoint"
         try:
@@ -646,7 +646,7 @@ class Debugger:
         """
         from pathlib import Path
 
-        from msx.state import load_state
+        from host.state_files import load_state
 
         if not args:
             print("Usage: ld FILE")

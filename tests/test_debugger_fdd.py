@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from msx.debugger.prompt import Debugger
+from host.debugger.prompt import Debugger
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793

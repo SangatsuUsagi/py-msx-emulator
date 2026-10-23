@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from host.machine_config import build_machine_from_spec
+from host.state_files import load_state, save_state
 from msx.machine import Machine
 from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
-from msx.state import load_state, save_state
 
 _RGB = bytearray(256 * 192 * 3)
 _BANK_SIZE = 0x4000

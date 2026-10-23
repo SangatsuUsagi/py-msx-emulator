@@ -26,7 +26,6 @@ from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP, VdpDevice
 
 if TYPE_CHECKING:
-    from msx.debugger.prompt import Debugger
     from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import FloppyDisk
     from msx.fmpac import FmPac
@@ -37,6 +36,13 @@ HANG_PC_REPEAT_THRESHOLD: int = 1000
 # MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
 SCREEN_WIDTH: int = 256
 SCREEN_HEIGHT: int = 192
+
+
+class DebuggerHook(Protocol):
+    """The interactive debugger the host may attach (host/debugger/prompt.py's
+    Debugger); the core only asks it to take over at a break."""
+
+    def enter(self) -> None: ...
 
 
 class SramMedium(Protocol):
@@ -57,7 +63,7 @@ def drive_media_id(index: int) -> str:
 
 class PauseReason(str, enum.Enum):
     """Why the emulator paused — passed to the pause hook, and the single source
-    of truth shared with the RPC adapter (msx/rpc_server.py imports it).
+    of truth shared with the RPC adapter (host/rpc_server.py imports it).
 
     Subclasses `str` so each member serializes to its wire value (e.g.
     ``"breakpoint"``) and compares equal to that string, keeping the JSON-RPC
@@ -114,7 +120,7 @@ class Machine:
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
-    _debugger: Debugger | None = field(default=None, repr=False)
+    _debugger: DebuggerHook | None = field(default=None, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
     _pause_hook: Callable[[PauseReason, int], None] | None = field(
@@ -311,7 +317,7 @@ class Machine:
         `PauseReason` member.
 
         PORT-NOTE: this is the *only* seam the core exposes to the RPC adapter
-          (msx/rpc_server.py). The core has no knowledge of sockets, JSON, or
+          (host/rpc_server.py). The core has no knowledge of sockets, JSON, or
           threads -- it just calls this generic callback.
         Rust equivalent: a `trait PauseSink` (with `reason: PauseReason`), so
           the RPC layer can live in a separate, feature-gated crate.
@@ -320,7 +326,7 @@ class Machine:
         Kept as-is here because: this is already the target shape (a generic
           callback seam), not a Python-specific pattern needing translation
           -- noted for completeness, and see the crate-split note in
-          msx/rpc_server.py for how the RPC layer sits behind it.
+          host/rpc_server.py for how the RPC layer sits behind it.
         """
         self._pause_hook = hook
 

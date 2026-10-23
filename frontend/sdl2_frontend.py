@@ -24,18 +24,18 @@ from frontend.sdl2_keyboard import (
     resolve_hotkeys,
     resolve_keyboard_joy_map,
 )
+from host.app_config import AppConfig
 from host.media import swap_disk
-from msx.app_config import AppConfig
+from host.screenshot import save_screenshot
+from host.state_files import load_state, save_state
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
 from msx.mouse import MouseDevice
 from msx.psg import SAMPLE_RATE, JoystickPort
-from msx.screenshot import save_screenshot
-from msx.state import load_state, save_state
 from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
-    from msx.rpc_server import DebugServer
+    from host.rpc_server import DebugServer
 
 _APP_NAME = "py-msx-emulator"
 _SCREEN_WIDTH = 256

@@ -382,7 +382,7 @@ def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[i
 
 
 # Function-key name -> SDL keycode (0x40000000 | SDL_SCANCODE_Fn; F1 is 58),
-# for the names msx/app_config.py's FKEY_NAMES accepts.
+# for the names host/app_config.py's FKEY_NAMES accepts.
 FKEY_NAME_TO_SDLKEY: dict[str, int] = {}
 for _n in range(1, 13):
     FKEY_NAME_TO_SDLKEY[f"f{_n}"] = 0x40000000 | (57 + _n)

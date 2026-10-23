@@ -29,7 +29,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str, Mock]:
          patch.object(Path, "exists", lambda self: True), \
          patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768), \
          patch("frontend.sdl2_frontend.run") as sdl_run, \
-         patch("msx.debugger.prompt.Debugger"):
+         patch("host.debugger.prompt.Debugger"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
             assert spec is not None and spec.loader is not None
@@ -81,7 +81,9 @@ class TestBenchmarkResume:
             calls.append(("step_frame", None))
 
         perf_values = iter([0.0, 1.0, 10.0, 10.0])
-        with patch("msx.state.load_state", side_effect=fake_load_state) as load_state_mock, \
+        with patch(
+            "host.state_files.load_state", side_effect=fake_load_state
+        ) as load_state_mock, \
              patch.object(Machine, "step_frame", side_effect=fake_step_frame), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "10", "--resume"])
@@ -93,7 +95,7 @@ class TestBenchmarkResume:
 
     def test_resume_with_explicit_path_loads_that_state(self) -> None:
         perf_values = iter([0.0, 10.0, 10.0])
-        with patch("msx.state.load_state") as load_state_mock, \
+        with patch("host.state_files.load_state") as load_state_mock, \
              patch.object(Machine, "step_frame", return_value=None), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(

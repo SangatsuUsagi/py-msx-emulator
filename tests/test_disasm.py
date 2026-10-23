@@ -1,6 +1,6 @@
-"""Tests for msx.debugger.disasm — Z80 disassembler."""
+"""Tests for host.debugger.disasm — Z80 disassembler."""
 
-from msx.debugger.disasm import disassemble
+from host.debugger.disasm import disassemble
 
 
 def _mem(*bytes_: int):

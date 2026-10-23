@@ -6,10 +6,11 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, NoReturn, TextIO, TypeVar
 
-from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS
+from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
+    from host.rpc_server import DebugServer
     from msx.boundary import RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
         _ExpandedExtensionOverlay,
         _ExtensionOverlay,
     )
-    from msx.rpc_server import DebugServer
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -342,7 +342,7 @@ def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | Non
     from msx.input import InputState
 
     if resume is not None:
-        from msx.state import load_state
+        from host.state_files import load_state
         load_state(machine, path=Path(resume) if resume else None)
     no_input = InputState()
     for _ in range(count_frame):
@@ -363,7 +363,7 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
 
-    from msx.state import load_state
+    from host.state_files import load_state
     if resume is not None:
         load_state(machine, path=Path(resume) if resume else None)
 
@@ -439,7 +439,7 @@ def _resolve_effective_options(
     file < CLI argument precedence. A CLI flag left unset is None (see the
     sentinel defaults in _build_arg_parser), so it never masks a config value.
     """
-    from msx.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
+    from host.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
 
     if app_cfg.frame_skip is None:
         frame_skip_cfg = None
@@ -518,7 +518,7 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
-    from msx.app_config import AppConfigError, load_app_config
+    from host.app_config import AppConfigError, load_app_config
     try:
         app_cfg = load_app_config(_PROJECT_ROOT)
     except AppConfigError as exc:
@@ -624,7 +624,7 @@ def main() -> None:
 
         # Attach the interactive debugger for all machines so Ctrl-C drops into
         # the REPL on MSX1 too (the slot/mapper tools are most useful there).
-        from msx.debugger.prompt import Debugger
+        from host.debugger.prompt import Debugger
         machine._debugger = Debugger(machine)
 
         if breakpoint_addrs:
@@ -647,7 +647,7 @@ def main() -> None:
             _run_benchmark(machine, args.benchmark, args.resume)
         else:
             if opts.rpc_enabled:
-                from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
+                from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
                 rpc_server = DebugServer(machine, sock_path=sock_path)
                 machine.set_pause_hook(rpc_server.on_pause)
