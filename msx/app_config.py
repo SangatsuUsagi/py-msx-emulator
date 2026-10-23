@@ -59,28 +59,29 @@ VALID_EXTENSIONS: tuple[str, ...] = (
     "msxdos2_512k_viewfont",
 )
 
-# SDL GameController button label → SDL_CONTROLLER_BUTTON_* index.
-GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {
-    "a": 0, "b": 1, "x": 2, "y": 3,
-    "back": 4, "guide": 5, "start": 6,
-    "leftstick": 7, "rightstick": 8,
-    "leftshoulder": 9, "rightshoulder": 10,
-    "dpup": 11, "dpdown": 12, "dpleft": 13, "dpright": 14,
-}
+# GameController button labels accepted by joystick.buttons. The SDL2
+# frontend translates each label to an SDL button index
+# (frontend/sdl2_joystick.py's GC_BUTTON_NAME_TO_INDEX).
+GC_BUTTON_NAMES: tuple[str, ...] = (
+    "a", "b", "x", "y",
+    "back", "guide", "start",
+    "leftstick", "rightstick",
+    "leftshoulder", "rightshoulder",
+    "dpup", "dpdown", "dpleft", "dpright",
+)
 
-# MSX joystick function → (default button label, port bit, is_turbo).
-# The port bit is fixed by MSX semantics (up=0..right=3, trigA=4, trigB=5); only
-# the button label is user-configurable. Turbo functions drive the same trigger
-# bits but through the turbo state machine.
-_GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
-    "up":        ("dpup", 0, False),
-    "down":      ("dpdown", 1, False),
-    "left":      ("dpleft", 2, False),
-    "right":     ("dpright", 3, False),
-    "trigger_a": ("a", 4, False),
-    "trigger_b": ("b", 5, False),
-    "turbo_a":   ("y", 4, True),
-    "turbo_b":   ("x", 5, True),
+# MSX joystick function → default button label. Only the label is
+# user-configurable; the frontend maps each function to its port bit and
+# turbo flag (frontend/sdl2_joystick.py's GAMEPAD_FUNCTION_BITS).
+_GAMEPAD_FUNCTIONS: dict[str, str] = {
+    "up":        "dpup",
+    "down":      "dpdown",
+    "left":      "dpleft",
+    "right":     "dpright",
+    "trigger_a": "a",
+    "trigger_b": "b",
+    "turbo_a":   "y",
+    "turbo_b":   "x",
 }
 
 # Public view of the joystick.buttons key set, so tools that emit or check that
@@ -114,10 +115,12 @@ DEFAULT_HOTKEYS: dict[str, str] = {
     "reset": "shift+f12",
 }
 
-# Function-key name → SDL keycode (0x40000000 | SDL_SCANCODE_Fn; F1 is 58).
-_FKEY_KEYCODES: dict[str, int] = {}
-for _n in range(1, 13):
-    _FKEY_KEYCODES[f"f{_n}"] = 0x40000000 | (57 + _n)
+# Function-key names a hotkey may use (before the optional "shift+"). The
+# SDL2 frontend translates each to a key code
+# (frontend/sdl2_keyboard.py's FKEY_NAME_TO_SDLKEY).
+FKEY_NAMES: tuple[str, ...] = (
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+)
 
 _SHIFT_PREFIX = "shift+"
 # Keys a hotkey may not take: F1-F5 (plain and Shift) reach the MSX matrix
@@ -197,43 +200,40 @@ class AppConfig:
             return DEFAULT_TURBO_PERIOD
         return max(1, round(60.0 / self.turbo_hz))
 
-    def gamepad_maps(self) -> tuple[dict[int, int], dict[int, int]]:
-        """Resolve the gamepad button map to ``JoystickManager`` dicts.
+    def gamepad_buttons_resolved(self) -> dict[str, str]:
+        """Resolve joystick.buttons over the built-in defaults.
 
         Returns:
-            A ``(direct, turbo)`` pair, each mapping an SDL GameController button
-            index to the MSX port bit it drives. ``direct`` bits are written
-            immediately; ``turbo`` bits are driven by the turbo state machine.
+            ``function -> button label`` for every gamepad function.
 
         Raises:
             AppConfigError: If two functions resolve to the same button.
         """
-        direct: dict[int, int] = {}
-        turbo: dict[int, int] = {}
-        seen: dict[int, str] = {}
-        for func, (default_label, bit, is_turbo) in _GAMEPAD_FUNCTIONS.items():
+        result: dict[str, str] = {}
+        seen: dict[str, str] = {}
+        for func, default_label in _GAMEPAD_FUNCTIONS.items():
             label = self.gamepad_buttons.get(func, default_label)
-            index = GC_BUTTON_NAME_TO_INDEX[label]
-            if index in seen:
+            if label in seen:
                 raise AppConfigError(
                     f"{CONFIG_FILENAME}: joystick.buttons: {label!r} assigned to both "
-                    f"{seen[index]!r} and {func!r}"
+                    f"{seen[label]!r} and {func!r}"
                 )
-            seen[index] = func
-            (turbo if is_turbo else direct)[index] = bit
-        return direct, turbo
+            seen[label] = func
+            result[func] = label
+        return result
 
-    def hotkey_bindings(self) -> dict[tuple[int, bool], str]:
-        """Resolve the SDL2 frontend hotkey table.
+    def hotkey_bindings(self) -> dict[tuple[str, bool], str]:
+        """Resolve the SDL2 frontend hotkey table, by key name.
 
         Returns:
-            ``(SDL keycode, Shift held) -> action`` for every action, with
-            ``hotkeys`` overrides applied over ``DEFAULT_HOTKEYS``.
+            ``(function-key name, Shift held) -> action`` for every action,
+            with ``hotkeys`` overrides applied over ``DEFAULT_HOTKEYS``. The
+            frontend translates the key names to key codes.
 
         Raises:
             AppConfigError: If two actions end up on the same key.
         """
-        result: dict[tuple[int, bool], str] = {}
+        result: dict[tuple[str, bool], str] = {}
         for action, default_name in DEFAULT_HOTKEYS.items():
             key_name = self.hotkeys.get(action, default_name)
             key = _hotkey_key(key_name)
@@ -246,11 +246,11 @@ class AppConfig:
         return result
 
 
-def _hotkey_key(key_name: str) -> tuple[int, bool]:
-    """Split a validated hotkey name into (SDL keycode, Shift held)."""
+def _hotkey_key(key_name: str) -> tuple[str, bool]:
+    """Split a validated hotkey name into (function-key name, Shift held)."""
     shift = key_name.startswith(_SHIFT_PREFIX)
     fkey = key_name[len(_SHIFT_PREFIX):] if shift else key_name
-    return _FKEY_KEYCODES[fkey], shift
+    return fkey, shift
 
 
 def load_app_config(root: Path) -> AppConfig:
@@ -422,10 +422,10 @@ def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
                 f"{CONFIG_FILENAME}: joystick.buttons: unknown function {func!r} "
                 f"(expected one of {', '.join(_GAMEPAD_FUNCTIONS)})"
             )
-        if not isinstance(label, str) or label not in GC_BUTTON_NAME_TO_INDEX:
+        if not isinstance(label, str) or label not in GC_BUTTON_NAMES:
             raise AppConfigError(
                 f"{CONFIG_FILENAME}: joystick.buttons.{func}: unknown button {label!r} "
-                f"(expected one of {', '.join(GC_BUTTON_NAME_TO_INDEX)})"
+                f"(expected one of {', '.join(GC_BUTTON_NAMES)})"
             )
         cfg.gamepad_buttons[func] = label
     _validate_no_duplicate_buttons(cfg)
@@ -433,7 +433,7 @@ def _parse_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
 
 def _validate_no_duplicate_buttons(cfg: AppConfig) -> None:
     """Surface duplicate-button conflicts at load time (raises AppConfigError)."""
-    cfg.gamepad_maps()
+    cfg.gamepad_buttons_resolved()
 
 
 def _parse_keyboard_joystick(keyboard_joystick: Any, cfg: AppConfig) -> None:
@@ -520,7 +520,7 @@ def _parse_hotkeys(hotkeys: Any, cfg: AppConfig) -> None:
         fkey = key_name
         if isinstance(key_name, str) and key_name.startswith(_SHIFT_PREFIX):
             fkey = key_name[len(_SHIFT_PREFIX):]
-        if not isinstance(key_name, str) or fkey not in _FKEY_KEYCODES:
+        if not isinstance(key_name, str) or fkey not in FKEY_NAMES:
             raise AppConfigError(
                 f"{CONFIG_FILENAME}: hotkeys.{action}: unknown key {key_name!r} "
                 f"(expected f1..f12, optionally prefixed with 'shift+')"

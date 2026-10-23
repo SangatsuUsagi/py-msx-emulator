@@ -666,3 +666,10 @@ def test_every_config_key_name_translates() -> None:
     # app-config-file "Every accepted name translates in the frontend" (keys).
     from msx.app_config import KEYBOARD_KEY_NAMES
     assert set(KEYBOARD_KEY_NAMES) == set(KEY_NAME_TO_SDLKEY)
+
+
+def test_every_config_hotkey_name_translates() -> None:
+    # app-config-file "Every accepted name translates in the frontend" (hotkeys).
+    from frontend.sdl2_keyboard import FKEY_NAME_TO_SDLKEY
+    from msx.app_config import FKEY_NAMES
+    assert set(FKEY_NAMES) == set(FKEY_NAME_TO_SDLKEY)
