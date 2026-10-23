@@ -15,10 +15,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
-from msx.mapper import MapperKind
+from msx.mapper import MapperKind, SramMediumMixin
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
 
 if TYPE_CHECKING:
@@ -74,7 +73,7 @@ _STATE_KEYS: frozenset[str] = frozenset(FmPacState.__annotations__)
 
 
 @dataclass
-class FmPac:
+class FmPac(SramMediumMixin):
     """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
 
     kind: ClassVar[MapperKind] = MapperKind.FMPAC
@@ -156,7 +155,7 @@ class FmPac:
             self._bank = value & 0x03
             return
         if self._sram_enabled and off < _OFF_MAGIC_LO:
-            self.sram[off] = value
+            self._write_sram(off, value)
 
     def _check_sram_enable(self) -> None:
         self._sram_enabled = self._r1ffe == _MAGIC_R1FFE and self._r1fff == _MAGIC_R1FFF
@@ -193,10 +192,7 @@ class FmPac:
 
     # ---------------------------------------------------------------------- SRAM
 
-    def save_sram(self, path: Path) -> None:
-        """Write the raw 8 KB SRAM image to path (battery-save format)."""
-        path.write_bytes(self.sram)
-
+    # save_sram/sram_dirty/mark_sram_persisted come from SramMediumMixin.
     # Loading a saved SRAM image is done by passing it as the `sram=`
     # constructor argument; __post_init__ blanks a wrong-size image.
 
@@ -252,7 +248,7 @@ class FmPac:
         Protocol; the value must come from this device's parse_state.
         """
         parsed = cast(FmPacState, state)
-        self.sram[:] = parsed["sram"]
+        self._restore_sram(parsed["sram"])
         self._bank = parsed["bank"]
         self._enable = parsed["enable"]
         self._r1ffe = parsed["r1ffe"]

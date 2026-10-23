@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from host.media import persist_dirty_media
 from msx.mapper import (
     Ascii8Sram2Mapper,
     Ascii8Sram8Mapper,
@@ -236,6 +237,22 @@ class TestAscii8Sram8:
         m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
         m.write(0x8000, 0xDD)
         assert m.sram[0x0000] == 0xDD
+
+    def test_guest_sram_write_sets_the_dirty_flag(self):
+        # cart-sram-mapper "A guest SRAM write sets the dirty flag".
+        m = Ascii8Sram8Mapper(rom=_ROM_16K)
+        assert m.sram_dirty is False
+        m.write(0x7000, _SRAM_BANK)  # window 2 = SRAM
+        m.write(0x8000, 0xDD)
+        assert m.sram_dirty is True
+        m.mark_sram_persisted()
+        assert m.sram_dirty is False
+
+    def test_rewriting_the_same_value_leaves_the_flag_clear(self):
+        m = Ascii8Sram8Mapper(rom=_ROM_16K)
+        m.write(0x7000, _SRAM_BANK)
+        m.write(0x8000, 0x00)  # SRAM already holds 0x00
+        assert m.sram_dirty is False
 
     def test_sram_shared_across_windows(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
@@ -536,32 +553,26 @@ class TestSramConstructorParam:
 # ---------------------------------------------------------------------------
 
 class TestSaveSram:
-    def test_save_writes_bytes(self, tmp_path: Path):
+    def test_save_returns_bytes(self):
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         m.sram[0] = 0x42
         m.sram[10] = 0xFF
-        p = tmp_path / "test.sram"
-        m.save_sram(p)
-        data = p.read_bytes()
+        data = m.save_sram()
         assert len(data) == 2048
         assert data[0] == 0x42
         assert data[10] == 0xFF
 
-    def test_save_sram8(self, tmp_path: Path):
+    def test_save_sram8(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
         m.sram[0x1FFF] = 0x99
-        p = tmp_path / "test.sram"
-        m.save_sram(p)
-        data = p.read_bytes()
+        data = m.save_sram()
         assert len(data) == 8192
         assert data[0x1FFF] == 0x99
 
-    def test_save_ascii16sram2(self, tmp_path: Path):
+    def test_save_ascii16sram2(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.sram[0x7FF] = 0x55
-        p = tmp_path / "test.sram"
-        m.save_sram(p)
-        data = p.read_bytes()
+        data = m.save_sram()
         assert len(data) == 2048
         assert data[0x7FF] == 0x55
 
@@ -661,12 +672,11 @@ class TestMachineLoaderSramIntegration:
         assert machine.sram_save_path is not None
         assert machine.sram_save_path2 is not None
         assert machine.sram_save_path != machine.sram_save_path2
-        machine.sram_save_path.parent.mkdir(parents=True, exist_ok=True)
 
-        machine.memory._mapper.sram[0] = 0x11
-        machine.memory._mapper2.sram[0] = 0x22
-        machine.memory._mapper.save_sram(machine.sram_save_path)
-        machine.memory._mapper2.save_sram(machine.sram_save_path2)
+        machine.memory._mapper._write_sram(0, 0x11)
+        machine.memory._mapper2._write_sram(0, 0x22)
+        assert sorted(machine.dirty_media()) == ["slot1.sram", "slot2.sram"]
+        persist_dirty_media(machine)
         assert machine.sram_save_path.read_bytes()[0] == 0x11
         assert machine.sram_save_path2.read_bytes()[0] == 0x22
 

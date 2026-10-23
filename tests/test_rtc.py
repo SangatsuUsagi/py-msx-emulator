@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from host.media import persist_dirty_media
 from msx.boundary import RtcTime
 from msx.machine_loader import MachineSpec, _RomEntry, build_machine
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
@@ -183,11 +184,11 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
         _select(rtc, reg)
         rtc.write_port(0xB5, (reg + 2) & 0x0F)
 
-    save_path = tmp_path / "rtc.sram"
-    rtc.save_sram(save_path)
-    assert len(save_path.read_bytes()) == SRAM_SIZE
+    assert rtc.sram_dirty is True
+    image = rtc.save_sram()
+    assert len(image) == SRAM_SIZE
 
-    reloaded = RTC(sram=bytearray(save_path.read_bytes()))
+    reloaded = RTC(sram=bytearray(image))
     _set_block(reloaded, 2)
     for reg in range(13):
         _select(reloaded, reg)
@@ -253,9 +254,9 @@ def test_machine_loads_previously_saved_rtc_sram(
     _set_block(machine1.rtc, 2)
     _select(machine1.rtc, 0)
     machine1.rtc.write_port(0xB5, 0xA)
-    assert machine1.rtc_sram_save_path is not None
-    machine1.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine1.rtc.save_sram(machine1.rtc_sram_save_path)
+    assert "rtc.cmos" in machine1.dirty_media()
+    persist_dirty_media(machine1)
+    assert machine1.dirty_media() == []
 
     machine2 = make_machine_msx2(_ROM, _EXTROM)
     assert machine2.rtc is not None
@@ -298,13 +299,8 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     _set_block(machine_a.rtc, 2)
     _select(machine_a.rtc, 0)
     machine_a.rtc.write_port(0xB5, 0x7)
-    assert machine_a.rtc_sram_save_path is not None
-    machine_a.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine_a.rtc.save_sram(machine_a.rtc_sram_save_path)
-
-    assert machine_b.rtc_sram_save_path is not None
-    machine_b.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine_b.rtc.save_sram(machine_b.rtc_sram_save_path)
+    persist_dirty_media(machine_a)
+    persist_dirty_media(machine_b)
 
     reloaded_b = build_machine(_rtc_spec("machine_b"), bios_override=_ROM, extrom_override=_EXTROM)
     assert reloaded_b.rtc is not None

@@ -35,6 +35,7 @@ C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2322,7 +2323,14 @@ def _build_fdc(
                 file=sys.stderr,
             )
             continue
-        device.mount(DskDiskImage(image_path), drive=idx)
+        # Reading the file here moves to host/machine_config.py with the
+        # MachineConfig split (enforce-core-boundary phase 19).
+        image = DskDiskImage(
+            image_path.read_bytes(),
+            write_protected=not os.access(image_path, os.W_OK),
+            path=image_path,
+        )
+        device.mount(image, drive=idx)
     return device
 
 

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
@@ -83,6 +82,9 @@ class RTC:
     # Blocks 2/3's persisted image, seeded into _regs[26:52] at construction;
     # save_sram() reads current state back from _regs, not from this field.
     sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE), repr=False)
+    # Set when a write or restore changes a block 2/3 nibble; cleared by
+    # mark_sram_persisted() once the host has written save_sram().
+    _sram_dirty: bool = field(default=False, init=False, repr=False)
     # Time at emulated cycle _start_cycle, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
     # Emulated cycle source (machine.cycle_count), wired by build_machine. A
@@ -144,6 +146,9 @@ class RTC:
         self._mode = state["mode"]
         self._test = state["test"]
         self._reset = state["reset"]
+        cmos = slice(2 * REGS_PER_BLOCK, 4 * REGS_PER_BLOCK)
+        if state["regs"][cmos] != self._regs[cmos]:
+            self._sram_dirty = True
         self._regs = list(state["regs"])
 
     def _elapsed_cycles(self) -> int:
@@ -151,10 +156,17 @@ class RTC:
             return 0
         return self._get_cycle() - self._start_cycle
 
-    def save_sram(self, path: Path) -> None:
-        """Write blocks 2/3's current 26 nibbles to path, one raw byte per
-        nibble (battery-save format, no packing)."""
-        path.write_bytes(bytes(self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK]))
+    def save_sram(self) -> bytes:
+        """Blocks 2/3's current 26 nibbles, one raw byte per nibble
+        (battery-save format, no packing)."""
+        return bytes(self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK])
+
+    @property
+    def sram_dirty(self) -> bool:
+        return self._sram_dirty
+
+    def mark_sram_persisted(self) -> None:
+        self._sram_dirty = False
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.
@@ -195,7 +207,11 @@ class RTC:
             self._reset = value
             return
         block = self._mode & MODE_BLOCK_SELECT
-        self._regs[block * REGS_PER_BLOCK + reg] = value & _MASK[block][reg]
+        index = block * REGS_PER_BLOCK + reg
+        masked = value & _MASK[block][reg]
+        if block >= 2 and self._regs[index] != masked:
+            self._sram_dirty = True
+        self._regs[index] = masked
 
     def _refresh_time_regs(self) -> None:
         """Write the current time into block 0 and the leap counter into

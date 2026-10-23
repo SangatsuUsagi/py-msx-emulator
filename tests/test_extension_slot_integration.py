@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from host.media import persist_dirty_media
 from msx.machine_loader import (
     MachineLoadError,
     MachineSpec,
@@ -286,9 +287,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     halnote.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     halnote.write(0x0000, 0xCD)  # SRAM byte, slot 2's halnote
 
-    for source, path in machine.sram_sources():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        source.save_sram(path)
+    persist_dirty_media(machine)
 
     save_state(machine, _RGB, "test")
     machine.fmpac.write(0x4000, 0x00)

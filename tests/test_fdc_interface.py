@@ -4,9 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -17,7 +18,7 @@ def _iface(tmp_path: Path | None = None, *, with_disk: bool = True) -> SonyPhili
     if with_disk and tmp_path is not None:
         p = tmp_path / "d.dsk"
         p.write_bytes(bytes(_2DD))
-        image = DskDiskImage(p)
+        image = dsk_image(p)
     drive = DiskDrive(image)
     return SonyPhilipsInterface(WD2793(), [drive], disk_rom=disk_rom)
 

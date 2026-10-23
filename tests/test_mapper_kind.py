@@ -113,8 +113,8 @@ def test_ram_mapper_kind_and_display_name() -> None:
     assert mapper_kind_display_name(MapperKind.RAM_MAPPER) == "RamMapper"
 
 
-# Classes that persist SRAM to a standalone .sram file via save_sram() (see
-# cart-sram-mapper's "SRAM persistence via save_sram", cart-halnote's and
+# Classes whose save_sram() returns an SRAM image the host persists (see
+# cart-sram-mapper's "SRAM image via save_sram", cart-halnote's and
 # cart-fmpac's own SRAM-persistence Requirements). Every other class in
 # _ALL_MAPPER_CLASSES has has_sram = False.
 _SRAM_CARRYING_CLASSES: frozenset[type[Mapper]] = frozenset({
@@ -182,9 +182,15 @@ def test_every_banktracingmapper_subclass_overrides_reset() -> None:
         )
 
 
-def test_save_sram_is_a_no_op_when_has_sram_is_false(tmp_path) -> None:
-    flat = FlatMapper(cartridge=None)
-    assert flat.has_sram is False
-    target = tmp_path / "should-not-exist.sram"
-    flat.save_sram(target)
-    assert not target.exists()
+def test_save_sram_is_empty_when_has_sram_is_false() -> None:
+    for mapper in (FlatMapper(cartridge=None), Ascii8Mapper(rom=bytes(range(256)) * 128)):
+        assert mapper.has_sram is False
+        assert mapper.save_sram() == b""
+        assert mapper.sram_dirty is False
+        mapper.mark_sram_persisted()
+
+
+def test_every_mapper_class_exposes_the_sram_medium_members() -> None:
+    for cls in _ALL_MAPPER_CLASSES:
+        for name in ("save_sram", "mark_sram_persisted", "sram_dirty"):
+            assert hasattr(cls, name), f"{cls.__name__} lacks {name}"

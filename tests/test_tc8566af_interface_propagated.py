@@ -12,9 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import TC8566AFInterface
 from msx.fdc.tc8566af import TC8566AF, Phase
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -27,7 +27,7 @@ def _iface(tmp_path: Path, *, drives: int = 1, with_disk: bool = True) -> TC8566
         if with_disk:
             p = tmp_path / f"d{i}.dsk"
             p.write_bytes(bytes(_2DD))
-            image = DskDiskImage(p)
+            image = dsk_image(p)
         disk_drives.append(DiskDrive(image))
     return TC8566AFInterface(TC8566AF(drives=disk_drives), disk_drives, disk_rom=disk_rom)
 
@@ -58,7 +58,7 @@ def test_mount_disk_attaches_image_to_target_drive(tmp_path: Path) -> None:
     iface = _iface(tmp_path, with_disk=False)
     p = tmp_path / "new.dsk"
     p.write_bytes(bytes(_2DD))
-    image = DskDiskImage(p)
+    image = dsk_image(p)
     iface.mount(image, drive=0)
     assert iface.drives[0].has_disk is True
 
@@ -75,12 +75,12 @@ def test_swap_disk_aborts_transfer_only_on_targeted_drive(tmp_path: Path) -> Non
 
     new_image_path = tmp_path / "swap1.dsk"
     new_image_path.write_bytes(bytes(_2DD))
-    iface.swap(1, DskDiskImage(new_image_path))  # swap drive 1, not the transferring drive 0
+    iface.swap(1, dsk_image(new_image_path))  # swap drive 1, not the transferring drive 0
     assert iface.controller._phase == Phase.EXECUTION  # untouched
 
     new_image_path0 = tmp_path / "swap0.dsk"
     new_image_path0.write_bytes(bytes(_2DD))
-    iface.swap(0, DskDiskImage(new_image_path0))  # swap the transferring drive itself
+    iface.swap(0, dsk_image(new_image_path0))  # swap the transferring drive itself
     assert iface.controller._phase == Phase.IDLE  # aborted
 
 
@@ -88,17 +88,16 @@ def test_swap_disk_flags_disk_changed(tmp_path: Path) -> None:
     iface = _iface(tmp_path)
     new_image_path = tmp_path / "swap.dsk"
     new_image_path.write_bytes(bytes(_2DD))
-    iface.swap(0, DskDiskImage(new_image_path))
+    iface.swap(0, dsk_image(new_image_path))
     assert iface.drives[0].disk_changed is True
 
 
-# -- rule-success.FlushAllDrives ---------------------------------------------
+# -- A sector write leaves the image dirty for the host -----------------------
 
-def test_flush_flushes_every_mounted_drive(tmp_path: Path) -> None:
+def test_sector_write_marks_the_mounted_image_dirty(tmp_path: Path) -> None:
     iface = _iface(tmp_path, drives=2)
     iface.drives[0].image.write_sector(0, b"\x77" * 512)
-    iface.flush()  # no exception; both drives (one mounted, both present) handled
-    assert iface.drives[0].image is not None
+    assert iface.drives[0].image.dirty is True
 
 
 # -- rule-success/failure.ForwardControlReg1Write ----------------------------
