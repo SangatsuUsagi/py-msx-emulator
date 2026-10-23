@@ -49,3 +49,31 @@ def test_no_core_module_names_the_frontend() -> None:
             if root in _FORBIDDEN_ROOTS:
                 offenders.append(f"{path.relative_to(_MSX_DIR.parent)}: {root}")
     assert offenders == []
+
+
+# SDL keycodes for non-ASCII keys are 0x40000000 | scancode, scancode < 512
+# (SDL_NUM_SCANCODES). Wider masks such as 0xFFFFFFFF are not key codes.
+_SDL_KEYCODE_FIRST = 0x40000000
+_SDL_KEYCODE_LAST = 0x400001FF
+
+
+def test_no_sdl_key_codes_in_the_core() -> None:
+    # machine-core "No SDL key codes in the core": no SDL key names in the
+    # source text, and no integer literal in the scancode-keycode range.
+    offenders = []
+    for path in sorted(_MSX_DIR.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(_MSX_DIR.parent)
+        for name in ("SDLK", "SDL_SCANCODE"):
+            if name in text:
+                offenders.append(f"{rel}: {name}")
+        for node in ast.walk(ast.parse(text, filename=str(path))):
+            if (isinstance(node, ast.Constant) and type(node.value) is int
+                    and _SDL_KEYCODE_FIRST <= node.value <= _SDL_KEYCODE_LAST):
+                offenders.append(f"{rel}:{node.lineno}: {node.value:#x}")
+    assert offenders == []
+
+
+def test_no_wall_clock_pacing_in_the_core() -> None:
+    # machine-core "No wall-clock pacing in the core".
+    assert list(_MSX_DIR.rglob("frame_timer.py")) == []

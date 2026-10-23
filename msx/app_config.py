@@ -96,7 +96,7 @@ _KEYBOARD_JOY_FUNCTIONS: tuple[str, ...] = (
 
 # Keyboard key names accepted by keyboard_joystick.buttons: letters, digits,
 # arrows, comma and period. The SDL2 frontend translates each name to a key
-# code (frontend/sdl2_keyboard.py's KEY_NAME_TO_SDLKEY).
+# code (frontend/sdl2_keyboard.py).
 KEYBOARD_KEY_NAMES: tuple[str, ...] = (
     *"abcdefghijklmnopqrstuvwxyz", *"0123456789",
     "up", "down", "left", "right", "comma", "period",
@@ -117,7 +117,7 @@ DEFAULT_HOTKEYS: dict[str, str] = {
 
 # Function-key names a hotkey may use (before the optional "shift+"). The
 # SDL2 frontend translates each to a key code
-# (frontend/sdl2_keyboard.py's FKEY_NAME_TO_SDLKEY).
+# (frontend/sdl2_keyboard.py).
 FKEY_NAMES: tuple[str, ...] = (
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
 )
