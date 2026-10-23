@@ -59,15 +59,11 @@ class MouseDevice:
     left/right mouse button state on every read, independent of phase.
     """
 
-    _scale: int = 1
-
     _phase: int = field(default=PHASE_YLOW2, init=False)
     _x_rel: int = field(default=0, init=False)
     _y_rel: int = field(default=0, init=False)
     _cur_x_rel: int = field(default=0, init=False)
     _cur_y_rel: int = field(default=0, init=False)
-    _frac_x: int = field(default=0, init=False)
-    _frac_y: int = field(default=0, init=False)
     _status: int = field(default=_STATUS_DEFAULT, init=False)
     _last_pin8: int = field(default=0, init=False)
     _last_cycle: int = field(default=0, init=False)
@@ -130,21 +126,8 @@ class MouseDevice:
         self._x_rel = 0
         self._y_rel = 0
 
-    def add_motion(self, dx_px: int, dy_px: int) -> None:
-        # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
-        #   the remainder keeps the sign of _scale (always in [0, _scale)),
-        #   regardless of dx_px/dy_px's sign.
-        # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
-        #   truncate toward zero).
-        # C++ equivalent: std::div with an explicit floor adjustment, or a
-        #   hand-written floor-division helper -- plain '/'/'%' also truncate
-        #   toward zero in C++.
-        # Kept as-is here because: semantic necessity, not performance -- the
-        #   sub-pixel carry (_frac_x/_frac_y) must stay in [0, _scale)
-        #   regardless of motion sign; truncating division would flip its
-        #   sign for negative motion and corrupt the carry.
-        dx, self._frac_x = divmod(dx_px + self._frac_x, self._scale)
-        dy, self._frac_y = divmod(dy_px + self._frac_y, self._scale)
+    def add_motion(self, dx: int, dy: int) -> None:
+        """Add relative motion, already in MSX mouse counts, to the running total."""
         self._cur_x_rel += dx
         self._cur_y_rel += dy
 

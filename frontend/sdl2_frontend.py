@@ -190,6 +190,35 @@ class _ActiveCombo:
 
 
 @dataclass
+class _HostMouse:
+    """The attached MSX mouse plus the host-pixel to MSX-count conversion.
+
+    One host pixel of pointer motion is one MSX count at the displayed size,
+    so motion is divided by the window's integer scale factor. The remainder
+    carries to the next event, so slow motion is not dropped.
+    """
+
+    device: MouseDevice
+    scale: int
+    frac_x: int = 0
+    frac_y: int = 0
+
+    def motion(self, dx_px: int, dy_px: int) -> None:
+        """Convert host pixels to MSX counts and pass them to the device."""
+        # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
+        #   the remainder stays in [0, scale) whatever the motion's sign.
+        # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
+        #   truncate toward zero).
+        # C++ equivalent: a hand-written floor-division helper -- plain
+        #   '/'/'%' also truncate toward zero in C++.
+        # Kept as-is here because: semantic necessity -- truncating division
+        #   would flip the carry's sign for negative motion and corrupt it.
+        dx, self.frac_x = divmod(dx_px + self.frac_x, self.scale)
+        dy, self.frac_y = divmod(dy_px + self.frac_y, self.scale)
+        self.device.add_motion(dx, dy)
+
+
+@dataclass
 class _CtrlComboState:
     """Tracks the Ctrl+F1..F5 hotkey combo across independent SDL key events
     (Ctrl and the F-key arrive as separate KEYDOWN/KEYUP events, and either
@@ -620,7 +649,7 @@ def _handle_events(
     joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    mouse_device: MouseDevice | None = None, hotkeys: _HotkeyState | None = None,
+    mouse: _HostMouse | None = None, hotkeys: _HotkeyState | None = None,
 ) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
@@ -660,19 +689,19 @@ def _handle_events(
                 machine.input.key_up(sym)
         elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
             joy_manager.handle_event(event)
-        elif mouse_device is not None and event.type == sdl2.SDL_MOUSEMOTION:
+        elif mouse is not None and event.type == sdl2.SDL_MOUSEMOTION:
             # Host motion is negated on both axes when converting to MSX
             # relative counts (matches openMSX src/input/Mouse.cc).
-            mouse_device.add_motion(-int(event.motion.xrel), -int(event.motion.yrel))
-        elif mouse_device is not None and event.type in (
+            mouse.motion(-int(event.motion.xrel), -int(event.motion.yrel))
+        elif mouse is not None and event.type in (
             sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP,
         ):
             button = int(event.button.button)
             pressed = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             if button == sdl2.SDL_BUTTON_LEFT:
-                mouse_device.set_button(TRIGGER_A_BIT, pressed)
+                mouse.device.set_button(TRIGGER_A_BIT, pressed)
             elif button == sdl2.SDL_BUTTON_RIGHT:
-                mouse_device.set_button(TRIGGER_B_BIT, pressed)
+                mouse.device.set_button(TRIGGER_B_BIT, pressed)
     return running
 
 
@@ -913,7 +942,7 @@ def _run_frame(
     sdl2: SDL2Api, machine: Machine, window: object, renderer: object,
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
-    mouse_device: MouseDevice | None, event: _EventLike,
+    mouse: _HostMouse | None, event: _EventLike,
     rpc_server: "DebugServer | None", frame_timer: FrameTimer,
     frame_skip: str, audio_dev: int, scale: int,
     hotkeys: _HotkeyState,
@@ -926,7 +955,7 @@ def _run_frame(
     # Process events (input + hotkeys); updates running.
     state.running = _handle_events(
         sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse_device, hotkeys,
+        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse, hotkeys,
     )
     if not state.running:
         return
@@ -1094,10 +1123,10 @@ def run(
         _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
     )
 
-    mouse_device: MouseDevice | None = None
+    mouse: _HostMouse | None = None
     if mouse_port is not None:
-        mouse_device = MouseDevice(_scale=scale)
-        machine.attach_mouse(mouse_device, JoystickPort(mouse_port))
+        mouse = _HostMouse(MouseDevice(), scale)
+        machine.attach_mouse(mouse.device, JoystickPort(mouse_port))
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
@@ -1139,7 +1168,7 @@ def run(
             try:
                 _run_frame(
                     sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
-                    ctrl_fkey_cells, game_title, mouse_device, event, rpc_server,
+                    ctrl_fkey_cells, game_title, mouse, event, rpc_server,
                     frame_timer, frame_skip, audio_dev, scale, hotkeys,
                 )
                 last_title = _update_window_title(
