@@ -20,6 +20,7 @@ from frontend.sdl2_keyboard import (
     SDLK_JIS_RO,
     SDLK_JIS_YEN,
     SdlKeyboard,
+    resolve_hotkeys,
     resolve_keyboard_joy_map,
 )
 from msx.app_config import AppConfig
@@ -1074,8 +1075,8 @@ def run(
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
             first entry is the one build_machine already mounted.
-        hotkey_bindings: (SDL keycode, Shift held) -> action table from
-            py_emulator.yaml (`AppConfig.hotkey_bindings`); None uses the
+        hotkey_bindings: (SDL keycode, Shift held) -> action table resolved
+            from py_emulator.yaml (`resolve_hotkeys(AppConfig.hotkey_bindings())`); None uses the
             built-in table.
         keyboard_joystick: keyboard_joystick.buttons (function -> key name)
             from py_emulator.yaml; None or empty uses the built-in key map.
@@ -1152,7 +1153,8 @@ def run(
 
     hotkeys = _HotkeyState(
         bindings=dict(
-            hotkey_bindings if hotkey_bindings is not None else AppConfig().hotkey_bindings()
+            hotkey_bindings if hotkey_bindings is not None
+            else resolve_hotkeys(AppConfig().hotkey_bindings())
         ),
         disks=_DiskList(list(fdd1_images) if fdd1_images else []),
     )

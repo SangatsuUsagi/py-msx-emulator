@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -83,6 +84,49 @@ _AXIS_BIT = {
 # direct triggers; 2/3 drive the same triggers through the turbo state machine.
 _JOY_BUTTON_BIT = {0: _BIT_TRIGGER_A, 1: _BIT_TRIGGER_B}
 _JOY_TURBO_BUTTON_BIT = {2: _BIT_TRIGGER_A, 3: _BIT_TRIGGER_B}
+
+
+# SDL GameController button label -> SDL_CONTROLLER_BUTTON_* index, for the
+# labels msx/app_config.py's GC_BUTTON_NAMES accepts.
+GC_BUTTON_NAME_TO_INDEX: dict[str, int] = {
+    "a": 0, "b": 1, "x": 2, "y": 3,
+    "back": 4, "guide": 5, "start": 6,
+    "leftstick": 7, "rightstick": 8,
+    "leftshoulder": 9, "rightshoulder": 10,
+    "dpup": 11, "dpdown": 12, "dpleft": 13, "dpright": 14,
+}
+
+# MSX joystick function -> (port bit, is_turbo). The bit is fixed by MSX
+# semantics (up=0..right=3, trigA=4, trigB=5); turbo functions drive the same
+# trigger bits through the turbo state machine.
+GAMEPAD_FUNCTION_BITS: dict[str, tuple[int, bool]] = {
+    "up": (0, False), "down": (1, False), "left": (2, False), "right": (3, False),
+    "trigger_a": (4, False), "trigger_b": (5, False),
+    "turbo_a": (4, True), "turbo_b": (5, True),
+}
+
+
+def resolve_gamepad_maps(buttons: Mapping[str, str]) -> tuple[dict[int, int], dict[int, int]]:
+    """Turn ``function -> button label`` into JoystickManager's button maps.
+
+    Args:
+        buttons: Every gamepad function's label, as AppConfig's
+            gamepad_buttons_resolved() returns it.
+
+    Returns:
+        A ``(direct, turbo)`` pair, each mapping an SDL GameController button
+        index to the MSX port bit it drives.
+    """
+    direct: dict[int, int] = {}
+    turbo: dict[int, int] = {}
+    for func, label in buttons.items():
+        bit, is_turbo = GAMEPAD_FUNCTION_BITS[func]
+        index = GC_BUTTON_NAME_TO_INDEX[label]
+        if is_turbo:
+            turbo[index] = bit
+        else:
+            direct[index] = bit
+    return direct, turbo
 
 
 @dataclass

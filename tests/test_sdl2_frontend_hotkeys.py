@@ -758,8 +758,13 @@ def test_plain_shift_still_sends_shift(tmp_path: Path) -> None:
 def test_hotkey_keycodes_match_real_sdl2_constants() -> None:
     import sdl2
 
-    from frontend.sdl2_keyboard import _K_LSHIFT, _K_RSHIFT
+    from frontend.sdl2_keyboard import _K_LSHIFT, _K_RSHIFT, FKEY_NAME_TO_SDLKEY
 
+    assert FKEY_NAME_TO_SDLKEY == {
+        "f1": sdl2.SDLK_F1, "f2": sdl2.SDLK_F2, "f3": sdl2.SDLK_F3, "f4": sdl2.SDLK_F4,
+        "f5": sdl2.SDLK_F5, "f6": sdl2.SDLK_F6, "f7": sdl2.SDLK_F7, "f8": sdl2.SDLK_F8,
+        "f9": sdl2.SDLK_F9, "f10": sdl2.SDLK_F10, "f11": sdl2.SDLK_F11, "f12": sdl2.SDLK_F12,
+    }
     assert sdl2.SDLK_F6 == _FakeSDL.SDLK_F6
     assert (sdl2.SDLK_LSHIFT, sdl2.SDLK_RSHIFT) == (_FakeSDL.SDLK_LSHIFT, _FakeSDL.SDLK_RSHIFT)
     assert (_K_LSHIFT, _K_RSHIFT) == (_FakeSDL.SDLK_LSHIFT, _FakeSDL.SDLK_RSHIFT)
@@ -1176,7 +1181,9 @@ def _default_harness(monkeypatch: pytest.MonkeyPatch, hotkeys: dict[str, str] | 
 
     _FullscreenSDL.calls = []
     monkeypatch.setattr(fe, "save_state", lambda *_a: pytest.fail("F8 save ran"))
-    bindings = AppConfig(hotkeys=dict(hotkeys or {})).hotkey_bindings()
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
+    bindings = resolve_hotkeys(AppConfig(hotkeys=dict(hotkeys or {})).hotkey_bindings())
     return _Harness(_HotkeyState(bindings=bindings, disks=_DiskList([])), _FullscreenSDL)
 
 
@@ -1229,7 +1236,9 @@ def test_built_in_table_with_no_config() -> None:
 
     f6, f7, f11, f12 = (_FakeSDL.SDLK_F6, _FakeSDL.SDLK_F7, _FakeSDL.SDLK_F11,
                         _FakeSDL.SDLK_F12)
-    assert AppConfig().hotkey_bindings() == {
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
+    assert resolve_hotkeys(AppConfig().hotkey_bindings()) == {
         (f6, False): "disk_next", (f6, True): "disk_eject",
         (f7, False): "fast_forward_hold", (f7, True): "fast_forward_lock",
         (f11, False): "pause", (f11, True): "fullscreen",

@@ -582,11 +582,16 @@ def test_cli_fdd1_overrides_config_fdd1() -> None:
 # ---------------------------------------------------------------------------
 
 def test_config_hotkeys_passed_to_the_frontend() -> None:
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
     cfg = AppConfig(hotkeys={"mute": "shift+f8"})
     _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    assert run_mock.call_args.kwargs["hotkey_bindings"] == cfg.hotkey_bindings()
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == resolve_hotkeys(cfg.hotkey_bindings())
 
 
 def test_no_hotkeys_config_passes_the_built_in_table() -> None:
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
     _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert run_mock.call_args.kwargs["hotkey_bindings"] == AppConfig().hotkey_bindings()
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == resolve_hotkeys(
+        AppConfig().hotkey_bindings())

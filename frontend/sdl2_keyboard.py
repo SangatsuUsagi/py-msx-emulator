@@ -381,6 +381,21 @@ def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[i
     return result
 
 
+# Function-key name -> SDL keycode (0x40000000 | SDL_SCANCODE_Fn; F1 is 58),
+# for the names msx/app_config.py's FKEY_NAMES accepts.
+FKEY_NAME_TO_SDLKEY: dict[str, int] = {}
+for _n in range(1, 13):
+    FKEY_NAME_TO_SDLKEY[f"f{_n}"] = 0x40000000 | (57 + _n)
+
+
+def resolve_hotkeys(bindings: Mapping[tuple[str, bool], str]) -> dict[tuple[int, bool], str]:
+    """Turn ``(function-key name, Shift held) -> action`` into key codes."""
+    result: dict[tuple[int, bool], str] = {}
+    for (key_name, shift), action in bindings.items():
+        result[(FKEY_NAME_TO_SDLKEY[key_name], shift)] = action
+    return result
+
+
 @dataclass
 class SdlKeyboard:
     """Feeds SDL key events into an InputState as matrix cells and joystick lines.
