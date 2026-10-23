@@ -13,15 +13,16 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import build_machine_from_spec, load_machine_config, sram_paths
 from host.media import persist_dirty_media
-from msx.machine_loader import (
+from msx.machine_loader import build_machine
+from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _ExtensionOverlay,
     _RomEntry,
-    build_machine,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
 from msx.ram_mapper import RamMapper
@@ -105,7 +106,7 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
     hbi_dir.mkdir()
     dos2_dir = tmp_path / "msxdos2_rom"
     dos2_dir.mkdir()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_hbi_j1_overlay(hbi_dir),
         extension_overlay=_msxdos2_512k_overlay(dos2_dir),
@@ -146,7 +147,7 @@ def test_two_halnote_overlays_at_once_rejected(tmp_path: Path) -> None:
     hbi_dir2 = tmp_path / "hbi_j1_rom2"
     hbi_dir2.mkdir()
     with pytest.raises(MachineLoadError, match="other cartridge slot"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_hbi_j1_overlay(hbi_dir1),
             extension_overlay=_hbi_j1_overlay(hbi_dir2),
@@ -180,7 +181,7 @@ def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
         ),
     )
     with pytest.raises(MachineLoadError, match="Kanji-ROM"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=overlay1, extension_overlay=overlay2,
         )
@@ -200,14 +201,15 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
     fmpac_dir = tmp_path / "fmpac_rom"
     fmpac_dir.mkdir()
     fmpac_overlay = _fmpac_overlay(fmpac_dir)
-    machine = build_machine(
+    config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
         extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
     )
+    machine = build_machine(config)
     assert machine.fmpac is not None
-    assert machine.fmpac_sram_save_path == fmpac_overlay.sram_save_path
-    assert (machine.fmpac, fmpac_overlay.sram_save_path) in machine.sram_sources()
+    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
+    assert machine.sram_media()["fmpac.sram"] is machine.fmpac
 
 
 def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
@@ -217,13 +219,14 @@ def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
     fmpac_dir = tmp_path / "fmpac_rom"
     fmpac_dir.mkdir()
     fmpac_overlay = _fmpac_overlay(fmpac_dir)
-    machine = build_machine(
+    config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
         extension_overlay=fmpac_overlay,
     )
+    machine = build_machine(config)
     assert machine.fmpac is not None
-    assert machine.fmpac_sram_save_path == fmpac_overlay.sram_save_path
+    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
 
 
 def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
@@ -237,7 +240,7 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
     fmpac_dir2 = tmp_path / "fmpac_rom2"
     fmpac_dir2.mkdir()
     with pytest.raises(MachineLoadError, match="fmpac"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_fmpac_overlay(fmpac_dir1),
             extension_overlay=_fmpac_overlay(fmpac_dir2),
@@ -271,13 +274,14 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     hbi_dir = tmp_path / "hbi_j1_rom"
     hbi_dir.mkdir()
     fmpac_overlay = _fmpac_overlay(fmpac_dir)
-    machine = build_machine(
+    config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
         extension_overlay=_hbi_j1_overlay(hbi_dir),
     )
+    machine = build_machine(config)
     assert machine.fmpac is not None
-    assert machine.fmpac_sram_save_path == fmpac_overlay.sram_save_path
+    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
     halnote = machine.halnote_cart
     assert halnote is not None
 
@@ -287,7 +291,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     halnote.write(0x4FFF, 0x85)  # SRAM enabled, bank 0 -> page 5
     halnote.write(0x0000, 0xCD)  # SRAM byte, slot 2's halnote
 
-    persist_dirty_media(machine)
+    persist_dirty_media(machine, sram_paths(config))
 
     save_state(machine, _RGB, "test")
     machine.fmpac.write(0x4000, 0x00)

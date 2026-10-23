@@ -374,8 +374,9 @@ def test_mouse_port_index_honors_configured_port() -> None:
 def test_valid_mappers_match_supported_mappers() -> None:
     # app_config.VALID_MAPPERS duplicates machine_loader._SUPPORTED_MAPPERS
     # (plus "auto") to avoid an import cycle; guard against the two drifting.
+    from host.machine_config import _SUPPORTED_MAPPERS
     from msx.app_config import VALID_MAPPERS
-    from msx.machine_loader import _MAPPER_BUILDERS, _SUPPORTED_MAPPERS
+    from msx.machine_loader import _MAPPER_BUILDERS
 
     assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
     # Every non-"auto" accepted name must actually have a builder.

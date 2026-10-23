@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import build_machine_from_spec
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _ExtensionOverlay, _RomEntry, build_machine
+from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
 from msx.state import load_state, save_state
 
 _RGB = bytearray(256 * 192 * 3)
@@ -62,7 +63,7 @@ def _fmpac_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     overlay = _make_fmpac_overlay(tmp_path / f"{name}_fmpac_rom")
-    machine = build_machine(_msx1_spec(main_dir), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(main_dir), extension_overlay=overlay)
     assert machine.fmpac is not None
     return machine
 
@@ -191,7 +192,7 @@ def test_roundtrip_preserves_rhythm_state(saves_dir: Path, tmp_path: Path) -> No
 def test_machine_without_fmpac_roundtrips(saves_dir: Path, tmp_path: Path) -> None:
     main_dir = tmp_path / "main_rom"
     main_dir.mkdir()
-    machine = build_machine(_msx1_spec(main_dir))
+    machine = build_machine_from_spec(_msx1_spec(main_dir))
     assert machine.fmpac is None
     machine.cpu.registers.A = 0x42
     save_state(machine, _RGB, "test")

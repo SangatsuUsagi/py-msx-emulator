@@ -2,8 +2,8 @@ import hashlib
 
 import pytest
 
-import msx.romdb as romdb
-from msx.romdb import RomDbEntry
+import host.romdb as romdb
+from host.romdb import RomDbEntry
 
 
 def _patch_db(monkeypatch: pytest.MonkeyPatch, raw: dict[str, dict[str, object]]) -> None:

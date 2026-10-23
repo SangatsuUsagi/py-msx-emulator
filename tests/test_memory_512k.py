@@ -12,14 +12,16 @@ from pathlib import Path
 
 import pytest
 
-from msx.machine_loader import (
-    MachineLoadError,
-    _ExpandedExtensionOverlay,
-    _ExpandedSubslotDevice,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_device_registry,
     load_extension_overlay,
     load_machine_spec,
+)
+from msx.machine_spec import (
+    MachineLoadError,
+    _ExpandedExtensionOverlay,
+    _ExpandedSubslotDevice,
 )
 from msx.ram_mapper import RamMapper
 from msx.state import load_state, save_state
@@ -303,7 +305,7 @@ def _ram_mapper_overlay(size_kb: int = 512) -> _ExpandedExtensionOverlay:
 
 def test_build_machine_wires_ram_mapper_subslot(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -315,7 +317,7 @@ def test_build_machine_wires_ram_mapper_subslot(tmp_path: Path) -> None:
 
 def test_ram_mapper_subslot_responds_on_standard_ports(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -328,7 +330,7 @@ def test_ram_mapper_subslot_responds_on_standard_ports(tmp_path: Path) -> None:
 
 def test_ram_mapper_cartridge_starts_blank(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -339,7 +341,7 @@ def test_ram_mapper_cartridge_starts_blank(tmp_path: Path) -> None:
 
 def test_machine_reset_resets_slot2_subslot_ram_mapper_banks(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -354,7 +356,7 @@ def test_machine_reset_resets_slot2_subslot_ram_mapper_banks(tmp_path: Path) -> 
 
 def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -370,7 +372,7 @@ def test_unpopulated_subslots_read_open_bus(tmp_path: Path) -> None:
 
 def test_build_machine_wires_ram_mapper_subslot_on_slot1(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay1=_ram_mapper_overlay()
     )
@@ -390,7 +392,7 @@ def test_rejected_when_other_slot_already_claims_ram_mapper(tmp_path: Path) -> N
     each targets."""
     spec = _no_mapper_spec(tmp_path)
     with pytest.raises(MachineLoadError, match="other cartridge slot"):
-        build_machine(
+        build_machine_from_spec(
             spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay1=_ram_mapper_overlay(),
             extension_overlay=_ram_mapper_overlay(),
@@ -405,7 +407,7 @@ def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
     spec = _has_mapper_spec(tmp_path)
     assert spec.has_ram_mapper is True
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
-        build_machine(
+        build_machine_from_spec(
             spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay=_ram_mapper_overlay(),
         )
@@ -414,7 +416,7 @@ def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
 def test_accepted_on_machine_with_no_ram_mapper(tmp_path: Path) -> None:
     spec = _no_mapper_spec(tmp_path)
     assert spec.has_ram_mapper is False
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )
@@ -428,7 +430,7 @@ def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     spec = _msx1_spec(tmp_path)
     assert spec.generation == "msx1"
     with pytest.raises(MachineLoadError, match="MSX1"):
-        build_machine(
+        build_machine_from_spec(
             spec, bios_override=_FAKE_ROM_32K, extension_overlay=_ram_mapper_overlay()
         )
 
@@ -444,7 +446,7 @@ def test_real_hb_f1xd_has_no_ram_mapper(tmp_path: Path) -> None:
     hb_f1xd_256k = load_machine_spec("hb_f1xd_256k", _CONFIG, registry, _ROOT)
     assert hb_f1xd_256k.has_ram_mapper is True
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
-        build_machine(
+        build_machine_from_spec(
             hb_f1xd_256k, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay=_ram_mapper_overlay(),
         )
@@ -452,7 +454,7 @@ def test_real_hb_f1xd_has_no_ram_mapper(tmp_path: Path) -> None:
     cbios_msx2_jp = load_machine_spec("cbios_msx2_jp", _CONFIG, registry, _ROOT)
     assert cbios_msx2_jp.has_ram_mapper is True
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
-        build_machine(
+        build_machine_from_spec(
             cbios_msx2_jp, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
             extension_overlay=_ram_mapper_overlay(),
         )
@@ -475,7 +477,7 @@ def test_roundtrip_preserves_ram_mapper_banks_and_contents(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     spec = _no_mapper_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
         extension_overlay=_ram_mapper_overlay()
     )

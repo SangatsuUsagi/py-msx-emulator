@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from msx.fmpac import SRAM_SIZE, FmPac
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    _ExtensionOverlay,
-    _RomEntry,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_extension_overlay,
+    load_machine_config,
+    sram_paths,
 )
+from msx.fmpac import SRAM_SIZE, FmPac
+from msx.machine_loader import build_machine
+from msx.machine_spec import MachineLoadError, MachineSpec, _ExtensionOverlay, _RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
 
@@ -477,10 +477,11 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
 
 def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    config = load_machine_config(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
-    assert machine.fmpac_sram_save_path == overlay.sram_save_path
+    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
 
 
 def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
@@ -491,16 +492,17 @@ def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
     # and ran, but silently never persisted) -- now resolved from
     # _ExtensionWiring, which is slot-agnostic.
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    config = load_machine_config(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper is machine.fmpac
-    assert machine.fmpac_sram_save_path == overlay.sram_save_path
-    assert (machine.fmpac, overlay.sram_save_path) in machine.sram_sources()
+    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
+    assert machine.sram_media()["fmpac.sram"] is machine.fmpac
 
 
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)  # page 1 (0x4000-0x7FFF) -> slot 2
     assert mem.read(0x4000) == 0  # FM-PAC ROM bank 0 marker byte
@@ -508,7 +510,7 @@ def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
 
 def test_machine_io_ports_gated_by_enable(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)
     assert machine.fmpac is not None
@@ -529,7 +531,7 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
     saved[0] = 0xEE
     overlay.sram_save_path.write_bytes(bytes(saved))
 
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x5FFE, 0x4D)
     machine.fmpac.write(0x5FFF, 0x69)
@@ -544,12 +546,12 @@ def test_missing_fmpac_rom_raises(tmp_path: Path) -> None:
         sram_save_path=tmp_path / "fmpac.sram",
     )
     with pytest.raises(MachineLoadError, match="fmpac.rom"):
-        build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+        build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay=overlay)
 
 
 def test_machine_reset_resets_fmpac(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x7FF7, 0x03)
     machine.reset()

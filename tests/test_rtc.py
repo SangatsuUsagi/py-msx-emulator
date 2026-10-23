@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import load_machine_config, sram_paths
 from host.media import persist_dirty_media
-from msx.boundary import RtcTime
-from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+from msx.boundary import MachineConfig, RtcTime
+from msx.machine_loader import build_machine
+from msx.machine_spec import MachineSpec, _RomEntry
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
-from tests.factories import make_machine_msx2
+from tests.factories import make_config_msx2, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -243,19 +245,21 @@ def test_hour_encoding_12h_noon() -> None:
 def test_machine_loads_previously_saved_rtc_sram(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A build_machine()-constructed RTC persists blocks 2/3 to a per-machine
+    """A load_machine_config()-built RTC persists blocks 2/3 to a per-machine
     saves/sram/rtc_<machine_id>.sram (relative to CWD) and loads it back on
     the next construction."""
     monkeypatch.chdir(tmp_path)
 
-    machine1 = make_machine_msx2(_ROM, _EXTROM)
+    config1 = make_config_msx2(_ROM, _EXTROM)
+    machine1 = build_machine(config1)
     assert machine1.rtc is not None
-    assert machine1.rtc_sram_save_path == Path("saves/sram/rtc_test_msx2.sram")
+    paths1 = sram_paths(config1)
+    assert paths1["rtc.cmos"] == Path("saves/sram/rtc_test_msx2.sram")
     _set_block(machine1.rtc, 2)
     _select(machine1.rtc, 0)
     machine1.rtc.write_port(0xB5, 0xA)
     assert "rtc.cmos" in machine1.dirty_media()
-    persist_dirty_media(machine1)
+    persist_dirty_media(machine1, paths1)
     assert machine1.dirty_media() == []
 
     machine2 = make_machine_msx2(_ROM, _EXTROM)
@@ -281,6 +285,12 @@ def _rtc_spec(machine_id: str) -> MachineSpec:
     )
 
 
+def _rtc_config(machine_id: str) -> MachineConfig:
+    return load_machine_config(
+        _rtc_spec(machine_id), bios_override=_ROM, extrom_override=_EXTROM
+    )
+
+
 def test_two_rtc_machines_do_not_share_cmos_ram(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -289,20 +299,23 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     not be visible to another machine's RTC."""
     monkeypatch.chdir(tmp_path)
 
-    machine_a = build_machine(_rtc_spec("machine_a"), bios_override=_ROM, extrom_override=_EXTROM)
-    machine_b = build_machine(_rtc_spec("machine_b"), bios_override=_ROM, extrom_override=_EXTROM)
+    config_a = _rtc_config("machine_a")
+    config_b = _rtc_config("machine_b")
+    machine_a = build_machine(config_a)
+    machine_b = build_machine(config_b)
     assert machine_a.rtc is not None and machine_b.rtc is not None
-    assert machine_a.rtc_sram_save_path != machine_b.rtc_sram_save_path
-    assert machine_a.rtc_sram_save_path == Path("saves/sram/rtc_machine_a.sram")
-    assert machine_b.rtc_sram_save_path == Path("saves/sram/rtc_machine_b.sram")
+    paths_a = sram_paths(config_a)
+    paths_b = sram_paths(config_b)
+    assert paths_a["rtc.cmos"] == Path("saves/sram/rtc_machine_a.sram")
+    assert paths_b["rtc.cmos"] == Path("saves/sram/rtc_machine_b.sram")
 
     _set_block(machine_a.rtc, 2)
     _select(machine_a.rtc, 0)
     machine_a.rtc.write_port(0xB5, 0x7)
-    persist_dirty_media(machine_a)
-    persist_dirty_media(machine_b)
+    persist_dirty_media(machine_a, paths_a)
+    persist_dirty_media(machine_b, paths_b)
 
-    reloaded_b = build_machine(_rtc_spec("machine_b"), bios_override=_ROM, extrom_override=_EXTROM)
+    reloaded_b = build_machine(_rtc_config("machine_b"))
     assert reloaded_b.rtc is not None
     _set_block(reloaded_b.rtc, 2)
     _select(reloaded_b.rtc, 0)

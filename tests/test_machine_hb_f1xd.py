@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+from host.machine_config import (
+    build_machine_from_spec,
+    load_device_registry,
+    load_machine_spec,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -35,7 +39,7 @@ def test_loader_resolves_flat_ram_subslot() -> None:
 
 def test_build_wires_flat_64k_ram() -> None:
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -48,7 +52,7 @@ def test_build_wires_flat_64k_ram() -> None:
 
 def test_flat_ram_read_write_through_machine_memory() -> None:
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -72,7 +76,7 @@ def test_bare_hb_f1xd_boots_to_basic() -> None:
     RAM in sub-slot 3 is usable and the DISK ROM does not stall the boot.
     """
     spec = _spec()
-    machine = build_machine(spec)
+    machine = build_machine_from_spec(spec)
     display_seen = False
     for _ in range(300):  # ~5 s of emulated time
         machine.run_frame()
@@ -92,7 +96,7 @@ def test_bios_scan_executes_disk_rom() -> None:
     DISK ROM INIT rather than skipping it.
     """
     spec = _spec()
-    machine = build_machine(spec)
+    machine = build_machine_from_spec(spec)
     assert machine.fdc is not None
     original = machine.fdc.read_mem
     rom_reads = 0
@@ -129,7 +133,7 @@ def test_disk_basic_boots_with_disk_mounted(tmp_path: Path) -> None:
     blank = tmp_path / "blank.dsk"
     blank.write_bytes(bytes(737280))
     spec = _spec()
-    machine = build_machine(spec, fdd1=blank)
+    machine = build_machine_from_spec(spec, fdd1=blank)
     display_seen = False
     for _ in range(300):
         machine.run_frame()

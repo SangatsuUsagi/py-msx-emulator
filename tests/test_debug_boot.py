@@ -79,13 +79,17 @@ def test_v9938_display_enable_logged_via_port_9b(capsys: pytest.CaptureFixture[s
 def test_build_machine_passes_logger_to_v9938() -> None:
     from pathlib import Path
 
-    from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+    from host.machine_config import (
+        build_machine_from_spec,
+        load_device_registry,
+        load_machine_spec,
+    )
 
     root = Path(__file__).resolve().parent.parent
     registry = load_device_registry(root / "config")
     spec = load_machine_spec("cbios_msx2_jp", root / "config", registry, root)
     logger = DebugLogger()
-    machine = build_machine(spec, logger=logger)
+    machine = build_machine_from_spec(spec, logger=logger)
     assert isinstance(machine.vdp, V9938)
     assert machine.vdp._logger is logger
 

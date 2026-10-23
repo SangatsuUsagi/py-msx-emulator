@@ -12,14 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from msx.machine_loader import (
+from host.machine_config import build_machine_from_spec, load_extension_overlay
+from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
-    build_machine,
-    load_extension_overlay,
 )
 from msx.mapper import Ascii8Mapper, Ascii16Mapper
 
@@ -231,7 +230,7 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
             ),
         },
     )
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -255,7 +254,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
             ),
         },
     )
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -283,7 +282,7 @@ def test_missing_ascii8_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(MachineLoadError, match="missing.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
@@ -301,7 +300,7 @@ def test_missing_ascii16_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(MachineLoadError, match="missing.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )

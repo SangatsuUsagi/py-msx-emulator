@@ -12,14 +12,13 @@ from pathlib import Path
 import pytest
 
 from frontend.sdl2_frontend import _target_fps_for
-from msx.machine import Machine
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_device_registry,
     load_machine_spec,
 )
+from msx.machine import Machine
+from msx.machine_spec import MachineLoadError, MachineSpec
 from msx.vdp._geometry import (
     CYCLES_PER_LINE,
     NTSC_LINES_PER_FRAME,
@@ -121,7 +120,7 @@ def test_loader_rejects_an_unknown_video_standard(tmp_path: Path) -> None:
 def test_pal_machine_frame_budget_matches_its_timing() -> None:
     registry = load_device_registry(_ROOT / "config")
     spec = load_machine_spec("cbios_msx1_eu", _ROOT / "config", registry, _ROOT)
-    machine = build_machine(spec)
+    machine = build_machine_from_spec(spec)
     assert machine.cycles_per_frame == 71_364
     assert _target_fps_for(machine) == 50.0
 
@@ -140,7 +139,7 @@ def test_tms9918a_run_frame_executes_the_whole_frame_budget(skip_render: bool) -
 def test_pal_tms9918a_run_frame_executes_the_pal_budget() -> None:
     registry = load_device_registry(_ROOT / "config")
     spec = load_machine_spec("cbios_msx1_eu", _ROOT / "config", registry, _ROOT)
-    machine = build_machine(spec, bios_override=b"\x00" * 0x8000)
+    machine = build_machine_from_spec(spec, bios_override=b"\x00" * 0x8000)
     machine.run_frame(skip_render=True)
     assert 71_364 <= machine.cycle_count <= 71_364 + 22
     assert machine.vdp.status & 0x80                  # VBlank raised within the frame

@@ -1,12 +1,11 @@
-from pathlib import Path
 
 import pytest
 
+from host.romdb import RomDbEntry
 from msx.input import InputState
 from msx.machine import Machine
-from msx.machine_loader import MachineLoadError
+from msx.machine_spec import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
-from msx.romdb import RomDbEntry
 from msx.vdp._geometry import VideoStandard
 from tests.factories import make_machine, make_machine_msx2
 
@@ -213,7 +212,7 @@ def test_make_machine_mapper_konami() -> None:
 # ---------------------------------------------------------------------------
 
 def test_auto_no_cartridge_uses_flat(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     _patch_db(monkeypatch, romdb, {})
     m = make_machine(rom=_NOP_ROM, mapper="auto")
     assert isinstance(m.memory._mapper, FlatMapper)
@@ -223,7 +222,7 @@ def test_auto_no_cartridge_uses_flat(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_auto_unknown_cartridge_falls_back_to_mirrored(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     _patch_db(monkeypatch, romdb, {})  # empty DB → always miss
     cart = bytes([0x01, 0x02])
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
@@ -237,7 +236,7 @@ def test_auto_unsupported_db_mapper_falls_back(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     cart = b"\xDE\xAD"
     sha1 = hashlib.sha1(cart).hexdigest()
     _patch_db(monkeypatch, romdb, {sha1: {"mapper": "CrossBlaim"}})
@@ -252,7 +251,7 @@ def test_auto_known_konamisco_selects_scc_mapper(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     from msx.mapper import KonamiSCCMapper
     cart = bytes(65536)  # dummy 64 KB
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -267,7 +266,7 @@ def test_auto_known_konami_selects_konami_mapper(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     cart = bytes(65536)
     sha1 = hashlib.sha1(cart).hexdigest()
     _patch_db(monkeypatch, romdb, {sha1: {"mapper": "Konami"}})
@@ -289,7 +288,7 @@ def test_auto_known_fixed_page_types_select_fixed_page_mapper(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     from msx.mapper import FixedPageMapper
     cart = bytes(16384)  # dummy 16 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -306,7 +305,7 @@ def test_auto_known_koeisram32_selects_koeisram32_mapper(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     from msx.mapper import KoeiSRAM32Mapper
     cart = bytes(65536)  # dummy 64 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -322,7 +321,7 @@ def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     from msx.mapper import GameMaster2Mapper
     cart = bytes(128 * 1024)  # dummy 128 KB cartridge
     sha1 = hashlib.sha1(cart).hexdigest()
@@ -381,7 +380,7 @@ def test_make_machine_mapper2_konamiscc_builds_real_scc_chip(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     cart2 = bytes(65536)
     sha1 = hashlib.sha1(cart2).hexdigest()
     _patch_db(monkeypatch, romdb, {sha1: {"mapper": "KonamiSCC"}})
@@ -400,7 +399,7 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 ) -> None:
     import hashlib
 
-    import msx.romdb as romdb
+    import host.romdb as romdb
     cart1 = bytes(65536)
     cart2 = bytes([0xFF]) + bytes(65535)
     sha1_1 = hashlib.sha1(cart1).hexdigest()
@@ -421,7 +420,7 @@ def test_make_machine_mapper2_konamiscc_rejected_when_slot1_also_konamiscc(
 # ---------------------------------------------------------------------------
 
 def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -> None:
-    from msx.machine_loader import _ExtensionOverlay
+    from msx.machine_spec import _ExtensionOverlay
     cart1 = bytes(65536)
     with pytest.raises(MachineLoadError, match="scc"):
         make_machine(
@@ -431,7 +430,7 @@ def test_make_machine_mapper1_konamiscc_rejected_when_extension2_is_scc_plus() -
 
 
 def test_make_machine_extension1_scc_plus_rejected_when_mapper2_is_konamiscc() -> None:
-    from msx.machine_loader import _ExtensionOverlay
+    from msx.machine_spec import _ExtensionOverlay
     cart2 = bytes(65536)
     with pytest.raises(MachineLoadError, match="scc"):
         make_machine(
@@ -441,7 +440,7 @@ def test_make_machine_extension1_scc_plus_rejected_when_mapper2_is_konamiscc() -
 
 
 def test_make_machine_extension1_and_extension2_both_scc_plus_rejected() -> None:
-    from msx.machine_loader import _ExtensionOverlay
+    from msx.machine_spec import _ExtensionOverlay
     with pytest.raises(MachineLoadError, match="scc"):
         make_machine(
             rom=_NOP_ROM,
@@ -451,7 +450,7 @@ def test_make_machine_extension1_and_extension2_both_scc_plus_rejected() -> None
 
 
 def test_make_machine_extension1_scc_plus_alone_builds_real_scc_chip() -> None:
-    from msx.machine_loader import _ExtensionOverlay
+    from msx.machine_spec import _ExtensionOverlay
     from msx.mapper import SCCICart
     m = make_machine(rom=_NOP_ROM, extension_overlay1=_ExtensionOverlay(device="scc_i_cart"))
     assert isinstance(m.memory._mapper, SCCICart)
@@ -563,66 +562,48 @@ def test_reset_with_no_fdc_attached_does_not_crash() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Machine.sram_sources() -- design.md Decision D2 Option B: a generic
-# (has_sram source, save path) list replacing the individually-enumerated
-# _save_sram_if_present call per device __main__.py's _cleanup used to make.
+# Machine.sram_media() -- every battery-backed medium by media id (the host
+# maps ids to files; see host.machine_config.sram_paths).
 # ---------------------------------------------------------------------------
 
-def test_sram_sources_empty_when_nothing_carries_sram() -> None:
+def test_sram_media_empty_when_nothing_carries_sram() -> None:
     m = _make_machine()
-    assert m.sram_sources() == []
+    assert m.sram_media() == {}
 
 
-def test_sram_sources_includes_slot1_mapper_when_sram_backed() -> None:
+def test_sram_media_includes_slot1_mapper_when_sram_backed() -> None:
     m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
-    sources = m.sram_sources()
-    assert len(sources) == 1
-    source, path = sources[0]
-    assert source is m.memory._mapper
-    assert isinstance(path, Path)
-    assert path == m.sram_save_path
+    assert m.sram_media() == {"slot1.sram": m.memory._mapper}
 
 
-def test_sram_sources_excludes_slot1_mapper_without_sram() -> None:
-    # A non-SRAM mapper (ASCII8) never gets a sram_save_path in the first
-    # place, but the has_sram guard is what actually excludes it here.
+def test_sram_media_excludes_slot1_mapper_without_sram() -> None:
     m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8")
-    assert m.sram_sources() == []
+    assert m.sram_media() == {}
 
 
-def test_sram_sources_includes_both_slots_independently() -> None:
+def test_sram_media_includes_both_slots_independently() -> None:
     m = make_machine(
         rom=_NOP_ROM,
         cartridge=bytes(65536), mapper="ASCII8SRAM2",
         cartridge2=bytes(range(256)) * 32, mapper2="GameMaster2",
     )
-    sources = m.sram_sources()
-    assert len(sources) == 2
-    found = {id(source) for source, _path in sources}
-    assert id(m.memory._mapper) in found
-    assert id(m.memory._mapper2) in found
+    media = m.sram_media()
+    assert media["slot1.sram"] is m.memory._mapper
+    assert media["slot2.sram"] is m.memory._mapper2
 
 
-def test_sram_sources_includes_fmpac_and_halnote_when_present(tmp_path: Path) -> None:
+def test_sram_media_includes_fmpac_and_an_expanded_slot_device() -> None:
     from msx.fmpac import FmPac
     from msx.mapper import HalnoteMapper
     from msx.opll import Opll
 
     m = _make_machine()
     m.fmpac = FmPac(rom=bytes(65536), opll=Opll())
-    m.fmpac_sram_save_path = tmp_path / "fmpac.sram"
-    m.halnote_cart = HalnoteMapper(rom=bytes(1048576))
-    m.halnote_sram_save_path = tmp_path / "halnote.sram"
+    halnote = HalnoteMapper(rom=bytes(1048576))
+    m.memory._mapper2_subslots[0] = halnote
 
-    sources = m.sram_sources()
-    found = {id(source): path for source, path in sources}
-    assert id(m.fmpac) in found and found[id(m.fmpac)] == m.fmpac_sram_save_path
-    assert id(m.halnote_cart) in found and found[id(m.halnote_cart)] == m.halnote_sram_save_path
-
-    m.halnote_sram_save_path = None  # unset path excludes it from the list
-    sources = m.sram_sources()
-    assert id(m.halnote_cart) not in {id(source) for source, _path in sources}
-    assert id(m.fmpac) in {id(source) for source, _path in sources}
+    media = m.sram_media()
+    assert media == {"fmpac.sram": m.fmpac, "slot2.0.sram": halnote}
 
 
 # ---------------------------------------------------------------------------

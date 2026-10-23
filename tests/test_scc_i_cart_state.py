@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import build_machine_from_spec
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _ExtensionOverlay, _RomEntry, build_machine
+from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
 from msx.state import load_state, save_state
 
 _RGB = bytearray(256 * 192 * 3)
@@ -46,7 +47,7 @@ def saves_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
-    return build_machine(
+    return build_machine_from_spec(
         _msx1_spec(main_dir), extension_overlay=_ExtensionOverlay(device="scc_i_cart")
     )
 
@@ -118,7 +119,7 @@ def test_loading_plain_state_into_scc_plus_machine_raises(
 ) -> None:
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
-    plain = build_machine(_msx1_spec(plain_dir))
+    plain = build_machine_from_spec(_msx1_spec(plain_dir))
     save_state(plain, _RGB, "test")
 
     scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
@@ -137,7 +138,7 @@ def test_loading_scc_plus_state_into_plain_machine_raises(
 
     plain_dir = tmp_path / "plain_main_rom"
     plain_dir.mkdir()
-    plain = build_machine(_msx1_spec(plain_dir))
+    plain = build_machine_from_spec(_msx1_spec(plain_dir))
     with pytest.raises(ValueError, match="slot 2 mapper mismatch"):
         load_state(plain)
 
@@ -149,7 +150,7 @@ def test_loading_scc_plus_state_into_plain_machine_raises(
 def test_machine_without_scc_plus_roundtrips(saves_dir: Path, tmp_path: Path) -> None:
     main_dir = tmp_path / "main_rom"
     main_dir.mkdir()
-    machine = build_machine(_msx1_spec(main_dir))
+    machine = build_machine_from_spec(_msx1_spec(main_dir))
     machine.cpu.registers.A = 0x42
     save_state(machine, _RGB, "test")
 

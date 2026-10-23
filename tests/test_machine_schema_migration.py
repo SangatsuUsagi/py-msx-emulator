@@ -20,7 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from msx.machine_loader import MachineSpec, load_device_registry, load_machine_spec
+from host.machine_config import load_device_registry, load_machine_spec
+from msx.machine_spec import MachineSpec
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
