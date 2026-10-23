@@ -20,11 +20,12 @@ from frontend.sdl2_frontend import (
     _update_window_title,
     _window_title,
 )
+from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
-from msx.input import KEY_MATRIX_INT, KEY_NAME_TO_CELL, InputState
+from msx.input import KEY_NAME_TO_CELL, InputState
 
 
 class _Keysym(ctypes.Structure):
@@ -145,6 +146,7 @@ class _Harness:
     ) -> None:
         self.sdl_cls = sdl_cls
         self.machine = _FakeMachine()
+        self.keyboard = SdlKeyboard(self.machine.input)
         self.ctrl_combo = _CtrlComboState()
         self.hotkeys = hotkeys
         self._event = _Event()
@@ -153,7 +155,7 @@ class _Harness:
     def send(self, script: list[tuple[int, ...]]) -> None:
         sdl = self.sdl_cls(script, self._event)
         self.running = _handle_events(
-            sdl, self._event, self.machine, None, None, self.ctrl_combo,
+            sdl, self._event, self.machine, self.keyboard, None, None, self.ctrl_combo,
             _CTRL_FKEY_CELLS, "", b"", 0, 0, None, self.hotkeys,
         )
 
@@ -391,7 +393,7 @@ def test_ctrl_keycodes_match_real_sdl2_constants() -> None:
     # against both the real pysdl2 library and msx.input's own constants.
     import sdl2
 
-    from msx.input import _K_LCTRL, _K_RCTRL
+    from frontend.sdl2_keyboard import _K_LCTRL, _K_RCTRL
 
     assert sdl2.SDLK_LCTRL == _K_LCTRL == 1073742048
     assert sdl2.SDLK_RCTRL == _K_RCTRL == 1073742052
@@ -413,13 +415,13 @@ def test_jis_yen_key_reaches_matrix_via_scancode_fallback() -> None:
     # `_handle_events` must key off scancode alone to identify the ¥ key and
     # reach MSX matrix cell (1, 4) (the same cell International \ uses) --
     # regardless of whatever `sym` the host layout happened to produce.
-    from msx.input import KEY_MATRIX_JP, SDLK_JIS_YEN
+    from frontend.sdl2_keyboard import KEY_MATRIX_JP, SDLK_JIS_YEN
 
     yen_cell = KEY_MATRIX_JP[SDLK_JIS_YEN]
     for observed_sym in (0, 165):  # SDLK_UNKNOWN, and Unicode YEN SIGN (U+00A5)
         h = _Harness()
         h.machine.input.keyboard_type = "jp"
-        h.machine.input._matrix_map = KEY_MATRIX_JP
+        h.keyboard._matrix_map = KEY_MATRIX_JP
         h.keydown(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
         assert _asserted(h.matrix, yen_cell)
         h.keyup(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
@@ -441,7 +443,7 @@ def test_host_apostrophe_key_reaches_colon_cell_via_scancode() -> None:
     # must use scancode to route the former to SDLK_HOST_APOSTROPHE_KEY's
     # cell (":"/"*", row 2 bit 0) and leave the latter (scancode for "7",
     # left as plain sym 39) reaching _K_QUOTE's cell (row 0 bit 7) instead.
-    from msx.input import _K_QUOTE, KEY_MATRIX_JP, SDLK_HOST_APOSTROPHE_KEY
+    from frontend.sdl2_keyboard import _K_QUOTE, KEY_MATRIX_JP, SDLK_HOST_APOSTROPHE_KEY
 
     colon_cell = KEY_MATRIX_JP[SDLK_HOST_APOSTROPHE_KEY]
     apostrophe_cell = KEY_MATRIX_JP[_K_QUOTE]
@@ -449,7 +451,7 @@ def test_host_apostrophe_key_reaches_colon_cell_via_scancode() -> None:
 
     h = _Harness()
     h.machine.input.keyboard_type = "jp"
-    h.machine.input._matrix_map = KEY_MATRIX_JP
+    h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(_K_QUOTE, scancode=_FakeSDL.SDL_SCANCODE_APOSTROPHE)
     assert _asserted(h.matrix, colon_cell)
@@ -483,13 +485,13 @@ def test_jis_caret_key_reaches_caret_cell_via_plain_sym() -> None:
     # (SDLK_CARET, 94, probe-confirmed constant across SHIFT) -- no scancode
     # interception needed, `_handle_events` passes the sym straight through
     # to _K_CARET's cell.
-    from msx.input import _K_CARET, KEY_MATRIX_JP
+    from frontend.sdl2_keyboard import _K_CARET, KEY_MATRIX_JP
 
     caret_cell = KEY_MATRIX_JP[_K_CARET]
 
     h = _Harness()
     h.machine.input.keyboard_type = "jp"
-    h.machine.input._matrix_map = KEY_MATRIX_JP
+    h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(_K_CARET, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
     assert _asserted(h.matrix, caret_cell)
@@ -511,13 +513,13 @@ def test_host_ro_key_reaches_underscore_cell_via_scancode() -> None:
     # constant across SHIFT -- same class of problem as the JIS ¥ key), so
     # `_handle_events` must identify it by scancode and route it to
     # SDLK_JIS_RO's cell ("_", row 2 bit 5).
-    from msx.input import KEY_MATRIX_JP, SDLK_JIS_RO
+    from frontend.sdl2_keyboard import KEY_MATRIX_JP, SDLK_JIS_RO
 
     underscore_cell = KEY_MATRIX_JP[SDLK_JIS_RO]
 
     h = _Harness()
     h.machine.input.keyboard_type = "jp"
-    h.machine.input._matrix_map = KEY_MATRIX_JP
+    h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(0, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL1)
     assert _asserted(h.matrix, underscore_cell)
@@ -530,7 +532,7 @@ def test_international_equals_key_reaches_equals_cell_via_plain_sym() -> None:
     # 46) reports SDLK_EQUALS instead -- reaches the plain "=" cell with no
     # scancode assist needed, regression check against the removed
     # SDLK_HOST_EQUALS_KEY scancode interception.
-    from msx.input import _K_EQUALS, KEY_MATRIX_INT
+    from frontend.sdl2_keyboard import _K_EQUALS, KEY_MATRIX_INT
 
     equals_cell = KEY_MATRIX_INT[_K_EQUALS]
 
@@ -756,7 +758,7 @@ def test_plain_shift_still_sends_shift(tmp_path: Path) -> None:
 def test_hotkey_keycodes_match_real_sdl2_constants() -> None:
     import sdl2
 
-    from msx.input import _K_LSHIFT, _K_RSHIFT
+    from frontend.sdl2_keyboard import _K_LSHIFT, _K_RSHIFT
 
     assert sdl2.SDLK_F6 == _FakeSDL.SDLK_F6
     assert (sdl2.SDLK_LSHIFT, sdl2.SDLK_RSHIFT) == (_FakeSDL.SDLK_LSHIFT, _FakeSDL.SDLK_RSHIFT)
@@ -1026,7 +1028,8 @@ class _Loop:
 
     def step(self) -> None:
         _run_frame(
-            self.sdl, self.machine, None, None, self.state, _LoopJoy(), _CtrlComboState(),
+            self.sdl, self.machine, SdlKeyboard(self.machine.input), None, None, self.state,
+            _LoopJoy(), _CtrlComboState(),
             _CTRL_FKEY_CELLS, "", None, _Event(), self.rpc, self.timer, "auto",
             self.audio_dev, 3, self.hotkeys,
         )

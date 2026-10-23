@@ -13,6 +13,7 @@ import pytest
 
 import frontend.sdl2_frontend as fe
 from frontend.sdl2_frontend import _CtrlComboState, _DiskList, _HotkeyState, _LoopState
+from frontend.sdl2_keyboard import SdlKeyboard
 from msx.machine import Machine
 from msx.state import _snapshot_from_machine
 from tests.factories import make_machine
@@ -94,9 +95,10 @@ def _run_through_frontend(machine: Machine, frames: int) -> list[bytes]:
     )
     hotkeys = _HotkeyState(bindings={}, disks=_DiskList([]))
     event = ctypes.c_int()
+    keyboard = SdlKeyboard(machine.input)
     for _ in range(frames):
         fe._run_frame(
-            sdl, machine, None, None, state, _NoJoystick(), _CtrlComboState(),
+            sdl, machine, keyboard, None, None, state, _NoJoystick(), _CtrlComboState(),
             {}, "", None, event, None, _Timer(), "auto", _AUDIO_DEV, 3, hotkeys,
         )
         assert state.running

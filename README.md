@@ -471,9 +471,9 @@ registered handler.
 
 | Item | Detail |
 | --- | --- |
-| Keyboard | `msx/input.py`. 11 rows × 8 bits, active-low, as in the MSX Technical Handbook |
+| Keyboard | `msx/input.py` (the matrix: 11 rows × 8 bits, active-low, as in the MSX Technical Handbook) and `frontend/sdl2_keyboard.py` (host key to matrix cell mapping) |
 | Physical joystick | `frontend/sdl2_joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
-| Keyboard emulation | WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
+| Keyboard emulation | `frontend/sdl2_keyboard.py`. WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
 
 - Known limitations:
   - No host key maps to the MSX numeric keypad (matrix rows 9-10).
@@ -1145,7 +1145,8 @@ py-msx-emulator/
 ├── frontend/
 │   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
-│   └── sdl2_joystick.py   # Physical joystick manager (SDL2)
+│   ├── sdl2_joystick.py   # Physical joystick manager (SDL2)
+│   └── sdl2_keyboard.py   # Host keyboard to MSX matrix / keyboard joystick (SDL2)
 ├── msx/                   # Core emulator package
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)

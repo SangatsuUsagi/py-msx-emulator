@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
@@ -15,15 +15,16 @@ from frontend.sdl2_joystick import (
     TURBO_PERIOD,
     JoystickManager,
 )
-from msx.app_config import AppConfig
-from msx.fdc.disk_image import DskDiskImage
-from msx.input import (
-    KEY_NAME_TO_CELL,
+from frontend.sdl2_keyboard import (
     SDLK_HOST_APOSTROPHE_KEY,
     SDLK_JIS_RO,
     SDLK_JIS_YEN,
-    InputState,
+    SdlKeyboard,
+    resolve_keyboard_joy_map,
 )
+from msx.app_config import AppConfig
+from msx.fdc.disk_image import DskDiskImage
+from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.psg import SAMPLE_RATE, JoystickPort
@@ -344,28 +345,28 @@ class _EventApi(Protocol):
 
 def _handle_ctrl_combo_keydown(
     sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState,
-    ctrl_fkey_cells: dict[int, tuple[int, int]], machine: Machine,
+    ctrl_fkey_cells: dict[int, tuple[int, int]], keyboard: SdlKeyboard,
 ) -> bool:
     """Ctrl+F1..F5 combo KEYDOWN handling. Returns True if `sym` was consumed
     (Ctrl itself, or an F-key while at least one Ctrl side is held)."""
     if sym == sdl2.SDLK_LCTRL:
         ctrl_combo.lctrl_held = True
         if ctrl_combo.active is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if sym == sdl2.SDLK_RCTRL:
         ctrl_combo.rctrl_held = True
         if ctrl_combo.active is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if sym in ctrl_fkey_cells and (ctrl_combo.lctrl_held or ctrl_combo.rctrl_held):
         if ctrl_combo.active is None:
             if ctrl_combo.lctrl_held:
-                machine.input.key_up(sdl2.SDLK_LCTRL)
+                keyboard.key_up(sdl2.SDLK_LCTRL)
             if ctrl_combo.rctrl_held:
-                machine.input.key_up(sdl2.SDLK_RCTRL)
+                keyboard.key_up(sdl2.SDLK_RCTRL)
             row, bit = ctrl_fkey_cells[sym]
-            machine.input.set_key_state(row, bit, True)
+            keyboard.input_state.set_key_state(row, bit, True)
             ctrl_combo.active = _ActiveCombo(sym, (row, bit))
         # else: a second F-key pressed while a combo is already active is
         # ignored until the active one releases.
@@ -374,7 +375,7 @@ def _handle_ctrl_combo_keydown(
 
 
 def _handle_ctrl_combo_keyup(
-    sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState, machine: Machine,
+    sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState, keyboard: SdlKeyboard,
 ) -> bool:
     """Ctrl+F1..F5 combo KEYUP handling. Returns True if `sym` was consumed."""
     if sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
@@ -388,18 +389,18 @@ def _handle_ctrl_combo_keyup(
             # later KEYUP will then find `active` already None and fall through
             # to the caller's plain key_up path (harmless — that key's KEYDOWN
             # was never forwarded there either, since the combo intercepted it).
-            ctrl_combo.release_active(machine.input)
-        machine.input.key_up(sym)
+            ctrl_combo.release_active(keyboard.input_state)
+        keyboard.key_up(sym)
         return True
     if ctrl_combo.active is not None and sym == ctrl_combo.active.fkey:
         # The F-key side of the combo releasing: end it and re-assert plain
         # CTRL for whichever side(s) are still physically held, so a lingering
         # Ctrl press reads as ordinary CTRL again rather than nothing at all.
-        ctrl_combo.release_active(machine.input)
+        ctrl_combo.release_active(keyboard.input_state)
         if ctrl_combo.lctrl_held:
-            machine.input.key_down(sdl2.SDLK_LCTRL)
+            keyboard.key_down(sdl2.SDLK_LCTRL)
         if ctrl_combo.rctrl_held:
-            machine.input.key_down(sdl2.SDLK_RCTRL)
+            keyboard.key_down(sdl2.SDLK_RCTRL)
         return True
     return False
 
@@ -468,8 +469,8 @@ def _run_hotkey_action(
 
 
 def _handle_bound_hotkey_keydown(
-    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, window: object,
-    ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
+    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, keyboard: SdlKeyboard,
+    window: object, ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
     was consumed (Shift itself, or a bound key with no Ctrl side held)."""
@@ -480,7 +481,7 @@ def _handle_bound_hotkey_keydown(
         else:
             shift.rshift_held = True
         if shift.active_key is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if ctrl_combo.lctrl_held or ctrl_combo.rctrl_held:
         return False
@@ -492,16 +493,16 @@ def _handle_bound_hotkey_keydown(
         return True
     if shift_held and shift.active_key is None:
         if shift.lshift_held:
-            machine.input.key_up(sdl2.SDLK_LSHIFT)
+            keyboard.key_up(sdl2.SDLK_LSHIFT)
         if shift.rshift_held:
-            machine.input.key_up(sdl2.SDLK_RSHIFT)
+            keyboard.key_up(sdl2.SDLK_RSHIFT)
         shift.active_key = sym
     _run_hotkey_action(sdl2, action, sym, machine, window, hotkeys)
     return True
 
 
 def _handle_bound_hotkey_keyup(
-    sdl2: _EventApi, sym: int, machine: Machine, hotkeys: _HotkeyState,
+    sdl2: _EventApi, sym: int, keyboard: SdlKeyboard, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking, fast-forward hold release and Shift+hotkey KEYUP
     handling. Returns True if `sym` was consumed."""
@@ -518,14 +519,14 @@ def _handle_bound_hotkey_keyup(
             shift.rshift_held = False
         if not (shift.lshift_held or shift.rshift_held):
             shift.active_key = None
-        machine.input.key_up(sym)
+        keyboard.key_up(sym)
         return True
     if shift.active_key is not None and sym == shift.active_key:
         shift.active_key = None
         if shift.lshift_held:
-            machine.input.key_down(sdl2.SDLK_LSHIFT)
+            keyboard.key_down(sdl2.SDLK_LSHIFT)
         if shift.rshift_held:
-            machine.input.key_down(sdl2.SDLK_RSHIFT)
+            keyboard.key_down(sdl2.SDLK_RSHIFT)
         return True
     return consumed
 
@@ -645,8 +646,8 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
 
 
 def _handle_events(
-    sdl2: _EventApi, event: _EventLike, machine: Machine, window: object,
-    joy_manager: JoystickManager,
+    sdl2: _EventApi, event: _EventLike, machine: Machine, keyboard: SdlKeyboard,
+    window: object, joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
     mouse: _HostMouse | None = None, hotkeys: _HotkeyState | None = None,
@@ -670,7 +671,7 @@ def _handle_events(
         elif event.type == sdl2.SDL_KEYDOWN:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
             if hotkeys is not None and _handle_bound_hotkey_keydown(
-                sdl2, sym, event.key.repeat, machine, window, ctrl_combo, hotkeys
+                sdl2, sym, event.key.repeat, machine, keyboard, window, ctrl_combo, hotkeys
             ):
                 continue
             consumed, running = _handle_hotkey_keydown(
@@ -678,15 +679,15 @@ def _handle_events(
                 game_title, rgb_buf, tex_w, tex_h, running,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
-                sdl2, sym, ctrl_combo, ctrl_fkey_cells, machine
+                sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
             ):
-                machine.input.key_down(sym)
+                keyboard.key_down(sym)
         elif event.type == sdl2.SDL_KEYUP:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
-            if hotkeys is not None and _handle_bound_hotkey_keyup(sdl2, sym, machine, hotkeys):
+            if hotkeys is not None and _handle_bound_hotkey_keyup(sdl2, sym, keyboard, hotkeys):
                 continue
-            if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, machine):
-                machine.input.key_up(sym)
+            if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, keyboard):
+                keyboard.key_up(sym)
         elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
             joy_manager.handle_event(event)
         elif mouse is not None and event.type == sdl2.SDL_MOUSEMOTION:
@@ -939,7 +940,7 @@ def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
 
 
 def _run_frame(
-    sdl2: SDL2Api, machine: Machine, window: object, renderer: object,
+    sdl2: SDL2Api, machine: Machine, keyboard: SdlKeyboard, window: object, renderer: object,
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
     mouse: _HostMouse | None, event: _EventLike,
@@ -954,7 +955,7 @@ def _run_frame(
     """
     # Process events (input + hotkeys); updates running.
     state.running = _handle_events(
-        sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
+        sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
         game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse, hotkeys,
     )
     if not state.running:
@@ -1050,6 +1051,7 @@ def run(
     mouse_port: int | None = None,
     fdd1_images: list[Path] | None = None,
     hotkey_bindings: dict[tuple[int, bool], str] | None = None,
+    keyboard_joystick: Mapping[str, str] | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1075,6 +1077,8 @@ def run(
         hotkey_bindings: (SDL keycode, Shift held) -> action table from
             py_emulator.yaml (`AppConfig.hotkey_bindings`); None uses the
             built-in table.
+        keyboard_joystick: keyboard_joystick.buttons (function -> key name)
+            from py_emulator.yaml; None or empty uses the built-in key map.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1123,6 +1127,10 @@ def run(
         _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
     )
 
+    keyboard = SdlKeyboard(
+        machine.input, resolve_keyboard_joy_map(keyboard_joystick or {})
+    )
+
     mouse: _HostMouse | None = None
     if mouse_port is not None:
         mouse = _HostMouse(MouseDevice(), scale)
@@ -1167,7 +1175,7 @@ def run(
         while state.running:
             try:
                 _run_frame(
-                    sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
+                    sdl2, machine, keyboard, window, renderer, state, joy_manager, ctrl_combo,
                     ctrl_fkey_cells, game_title, mouse, event, rpc_server,
                     frame_timer, frame_skip, audio_dev, scale, hotkeys,
                 )

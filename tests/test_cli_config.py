@@ -513,22 +513,17 @@ def test_builtin_frame_skip_auto_when_neither_set() -> None:
 # keyboard_joystick.buttons -> InputState.joy_map, threaded to build_machine
 # ---------------------------------------------------------------------------
 
-def test_keyboard_joy_map_passed_to_build_machine() -> None:
-    from msx.input import JOY_MAP, _K_j
-
+def test_keyboard_joystick_names_passed_to_run() -> None:
+    # The frontend resolves the names; build_machine takes no key map.
     cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    joy_map = build_mock.call_args.kwargs["joy_map"]
-    assert joy_map[_K_j] == (0, 4)
-    assert joy_map is not JOY_MAP
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
+    assert run_mock.call_args.kwargs["keyboard_joystick"] == {"trigger_a": "j"}
+    assert "joy_map" not in build_mock.call_args.kwargs
 
 
-def test_default_keyboard_joy_map_passed_when_no_override() -> None:
-    from msx.input import JOY_MAP
-
-    _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["joy_map"] is JOY_MAP
+def test_default_keyboard_joystick_passed_when_no_override() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert run_mock.call_args.kwargs["keyboard_joystick"] == {}
 
 
 # ---------------------------------------------------------------------------
