@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
+from frontend.frame_timer import FrameTimer
 from frontend.sdl2_joystick import (
     _DEFAULT_GC_BUTTON_BIT,
     _DEFAULT_GC_TURBO_BUTTON_BIT,
@@ -16,7 +17,6 @@ from frontend.sdl2_joystick import (
 )
 from msx.app_config import AppConfig
 from msx.fdc.disk_image import DskDiskImage
-from msx.frame_timer import FrameTimer
 from msx.input import (
     KEY_NAME_TO_CELL,
     SDLK_HOST_APOSTROPHE_KEY,
