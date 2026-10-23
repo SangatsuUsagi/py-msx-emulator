@@ -54,6 +54,28 @@ class InputState:
     _joy1_hw:  int = field(default=0x3F, init=False, repr=False)
     _joy2_kbd: int = field(default=0x3F, init=False, repr=False)
     _joy2_hw:  int = field(default=0x3F, init=False, repr=False)
+    # Mouse input for one frame: motion in MSX counts accumulated by the
+    # frontend, and the two buttons. Machine.step_frame feeds them to the
+    # attached mouse once per frame.
+    mouse_dx: int = 0
+    mouse_dy: int = 0
+    mouse_left: bool = False
+    mouse_right: bool = False
+
+    def copy_from(self, other: "InputState") -> None:
+        """Take every input line from `other` (one frame's input value).
+
+        `keyboard_type` is a machine fact and is not copied.
+        """
+        self.matrix[:] = other.matrix
+        self._joy1_kbd = other._joy1_kbd
+        self._joy1_hw = other._joy1_hw
+        self._joy2_kbd = other._joy2_kbd
+        self._joy2_hw = other._joy2_hw
+        self.mouse_dx = other.mouse_dx
+        self.mouse_dy = other.mouse_dy
+        self.mouse_left = other.mouse_left
+        self.mouse_right = other.mouse_right
 
     @property
     def joy1(self) -> int:

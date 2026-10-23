@@ -80,16 +80,18 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
 
 class TestCountFrameCLI:
     def test_runs_exactly_n_frames(self) -> None:
-        with patch.object(Machine, "run_frame", return_value=None) as rf:
+        with patch.object(Machine, "step_frame", return_value=None) as rf:
             code, out, err = _run_main(["--count-frame", "5"])
         assert code == 0
         assert rf.call_count == 5
+        # Headless: no video is needed, and rendering never changes state.
+        assert all(call.kwargs["render_video"] is False for call in rf.call_args_list)
         assert "frames" in out
 
     def test_no_count_frame_takes_sdl_path(self) -> None:
         # Without --count-frame the headless loop is skipped (SDL run is mocked
-        # inside _run_main), so main() never drives run_frame itself.
-        with patch.object(Machine, "run_frame", return_value=None) as rf:
+        # inside _run_main), so main() never drives step_frame itself.
+        with patch.object(Machine, "step_frame", return_value=None) as rf:
             code, _out, _err = _run_main([])
         assert code == 0
         rf.assert_not_called()
@@ -102,22 +104,22 @@ class TestCountFrameResume:
         def fake_load_state(machine: Machine, path: Path | None = None) -> None:
             calls.append(("load_state", path))
 
-        def fake_run_frame() -> None:
-            calls.append(("run_frame", None))
+        def fake_step_frame(*_args: object, **_kwargs: object) -> None:
+            calls.append(("step_frame", None))
 
         with patch("msx.state.load_state", side_effect=fake_load_state) as load_state_mock, \
-             patch.object(Machine, "run_frame", side_effect=fake_run_frame):
+             patch.object(Machine, "step_frame", side_effect=fake_step_frame):
             code, _out, _err = _run_main(["--count-frame", "3", "--resume"])
         assert code == 0
         assert load_state_mock.call_count == 1
         assert load_state_mock.call_args.kwargs["path"] is None
         # The state must be restored before any frame of the headless run.
         assert calls[0] == ("load_state", None)
-        assert [c for c in calls if c[0] == "run_frame"] == [("run_frame", None)] * 3
+        assert [c for c in calls if c[0] == "step_frame"] == [("step_frame", None)] * 3
 
     def test_resume_with_explicit_path_loads_that_state(self) -> None:
         with patch("msx.state.load_state") as load_state_mock, \
-             patch.object(Machine, "run_frame", return_value=None) as rf:
+             patch.object(Machine, "step_frame", return_value=None) as rf:
             code, _out, _err = _run_main(
                 ["--count-frame", "3", "--resume", "path/to/scene.state"])
         assert code == 0
@@ -127,7 +129,7 @@ class TestCountFrameResume:
 
     def test_no_resume_flag_does_not_load_state(self) -> None:
         with patch("msx.state.load_state") as load_state_mock, \
-             patch.object(Machine, "run_frame", return_value=None):
+             patch.object(Machine, "step_frame", return_value=None):
             code, _out, _err = _run_main(["--count-frame", "3"])
         assert code == 0
         load_state_mock.assert_not_called()
@@ -136,7 +138,7 @@ class TestCountFrameResume:
 class TestMapperTraceCLI:
     def test_inert_without_bank_switching_mapper(self) -> None:
         # Zero ROM cartridge -> flat mapper; flag is accepted but inert.
-        with patch.object(Machine, "run_frame", return_value=None):
+        with patch.object(Machine, "step_frame", return_value=None):
             code, _out, err = _run_main(["--mapper-trace", "--count-frame", "1"])
         assert code == 0
         assert "no bank-switching ROM mapper" in err

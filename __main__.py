@@ -335,12 +335,18 @@ def _print_startup_summary(
 
 
 def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
-    """Run exactly `count_frame` frames headlessly (no SDL window)."""
+    """Run exactly `count_frame` frames headlessly (no SDL window).
+
+    No host input and no video: emulated state does not depend on rendering.
+    """
+    from msx.input import InputState
+
     if resume is not None:
         from msx.state import load_state
         load_state(machine, path=Path(resume) if resume else None)
+    no_input = InputState()
     for _ in range(count_frame):
-        machine.run_frame()
+        machine.step_frame(no_input, render_video=False)
 
 
 def _host_rtc_time() -> "RtcTime":
@@ -361,9 +367,13 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     if resume is not None:
         load_state(machine, path=Path(resume) if resume else None)
 
+    from msx.input import InputState
+
+    # Every frame renders RGB video, as interactive play does.
+    no_input = InputState()
     start = time.perf_counter()
     for _ in range(frames):
-        machine.run_frame()
+        machine.step_frame(no_input, render_video=True)
     elapsed = time.perf_counter() - start
 
     print(f"frames  : {frames}")

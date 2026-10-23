@@ -21,6 +21,7 @@ from frontend.sdl2_frontend import (
     _window_title,
 )
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
+from msx.boundary import FrameOutput, RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
@@ -964,20 +965,15 @@ class _LoopMachine(_FakeMachine):
         self.cycle_count = 0
         self.frames = 0
         self.takes = 0
-        self._audio = b""
         self.vdp = _LoopVDP()
         self.video_standard = _LoopStandard()
 
-    def run_frame(self, skip_render: bool = False) -> bytearray:
+    def step_frame(self, frame_input: InputState, render_video: bool) -> FrameOutput:
         self.frames += 1
-        self.cycle_count += 59736
-        self._audio = b"\x10\x00" * _SAMPLES
-        return bytearray(256 * 212)
-
-    def take_audio(self) -> bytes:
         self.takes += 1
-        pcm, self._audio = self._audio, b""
-        return pcm
+        self.cycle_count += 59736
+        video = RgbFrame(256, 212, bytes(256 * 212 * 3)) if render_video else None
+        return FrameOutput(video, b"\x10\x00" * _SAMPLES, self.frames)
 
 
 class _LoopTimer:

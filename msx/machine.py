@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from msx.audio_mixer import AudioMixer
+from msx.boundary import FrameOutput, RgbFrame
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
@@ -14,11 +15,11 @@ from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
-from msx.mouse import MouseDevice
+from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
 from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
-from msx.vdp._geometry import VideoStandard
+from msx.vdp._geometry import OUTPUT_H, VideoStandard
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -516,6 +517,30 @@ class Machine:
         """Audio samples per frame: the output rate over the pacing rate (735 at
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
         return int(SAMPLE_RATE // self.video_standard.target_fps)
+
+    def step_frame(self, input: InputState, render_video: bool) -> FrameOutput:
+        """Run one frame with `input` held for the whole frame (the core's
+        per-frame API, allium/core-frontend.allium FrameStepping).
+
+        Copies the input lines into the machine's own InputState, feeds the
+        frame's mouse motion and buttons to the attached mouse once, runs the
+        frame, and returns its RGB24 video (when `render_video`), its
+        pre-filter audio and the frame number. `render_video` never changes
+        emulated state.
+        """
+        self.input.copy_from(input)
+        mouse = self.psg.mouse
+        if mouse is not None:
+            mouse.add_motion(input.mouse_dx, input.mouse_dy)
+            mouse.set_button(TRIGGER_A_BIT, input.mouse_left)
+            mouse.set_button(TRIGGER_B_BIT, input.mouse_right)
+        index_buf = self.run_frame(skip_render=not render_video)
+        video: RgbFrame | None = None
+        if render_video:
+            video = RgbFrame(
+                len(index_buf) // OUTPUT_H, OUTPUT_H, self.vdp.to_rgb24(index_buf)
+            )
+        return FrameOutput(video, self.take_audio(), self.vdp.frame_count)
 
     def take_audio(self) -> bytes:
         """Return the mixed PCM of the most recent run_frame() and clear it."""

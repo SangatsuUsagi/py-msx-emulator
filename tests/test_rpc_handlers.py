@@ -252,6 +252,23 @@ def test_joystick(rig) -> None:
     assert machine.input.joy1 == 0x3F
 
 
+def test_injected_input_also_reaches_the_frontend_accumulator(rig) -> None:
+    # With a frontend running, injected input must survive the next
+    # step_frame, which copies the frontend's accumulator into the machine.
+    from msx.input import InputState
+
+    machine, srv, client = rig
+    accumulator = InputState()
+    srv.input_target = accumulator
+    client.result("input.press_key_named", {"key": "space", "duration_ms": 5000})
+    client.result("input.joystick", {"port": 2, "up": True})
+    assert accumulator.matrix[8] & 1 == 0
+    assert accumulator.joy2 & 1 == 0
+    assert machine.input.matrix[8] & 1 == 0          # and the machine sees it at once
+    client.result("input.joystick_release", {"port": 2})
+    assert accumulator.joy2 == 0x3F
+
+
 # ── Screenshot ───────────────────────────────────────────────────────────────
 
 def test_screen_capture(rig) -> None:

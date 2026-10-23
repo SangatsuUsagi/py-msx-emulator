@@ -25,3 +25,24 @@ class RtcTime:
 
 # Start time when the host supplies none (a Saturday).
 RTC_DEFAULT_START = RtcTime(2000, 1, 1, 0, 0, 0)
+
+
+@dataclass(frozen=True)
+class RgbFrame:
+    """One rendered frame as packed RGB24, row-major (width * height * 3 bytes).
+
+    `width` is 256 or 512; `height` is the constant output height (212).
+    """
+
+    width: int
+    height: int
+    pixels: bytes
+
+
+@dataclass(frozen=True)
+class FrameOutput:
+    """What Machine.step_frame returns for one frame."""
+
+    video: RgbFrame | None   # absent when the frame was not rendered
+    audio: bytes             # signed 16-bit LE mono PCM, before any output filter
+    frame_number: int

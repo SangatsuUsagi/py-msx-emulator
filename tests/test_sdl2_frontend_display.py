@@ -65,7 +65,8 @@ def test_same_width_frame_does_not_recreate_texture() -> None:
     index_buf = bytearray(_SCREEN_WIDTH * _SCREEN_HEIGHT)
     texture, tex_w, tex_h, running = _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
     )
     assert (tex_w, tex_h) == (_SCREEN_WIDTH, _SCREEN_HEIGHT)
     assert texture == 100          # unchanged: no recreate
@@ -81,7 +82,8 @@ def test_wide_frame_recreates_texture_at_new_width() -> None:
     index_buf = bytearray(wide_w * _SCREEN_HEIGHT)
     texture, tex_w, tex_h, running = _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
     )
     assert (tex_w, tex_h) == (wide_w, _SCREEN_HEIGHT)  # height never changes
     assert running is True
@@ -96,7 +98,8 @@ def test_narrowing_back_to_base_width_recreates_again() -> None:
     index_buf = bytearray(_SCREEN_WIDTH * _SCREEN_HEIGHT)
     texture, tex_w, tex_h, running = _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=512, tex_h=_SCREEN_HEIGHT, scale=3,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=512, tex_h=_SCREEN_HEIGHT, scale=3,
     )
     assert (tex_w, tex_h) == (_SCREEN_WIDTH, _SCREEN_HEIGHT)
     assert sdl.destroyed == [100]
@@ -108,7 +111,8 @@ def test_texture_create_failure_reports_not_running() -> None:
     index_buf = bytearray(512 * _SCREEN_HEIGHT)
     _texture, _tex_w, _tex_h, running = _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
     )
     assert running is False
 
@@ -123,7 +127,8 @@ def test_wide_texture_window_size_capped_at_base_width_times_scale() -> None:
     scale = 3
     _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=scale,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=scale,
     )
     assert sdl.window_sizes == [(_SCREEN_WIDTH * scale, _SCREEN_HEIGHT * scale)]
 
@@ -136,7 +141,8 @@ def test_normal_width_texture_window_size_uses_its_own_width_times_scale() -> No
     scale = 2
     _resize_texture_if_needed(
         sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=512, tex_h=_SCREEN_HEIGHT, scale=scale,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=512, tex_h=_SCREEN_HEIGHT, scale=scale,
     )
     assert sdl.window_sizes == [(_SCREEN_WIDTH * scale, _SCREEN_HEIGHT * scale)]
 
@@ -210,7 +216,8 @@ def test_resize_then_upload_chain_matches_run_loop_order() -> None:
     index_buf = bytearray(wide_w * _SCREEN_HEIGHT)
     _texture, tex_w, tex_h, running = _resize_texture_if_needed(
         resize_sdl, renderer=1, window=1, texture=100,
-        index_buf=index_buf, tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
+        frame_w=len(index_buf) // _SCREEN_HEIGHT,
+        tex_w=_SCREEN_WIDTH, tex_h=_SCREEN_HEIGHT, scale=3,
     )
     assert running is True
     assert (tex_w, tex_h) == (wide_w, _SCREEN_HEIGHT)
