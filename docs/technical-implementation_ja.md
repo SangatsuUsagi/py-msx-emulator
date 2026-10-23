@@ -333,7 +333,7 @@ MSX2 のデフォルトの配置：
 
 | 層 | ファイル | 役割 |
 | --- | --- | --- |
-| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | `*.dsk` のセクタイメージを読む。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためて、終了時にファイルに書き戻す |
+| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | ファイルから読んだバイト列で `*.dsk` のセクタイメージを持つ。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためてイメージを dirty にし、`host/media.py` が終了時、ステートセーブの前、ディスクの入れ替え時にファイルへ書き戻す |
 | ドライブ | `disk_drive.py`（`DiskDrive`） | 物理ドライブ 1 台。マウント中のイメージを持ち、ヘッドの位置を追い、セクタを読み書きする |
 | コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持たない |
 | インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000〜0x7FFF にマップする。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使う。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置く。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
@@ -349,7 +349,7 @@ MSX2 のデフォルトの配置：
 - デバッガの `fdd1`/`fdd2` コマンド。
 - ソケット RPC サーバの `fdd.swap` メソッド。
 
-この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする（終了時にファイルへ書き戻す）。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
+この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする（書き込んだセクタは終了時、ステートセーブの前、ディスクの入れ替え時に `.dsk` ファイルへ書き戻す）。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
 
 ## マシンと拡張の YAML スキーマ
 

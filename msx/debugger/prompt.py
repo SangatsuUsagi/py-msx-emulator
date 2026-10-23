@@ -715,7 +715,7 @@ class Debugger:
         # Local imports keep the debugger free of an FDC import at module load.
         from pathlib import Path
 
-        from msx.fdc.disk_image import DskDiskImage
+        from host.media import swap_disk
 
         label = f"fdd{drive_index + 1}"
         fdc = self._machine.fdc
@@ -734,7 +734,7 @@ class Debugger:
             return
         arg = args[0]
         if arg == "-":
-            fdc.swap(drive_index, None)
+            swap_disk(self._machine, drive_index, None)
             print(f"{label}: ejected")
             return
         path = Path(arg).expanduser()
@@ -742,11 +742,10 @@ class Debugger:
             print(f"{label}: file not found: {path}")
             return
         try:
-            image = DskDiskImage(path)
+            swap_disk(self._machine, drive_index, path)
         except (ValueError, OSError) as exc:
             print(f"{label}: cannot mount {path}: {exc}")
             return
-        fdc.swap(drive_index, image)
         print(f"{label}: mounted {path}")
 
 

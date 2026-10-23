@@ -23,10 +23,11 @@ from frontend.sdl2_frontend import (
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from msx.boundary import FrameOutput, RgbFrame
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
 from msx.input import KEY_NAME_TO_CELL, InputState
+from msx.machine import Machine
+from tests.disk_factories import dsk_image
 
 
 class _Keysym(ctypes.Structure):
@@ -122,6 +123,9 @@ class _FakeMachine:
     def reset(self) -> None:
         self.reset_calls += 1
         self.shift_at_reset = _asserted(self.input.matrix, KEY_MATRIX_INT[_FakeSDL.SDLK_LSHIFT])
+
+    # The real swap path, so host.media.swap_disk drives the FloppyDisk.
+    mount_disk = Machine.mount_disk
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
@@ -566,7 +570,7 @@ def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harnes
     if fdc:
         h.machine.fdc = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
         if paths:
-            h.machine.fdc.mount(DskDiskImage(paths[0]), 0)
+            h.machine.fdc.mount(dsk_image(paths[0]), 0)
     return h
 
 
@@ -660,7 +664,7 @@ def test_disk_hotkeys_do_nothing_without_an_fdc(tmp_path: Path, shift: bool) -> 
 def test_disk_hotkeys_do_nothing_with_an_empty_list(tmp_path: Path, shift: bool) -> None:
     h = _disk_harness(tmp_path, [])
     assert h.machine.fdc is not None
-    h.machine.fdc.mount(DskDiskImage(_dsk(tmp_path / "x.dsk")), 0)
+    h.machine.fdc.mount(dsk_image(_dsk(tmp_path / "x.dsk")), 0)
     if shift:
         h.keydown(_FakeSDL.SDLK_LSHIFT)
     h.keydown(_FakeSDL.SDLK_F6)
@@ -794,7 +798,7 @@ def test_title_shows_an_ejected_drive(tmp_path: Path) -> None:
 def test_title_shows_an_image_from_outside_the_list(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
     assert h.machine.fdc is not None and h.hotkeys is not None
-    h.machine.fdc.swap(0, DskDiskImage(_dsk(tmp_path / "other.dsk")))
+    h.machine.fdc.swap(0, dsk_image(_dsk(tmp_path / "other.dsk")))
     title = _window_title("Game", 60.0, h.machine, h.hotkeys, False)
     assert title.endswith("disk -/2: other.dsk")
 

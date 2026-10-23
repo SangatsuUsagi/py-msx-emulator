@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
@@ -83,8 +82,15 @@ class RamMapper:
         matching Machine.reset()'s "Memory/VRAM contents are retained"."""
         self.banks[:] = [0, 0, 0, 0]
 
-    def save_sram(self, path: Path) -> None:
-        """No-op: RamMapper has no separate .sram file, see has_sram."""
+    def save_sram(self) -> bytes:
+        """Empty: RamMapper has no SRAM medium, see has_sram."""
+        return b""
+
+    @property
+    def sram_dirty(self) -> bool:
+        return False
+
+    def mark_sram_persisted(self) -> None:
         pass
 
     def _phys(self, addr: int) -> int:

@@ -1,6 +1,7 @@
 """Tests for the debugger fdd1/fdd2 disk-swap REPL commands."""
 from __future__ import annotations
 
+import functools
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -9,9 +10,10 @@ import pytest
 
 from msx.debugger.prompt import Debugger
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
+from msx.machine import Machine
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -20,7 +22,9 @@ def _dbg(drives: int = 1) -> tuple[Debugger, SonyPhilipsInterface]:
     iface = SonyPhilipsInterface(
         WD2793(), [DiskDrive() for _ in range(drives)], disk_rom=bytes(16384)
     )
-    return Debugger(types.SimpleNamespace(fdc=iface)), iface  # type: ignore[arg-type]
+    machine = types.SimpleNamespace(fdc=iface)
+    machine.mount_disk = functools.partial(Machine.mount_disk, machine)
+    return Debugger(machine), iface  # type: ignore[arg-type]
 
 
 def _dsk(path: Path) -> Path:
@@ -45,14 +49,14 @@ def test_fdd1_status_empty(capsys: pytest.CaptureFixture[str]) -> None:
 def test_fdd1_status_shows_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     dbg, iface = _dbg()
     p = _dsk(tmp_path / "g.dsk")
-    iface.mount(DskDiskImage(p), 0)
+    iface.mount(dsk_image(p), 0)
     dbg._cmd_fdd([], 0)
     assert str(p) in capsys.readouterr().out
 
 
 def test_fdd1_eject(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     dbg, iface = _dbg()
-    iface.mount(DskDiskImage(_dsk(tmp_path / "g.dsk")), 0)
+    iface.mount(dsk_image(_dsk(tmp_path / "g.dsk")), 0)
     dbg._cmd_fdd(["-"], 0)
     assert iface.drives[0].image is None
     assert "eject" in capsys.readouterr().out.lower()
@@ -74,7 +78,7 @@ def test_fdd1_missing_file_keeps_disk(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     dbg, iface = _dbg()
-    iface.mount(DskDiskImage(_dsk(tmp_path / "g.dsk")), 0)
+    iface.mount(dsk_image(_dsk(tmp_path / "g.dsk")), 0)
     dbg._cmd_fdd([str(tmp_path / "nope.dsk")], 0)
     assert iface.drives[0].image is not None  # previous disk kept
     assert "not found" in capsys.readouterr().out.lower()
@@ -91,6 +95,7 @@ def _loop_dbg(iface: SonyPhilipsInterface) -> Debugger:
         ),
         vdp=types.SimpleNamespace(frame_count=0),
     )
+    machine.mount_disk = functools.partial(Machine.mount_disk, machine)
     return Debugger(machine)  # type: ignore[arg-type]
 
 

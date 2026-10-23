@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.tc8566af import (
     CMD_READ_DATA,
     CMD_RECALIBRATE,
@@ -25,6 +25,7 @@ from msx.fdc.tc8566af import (
     TC8566AF,
     Phase,
 )
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -37,7 +38,7 @@ def _ctrl(tmp_path: Path, *, with_disk: bool = True) -> tuple[TC8566AF, DiskDriv
     if with_disk:
         p = tmp_path / "d.dsk"
         p.write_bytes(bytes(_2DD))
-        image = DskDiskImage(p)
+        image = dsk_image(p)
     drive = DiskDrive(image)
     return TC8566AF(drives=[drive]), drive
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 from msx.dac import EventDac
@@ -159,12 +158,17 @@ class Mapper(Protocol):
     def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank_info(self, page: int) -> str | None: ...
     def reset(self) -> None: ...
-    # Whether this mapper persists SRAM to a standalone .sram file via
-    # save_sram -- declared on the Protocol so a generic caller (e.g. the
-    # exit-time SRAM-save check) can ask directly instead of probing for
-    # the method's existence with hasattr.
+    # Whether this mapper carries battery-backed SRAM that the host persists
+    # -- declared on the Protocol so a generic caller (e.g. the media list)
+    # can ask directly instead of probing for the method's existence with
+    # hasattr. save_sram() returns the SRAM image (empty without SRAM);
+    # sram_dirty is set by a guest write that changes a byte and cleared by
+    # mark_sram_persisted() once the host has written the image.
     has_sram: ClassVar[bool]
-    def save_sram(self, path: Path) -> None: ...
+    def save_sram(self) -> bytes: ...
+    @property
+    def sram_dirty(self) -> bool: ...
+    def mark_sram_persisted(self) -> None: ...
 
 
 def _format_bank_info(banks: list[int], page: int) -> str | None:
@@ -233,9 +237,16 @@ class BankTracingMapper:
         that no subclass silently falls back to it."""
         pass
 
-    def save_sram(self, path: Path) -> None:
+    def save_sram(self) -> bytes:
         """Default for BankTracingMapper subclasses with has_sram = False --
-        overridden by the SRAM-carrying subclasses."""
+        overridden by the SRAM-carrying subclasses (SramMediumMixin)."""
+        return b""
+
+    @property
+    def sram_dirty(self) -> bool:
+        return False
+
+    def mark_sram_persisted(self) -> None:
         pass
 
     def parse_state(self, obj: object, label: str) -> Mapping[str, object]:
@@ -318,8 +329,44 @@ class _NoStateMapperMixin:
     def reset(self) -> None:
         pass
 
-    def save_sram(self, path: Path) -> None:
+    def save_sram(self) -> bytes:
+        return b""
+
+    @property
+    def sram_dirty(self) -> bool:
+        return False
+
+    def mark_sram_persisted(self) -> None:
         pass
+
+
+class SramMediumMixin:
+    """SRAM image and dirty flag for an SRAM-carrying mapper (listed first in
+    the bases so it overrides BankTracingMapper's no-SRAM defaults)."""
+
+    sram: bytearray
+    _sram_dirty = False
+
+    def save_sram(self) -> bytes:
+        return bytes(self.sram)
+
+    @property
+    def sram_dirty(self) -> bool:
+        return self._sram_dirty
+
+    def mark_sram_persisted(self) -> None:
+        self._sram_dirty = False
+
+    def _write_sram(self, offset: int, value: int) -> None:
+        if self.sram[offset] != value:
+            self.sram[offset] = value
+            self._sram_dirty = True
+
+    def _restore_sram(self, image: bytes | bytearray) -> None:
+        # A restored state that differs from the persisted image is unsaved.
+        if self.sram != image:
+            self.sram[:] = image
+            self._sram_dirty = True
 
 
 @dataclass
@@ -648,7 +695,7 @@ _ASCII8_SRAM2_KEYS: frozenset[str] = frozenset(Ascii8Sram2MapperState.__annotati
 
 
 @dataclass
-class Ascii8Sram2Mapper(Ascii8Mapper):
+class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
     """ASCII8 mapper + 2 KB battery-backed SRAM (generic ASCII8-SRAM).
 
     Following openMSX RomAscii8_8: a window maps SRAM when its bank register
@@ -763,10 +810,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         else:
             window, base = 3, 0xA000
         if self._is_sram_bank(window):
-            self.sram[self._sram_offset(window, addr, base)] = value & 0xFF
-
-    def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)
+            self._write_sram(self._sram_offset(window, addr, base), value & 0xFF)
 
     def snapshot(self) -> Ascii8Sram2MapperState:
         return {**super().snapshot(), "sram": bytearray(self.sram)}
@@ -781,7 +825,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     def apply_state(self, state: Mapping[str, object]) -> None:
         st = cast(Ascii8Sram2MapperState, state)
         super().apply_state(st)
-        self.sram[:] = st["sram"]
+        self._restore_sram(st["sram"])
 
 
 @dataclass
@@ -819,7 +863,7 @@ _GM2_KEYS: frozenset[str] = frozenset(GameMaster2MapperState.__annotations__)
 
 
 @dataclass
-class GameMaster2Mapper(BankTracingMapper):
+class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
     """Konami Game Master 2 mapper: 128 KB ROM + 8 KB battery-backed SRAM.
 
     Follows openMSX RomGameMaster2.cc, cross-checked against the Game Master 2
@@ -967,10 +1011,7 @@ class GameMaster2Mapper(BankTracingMapper):
         elif 0xB000 <= addr < 0xC000:
             if self._sram_enabled:
                 offset = self._sram_half | (addr & self._HALF_MASK)
-                self.sram[offset] = value & 0xFF
-
-    def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)
+                self._write_sram(offset, value & 0xFF)
 
     # PORT-NOTE: snapshot/restore round-trips a heterogeneous `dict[str,
     #   object]` (list[int], int, bool, bytes) with runtime casts, like every
@@ -1023,7 +1064,7 @@ class GameMaster2Mapper(BankTracingMapper):
         self._sram_half = st["sram_half"]
         self._window_sram_half[:] = st["window_sram_half"]
         self._sram_enabled = st["sram_enabled"]
-        self.sram[:] = st["sram"]
+        self._restore_sram(st["sram"])
         for window in range(4):
             self._sync_window(window)
 
@@ -1051,7 +1092,7 @@ _ASCII16_SRAM2_KEYS: frozenset[str] = frozenset(Ascii16Sram2MapperState.__annota
 
 
 @dataclass
-class Ascii16Sram2Mapper(Ascii16Mapper):
+class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
     """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
     Either window can be SRAM-mapped: a window's SRAM is selected when its
@@ -1156,10 +1197,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
             # windows is open bus, not a mirror, so a write there reaches
             # no real chip and must not fall through into SRAM.
             if self._is_sram_bank(1):
-                self.sram[(addr - 0x8000) & self._SRAM_MASK] = value & 0xFF
-
-    def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)
+                self._write_sram((addr - 0x8000) & self._SRAM_MASK, value & 0xFF)
 
     def snapshot(self) -> Ascii16Sram2MapperState:
         return {**super().snapshot(), "sram": bytearray(self.sram)}
@@ -1174,7 +1212,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     def apply_state(self, state: Mapping[str, object]) -> None:
         st = cast(Ascii16Sram2MapperState, state)
         super().apply_state(st)
-        self.sram[:] = st["sram"]
+        self._restore_sram(st["sram"])
 
 
 @dataclass
@@ -1880,7 +1918,7 @@ _HALNOTE_KEYS: frozenset[str] = frozenset(HalnoteMapperState.__annotations__)
 
 
 @dataclass
-class HalnoteMapper(BankTracingMapper):
+class HalnoteMapper(SramMediumMixin, BankTracingMapper):
     """Sony HBI-J1's Halnote mapper (MSX-JE word-processor ROM): a 1 MB ROM
     as 128 x 8 KB banks, a JIS2 dictionary sub-mapper, and 16 KB SRAM.
 
@@ -1963,7 +2001,7 @@ class HalnoteMapper(BankTracingMapper):
     def write(self, addr: int, value: int) -> None:
         if addr < 0x4000:
             if self._sram_enabled:
-                self.sram[addr] = value & 0xFF
+                self._write_sram(addr, value & 0xFF)
             return
         if addr >= 0xC000:
             return  # always unmapped
@@ -1980,9 +2018,6 @@ class HalnoteMapper(BankTracingMapper):
                 self._submapper_enabled = bool(value & _HALNOTE_SUBMAPPER_ENABLE_BIT)
             self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
-
-    def save_sram(self, path: Path) -> None:
-        path.write_bytes(self.sram)
 
     def snapshot(self) -> HalnoteMapperState:
         # sram_enabled/submapper_enabled are not persisted here -- they are
@@ -2013,7 +2048,7 @@ class HalnoteMapper(BankTracingMapper):
         # with (e.g. a hand-edited or foreign-generated state file).
         self._sram_enabled = bool(self._banks[0] & _HALNOTE_SRAM_ENABLE_BIT)
         self._submapper_enabled = bool(self._banks[1] & _HALNOTE_SUBMAPPER_ENABLE_BIT)
-        self.sram[:] = st["sram"]
+        self._restore_sram(st["sram"])
         for window in range(4):
             self._sync_window(window)
 

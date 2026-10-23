@@ -791,7 +791,7 @@ def _h_state_load(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
 # ── Floppy disk ──────────────────────────────────────────────────────────────
 
 def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.fdc.disk_image import DskDiskImage
+    from host.media import swap_disk
 
     drive = _require_int(params, "drive")
     if drive not in (1, 2):
@@ -802,9 +802,9 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     drive_idx = drive - 1
     if path:
-        fdc.swap(drive_idx, DskDiskImage(str(path)))
+        swap_disk(server.machine, drive_idx, Path(str(path)))
         return {"drive": drive, "path": str(path), "mounted": True}
-    fdc.swap(drive_idx, None)
+    swap_disk(server.machine, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
 
 

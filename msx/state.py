@@ -302,10 +302,6 @@ def _check_optional_wiring(
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
-    # Flush pending disk writes first so the disk-identity hash
-    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
-    # the .dsk file's own on-disk bytes.
-    machine.fdc.flush()
     return machine.fdc.snapshot()
 
 
@@ -971,6 +967,12 @@ def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Pa
     state_path = saves_dir / f"{stem}.state"
     png_path = saves_dir / f"{stem}.png"
 
+    # Write pending disk writes back first so the disk-identity hash
+    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
+    # the .dsk file's own on-disk bytes. This file-level half of state.py
+    # moves to host/state_files.py in enforce-core-boundary phase 20.
+    from host.media import persist_dirty_media
+    persist_dirty_media(machine)
     snap = _snapshot_from_machine(machine)
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(_to_jsonable(asdict(snap)), f)

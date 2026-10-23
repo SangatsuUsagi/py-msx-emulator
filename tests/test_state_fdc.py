@@ -13,6 +13,7 @@ from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
 from msx.state import load_state, save_state
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 _RGB_MSX2 = bytearray(256 * 192 * 3)
@@ -165,7 +166,7 @@ def test_different_mounted_disk_is_rejected(tmp_path: Path, saves_dir: Path) -> 
     dsk_b = tmp_path / "b.dsk"
     _make_disk(dsk_b, fill=0xBB)
     assert machine.fdc is not None
-    machine.fdc.mount(DskDiskImage(dsk_b), drive=0)
+    machine.fdc.mount(dsk_image(dsk_b), drive=0)
 
     with pytest.raises(ValueError, match="(?i)disk"):
         load_state(machine)
@@ -244,7 +245,6 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     tmp_path: Path, saves_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # machine-state "A load parses each producer object once".
-    from msx.fdc.disk_image import DskDiskImage
     from msx.psg import PSG
 
     _make_roms(tmp_path)
@@ -311,7 +311,7 @@ def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
         other = tmp_path / "other.dsk"
         _make_disk(other, fill=0xBB)
         assert machine.fdc is not None
-        machine.fdc.mount(DskDiskImage(other), drive=0)
+        machine.fdc.mount(dsk_image(other), drive=0)
         target = machine
     else:
         target = build_machine(_tc8566af_spec(tmp_path), fdd1=dsk)

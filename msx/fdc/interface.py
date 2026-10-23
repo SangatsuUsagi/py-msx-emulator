@@ -158,17 +158,17 @@ class FloppyDiskState(Generic[S]):
         """Mount (or unmount with None) an image into a drive."""
         self.drives[drive].mount(image)
 
-    def swap(self, drive: int, image: DskDiskImage | None) -> None:
+    def swap(self, drive: int, image: DskDiskImage | None) -> DskDiskImage | None:
         """Replace a drive's image at runtime (hot swap / eject).
 
-        Flushes the outgoing image so pending writes reach its file, mounts the
-        new image (or None to eject), asserts the drive's disk-change signal so
-        Disk BASIC re-reads the new medium, and aborts any in-progress controller
-        transfer so no buffer keeps referencing the previous disk.
+        Mounts the new image (or None to eject), asserts the drive's
+        disk-change signal so Disk BASIC re-reads the new medium, and aborts
+        any in-progress controller transfer so no buffer keeps referencing the
+        previous disk. Returns the outgoing image when it holds unpersisted
+        writes, for the host to write back; None otherwise.
         """
         target = self.drives[drive]
-        if target.image is not None:
-            target.image.flush()
+        outgoing = target.image
         target.mount(image)
         target.disk_changed = True
         # Only abort a transfer on the drive actually connected to the
@@ -176,12 +176,9 @@ class FloppyDiskState(Generic[S]):
         # machine must not disturb an in-progress transfer on the selected one.
         if self.controller.drive is target:
             self.controller.abort()
-
-    def flush(self) -> None:
-        """Flush every mounted image's pending writes back to its file."""
-        for drive in self.drives:
-            if drive.image is not None:
-                drive.image.flush()
+        if outgoing is not None and outgoing.dirty:
+            return outgoing
+        return None
 
     def snapshot(self) -> FloppyDiskStateSnapshot:
         """Capture the controller's and every drive's own state (in
@@ -249,7 +246,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
       drives, disk_rom) lives on the composed `self.state: FloppyDiskState`
       instead of directly on this class, exposed here only via read-only properties/thin delegating
       methods for external API compatibility (`.controller`, `.drives`,
-      `.disk_rom`, `.mount()`, `.swap()`, `.flush()`).
+      `.disk_rom`, `.mount()`, `.swap()`).
     This is the one place in msx/ using abc.ABC/abstractmethod rather than
       the Protocol + NotImplementedError convention every other interface
       here follows (Mapper, FdcController, VdpDevice): those are satisfied
@@ -311,14 +308,10 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         """Mount (or unmount with None) an image into a drive."""
         self.state.mount(image, drive)
 
-    def swap(self, drive: int, image: DskDiskImage | None) -> None:
+    def swap(self, drive: int, image: DskDiskImage | None) -> DskDiskImage | None:
         """Replace a drive's image at runtime (hot swap / eject). See
         FloppyDiskState.swap for the full behaviour."""
-        self.state.swap(drive, image)
-
-    def flush(self) -> None:
-        """Flush every mounted image's pending writes back to its file."""
-        self.state.flush()
+        return self.state.swap(drive, image)
 
     @abc.abstractmethod
     def _snapshot_connection_style(self) -> C:

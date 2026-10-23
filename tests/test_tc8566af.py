@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.tc8566af import (
     CMD_FORMAT,
     CMD_READ_DATA,
@@ -25,6 +25,7 @@ from msx.fdc.tc8566af import (
     TC8566AF,
 )
 from msx.snapshot_schema import SchemaError
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -35,7 +36,7 @@ _READ_WRITE_PARAMS = (0, 0, 0, 1, 2, 1, 0x1B, 0xFF)
 def _ctrl(tmp_path: Path, *, write_protected: bool = False) -> tuple[TC8566AF, DiskDrive]:
     p = tmp_path / "d.dsk"
     p.write_bytes(bytes(_2DD))
-    image = DskDiskImage(p, write_protected=write_protected)
+    image = dsk_image(p, write_protected=write_protected)
     drive = DiskDrive(image)
     return TC8566AF(drives=[drive]), drive
 

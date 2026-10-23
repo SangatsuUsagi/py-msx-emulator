@@ -24,8 +24,8 @@ from frontend.sdl2_keyboard import (
     resolve_hotkeys,
     resolve_keyboard_joy_map,
 )
+from host.media import swap_disk
 from msx.app_config import AppConfig
-from msx.fdc.disk_image import DskDiskImage
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
 from msx.mouse import MouseDevice
@@ -413,16 +413,15 @@ def _handle_ctrl_combo_keyup(
 
 
 def _mount_disk(machine: Machine, path: Path) -> bool:
-    """Swap `path` into drive A via `FloppyDisk.swap` (flush, disk change,
-    transfer abort). Returns False, leaving the drive as it was, if the image
-    cannot be opened."""
+    """Swap `path` into drive A via `host.media.swap_disk` (outgoing image
+    written back, disk change, transfer abort). Returns False, leaving the
+    drive as it was, if the image cannot be opened."""
     assert machine.fdc is not None
     try:
-        image = DskDiskImage(path)
+        swap_disk(machine, 0, path)
     except (ValueError, OSError) as exc:
         print(f"disk swap failed: {exc}", file=sys.stderr)
         return False
-    machine.fdc.swap(0, image)
     return True
 
 
@@ -443,7 +442,7 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
     if machine.fdc.drives[0].image is None:
         _mount_disk(machine, disks.paths[disks.index])
     else:
-        machine.fdc.swap(0, None)
+        swap_disk(machine, 0, None)
 
 
 def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
@@ -883,9 +882,10 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
     image = machine.fdc.drives[0].image
     if image is None:
         return f"disk {disks.index + 1}/{count}: (ejected)"
+    name = image.path.name if image.path is not None else "?"
     if image.path == disks.paths[disks.index]:
-        return f"disk {disks.index + 1}/{count}: {image.path.name}"
-    return f"disk -/{count}: {image.path.name}"
+        return f"disk {disks.index + 1}/{count}: {name}"
+    return f"disk -/{count}: {name}"
 
 
 def _window_title(

@@ -522,7 +522,7 @@ with the Sony/Philips style, and the TC8566AF with its own style.
 
 | Layer      | File                             | Responsibility                                                                                                                                                                                                                                                    |
 | ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk image | `disk_image.py` (`DskDiskImage`) | Reads a `*.dsk` sector image. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and writes them back to the file on exit |
+| Disk image | `disk_image.py` (`DskDiskImage`) | Holds a `*.dsk` sector image built from the file's bytes. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and marks the image dirty; `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk is swapped out |
 | Drive      | `disk_drive.py` (`DiskDrive`)    | One physical drive. Holds the mounted image, tracks the head position, and gives sector read/write                                                                                                                                                                  |
 | Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I-IV command decode, status register, data/track/sector registers, `abort()`. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register |
 | Interface  | `interface.py`                   | Connection style between the controller and the memory bus. Both styles map the DISK ROM at 0x4000-0x7FFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8-0x7FFF and uses the disk-change bit. `TC8566AFInterface` puts two control registers, the Main Status Register, and the Data Register at 0x7FF8-0x7FFB. Both styles share `swap()`, which mounts and ejects disks at runtime |
@@ -546,7 +546,8 @@ images. Three paths swap disks at runtime, and all of them call
 - The `fdd.swap` method of the socket RPC server.
 
 The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and
-writes files with write-back on exit.
+writes files; written sectors go back to the `.dsk` file on exit, before a
+save state, and when the disk is swapped out.
 `machine.fdc` is `None` on machines with no floppy interface.
 
 ## Machine and extension YAML schema

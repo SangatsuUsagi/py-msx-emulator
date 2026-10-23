@@ -247,7 +247,7 @@ mixes the chip output into the audio output with PSG/SCC.
 | Activation | `--extension1`/`--extension2 fmpac` (see [`docs/README_extension.md`](docs/README_extension.md#fm-pac)), ROM at `roms/fmpac/fmpac.rom` |
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by bit 0 of the enable register |
-| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit |
+| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit if it changed |
 | OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
 
 - Known limitations:
@@ -285,7 +285,7 @@ hardware, not only documentation.
 | Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads |
 | Sub-slot 0 | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
-| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit |
+| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit if it changed |
 | Known limitations | The real-hardware behavior after 32 consecutive Kanji-ROM reads without an address rewrite is unverified. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
 
 ### Audio output filter
@@ -357,7 +357,8 @@ CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
 - Implementation: `msx/rtc.py`
 - CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram`, one file per
   machine. Real hardware has one physical RTC and battery per machine, unlike
-  cartridge SRAM. The emulator loads the file on start and saves it on exit.
+  cartridge SRAM. The emulator loads the file on start and saves it on exit
+  if it changed.
 - Clock: starts at the host's local time when the machine is created, then
   advances with emulated time only. The emulation is thus the same on every
   run with the same input, and the clock runs at the emulated speed (fast
@@ -392,7 +393,7 @@ the same type list.
 Slot 1 and slot 2 each select their mapper independently (`--mapper`/`--mapper1`
 and `--mapper2`, both auto-detected by default). Both slots support the same
 mapper set, including the SRAM-backed types. The SRAM of each slot persists to
-its own `saves/sram/<cartridge SHA1>.sram` path.
+its own `saves/sram/<cartridge SHA1>.sram` path, written on exit if it changed.
 
 `KonamiSCC` in either slot builds a real Konami-SCC chip, because a real
 Konami-SCC cartridge can occupy either slot (for example, behind a Konami
@@ -410,7 +411,8 @@ drive, controller, and connection-style interface. On this layer, the emulator
 implements a WD2793 controller with the Sony/Philips connection style, as used
 by the Sony HB-F1XD. The registers are memory-mapped in slot 3 sub-slot 0.
 `--fdd1` mounts a `*.dsk` image. The emulator supports Disk BASIC boot,
-`CALL FORMAT`, and file read/write with write-back on exit. You can swap disks
+`CALL FORMAT`, and file read/write. Written sectors go back to the `.dsk` file
+on exit, before a save state, and when the disk is swapped out. You can swap disks
 at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
 or from the debugger REPL (`fdd1`/`fdd2`).
 
@@ -777,7 +779,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1. The emulator rejects it if slot 1 also resolves to KonamiSCC, or if slot 1 selects `--extension1 scc_plus` |
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
+| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk is swapped out. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |

@@ -4,8 +4,6 @@ Behaviour follows openMSX RomGameMaster2.cc.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from msx.mapper import GameMaster2Mapper
@@ -217,14 +215,16 @@ class TestSramConstruction:
         assert m.sram is not None
         assert len(m.sram) == 8192
 
-    def test_save_sram_writes_bytes(self, tmp_path: Path):
+    def test_save_sram_returns_bytes(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x10)
         m.write(0xB100, 0x42)
-        p = tmp_path / "gm2.sram"
-        m.save_sram(p)
-        assert p.read_bytes()[0x100] == 0x42
-        assert len(p.read_bytes()) == 8192
+        assert m.sram_dirty is True
+        data = m.save_sram()
+        assert data[0x100] == 0x42
+        assert len(data) == 8192
+        m.mark_sram_persisted()
+        assert m.sram_dirty is False
 
 
 class TestReset:

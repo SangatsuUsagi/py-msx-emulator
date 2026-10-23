@@ -83,7 +83,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.wd2793 import (
     BUSY,
     NOT_READY,
@@ -96,6 +95,7 @@ from msx.fdc.wd2793 import (
     WRITE_PROTECTED,
     Mode,
 )
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -103,7 +103,7 @@ _2DD = 737280
 def _ctrl(tmp_path: Path, *, fill: int = 0x00, write_protected: bool = False):
     p = tmp_path / "d.dsk"
     p.write_bytes(bytes([fill]) * _2DD)
-    image = DskDiskImage(p, write_protected=write_protected)
+    image = dsk_image(p, write_protected=write_protected)
     drive = DiskDrive(image)
     return WD2793(drive=drive), drive, image
 

@@ -395,15 +395,10 @@ def _cleanup(
     if mapper_trace_file is not None:
         mapper_trace_file.close()
     if machine is not None:
-        # machine.sram_sources() -- one generic list instead of one
-        # _save_sram_if_present call per SRAM-backed device (see
-        # design.md Decision D2 Option B).
-        for source, save_path in machine.sram_sources():
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            source.save_sram(save_path)
-        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
-        if machine.fdc is not None:
-            machine.fdc.flush()
+        # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
+        # FORMAT / file save) back to its file.
+        from host.media import persist_dirty_media
+        persist_dirty_media(machine)
 
 
 class _EffectiveOptions(NamedTuple):

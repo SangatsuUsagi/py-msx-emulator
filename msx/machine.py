@@ -27,6 +27,7 @@ from msx.vdp.vdp import VDP, VdpDevice
 
 if TYPE_CHECKING:
     from msx.debugger.prompt import Debugger
+    from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import FloppyDisk
     from msx.fmpac import FmPac
     from msx.rtc import RTC
@@ -38,14 +39,20 @@ SCREEN_WIDTH: int = 256
 SCREEN_HEIGHT: int = 192
 
 
-class SramSource(Protocol):
-    """Structural type for anything Machine.sram_sources() can hand
-    __main__.py's cleanup path -- any object with a save_sram(path) method
+class SramMedium(Protocol):
+    """Structural type for a battery-backed SRAM owner exposed as a medium
     (every Mapper, per cart-rom-mapper's "Mapper protocol" Requirement, plus
-    FmPac/HalnoteMapper/RTC, which duck-type the same shape without being
-    Mappers themselves)."""
+    FmPac/RTC, which duck-type the same shape without being Mappers)."""
 
-    def save_sram(self, path: Path) -> None: ...
+    def save_sram(self) -> bytes: ...
+    @property
+    def sram_dirty(self) -> bool: ...
+    def mark_sram_persisted(self) -> None: ...
+
+
+def drive_media_id(index: int) -> str:
+    """Media id of floppy drive `index` (0 -> "drive_a")."""
+    return "drive_" + chr(ord("a") + index)
 
 
 class PauseReason(str, enum.Enum):
@@ -229,14 +236,14 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
 
-    def sram_sources(self) -> list[tuple[SramSource, Path]]:
+    def sram_sources(self) -> list[tuple[SramMedium, Path]]:
         """(has_sram source, save path) pairs to load-on-start/save-on-exit,
         computed from this Machine's already-resolved device references and
         paths -- replaces enumerating each device's own
         `_save_sram_if_present` call at the __main__.py cleanup site (see
         design.md Decision D2 Option B). A future SRAM-backed device needs
         only its own field pair added here, not a new cleanup call site."""
-        sources: list[tuple[SramSource, Path]] = []
+        sources: list[tuple[SramMedium, Path]] = []
         mapper = self.memory._mapper
         if mapper.has_sram and self.sram_save_path is not None:
             sources.append((mapper, self.sram_save_path))
@@ -250,6 +257,82 @@ class Machine:
         if self.rtc is not None and self.rtc_sram_save_path is not None:
             sources.append((self.rtc, self.rtc_sram_save_path))
         return sources
+
+    def sram_media(self) -> dict[str, SramMedium]:
+        """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
+        mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
+        `rtc.cmos`. The FM-PAC is listed only under its own id even when it is
+        a slot's mapper."""
+        media: dict[str, SramMedium] = {}
+        if self.fmpac is not None:
+            media["fmpac.sram"] = self.fmpac
+        if self.rtc is not None:
+            media["rtc.cmos"] = self.rtc
+        slots = (
+            (1, self.memory._mapper, self.memory._mapper1_subslots),
+            (2, self.memory._mapper2, self.memory._mapper2_subslots),
+        )
+        for slot, mapper, subslots in slots:
+            if mapper.has_sram and mapper is not self.fmpac:
+                media[f"slot{slot}.sram"] = mapper
+            for sub, sub_mapper in enumerate(subslots):
+                if sub_mapper is not None and sub_mapper.has_sram and sub_mapper is not self.fmpac:
+                    media[f"slot{slot}.{sub}.sram"] = sub_mapper
+        return media
+
+    def _disk_media(self) -> dict[str, DskDiskImage]:
+        media: dict[str, DskDiskImage] = {}
+        if self.fdc is not None:
+            for index, drive in enumerate(self.fdc.drives):
+                if drive.image is not None:
+                    media[drive_media_id(index)] = drive.image
+        return media
+
+    def dirty_media(self) -> list[str]:
+        """Ids of the media written since they were last persisted."""
+        dirty: list[str] = []
+        for media_id, sram in self.sram_media().items():
+            if sram.sram_dirty:
+                dirty.append(media_id)
+        for media_id, image in self._disk_media().items():
+            if image.dirty:
+                dirty.append(media_id)
+        return dirty
+
+    def read_media(self, media_id: str) -> bytes:
+        """A medium's current bytes. Raises KeyError for an unknown id."""
+        disks = self._disk_media()
+        if media_id in disks:
+            return disks[media_id].data()
+        return self.sram_media()[media_id].save_sram()
+
+    def mark_persisted(self, media_id: str) -> None:
+        """Clear a medium's dirty flag after the host has written it."""
+        disks = self._disk_media()
+        if media_id in disks:
+            disks[media_id].mark_persisted()
+            return
+        self.sram_media()[media_id].mark_sram_persisted()
+
+    def mount_disk(
+        self, drive: int, image: bytes | None, write_protected: bool = False,
+        path: Path | None = None,
+    ) -> bytes | None:
+        """Swap `image` (None ejects) into `drive` (0 = A). Returns the
+        outgoing image's bytes when it held unpersisted writes, for the host to
+        write back. `path` is only recorded as the image's name (see
+        DskDiskImage). Raises ValueError, changing nothing, for a machine
+        without that drive or an image whose size is not a positive multiple of
+        512."""
+        from msx.fdc.disk_image import DskDiskImage
+
+        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+            raise ValueError(f"no floppy drive {drive_media_id(drive)} on this machine")
+        new_image = None
+        if image is not None:
+            new_image = DskDiskImage(image, write_protected=write_protected, path=path)
+        outgoing = self.fdc.swap(drive, new_image)
+        return outgoing.data() if outgoing is not None else None
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.
