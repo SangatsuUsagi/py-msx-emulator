@@ -21,8 +21,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
+from msx.snapshot_schema import I64_MAX, check_int, check_int_list, check_object
 
 MODE_REG = 13
 TEST_REG = 14
@@ -49,6 +51,23 @@ _MASK: tuple[tuple[int, ...], ...] = (
     (0xF,) * 13,                                                        # block 2: RAM
     (0xF,) * 13,                                                        # block 3: RAM
 )
+
+
+class RtcState(TypedDict):
+    """Save-state schema for RTC.snapshot()/apply_state(). The time is saved
+    as the start time plus the emulated cycles since it, because the
+    machine's cycle counter itself is not part of a snapshot."""
+
+    start: list[int]          # year, month, day, hour, minute, second
+    elapsed_cycles: int
+    addr: int
+    mode: int
+    test: int
+    reset: int
+    regs: list[int]
+
+
+_RTC_STATE_KEYS: frozenset[str] = frozenset(RtcState.__annotations__)
 
 
 @dataclass
@@ -81,9 +100,56 @@ class RTC:
         self._regs[REGS_PER_BLOCK + HOUR_MODE_REG] = HOUR_MODE_24H
 
     def _elapsed_seconds(self) -> int:
+        return self._elapsed_cycles() // CPU_CLOCK_HZ
+
+    def snapshot(self) -> RtcState:
+        """Capture the RTC for save-state (paired with apply_state)."""
+        st = self.start
+        return {
+            "start": [st.year, st.month, st.day, st.hour, st.minute, st.second],
+            "elapsed_cycles": self._elapsed_cycles(),
+            "addr": self._addr,
+            "mode": self._mode,
+            "test": self._test,
+            "reset": self._reset,
+            "regs": list(self._regs),
+        }
+
+    def parse_state(self, obj: object, label: str) -> RtcState:
+        """Validate a snapshot() object without touching the chip."""
+        state = check_object(obj, label, _RTC_STATE_KEYS)
+        start = check_int_list(state["start"], f"{label}.start", 6, 0, 9999)
+        _check_start(start, f"{label}.start")
+        return {
+            "start": start,
+            "elapsed_cycles": check_int(
+                state["elapsed_cycles"], f"{label}.elapsed_cycles", 0, I64_MAX
+            ),
+            "addr": check_int(state["addr"], f"{label}.addr", 0, 0x0F),
+            "mode": check_int(state["mode"], f"{label}.mode", 0, 0x0F),
+            "test": check_int(state["test"], f"{label}.test", 0, 0x0F),
+            "reset": check_int(state["reset"], f"{label}.reset", 0, 0x0F),
+            "regs": check_int_list(
+                state["regs"], f"{label}.regs", 4 * REGS_PER_BLOCK, 0, 0x0F
+            ),
+        }
+
+    def apply_state(self, state: RtcState) -> None:
+        """Assign an already-parsed RtcState (see parse_state)."""
+        y, mo, d, h, mi, sec = state["start"]
+        self.start = RtcTime(y, mo, d, h, mi, sec)
+        now = self._get_cycle() if self._get_cycle is not None else 0
+        self._start_cycle = now - state["elapsed_cycles"]
+        self._addr = state["addr"]
+        self._mode = state["mode"]
+        self._test = state["test"]
+        self._reset = state["reset"]
+        self._regs = list(state["regs"])
+
+    def _elapsed_cycles(self) -> int:
         if self._get_cycle is None:
             return 0
-        return (self._get_cycle() - self._start_cycle) // CPU_CLOCK_HZ
+        return self._get_cycle() - self._start_cycle
 
     def save_sram(self, path: Path) -> None:
         """Write blocks 2/3's current 26 nibbles to path, one raw byte per
@@ -169,6 +235,16 @@ class RTC:
             return hour % 10, hour // 10
         hour12 = hour % 12 or 12
         return hour12 % 10, hour12 // 10 + (2 if hour >= 12 else 0)
+
+
+def _check_start(start: list[int], label: str) -> None:
+    """Reject a start time that is not a real calendar date and time."""
+    year, month, day, hour, minute, second = start
+    if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59
+            and second <= 59):
+        raise ValueError(f"{label}: invalid date/time {start}")
+    if _civil_from_days(_days_from_civil(year, month, day)) != (year, month, day):
+        raise ValueError(f"{label}: invalid date {year}-{month}-{day}")
 
 
 def _days_from_civil(year: int, month: int, day: int) -> int:

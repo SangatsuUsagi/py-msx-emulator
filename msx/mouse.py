@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
+
+from msx.snapshot_schema import I64_MAX, check_int, check_object
 
 # 8-phase scan cycle: a main cycle reporting the real relative X/Y delta,
 # immediately followed by an alternate cycle forced to zero delta. MSX BIOS
@@ -46,6 +49,25 @@ TRIGGER_B_BIT = 5  # right button
 _STATUS_TRIGGER_A = 0x10  # left button
 _STATUS_TRIGGER_B = 0x20  # right button
 _STATUS_DEFAULT = _STATUS_TRIGGER_A | _STATUS_TRIGGER_B  # both released
+
+
+class MouseState(TypedDict):
+    """Save-state schema for MouseDevice.snapshot()/apply_state(). The last
+    pin-8 write is saved as its age in cycles, because the machine's cycle
+    counter itself is not part of a snapshot."""
+
+    phase: int
+    x_rel: int
+    y_rel: int
+    cur_x_rel: int
+    cur_y_rel: int
+    status: int
+    last_pin8: int
+    last_cycle_age: int
+
+
+_MOUSE_STATE_KEYS: frozenset[str] = frozenset(MouseState.__annotations__)
+_I64_MIN = -I64_MAX - 1
 
 
 @dataclass
@@ -141,3 +163,44 @@ class MouseDevice:
             self._status &= ~(1 << bit) & 0xFF
         else:
             self._status |= (1 << bit)
+
+    def snapshot(self, cycle: int) -> MouseState:
+        """Capture the scan state at machine cycle `cycle` (see apply_state)."""
+        return {
+            "phase": self._phase,
+            "x_rel": self._x_rel,
+            "y_rel": self._y_rel,
+            "cur_x_rel": self._cur_x_rel,
+            "cur_y_rel": self._cur_y_rel,
+            "status": self._status,
+            "last_pin8": self._last_pin8,
+            "last_cycle_age": cycle - self._last_cycle,
+        }
+
+    def parse_state(self, obj: object, label: str) -> MouseState:
+        """Validate a snapshot() object without touching the device."""
+        state = check_object(obj, label, _MOUSE_STATE_KEYS)
+        delta = _MAX_ABS_DELTA
+        return {
+            "phase": check_int(state["phase"], f"{label}.phase", 0, 7),
+            "x_rel": check_int(state["x_rel"], f"{label}.x_rel", -delta, delta),
+            "y_rel": check_int(state["y_rel"], f"{label}.y_rel", -delta, delta),
+            "cur_x_rel": check_int(state["cur_x_rel"], f"{label}.cur_x_rel", _I64_MIN, I64_MAX),
+            "cur_y_rel": check_int(state["cur_y_rel"], f"{label}.cur_y_rel", _I64_MIN, I64_MAX),
+            "status": check_int(state["status"], f"{label}.status", 0, 0xFF),
+            "last_pin8": check_int(state["last_pin8"], f"{label}.last_pin8", 0, 1),
+            "last_cycle_age": check_int(
+                state["last_cycle_age"], f"{label}.last_cycle_age", _I64_MIN, I64_MAX
+            ),
+        }
+
+    def apply_state(self, state: MouseState, cycle: int) -> None:
+        """Assign an already-parsed MouseState at machine cycle `cycle`."""
+        self._phase = state["phase"]
+        self._x_rel = state["x_rel"]
+        self._y_rel = state["y_rel"]
+        self._cur_x_rel = state["cur_x_rel"]
+        self._cur_y_rel = state["cur_y_rel"]
+        self._status = state["status"]
+        self._last_pin8 = state["last_pin8"]
+        self._last_cycle = cycle - state["last_cycle_age"]

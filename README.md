@@ -357,8 +357,12 @@ CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
 - CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram`, one file per
   machine. Real hardware has one physical RTC and battery per machine, unlike
   cartridge SRAM. The emulator loads the file on start and saves it on exit.
-- Known limitations: clock reads return the host system time. There is no
-  alarm or timer output.
+- Clock: starts at the host's local time when the machine is created, then
+  advances with emulated time only. The emulation is thus the same on every
+  run with the same input, and the clock runs at the emulated speed (fast
+  under fast-forward, stopped while paused).
+- Known limitations: setting the clock from the MSX does not change it.
+  There is no alarm or timer output.
 
 ### Cartridge mappers
 

@@ -165,6 +165,11 @@ class PSG:
         """
         self._mouse = MouseSlot(device, port)
 
+    @property
+    def mouse(self) -> MouseDevice | None:
+        """The attached mouse, or None (read-only; see attach_mouse)."""
+        return self._mouse.device if self._mouse is not None else None
+
     # ------------------------------------------------------------------ ports
 
     def write_port(self, port: int, value: int) -> None:
