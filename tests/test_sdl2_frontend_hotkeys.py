@@ -1145,11 +1145,28 @@ def test_muted_frame_queues_silence(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_queued_buffer_is_the_machines_pcm(monkeypatch: pytest.MonkeyPatch) -> None:
-    # app-sdl2-audio "Queued buffer is the machine's PCM".
+    # app-sdl2-audio "Queued buffer is the machine's PCM" and "Queued audio is
+    # the filtered machine PCM": the frontend filters the machine's PCM.
+    from frontend.audio_filter import BiquadLowPass
+
     loop = _Loop(monkeypatch)
     loop.step()
     assert loop.machine.takes == 1
-    assert loop.sdl.queued == [b"\x10\x00" * _SAMPLES]
+    assert loop.sdl.queued == [BiquadLowPass().filter(b"\x10\x00" * _SAMPLES)]
+
+
+def test_reset_hotkey_clears_the_filter_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    # app-sdl2-audio "Machine reset clears the filter state".
+    from frontend.audio_filter import BiquadLowPass
+    from frontend.sdl2_frontend import _run_hotkey_action
+
+    loop = _Loop(monkeypatch)
+    loop.step()
+    loop.step()
+    _run_hotkey_action(loop.sdl, "reset", 0, loop.machine, None, loop.hotkeys)
+    loop.step()
+    assert loop.sdl.queued[2] == BiquadLowPass().filter(b"\x10\x00" * _SAMPLES)
+    assert loop.sdl.queued[1] != loop.sdl.queued[2]
 
 
 def test_no_audio_device_still_takes_the_pcm(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,7 +1,10 @@
-"""Tests for the core per-frame audio mixer (msx/audio_mixer.py, spec audio-mixer)."""
+"""Tests for the core per-frame audio mixer (msx/audio_mixer.py, spec audio-mixer).
+
+The mixer hands off the unfiltered mix; the output filter is the frontend's
+(tests/test_sdl2_frontend_audio.py).
+"""
 from array import array
 
-from msx.audio_filter import BiquadLowPass
 from msx.audio_mixer import AudioMixer
 from msx.psg import SAMPLES_PER_FRAME
 
@@ -11,11 +14,6 @@ N = SAMPLES_PER_FRAME
 def _pcm(value: int, n: int = N) -> bytes:
     """n signed-16 samples of `value`, as native-order bytes."""
     return array("h", [value] * n).tobytes()
-
-
-def _filtered(buf: bytes) -> bytes:
-    """`buf` through a fresh output filter: what the mixer hands off for a first frame."""
-    return BiquadLowPass().filter(buf)
 
 
 class _Gen:
@@ -57,38 +55,38 @@ def _mix(
 def test_psg_only_passthrough() -> None:
     # audio-mixer "Silent optional sources leave the PSG-only path".
     psg = _pcm(1234)
-    assert _mix(psg) == _filtered(psg)
+    assert _mix(psg) == psg
 
 
 def test_silent_dac_and_key_click_leave_psg_only_path() -> None:
     psg = _pcm(1234)
-    assert _mix(psg, dac=_SilentGen(), click=_SilentGen()) == _filtered(psg)
+    assert _mix(psg, dac=_SilentGen(), click=_SilentGen()) == psg
 
 
 def test_dac_is_mixed_when_it_sounds() -> None:
     # audio-mixer "DAC is mixed when it sounds".
-    assert _mix(_pcm(100), dac=_pcm(25)) == _filtered(_pcm(125))
+    assert _mix(_pcm(100), dac=_pcm(25)) == _pcm(125)
 
 
 def test_mix_sums_psg_scc_dac() -> None:
-    assert _mix(_pcm(100), scc=_pcm(50), dac=_pcm(25)) == _filtered(_pcm(175))
+    assert _mix(_pcm(100), scc=_pcm(50), dac=_pcm(25)) == _pcm(175)
 
 
 def test_opll_contributes_to_mix() -> None:
     # audio-mixer "OPLL contributes to the mix".
-    assert _mix(_pcm(100), opll=_pcm(50)) == _filtered(_pcm(150))
+    assert _mix(_pcm(100), opll=_pcm(50)) == _pcm(150)
 
 
 def test_key_click_is_mixed() -> None:
     # audio-mixer "Key click is mixed when PPI Port C bit 7 changes".
-    assert _mix(_pcm(100), click=_pcm(9288)) == _filtered(_pcm(9388))
+    assert _mix(_pcm(100), click=_pcm(9288)) == _pcm(9388)
 
 
 def test_sum_is_clamped() -> None:
     # audio-mixer "Sum is clamped".
-    assert _mix(_pcm(30000), scc=_pcm(10000)) == _filtered(_pcm(32767))
-    assert _mix(_pcm(-30000), scc=_pcm(-10000)) == _filtered(_pcm(-32768))
-    assert _mix(_pcm(30000), click=_pcm(9288)) == _filtered(_pcm(32767))
+    assert _mix(_pcm(30000), scc=_pcm(10000)) == _pcm(32767)
+    assert _mix(_pcm(-30000), scc=_pcm(-10000)) == _pcm(-32768)
+    assert _mix(_pcm(30000), click=_pcm(9288)) == _pcm(32767)
 
 
 def test_cycle_stamped_sources_get_the_frame_window() -> None:
@@ -102,24 +100,9 @@ def test_cycle_stamped_sources_get_the_frame_window() -> None:
     assert opll.calls == [(N,)]
 
 
-def test_filter_state_carries_across_frames() -> None:
-    # audio-mixer "Mixed audio passes the output low-pass filter": one filter
-    # instance whose state carries across frames.
-    psg = _pcm(20000)
-    mixer = AudioMixer()
-    mixer.mix_frame(N, 0, 100, _Gen(psg), None, None, None, None)
-    first = mixer.take()
-    mixer.mix_frame(N, 100, 200, _Gen(psg), None, None, None, None)
-    second = mixer.take()
-    reference = BiquadLowPass()
-    assert first == reference.filter(psg)
-    assert second == reference.filter(psg)
-    assert second != _filtered(psg)
-
-
 def test_filter_applies_after_the_sum() -> None:
     mixed = _mix(_pcm(100), scc=_pcm(50), dac=_pcm(25), opll=_pcm(25))
-    assert mixed == _filtered(_pcm(200))
+    assert mixed == _pcm(200)
 
 
 def test_take_returns_the_frame_once() -> None:
@@ -134,10 +117,7 @@ def test_untaken_frame_is_replaced() -> None:
     mixer = AudioMixer()
     for value in (1000, 2000, 3000):
         mixer.mix_frame(N, 0, 100, _Gen(_pcm(value)), None, None, None, None)
-    reference = BiquadLowPass()
-    reference.filter(_pcm(1000))
-    reference.filter(_pcm(2000))
-    assert mixer.take() == reference.filter(_pcm(3000))
+    assert mixer.take() == _pcm(3000)
 
 
 def test_reset_clears_filter_history_and_pending_frame() -> None:
@@ -147,4 +127,4 @@ def test_reset_clears_filter_history_and_pending_frame() -> None:
     mixer.reset()
     assert mixer.take() == b""
     mixer.mix_frame(N, 0, 100, _Gen(psg), None, None, None, None)
-    assert mixer.take() == _filtered(psg)
+    assert mixer.take() == psg
