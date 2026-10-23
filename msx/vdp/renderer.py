@@ -49,8 +49,9 @@ def render_frame(vdp: VDP, skip_render: bool = False) -> bytearray:
 
     Dispatches on the M1-M3 mode bits (R#1/R#0, TMS9918A datasheet naming) to
     pick a screen-mode renderer; `skip_render` (a frame the frontend skips
-    under frame-skip or fast-forward) returns an empty buffer. The only VDP state a render
-    changes is the sprite status in S#0 (5S / index / C); VBlank is raised by
+    under frame-skip or fast-forward) returns an empty buffer but still sets
+    S#0 as a full render would. The only VDP state a render changes is the
+    sprite status in S#0 (5S / index / C); VBlank is raised by
     VDP.begin_vblank(), which Machine.run_frame calls.
     """
     buf, status = _render(vdp, skip_render)
@@ -66,14 +67,13 @@ def render_preview(vdp: VDP) -> bytearray:
 def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
     """Render a frame; return it with the S#0 value the render produces."""
     status = vdp.status
-    if skip_render:
-        return bytearray(0), status
-
     r0 = vdp.regs[0]
     r1 = vdp.regs[1]
     border = vdp.regs[7] & 0x0F
 
     if not (r1 & 0x40):  # BL (Blank) bit clear → blank display
+        if skip_render:
+            return bytearray(0), status
         # bytearray([b]) * n is a single C-level fill; [b] * n would first build
         # an n-element Python list (≈48× slower on this per-frame path).
         return bytearray([border]) * (_W * OUTPUT_H), status
@@ -88,6 +88,14 @@ def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
 
     h = vdp.display_height
     buf = bytearray(_W * h)
+
+    if skip_render:
+        # A skipped frame still runs the sprite pass, so S#0 never depends on
+        # whether the frontend presents the frame. The pass plots into a
+        # scratch buffer that is dropped; the background is not rendered.
+        if not m1 and not vdp.debug_disable_sprites:
+            status = _render_sprites(vdp, buf, status)
+        return bytearray(0), status
 
     if m1:
         _render_text(vdp, buf)

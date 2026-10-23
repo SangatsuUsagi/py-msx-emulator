@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
+    from msx.mouse import MouseState
     from msx.psg import PsgSynthState
+    from msx.rtc import RtcState
     from msx.scc import SccState
 
 _T = TypeVar("_T")
@@ -105,7 +107,11 @@ _T = TypeVar("_T")
 #   openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
 #   configured page" Requirement). None unless machine.memory.slot0_ram is
 #   configured.
-CURRENT_FORMAT_VERSION: int = 15
+# Version 16: rtc_state and mouse_state added (the RTC's start time,
+#   elapsed emulated cycles and register blocks; the mouse's scan state),
+#   each None when the machine has no RTC / no attached mouse. See
+#   openspec/changes/enforce-core-boundary.
+CURRENT_FORMAT_VERSION: int = 16
 
 
 class StateLoadError(ValueError):
@@ -216,6 +222,10 @@ class MachineSnapshot:
     # openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
     # configured page" Requirement.
     slot0_ram: bytearray | None = None
+    # RTC (None when the machine has none) and attached mouse (None when no
+    # mouse is attached); see RTC.snapshot() / MouseDevice.snapshot().
+    rtc_state: dict[str, object] | None = None
+    mouse_state: dict[str, object] | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -262,6 +272,30 @@ def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -
             "SCC wiring mismatch: "
             f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
             f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
+        )
+
+
+def _rtc_to_dict(machine: "Machine") -> dict[str, object] | None:
+    if machine.rtc is None:
+        return None
+    return cast(dict[str, object], machine.rtc.snapshot())
+
+
+def _mouse_to_dict(machine: "Machine") -> dict[str, object] | None:
+    mouse = machine.psg.mouse
+    if mouse is None:
+        return None
+    return cast(dict[str, object], mouse.snapshot(machine.cycle_count))
+
+
+def _check_optional_wiring(
+    name: str, running: bool, state: dict[str, object] | None
+) -> None:
+    if (state is None) == running:
+        raise SnapshotMismatchError(
+            f"{name} wiring mismatch: "
+            f"running machine has {'a' if running else 'no'} {name}, "
+            f"saved state has {name + ' state' if state is not None else 'no ' + name + ' state'}"
         )
 
 
@@ -440,6 +474,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         mapper1_subslot_kinds=mapper1_subslot_kinds,
         mapper1_subslot_states=mapper1_subslot_states,
         slot0_ram=slot0_ram,
+        rtc_state=_rtc_to_dict(machine),
+        mouse_state=_mouse_to_dict(machine),
     )
 
 
@@ -647,6 +683,8 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
             "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
         ),
         slot0_ram=parse_field("slot0_ram", check_optional_bytes),
+        rtc_state=parse_field("rtc_state", check_optional_object),
+        mouse_state=parse_field("mouse_state", check_optional_object),
     )
 
 
@@ -706,6 +744,8 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     )
     _check_scc_wiring(machine, snap.scc_state)
     _check_slot0_ram_wiring(machine, snap.slot0_ram)
+    _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc_state)
+    _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse_state)
     return _parse_producer_objects(machine, snap)
 
 
@@ -723,6 +763,8 @@ class _ParsedProducers:
     psg_synth: "PsgSynthState"
     scc: "SccState | None"
     fdc: "FloppyDiskParsed | None"
+    rtc: "RtcState | None"
+    mouse: "MouseState | None"
 
 
 def _parse_subslot_producers(
@@ -782,7 +824,21 @@ def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _Parse
     fdc_parsed = None
     if fdc is not None and fdc_state is not None:
         fdc_parsed = _parse_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
-    return _ParsedProducers(mappers, psg_synth, scc_parsed, fdc_parsed)
+    rtc = machine.rtc
+    rtc_state = snap.rtc_state
+    rtc_parsed = None
+    if rtc is not None and rtc_state is not None:
+        rtc_parsed = _parse_producer("rtc", lambda: rtc.parse_state(rtc_state, "rtc_state"))
+    mouse = machine.psg.mouse
+    mouse_state = snap.mouse_state
+    mouse_parsed = None
+    if mouse is not None and mouse_state is not None:
+        mouse_parsed = _parse_producer(
+            "mouse", lambda: mouse.parse_state(mouse_state, "mouse_state")
+        )
+    return _ParsedProducers(
+        mappers, psg_synth, scc_parsed, fdc_parsed, rtc_parsed, mouse_parsed
+    )
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
@@ -842,6 +898,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
     if machine.memory.slot0_ram is not None and snap.slot0_ram is not None:
         machine.memory.slot0_ram[:] = snap.slot0_ram
+    if machine.rtc is not None and parsed.rtc is not None:
+        machine.rtc.apply_state(parsed.rtc)
+    mouse = machine.psg.mouse
+    if mouse is not None and parsed.mouse is not None:
+        mouse.apply_state(parsed.mouse, machine.cycle_count)
 
 
 # --- symlink helper -----------------------------------------------------------
