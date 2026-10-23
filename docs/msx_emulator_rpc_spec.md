@@ -406,7 +406,8 @@ Valid keys: `SPACE` `RETURN` `ESC` `UP` `DOWN` `LEFT` `RIGHT` `SHIFT` `CTRL` `GR
 ### `fdd.swap`
 
 **Params:** `{ "drive": 1, "path": "disks/game_disk2.dsk" }` (use `null` to unmount)  
-**Result:** `{ "drive": 1, "path": "...", "mounted": true }`
+**Result:** `{ "drive": 1, "path": "...", "mounted": true }`  
+The outgoing image is written back to its file first when it holds unsaved writes.
 
 ---
 
