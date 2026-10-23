@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypedDict, TypeGuard, cast
@@ -2083,7 +2082,6 @@ def build_machine(
     fdd2: Path | None = None,
     extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
-    joy_map: Mapping[int, tuple[int, int]] | None = None,
 ) -> "Machine":
     """Build a Machine from a resolved MachineSpec.
 
@@ -2101,8 +2099,6 @@ def build_machine(
             loading spec.logo_rom_entry.file from disk. Pass None to skip logo.
         extrom_override: If given (MSX2 only), use these bytes as the MSX2
             extension/sub ROM instead of loading spec.sub_rom_entry.file.
-        joy_map: Optional Joy1 keyboard key map override for InputState
-            (see AppConfig.keyboard_joy_map). Defaults to the built-in JOY_MAP.
         extension_overlay: Resolved --extension2 overlay (see
             load_extension_overlay), or None for no extension on slot 2. A
             flat (_ExtensionOverlay) overlay unconditionally occupies
@@ -2166,8 +2162,6 @@ def build_machine(
     dac = _resolve_shared_dac(spec, mapper_instance, mapper2_instance)
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
-    if joy_map is not None:
-        input_state.joy_map = joy_map
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
     if wiring.fmpac_device is not None:

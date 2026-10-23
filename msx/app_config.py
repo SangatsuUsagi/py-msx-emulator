@@ -13,14 +13,11 @@ returned and behaviour is identical to running with no config.
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
-
-from msx.input import JOY_MAP, KEY_NAME_TO_SDLKEY
 
 CONFIG_FILENAME = "py_emulator.yaml"
 
@@ -90,12 +87,19 @@ _GAMEPAD_FUNCTIONS: dict[str, tuple[str, int, bool]] = {
 # block (scripts/list_joystick_buttons.py) cannot drift from the validator.
 GAMEPAD_FUNCTION_KEYS: tuple[str, ...] = tuple(_GAMEPAD_FUNCTIONS)
 
-# MSX Joy1 function → port bit (0-5). The keyboard-side default key(s) live in
-# input.JOY_MAP; only the bit assignment is duplicated here (mirrors how
-# _GAMEPAD_FUNCTIONS pairs a function with its port bit for the gamepad side).
-_KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
+# MSX Joy1 functions configurable under keyboard_joystick.buttons. The
+# frontend keyboard maps each to its port bit and default key(s).
+_KEYBOARD_JOY_FUNCTIONS: tuple[str, ...] = (
+    "up", "down", "left", "right", "trigger_a", "trigger_b",
+)
+
+# Keyboard key names accepted by keyboard_joystick.buttons: letters, digits,
+# arrows, comma and period. The SDL2 frontend translates each name to a key
+# code (frontend/sdl2_keyboard.py's KEY_NAME_TO_SDLKEY).
+KEYBOARD_KEY_NAMES: tuple[str, ...] = (
+    *"abcdefghijklmnopqrstuvwxyz", *"0123456789",
+    "up", "down", "left", "right", "comma", "period",
+)
 
 # SDL2 frontend hotkey action → built-in key name ("f1".."f12", optionally
 # "shift+"-prefixed). `hotkeys:` in the config replaces single entries.
@@ -218,41 +222,6 @@ class AppConfig:
             seen[index] = func
             (turbo if is_turbo else direct)[index] = bit
         return direct, turbo
-
-    def keyboard_joy_map(self) -> Mapping[int, tuple[int, int]]:
-        """Resolve the Joy1 keyboard key map for ``InputState(joy_map=...)``.
-
-        Each overridden function's default key(s) are dropped and replaced
-        with its configured key.
-
-        Returns:
-            The built-in ``input.JOY_MAP`` unchanged when no function is
-            overridden, otherwise a resolved ``sdlkey -> (port, bit)`` map.
-
-        Raises:
-            AppConfigError: If two overridden functions resolve to the same key.
-        """
-        if not self.keyboard_joystick_buttons:
-            return JOY_MAP
-        overridden_bits = {
-            _KEYBOARD_JOY_FUNCTIONS[func] for func in self.keyboard_joystick_buttons
-        }
-        result = {
-            sdlkey: (port, bit) for sdlkey, (port, bit) in JOY_MAP.items()
-            if not (port == 0 and bit in overridden_bits)
-        }
-        seen: dict[int, str] = {}
-        for func, key_name in self.keyboard_joystick_buttons.items():
-            sdlkey = KEY_NAME_TO_SDLKEY[key_name]
-            if sdlkey in seen:
-                raise AppConfigError(
-                    f"{CONFIG_FILENAME}: keyboard_joystick.buttons: {key_name!r} assigned to "
-                    f"both {seen[sdlkey]!r} and {func!r}"
-                )
-            seen[sdlkey] = func
-            result[sdlkey] = (0, _KEYBOARD_JOY_FUNCTIONS[func])
-        return result
-
 
     def hotkey_bindings(self) -> dict[tuple[int, bool], str]:
         """Resolve the SDL2 frontend hotkey table.
@@ -490,18 +459,28 @@ def _parse_keyboard_joystick_buttons(buttons: Any, cfg: AppConfig) -> None:
                 f"{CONFIG_FILENAME}: keyboard_joystick.buttons: unknown function {func!r} "
                 f"(expected one of {', '.join(_KEYBOARD_JOY_FUNCTIONS)})"
             )
-        if not isinstance(key_name, str) or key_name not in KEY_NAME_TO_SDLKEY:
+        if not isinstance(key_name, str) or key_name not in KEYBOARD_KEY_NAMES:
             raise AppConfigError(
                 f"{CONFIG_FILENAME}: keyboard_joystick.buttons.{func}: unknown key {key_name!r} "
-                f"(expected one of {', '.join(KEY_NAME_TO_SDLKEY)})"
+                f"(expected one of {', '.join(KEYBOARD_KEY_NAMES)})"
             )
         cfg.keyboard_joystick_buttons[func] = key_name
     _validate_no_duplicate_keyboard_keys(cfg)
 
 
 def _validate_no_duplicate_keyboard_keys(cfg: AppConfig) -> None:
-    """Surface duplicate-key conflicts at load time (raises AppConfigError)."""
-    cfg.keyboard_joy_map()
+    """Reject two keyboard_joystick functions on one key (raises AppConfigError).
+
+    Each key name maps to one key code, so comparing names is enough.
+    """
+    seen: dict[str, str] = {}
+    for func, key_name in cfg.keyboard_joystick_buttons.items():
+        if key_name in seen:
+            raise AppConfigError(
+                f"{CONFIG_FILENAME}: keyboard_joystick.buttons: {key_name!r} assigned to "
+                f"both {seen[key_name]!r} and {func!r}"
+            )
+        seen[key_name] = func
 
 
 def _parse_mouse(mouse: Any, cfg: AppConfig) -> None:

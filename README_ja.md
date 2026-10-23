@@ -293,9 +293,9 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 | 項目 | 詳細 |
 | --- | --- |
-| キーボード | `msx/input.py`。MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
+| キーボード | `msx/input.py`（マトリクス：MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー）と `frontend/sdl2_keyboard.py`（ホストのキーからマトリクスのセルへの変換） |
 | 物理ジョイスティック | `frontend/sdl2_joystick.py`。SDL2 GameController API（優先）と生ジョイスティックのフォールバック。ホットプラグ対応 |
-| キーボードエミュレーション | WASD = Joy1 方向。Z/X または ,/. = トリガ A/B。矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
+| キーボードエミュレーション | `frontend/sdl2_keyboard.py`。WASD = Joy1 方向。Z/X または ,/. = トリガ A/B。矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
 
 - 既知の制限：
   - MSX のテンキー（マトリクスの行 9〜10）に割り当てたホストのキーはない。
@@ -839,7 +839,8 @@ py-msx-emulator/
 ├── frontend/
 │   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
 │   ├── sdl2_frontend.py   # SDL2 ウィンドウ、音声のキュー投入、イベントループ
-│   └── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
+│   ├── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
+│   └── sdl2_keyboard.py   # ホストのキーボードから MSX マトリクス／キーボードジョイスティックへ（SDL2）
 ├── msx/                   # コアエミュレータパッケージ
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）

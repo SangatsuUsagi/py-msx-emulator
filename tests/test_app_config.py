@@ -295,36 +295,6 @@ def test_turbo_override_rebinds_button() -> None:
 # Keyboard joystick (Joy1) map resolution
 # ---------------------------------------------------------------------------
 
-def test_default_keyboard_joy_map_is_builtin_joy_map() -> None:
-    from msx.input import JOY_MAP
-    assert AppConfig().keyboard_joy_map() is JOY_MAP
-
-
-def test_keyboard_joy_map_override_replaces_default_keys() -> None:
-    from msx.input import _K_COMMA, _K_j, _K_z
-
-    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    resolved = cfg.keyboard_joy_map()
-    assert resolved[_K_j] == (0, 4)
-    assert _K_z not in resolved
-    assert _K_COMMA not in resolved
-
-
-def test_keyboard_joy_map_omitted_function_keeps_default() -> None:
-    from msx.input import _K_UP, _K_w
-
-    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    resolved = cfg.keyboard_joy_map()
-    assert resolved[_K_w] == (0, 0)
-    assert resolved[_K_UP] == (0, 0)
-
-
-def test_keyboard_joy_map_duplicate_key_rejected() -> None:
-    cfg = AppConfig(keyboard_joystick_buttons={"up": "j", "down": "j"})
-    with pytest.raises(AppConfigError):
-        cfg.keyboard_joy_map()
-
-
 # ---------------------------------------------------------------------------
 # Turbo period
 # ---------------------------------------------------------------------------
