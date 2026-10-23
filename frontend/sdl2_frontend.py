@@ -28,7 +28,7 @@ from msx.app_config import AppConfig
 from msx.fdc.disk_image import DskDiskImage
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
-from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
+from msx.mouse import MouseDevice
 from msx.psg import SAMPLE_RATE, JoystickPort
 from msx.screenshot import save_screenshot
 from msx.state import load_state, save_state
@@ -194,20 +194,21 @@ class _ActiveCombo:
 
 @dataclass
 class _HostMouse:
-    """The attached MSX mouse plus the host-pixel to MSX-count conversion.
+    """Host mouse input for the frame's InputState, in MSX counts.
 
     One host pixel of pointer motion is one MSX count at the displayed size,
     so motion is divided by the window's integer scale factor. The remainder
-    carries to the next event, so slow motion is not dropped.
+    carries to the next event, so slow motion is not dropped. Motion
+    accumulates in `input` until the frame loop hands it to the machine.
     """
 
-    device: MouseDevice
+    input: InputState
     scale: int
     frac_x: int = 0
     frac_y: int = 0
 
     def motion(self, dx_px: int, dy_px: int) -> None:
-        """Convert host pixels to MSX counts and pass them to the device."""
+        """Convert host pixels to MSX counts and add them to the frame's input."""
         # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
         #   the remainder stays in [0, scale) whatever the motion's sign.
         # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
@@ -218,7 +219,8 @@ class _HostMouse:
         #   would flip the carry's sign for negative motion and corrupt it.
         dx, self.frac_x = divmod(dx_px + self.frac_x, self.scale)
         dy, self.frac_y = divmod(dy_px + self.frac_y, self.scale)
-        self.device.add_motion(dx, dy)
+        self.input.mouse_dx += dx
+        self.input.mouse_dy += dy
 
 
 @dataclass
@@ -706,9 +708,9 @@ def _handle_events(
             button = int(event.button.button)
             pressed = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             if button == sdl2.SDL_BUTTON_LEFT:
-                mouse.device.set_button(TRIGGER_A_BIT, pressed)
+                mouse.input.mouse_left = pressed
             elif button == sdl2.SDL_BUTTON_RIGHT:
-                mouse.device.set_button(TRIGGER_B_BIT, pressed)
+                mouse.input.mouse_right = pressed
     return running
 
 
@@ -781,13 +783,13 @@ class _ResizeTextureApi(Protocol):
 
 def _resize_texture_if_needed(
     sdl2: _ResizeTextureApi, renderer: object, window: object, texture: object,
-    index_buf: bytearray, tex_w: int, tex_h: int, scale: int,
+    frame_w: int, tex_w: int, tex_h: int, scale: int,
 ) -> tuple[object, int, int, bool]:
     """Recreate the streaming texture and resize the window when the frame width
     changes (SCREEN 6/7 is 512-wide; the output height is constant). Returns the
     (possibly new) texture, its width/height, and False if recreation failed."""
     new_h = _SCREEN_HEIGHT
-    new_w = (len(index_buf) // new_h) if index_buf else tex_w
+    new_w = frame_w
     if (new_w, new_h) == (tex_w, tex_h):
         return texture, tex_w, tex_h, True
     tex_w, tex_h = new_w, new_h
@@ -1001,23 +1003,28 @@ def _run_frame(
         skip_this_frame = since_present < 1.0 / frame_timer.fps
     else:
         skip_this_frame = state.skip_counter > 0
-    index_buf = machine.run_frame(skip_render=skip_this_frame)
-    if not skip_this_frame:
-        state.rgb_buf = machine.vdp.to_rgb24(index_buf)
+    frame_input = keyboard.input_state
+    out = machine.step_frame(frame_input, render_video=not skip_this_frame)
+    # Mouse motion is per frame: the machine has taken this frame's share.
+    frame_input.mouse_dx = 0
+    frame_input.mouse_dy = 0
+    if out.video is not None:
+        state.rgb_buf = out.video.pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
         # 512-wide). Recreate the texture / resize the window on a width
         # change before uploading, or the texture copy would overflow.
         state.texture, state.tex_w, state.tex_h, state.running = _resize_texture_if_needed(
-            sdl2, renderer, window, state.texture, index_buf, state.tex_w, state.tex_h, scale
+            sdl2, renderer, window, state.texture, out.video.width, state.tex_w, state.tex_h,
+            scale,
         )
         if not state.running:
             return
 
-    # run_frame() already mixed the frame's audio; take and filter it every
+    # step_frame() already mixed the frame's audio; filter it every
     # frame (also with no device, so the filter state stays continuous) and
     # queue it unless fast-forwarding, as silence when muted.
-    audio_buf = hotkeys.audio_filter.filter(machine.take_audio())
+    audio_buf = hotkeys.audio_filter.filter(out.audio)
     if audio_dev > 0:
         if hotkeys.muted:
             audio_buf = bytes(len(audio_buf))
@@ -1126,22 +1133,25 @@ def run(
         gamepad_map if gamepad_map is not None
         else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
     )
+    # Host input accumulates here and reaches the machine once per frame
+    # through step_frame (allium/core-frontend.allium InputHeldForFrame).
+    frame_input = InputState(keyboard_type=machine.input.keyboard_type)
+    if rpc_server is not None:
+        rpc_server.input_target = frame_input
     joy_manager = JoystickManager(
-        _input=machine.input,
+        _input=frame_input,
         _sdl=sdl2,
         _gc_button_bit=dict(gc_button_bit),
         _gc_turbo_button_bit=dict(gc_turbo_button_bit),
         _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
     )
 
-    keyboard = SdlKeyboard(
-        machine.input, resolve_keyboard_joy_map(keyboard_joystick or {})
-    )
+    keyboard = SdlKeyboard(frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}))
 
     mouse: _HostMouse | None = None
     if mouse_port is not None:
-        mouse = _HostMouse(MouseDevice(), scale)
-        machine.attach_mouse(mouse.device, JoystickPort(mouse_port))
+        mouse = _HostMouse(keyboard.input_state, scale)
+        machine.attach_mouse(MouseDevice(), JoystickPort(mouse_port))
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host

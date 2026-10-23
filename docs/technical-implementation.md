@@ -395,8 +395,9 @@ on NTSC machines and 882 on PAL machines. At the end of every
 `Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of
 the chips that the machine has and clamps the result to 16 bits. This happens
 with or without a frontend, so the chips advance the same way in a headless
-run. The SDL2 frontend takes the buffer with `Machine.take_audio()`, passes
-it through the output low-pass filter, and queues it to SDL. The machine holds
+run. The SDL2 frontend gets the buffer in `step_frame`'s `FrameOutput` (see
+[Frame API](#frame-api)), passes it through the output low-pass filter, and
+queues it to SDL. The machine holds
 only the latest frame, so audio that nobody takes does not accumulate.
 
 The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
@@ -896,6 +897,26 @@ boots do not fail. Every device in `config/devices/` is currently
 `implemented: true`.
 
 ---
+
+## Frame API
+
+`Machine.step_frame(input, render_video)` is the core's per-frame call
+(`allium/core-frontend.allium`). It takes one `InputState` value: the 11
+keyboard matrix rows, both joystick ports, and the frame's mouse motion (in
+MSX counts) and buttons. It copies the value into the machine's own input
+lines, so the input stays the same for the whole frame, and feeds the mouse
+once. It then runs the frame and returns a `FrameOutput` (`msx/boundary.py`):
+the RGB24 video when `render_video` is true, the frame's audio before the
+output filter, and the frame number. `render_video` decides only whether
+video is produced: a skipped frame still runs the sprite pass, so the VDP
+status is the same.
+
+The SDL2 frontend keeps its own `InputState` as an accumulator. The keyboard,
+the gamepads, the mouse and the RPC input methods write to it, and each frame
+it passes the accumulator to `step_frame` and clears the mouse motion.
+Headless runs (`--count-frame`, `--benchmark`) pass an empty `InputState`.
+`Machine.run_frame()` remains as the internal step that the debugger and the
+break handling use.
 
 ## Portability
 

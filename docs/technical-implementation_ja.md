@@ -257,7 +257,7 @@ R#44（COL）への書き込みが、HMMC/LMMC の転送ラッチ（`_cmd_transf
 
 ## オーディオ
 
-音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。`Machine.run_frame()` の最後に、`AudioMixer`（`msx/audio_mixer.py`）がマシンにあるチップの出力を足し、16 ビットに収める。フロントエンドの有無に関係なく行うので、ヘッドレスの実行でもチップの状態は同じように進む。SDL2 フロントエンドは `Machine.take_audio()` でそのバッファを受け取り、出力ローパスフィルタを通して SDL のキューに積む。マシンが持つのは最新の 1 フレーム分だけなので、受け取られない音声がたまることはない。
+音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。`Machine.run_frame()` の最後に、`AudioMixer`（`msx/audio_mixer.py`）がマシンにあるチップの出力を足し、16 ビットに収める。フロントエンドの有無に関係なく行うので、ヘッドレスの実行でもチップの状態は同じように進む。SDL2 フロントエンドは `step_frame` の `FrameOutput` でそのバッファを受け取り（[フレーム API](#フレーム-api) を参照）、出力ローパスフィルタを通して SDL のキューに積む。マシンが持つのは最新の 1 フレーム分だけなので、受け取られない音声がたまることはない。
 
 Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込みで動く DAC チャンネル 1 つ（`msx/dac.py` の `EventDac`）を共有する。持ち主は書き込みを符号付き 16 ビットのレベルに変え、書き込んだサイクルと一緒に渡す。レベルが変わらない書き込みは記録しない。`generate_samples` は各変化をサンプル位置 `(cycle - frame_start) * n // (frame_end - frame_start)` に置き、次の変化までレベルを保つ。変化がなくレベルが 0 のフレームでは `None` を返し、ミキサーはそのチャンネルを混ぜない。
 
@@ -656,6 +656,12 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 読み込み時、ローダは `implemented: false` のデバイス YAML を飛ばし、stderr に警告を出す。マシンのほかの部分はふつうに動くので、エミュレーションができる前にデバイス定義だけをコミットしても、起動は失敗しない。今 `config/devices/` にあるデバイスはすべて `implemented: true`。
 
 ---
+
+## フレーム API
+
+`Machine.step_frame(input, render_video)` は、コアを 1 フレーム進める呼び出し（`allium/core-frontend.allium`）。`InputState` の値を 1 つ受け取る。中身は、キーボードマトリクスの 11 行、2 つのジョイスティックポート、そのフレームのマウスの移動量（MSX 側の単位）とボタン。この値をマシン自身の入力に写すので、入力はフレームの間ずっと変わらない。マウスには移動量を 1 回だけ渡す。その後フレームを実行し、`FrameOutput`（`msx/boundary.py`）を返す。中身は、`render_video` が真のときの RGB24 の映像、出力フィルタ前のそのフレームの音声、フレーム番号。`render_video` が決めるのは映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP の状態は同じになる。
+
+SDL2 フロントエンドは、入力の溜め置き場として自分の `InputState` を持つ。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込む。フロントエンドは毎フレームそれを `step_frame` に渡し、マウスの移動量を 0 に戻す。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputState` を渡す。`Machine.run_frame()` は、デバッガとブレーク処理が使う内部の処理として残っている。
 
 ## 移植性
 

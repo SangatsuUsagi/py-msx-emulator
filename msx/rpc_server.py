@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from msx.debugger.disasm import disassemble
-from msx.input import KEY_NAME_TO_CELL
+from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import PauseReason
 from msx.screenshot import encode_rgb24_png, render_current_rgb24, scale_rgb24
 
@@ -178,6 +178,10 @@ class DebugServer:
         }
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
+        # The frontend's per-frame input accumulator, when one runs (set by
+        # frontend.sdl2_frontend.run). Injected input goes to it too, so the
+        # next step_frame keeps it.
+        self.input_target: InputState | None = None
         self._register_handlers()
 
     # -- lifecycle ----------------------------------------------------------
@@ -189,6 +193,15 @@ class DebugServer:
     @property
     def machine(self) -> "Machine":
         return self._machine
+
+    def input_lines(self) -> list[InputState]:
+        """Every InputState injected input must reach: the machine's own lines
+        (seen at once, e.g. by a paused single-step) and the frontend's
+        accumulator (carried into the next step_frame)."""
+        lines = [self._machine.input]
+        if self.input_target is not None and self.input_target is not self._machine.input:
+            lines.append(self.input_target)
+        return lines
 
     def start(self) -> None:
         """Bind the socket and start accepting connections on a daemon thread."""
@@ -441,7 +454,8 @@ class DebugServer:
         still_pending: list[tuple[float, int, int]] = []
         for deadline, row, bit in self._key_releases:
             if now >= deadline:
-                self._machine.input.set_key_state(row, bit, False)
+                for lines in self.input_lines():
+                    lines.set_key_state(row, bit, False)
             else:
                 still_pending.append((deadline, row, bit))
         self._key_releases = still_pending
@@ -692,7 +706,8 @@ def _h_input_press_key_named(server: DebugServer, params: dict[str, Any]) -> dic
         raise RpcError(ERR_INVALID_PARAMS, f"unknown key name: {name}")
     duration_ms = _require_int(params, "duration_ms", default=100)
     row, bit = cell
-    server.machine.input.set_key_state(row, bit, True)
+    for lines in server.input_lines():
+        lines.set_key_state(row, bit, True)
     server.schedule_key_release(row, bit, duration_ms)
     return {"key": name.upper(), "row": row, "bit": bit, "duration_ms": duration_ms}
 
@@ -702,15 +717,15 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
     state = server.joystick_state[port]
-    inp = server.machine.input
     port_idx = port - 1
     for name, bit in _JOY_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
-        if pressed:
-            inp.joystick_button_down(port_idx, bit)
-        else:
-            inp.joystick_button_up(port_idx, bit)
+        for inp in server.input_lines():
+            if pressed:
+                inp.joystick_button_down(port_idx, bit)
+            else:
+                inp.joystick_button_up(port_idx, bit)
     return {"port": port, "state": dict(state)}
 
 
@@ -719,11 +734,11 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
     state = server.joystick_state[port]
-    inp = server.machine.input
     port_idx = port - 1
     for name, bit in _JOY_BITS.items():
         state[name] = False
-        inp.joystick_button_up(port_idx, bit)
+        for inp in server.input_lines():
+            inp.joystick_button_up(port_idx, bit)
     return {"port": port, "released": True}
 
 
@@ -816,7 +831,8 @@ def _blank_joy_state() -> dict[str, bool]:
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     try:
-        server.machine.input.set_key_state(row, bit, pressed)
+        for lines in server.input_lines():
+            lines.set_key_state(row, bit, pressed)
     except ValueError as exc:
         raise RpcError(ERR_INVALID_PARAMS, str(exc)) from None
 
