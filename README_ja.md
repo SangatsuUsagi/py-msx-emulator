@@ -837,6 +837,7 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI エントリポイント（python .）
 ├── frontend/
+│   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
 │   ├── sdl2_frontend.py   # SDL2 ウィンドウ、音声のキュー投入、イベントループ
 │   └── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
 ├── msx/                   # コアエミュレータパッケージ
@@ -864,7 +865,6 @@ py-msx-emulator/
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
-│   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
 │   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）

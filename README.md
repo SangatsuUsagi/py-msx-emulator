@@ -1143,6 +1143,7 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI entry point (python .)
 ├── frontend/
+│   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
 │   └── sdl2_joystick.py   # Physical joystick manager (SDL2)
 ├── msx/                   # Core emulator package
@@ -1170,7 +1171,6 @@ py-msx-emulator/
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
-│   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
