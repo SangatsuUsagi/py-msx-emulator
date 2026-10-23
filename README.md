@@ -547,7 +547,7 @@ records the mounted `.dsk` by path, size, and SHA1. If the current disk does
 not match at load time, the load fails with an error and does not continue
 silently.
 
-- Implementation: `msx/state.py`
+- Implementation: `msx/state.py` (snapshot encoding), `host/state_files.py` (files)
 
 ### Interactive debugger
 
@@ -556,7 +556,7 @@ watchpoints, step execution, register and VRAM dumps, disassembly, VDP trace,
 mapper trace, a slot inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`).
 For the full command reference, see [`docs/debugger.md`](docs/debugger.md).
 
-- Implementation: `msx/debugger/`
+- Implementation: `host/debugger/`
 
 ### Debug tooling
 
@@ -1155,14 +1155,24 @@ py-msx-emulator/
 │   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
 │   ├── sdl2_joystick.py   # Physical joystick manager (SDL2)
 │   └── sdl2_keyboard.py   # Host keyboard to MSX matrix / keyboard joystick (SDL2)
-├── msx/                   # Core emulator package
+├── host/                  # Host services: files, configuration, debugging surfaces
+│   ├── machine_config.py  # YAML machine configuration + ROM/SRAM/disk file loading
+│   ├── romdb.py           # SHA1-based ROM title/mapper database
+│   ├── app_config.py      # py_emulator.yaml startup defaults
+│   ├── media.py           # SRAM and disk image files (save changed media, disk swap)
+│   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
+│   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
+│   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
+│   └── debugger/          # Interactive REPL (prompt, disassembler)
+├── msx/                   # Core emulator package (no file I/O, no host clock)
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
 │   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
 │   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
-│   ├── debugger/          # Interactive REPL (prompt, disassembler)
-│   ├── machine.py         # Component wiring and frame loop
-│   ├── machine_loader.py  # YAML-based machine configuration loader
+│   ├── boundary.py        # Values passed across the core boundary (config, frame output)
+│   ├── machine.py         # Component wiring, frame loop (step_frame)
+│   ├── machine_spec.py    # Resolved machine description
+│   ├── machine_loader.py  # Builds a machine from a loaded configuration
 │   ├── memory.py          # Slot-based memory bus
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
@@ -1179,11 +1189,8 @@ py-msx-emulator/
 │   ├── io.py              # I/O bus (port dispatch)
 │   ├── input.py           # Keyboard matrix + joystick input state
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
-│   ├── app_config.py      # py_emulator.yaml startup defaults
-│   ├── romdb.py           # SHA1-based ROM title/mapper database
-│   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
-│   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
-│   └── state.py           # Save/load machine state (JSON + PNG)
+│   ├── screenshot.py      # Current-frame RGB24 capture
+│   └── state.py           # Machine state snapshot (versioned JSON)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)

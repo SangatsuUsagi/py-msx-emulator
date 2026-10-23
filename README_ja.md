@@ -331,13 +331,13 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、マウント中のディスクの識別情報を含む。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
 
-- 実装：`msx/state.py`
+- 実装：`msx/state.py`（スナップショットのエンコード）、`host/state_files.py`（ファイル）
 
 ### インタラクティブデバッガ
 
 Ctrl+C かブレークポイントで開く REPL。ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）がある。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照。
 
-- 実装：`msx/debugger/`
+- 実装：`host/debugger/`
 
 ### デバッグツール
 
@@ -843,14 +843,24 @@ py-msx-emulator/
 │   ├── sdl2_frontend.py   # SDL2 ウィンドウ、音声のキュー投入、イベントループ
 │   ├── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
 │   └── sdl2_keyboard.py   # ホストのキーボードから MSX マトリクス／キーボードジョイスティックへ（SDL2）
-├── msx/                   # コアエミュレータパッケージ
+├── host/                  # ホスト側のサービス（ファイル、設定、デバッグ用の窓口）
+│   ├── machine_config.py  # YAML のマシン設定と ROM/SRAM/ディスクファイルの読み込み
+│   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
+│   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
+│   ├── media.py           # SRAM とディスクイメージのファイル（変更の保存、ディスク交換）
+│   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
+│   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
+│   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
+│   └── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
+├── msx/                   # コアエミュレータパッケージ（ファイル入出力・ホスト時計なし）
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
 │   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インタフェース）
 │   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
-│   ├── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
-│   ├── machine.py         # コンポーネント配線とフレームループ
-│   ├── machine_loader.py  # YAML ベースのマシン設定ローダ
+│   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
+│   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
+│   ├── machine_spec.py    # 解決済みのマシン記述
+│   ├── machine_loader.py  # 読み込んだ設定からマシンを組み立てる
 │   ├── memory.py          # スロットベースのメモリバス
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
@@ -867,11 +877,8 @@ py-msx-emulator/
 │   ├── io.py              # I/O バス（ポートディスパッチ）
 │   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
-│   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
-│   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
-│   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
-│   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
-│   └── state.py           # マシン状態のセーブ/ロード（JSON + PNG）
+│   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
+│   └── state.py           # マシン状態のスナップショット（バージョン付き JSON）
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）

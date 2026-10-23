@@ -7,7 +7,7 @@ execution, and tracing.
 Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 /
 TMS9918A, they print a clear error message and do not raise an exception.
 
-Source: `msx/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
+Source: `host/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
 `msx/vdp/v9938_renderer.py` (VDP), `msx/mapper_tracer.py` (mapper trace).
 
 ---

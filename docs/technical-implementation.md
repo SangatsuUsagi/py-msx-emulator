@@ -552,7 +552,7 @@ save state, and when the disk is swapped out.
 
 ## Machine and extension YAML schema
 
-`msx/machine_loader.py` is the single source of truth for three YAML surfaces:
+`host/machine_config.py` is the single source of truth for three YAML surfaces:
 device definitions (`config/devices/*.yaml`), machine specifications
 (`config/machines/*.yaml`), and extension overlays
 (`config/extensions/*.yaml`). All three are `TypedDict` shapes that the loader
@@ -868,7 +868,7 @@ ROM-bearing field in the loader.
 
 ### Two-pass resolution
 
-`msx/machine_loader.py` resolves the hardware topology in two passes:
+`host/machine_config.py` resolves the hardware topology in two passes:
 
 1. **Device registry pass.** `load_device_registry(config_dir)` reads every
    `*.yaml` file in `config/devices/` into a dict with the device `id` as key.
@@ -883,10 +883,17 @@ ROM-bearing field in the loader.
    `schema_version`, or an absent necessary ROM entry, it raises a
    `MachineLoadError` that gives the file and the field.
 
-### build_machine()
+### load_machine_config() and build_machine()
 
-`build_machine(spec, cartridge, mapper, ...)` constructs a `Machine` from a
-resolved `MachineSpec`. The `spec.generation` field selects the concrete types:
+Building is split between the host and the core.
+`load_machine_config(spec, cartridge, mapper, ...)` in `host/machine_config.py`
+reads every file the machine needs into a `MachineConfig` value
+(`msx/boundary.py`): the ROM images by role, the cartridges with their mappers
+(an `auto` mapper is resolved here through the ROM database), the saved SRAM
+images, the disk images and the RTC start time. `build_machine(config)` in
+`msx/machine_loader.py` then constructs the `Machine` from those bytes only. It
+opens no file and consults no database, so the same config always builds the
+same machine. The `spec.generation` field selects the concrete types:
 
 - `"msx1"`: `VDP` (TMS9918A), flat slot 3 RAM, no RTC or RAM mapper
 - `"msx2"`: `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`

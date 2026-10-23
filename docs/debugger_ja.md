@@ -4,7 +4,7 @@
 
 **⚙V9938** と記されたコマンドは MSX2 / V9938 マシン専用です。MSX1 / TMS9918A では例外を発生させず、わかりやすいエラーメッセージを表示します。
 
-ソース：`msx/debugger/prompt.py`（REPL）、`msx/vdp/v9938.py` / `msx/vdp/v9938_renderer.py`（VDP）、`msx/mapper_tracer.py`（マッパートレース）
+ソース：`host/debugger/prompt.py`（REPL）、`msx/vdp/v9938.py` / `msx/vdp/v9938_renderer.py`（VDP）、`msx/mapper_tracer.py`（マッパートレース）
 
 ---
 
