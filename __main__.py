@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from msx.boundary import RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
-    from msx.machine_loader import (
+    from msx.machine_spec import (
         MachineSpec,
         _ExpandedExtensionOverlay,
         _ExtensionOverlay,
@@ -281,7 +281,7 @@ def _print_extension_summary_line(
 ) -> None:
     if extension_overlay is None:
         return
-    from msx.machine_loader import _ExpandedExtensionOverlay
+    from msx.machine_spec import _ExpandedExtensionOverlay
     if isinstance(extension_overlay, _ExpandedExtensionOverlay):
         print(
             f"extension: {extension_id} (expanded slot {slot_num}: "
@@ -384,6 +384,7 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
+    sram_paths: "dict[str, Path]",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -398,7 +399,7 @@ def _cleanup(
         # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
-        persist_dirty_media(machine)
+        persist_dirty_media(machine, sram_paths)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -526,7 +527,7 @@ def main() -> None:
     opts = _resolve_effective_options(args, app_cfg)
     _validate_options(args, opts)
 
-    from msx.romdb import lookup, lookup_system, lookup_title
+    from host.romdb import lookup, lookup_system, lookup_title
 
     paths = _resolve_paths(args, opts.slot1, opts.slot2, opts.fdd1)
     fdd1_paths = paths.fdd1_paths
@@ -539,13 +540,15 @@ def main() -> None:
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
 
     # --- Load machine spec from YAML ---
-    from msx.machine_loader import (
-        MachineLoadError,
-        build_machine,
+    from host.machine_config import (
         load_device_registry,
         load_extension_overlay,
+        load_machine_config,
         load_machine_spec,
+        sram_paths,
     )
+    from msx.machine_loader import build_machine
+    from msx.machine_spec import MachineLoadError
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
@@ -599,22 +602,23 @@ def main() -> None:
     logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
     rpc_server = None
+    media_files: dict[str, Path] = {}
     try:
         try:
-            machine = build_machine(
+            config = load_machine_config(
                 spec,
                 cartridge=cartridge,
                 mapper=opts.mapper1,
                 cartridge2=cartridge2,
                 mapper2=opts.mapper2,
-                logger=logger,
-                tracer=tracer,
                 fdd1=fdd1_paths[0] if fdd1_paths else None,
                 fdd2=fdd2_path,
                 extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
                 rtc_initial_time=_host_rtc_time(),
             )
+            media_files = sram_paths(config)
+            machine = build_machine(config, logger=logger, tracer=tracer)
         except MachineLoadError as exc:
             _fail(str(exc))
 
@@ -660,7 +664,7 @@ def main() -> None:
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
                 keyboard_joystick=app_cfg.keyboard_joystick_buttons)
     finally:
-        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
+        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, media_files)
 
 
 if __name__ == "__main__":

@@ -463,7 +463,7 @@ SHA1 title lookup for automatic game-title detection and mapper selection.
 
 | Item | Detail |
 | --- | --- |
-| Implementation | `msx/romdb.py` |
+| Implementation | `host/romdb.py` |
 | Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (reference only. This project compiled all entries independently as factual data) |
 | Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
 

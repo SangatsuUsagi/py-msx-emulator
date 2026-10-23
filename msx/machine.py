@@ -113,16 +113,6 @@ class Machine:
     #   arbitrary-precision int never wraps, so this width requirement is
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
-    sram_save_path: "Path | None" = field(default=None, repr=False)
-    # Slot 2's cartridge-mapper SRAM path, symmetric to sram_save_path (slot
-    # 1). This and sram_save_path/fmpac_sram_save_path/
-    # halnote_sram_save_path/rtc_sram_save_path are candidates for the
-    # generic (has_sram source, path) list design.md's D2 proposes -- not
-    # yet migrated (a later phase of slot1-slot2-symmetrization).
-    sram_save_path2: "Path | None" = field(default=None, repr=False)
-    fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
-    halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
-    rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: Debugger | None = field(default=None, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
@@ -235,28 +225,6 @@ class Machine:
         for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
-
-    def sram_sources(self) -> list[tuple[SramMedium, Path]]:
-        """(has_sram source, save path) pairs to load-on-start/save-on-exit,
-        computed from this Machine's already-resolved device references and
-        paths -- replaces enumerating each device's own
-        `_save_sram_if_present` call at the __main__.py cleanup site (see
-        design.md Decision D2 Option B). A future SRAM-backed device needs
-        only its own field pair added here, not a new cleanup call site."""
-        sources: list[tuple[SramMedium, Path]] = []
-        mapper = self.memory._mapper
-        if mapper.has_sram and self.sram_save_path is not None:
-            sources.append((mapper, self.sram_save_path))
-        mapper2 = self.memory._mapper2
-        if mapper2.has_sram and self.sram_save_path2 is not None:
-            sources.append((mapper2, self.sram_save_path2))
-        if self.fmpac is not None and self.fmpac_sram_save_path is not None:
-            sources.append((self.fmpac, self.fmpac_sram_save_path))
-        if self.halnote_cart is not None and self.halnote_sram_save_path is not None:
-            sources.append((self.halnote_cart, self.halnote_sram_save_path))
-        if self.rtc is not None and self.rtc_sram_save_path is not None:
-            sources.append((self.rtc, self.rtc_sram_save_path))
-        return sources
 
     def sram_media(self) -> dict[str, SramMedium]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge

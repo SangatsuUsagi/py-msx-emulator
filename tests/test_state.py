@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from msx.machine_loader import MachineSpec, _RomEntry, _Slot0RamEntry, build_machine
+from host.machine_config import build_machine_from_spec
+from msx.machine_spec import MachineSpec, _RomEntry, _Slot0RamEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
 from tests.factories import make_machine
@@ -38,7 +39,7 @@ def _make_msx1_machine_with_slot0_ram():
         has_v9938=False,
         has_rtc=False,
     )
-    return build_machine(spec, bios_override=_ROM)
+    return build_machine_from_spec(spec, bios_override=_ROM)
 
 
 @pytest.fixture()

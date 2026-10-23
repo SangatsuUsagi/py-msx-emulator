@@ -1,20 +1,23 @@
 """Convenience factory wrappers for tests.
 
-make_machine / make_machine_msx2 delegate entirely to machine_loader.build_machine()
-so construction logic lives in one place with no duplicate implementation.
+make_config / make_config_msx2 delegate to host.machine_config.load_machine_config(),
+and make_machine / make_machine_msx2 build those configs with msx.machine_loader's
+build_machine(), so construction logic lives in one place.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+from host.machine_config import load_machine_config
+from msx.boundary import MachineConfig
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
-from msx.machine_loader import (
+from msx.machine_loader import build_machine
+from msx.machine_spec import (
     MachineSpec,
     _ExpandedExtensionOverlay,
     _ExtensionOverlay,
     _RomEntry,
-    build_machine,
 )
 from msx.vdp.tracer import Tracer
 
@@ -50,6 +53,51 @@ def _msx2_spec() -> MachineSpec:
     )
 
 
+def make_config(
+    rom: bytes,
+    cartridge: bytes | None = None,
+    mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+    logrom: bytes | None = None,
+    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+) -> MachineConfig:
+    return load_machine_config(
+        _msx1_spec(),
+        cartridge=cartridge,
+        mapper=mapper,
+        cartridge2=cartridge2,
+        mapper2=mapper2,
+        bios_override=rom,
+        logo_override=logrom,
+        extension_overlay=extension_overlay,
+        extension_overlay1=extension_overlay1,
+    )
+
+
+def make_config_msx2(
+    rom: bytes,
+    extrom: bytes,
+    *,
+    logrom: bytes | None = None,
+    cartridge: bytes | None = None,
+    mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+) -> MachineConfig:
+    return load_machine_config(
+        _msx2_spec(),
+        cartridge=cartridge,
+        mapper=mapper,
+        cartridge2=cartridge2,
+        mapper2=mapper2,
+        bios_override=rom,
+        logo_override=logrom,
+        extrom_override=extrom,
+    )
+
+
 def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
@@ -62,19 +110,11 @@ def make_machine(
     extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
     extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
 ) -> Machine:
-    return build_machine(
-        _msx1_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
-        cartridge2=cartridge2,
-        mapper2=mapper2,
-        logger=logger,
-        tracer=tracer,
-        bios_override=rom,
-        logo_override=logrom,
-        extension_overlay=extension_overlay,
-        extension_overlay1=extension_overlay1,
+    config = make_config(
+        rom, cartridge, mapper, cartridge2, mapper2, logrom,
+        extension_overlay, extension_overlay1,
     )
+    return build_machine(config, logger=logger, tracer=tracer)
 
 
 def make_machine_msx2(
@@ -89,15 +129,8 @@ def make_machine_msx2(
     logger: DebugLogger | None = None,
     tracer: Tracer | None = None,
 ) -> Machine:
-    return build_machine(
-        _msx2_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
-        cartridge2=cartridge2,
-        mapper2=mapper2,
-        logger=logger,
-        tracer=tracer,
-        bios_override=rom,
-        logo_override=logrom,
-        extrom_override=extrom,
+    config = make_config_msx2(
+        rom, extrom, logrom=logrom, cartridge=cartridge, mapper=mapper,
+        cartridge2=cartridge2, mapper2=mapper2,
     )
+    return build_machine(config, logger=logger, tracer=tracer)

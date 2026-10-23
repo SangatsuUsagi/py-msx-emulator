@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import sram_paths
 from host.media import persist_dirty_media
+from msx.machine_loader import build_machine
 from msx.mapper import (
     Ascii8Sram2Mapper,
     Ascii8Sram8Mapper,
@@ -13,6 +15,7 @@ from msx.mapper import (
     Ascii16Sram8Mapper,
     KoeiSRAM32Mapper,
 )
+from tests.factories import make_config
 
 # 16 KB = 2 pages of 8 KB. ASCII8 SRAM enable bit = num_pages = 2.
 _ROM_16K = bytes(range(256)) * 64
@@ -585,8 +588,7 @@ class TestMachineLoaderSramIntegration:
     def test_sram_loaded_from_saves_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         import hashlib
 
-        from msx.machine_loader import _SRAM_SIZES
-        from tests.factories import make_machine
+        from host.machine_config import _SRAM_SIZES
 
         rom = bytes(64 * 1024)
         cartridge = bytes(range(256)) * 32  # 8KB cart
@@ -599,9 +601,9 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        machine = make_machine(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
-        assert machine.sram_save_path is not None
-        assert machine.sram_save_path.name == f"{sha1}.sram"
+        config = make_config(rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2")
+        machine = build_machine(config)
+        assert sram_paths(config)["slot1.sram"].name == f"{sha1}.sram"
         assert machine.memory._mapper.sram[0] == 0xAB
 
     def test_no_sram_file_gives_zeroed_sram(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -624,8 +626,7 @@ class TestMachineLoaderSramIntegration:
     ) -> None:
         import hashlib
 
-        from msx.machine_loader import _SRAM_SIZES
-        from tests.factories import make_machine
+        from host.machine_config import _SRAM_SIZES
 
         rom = bytes(64 * 1024)
         cartridge2 = bytes(range(256)) * 32  # 8KB cart, distinct from slot 1's
@@ -638,12 +639,12 @@ class TestMachineLoaderSramIntegration:
         sram_file.write_bytes(bytes([0xAB] * expected_size))
 
         monkeypatch.chdir(tmp_path)
-        machine = make_machine(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
-        assert machine.sram_save_path2 is not None
-        assert machine.sram_save_path2.name == f"{sha1}.sram"
+        config = make_config(rom=rom, cartridge2=cartridge2, mapper2="ASCII8SRAM2")
+        machine = build_machine(config)
+        assert sram_paths(config)["slot2.sram"].name == f"{sha1}.sram"
         assert machine.memory._mapper2.sram[0] == 0xAB
         # Slot 1 (empty here) must not be perturbed by slot 2's SRAM load.
-        assert machine.sram_save_path is None
+        assert "slot1.sram" not in sram_paths(config)
 
     def test_no_sram_file_gives_zeroed_sram_slot2(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -659,26 +660,25 @@ class TestMachineLoaderSramIntegration:
     def test_both_slots_persist_sram_independently(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tests.factories import make_machine
 
         rom = bytes(64 * 1024)
         cartridge = bytes(range(256)) * 32
         cartridge2 = bytes(range(256))[::-1] * 32  # distinct content -> distinct SHA1
         monkeypatch.chdir(tmp_path)
-        machine = make_machine(
+        config = make_config(
             rom=rom, cartridge=cartridge, mapper="ASCII8SRAM2",
             cartridge2=cartridge2, mapper2="GameMaster2",
         )
-        assert machine.sram_save_path is not None
-        assert machine.sram_save_path2 is not None
-        assert machine.sram_save_path != machine.sram_save_path2
+        machine = build_machine(config)
+        paths = sram_paths(config)
+        assert paths["slot1.sram"] != paths["slot2.sram"]
 
         machine.memory._mapper._write_sram(0, 0x11)
         machine.memory._mapper2._write_sram(0, 0x22)
         assert sorted(machine.dirty_media()) == ["slot1.sram", "slot2.sram"]
-        persist_dirty_media(machine)
-        assert machine.sram_save_path.read_bytes()[0] == 0x11
-        assert machine.sram_save_path2.read_bytes()[0] == 0x22
+        persist_dirty_media(machine, paths)
+        assert paths["slot1.sram"].read_bytes()[0] == 0x11
+        assert paths["slot2.sram"].read_bytes()[0] == 0x22
 
 
 # ---------------------------------------------------------------------------

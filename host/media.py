@@ -8,6 +8,7 @@ swap paths.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,15 +26,11 @@ def load_disk_image(path: Path) -> DskDiskImage:
     return DskDiskImage(data, write_protected=not os.access(path, os.W_OK), path=path)
 
 
-def media_paths(machine: Machine) -> dict[str, Path]:
-    """The file each persisted medium is written to, by media id."""
-    owners: dict[int, Path] = {}
-    for device, path in machine.sram_sources():
-        owners[id(device)] = path
-    paths: dict[str, Path] = {}
-    for media_id, device in machine.sram_media().items():
-        if id(device) in owners:
-            paths[media_id] = owners[id(device)]
+def media_paths(machine: Machine, sram_paths: Mapping[str, Path]) -> dict[str, Path]:
+    """The file each persisted medium is written to, by media id: the SRAM
+    files `sram_paths` names (host.machine_config.sram_paths of the
+    machine's config) plus each mounted disk's own file."""
+    paths = dict(sram_paths)
     if machine.fdc is not None:
         for index, drive in enumerate(machine.fdc.drives):
             if drive.image is not None and drive.image.path is not None:
@@ -41,9 +38,12 @@ def media_paths(machine: Machine) -> dict[str, Path]:
     return paths
 
 
-def persist_dirty_media(machine: Machine) -> None:
-    """Write every dirty medium that has a file back to it."""
-    paths = media_paths(machine)
+def persist_dirty_media(
+    machine: Machine, sram_paths: Mapping[str, Path] | None = None
+) -> None:
+    """Write every dirty medium that has a file back to it. Without
+    `sram_paths` only disk images are written."""
+    paths = media_paths(machine, sram_paths if sram_paths is not None else {})
     for media_id in machine.dirty_media():
         path = paths.get(media_id)
         if path is None:

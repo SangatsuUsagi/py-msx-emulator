@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from msx.fdc.interface import TC8566AFInterface
-from msx.fdc.tc8566af import TC8566AF
-from msx.machine_loader import (
-    MachineSpec,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_device_registry,
     load_machine_spec,
 )
+from msx.fdc.interface import TC8566AFInterface
+from msx.fdc.tc8566af import TC8566AF
+from msx.machine_spec import MachineSpec
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -42,7 +42,7 @@ def test_loader_resolves_tc8566af_fdc() -> None:
 
 def test_build_wires_tc8566af_interface() -> None:
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -57,7 +57,7 @@ def test_build_wires_tc8566af_interface() -> None:
 def test_disk_rom_visible_and_registers_routed() -> None:
     spec = _spec()
     disk_rom = bytes([0xC9]) + bytes(16383)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -83,7 +83,7 @@ def test_flat_ram_read_write_through_machine_memory() -> None:
     coverage in tests/test_memory_flat_ram.py::
     test_sub_rom_and_fdc_in_independent_subslots."""
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -102,7 +102,7 @@ def test_sub_rom_readable_through_machine_memory() -> None:
     fs_a1f machine."""
     spec = _spec()
     sub_rom = bytes([0x41]) + bytes(16383)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=sub_rom,

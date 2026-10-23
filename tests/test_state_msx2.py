@@ -661,7 +661,8 @@ def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
 
 def _make_msx2_no_ram_mapper():
     """Build an MSX2 machine (V9938) that has no RAM mapper (ram_mapper is None)."""
-    from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+    from host.machine_config import build_machine_from_spec
+    from msx.machine_spec import MachineSpec, _RomEntry
     spec = MachineSpec(
         name="test_msx2_nomap",
         generation="msx2",
@@ -674,7 +675,7 @@ def _make_msx2_no_ram_mapper():
         has_v9938=True,
         has_rtc=True,
     )
-    return build_machine(spec, bios_override=_ROM, extrom_override=_EXTROM)
+    return build_machine_from_spec(spec, bios_override=_ROM, extrom_override=_EXTROM)
 
 
 def test_msx2_roundtrip_without_ram_mapper(saves_dir):

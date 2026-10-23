@@ -30,11 +30,15 @@ def test_pal_machine_paces_at_50_fps() -> None:
 
 @pytest.mark.parametrize("machine_id", ["cbios_msx1_eu", "cbios_msx2_eu"])
 def test_loader_sets_video_standard_from_machine_yaml(machine_id: str) -> None:
-    from msx.machine_loader import build_machine, load_device_registry, load_machine_spec
+    from host.machine_config import (
+        build_machine_from_spec,
+        load_device_registry,
+        load_machine_spec,
+    )
 
     root = Path(__file__).resolve().parent.parent
     registry = load_device_registry(root / "config")
     spec = load_machine_spec(machine_id, root / "config", registry, root)
-    machine = build_machine(spec)
+    machine = build_machine_from_spec(spec)
     assert machine.video_standard is VideoStandard.PAL
     assert machine.lines_per_frame == 313

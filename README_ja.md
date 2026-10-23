@@ -280,7 +280,7 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 | 項目 | 詳細 |
 | --- | --- |
-| 実装 | `msx/romdb.py` |
+| 実装 | `host/romdb.py` |
 | データソース | [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml)（参照元。すべてのエントリは独自に収集した事実情報） |
 | フォールバック | ROM がデータベースにない場合は、タイトルなしで起動し、`--mapper auto` の推定でマッパーを選ぶ |
 

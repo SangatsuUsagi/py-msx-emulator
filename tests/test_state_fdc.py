@@ -6,12 +6,13 @@ from typing import cast
 
 import pytest
 
+from host.machine_config import build_machine_from_spec
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
-from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
+from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from msx.state import load_state, save_state
 from tests.disk_factories import dsk_image
 
@@ -74,7 +75,7 @@ def test_wd2793_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     drive = machine.fdc.drives[0]
     drive.track = 5
@@ -112,7 +113,7 @@ def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> N
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     machine.fdc.write_mem(REG_DRIVE, 0x03)
     ctrl = cast(WD2793, machine.fdc.controller)
@@ -131,7 +132,7 @@ def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    machine = build_machine(_tc8566af_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     drive = machine.fdc.drives[0]
     drive.track = 7
@@ -160,7 +161,7 @@ def test_different_mounted_disk_is_rejected(tmp_path: Path, saves_dir: Path) -> 
     _make_roms(tmp_path)
     dsk_a = tmp_path / "a.dsk"
     _make_disk(dsk_a, fill=0xAA)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk_a)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk_a)
     save_state(machine, _RGB_MSX2, "test")
 
     dsk_b = tmp_path / "b.dsk"
@@ -176,7 +177,7 @@ def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> No
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     save_state(machine, _RGB_MSX2, "test")
 
     assert machine.fdc is not None
@@ -193,10 +194,10 @@ def test_fdc_kind_mismatch_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    wd_machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    wd_machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     save_state(wd_machine, _RGB_MSX2, "test")
 
-    tc_machine = build_machine(_tc8566af_spec(tmp_path), fdd1=dsk)
+    tc_machine = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
     with pytest.raises(ValueError, match="(?i)kind"):
         load_state(tc_machine)
 
@@ -205,12 +206,12 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    fdc_machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    fdc_machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     save_state(fdc_machine, _RGB_MSX2, "test")
 
     no_fdc_spec = _wd2793_spec(tmp_path)
     no_fdc_spec.fdc = None
-    no_fdc_machine = build_machine(no_fdc_spec)
+    no_fdc_machine = build_machine_from_spec(no_fdc_spec)
     assert no_fdc_machine.fdc is None
 
     with pytest.raises(ValueError, match="(?i)fdc"):
@@ -250,7 +251,7 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     save_state(machine, _RGB_MSX2, "test")
 
@@ -304,7 +305,7 @@ def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     _make_disk(dsk, fill=0xAA)
-    machine = build_machine(_wd2793_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
     save_state(machine, _RGB_MSX2, "test")
 
     if case == "other_disk":
@@ -314,7 +315,7 @@ def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
         machine.fdc.mount(dsk_image(other), drive=0)
         target = machine
     else:
-        target = build_machine(_tc8566af_spec(tmp_path), fdd1=dsk)
+        target = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
 
     with pytest.raises(StateLoadError) as exc_info:
         load_state(target)

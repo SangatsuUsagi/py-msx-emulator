@@ -5,7 +5,12 @@ core, or receive them from it. No module here reads files or the host clock.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.machine_spec import MachineSpec, _ExpandedExtensionOverlay, _ExtensionOverlay
 
 
 @dataclass(frozen=True)
@@ -46,3 +51,43 @@ class FrameOutput:
     video: RgbFrame | None   # absent when the frame was not rendered
     audio: bytes             # signed 16-bit LE mono PCM, before any output filter
     frame_number: int
+
+
+@dataclass(frozen=True)
+class DiskMedium:
+    """A disk image the host read, to mount at build time."""
+
+    data: bytes
+    write_protected: bool = False
+    # The host's name for the image's file; only recorded (see DskDiskImage).
+    path: Path | None = None
+
+
+@dataclass
+class MachineConfig:
+    """Everything build_machine needs, as values: no path is opened and no
+    database is consulted while building.
+
+    `roms` holds ROM images by role: "main", "logo" (optional), "sub"
+    (MSX2 SUB ROM), "disk" (FDC DISK ROM), "io_device" (a machine-declared
+    I/O device's ROM), and per cartridge slot n: "slot<n>.ext" (a flat
+    extension overlay's device ROM), "slot<n>.io_device" (an expanded
+    overlay's I/O device ROM), "slot<n>.<sub>" (an expanded overlay's
+    sub-slot device ROM). `media` holds initial battery-backed images by
+    media id ("slot<n>.sram", "slot<n>.<sub>.sram", "fmpac.sram",
+    "rtc.cmos"); an absent id starts blank. `disks` holds the images to mount
+    by drive id ("drive_a", "drive_b"). `mapper1`/`mapper2` are resolved
+    mapper names, never "auto".
+    """
+
+    spec: MachineSpec
+    roms: dict[str, bytes] = field(default_factory=dict)
+    cartridge1: bytes | None = None
+    mapper1: str = "Mirrored"
+    cartridge2: bytes | None = None
+    mapper2: str = "Mirrored"
+    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None
+    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None
+    media: dict[str, bytes] = field(default_factory=dict)
+    disks: dict[str, DiskMedium] = field(default_factory=dict)
+    rtc_initial_time: RtcTime | None = None

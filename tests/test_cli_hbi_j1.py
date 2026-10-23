@@ -14,17 +14,16 @@ from unittest.mock import patch
 
 import pytest
 
+from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.kanji import KanjiRom
 from msx.machine import Machine
-from msx.machine_loader import (
+from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _ExtensionOverlay,
     _RomEntry,
-    build_machine,
-    load_extension_overlay,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
 from msx.state import load_state, save_state
@@ -244,7 +243,7 @@ def _hbi_j1_machine(tmp_path: Path, name: str = "m") -> Machine:
     # rejects hbi_j1 on an MSX1 spec), hence the MSX2 base spec here.
     rom_dir = tmp_path / f"{name}_hbi_j1_rom"
     rom_dir.mkdir()
-    return build_machine(
+    return build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=_hbi_j1_overlay(rom_dir),
     )
@@ -286,7 +285,7 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
     # machine-config-loader.allium's WireMsx2Memory guidance).
     rom_dir = tmp_path / "hbi_j1_rom"
     rom_dir.mkdir()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(),
         bios_override=bytes(32768),
         extrom_override=bytes(32768),
@@ -308,7 +307,7 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
 def _hbi_j1_machine_slot1(tmp_path: Path, name: str = "m") -> Machine:
     rom_dir = tmp_path / f"{name}_hbi_j1_rom_slot1"
     rom_dir.mkdir()
-    return build_machine(
+    return build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_hbi_j1_overlay(rom_dir),
     )
@@ -434,7 +433,7 @@ def test_subslot1_dispatches_to_flat_kanji_driver_rom(tmp_path: Path) -> None:
 
     rom_dir = tmp_path / "hbi_j1_rom"
     rom_dir.mkdir()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=_hbi_j1_overlay_with_marker(rom_dir),
     )
@@ -475,7 +474,7 @@ def test_build_machine_loads_existing_halnote_sram(tmp_path: Path) -> None:
     sram_path.write_bytes(bytes(saved))
 
     overlay = _hbi_j1_overlay(rom_dir, sram_path=sram_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -494,7 +493,7 @@ def test_hbi_j1_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     rom_dir = tmp_path / "hbi_j1_rom"
     rom_dir.mkdir()
     with pytest.raises(MachineLoadError, match="MSX1"):
-        build_machine(_msx1_spec(main_dir), extension_overlay=_hbi_j1_overlay(rom_dir))
+        build_machine_from_spec(_msx1_spec(main_dir), extension_overlay=_hbi_j1_overlay(rom_dir))
 
 
 def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path) -> None:
@@ -503,7 +502,7 @@ def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path)
     fmpac_dir = tmp_path / "fmpac_rom"
     fmpac_dir.mkdir()
     (fmpac_dir / "fmpac.rom").write_bytes(bytes(65536))
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx1_spec(main_dir),
         extension_overlay=_ExtensionOverlay(
             device="fmpac", rom_base_dir=fmpac_dir,
@@ -518,7 +517,7 @@ def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path)
 def test_build_machine_no_overlay_leaves_expanded_fields_unset(tmp_path: Path) -> None:
     main_dir = tmp_path / "main_rom"
     main_dir.mkdir()
-    machine = build_machine(_msx1_spec(main_dir))
+    machine = build_machine_from_spec(_msx1_spec(main_dir))
     assert machine.memory.slot2_sub_slot_enabled is False
     assert machine.halnote_cart is None
     assert machine.kanji is None
@@ -534,7 +533,7 @@ def test_missing_msx_je_rom_raises_naming_file(tmp_path: Path) -> None:
     overlay = _hbi_j1_overlay(rom_dir)
     (rom_dir / "msx-je.rom").unlink()
     with pytest.raises(MachineLoadError, match="msx-je.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
@@ -546,7 +545,7 @@ def test_missing_kanjibasic_rom_raises_naming_file(tmp_path: Path) -> None:
     overlay = _hbi_j1_overlay(rom_dir)
     (rom_dir / "kanjibasic.rom").unlink()
     with pytest.raises(MachineLoadError, match="kanjibasic.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
@@ -558,7 +557,7 @@ def test_missing_kanjifont_rom_raises_naming_file(tmp_path: Path) -> None:
     overlay = _hbi_j1_overlay(rom_dir)
     (rom_dir / "kanjifont.rom").unlink()
     with pytest.raises(MachineLoadError, match="kanjifont.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
@@ -606,7 +605,7 @@ def test_roundtrip_preserves_halnote_sram_and_banks(saves_dir: Path, tmp_path: P
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -634,7 +633,7 @@ def test_loading_plain_state_into_hbi_j1_machine_raises(
     the prior silent-skip (msx/state.py's now-removed _restore_halnote)."""
     # MSX2, matching hbi_j1_machine's generation, so this exercises the
     # slot-2 expansion wiring mismatch specifically, not a generation one.
-    plain = build_machine(
+    plain = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768)
     )
     save_state(plain, _RGB, "test")
@@ -656,7 +655,7 @@ def test_loading_hbi_j1_state_into_plain_machine_raises(
 
     # MSX2, matching hbi_j1_machine's generation, so this exercises the
     # slot-2 expansion wiring mismatch specifically, not a generation one.
-    plain = build_machine(
+    plain = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768)
     )
     with pytest.raises(ValueError, match="slot 2 expansion wiring mismatch"):
@@ -691,7 +690,7 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
-    other_machine = build_machine(
+    other_machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=other_overlay,
     )
@@ -734,7 +733,7 @@ def test_roundtrip_preserves_halnote_sram_and_banks_on_slot1(
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=overlay,
     )
@@ -774,7 +773,7 @@ def test_loading_state_with_mismatched_slot1_subslot_kind_raises(
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
-    other_machine = build_machine(
+    other_machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=other_overlay,
     )

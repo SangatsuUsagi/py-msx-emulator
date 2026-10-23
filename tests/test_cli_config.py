@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import msx.machine_loader as machine_loader
+import host.machine_config as machine_config
 from msx.app_config import AppConfig
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
@@ -22,10 +22,12 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     run_mock = MagicMock(name="run")
-    build_mock = MagicMock(name="build_machine")
+    # load_machine_config receives the cartridge/mapper arguments main()
+    # resolved; build_machine only the resulting config.
+    build_mock = MagicMock(name="load_machine_config")
     extension_mock = MagicMock(name="load_extension_overlay", return_value=None)
     spec_spy = MagicMock(name="load_machine_spec",
-                         side_effect=machine_loader.load_machine_spec)
+                         side_effect=machine_config.load_machine_spec)
 
     patches = [
         patch.object(sys, "argv", [".", *argv]),
@@ -38,9 +40,10 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768),
         patch("frontend.sdl2_frontend.run", run_mock),
         patch("msx.debugger.prompt.Debugger"),
-        patch("msx.machine_loader.build_machine", build_mock),
-        patch("msx.machine_loader.load_extension_overlay", extension_mock),
-        patch("msx.machine_loader.load_machine_spec", spec_spy),
+        patch("host.machine_config.load_machine_config", build_mock),
+        patch("msx.machine_loader.build_machine", MagicMock(name="build_machine")),
+        patch("host.machine_config.load_extension_overlay", extension_mock),
+        patch("host.machine_config.load_machine_spec", spec_spy),
     ]
     if app_cfg is not None:
         patches.append(patch("msx.app_config.load_app_config", lambda root: app_cfg))

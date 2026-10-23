@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from msx.machine_loader import (
-    MachineSpec,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_device_registry,
     load_machine_spec,
 )
+from msx.machine_spec import MachineSpec
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -40,7 +40,7 @@ def test_loader_resolves_ram_mapper() -> None:
 
 def test_build_wires_256kb_ram_mapper() -> None:
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -53,7 +53,7 @@ def test_build_wires_256kb_ram_mapper() -> None:
 
 def test_ram_mapper_read_write_through_machine_memory() -> None:
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),
@@ -70,7 +70,7 @@ def test_sub_rom_and_fdc_still_wired_alongside_ram_mapper() -> None:
     """The FDC + RAM mapper coexistence this machine relies on
     (openspec/changes/archive/2026-09-09-slot3-fdc-ram-mapper-coexistence)."""
     spec = _spec()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec,
         bios_override=bytes(32768),
         extrom_override=bytes(16384),

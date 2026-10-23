@@ -122,6 +122,6 @@ class DskDiskImage:
 
     def content_sha1(self) -> str:
         """SHA1 hex digest of the image's current bytes (save-state disk
-        identity check; same hashlib convention as msx/romdb.py's ROM
+        identity check; same hashlib convention as host/romdb.py's ROM
         identity)."""
         return hashlib.sha1(bytes(self._data), usedforsecurity=False).hexdigest()

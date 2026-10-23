@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from msx.machine_loader import MachineLoadError, _parse_slot3_msx2
+from host.machine_config import _parse_slot3_msx2
+from msx.machine_spec import MachineLoadError
 
 # allium/machine-config-loader.allium's config.max_sub_slot_index (= 3):
 # derived from the secondary slot register's 2-bit-per-page sub-slot field

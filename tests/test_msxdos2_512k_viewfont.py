@@ -17,14 +17,13 @@ from unittest.mock import patch
 
 import pytest
 
-from msx.machine_loader import (
+from host.machine_config import build_machine_from_spec, load_extension_overlay
+from msx.machine_spec import (
     MachineLoadError,
     MachineSpec,
     _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
-    build_machine,
-    load_extension_overlay,
 )
 from msx.mapper import Ascii8Mapper, FixedPageMapper
 from msx.ram_mapper import RamMapper
@@ -189,7 +188,7 @@ def test_build_machine_wires_ram_mapper_kernel_rom_and_view_font_device(
 ) -> None:
     rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
     )
@@ -211,7 +210,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     rom_dir.mkdir()
     overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -232,7 +231,7 @@ def test_view_font_subslot_dispatches_to_ascii8_mapper(tmp_path: Path) -> None:
         view_font_rom[page * 8192] = page & 0xFF
     overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "viewfont.rom").write_bytes(bytes(view_font_rom))
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=overlay,
     )
@@ -247,7 +246,7 @@ def test_view_font_subslot_dispatches_to_ascii8_mapper(tmp_path: Path) -> None:
 def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> None:
     rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
-    machine = build_machine(
+    machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
     )
@@ -264,7 +263,7 @@ def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
     rom_dir.mkdir()
     spec = _msx2_spec(has_ram_mapper=True)
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
-        build_machine(
+        build_machine_from_spec(
             spec, bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
         )
@@ -279,7 +278,7 @@ def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     rom_dir = tmp_path / "msxdos2_viewfont_rom"
     rom_dir.mkdir()
     with pytest.raises(MachineLoadError, match="MSX1"):
-        build_machine(
+        build_machine_from_spec(
             _msx1_spec(main_dir),
             extension_overlay=_msxdos2_512k_viewfont_overlay(rom_dir),
         )
@@ -295,7 +294,7 @@ def test_missing_kernel_rom_raises_naming_file(tmp_path: Path) -> None:
     overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "msxd22s.rom").unlink()
     with pytest.raises(MachineLoadError, match="msxd22s.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
@@ -307,7 +306,7 @@ def test_missing_view_font_rom_raises_naming_file(tmp_path: Path) -> None:
     overlay = _msxdos2_512k_viewfont_overlay(rom_dir)
     (rom_dir / "viewfont.rom").unlink()
     with pytest.raises(MachineLoadError, match="viewfont.rom"):
-        build_machine(
+        build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay=overlay,
         )
