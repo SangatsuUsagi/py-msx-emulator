@@ -3,6 +3,7 @@ MachineConfig document ("The host resolves a machine into a canonical
 document", "ROMs are referenced by size and SHA1")."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +23,7 @@ from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineLoadError
 from msx.state import _snapshot_from_machine
-from tests.factories import _msx2_spec, make_config, make_config_msx2
+from tests.factories import _msx2_spec, make_config, make_config_msx2, reformat_document
 
 _ROM = bytes(32 * 1024)
 _CART = bytes(range(256)) * 64  # 16 KB
@@ -278,3 +279,19 @@ def test_a_machine_keeps_the_hash_of_its_document(
     config = _hb_f1xd_config(tmp_path)
     expected = hashlib.sha256(config.document).hexdigest()
     assert build_machine(config).machine_config_sha256 == expected
+
+
+# ---------------------------------------------------------------------------
+# machine-loader "The configuration identity is the hash of the canonical document"
+# ---------------------------------------------------------------------------
+
+def test_a_reformatted_document_has_the_canonical_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+    reformatted = dataclasses.replace(config, document=reformat_document(config.document))
+    assert reformatted.document != config.document
+    canonical = build_machine(config).machine_config_sha256
+    assert build_machine(reformatted).machine_config_sha256 == canonical
+    assert canonical == hashlib.sha256(config.document).hexdigest()
