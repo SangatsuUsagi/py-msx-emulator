@@ -22,7 +22,7 @@ from msx.vdp._v9938_defs import (
     display_width_of,
     even_odd_enabled_of,
 )
-from msx.vdp.vdp import FramebufferFormat
+from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
@@ -500,6 +500,10 @@ class V9938:
     _rgb_lut_key: tuple[int, ...] = field(default=(), init=False, repr=False)
     _rgb_channels: tuple[bytes, bytes, bytes] = field(
         default_factory=lambda: (b"", b"", b""), init=False, repr=False
+    )
+    # Memoised RGB24 rows (see Rgb24RowCache): derived data, not emulated state.
+    _rgb_rows: Rgb24RowCache = field(
+        default_factory=Rgb24RowCache, init=False, repr=False, compare=False
     )
 
     # Public accessors mirroring the TMS9918A VDP field names, so cross-module
