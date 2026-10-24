@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3672%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3814%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -619,7 +619,7 @@ But
 textures. Real interactive sessions thus run somewhat slower than the numbers
 below.
 
-Since v2.7.9 the core and the frontend are separate, and the core synthesizes
+Since v2.8.0 the core and the frontend are separate, and the core synthesizes
 the sound chips every frame, also in headless runs. `--benchmark` also
 converts every frame to RGB, as the frontend does for a shown frame. The
 `--benchmark` numbers thus include the cost of sound synthesis and of the RGB
@@ -670,7 +670,7 @@ because of OS scheduling and thermal throttling. Treat them as approximate.
 Avg FPS (`--benchmark`) from v0.1.0 through v2.7.5, per platform and runtime.
 The author measured all versions with the same cold-boot method as above, but
 without sound synthesis (the method up to v2.7.8). These charts thus do not
-continue into the v2.7.9 numbers above.
+continue into the v2.8.0 numbers above.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -1136,7 +1136,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3672 tests and covers all major components. It includes
+The test suite has 3814 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1218,7 +1218,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (3672 tests)
+├── tests/                 # Test suite (3814 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
