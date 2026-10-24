@@ -397,7 +397,7 @@ def test_msx2_v9938_state_is_one_object(saves_dir):
 
 
 def test_new_save_uses_format_version_18(saves_dir):
-    # machine-state "New save uses the current format version 17" (now 18).
+    # machine-state "New save uses the current format version 18".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
