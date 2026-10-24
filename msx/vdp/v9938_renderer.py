@@ -20,7 +20,7 @@ from msx.vdp._v9938_defs import (
     display_width_of,
     even_odd_enabled_of,
 )
-from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
+from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -1826,21 +1826,17 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
         for sy in range(max(0, band.y0), min(native_h, band.y1)):
             line_channels[sy] = channels
 
-    out = ZERO_BYTE * (w * OUTPUT_H * 3)
+    rows = vdp._rgb_rows
+    parts: list[bytes] = []
     for dy in range(OUTPUT_H):
         ny = dy - pad  # native index-buffer row this output row maps to
+        channels = default_channels
         if 0 <= ny < native_h:
             sy = ny - v_off
-            rtab, gtab, btab = line_channels[sy] if 0 <= sy < native_h else default_channels
-        else:
-            rtab, gtab, btab = default_channels
-        row = src[dy * w : dy * w + w]
-        o = dy * w * 3
-        end = o + w * 3
-        out[o:end:3] = row.translate(rtab)
-        out[o + 1 : end : 3] = row.translate(gtab)
-        out[o + 2 : end : 3] = row.translate(btab)
-    return bytes(out)
+            if 0 <= sy < native_h:
+                channels = line_channels[sy]
+        parts.append(rows.row(src[dy * w : dy * w + w], channels))
+    return b"".join(parts)
 
 
 def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
@@ -1859,7 +1855,7 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     Kept as-is here because: Python has no borrow distinction to keep.
     """
     if vdp.framebuffer_format is FramebufferFormat.GRB332:
-        return _translate_rgb24(src, _GRB332_CHANNELS)
+        return vdp._rgb_rows.frame(src, _GRB332_CHANNELS)
 
     # _reg_write_log is still valid here: it is cleared by begin_scanline(0) at
     # the *next* frame, not at the end of this one.
@@ -1870,4 +1866,4 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     if key != vdp._rgb_lut_key:
         vdp._rgb_lut_key = key
         vdp._rgb_channels = _channel_tables_indexed(_make_lut16(vdp.palette))
-    return _translate_rgb24(src, vdp._rgb_channels)
+    return vdp._rgb_rows.frame(src, vdp._rgb_channels)
