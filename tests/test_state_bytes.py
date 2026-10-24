@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from host import state_files
 from host.state_files import save_state as save_state_file
 from msx import state
 from msx.boundary import RgbFrame
@@ -64,3 +65,13 @@ def test_host_save_scales_the_thumbnail_to_256x192(
     path = save_state_file(machine, RgbFrame(512, 212, bytes(512 * 212 * 3)), "wide")
     with Image.open(path.with_suffix(".png")) as img:
         assert img.size == (256, 192)
+
+
+@pytest.mark.parametrize(("resume", "expected"), [("", None), ("a/b.state", Path("a/b.state"))])
+def test_resume_state_maps_empty_to_the_latest_state(
+    monkeypatch: pytest.MonkeyPatch, resume: str, expected: Path | None
+) -> None:
+    calls: list[Path | None] = []
+    monkeypatch.setattr(state_files, "load_state", lambda machine, path=None: calls.append(path))
+    state_files.resume_state(make_machine(rom=_ROM), resume)
+    assert calls == [expected]

@@ -27,7 +27,7 @@ from frontend.sdl2_keyboard import (
 from host.app_config import AppConfig
 from host.media import swap_disk
 from host.screenshot import save_screenshot
-from host.state_files import load_state, save_state
+from host.state_files import load_state, resume_state, save_state
 from msx.boundary import RgbFrame
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
@@ -1178,7 +1178,7 @@ def run(
 
     if resume is not None:
         try:
-            load_state(machine, path=Path(resume) if resume else None)
+            resume_state(machine, resume)
         except Exception as exc:
             print(f"resume failed: {exc}", file=sys.stderr)
 

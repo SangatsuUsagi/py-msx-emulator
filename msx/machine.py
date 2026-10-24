@@ -351,6 +351,11 @@ class Machine:
         """
         self.psg.attach_mouse(device, port)
 
+    def attach_debugger(self, debugger: DebuggerHook | None) -> None:
+        """Attach (or detach) the interactive debugger a break enters when no
+        pause hook is set."""
+        self._debugger = debugger
+
     def enter_debugger_if_attached(self) -> bool:
         """Break into the attached interactive debugger REPL, if one is attached.
 
@@ -587,22 +592,23 @@ class Machine:
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
         return int(SAMPLE_RATE // self.video_standard.target_fps)
 
-    def step_frame(self, input: InputState, render_video: bool) -> FrameOutput:
-        """Run one frame with `input` held for the whole frame (the core's
-        per-frame API, allium/core-frontend.allium FrameStepping).
+    def step_frame(self, frame_input: InputState, render_video: bool) -> FrameOutput:
+        """Run one frame with `frame_input` held for the whole frame (the
+        core's per-frame API, allium/core-frontend.allium FrameStepping).
 
         Copies the input lines into the machine's own InputState, feeds the
         frame's mouse motion and buttons to the attached mouse once, runs the
         frame, and returns its RGB24 video (when `render_video`), its
         pre-filter audio and the frame number. `render_video` never changes
-        emulated state.
+        emulated state. `mouse_dx`/`mouse_dy` are this frame's motion only: a
+        caller reusing one InputState zeroes them before the next frame.
         """
-        self.input.copy_from(input)
+        self.input.copy_from(frame_input)
         mouse = self.psg.mouse
         if mouse is not None:
-            mouse.add_motion(input.mouse_dx, input.mouse_dy)
-            mouse.set_button(TRIGGER_A_BIT, input.mouse_left)
-            mouse.set_button(TRIGGER_B_BIT, input.mouse_right)
+            mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
+            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
+            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
         index_buf = self.run_frame(skip_render=not render_video)
         video: RgbFrame | None = None
         if render_video:

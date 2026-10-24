@@ -108,3 +108,9 @@ def load_state(machine: Machine, path: Path | None = None) -> None:
 
     state.load_state(machine, resolved.read_bytes(), str(resolved))
     print(f"state loaded: {resolved}")
+
+
+def resume_state(machine: Machine, resume: str) -> None:
+    """Load the `--resume` argument: a .state path, or "" for
+    saves/states/latest.state. Raises as load_state does."""
+    load_state(machine, path=Path(resume) if resume else None)

@@ -342,8 +342,8 @@ def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | Non
     from msx.input import InputState
 
     if resume is not None:
-        from host.state_files import load_state
-        load_state(machine, path=Path(resume) if resume else None)
+        from host.state_files import resume_state
+        resume_state(machine, resume)
     no_input = InputState()
     for _ in range(count_frame):
         machine.step_frame(no_input, render_video=False)
@@ -363,9 +363,9 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
 
-    from host.state_files import load_state
+    from host.state_files import resume_state
     if resume is not None:
-        load_state(machine, path=Path(resume) if resume else None)
+        resume_state(machine, resume)
 
     from msx.input import InputState
 
@@ -384,7 +384,7 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_paths: "dict[str, Path]",
+    sram_files: "dict[str, Path]",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -399,7 +399,7 @@ def _cleanup(
         # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
-        persist_dirty_media(machine, sram_paths)
+        persist_dirty_media(machine, sram_files)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -602,7 +602,7 @@ def main() -> None:
     logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
     rpc_server = None
-    media_files: dict[str, Path] = {}
+    sram_files: dict[str, Path] = {}
     try:
         try:
             config = load_machine_config(
@@ -617,7 +617,7 @@ def main() -> None:
                 extension_overlay2=extension_overlay2,
                 rtc_initial_time=_host_rtc_time(),
             )
-            media_files = sram_paths(config)
+            sram_files = sram_paths(config)
             machine = build_machine(config, logger=logger, tracer=tracer)
         except MachineLoadError as exc:
             _fail(str(exc))
@@ -625,7 +625,7 @@ def main() -> None:
         # Attach the interactive debugger for all machines so Ctrl-C drops into
         # the REPL on MSX1 too (the slot/mapper tools are most useful there).
         from host.debugger.prompt import Debugger
-        machine._debugger = Debugger(machine)
+        machine.attach_debugger(Debugger(machine))
 
         if breakpoint_addrs:
             machine.set_breakpoints(breakpoint_addrs)
@@ -664,7 +664,7 @@ def main() -> None:
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
                 keyboard_joystick=app_cfg.keyboard_joystick_buttons)
     finally:
-        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, media_files)
+        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files)
 
 
 if __name__ == "__main__":
