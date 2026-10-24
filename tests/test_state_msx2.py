@@ -141,12 +141,12 @@ def test_msx2_roundtrip_sub_slot_reg(saves_dir):
 
 
 def test_msx1_sub_slot_reg_none_in_snapshot(saves_dir):
-    """MSX1 snapshots store sub_slot_reg=None and don't touch Memory.sub_slot_reg."""
+    """MSX1 snapshots store no slot 3 secondary slot register."""
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
     data = _load_state_json(state_path)
-    assert data["sub_slot_reg"] is None
+    assert data["slots"]["slot3"]["secondary_slot_register"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -170,12 +170,14 @@ def test_msx2_roundtrip_slot2_sub_slot_reg(saves_dir):
 
 def test_slot2_sub_slot_disabled_none_in_snapshot(saves_dir):
     """A machine without an expanded slot 2 (every machine without an
-    HBI-J1-style extension, the default) stores slot2_sub_slot_reg=None."""
+    HBI-J1-style extension, the default) stores no slot 2 secondary slot
+    register and no sub-slots."""
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
     data = _load_state_json(state_path)
-    assert data["slot2_sub_slot_reg"] is None
+    assert data["slots"]["slot2"]["secondary_slot_register"] is None
+    assert data["slots"]["slot2"]["subslots"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +203,13 @@ def test_msx2_roundtrip_slot1_sub_slot_reg(saves_dir):
 def test_slot1_sub_slot_disabled_none_in_snapshot(saves_dir):
     """A machine without an expanded slot 1 (every machine today, since
     --extension1 does not yet support expanded-shape overlays) stores
-    slot1_sub_slot_reg=None."""
+    no slot 1 secondary slot register and no sub-slots."""
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
     data = _load_state_json(state_path)
-    assert data["slot1_sub_slot_reg"] is None
+    assert data["slots"]["slot1"]["secondary_slot_register"] is None
+    assert data["slots"]["slot1"]["subslots"] is None
 
 
 def test_msx2_roundtrip_mapper1_subslot_content(saves_dir):
@@ -306,7 +309,7 @@ def test_msx1_snapshot_has_no_vdp9938_object(saves_dir):
     machine = make_machine(_ROM)
     state_path = save_state(machine, _RGB_MSX1, "test")
 
-    assert _load_state_json(state_path)["vdp9938"] is None
+    assert _load_state_json(state_path)["vdp"]["v9938"] is None
 
 
 def test_msx2_roundtrip_cmd_remaining(saves_dir):
@@ -387,10 +390,10 @@ def test_msx2_v9938_state_is_one_object(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
     data = _load_state_json(save_state(machine, _RGB_MSX2, "test"))
 
-    assert isinstance(data["vdp9938"], dict)
-    for key in ("vdp_palette", "cmd_regs", "status2", "cmd_remaining", "vdp_pal_latch",
-                "vdp_collision_x", "vdp_status1", "vdp_cmd_engine"):
-        assert key not in data
+    assert isinstance(data["vdp"]["v9938"], dict)
+    for key in ("palette", "cmd_regs", "status2", "cmd_remaining", "collision_x",
+                "status1", "cmd_engine"):
+        assert key not in data["vdp"]
 
 
 def test_new_save_uses_format_version_17(saves_dir):
@@ -591,7 +594,7 @@ def test_msx2_timed_command_mid_countdown_keeps_ce_until_expiry(saves_dir):
 
 def _corrupt_vdp9938(state_path, corrupt: str) -> None:
     data = _load_state_json(state_path)
-    v = data["vdp9938"]
+    v = data["vdp"]["v9938"]
     if corrupt == "missing_key":
         del v["status1"]
     elif corrupt == "engine_missing_key":
@@ -620,7 +623,7 @@ def test_malformed_vdp9938_state_raises_state_load_error(saves_dir, corrupt):
 
     with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
-    assert "vdp9938" in str(exc_info.value)
+    assert "vdp.v9938" in str(exc_info.value)
 
 
 def test_malformed_vdp9938_state_leaves_vdp_untouched(saves_dir):
@@ -638,7 +641,7 @@ def test_other_layout_of_the_same_version_is_rejected_cleanly(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
     data = _load_state_json(state_path)
-    del data["vdp9938"]
+    del data["vdp"]
     data["vdp_status1"] = 0                       # a key this layout does not define
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -712,11 +715,11 @@ def test_msx2_snapshot_without_vdp9938_is_rejected_before_restoring(saves_dir):
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
     data = _load_state_json(state_path)
-    data["vdp9938"] = None
+    data["vdp"]["v9938"] = None
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
     machine.memory.ram[0] = 0x5A           # must survive the rejected load
 
-    with pytest.raises(StateLoadError, match="vdp9938"):
+    with pytest.raises(StateLoadError, match="vdp.v9938"):
         load_state(machine, state_path)
     assert machine.memory.ram[0] == 0x5A

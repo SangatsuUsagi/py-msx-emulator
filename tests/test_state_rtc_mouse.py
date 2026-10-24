@@ -100,7 +100,7 @@ def test_mouse_wiring_mismatch_is_rejected() -> None:
 def test_rtc_state_with_an_invalid_date_is_rejected() -> None:
     saved = _msx2(RtcTime(2026, 1, 1, 0, 0, 0))
     snap = _snapshot_from_machine(saved)
-    assert snap.rtc_state is not None
-    snap.rtc_state["start"] = [2026, 2, 30, 0, 0, 0]
+    assert snap.rtc is not None
+    snap.rtc["start"] = [2026, 2, 30, 0, 0, 0]
     with pytest.raises(ValueError, match="rtc"):
         _restore_snapshot(_msx2(RtcTime(2026, 1, 1, 0, 0, 0)), snap)

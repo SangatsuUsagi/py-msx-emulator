@@ -165,11 +165,11 @@ def test_msx2_file_with_null_vdp9938_is_rejected(tmp_path, monkeypatch) -> None:
     state_path = save_state(machine, _RGB_MSX2, "test")
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    data["vdp9938"] = None
+    data["vdp"]["v9938"] = None
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    with pytest.raises(StateLoadError, match="vdp9938"):
+    with pytest.raises(StateLoadError, match="vdp.v9938"):
         load_state(machine, state_path)
 
 
@@ -215,7 +215,7 @@ def test_palette_first_byte_while_control_pending_changes_latch_value() -> None:
 
 
 def test_state_restore_of_latch_and_first_byte_agree(tmp_path, monkeypatch) -> None:
-    # vdp9938 holds the whole latch; the common vdp_latch is its port-0x99 view.
+    # vdp.v9938 holds the whole latch; the common vdp.latch is its port-0x99 view.
     monkeypatch.chdir(tmp_path)
     machine = make_machine_msx2(_ROM, _EXTROM)
     vdp = machine.vdp
@@ -247,35 +247,36 @@ def _edited_msx2_file(tmp_path, monkeypatch, edit):
 @pytest.mark.parametrize(
     "edit",
     [
-        lambda d: d.__setitem__("vdp_latch", 0x35),                  # differs from first_byte
-        lambda d: d.__setitem__("vdp_latch", None),                  # control_pending is true
-        lambda d: d["vdp9938"].__setitem__("control_pending", False),  # vdp_latch is 0x34
+        lambda d: d["vdp"].__setitem__("latch", 0x35),                # differs from first_byte
+        lambda d: d["vdp"].__setitem__("latch", None),                # control_pending is true
+        lambda d: d["vdp"]["v9938"].__setitem__("control_pending", False),  # latch is 0x34
     ],
 )
 def test_disagreeing_port_latch_is_rejected(tmp_path, monkeypatch, edit) -> None:
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
-    with pytest.raises(StateLoadError, match="vdp9938"):
+    with pytest.raises(StateLoadError, match="V9938 latch"):
         load_state(machine, state_path)
 
 
 @pytest.mark.parametrize("value", [0x100, -1, "x", True])
 def test_out_of_range_vdp_latch_is_rejected(tmp_path, monkeypatch, value) -> None:
     machine, state_path = _edited_msx2_file(
-        tmp_path, monkeypatch, lambda d: d.__setitem__("vdp_latch", value)
+        tmp_path, monkeypatch, lambda d: d["vdp"].__setitem__("latch", value)
     )
     with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
-    assert exc_info.value.producer == "vdp_latch"
+    assert exc_info.value.producer == "vdp"
+    assert "vdp.latch" in str(exc_info.value)
 
 
 def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None:
     machine, state_path = _edited_msx2_file(
-        tmp_path, monkeypatch, lambda d: d["vdp9938"]["cmd_engine"].__setitem__("bpp", 0)
+        tmp_path, monkeypatch, lambda d: d["vdp"]["v9938"]["cmd_engine"].__setitem__("bpp", 0)
     )
     machine.vdp.vram[0:4] = b"\x11\x22\x33\x44"
     machine.vdp.regs[7] = 0x5A
     machine.memory.ram[0] = 0x99
-    with pytest.raises(StateLoadError, match="vdp9938"):
+    with pytest.raises(StateLoadError, match="vdp.v9938"):
         load_state(machine, state_path)
     assert bytes(machine.vdp.vram[0:4]) == b"\x11\x22\x33\x44"
     assert machine.vdp.regs[7] == 0x5A
@@ -284,7 +285,7 @@ def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None
 
 @pytest.mark.parametrize(
     "edit",
-    [lambda d: d.__setitem__("extra_key", 1), lambda d: d.pop("vdp_regs")],
+    [lambda d: d.__setitem__("extra_key", 1), lambda d: d.pop("psg")],
 )
 def test_other_top_level_layout_is_refused(tmp_path, monkeypatch, edit) -> None:
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
@@ -299,7 +300,7 @@ def test_parse_names_a_missing_key_and_its_object(where, key) -> None:
     for part in where:
         target = target[part]
     del target[key]
-    label = where[-1] if where else "vdp9938"
+    label = where[-1] if where else "vdp.v9938"
     with pytest.raises(SchemaError, match=rf"{label} is missing keys \['{key}'\]"):
         parse_v9938_state(bad)
 
@@ -307,7 +308,7 @@ def test_parse_names_a_missing_key_and_its_object(where, key) -> None:
 def test_layout_is_checked_before_mapper_kinds_are_decoded(tmp_path, monkeypatch) -> None:
     def edit(d):
         d["extra_key"] = 1
-        d["mapper_kind"] = "no-such-mapper"
+        d["slots"]["slot1"]["mapper"]["kind"] = "no-such-mapper"
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
     with pytest.raises(ValueError, match="incompatible state file layout"):
         load_state(machine, state_path)
