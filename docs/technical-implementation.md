@@ -888,12 +888,17 @@ ROM-bearing field in the loader.
 Building is split between the host and the core.
 `load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py`
 reads every file the machine needs into a `MachineConfig` value
-(`msx/boundary.py`): the ROM images by role, the cartridges with their mappers
-(an `auto` mapper is resolved here through the ROM database), the saved SRAM
-images, the disk images and the RTC start time. `build_machine(config)` in
-`msx/machine_loader.py` then constructs the `Machine` from those bytes only. It
-opens no file and consults no database, so the same config always builds the
-same machine. The `spec.generation` field selects the concrete types:
+(`msx/boundary.py`). The resolved machine, the cartridges with their mappers (an
+`auto` mapper is resolved here through the ROM database) and the extensions
+become one canonical JSON document (`msx/machine_config.py`,
+`msx/machine_config.schema.json`), in which every ROM is a reference
+`{name, size, sha1, pages}`. The ROM images travel beside it keyed by SHA1, with
+the run inputs: the saved SRAM images, the disk images and the RTC start time.
+`build_machine(config)` in `msx/machine_loader.py` parses the document strictly,
+checks every referenced image's size and SHA1, and then constructs the `Machine`
+from those bytes only. It opens no file and consults no database, so the same
+config always builds the same machine, and the `Machine` keeps the document's
+SHA-256, which a save state records. The `spec.generation` field selects the concrete types:
 
 - `"msx1"`: `VDP` (TMS9918A), flat slot 3 RAM, no RTC or RAM mapper
 - `"msx2"`: `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`
