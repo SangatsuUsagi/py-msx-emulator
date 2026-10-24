@@ -648,7 +648,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### load_machine_config() と build_machine()
 
-マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
+マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。解決済みのマシン、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、拡張は、1 つの正規化した JSON の文書（`msx/machine_config.py`、`msx/machine_config.schema.json`）になり、ROM はすべて `{name, size, sha1, pages}` の参照として書く。ROM イメージは SHA1 をキーにして文書と一緒に渡し、実行時の入力（保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻）も添える。続いて `msx/machine_loader.py` の `build_machine(config)` が文書を厳密に解析し、参照された各イメージのサイズと SHA1 を確かめてから、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`Machine` は文書の SHA-256 を持ち、ステートはそれを記録する。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
 - `"msx2"`：`V9938`、サブ ROM と `RamMapper` を持つ拡張スロット 3、`RTC`

@@ -283,6 +283,7 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 | 項目 | 詳細 |
 | --- | --- |
 | 実装 | `host/romdb.py` |
+| データ | `roms/msx_romdb.json`（`scripts/make_romdb.py` で生成） |
 | データソース | [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml)（参照元。すべてのエントリは独自に収集した事実情報） |
 | フォールバック | ROM がデータベースにない場合は、タイトルなしで起動し、`--mapper auto` の推定でマッパーを選ぶ |
 
@@ -331,7 +332,7 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 ### ステートセーブ/ロード
 
-ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報を含む。ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になる。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持つ。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定める。形式のバージョンは 17 で、それより前のバージョンのステートは読み込めない。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
+ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報を含む。ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になる。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持つ。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定める。形式のバージョンは 18 で、それより前のバージョンのステートは読み込めない。ステートには保存したときのマシン構成も記録し（[マシン設定](#マシン設定)を参照）、同じマシン、拡張、カートリッジ ROM のときだけ読み込める。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
 
 - 実装：`msx/state.py`（スナップショットのエンコード）、`msx/snapshot.schema.json`（構成）、`host/state_files.py`（ファイル）
 
@@ -708,6 +709,8 @@ Claude Code のような AI コーディングエージェントから、実行�
 
 ハードウェア構成（VDP の種類、RAM のサイズ、スロットの配線、ROM ファイル）は `config/machines/` の YAML ファイルに書く。`--machine` でマシンの ID を選ぶ。省略すると ROM データベースで世代を決める（MSX1 の ROM なら `cbios_msx1_jp`、MSX2 の ROM かカートリッジなしなら `cbios_msx2_jp`）。
 
+編集するのは YAML ファイルで、配線の根拠を書いたコメントもそこに残す。起動時に、選んだマシン、デバイス、カートリッジとマッパー、拡張を 1 つの MachineConfig 文書にまとめる。文書は正規化した JSON（RFC 8785）で、構成は [`msx/machine_config.schema.json`](msx/machine_config.schema.json) が定める。エミュレータのコアは YAML ではなく、この文書と、文書が SHA1 で名指しする ROM イメージからマシンを組み立てる。コアの別の実装にも同じ文書を渡せる。ステートには文書の SHA-256 を記録する。
+
 ### 利用可能なマシン ID
 
 | ID | 世代 | 地域 | VDP |
@@ -863,7 +866,10 @@ py-msx-emulator/
 │   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
 │   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
 │   ├── machine_spec.py    # 解決済みのマシン記述
-│   ├── machine_loader.py  # 読み込んだ設定からマシンを組み立てる
+│   ├── machine_config.py  # MachineConfig 文書（正規化した JSON）の作成と解析
+│   ├── machine_config.schema.json # MachineConfig 文書の構成を定める JSON Schema
+│   ├── machine_loader.py  # MachineConfig からマシンを組み立てる
+│   ├── canonical_json.py  # 正規化 JSON の書き出しと厳密な読み込み（文書、ステート）
 │   ├── memory.py          # スロットベースのメモリバス
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
