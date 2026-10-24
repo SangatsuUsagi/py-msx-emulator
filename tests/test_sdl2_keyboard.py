@@ -43,18 +43,24 @@ from frontend.sdl2_keyboard import (
     _K_z,
     resolve_keyboard_joy_map,
 )
-from msx.input import KEY_NAME_TO_CELL, InputState
+from host.input_state import InputState
+from msx.input import KEY_NAME_TO_CELL
+from msx.machine_spec import KeyboardLayout
 
 
 class _Kb:
-    """An InputState driven through SdlKeyboard, read like the old InputState."""
+    """An InputState builder driven through SdlKeyboard for a machine of the
+    given keyboard layout."""
 
     def __init__(
         self, keyboard_type: str = "int",
         joy_map: Mapping[int, tuple[int, int]] | None = None,
     ) -> None:
-        self.input = InputState(keyboard_type=keyboard_type)
-        self.kb = SdlKeyboard(self.input, JOY_MAP if joy_map is None else joy_map)
+        self.input = InputState()
+        self.kb = SdlKeyboard(
+            self.input, JOY_MAP if joy_map is None else joy_map,
+            keyboard_layout=KeyboardLayout(keyboard_type),
+        )
 
     def key_down(self, key: int) -> None:
         self.kb.key_down(key)
@@ -82,7 +88,7 @@ class _Kb:
 
     @property
     def keyboard_type(self) -> str:
-        return self.input.keyboard_type
+        return self.kb.keyboard_layout.value
 
     @property
     def joy_map(self) -> Mapping[int, tuple[int, int]]:

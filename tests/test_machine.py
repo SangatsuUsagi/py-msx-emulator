@@ -2,7 +2,7 @@
 import pytest
 
 from host.romdb import RomDbEntry
-from msx.input import InputState
+from msx.input import InputLines
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
@@ -179,7 +179,7 @@ def test_make_machine_io_routes_psg() -> None:
 
 def test_make_machine_exposes_input_state() -> None:
     m = _make_machine()
-    assert isinstance(m.input, InputState)
+    assert isinstance(m.input, InputLines)
     assert all(row == 0xFF for row in m.input.matrix)
     assert m.input.joy1 == 0x3F
     assert m.input.joy2 == 0x3F

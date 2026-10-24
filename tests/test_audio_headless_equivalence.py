@@ -15,7 +15,8 @@ import frontend.sdl2_frontend as fe
 from frontend.audio_filter import BiquadLowPass
 from frontend.sdl2_frontend import _CtrlComboState, _DiskList, _HotkeyState, _LoopState
 from frontend.sdl2_keyboard import SdlKeyboard
-from msx.input import InputState
+from host.input_state import InputState
+from msx.input import InputFrame
 from msx.machine import Machine
 from msx.state import _snapshot_from_machine
 from tests.factories import make_machine
@@ -111,7 +112,7 @@ def _run_headless(machine: Machine, frames: int) -> list[bytes]:
     # Headless never renders video; the frontend run renders, so equality
     # also shows that rendering does not change emulated state.
     pcm = []
-    no_input = InputState()
+    no_input = InputFrame()
     for _ in range(frames):
         pcm.append(machine.step_frame(no_input, render_video=False).audio)
     return pcm

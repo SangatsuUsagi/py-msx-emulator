@@ -255,7 +255,7 @@ def test_joystick(rig) -> None:
 def test_injected_input_also_reaches_the_frontend_accumulator(rig) -> None:
     # With a frontend running, injected input must survive the next
     # step_frame, which copies the frontend's accumulator into the machine.
-    from msx.input import InputState
+    from host.input_state import InputState
 
     machine, srv, client = rig
     accumulator = InputState()

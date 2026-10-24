@@ -21,12 +21,14 @@ from frontend.sdl2_frontend import (
     _window_title,
 )
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
+from host.input_state import InputState
 from msx.boundary import FrameOutput, RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
-from msx.input import KEY_NAME_TO_CELL, InputState
+from msx.input import KEY_NAME_TO_CELL, InputFrame
 from msx.machine import Machine
+from msx.machine_spec import KeyboardLayout
 from tests.disk_factories import dsk_image
 
 
@@ -115,6 +117,7 @@ class _FakeSDL:
 class _FakeMachine:
     def __init__(self) -> None:
         self.input = InputState()
+        self.keyboard_layout = KeyboardLayout.INTERNATIONAL
         self._debugger = None
         self.fdc: SonyPhilipsInterface | None = None
         self.reset_calls = 0
@@ -428,7 +431,7 @@ def test_jis_yen_key_reaches_matrix_via_scancode_fallback() -> None:
     yen_cell = KEY_MATRIX_JP[SDLK_JIS_YEN]
     for observed_sym in (0, 165):  # SDLK_UNKNOWN, and Unicode YEN SIGN (U+00A5)
         h = _Harness()
-        h.machine.input.keyboard_type = "jp"
+        h.keyboard.keyboard_layout = KeyboardLayout.JAPANESE
         h.keyboard._matrix_map = KEY_MATRIX_JP
         h.keydown(observed_sym, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL3)
         assert _asserted(h.matrix, yen_cell)
@@ -458,7 +461,7 @@ def test_host_apostrophe_key_reaches_colon_cell_via_scancode() -> None:
     assert colon_cell != apostrophe_cell
 
     h = _Harness()
-    h.machine.input.keyboard_type = "jp"
+    h.keyboard.keyboard_layout = KeyboardLayout.JAPANESE
     h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(_K_QUOTE, scancode=_FakeSDL.SDL_SCANCODE_APOSTROPHE)
@@ -498,7 +501,7 @@ def test_jis_caret_key_reaches_caret_cell_via_plain_sym() -> None:
     caret_cell = KEY_MATRIX_JP[_K_CARET]
 
     h = _Harness()
-    h.machine.input.keyboard_type = "jp"
+    h.keyboard.keyboard_layout = KeyboardLayout.JAPANESE
     h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(_K_CARET, scancode=_FakeSDL.SDL_SCANCODE_EQUALS)
@@ -526,7 +529,7 @@ def test_host_ro_key_reaches_underscore_cell_via_scancode() -> None:
     underscore_cell = KEY_MATRIX_JP[SDLK_JIS_RO]
 
     h = _Harness()
-    h.machine.input.keyboard_type = "jp"
+    h.keyboard.keyboard_layout = KeyboardLayout.JAPANESE
     h.keyboard._matrix_map = KEY_MATRIX_JP
 
     h.keydown(0, scancode=_FakeSDL.SDL_SCANCODE_INTERNATIONAL1)
@@ -975,7 +978,7 @@ class _LoopMachine(_FakeMachine):
         self.vdp = _LoopVDP()
         self.video_standard = _LoopStandard()
 
-    def step_frame(self, frame_input: InputState, render_video: bool) -> FrameOutput:
+    def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
         self.frames += 1
         self.takes += 1
         self.cycle_count += 59736

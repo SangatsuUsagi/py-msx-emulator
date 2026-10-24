@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from msx.input import InputState
+from host.input_state import InputState
 
 
 class _SdlJoystickApi(Protocol):

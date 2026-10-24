@@ -84,7 +84,7 @@ def test_the_memo_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
     # vdp-renderer "The memo is not part of the snapshot".
     from msx import state
-    from msx.input import InputState
+    from msx.input import InputFrame
     from tests.factories import make_machine, make_machine_msx2
 
     def build():  # type: ignore[no-untyped-def]
@@ -95,7 +95,7 @@ def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
     plain, converted = build(), build()
     for machine in (plain, converted):
         for _ in range(3):
-            machine.step_frame(InputState(), render_video=False)
+            machine.step_frame(InputFrame(), render_video=False)
     converted.vdp._rgb_rows.frame(_frame(256, 7, repeat_rows=True), _TMS_CHANNELS)
     assert len(converted.vdp._rgb_rows) > 0
     saved = state.save_state(converted)
@@ -103,8 +103,8 @@ def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
 
     loaded = build()
     state.load_state(loaded, saved, "test")
-    expected = converted.step_frame(InputState(), render_video=True).video
-    assert loaded.step_frame(InputState(), render_video=True).video == expected
+    expected = converted.step_frame(InputFrame(), render_video=True).video
+    assert loaded.step_frame(InputFrame(), render_video=True).video == expected
 
 
 class _Uncached:

@@ -26,7 +26,7 @@ from msx.boundary import (
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import FmPac
-from msx.input import InputState
+from msx.input import InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.machine_spec import (
@@ -764,7 +764,7 @@ def build_machine(
     # with it, and either slot's mapper can resolve to Majutsushi.
     dac = _resolve_shared_dac(spec, mapper1_instance, mapper2_instance)
 
-    input_state = InputState(keyboard_type=spec.keyboard_type)
+    input_state = InputLines()
     psg = PSG(_input=input_state)
     io = IOBus(_logger=logger)
     if wiring.fmpac_device is not None:
@@ -865,7 +865,7 @@ def _build_msx1(
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
-    input_state: InputState,
+    input_state: InputLines,
     psg: PSG,
     io: IOBus,
     logger: DebugLogger | None,
@@ -954,7 +954,7 @@ def _build_msx2(
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
-    input_state: InputState,
+    input_state: InputLines,
     psg: PSG,
     io: IOBus,
     logger: DebugLogger | None,

@@ -1,10 +1,10 @@
-from msx.input import InputState
+from msx.input import InputLines
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ppi import PPI, PpiControlRead
 
 
-def make_ppi(slot_register: int = 0, input_state: InputState | None = None,
+def make_ppi(slot_register: int = 0, input_state: InputLines | None = None,
              control_read: PpiControlRead = PpiControlRead.CONTROL) -> PPI:
     mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None),
                  slot_register=slot_register)
@@ -48,7 +48,7 @@ def test_port_aa_upper_nibble_reflected() -> None:
 
 
 def test_port_aa_write_stores_row() -> None:
-    state = InputState()
+    state = InputLines()
     state.matrix[3] = 0xFE
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x03)
@@ -56,14 +56,14 @@ def test_port_aa_write_stores_row() -> None:
 
 
 def test_port_aa_row_out_of_range_returns_ff() -> None:
-    state = InputState()
+    state = InputLines()
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x0F)  # row 15, out of range
     assert ppi.read_port(0xA9) == 0xFF
 
 
 def test_keyboard_read_matrix_row2() -> None:
-    state = InputState()
+    state = InputLines()
     state.matrix[2] = 0xFE
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x02)
@@ -71,7 +71,7 @@ def test_keyboard_read_matrix_row2() -> None:
 
 
 def test_keyboard_read_returns_ff_no_input() -> None:
-    ppi = make_ppi()  # no InputState
+    ppi = make_ppi()  # no InputLines
     assert ppi.read_port(0xA9) == 0xFF
 
 
@@ -193,7 +193,7 @@ def test_port_ab_mode_word_leaves_port_c_unchanged() -> None:
 # out-of-range like rows 11-15 (see "Rows 9-10" open question) -----------------
 
 def test_port_aa_row9_reads_matrix_row9() -> None:
-    state = InputState()
+    state = InputLines()
     state.matrix[9] = 0xAA
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x09)  # row 9
@@ -201,7 +201,7 @@ def test_port_aa_row9_reads_matrix_row9() -> None:
 
 
 def test_port_aa_row10_reads_matrix_row10() -> None:
-    state = InputState()
+    state = InputLines()
     state.matrix[10] = 0x55
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x0A)  # row 10
@@ -211,7 +211,7 @@ def test_port_aa_row10_reads_matrix_row10() -> None:
 def test_port_aa_row11_out_of_range_returns_ff() -> None:
     # Boundary complement to test_port_aa_row_out_of_range_returns_ff (row 15):
     # row 11 is the first row past the real 0-10 matrix.
-    state = InputState()
+    state = InputLines()
     ppi = make_ppi(input_state=state)
     ppi.write_port(0xAA, 0x0B)  # row 11
     assert ppi.read_port(0xA9) == 0xFF
@@ -267,7 +267,7 @@ def test_reset_restores_control_word_to_post_reset_default() -> None:
 
 
 def test_reset_clears_port_c() -> None:
-    input_state = InputState()
+    input_state = InputLines()
     input_state.matrix[0] = 0xFE  # row 0: distinct from every other row's 0xFF
     ppi = make_ppi(input_state=input_state)
     ppi.write_port(0xAA, 0x43)  # CAPS LED bit + row 3 selected

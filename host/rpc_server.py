@@ -57,8 +57,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from host.debugger.disasm import disassemble
+from host.input_state import InputState
 from host.screenshot import encode_rgb24_png, scale_rgb24
-from msx.input import KEY_NAME_TO_CELL, InputState
+from msx.input import KEY_NAME_TO_CELL
 from msx.machine import PauseReason
 from msx.screenshot import render_current_rgb24
 
@@ -182,7 +183,9 @@ class DebugServer:
         # The frontend's per-frame input accumulator, when one runs (set by
         # frontend.sdl2_frontend.run). Injected input goes to it too, so the
         # next step_frame keeps it.
-        self.input_target: InputState | None = None
+        # Where injected input is built: the frontend's own builder when one
+        # runs (it replaces this), so injection carries into its next frame.
+        self.input_target: InputState = InputState()
         self._register_handlers()
 
     # -- lifecycle ----------------------------------------------------------
@@ -195,14 +198,11 @@ class DebugServer:
     def machine(self) -> "Machine":
         return self._machine
 
-    def input_lines(self) -> list[InputState]:
-        """Every InputState injected input must reach: the machine's own lines
-        (seen at once, e.g. by a paused single-step) and the frontend's
-        accumulator (carried into the next step_frame)."""
-        lines = [self._machine.input]
-        if self.input_target is not None and self.input_target is not self._machine.input:
-            lines.append(self.input_target)
-        return lines
+    def apply_injected_input(self) -> None:
+        """Hand the builder's current input to the machine at once, so the
+        next PPI/PSG read sees an injection even while paused (remote-socket-rpc
+        "Input injection methods"); the frontend's next frame carries it on."""
+        self._machine.apply_input(self.input_target.frame())
 
     def start(self) -> None:
         """Bind the socket and start accepting connections on a daemon thread."""
@@ -455,8 +455,8 @@ class DebugServer:
         still_pending: list[tuple[float, int, int]] = []
         for deadline, row, bit in self._key_releases:
             if now >= deadline:
-                for lines in self.input_lines():
-                    lines.set_key_state(row, bit, False)
+                self.input_target.set_key_state(row, bit, False)
+                self.apply_injected_input()
             else:
                 still_pending.append((deadline, row, bit))
         self._key_releases = still_pending
@@ -707,8 +707,8 @@ def _h_input_press_key_named(server: DebugServer, params: dict[str, Any]) -> dic
         raise RpcError(ERR_INVALID_PARAMS, f"unknown key name: {name}")
     duration_ms = _require_int(params, "duration_ms", default=100)
     row, bit = cell
-    for lines in server.input_lines():
-        lines.set_key_state(row, bit, True)
+    server.input_target.set_key_state(row, bit, True)
+    server.apply_injected_input()
     server.schedule_key_release(row, bit, duration_ms)
     return {"key": name.upper(), "row": row, "bit": bit, "duration_ms": duration_ms}
 
@@ -722,11 +722,11 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     for name, bit in _JOY_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
-        for inp in server.input_lines():
-            if pressed:
-                inp.joystick_button_down(port_idx, bit)
-            else:
-                inp.joystick_button_up(port_idx, bit)
+        if pressed:
+            server.input_target.joystick_button_down(port_idx, bit)
+        else:
+            server.input_target.joystick_button_up(port_idx, bit)
+    server.apply_injected_input()
     return {"port": port, "state": dict(state)}
 
 
@@ -738,8 +738,8 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
     port_idx = port - 1
     for name, bit in _JOY_BITS.items():
         state[name] = False
-        for inp in server.input_lines():
-            inp.joystick_button_up(port_idx, bit)
+        server.input_target.joystick_button_up(port_idx, bit)
+    server.apply_injected_input()
     return {"port": port, "released": True}
 
 
@@ -828,10 +828,10 @@ def _blank_joy_state() -> dict[str, bool]:
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     try:
-        for lines in server.input_lines():
-            lines.set_key_state(row, bit, pressed)
+        server.input_target.set_key_state(row, bit, pressed)
     except ValueError as exc:
         raise RpcError(ERR_INVALID_PARAMS, str(exc)) from None
+    server.apply_injected_input()
 
 
 def _parse_addr(value: Any) -> int:

@@ -10,7 +10,7 @@ from host import state_files
 from host.state_files import save_state as save_state_file
 from msx import state
 from msx.boundary import RgbFrame
-from msx.input import InputState
+from msx.input import InputFrame
 from tests.factories import make_machine
 
 _ROM = bytes(32 * 1024)
@@ -21,7 +21,7 @@ def test_core_save_returns_bytes_and_writes_nothing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     machine = make_machine(rom=_ROM)
-    machine.step_frame(InputState(), render_video=False)
+    machine.step_frame(InputFrame(), render_video=False)
     data = state.save_state(machine)
     assert isinstance(data, bytes)
     assert json.loads(data)["format_version"] == state.CURRENT_FORMAT_VERSION
@@ -34,7 +34,7 @@ def test_core_load_restores_from_bytes(
     monkeypatch.chdir(tmp_path)
     saved = make_machine(rom=_ROM)
     for _ in range(2):
-        saved.step_frame(InputState(), render_video=False)
+        saved.step_frame(InputFrame(), render_video=False)
     data = state.save_state(saved)
     restored = make_machine(rom=_ROM)
     state.load_state(restored, data)

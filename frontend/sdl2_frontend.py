@@ -25,11 +25,12 @@ from frontend.sdl2_keyboard import (
     resolve_keyboard_joy_map,
 )
 from host.app_config import AppConfig
+from host.input_state import InputState
 from host.media import swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
 from msx.boundary import RgbFrame
-from msx.input import KEY_NAME_TO_CELL, InputState
+from msx.input import KEY_NAME_TO_CELL
 from msx.machine import Machine
 from msx.mouse import MouseDevice
 from msx.psg import SAMPLE_RATE, JoystickPort
@@ -1004,11 +1005,9 @@ def _run_frame(
         skip_this_frame = since_present < 1.0 / frame_timer.fps
     else:
         skip_this_frame = state.skip_counter > 0
-    frame_input = keyboard.input_state
-    out = machine.step_frame(frame_input, render_video=not skip_this_frame)
-    # Mouse motion is per frame: the machine has taken this frame's share.
-    frame_input.mouse_dx = 0
-    frame_input.mouse_dy = 0
+    out = machine.step_frame(
+        keyboard.input_state.take_frame(), render_video=not skip_this_frame
+    )
     if out.video is not None:
         state.rgb_buf = out.video.pixels
         # The output height is constant (192-line frames are padded to
@@ -1136,7 +1135,7 @@ def run(
     )
     # Host input accumulates here and reaches the machine once per frame
     # through step_frame (allium/core-frontend.allium InputHeldForFrame).
-    frame_input = InputState(keyboard_type=machine.input.keyboard_type)
+    frame_input = InputState()
     if rpc_server is not None:
         rpc_server.input_target = frame_input
     joy_manager = JoystickManager(
@@ -1147,7 +1146,10 @@ def run(
         _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
     )
 
-    keyboard = SdlKeyboard(frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}))
+    keyboard = SdlKeyboard(
+        frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
+        keyboard_layout=machine.keyboard_layout,
+    )
 
     mouse: _HostMouse | None = None
     if mouse_port is not None:

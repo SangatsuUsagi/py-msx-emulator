@@ -7,7 +7,7 @@ import pytest
 
 import host.romdb as romdb
 from host.machine_config import load_machine_config
-from msx.input import InputState
+from msx.input import InputFrame
 from msx.machine_loader import build_machine
 from msx.state import _snapshot_from_machine
 from tests.factories import _msx2_spec, make_config, make_config_msx2
@@ -25,7 +25,7 @@ def test_building_twice_from_one_config_gives_equal_machines(
     second = build_machine(config)
     for machine in (first, second):
         for _ in range(3):
-            machine.step_frame(InputState(), render_video=False)
+            machine.step_frame(InputFrame(), render_video=False)
     assert _snapshot_from_machine(first) == _snapshot_from_machine(second)
 
 

@@ -1,6 +1,6 @@
 """Host-pixel to MSX-count mouse conversion in the SDL2 frontend (input-mouse)."""
 from frontend.sdl2_frontend import _HostMouse
-from msx.input import InputState
+from host.input_state import InputState
 
 
 def test_sub_scale_motion_accumulates_instead_of_being_dropped() -> None:

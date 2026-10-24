@@ -664,7 +664,7 @@ def test_keyboard_type_null_override_is_rejected_not_defaulted(tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_build_machine_input_state_keyboard_type_reaches_machine(tmp_path: Path) -> None:
+def test_build_machine_keyboard_type_reaches_machine(tmp_path: Path) -> None:
     config_dir, registry = _full_registry(tmp_path)
     _write(
         config_dir / "devices" / "ppi8255.yaml",
@@ -680,7 +680,7 @@ def test_build_machine_input_state_keyboard_type_reaches_machine(tmp_path: Path)
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
     assert spec.keyboard_type == "jp"
     machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
-    assert machine.input.keyboard_type == "jp"
+    assert machine.keyboard_layout == "jp"
 
 
 # ---------------------------------------------------------------------------
