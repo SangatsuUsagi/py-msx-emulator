@@ -7,7 +7,6 @@ devices from those bytes. It reads no file and looks up no database.
 """
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
@@ -908,16 +907,16 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
     else:
         device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
-    for idx in range(max(len(drives), 2)):
-        disk = config.disks.get(drive_media_id(idx))
-        if disk is None:
-            continue
-        if idx >= len(drives):
-            print(
-                f"warning: --fdd{idx + 1} given but machine has only "
-                f"{len(drives)} drive(s); ignoring",
-                file=sys.stderr,
+    drive_ids = [drive_media_id(idx) for idx in range(len(drives))]
+    for media_id in config.disks:
+        if media_id not in drive_ids:
+            raise MachineLoadError(
+                f"MachineConfig has a disk for {media_id} but the machine has "
+                f"{len(drives)} drive(s)"
             )
+    for idx, media_id in enumerate(drive_ids):
+        disk = config.disks.get(media_id)
+        if disk is None:
             continue
         image = DskDiskImage(disk.data, write_protected=disk.write_protected, path=disk.path)
         device.mount(image, drive=idx)
@@ -1025,6 +1024,8 @@ def _build_msx2(
         ppi=ppi,
     )
     if rtc is not None:
+        # PORT-NOTE: same back-reference as _wire_post_construction_attrs' cycle
+        #   closures; a port shares a narrow cycle counter with the RTC.
         rtc._get_cycle = lambda: machine.cycle_count
         rtc._start_cycle = machine.cycle_count
     if tracer is not None and isinstance(vdp, V9938):

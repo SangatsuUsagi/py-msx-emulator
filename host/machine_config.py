@@ -96,28 +96,22 @@ _SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 _MAX_SUB_SLOT_INDEX = 3
 
 
-def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
-    """Resolve the mapper type and return it with the cartridge sha1 (computed
-    once here so callers can reuse it for the SRAM save path)."""
-    sha1 = (
-        hashlib.sha1(cartridge, usedforsecurity=False).hexdigest()
-        if cartridge is not None
-        else None
-    )
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+    """Resolve "auto" through the ROM database; any other name passes through."""
     if mapper != "auto":
-        return mapper, sha1
+        return mapper
     if cartridge is None:
-        return "Mirrored", sha1
+        return "Mirrored"
     found = romdb.lookup(cartridge)
     if found is None:
         print("warning: cartridge not found in ROM database, using Mirrored mapper",
               file=sys.stderr)
-        return "Mirrored", sha1
+        return "Mirrored"
     if found not in _SUPPORTED_MAPPERS:
         print(f"warning: unsupported mapper type {found!r} from ROM database, "
               "using Mirrored mapper", file=sys.stderr)
-        return "Mirrored", sha1
-    return found, sha1
+        return "Mirrored"
+    return found
 
 
 @dataclass
@@ -1256,8 +1250,8 @@ def load_machine_config(
         logo = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
         if logo is not None:
             roms["logo"] = logo
-    mapper1_name, _ = _resolve_mapper_type(mapper, cartridge)
-    mapper2_name, _ = _resolve_mapper_type(mapper2, cartridge2)
+    mapper1_name = _resolve_mapper_type(mapper, cartridge)
+    mapper2_name = _resolve_mapper_type(mapper2, cartridge2)
     if spec.io_device is not None and spec.io_device.device == "kanji_rom":
         roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
     roms.update(_overlay_roms(1, extension_overlay1))
@@ -1279,7 +1273,13 @@ def load_machine_config(
                 assert disk is not None
                 roms["disk"] = disk
             for index, path in enumerate((fdd1, fdd2)):
-                if path is not None:
+                if path is not None and index >= spec.fdc.drives:
+                    print(
+                        f"warning: --fdd{index + 1} given but machine has only "
+                        f"{spec.fdc.drives} drive(s); ignoring",
+                        file=sys.stderr,
+                    )
+                elif path is not None:
                     disks[drive_media_id(index)] = DiskMedium(
                         path.read_bytes(), not os.access(path, os.W_OK), path
                     )

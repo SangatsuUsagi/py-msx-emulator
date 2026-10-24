@@ -17,7 +17,9 @@ from msx.vdp._geometry import VideoStandard
 
 
 class MachineLoadError(Exception):
-    """Raised when a device or machine YAML fails validation."""
+    """Raised when a machine definition or MachineConfig is invalid or
+    self-conflicting (YAML validation on the host; wiring conflicts and missing
+    ROM roles in build_machine)."""
 
 
 @dataclass

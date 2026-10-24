@@ -10,9 +10,12 @@ from host.machine_config import (
     _parse_slot3_msx2,
     build_machine_from_spec,
     load_device_registry,
+    load_machine_config,
     load_machine_spec,
 )
+from msx.boundary import DiskMedium
 from msx.fdc.disk_image import DskDiskImage
+from msx.machine_loader import build_machine
 from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -226,3 +229,22 @@ def test_fdd2_alone_mounts_into_drive_b_not_a(tmp_path: Path) -> None:
     assert machine.fdc.drives[0].has_disk is False
     assert machine.fdc.drives[1].has_disk is True
     assert isinstance(machine.fdc.drives[1].image, DskDiskImage)
+
+
+def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _make_roms(tmp_path)
+    dsk = tmp_path / "b.dsk"
+    dsk.write_bytes(bytes(_2DD))
+    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
+    assert "drive_b" not in config.disks
+    assert "only 1 drive" in capsys.readouterr().err
+
+
+def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path))
+    config.disks["drive_b"] = DiskMedium(bytes(_2DD))
+    with pytest.raises(MachineLoadError, match="drive_b"):
+        build_machine(config)
