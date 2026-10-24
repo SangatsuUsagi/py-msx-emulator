@@ -475,8 +475,9 @@ class SonyPhilipsInterface(FloppyDiskBase[WD2793State, SonyPhilipsConnectionStat
         reg = addr & 0x3FFF
         if REG_STATUS_CMD <= reg <= REG_CONTROL_STATUS:
             return self._read_reg(reg)
-        if self.disk_rom is not None and reg < len(self.disk_rom):
-            return self.disk_rom[reg]
+        rom = self.state.disk_rom
+        if rom is not None and reg < len(rom):
+            return rom[reg]
         return 0xFF
 
     def write_mem(self, addr: int, value: int) -> None:
@@ -627,8 +628,9 @@ class TC8566AFInterface(FloppyDiskBase[TC8566AFState, TC8566AFConnectionState]):
             if reg in _TC_RESERVED:
                 return _TC_RESERVED[reg]
             return 0xFF  # TC_REG_CONTROL0 / TC_REG_CONTROL1: write-only
-        if self.disk_rom is not None and reg < len(self.disk_rom):
-            return self.disk_rom[reg]
+        rom = self.state.disk_rom
+        if rom is not None and reg < len(rom):
+            return rom[reg]
         return 0xFF
 
     def write_mem(self, addr: int, value: int) -> None:

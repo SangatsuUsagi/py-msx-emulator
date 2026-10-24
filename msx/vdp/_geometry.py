@@ -24,6 +24,10 @@ CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
 NTSC_LINES_PER_FRAME = 262
 PAL_LINES_PER_FRAME = 313
 
+# Multiply this to get a zeroed buffer: on PyPy `ZERO_BYTE * n` is ~10x faster
+# than `bytearray(n)` (same cost on CPython). Never mutate it.
+ZERO_BYTE = bytearray(1)
+
 
 class VideoStandard(enum.Enum):
     """Video standard of a machine; values are the machine-YAML spellings.

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
-from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
+from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE, pad_rows, pad_to_output_height
 from msx.vdp._v9938_defs import (
     _S2_EO,
     _PaletteChange,
@@ -470,7 +470,7 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # it alongside row_vscroll so the sprite pass reads both per line.
     row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
 
-    out = bytearray(frame_w * full_h)
+    out = ZERO_BYTE * (frame_w * full_h)
     if len(runs) == 1:
         _render_band_run(vdp, st, out, runs[0], full_h, row_vscroll, row_spd, True)
     else:
@@ -479,7 +479,7 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
             if run_w == frame_w:
                 _render_band_run(vdp, st, out, run, full_h, row_vscroll, row_spd, False)
             else:
-                narrow = bytearray(run_w * full_h)
+                narrow = ZERO_BYTE * (run_w * full_h)
                 _render_band_run(vdp, st, narrow, run, full_h, row_vscroll, row_spd, False)
                 _widen_rows(out, frame_w, narrow, run_w, run[0].y0, min(run[-1].y1, full_h))
     _update_field_parity(vdp, st)
@@ -513,14 +513,14 @@ def _render_sprite_status_only(vdp: "V9938", st: _RenderStatus) -> None:
         runs = _width_runs(bands)
         row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
         for run in runs:
-            scratch = bytearray(display_width_of(run[0].regs) * full_h)
+            scratch = ZERO_BYTE * (display_width_of(run[0].regs) * full_h)
             _render_run_sprites(
                 vdp, st, scratch, run, full_h, row_vscroll, row_spd, len(runs) == 1
             )
     else:
         regs = vdp.regs
         h = display_height_of(regs)
-        scratch = bytearray(display_width_of(regs) * h)
+        scratch = ZERO_BYTE * (display_width_of(regs) * h)
         _render_sprites_for_mode(vdp, regs, st, scratch, 0, h)
     _update_field_parity(vdp, st)
 
@@ -633,7 +633,7 @@ def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
     regs = vdp.regs
     h = display_height_of(regs)
     w = display_width_of(regs)
-    buf = bytearray(w * h)
+    buf = ZERO_BYTE * (w * h)
     _render_pass_range(vdp, regs, st, buf, 0, h)
     _update_field_parity(vdp, st)
     return buf
@@ -1232,8 +1232,8 @@ def _render_sprites(
     # z-order (only a pixel the VDP actually displays claims a pixel, so a
     # transparent higher-priority sprite does not block a lower-priority one
     # showing through); sprite_touched tracks coincidence.
-    sprite_painted = bytearray(_W * scan_hi)
-    sprite_touched = bytearray(_W * scan_hi)
+    sprite_painted = ZERO_BYTE * (_W * scan_hi)
+    sprite_touched = ZERO_BYTE * (_W * scan_hi)
     coincidence = False
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
@@ -1483,16 +1483,16 @@ def _render_sprites_mode2(
     # 0 = unclaimed. A displayed pixel stores colour | _SPRITE_CLAIM, so an
     # opaque colour-0 pixel (TP=1) claims its pixel too; the claim bit is
     # masked off when compositing.
-    sprite_buf = bytearray(scan_hi * width)
+    sprite_buf = ZERO_BYTE * (scan_hi * width)
     # Coincidence is tracked separately from sprite_buf (same split as
     # _render_sprites above): sprite_buf holds the composited colour and the
     # z-order winner, which a CC/IC sprite claims like any other, while
     # sprite_touched records only pixels a collision-eligible sprite covered.
-    sprite_touched = bytearray(scan_hi * width)
+    sprite_touched = ZERO_BYTE * (scan_hi * width)
     # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
     # visible if a higher-priority CC=0 sprite precedes it on the same line
     # (V9938 rule); leading CC=1 sprites are invisible.
-    cc0_seen = bytearray(scan_hi)
+    cc0_seen = ZERO_BYTE * scan_hi
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
@@ -1826,7 +1826,7 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
         for sy in range(max(0, band.y0), min(native_h, band.y1)):
             line_channels[sy] = channels
 
-    out = bytearray(w * OUTPUT_H * 3)
+    out = ZERO_BYTE * (w * OUTPUT_H * 3)
     for dy in range(OUTPUT_H):
         ny = dy - pad  # native index-buffer row this output row maps to
         if 0 <= ny < native_h:
