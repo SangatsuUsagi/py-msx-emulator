@@ -1,0 +1,689 @@
+"""SDL2 host keyboard (frontend/sdl2_keyboard.py): host keys to MSX matrix
+cells and keyboard-sourced joystick lines (specs input-keyboard, input-joystick).
+"""
+from collections.abc import Mapping
+
+from frontend.sdl2_keyboard import (
+    _K_0,
+    _K_AT,
+    _K_BACKQUOTE,
+    _K_CARET,
+    _K_COLON,
+    _K_COMMA,
+    _K_DOWN,
+    _K_EQUALS,
+    _K_F1,
+    _K_LALT,
+    _K_LEFT,
+    _K_LEFTBRACKET,
+    _K_LSHIFT,
+    _K_MINUS,
+    _K_QUOTE,
+    _K_RALT,
+    _K_RIGHT,
+    _K_RIGHTBRACKET,
+    _K_SEMICOLON,
+    _K_SLASH,
+    _K_SPACE,
+    _K_UNDERSCORE,
+    _K_UP,
+    JOY_MAP,
+    KEY_MATRIX_INT,
+    KEY_MATRIX_JP,
+    KEY_NAME_TO_SDLKEY,
+    SDLK_HOST_APOSTROPHE_KEY,
+    SDLK_JIS_RO,
+    SdlKeyboard,
+    _K_a,
+    _K_j,
+    _K_k,
+    _K_s,
+    _K_w,
+    _K_x,
+    _K_z,
+    resolve_keyboard_joy_map,
+)
+from host.input_state import InputState
+from msx.input import KEY_NAME_TO_CELL
+from msx.machine_spec import KeyboardLayout
+
+
+class _Kb:
+    """An InputState builder driven through SdlKeyboard for a machine of the
+    given keyboard layout."""
+
+    def __init__(
+        self, keyboard_type: str = "int",
+        joy_map: Mapping[int, tuple[int, int]] | None = None,
+    ) -> None:
+        self.input = InputState()
+        self.kb = SdlKeyboard(
+            self.input, JOY_MAP if joy_map is None else joy_map,
+            keyboard_layout=KeyboardLayout(keyboard_type),
+        )
+
+    def key_down(self, key: int) -> None:
+        self.kb.key_down(key)
+
+    def key_up(self, key: int) -> None:
+        self.kb.key_up(key)
+
+    def joystick_button_down(self, port: int, bit: int) -> None:
+        self.input.joystick_button_down(port, bit)
+
+    def joystick_button_up(self, port: int, bit: int) -> None:
+        self.input.joystick_button_up(port, bit)
+
+    @property
+    def matrix(self) -> list[int]:
+        return self.input.matrix
+
+    @property
+    def joy1(self) -> int:
+        return self.input.joy1
+
+    @property
+    def joy2(self) -> int:
+        return self.input.joy2
+
+    @property
+    def keyboard_type(self) -> str:
+        return self.kb.keyboard_layout.value
+
+    @property
+    def joy_map(self) -> Mapping[int, tuple[int, int]]:
+        return self.kb.joy_map
+
+# The tests assert the International layout; alias it locally (production no
+# longer exports a bare KEY_MATRIX default — it selects INT/JP explicitly).
+KEY_MATRIX = KEY_MATRIX_INT
+
+
+def make_input() -> _Kb:
+    return _Kb()
+
+
+def test_default_matrix_all_released() -> None:
+    state = make_input()
+    assert all(row == 0xFF for row in state.matrix)
+
+
+def test_default_joy1_all_released() -> None:
+    state = make_input()
+    assert state.joy1 == 0x3F
+
+
+def test_default_joy2_all_released() -> None:
+    state = make_input()
+    assert state.joy2 == 0x3F
+
+
+def test_minus_key_maps_to_row1_col2() -> None:
+    assert KEY_MATRIX[_K_MINUS] == (1, 2)
+    state = _Kb()
+    state.key_down(_K_MINUS)
+    assert state.matrix[1] & (1 << 2) == 0  # active-low: pressed
+
+
+def test_slash_key_maps_to_row2_col4() -> None:
+    # International layout: '/' is row 2, col 4 (shared with JIS).
+    assert KEY_MATRIX[_K_SLASH] == (2, 4)
+    state = _Kb()
+    state.key_down(_K_SLASH)
+    assert state.matrix[2] & (1 << 4) == 0
+
+
+def test_semicolon_key_maps_to_row1_col7() -> None:
+    assert KEY_MATRIX[_K_SEMICOLON] == (1, 7)
+
+
+def test_key_down_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_a]
+    state.key_down(_K_a)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_up_sets_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_a]
+    state.key_down(_K_a)
+    state.key_up(_K_a)
+    assert state.matrix[row] & (1 << bit) != 0
+
+
+def test_key_down_space_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_SPACE]
+    state.key_down(_K_SPACE)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_up_space_restores_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_SPACE]
+    state.key_down(_K_SPACE)
+    state.key_up(_K_SPACE)
+    assert state.matrix[row] & (1 << bit) != 0
+
+
+# --- allium/ppi.allium: AssertMatrixCell's row dispatch (row_0..row_10) --
+# rows 3 and 4 (letters C-J, K-R) had no key ever exercised against the
+# matrix bit directly before (only via joystick assertions on the same key).
+
+def test_key_down_row3_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_j]
+    assert (row, bit) == (3, 7)
+    state.key_down(_K_j)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_down_row4_clears_matrix_bit() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_k]
+    assert (row, bit) == (4, 0)
+    state.key_down(_K_k)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_down_clears_joystick_bit() -> None:
+    state = make_input()
+    _port, bit = JOY_MAP[_K_w]
+    state.key_down(_K_w)
+    assert state.joy1 & (1 << bit) == 0
+
+
+def test_key_up_sets_joystick_bit() -> None:
+    state = make_input()
+    _port, bit = JOY_MAP[_K_w]
+    state.key_down(_K_w)
+    state.key_up(_K_w)
+    assert state.joy1 & (1 << bit) != 0
+
+
+def test_key_down_down_clears_joystick_down_bit() -> None:
+    state = make_input()
+    _port, bit = JOY_MAP[_K_s]
+    state.key_down(_K_s)
+    assert state.joy1 & (1 << bit) == 0
+
+
+def test_unknown_key_noop_matrix() -> None:
+    state = make_input()
+    before = list(state.matrix)
+    state.key_down(9999)
+    state.key_up(9999)
+    assert state.matrix == before
+
+
+def test_unknown_key_noop_joystick() -> None:
+    state = make_input()
+    state.key_down(9999)
+    state.key_up(9999)
+    assert state.joy1 == 0x3F
+    assert state.joy2 == 0x3F
+
+
+def test_multiple_keys_down() -> None:
+    state = make_input()
+    state.key_down(_K_a)
+    state.key_down(_K_SPACE)
+    row_a, bit_a = KEY_MATRIX[_K_a]
+    row_sp, bit_sp = KEY_MATRIX[_K_SPACE]
+    assert state.matrix[row_a] & (1 << bit_a) == 0
+    assert state.matrix[row_sp] & (1 << bit_sp) == 0
+
+
+def test_cursor_keys_in_row8() -> None:
+    assert KEY_MATRIX[_K_UP] == (8, 5)
+    assert KEY_MATRIX[_K_DOWN] == (8, 6)
+    assert KEY_MATRIX[_K_LEFT] == (8, 4)
+    assert KEY_MATRIX[_K_RIGHT] == (8, 7)
+
+
+def test_cursor_keys_clear_row8_bits() -> None:
+    state = make_input()
+    state.key_down(_K_UP)
+    assert state.matrix[8] & (1 << 5) == 0
+    state.key_down(_K_LEFT)
+    assert state.matrix[8] & (1 << 4) == 0
+
+
+def test_cursor_keys_joy1_in_joymap() -> None:
+    assert JOY_MAP[_K_UP]    == (0, 0)
+    assert JOY_MAP[_K_DOWN]  == (0, 1)
+    assert JOY_MAP[_K_LEFT]  == (0, 2)
+    assert JOY_MAP[_K_RIGHT] == (0, 3)
+
+
+def test_other_bits_unaffected_on_key_down() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_a]
+    state.key_down(_K_a)
+    mask = ~(1 << bit) & 0xFF
+    assert state.matrix[row] & mask == mask
+
+
+def test_joystick_button_down_clears_joy1_bit() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 0)
+    assert state.joy1 & (1 << 0) == 0
+
+
+def test_joystick_button_up_sets_joy1_bit() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 0)
+    state.joystick_button_up(0, 0)
+    assert state.joy1 & (1 << 0) != 0
+
+
+def test_joystick_button_down_other_bits_unaffected() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 2)
+    mask = ~(1 << 2) & 0x3F
+    assert state.joy1 & mask == mask
+
+
+def test_joystick_button_down_joy2() -> None:
+    state = make_input()
+    state.joystick_button_down(1, 0)
+    assert state.joy2 & (1 << 0) == 0
+    assert state.joy1 == 0x3F  # joy1 unaffected
+
+
+def test_joystick_button_down_and_keyboard_stack() -> None:
+    state = make_input()
+    state.key_down(_K_w)               # keyboard presses Joy1 Up (bit 0)
+    state.joystick_button_down(0, 0)   # hardware also presses bit 0
+    assert state.joy1 & (1 << 0) == 0
+    state.joystick_button_up(0, 0)     # hardware releases
+    assert state.joy1 & (1 << 0) == 0  # keyboard still holds it
+    state.key_up(_K_w)
+    assert state.joy1 & (1 << 0) != 0  # now fully released
+
+
+def test_trigger_b_keyboard_mapping() -> None:
+    state = make_input()
+    assert JOY_MAP[_K_x] == (0, 5)   # Joy1 Trigger B
+    state.key_down(_K_x)
+    assert state.joy1 & (1 << 5) == 0  # bit 5 pressed
+    state.key_up(_K_x)
+    assert state.joy1 & (1 << 5) != 0
+
+
+def test_trigger_b_hardware() -> None:
+    state = make_input()
+    state.joystick_button_down(0, 5)
+    assert state.joy1 & (1 << 5) == 0
+    state.joystick_button_up(0, 5)
+    assert state.joy1 & (1 << 5) != 0
+
+
+# ---------------------------------------------------------------------------
+# Keyboard layout selection (International vs Japanese/JIS)
+# ---------------------------------------------------------------------------
+
+def test_default_keyboard_type_is_int() -> None:
+    assert _Kb().keyboard_type == "int"
+
+
+def test_int_and_jp_share_common_cells() -> None:
+    # Digits, letters, comma/period/slash, minus, semicolon are identical.
+    for key in (_K_a, _K_SPACE, _K_MINUS, _K_SEMICOLON, _K_SLASH, _K_COMMA):
+        assert KEY_MATRIX_INT[key] == KEY_MATRIX_JP[key]
+
+
+def test_int_specific_symbol_cells() -> None:
+    assert KEY_MATRIX_INT[_K_RIGHTBRACKET] == (1, 6)  # ]
+    assert KEY_MATRIX_INT[_K_LEFTBRACKET] == (1, 5)   # [
+    assert KEY_MATRIX_INT[_K_QUOTE] == (2, 0)         # ' (int has a dedicated key)
+
+
+def test_jp_specific_symbol_cells() -> None:
+    assert KEY_MATRIX_JP[_K_RIGHTBRACKET] == (2, 1)   # ] differs from int
+    assert KEY_MATRIX_JP[_K_LEFTBRACKET] == (1, 6)    # [ differs from int
+    # JIS apostrophe is reported to be SHIFT+"7" (row-0 bit-7) on real
+    # hardware, colliding on sym with SDLK_QUOTE -- see allium/ppi.allium's
+    # Open Questions for the (unverified) detail. Harmless belt-and-braces
+    # entry either way.
+    assert KEY_MATRIX_JP[_K_QUOTE] == (0, 7)
+
+
+def test_keyboard_type_selects_matrix_on_keypress() -> None:
+    # ']' lands in different cells depending on the selected layout.
+    kint = _Kb(keyboard_type="int")
+    kint.key_down(_K_RIGHTBRACKET)
+    assert kint.matrix[1] & (1 << 6) == 0  # int cell (1,6)
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_RIGHTBRACKET)
+    assert kjp.matrix[2] & (1 << 1) == 0   # jp cell (2,1)
+
+
+def test_jp_apostrophe_via_shift_seven_sym_maps_on_keypress() -> None:
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_QUOTE)
+    assert kjp.matrix[0] & (1 << 7) == 0
+    kjp.key_up(_K_QUOTE)
+    assert kjp.matrix[0] & (1 << 7) != 0
+
+
+def test_jp_equals_reachable_via_minus_cell_no_alias_needed() -> None:
+    # JIS "=" is SHIFT+"-" (row-1 bit-2) on real hardware. Probe-confirmed:
+    # the "-" key's own sym does not change under SHIFT, so plain SHIFT +
+    # _K_MINUS already reaches this cell -- no _K_EQUALS alias needed (and
+    # none is present: on JIS, scancode 46 is left alone entirely -- a real
+    # JIS "^"/"~" key reports that same scancode, see
+    # test_jp_host_equals_key_not_bound).
+    assert _K_EQUALS not in KEY_MATRIX_JP
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_LSHIFT)
+    kjp.key_down(_K_MINUS)
+    assert kjp.matrix[1] & (1 << 2) == 0   # "-" cell asserted
+    assert kjp.matrix[6] & (1 << 0) == 0   # SHIFT cell also asserted
+
+
+def test_jp_backquote_repurposed_as_caret_cell() -> None:
+    # JIS has no keyboard key at the host's "`"/"~" position; it is
+    # deliberately repurposed onto "^"'s cell (row-1 bit-3) so the character
+    # is reachable even when the host misdetects the keyboard layout and the
+    # real JIS "^" key's own sym isn't SDLK_CARET (see allium/ppi.allium).
+    assert KEY_MATRIX_JP[_K_BACKQUOTE] == KEY_MATRIX_JP[_K_CARET] == (1, 3)
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_BACKQUOTE)
+    assert kjp.matrix[1] & (1 << 3) == 0
+    kjp.key_up(_K_BACKQUOTE)
+    assert kjp.matrix[1] & (1 << 3) != 0
+
+
+def test_jp_host_apostrophe_key_repurposed_as_colon_cell() -> None:
+    # The host's dedicated apostrophe/quote key collides on sym with
+    # SHIFT+"7" (both SDLK_QUOTE) on a JIS input source, so it is identified
+    # by scancode instead (SDLK_HOST_APOSTROPHE_KEY) and repurposed onto
+    # ":"/"*"'s cell (row-2 bit-0), distinct from _K_QUOTE's row-0 bit-7.
+    assert KEY_MATRIX_JP[SDLK_HOST_APOSTROPHE_KEY] == KEY_MATRIX_JP[_K_COLON] == (2, 0)
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(SDLK_HOST_APOSTROPHE_KEY)
+    assert kjp.matrix[2] & (1 << 0) == 0
+    kjp.key_up(SDLK_HOST_APOSTROPHE_KEY)
+    assert kjp.matrix[2] & (1 << 0) != 0
+
+
+def test_int_host_apostrophe_key_shares_quote_cell() -> None:
+    # On International layout, the scancode sentinel is a defensive
+    # duplicate of the plain _K_QUOTE sym -- both name the same key here.
+    assert KEY_MATRIX_INT[SDLK_HOST_APOSTROPHE_KEY] == KEY_MATRIX_INT[_K_QUOTE] == (2, 0)
+
+
+def test_jp_caret_key_reaches_caret_cell_via_plain_sym() -> None:
+    # The real JIS "^"/"~" key and the International "="/"+" key sit at the
+    # same host physical position (scancode 46) but report different syms
+    # (SDLK_CARET vs SDLK_EQUALS, probe-confirmed against real JIS
+    # hardware), so no scancode interception is needed to tell them apart --
+    # the plain sym alone already resolves each to its own layout's cell.
+    assert KEY_MATRIX_JP[_K_CARET] == (1, 3)
+    assert _K_EQUALS not in KEY_MATRIX_JP
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_CARET)
+    assert kjp.matrix[1] & (1 << 3) == 0
+    kjp.key_up(_K_CARET)
+    assert kjp.matrix[1] & (1 << 3) != 0
+
+
+def test_jp_ro_key_reaches_underscore_cell() -> None:
+    # The real JIS "\"/"_" key (to the right of "/") is identified by
+    # scancode (SDLK_JIS_RO, its sym is unreliable) and bound directly to
+    # the "_" cell (row-2 bit-5) -- same cell as _K_UNDERSCORE. An
+    # International/US host never reports this scancode, so it has no
+    # KEY_MATRIX_INT entry.
+    assert KEY_MATRIX_JP[SDLK_JIS_RO] == KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)
+    assert SDLK_JIS_RO not in KEY_MATRIX_INT
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(SDLK_JIS_RO)
+    assert kjp.matrix[2] & (1 << 5) == 0
+    kjp.key_up(SDLK_JIS_RO)
+    assert kjp.matrix[2] & (1 << 5) != 0
+
+
+def test_shift_zero_reaches_underscore_cell_on_jp() -> None:
+    # JIS-only escape hatch: SHIFT+"0" asserts the "_" cell (row-2 bit-5)
+    # instead of "0"'s own cell (row-0 bit-0). Safe on JIS: openMSX's
+    # unicodemap.jp_jis has no SHIFT entry for row-0 bit-0.
+    state = _Kb(keyboard_type="jp")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    assert state.matrix[2] & (1 << 5) == 0    # "_" cell asserted
+    assert state.matrix[0] & (1 << 0) != 0    # "0" cell NOT asserted
+    state.key_up(_K_0)
+    assert state.matrix[2] & (1 << 5) != 0    # "_" cell released
+    state.key_up(_K_LSHIFT)
+
+
+def test_shift_zero_types_right_paren_on_int() -> None:
+    # International: SHIFT+"0" is ")" (openMSX unicodemap.int row-0 bit-0
+    # with SHIFT), so the "0" cell must be asserted, not redirected.
+    state = _Kb(keyboard_type="int")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    assert state.matrix[0] & (1 << 0) == 0    # "0" cell asserted
+    assert state.matrix[2] & (1 << 5) != 0    # "_" cell untouched
+    state.key_up(_K_0)
+    assert state.matrix[0] & (1 << 0) != 0
+    state.key_up(_K_LSHIFT)
+
+
+def test_shift_zero_release_after_shift_released_still_hits_underscore_cell() -> None:
+    # The redirect decision is latched at key_down time, so releasing SHIFT
+    # before "0" must still release the "_" cell, not silently reassert "0".
+    state = _Kb(keyboard_type="jp")
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_0)
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[2] & (1 << 5) == 0        # "_" cell still asserted
+    state.key_up(_K_0)
+    assert state.matrix[2] & (1 << 5) != 0        # "_" cell released
+    assert state.matrix[0] & (1 << 0) != 0        # "0" cell was never touched
+
+
+def test_zero_without_shift_still_asserts_zero_cell() -> None:
+    # Regression check: plain "0" (no SHIFT) is unaffected by the escape
+    # hatch on both layouts.
+    for keyboard_type in ("int", "jp"):
+        state = _Kb(keyboard_type=keyboard_type)
+        state.key_down(_K_0)
+        assert state.matrix[0] & (1 << 0) == 0
+        assert state.matrix[2] & (1 << 5) != 0
+        state.key_up(_K_0)
+        assert state.matrix[0] & (1 << 0) != 0
+
+
+def test_jp_at_caret_colon_underscore_cells() -> None:
+    assert KEY_MATRIX_JP[_K_AT] == (1, 5)          # @
+    assert KEY_MATRIX_JP[_K_CARET] == (1, 3)       # ^
+    assert KEY_MATRIX_JP[_K_COLON] == (2, 0)       # :
+    assert KEY_MATRIX_JP[_K_UNDERSCORE] == (2, 5)  # _
+    assert _K_AT not in KEY_MATRIX_INT
+    assert _K_CARET not in KEY_MATRIX_INT
+    assert _K_COLON not in KEY_MATRIX_INT
+    assert _K_UNDERSCORE not in KEY_MATRIX_INT
+
+
+def test_jp_at_maps_on_keypress() -> None:
+    kjp = _Kb(keyboard_type="jp")
+    kjp.key_down(_K_AT)
+    assert kjp.matrix[1] & (1 << 5) == 0
+    kjp.key_up(_K_AT)
+    assert kjp.matrix[1] & (1 << 5) != 0
+
+
+def test_left_alt_maps_to_graph_key() -> None:
+    # Left Alt/Option → MSX GRAPH at matrix (6, 2), shared by both layouts.
+    assert KEY_MATRIX_INT[_K_LALT] == (6, 2)
+    assert KEY_MATRIX_JP[_K_LALT] == (6, 2)
+    state = _Kb()
+    state.key_down(_K_LALT)
+    assert state.matrix[6] & (1 << 2) == 0  # GRAPH pressed (active-low)
+    state.key_up(_K_LALT)
+    assert state.matrix[6] & (1 << 2) != 0
+
+
+def test_shift_lr_reference_counted_release() -> None:
+    # LSHIFT and RSHIFT share matrix cell (6,0). Releasing one while the other
+    # is still held must keep the bit low; it clears only when both are up.
+    from frontend.sdl2_keyboard import _K_LSHIFT, _K_RSHIFT
+    state = make_input()
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_RSHIFT)
+    assert state.matrix[6] & 0x01 == 0   # SHIFT pressed
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[6] & 0x01 == 0   # still held by RSHIFT
+    state.key_up(_K_RSHIFT)
+    assert state.matrix[6] & 0x01 != 0   # both released → bit high
+
+
+def test_ctrl_lr_reference_counted_release() -> None:
+    # LCTRL and RCTRL share matrix cell (6,1); same reference-counted release.
+    from frontend.sdl2_keyboard import _K_LCTRL, _K_RCTRL
+    state = make_input()
+    state.key_down(_K_LCTRL)
+    state.key_down(_K_RCTRL)
+    assert state.matrix[6] & 0x02 == 0
+    state.key_up(_K_RCTRL)
+    assert state.matrix[6] & 0x02 == 0   # still held by LCTRL
+    state.key_up(_K_LCTRL)
+    assert state.matrix[6] & 0x02 != 0
+
+
+def test_right_alt_maps_to_code_kana_key() -> None:
+    # Right Alt/Option -> MSX CODE/KANA, same cell as the RPC-injection name
+    # table. Left Alt/Option keeps its existing GRAPH mapping (unchanged).
+    assert KEY_MATRIX_INT[_K_RALT] == KEY_NAME_TO_CELL["CODE"]
+    assert KEY_MATRIX_JP[_K_RALT] == KEY_NAME_TO_CELL["CODE"]
+    state = _Kb()
+    row, bit = KEY_NAME_TO_CELL["CODE"]
+    state.key_down(_K_RALT)
+    assert state.matrix[row] & (1 << bit) == 0  # CODE/KANA pressed (active-low)
+    state.key_up(_K_RALT)
+    assert state.matrix[row] & (1 << bit) != 0
+
+
+def test_shift_f1_simultaneous_press_asserts_both_cells() -> None:
+    # MSX BASIC reads simultaneous SHIFT+F1..F5 as F6..F10; InputState itself
+    # only needs to track both physical keys independently and correctly.
+    state = make_input()
+    shift_row, shift_bit = KEY_MATRIX[_K_LSHIFT]
+    f1_row, f1_bit = KEY_MATRIX[_K_F1]
+    state.key_down(_K_LSHIFT)
+    state.key_down(_K_F1)
+    assert state.matrix[shift_row] & (1 << shift_bit) == 0
+    assert state.matrix[f1_row] & (1 << f1_bit) == 0
+    state.key_up(_K_F1)
+    assert state.matrix[f1_row] & (1 << f1_bit) != 0     # F1 released
+    assert state.matrix[shift_row] & (1 << shift_bit) == 0  # SHIFT still held
+    state.key_up(_K_LSHIFT)
+    assert state.matrix[shift_row] & (1 << shift_bit) != 0
+
+
+def test_default_joy_map_matches_built_in_joy_map() -> None:
+    state = _Kb()
+    assert state.joy_map is JOY_MAP
+
+
+def test_custom_joy_map_used_instead_of_default() -> None:
+    # Custom map: only J drives Joy1 Trigger A. Z (the built-in default key)
+    # must no longer affect Joy1 at all.
+    state = _Kb(joy_map={_K_j: (0, 4)})
+    state.key_down(_K_z)
+    assert state.joy1 & (1 << 4) != 0   # unaffected: Z is not in the custom map
+    state.key_down(_K_j)
+    assert state.joy1 & (1 << 4) == 0   # J drives Trigger A per the custom map
+
+
+def test_custom_joy_map_does_not_affect_keyboard_matrix() -> None:
+    # A joy_map override only changes joystick bits; the MSX keyboard matrix
+    # (Z key) is unaffected.
+    state = _Kb(joy_map={_K_j: (0, 4)})
+    row, bit = KEY_MATRIX[_K_z]
+    state.key_down(_K_z)
+    assert state.matrix[row] & (1 << bit) == 0
+
+
+def test_key_name_to_sdlkey_covers_joy_map_keys() -> None:
+    assert KEY_NAME_TO_SDLKEY["w"] == _K_w
+    assert KEY_NAME_TO_SDLKEY["j"] == _K_j
+    assert KEY_NAME_TO_SDLKEY["up"] == _K_UP
+    assert KEY_NAME_TO_SDLKEY["comma"] == _K_COMMA
+
+
+# --- allium/frontend.allium: KeyRepeatIsUnhandled ---------------------------
+# No repeat-suppression logic exists anywhere in this codebase; a repeated
+# KEYDOWN for an already-held key must be a harmless no-op (idempotent Set
+# add + matrix bit already cleared), not an error or a state change.
+
+def test_repeated_key_down_without_release_is_idempotent() -> None:
+    state = make_input()
+    row, bit = KEY_MATRIX[_K_a]
+    state.key_down(_K_a)
+    before = list(state.matrix)
+    state.key_down(_K_a)  # simulated SDL2 key-repeat KEYDOWN
+    state.key_down(_K_a)
+    assert state.matrix == before
+    assert state.matrix[row] & (1 << bit) == 0  # still pressed
+    state.key_up(_K_a)
+    assert state.matrix[row] & (1 << bit) != 0  # a single key_up fully releases it
+
+
+def test_repeated_key_down_joystick_overlay_is_idempotent() -> None:
+    state = make_input()
+    state.key_down(_K_w)
+    before_joy1 = state.joy1
+    state.key_down(_K_w)
+    state.key_down(_K_w)
+    assert state.joy1 == before_joy1
+
+
+def test_frontend_key_press_reaches_the_matrix() -> None:
+    # input-keyboard "Frontend key press reaches the matrix".
+    state = InputState()
+    SdlKeyboard(state).key_down(_K_a)
+    assert state.matrix[2] & (1 << 6) == 0
+
+
+# --- keyboard_joystick.buttons resolution (app-config-file) -----------------
+
+def test_resolve_keyboard_joy_map_empty_is_builtin() -> None:
+    assert resolve_keyboard_joy_map({}) is JOY_MAP
+
+
+def test_resolve_keyboard_joy_map_override_replaces_default_keys() -> None:
+    # "Custom key replaces default for one function": J replaces Z and comma.
+    resolved = resolve_keyboard_joy_map({"trigger_a": "j"})
+    assert resolved[_K_j] == (0, 4)
+    assert _K_z not in resolved and _K_COMMA not in resolved
+
+
+def test_resolve_keyboard_joy_map_omitted_function_keeps_default() -> None:
+    # "Omitted function keeps both built-in defaults": W and Up stay on up.
+    resolved = resolve_keyboard_joy_map({"trigger_a": "j"})
+    assert resolved[_K_w] == (0, 0) and resolved[_K_UP] == (0, 0)
+
+
+def test_every_config_key_name_translates() -> None:
+    # app-config-file "Every accepted name translates in the frontend" (keys).
+    from host.app_config import KEYBOARD_KEY_NAMES
+    assert set(KEYBOARD_KEY_NAMES) == set(KEY_NAME_TO_SDLKEY)
+
+
+def test_config_joystick_functions_match_the_frontend_port_bits() -> None:
+    # keyboard_joystick.buttons function names are listed twice (the host
+    # validator cannot import the SDL frontend); the two lists must agree.
+    from frontend.sdl2_keyboard import _KEYBOARD_JOY_FUNCTIONS as FRONTEND_FUNCTIONS
+    from host.app_config import _KEYBOARD_JOY_FUNCTIONS as CONFIG_FUNCTIONS
+    assert set(CONFIG_FUNCTIONS) == set(FRONTEND_FUNCTIONS)
+
+
+def test_every_config_hotkey_name_translates() -> None:
+    # app-config-file "Every accepted name translates in the frontend" (hotkeys).
+    from frontend.sdl2_keyboard import FKEY_NAME_TO_SDLKEY
+    from host.app_config import FKEY_NAMES
+    assert set(FKEY_NAMES) == set(FKEY_NAME_TO_SDLKEY)

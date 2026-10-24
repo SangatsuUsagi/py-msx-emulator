@@ -1,13 +1,13 @@
 """Sector-based ``*.dsk`` disk image.
 
 A ``.dsk`` file is a linear dump of 512-byte sectors; sector count is the file
-size divided by 512. Data is held in memory and written back to the file on
-``flush()`` so an aborted run cannot leave the image half-written.
+size divided by 512. The image is built from the bytes the host read and held
+in memory; a sector write marks it dirty, and the host writes ``data()`` back
+to the file (see host/media.py). This module opens no files.
 """
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 SECTOR_SIZE: int = 512
@@ -19,30 +19,31 @@ FALLBACK_SIDES: int = 2
 
 
 class DskDiskImage:
-    """Linear 512-byte-sector disk image backed by a ``*.dsk`` file.
+    """Linear 512-byte-sector disk image built from a ``*.dsk`` file's bytes.
 
     Args:
-        path: Path to the ``.dsk`` file (must already exist).
-        write_protected: Force write protection. When None (default) the image
-            is write-protected iff the underlying file is not writable.
+        data: The image bytes.
+        write_protected: Reject sector writes (the host passes True when the
+            file is not writable).
+        path: The host's name for the image's file. Only recorded (save-state
+            disk identity, debugger/title display); never opened here.
 
     Raises:
-        FileNotFoundError: If the file does not exist.
-        ValueError: If the file size is not a positive multiple of 512.
+        ValueError: If the size is not a positive multiple of 512.
     """
 
-    def __init__(self, path: str | os.PathLike[str], *, write_protected: bool | None = None):
-        self.path = Path(path)
-        raw = self.path.read_bytes()
-        if len(raw) == 0 or (len(raw) % SECTOR_SIZE) != 0:
+    def __init__(
+        self, data: bytes, *, write_protected: bool = False, path: Path | None = None
+    ) -> None:
+        self.path = path
+        if len(data) == 0 or (len(data) % SECTOR_SIZE) != 0:
             raise ValueError(
-                f"{self.path}: size {len(raw)} is not a positive multiple of {SECTOR_SIZE}"
+                f"{path or 'disk image'}: size {len(data)} is not a positive multiple "
+                f"of {SECTOR_SIZE}"
             )
-        self._data = bytearray(raw)
+        self._data = bytearray(data)
         self._dirty = False
-        if write_protected is None:
-            write_protected = not os.access(self.path, os.W_OK)
-        self._write_protected = bool(write_protected)
+        self._write_protected = write_protected
         self.sectors_per_track, self.sides = self._read_geometry()
 
     def _read_geometry(self) -> tuple[int, int]:
@@ -97,7 +98,7 @@ class DskDiskImage:
             ValueError: If ``data`` is not exactly 512 bytes.
         """
         if self._write_protected:
-            raise PermissionError(f"{self.path} is write-protected")
+            raise PermissionError(f"{self.path or 'disk image'} is write-protected")
         if lsn < 0 or lsn >= self.num_sectors:
             raise IndexError(f"sector {lsn} out of range (0..{self.num_sectors - 1})")
         if len(data) != SECTOR_SIZE:
@@ -106,14 +107,21 @@ class DskDiskImage:
         self._data[off:off + SECTOR_SIZE] = data
         self._dirty = True
 
-    def flush(self) -> None:
-        """Write pending changes back to the file (no-op if unchanged/protected)."""
-        if self._dirty and not self._write_protected:
-            self.path.write_bytes(self._data)
-            self._dirty = False
+    @property
+    def dirty(self) -> bool:
+        """True after a sector write the host has not persisted yet."""
+        return self._dirty
+
+    def mark_persisted(self) -> None:
+        """Clear the dirty flag once the host has written data() back."""
+        self._dirty = False
+
+    def data(self) -> bytes:
+        """The image's current bytes."""
+        return bytes(self._data)
 
     def content_sha1(self) -> str:
         """SHA1 hex digest of the image's current bytes (save-state disk
-        identity check; same hashlib convention as msx/romdb.py's ROM
+        identity check; same hashlib convention as host/romdb.py's ROM
         identity)."""
         return hashlib.sha1(bytes(self._data), usedforsecurity=False).hexdigest()

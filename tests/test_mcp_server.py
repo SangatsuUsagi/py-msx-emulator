@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from mcp.types import ImageContent
 
-from msx.rpc_server import DebugServer
+from host.rpc_server import DebugServer
 from tests.factories import make_machine
 
 _TOOLS = Path(__file__).parent.parent / "tools"

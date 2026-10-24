@@ -1,5 +1,5 @@
 """Tests for make_machine_msx2 factory and MSX1 regression guard."""
-from msx.input import InputState
+from msx.input import InputLines
 from msx.machine import Machine
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
@@ -25,7 +25,7 @@ def test_msx2_memory_has_ram_mapper() -> None:
 
 def test_msx2_input_is_input_state() -> None:
     machine = make_machine_msx2(_DUMMY_ROM, _DUMMY_EXTROM)
-    assert isinstance(machine.input, InputState)
+    assert isinstance(machine.input, InputLines)
 
 
 def test_msx2_returns_machine_instance() -> None:
@@ -115,7 +115,7 @@ def test_msx1_make_machine_still_works() -> None:
 
 def test_msx1_input_is_input_state() -> None:
     machine = make_machine(_DUMMY_ROM)
-    assert isinstance(machine.input, InputState)
+    assert isinstance(machine.input, InputLines)
 
 
 # ---------------------------------------------------------------------------

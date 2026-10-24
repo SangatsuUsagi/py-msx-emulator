@@ -1,6 +1,6 @@
 import time
 
-from msx.frame_timer import FrameTimer
+from frontend.frame_timer import FrameTimer
 
 
 def test_tick_waits_approximately_one_frame_interval() -> None:

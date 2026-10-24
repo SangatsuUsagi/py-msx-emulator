@@ -56,10 +56,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from msx.debugger.disasm import disassemble
+from host.debugger.disasm import disassemble
+from host.input_state import InputState
+from host.screenshot import encode_rgb24_png, scale_rgb24
 from msx.input import KEY_NAME_TO_CELL
 from msx.machine import PauseReason
-from msx.screenshot import encode_rgb24_png, render_current_rgb24, scale_rgb24
+from msx.screenshot import render_current_rgb24
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -178,6 +180,12 @@ class DebugServer:
         }
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
+        # The frontend's per-frame input accumulator, when one runs (set by
+        # frontend.sdl2_frontend.run). Injected input goes to it too, so the
+        # next step_frame keeps it.
+        # Where injected input is built: the frontend's own builder when one
+        # runs (it replaces this), so injection carries into its next frame.
+        self.input_target: InputState = InputState()
         self._register_handlers()
 
     # -- lifecycle ----------------------------------------------------------
@@ -189,6 +197,12 @@ class DebugServer:
     @property
     def machine(self) -> "Machine":
         return self._machine
+
+    def apply_injected_input(self) -> None:
+        """Hand the builder's current input to the machine at once, so the
+        next PPI/PSG read sees an injection even while paused (remote-socket-rpc
+        "Input injection methods"); the frontend's next frame carries it on."""
+        self._machine.apply_input(self.input_target.frame())
 
     def start(self) -> None:
         """Bind the socket and start accepting connections on a daemon thread."""
@@ -441,7 +455,8 @@ class DebugServer:
         still_pending: list[tuple[float, int, int]] = []
         for deadline, row, bit in self._key_releases:
             if now >= deadline:
-                self._machine.input.set_key_state(row, bit, False)
+                self.input_target.set_key_state(row, bit, False)
+                self.apply_injected_input()
             else:
                 still_pending.append((deadline, row, bit))
         self._key_releases = still_pending
@@ -692,7 +707,8 @@ def _h_input_press_key_named(server: DebugServer, params: dict[str, Any]) -> dic
         raise RpcError(ERR_INVALID_PARAMS, f"unknown key name: {name}")
     duration_ms = _require_int(params, "duration_ms", default=100)
     row, bit = cell
-    server.machine.input.set_key_state(row, bit, True)
+    server.input_target.set_key_state(row, bit, True)
+    server.apply_injected_input()
     server.schedule_key_release(row, bit, duration_ms)
     return {"key": name.upper(), "row": row, "bit": bit, "duration_ms": duration_ms}
 
@@ -702,15 +718,15 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
     state = server.joystick_state[port]
-    inp = server.machine.input
     port_idx = port - 1
     for name, bit in _JOY_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
         if pressed:
-            inp.joystick_button_down(port_idx, bit)
+            server.input_target.joystick_button_down(port_idx, bit)
         else:
-            inp.joystick_button_up(port_idx, bit)
+            server.input_target.joystick_button_up(port_idx, bit)
+    server.apply_injected_input()
     return {"port": port, "state": dict(state)}
 
 
@@ -719,11 +735,11 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
     state = server.joystick_state[port]
-    inp = server.machine.input
     port_idx = port - 1
     for name, bit in _JOY_BITS.items():
         state[name] = False
-        inp.joystick_button_up(port_idx, bit)
+        server.input_target.joystick_button_up(port_idx, bit)
+    server.apply_injected_input()
     return {"port": port, "released": True}
 
 
@@ -749,22 +765,18 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 # ── State save / load ────────────────────────────────────────────────────────
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    from msx.state import save_state
+    from host.state_files import save_state
+    from msx.boundary import RgbFrame
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
     rgb, width, height = server.capture_rgb()
-    # save_state writes a fixed native-resolution (256x192) thumbnail, so match
-    # that size for V9938 modes whose frame can be taller (e.g. 212 lines).
-    if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-        rgb = scale_rgb24(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
-    saved = save_state(server.machine, rgb, title)
+    saved = save_state(server.machine, RgbFrame(width, height, rgb), title)
     return {"path": str(saved)}
 
 
 def _h_state_load(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.state import load_state
+    from host.state_files import load_state
 
     path = params.get("path")
     if not isinstance(path, str) or not path:
@@ -776,7 +788,7 @@ def _h_state_load(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
 # ── Floppy disk ──────────────────────────────────────────────────────────────
 
 def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.fdc.disk_image import DskDiskImage
+    from host.media import swap_disk
 
     drive = _require_int(params, "drive")
     if drive not in (1, 2):
@@ -787,9 +799,9 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     drive_idx = drive - 1
     if path:
-        fdc.swap(drive_idx, DskDiskImage(str(path)))
+        swap_disk(server.machine, drive_idx, Path(str(path)))
         return {"drive": drive, "path": str(path), "mounted": True}
-    fdc.swap(drive_idx, None)
+    swap_disk(server.machine, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
 
 
@@ -816,9 +828,10 @@ def _blank_joy_state() -> dict[str, bool]:
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     try:
-        server.machine.input.set_key_state(row, bit, pressed)
+        server.input_target.set_key_state(row, bit, pressed)
     except ValueError as exc:
         raise RpcError(ERR_INVALID_PARAMS, str(exc)) from None
+    server.apply_injected_input()
 
 
 def _parse_addr(value: Any) -> int:

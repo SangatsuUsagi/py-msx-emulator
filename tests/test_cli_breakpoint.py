@@ -33,7 +33,7 @@ def _run_main(argv: list[str], machine: str = "cbios_msx2") -> tuple[int, str, s
          patch.object(Path, "exists", fake_exists), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
          patch("frontend.sdl2_frontend.run"), \
-         patch("msx.debugger.prompt.Debugger"):
+         patch("host.debugger.prompt.Debugger"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
             assert spec is not None and spec.loader is not None

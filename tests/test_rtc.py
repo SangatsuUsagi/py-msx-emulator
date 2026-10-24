@@ -1,12 +1,15 @@
 """Tests for the RP-5C01 RTC (register banks + CMOS RAM + running clock)."""
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+from host.machine_config import load_machine_config, sram_paths
+from host.media import persist_dirty_media
+from msx.boundary import MachineConfig, RtcTime
+from msx.machine_loader import build_machine
+from msx.machine_spec import MachineSpec, _RomEntry
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
-from tests.factories import make_machine_msx2
+from tests.factories import make_config_msx2, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -148,10 +151,10 @@ def test_time_block_returns_valid_bcd() -> None:
 
 def test_block0_write_never_survives_read() -> None:
     """A write to a block-0 register is stored (subject to its mask), but
-    ReadDataPort unconditionally overwrites block 0 with the frozen epoch
-    snapshot on every read of block 0 or block 1 -- so the write is never
-    observable."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 30, 45))
+    ReadDataPort unconditionally overwrites block 0 with the current time on
+    every read of block 0 or block 1 -- so the write is never observable.
+    io-rtc "a block 0 write does not survive the next read"."""
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 30, 45))
     _set_block(rtc, 0)
     _select(rtc, 0)  # seconds units
     baseline = rtc.read_port(0xB5) & 0x0F
@@ -163,7 +166,7 @@ def test_leap_counter_write_never_survives_read() -> None:
     """Block 1 register 11 (leap-year counter) gets the same
     always-overwritten-on-read treatment as block 0: it always reads back
     epoch_leap, regardless of what was last written."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
+    rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))  # (2026 - 1980) % 4 == 2
     _set_block(rtc, 1)
     _select(rtc, 11)
     assert rtc.read_port(0xB5) & 0x0F == 2
@@ -172,7 +175,7 @@ def test_leap_counter_write_never_survives_read() -> None:
 
 
 def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
-    """save_sram()'s bytes, passed back as sram=, reproduce the same RAM."""
+    """cmos.data()'s bytes, passed back as sram=, reproduce the same RAM."""
     rtc = RTC()
     _set_block(rtc, 2)
     for reg in range(13):
@@ -183,11 +186,11 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
         _select(rtc, reg)
         rtc.write_port(0xB5, (reg + 2) & 0x0F)
 
-    save_path = tmp_path / "rtc.sram"
-    rtc.save_sram(save_path)
-    assert len(save_path.read_bytes()) == SRAM_SIZE
+    assert rtc.cmos.dirty is True
+    image = rtc.cmos.data()
+    assert len(image) == SRAM_SIZE
 
-    reloaded = RTC(sram=bytearray(save_path.read_bytes()))
+    reloaded = RTC(sram=bytearray(image))
     _set_block(reloaded, 2)
     for reg in range(13):
         _select(reloaded, reg)
@@ -208,33 +211,33 @@ def test_sram_wrong_size_starts_fresh() -> None:
 
 def test_hour_encoding_24h_is_default() -> None:
     """Register 10 defaults to 24-hour when never written."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
     assert _read_hour(rtc) == (3, 1)  # 13 -> units 3, tens 1
 
 
 def test_hour_encoding_12h_am() -> None:
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 9, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 9, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (9, 0)
 
 
 def test_hour_encoding_12h_pm() -> None:
     """PM hours offset the tens digit by 2 (RP/RF5C01A datasheet)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 13, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 13, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (1, 2)  # 1 PM -> "21"
 
 
 def test_hour_encoding_12h_midnight() -> None:
     """Midnight (hour 0) is hour-of-12 12, AM (no +2 offset)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 0, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 0, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (2, 1)  # "12"
 
 
 def test_hour_encoding_12h_noon() -> None:
     """Noon (hour 12) is hour-of-12 12, PM (+2 offset)."""
-    rtc = RTC(_epoch=datetime(2026, 1, 1, 12, 0, 0))
+    rtc = RTC(start=RtcTime(2026, 1, 1, 12, 0, 0))
     _set_hour_mode(rtc, is_24h=False)
     assert _read_hour(rtc) == (2, 3)  # "32"
 
@@ -242,20 +245,22 @@ def test_hour_encoding_12h_noon() -> None:
 def test_machine_loads_previously_saved_rtc_sram(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A build_machine()-constructed RTC persists blocks 2/3 to a per-machine
+    """A load_machine_config()-built RTC persists blocks 2/3 to a per-machine
     saves/sram/rtc_<machine_id>.sram (relative to CWD) and loads it back on
     the next construction."""
     monkeypatch.chdir(tmp_path)
 
-    machine1 = make_machine_msx2(_ROM, _EXTROM)
+    config1 = make_config_msx2(_ROM, _EXTROM)
+    machine1 = build_machine(config1)
     assert machine1.rtc is not None
-    assert machine1.rtc_sram_save_path == Path("saves/sram/rtc_test_msx2.sram")
+    paths1 = sram_paths(config1)
+    assert paths1["rtc.cmos"] == Path("saves/sram/rtc_test_msx2.sram")
     _set_block(machine1.rtc, 2)
     _select(machine1.rtc, 0)
     machine1.rtc.write_port(0xB5, 0xA)
-    assert machine1.rtc_sram_save_path is not None
-    machine1.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine1.rtc.save_sram(machine1.rtc_sram_save_path)
+    assert "rtc.cmos" in machine1.dirty_media()
+    persist_dirty_media(machine1, paths1)
+    assert machine1.dirty_media() == []
 
     machine2 = make_machine_msx2(_ROM, _EXTROM)
     assert machine2.rtc is not None
@@ -280,6 +285,12 @@ def _rtc_spec(machine_id: str) -> MachineSpec:
     )
 
 
+def _rtc_config(machine_id: str) -> MachineConfig:
+    return load_machine_config(
+        _rtc_spec(machine_id), bios_override=_ROM, extrom_override=_EXTROM
+    )
+
+
 def test_two_rtc_machines_do_not_share_cmos_ram(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -288,26 +299,127 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     not be visible to another machine's RTC."""
     monkeypatch.chdir(tmp_path)
 
-    machine_a = build_machine(_rtc_spec("machine_a"), bios_override=_ROM, extrom_override=_EXTROM)
-    machine_b = build_machine(_rtc_spec("machine_b"), bios_override=_ROM, extrom_override=_EXTROM)
+    config_a = _rtc_config("machine_a")
+    config_b = _rtc_config("machine_b")
+    machine_a = build_machine(config_a)
+    machine_b = build_machine(config_b)
     assert machine_a.rtc is not None and machine_b.rtc is not None
-    assert machine_a.rtc_sram_save_path != machine_b.rtc_sram_save_path
-    assert machine_a.rtc_sram_save_path == Path("saves/sram/rtc_machine_a.sram")
-    assert machine_b.rtc_sram_save_path == Path("saves/sram/rtc_machine_b.sram")
+    paths_a = sram_paths(config_a)
+    paths_b = sram_paths(config_b)
+    assert paths_a["rtc.cmos"] == Path("saves/sram/rtc_machine_a.sram")
+    assert paths_b["rtc.cmos"] == Path("saves/sram/rtc_machine_b.sram")
 
     _set_block(machine_a.rtc, 2)
     _select(machine_a.rtc, 0)
     machine_a.rtc.write_port(0xB5, 0x7)
-    assert machine_a.rtc_sram_save_path is not None
-    machine_a.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine_a.rtc.save_sram(machine_a.rtc_sram_save_path)
+    persist_dirty_media(machine_a, paths_a)
+    persist_dirty_media(machine_b, paths_b)
 
-    assert machine_b.rtc_sram_save_path is not None
-    machine_b.rtc_sram_save_path.parent.mkdir(parents=True, exist_ok=True)
-    machine_b.rtc.save_sram(machine_b.rtc_sram_save_path)
-
-    reloaded_b = build_machine(_rtc_spec("machine_b"), bios_override=_ROM, extrom_override=_EXTROM)
+    reloaded_b = build_machine(_rtc_config("machine_b"))
     assert reloaded_b.rtc is not None
     _set_block(reloaded_b.rtc, 2)
     _select(reloaded_b.rtc, 0)
     assert reloaded_b.rtc.read_port(0xB5) & 0x0F == 0x0  # not machine_a's 0x7
+
+
+# --- io-rtc: time from the host's start value, advanced by emulated cycles ---
+
+def _read_block0(rtc: RTC) -> list[int]:
+    _set_block(rtc, 0)
+    digits = []
+    for reg in range(13):
+        _select(rtc, reg)
+        digits.append(rtc.read_port(0xB5) & 0x0F)
+    return digits
+
+
+def _clocked(start: RtcTime) -> tuple[RTC, list[int]]:
+    cycle = [0]
+    rtc = RTC(start=start, _get_cycle=lambda: cycle[0])
+    return rtc, cycle
+
+
+def test_block0_reflects_the_supplied_start_time() -> None:
+    rtc = RTC(start=RtcTime(2026, 10, 23, 12, 34, 56))
+    d = _read_block0(rtc)
+    assert (d[2], d[3]) == (4, 3)                       # minute 34
+
+
+def test_no_start_time_gives_the_fixed_epoch() -> None:
+    d = _read_block0(RTC())
+    # 2000-01-01 00:00:00, Saturday (6); year register = 2000 - 1980 = 20
+    assert d == [0, 0, 0, 0, 0, 0, 6, 1, 0, 1, 0, 0, 2]
+
+
+def test_one_emulated_second_advances_the_seconds_digit() -> None:
+    rtc, cycle = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    cycle[0] = 3_579_545 - 1
+    assert _read_block0(rtc)[0:2] == [0, 0]
+    cycle[0] = 3_579_545
+    assert _read_block0(rtc)[0:2] == [1, 0]
+
+
+def test_midnight_carries_into_the_next_day() -> None:
+    rtc, cycle = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
+    before = _read_block0(rtc)
+    cycle[0] = 3_579_545
+    after = _read_block0(rtc)
+    # 2000-01-01 00:00:00; year register (2000 - 1980) % 100 = 20
+    assert after[0:6] == [0, 0, 0, 0, 0, 0]
+    assert after[7:13] == [1, 0, 1, 0, 0, 2]
+    assert after[6] == (before[6] + 1) % 7
+
+
+def test_rtc_never_reads_the_host_clock() -> None:
+    # Two RTCs with the same start and no elapsed cycles read the same digits.
+    a = RTC(start=RtcTime(2026, 10, 23, 1, 2, 3))
+    b = RTC(start=RtcTime(2026, 10, 23, 1, 2, 3))
+    assert _read_block0(a) == _read_block0(b)
+
+
+def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
+    machine = make_machine_msx2(bytes(0x8000), bytes(0x4000))
+    assert machine.rtc is not None
+    machine.cycle_count = 3 * 3_579_545
+    assert _read_block0(machine.rtc)[0:2] == [3, 0]
+
+
+# RTC.snapshot() captured before the CMOS RAM moved from _regs[26:52] to
+# RTC.cmos (openspec/changes/sram-image-composition): the 52-entry `regs`
+# list must stay byte-for-byte the same. The initial image deliberately
+# holds values above 0x0F, which are stored as given and masked on read.
+_CAPTURED_REGS = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0,
+    0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4,
+    13, 14, 15, 16, 17, 10, 19, 20, 21, 22, 23, 24, 25,
+]
+
+
+def test_snapshot_regs_layout_is_unchanged() -> None:
+    rtc = RTC(sram=bytearray(range(26)))
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x02)  # block 2
+    for reg in range(13):
+        rtc.write_port(0xB4, reg)
+        rtc.write_port(0xB5, (reg * 3) & 0x0F)
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x03)  # block 3
+    rtc.write_port(0xB4, 5)
+    rtc.write_port(0xB5, 0x0A)
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x01)  # block 1
+    rtc.write_port(0xB4, 11)
+    rtc.write_port(0xB5, 0x02)
+    assert rtc.snapshot()["regs"] == _CAPTURED_REGS
+    assert list(rtc.cmos.data()) == _CAPTURED_REGS[26:]
+    assert rtc.cmos.dirty is True
+
+
+def test_restoring_regs_with_different_cmos_marks_it_dirty() -> None:
+    rtc = RTC()
+    state = rtc.parse_state(rtc.snapshot(), "rtc")
+    state["regs"] = state["regs"][:26] + [0x5] * 26
+    rtc.apply_state(state)
+    assert rtc.cmos.dirty is True
+    assert rtc.snapshot()["regs"][26:] == [0x5] * 26

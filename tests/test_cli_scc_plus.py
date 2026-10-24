@@ -12,13 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    _ExtensionOverlay,
-    _RomEntry,
-    build_machine,
-)
+from host.machine_config import build_machine_from_spec
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
 from msx.mapper import SCCICart
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
@@ -34,7 +29,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     def fake_read_text(self: Path, encoding: str | None = None) -> str:
         # Isolate from the developer's own (git-ignored) py_emulator.yaml,
         # the only real caller of Path.read_text in this codebase
-        # (msx/app_config.py's load_app_config) -- an empty string parses
+        # (host/app_config.py's load_app_config) -- an empty string parses
         # to an all-unset AppConfig, the same as a genuinely absent file.
         return ""
 
@@ -109,7 +104,7 @@ def test_extension_scc_plus_rejected_when_slot1_is_konamiscc() -> None:
 # ---------------------------------------------------------------------------
 
 def _fake_app_config(**overrides: object) -> object:
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
     cfg = AppConfig()
     for key, value in overrides.items():
         setattr(cfg, key, value)
@@ -117,7 +112,7 @@ def _fake_app_config(**overrides: object) -> object:
 
 
 def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
-    with patch("msx.app_config.load_app_config",
+    with patch("host.app_config.load_app_config",
                return_value=_fake_app_config(extension2="scc_plus")):
         code, out, _err = _run_main(["--count-frame", "1"])
     assert code == 0
@@ -125,7 +120,7 @@ def test_config_extension_connects_cartridge_when_flag_omitted() -> None:
 
 
 def test_cli_extension_overrides_config_extension() -> None:
-    with patch("msx.app_config.load_app_config",
+    with patch("host.app_config.load_app_config",
                return_value=_fake_app_config(extension2="fmpac")):
         code, out, _err = _run_main(["--extension2", "scc_plus", "--count-frame", "1"])
     assert code == 0
@@ -153,13 +148,13 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
     )
 
 
-def _scc_plus_overlay() -> _ExtensionOverlay:
-    return _ExtensionOverlay(device="scc_i_cart")
+def _scc_plus_overlay() -> ExtensionOverlay:
+    return ExtensionOverlay(device="scc_i_cart")
 
 
-def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
+def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     (tmp_path / "fmpac.rom").write_bytes(bytes(65536))
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
@@ -168,7 +163,7 @@ def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
 
 
 def test_build_machine_installs_scci_cart_in_slot2(tmp_path: Path) -> None:
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=_scc_plus_overlay())
     assert isinstance(machine.memory._mapper2, SCCICart)
     assert not isinstance(machine.memory._mapper, SCCICart)
     assert machine.scc is not None
@@ -178,9 +173,9 @@ def test_build_machine_installs_scci_cart_in_slot2(tmp_path: Path) -> None:
 def test_build_machine_rejects_scc_plus_when_slot1_is_konamiscc(tmp_path: Path) -> None:
     cart1 = bytes(65536)
     with pytest.raises(MachineLoadError, match="scc"):
-        build_machine(
-            _msx1_spec(tmp_path), cartridge=cart1, mapper="KonamiSCC",
-            extension_overlay=_scc_plus_overlay(),
+        build_machine_from_spec(
+            _msx1_spec(tmp_path), cartridge1=cart1, mapper1="KonamiSCC",
+            extension_overlay2=_scc_plus_overlay(),
         )
 
 
@@ -192,7 +187,7 @@ def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path
     cartridge does not survive a reset -- it comes back in Compatible mode
     with no active SCC window, matching the chip's own reset() rather than
     being resynced to its pre-reset state."""
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=_scc_plus_overlay())
     cart = machine.memory._mapper2
     assert isinstance(cart, SCCICart)
 
@@ -210,16 +205,16 @@ def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path
 
 
 def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: Path) -> None:
-    machine = build_machine(_msx1_spec(tmp_path))
+    machine = build_machine_from_spec(_msx1_spec(tmp_path))
     assert not isinstance(machine.memory._mapper2, SCCICart)
 
 
 def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
     """--extension scc_plus (slot 2) no longer forces slot 1 -- a normal
     cartridge/mapper resolves in slot 1 independently."""
-    machine = build_machine(
-        _msx1_spec(tmp_path), cartridge=bytes(65536), mapper="ASCII8",
-        extension_overlay=_scc_plus_overlay(),
+    machine = build_machine_from_spec(
+        _msx1_spec(tmp_path), cartridge1=bytes(65536), mapper1="ASCII8",
+        extension_overlay2=_scc_plus_overlay(),
     )
     assert isinstance(machine.memory._mapper2, SCCICart)
     assert not isinstance(machine.memory._mapper, SCCICart)
@@ -227,7 +222,7 @@ def test_build_machine_scc_plus_with_slot1_cartridge(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("addr", [0x9800, 0xB800])
 def test_scci_cart_dispatches_at_slot2(tmp_path: Path, addr: int) -> None:
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=_scc_plus_overlay())
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=_scc_plus_overlay())
     mem = machine.memory
     # Just confirm dispatch reaches the SCCICart without raising; the SCC
     # window itself is inactive at power-on (see test_scc_i_cart.py).

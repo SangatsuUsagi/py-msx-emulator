@@ -10,9 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import BUSY, TRACK_BYTES, WD2793
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -28,7 +29,7 @@ _DRIVE = 0x7FFD
 
 def _iface_with_disk(dsk: Path) -> SonyPhilipsInterface:
     iface = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
-    iface.mount(DskDiskImage(dsk), drive=0)
+    iface.mount(dsk_image(dsk), drive=0)
     iface.write_mem(_DRIVE, 0x80)  # drive A + motor on
     iface.write_mem(_SIDE, 0x00)   # side 0
     return iface
@@ -74,9 +75,12 @@ def test_format_write_read_roundtrip_and_persist(tmp_path: Path) -> None:
     # 3. READ it back through the controller: identical.
     assert _read_sector(iface, 0, 1) == payload
 
-    # 4. Persist: flush, then remount the file and confirm the sector survived.
-    iface.flush()
-    remounted = DskDiskImage(dsk)
+    # 4. Persist (as the host does with a dirty image), then remount the file
+    #    and confirm the sector survived.
+    image = iface.drives[0].image
+    assert image is not None and image.dirty
+    dsk.write_bytes(image.data())
+    remounted = dsk_image(dsk)
     assert remounted.read_sector(0) == payload
 
 

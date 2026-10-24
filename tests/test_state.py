@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from msx.machine_loader import MachineSpec, _RomEntry, _Slot0RamEntry, build_machine
+from host.machine_config import build_machine_from_spec
+from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
+from msx.machine_spec import MachineSpec, _RomEntry, _Slot0RamEntry
 from msx.snapshot_schema import SnapshotMismatchError
-from msx.state import CURRENT_FORMAT_VERSION, StateLoadError, load_state, save_state
+from msx.state import CURRENT_FORMAT_VERSION, StateLoadError
 from tests.factories import make_machine
 
 _CART_64K = b"\x00" * 0x10000
@@ -38,7 +41,7 @@ def _make_msx1_machine_with_slot0_ram():
         has_v9938=False,
         has_rtc=False,
     )
-    return build_machine(spec, bios_override=_ROM)
+    return build_machine_from_spec(spec, bios_override=_ROM)
 
 
 @pytest.fixture()
@@ -51,7 +54,7 @@ def saves_dir(tmp_path, monkeypatch):
 # --- save_state ---------------------------------------------------------------
 
 def test_save_state_creates_state_file(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     path = save_state(machine, rgb, "test")
     assert path.exists()
     assert path.suffix == ".state"
@@ -59,7 +62,7 @@ def test_save_state_creates_state_file(machine, saves_dir):
 
 
 def test_save_state_creates_png(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
     png_path = state_path.with_suffix(".png")
     assert png_path.exists()
@@ -69,7 +72,7 @@ def test_save_state_creates_png(machine, saves_dir):
 
 
 def test_save_state_creates_latest_symlinks(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
     png_path = state_path.with_suffix(".png")
 
@@ -85,13 +88,13 @@ def test_save_state_creates_saves_dir(machine, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     saves = tmp_path / "saves"
     assert not saves.exists()
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
     assert saves.is_dir()
 
 
 def test_save_state_title_sanitised(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     # Spaces become underscores; non-ASCII (e.g. Japanese) is now preserved;
     # filesystem-unsafe characters are stripped.
     path = save_state(machine, rgb, "テスト タイトル")
@@ -99,7 +102,7 @@ def test_save_state_title_sanitised(machine, saves_dir):
     assert "テスト_タイトル" in path.name
 
 def test_save_state_title_strips_unsafe_chars(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     path = save_state(machine, rgb, 'bad/name:file*?"')
     assert "/" not in path.name
     assert ":" not in path.name
@@ -112,7 +115,7 @@ def test_load_state_restores_cpu_registers(machine, saves_dir):
     machine.cpu.registers.A = 0x42
     machine.cpu.registers.PC = 0x1234
     machine.memory.ram[0] = 0xAB
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
     machine.cpu.registers.A = 0x00
@@ -136,7 +139,7 @@ def test_load_state_missing_file_raises(machine, saves_dir):
 def test_slot0_ram_round_trips_through_save_load(saves_dir):
     machine = _make_msx1_machine_with_slot0_ram()
     machine.memory.write(0xC000, 0x77)
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
     machine.memory.write(0xC000, 0x00)
@@ -149,7 +152,7 @@ def test_load_state_rejects_slot0_ram_wiring_mismatch(machine, saves_dir):
     """A save from a machine with slot0_ram configured cannot load onto one
     without it (or vice versa) -- mirrors the FDC/SCC wiring mismatch checks."""
     slot0_machine = _make_msx1_machine_with_slot0_ram()
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(slot0_machine, rgb, "test")
 
     with pytest.raises(SnapshotMismatchError, match="slot 0 RAM"):
@@ -158,7 +161,7 @@ def test_load_state_rejects_slot0_ram_wiring_mismatch(machine, saves_dir):
 
 def test_load_state_wrong_version_raises(machine, saves_dir):
     import json
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -184,7 +187,7 @@ def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_di
     from MachineSnapshot construction."""
     import json
 
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -217,7 +220,7 @@ def test_malformed_mapper_state_raises_state_load_error(saves_dir):
     # ASCII8's state requires "banks" (a schema error if absent), unlike the
     # flat-cartridge default mapper whose state is an empty object.
     machine = make_machine(rom=_ROM, cartridge=b"\x00" * 0x10000, mapper="ASCII8")
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -235,7 +238,7 @@ def test_malformed_mapper_state_raises_state_load_error(saves_dir):
 def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
     import json
 
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -251,7 +254,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
 
 
 def test_well_formed_state_does_not_raise_state_load_error(machine, saves_dir):
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
     load_state(machine)  # must not raise StateLoadError (or anything else)
 
@@ -262,7 +265,7 @@ def test_snapshot_persists_mapper_kind_value_not_class_name(saves_dir):
     import json
 
     machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="KonamiSCC")
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -273,7 +276,7 @@ def test_snapshot_persists_mapper_kind_value_not_class_name(saves_dir):
 
 def test_mapper_kind_mismatch_raises_value_error(saves_dir):
     saved_machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="Konami")
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(saved_machine, rgb, "test")
 
     running_machine = make_machine(rom=_ROM, cartridge=_CART_64K, mapper="ASCII8")
@@ -289,7 +292,7 @@ def test_snapshot_persists_mapper2_kind(saves_dir):
     import json
 
     machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="ASCII16")
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
 
     with open(state_path, "r", encoding="utf-8") as f:
@@ -299,7 +302,7 @@ def test_snapshot_persists_mapper2_kind(saves_dir):
 
 def test_mapper2_kind_mismatch_raises_value_error(saves_dir):
     saved_machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="Konami")
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(saved_machine, rgb, "test")
 
     running_machine = make_machine(rom=_ROM, cartridge2=_CART_64K, mapper2="ASCII8")
@@ -313,7 +316,7 @@ def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
     """A machine with nothing in slot 2 (an empty FlatMapper) still has a
     real mapper2_kind/mapper2_state, and round-trips cleanly."""
     machine = make_machine(rom=_ROM)
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
     load_state(machine)  # must not raise
 
@@ -324,7 +327,7 @@ def test_load_state_restores_vdp_port_state(machine, saves_dir):
     machine.vdp.latch = 0x56
     machine.vdp.addr = 0x1256
     machine.vdp.read_buf = 0xAB
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
     machine.vdp.latch = None
@@ -341,7 +344,7 @@ def test_load_state_restores_vdp_port_state(machine, saves_dir):
 def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
     import json
 
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -356,7 +359,7 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
     machine.vdp.latch = None
-    rgb = bytearray(256 * 192 * 3)
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
     machine.vdp.latch = 0x55

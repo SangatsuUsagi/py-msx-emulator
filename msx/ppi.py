@@ -6,7 +6,7 @@ from enum import Enum
 from typing import ClassVar
 
 from msx.dac import EventDac
-from msx.input import InputState
+from msx.input import InputLines
 from msx.memory import Memory
 
 # Key-click output while Port C bit 7 is 1: the PSG single-channel maximum
@@ -33,7 +33,7 @@ class PpiControlRead(str, Enum):
 @dataclass
 class PPI:
     memory: Memory
-    _input: InputState | None = field(default=None, repr=False)
+    _input: InputLines | None = field(default=None, repr=False)
     # Intel 8255 post-reset control word: mode 0, ports A/B/C all input.
     _POST_RESET_CONTROL: ClassVar[int] = 0x9B
     # PPI Port C (0xAA): bits 3-0 = keyboard row select; bits 7-4 = output control

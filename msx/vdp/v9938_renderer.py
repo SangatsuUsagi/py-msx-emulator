@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable, NamedTuple
 
-from msx.vdp._geometry import OUTPUT_H, pad_rows, pad_to_output_height
+from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE, pad_rows, pad_to_output_height
 from msx.vdp._v9938_defs import (
     _S2_EO,
     _PaletteChange,
@@ -20,7 +20,7 @@ from msx.vdp._v9938_defs import (
     display_width_of,
     even_odd_enabled_of,
 )
-from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed, _translate_rgb24
+from msx.vdp.vdp import FramebufferFormat, _channel_tables_indexed
 
 if TYPE_CHECKING:
     from msx.vdp.v9938 import V9938
@@ -243,7 +243,7 @@ def _render(vdp: "V9938", skip_render: bool) -> tuple[bytearray, _RenderStatus]:
     """Render a frame; return it with the status the render produces."""
     st = _RenderStatus(vdp.status, vdp.collision_x, vdp.collision_y, vdp.status2)
     if skip_render:
-        _update_field_parity(vdp, st)
+        _render_sprite_status_only(vdp, st)
         return bytearray(0), st
 
     log = vdp._reg_write_log
@@ -468,16 +468,9 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
     # SPD sprite-disable (R#8 bit 1) is per-line too: a split screen may blank
     # sprites over just its status band (SPD=1 there, 0 in the play area). Build
     # it alongside row_vscroll so the sprite pass reads both per line.
-    row_vscroll = [0] * full_h
-    row_spd = [False] * full_h
-    for band in bands:
-        v = band.regs[23]
-        spd = bool(band.regs[8] & 0x02)
-        for y in range(band.y0, min(band.y1, full_h)):
-            row_vscroll[y] = v
-            row_spd[y] = spd
+    row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
 
-    out = bytearray(frame_w * full_h)
+    out = ZERO_BYTE * (frame_w * full_h)
     if len(runs) == 1:
         _render_band_run(vdp, st, out, runs[0], full_h, row_vscroll, row_spd, True)
     else:
@@ -486,11 +479,50 @@ def _render_banded(vdp: "V9938", st: _RenderStatus) -> bytearray:
             if run_w == frame_w:
                 _render_band_run(vdp, st, out, run, full_h, row_vscroll, row_spd, False)
             else:
-                narrow = bytearray(run_w * full_h)
+                narrow = ZERO_BYTE * (run_w * full_h)
                 _render_band_run(vdp, st, narrow, run, full_h, row_vscroll, row_spd, False)
                 _widen_rows(out, frame_w, narrow, run_w, run[0].y0, min(run[-1].y1, full_h))
     _update_field_parity(vdp, st)
     return out
+
+
+def _per_line_vscroll_spd(bands: list[_Band], full_h: int) -> tuple[list[int], list[bool]]:
+    """Flatten the bands' R#23 (vscroll) and R#8 SPD into one value per scanline."""
+    row_vscroll = [0] * full_h
+    row_spd = [False] * full_h
+    for band in bands:
+        v = band.regs[23]
+        spd = bool(band.regs[8] & 0x02)
+        for y in range(band.y0, min(band.y1, full_h)):
+            row_vscroll[y] = v
+            row_spd[y] = spd
+    return row_vscroll, row_spd
+
+
+def _render_sprite_status_only(vdp: "V9938", st: _RenderStatus) -> None:
+    """Run a frame's sprite passes for their status only (a skipped frame).
+
+    Uses the same band split and sprite passes as a full render, plotting into
+    scratch buffers that are dropped, so S#0, the collision coordinates and S#2
+    never depend on whether the frame was presented. The background is not
+    rendered.
+    """
+    bands = _build_bands(vdp) if vdp._reg_write_log else []
+    if bands:
+        full_h = vdp.display_height
+        runs = _width_runs(bands)
+        row_vscroll, row_spd = _per_line_vscroll_spd(bands, full_h)
+        for run in runs:
+            scratch = ZERO_BYTE * (display_width_of(run[0].regs) * full_h)
+            _render_run_sprites(
+                vdp, st, scratch, run, full_h, row_vscroll, row_spd, len(runs) == 1
+            )
+    else:
+        regs = vdp.regs
+        h = display_height_of(regs)
+        scratch = ZERO_BYTE * (display_width_of(regs) * h)
+        _render_sprites_for_mode(vdp, regs, st, scratch, 0, h)
+    _update_field_parity(vdp, st)
 
 
 def _width_runs(bands: list[_Band]) -> list[list[_Band]]:
@@ -539,7 +571,20 @@ def _render_band_run(
         _render_pass_range(
             vdp, band.regs, st, buf, band.y0, min(band.y1, full_h), draw_sprites=False
         )
+    _render_run_sprites(vdp, st, buf, run, full_h, row_vscroll, row_spd, whole_frame)
 
+
+def _render_run_sprites(
+    vdp: "V9938",
+    st: _RenderStatus,
+    buf: bytearray,
+    run: list[_Band],
+    full_h: int,
+    row_vscroll: list[int],
+    row_spd: list[bool],
+    whole_frame: bool,
+) -> None:
+    """Run one width run's sprite passes into `buf` (the run's own width)."""
     # Sprites are evaluated in as few passes as possible: one per distinct sprite
     # attribute table (R#5/R#11), using the registers of the largest band sharing
     # that SAT — the main play area. Vertical scroll (R#23) is *not* a reason to
@@ -588,7 +633,7 @@ def _render_pass(vdp: "V9938", st: _RenderStatus) -> bytearray:
     regs = vdp.regs
     h = display_height_of(regs)
     w = display_width_of(regs)
-    buf = bytearray(w * h)
+    buf = ZERO_BYTE * (w * h)
     _render_pass_range(vdp, regs, st, buf, 0, h)
     _update_field_parity(vdp, st)
     return buf
@@ -1187,8 +1232,8 @@ def _render_sprites(
     # z-order (only a pixel the VDP actually displays claims a pixel, so a
     # transparent higher-priority sprite does not block a lower-priority one
     # showing through); sprite_touched tracks coincidence.
-    sprite_painted = bytearray(_W * scan_hi)
-    sprite_touched = bytearray(_W * scan_hi)
+    sprite_painted = ZERO_BYTE * (_W * scan_hi)
+    sprite_touched = ZERO_BYTE * (_W * scan_hi)
     coincidence = False
     # Collision coordinates (S#3-S#6): the earliest colliding line, and the
     # leftmost collision on it (openMSX SpriteChecker takes minXCollision on
@@ -1438,16 +1483,16 @@ def _render_sprites_mode2(
     # 0 = unclaimed. A displayed pixel stores colour | _SPRITE_CLAIM, so an
     # opaque colour-0 pixel (TP=1) claims its pixel too; the claim bit is
     # masked off when compositing.
-    sprite_buf = bytearray(scan_hi * width)
+    sprite_buf = ZERO_BYTE * (scan_hi * width)
     # Coincidence is tracked separately from sprite_buf (same split as
     # _render_sprites above): sprite_buf holds the composited colour and the
     # z-order winner, which a CC/IC sprite claims like any other, while
     # sprite_touched records only pixels a collision-eligible sprite covered.
-    sprite_touched = bytearray(scan_hi * width)
+    sprite_touched = ZERO_BYTE * (scan_hi * width)
     # Per line: set once a CC=0 sprite has appeared. A CC=1 sprite is only
     # visible if a higher-priority CC=0 sprite precedes it on the same line
     # (V9938 rule); leading CC=1 sprites are invisible.
-    cc0_seen = bytearray(scan_hi)
+    cc0_seen = ZERO_BYTE * scan_hi
     drawn: list[int] = []  # coords touched, to composite only those (vs full scan)
     coincidence = False
     # Collision coordinates (S#3-S#6), as in _render_sprites above.
@@ -1781,21 +1826,17 @@ def _banded_to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
         for sy in range(max(0, band.y0), min(native_h, band.y1)):
             line_channels[sy] = channels
 
-    out = bytearray(w * OUTPUT_H * 3)
+    rows = vdp._rgb_rows
+    parts: list[bytes] = []
     for dy in range(OUTPUT_H):
         ny = dy - pad  # native index-buffer row this output row maps to
+        channels = default_channels
         if 0 <= ny < native_h:
             sy = ny - v_off
-            rtab, gtab, btab = line_channels[sy] if 0 <= sy < native_h else default_channels
-        else:
-            rtab, gtab, btab = default_channels
-        row = src[dy * w : dy * w + w]
-        o = dy * w * 3
-        end = o + w * 3
-        out[o:end:3] = row.translate(rtab)
-        out[o + 1 : end : 3] = row.translate(gtab)
-        out[o + 2 : end : 3] = row.translate(btab)
-    return bytes(out)
+            if 0 <= sy < native_h:
+                channels = line_channels[sy]
+        parts.append(rows.row(src[dy * w : dy * w + w], channels))
+    return b"".join(parts)
 
 
 def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
@@ -1814,7 +1855,7 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     Kept as-is here because: Python has no borrow distinction to keep.
     """
     if vdp.framebuffer_format is FramebufferFormat.GRB332:
-        return _translate_rgb24(src, _GRB332_CHANNELS)
+        return vdp._rgb_rows.frame(src, _GRB332_CHANNELS)
 
     # _reg_write_log is still valid here: it is cleared by begin_scanline(0) at
     # the *next* frame, not at the end of this one.
@@ -1825,4 +1866,4 @@ def to_rgb24(vdp: "V9938", src: bytearray) -> bytes:
     if key != vdp._rgb_lut_key:
         vdp._rgb_lut_key = key
         vdp._rgb_channels = _channel_tables_indexed(_make_lut16(vdp.palette))
-    return _translate_rgb24(src, vdp._rgb_channels)
+    return vdp._rgb_rows.frame(src, vdp._rgb_channels)

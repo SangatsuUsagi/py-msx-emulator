@@ -29,7 +29,7 @@ def _run_main(argv: list[str]) -> tuple[int, str, str, Mock]:
          patch.object(Path, "exists", lambda self: True), \
          patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768), \
          patch("frontend.sdl2_frontend.run") as sdl_run, \
-         patch("msx.debugger.prompt.Debugger"):
+         patch("host.debugger.prompt.Debugger"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
             assert spec is not None and spec.loader is not None
@@ -46,7 +46,7 @@ class TestBenchmarkCLI:
         # start / end timestamps; the loop runs a fixed frame count, so
         # perf_counter is read exactly twice.
         perf_values = iter([0.0, 10.0])
-        with patch.object(Machine, "run_frame", return_value=None) as rf, \
+        with patch.object(Machine, "step_frame", return_value=None) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "5"])
         assert code == 0
@@ -55,15 +55,14 @@ class TestBenchmarkCLI:
         assert "elapsed : 10.00s" in out
         assert "avg fps : 0.50" in out
         sdl_run.assert_not_called()
-        # Offscreen VDP rendering must not be skipped: benchmark measures whether
-        # emulation *and* rendering together sustain 60fps, not raw CPU throughput.
+        # Video must be rendered: benchmark measures whether emulation *and*
+        # rendering (to RGB, as in interactive play) together sustain 60fps.
         for call in rf.call_args_list:
-            assert call.kwargs.get("skip_render", False) is False
-            assert not call.args
+            assert call.kwargs["render_video"] is True
 
     def test_bare_flag_defaults_to_ten_thousand_frames(self) -> None:
         perf_values = iter([0.0, 10.0])
-        with patch.object(Machine, "run_frame", return_value=None) as rf, \
+        with patch.object(Machine, "step_frame", return_value=None) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark"])
         assert code == 0
@@ -78,24 +77,26 @@ class TestBenchmarkResume:
         def fake_load_state(machine: Machine, path: Path | None = None) -> None:
             calls.append(("load_state", path))
 
-        def fake_run_frame() -> None:
-            calls.append(("run_frame", None))
+        def fake_step_frame(*_args: object, **_kwargs: object) -> None:
+            calls.append(("step_frame", None))
 
         perf_values = iter([0.0, 1.0, 10.0, 10.0])
-        with patch("msx.state.load_state", side_effect=fake_load_state) as load_state_mock, \
-             patch.object(Machine, "run_frame", side_effect=fake_run_frame), \
+        with patch(
+            "host.state_files.load_state", side_effect=fake_load_state
+        ) as load_state_mock, \
+             patch.object(Machine, "step_frame", side_effect=fake_step_frame), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "10", "--resume"])
         assert code == 0
         assert load_state_mock.call_count == 1
         assert load_state_mock.call_args.kwargs["path"] is None
         assert calls[0] == ("load_state", None)
-        assert calls[1] == ("run_frame", None)
+        assert calls[1] == ("step_frame", None)
 
     def test_resume_with_explicit_path_loads_that_state(self) -> None:
         perf_values = iter([0.0, 10.0, 10.0])
-        with patch("msx.state.load_state") as load_state_mock, \
-             patch.object(Machine, "run_frame", return_value=None), \
+        with patch("host.state_files.load_state") as load_state_mock, \
+             patch.object(Machine, "step_frame", return_value=None), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(
                 ["--benchmark", "10", "--resume", "path/to/scene.state"])
@@ -106,7 +107,7 @@ class TestBenchmarkResume:
 
 class TestBenchmarkCountFrameMutualExclusion:
     def test_both_flags_exits_nonzero(self) -> None:
-        with patch.object(Machine, "run_frame", return_value=None) as rf:
+        with patch.object(Machine, "step_frame", return_value=None) as rf:
             code, out, err, sdl_run = _run_main(["--benchmark", "5", "--count-frame", "10"])
         assert code != 0
         assert "mutually exclusive" in err.lower()
@@ -117,7 +118,7 @@ class TestBenchmarkCountFrameMutualExclusion:
 class TestBenchmarkNoSDLWindow:
     def test_benchmark_skips_sdl_frontend(self) -> None:
         perf_values = iter([0.0, 10.0, 10.0])
-        with patch.object(Machine, "run_frame", return_value=None), \
+        with patch.object(Machine, "step_frame", return_value=None), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "10"])
         assert code == 0

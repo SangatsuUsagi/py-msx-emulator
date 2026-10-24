@@ -5,18 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from msx.fdc.disk_image import DskDiskImage
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    _FdcDef,
+from host.machine_config import (
     _parse_fdc,
     _parse_slot3_msx2,
-    _RomEntry,
-    build_machine,
+    build_machine_from_spec,
     load_device_registry,
+    load_machine_config,
     load_machine_spec,
 )
+from msx.boundary import DiskMedium, MediaId
+from msx.fdc.disk_image import DskDiskImage
+from msx.machine_loader import build_machine
+from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -178,14 +178,14 @@ def _fdc_spec(tmp_path: Path) -> MachineSpec:
 
 def test_build_wires_fdc_device(tmp_path: Path) -> None:
     _make_roms(tmp_path)
-    machine = build_machine(_fdc_spec(tmp_path))
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
     assert machine.fdc is not None
     assert machine.memory.fdc is machine.fdc
 
 
 def test_disk_rom_and_registers_routed_through_memory(tmp_path: Path) -> None:
     _make_roms(tmp_path)
-    machine = build_machine(_fdc_spec(tmp_path))
+    machine = build_machine_from_spec(_fdc_spec(tmp_path))
     mem = machine.memory
     mem.set_slot_register(0xFF)  # all pages -> slot 3
     mem.set_sub_slot_reg(0x00)  # all pages -> sub-slot 0
@@ -200,7 +200,7 @@ def test_fdd1_mounts_into_drive_a(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     dsk.write_bytes(bytes(_2DD))
-    machine = build_machine(_fdc_spec(tmp_path), fdd1=dsk)
+    machine = build_machine_from_spec(_fdc_spec(tmp_path), fdd1=dsk)
     assert machine.fdc is not None
     assert machine.fdc.drives[0].has_disk is True
     assert isinstance(machine.fdc.drives[0].image, DskDiskImage)
@@ -224,8 +224,28 @@ def test_fdd2_alone_mounts_into_drive_b_not_a(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"
     dsk.write_bytes(bytes(_2DD))
-    machine = build_machine(_fdc_spec_two_drives(tmp_path), fdd1=None, fdd2=dsk)
+    machine = build_machine_from_spec(_fdc_spec_two_drives(tmp_path), fdd1=None, fdd2=dsk)
     assert machine.fdc is not None
     assert machine.fdc.drives[0].has_disk is False
     assert machine.fdc.drives[1].has_disk is True
     assert isinstance(machine.fdc.drives[1].image, DskDiskImage)
+
+
+def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _make_roms(tmp_path)
+    dsk = tmp_path / "b.dsk"
+    dsk.write_bytes(bytes(_2DD))
+    config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
+    assert "drive_b" not in config.disks
+    assert "only 1 drive" in capsys.readouterr().err
+
+
+def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path))
+    config.disks[MediaId.DRIVE_B] = DiskMedium(bytes(_2DD))
+    # The message names the id by its value (not "MediaId.DRIVE_B").
+    with pytest.raises(MachineLoadError, match="disk for drive_b but"):
+        build_machine(config)

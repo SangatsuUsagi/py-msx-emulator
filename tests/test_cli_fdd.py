@@ -57,7 +57,7 @@ def test_fdd1_missing_file_exits_nonzero() -> None:
 
 
 def test_fdd1_mounted_on_hb_f1xd(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
     code, out, _err = _run_main(["--machine", "hb_f1xd", "--fdd1", "game.dsk"])
@@ -67,7 +67,7 @@ def test_fdd1_mounted_on_hb_f1xd(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fdd1_without_floppy_machine_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
@@ -78,7 +78,7 @@ def test_fdd1_without_floppy_machine_warns(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_fdd2_on_single_drive_machine_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
     # HB-F1XD declares a single drive, so drive B has nowhere to mount.
@@ -95,7 +95,7 @@ def test_fdd1_list_missing_entry_exits_nonzero() -> None:
 
 
 def test_fdd1_list_passed_to_the_frontend(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 
     run_mock = MagicMock()
@@ -111,7 +111,7 @@ def test_fdd1_list_passed_to_the_frontend(monkeypatch: pytest.MonkeyPatch) -> No
 def test_fdd1_without_floppy_machine_hands_an_empty_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
 

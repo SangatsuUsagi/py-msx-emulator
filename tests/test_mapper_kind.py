@@ -27,7 +27,9 @@ from msx.mapper import (
     SCCICart,
     mapper_kind_display_name,
 )
+from msx.opll import Opll
 from msx.ram_mapper import RamMapper
+from msx.sram import SramImage
 
 # Every _ALL_MAPPER_CLASSES member that subclasses BankTracingMapper (directly
 # or via an intermediate class/mixin). FlatMapper and FixedPageMapper subclass
@@ -113,10 +115,10 @@ def test_ram_mapper_kind_and_display_name() -> None:
     assert mapper_kind_display_name(MapperKind.RAM_MAPPER) == "RamMapper"
 
 
-# Classes that persist SRAM to a standalone .sram file via save_sram() (see
-# cart-sram-mapper's "SRAM persistence via save_sram", cart-halnote's and
+# Classes whose sram_medium() returns an SRAM image the host persists (see
+# cart-sram-mapper's "SRAM image via sram_medium", cart-halnote's and
 # cart-fmpac's own SRAM-persistence Requirements). Every other class in
-# _ALL_MAPPER_CLASSES has has_sram = False.
+# _ALL_MAPPER_CLASSES returns None.
 _SRAM_CARRYING_CLASSES: frozenset[type[Mapper]] = frozenset({
     Ascii8Sram2Mapper,
     Ascii8Sram8Mapper,
@@ -129,12 +131,37 @@ _SRAM_CARRYING_CLASSES: frozenset[type[Mapper]] = frozenset({
 })
 
 
-def test_has_sram_matches_the_known_sram_carrying_set() -> None:
+_NO_SRAM_DEFAULTS = (BankTracingMapper.sram_medium, FlatMapper.sram_medium,
+                     RamMapper.sram_medium)
+
+
+def test_sram_medium_is_overridden_exactly_by_the_sram_carrying_set() -> None:
+    # cart-sram-mapper "Every SRAM-carrying mapper class has an SRAM medium"
+    # (class level): an SRAM class must not fall back to a None default.
     for cls in _ALL_MAPPER_CLASSES:
-        expected = cls in _SRAM_CARRYING_CLASSES
-        assert cls.has_sram is expected, (
-            f"{cls.__name__}.has_sram is {cls.has_sram}, expected {expected}"
-        )
+        overridden = cls.sram_medium not in _NO_SRAM_DEFAULTS
+        assert overridden is (cls in _SRAM_CARRYING_CLASSES), cls.__name__
+
+
+def test_sram_carrying_instances_return_an_image_of_their_size() -> None:
+    # cart-sram-mapper "Every SRAM-carrying mapper class has an SRAM
+    # medium", cart-fmpac / cart-halnote "<class> has an SRAM medium".
+    rom = bytes(range(256)) * 128
+    cases: list[tuple[Mapper, int]] = [
+        (Ascii8Sram2Mapper(rom=rom), 2048),
+        (Ascii8Sram8Mapper(rom=rom), 8192),
+        (KoeiSRAM32Mapper(rom=rom), 32768),
+        (GameMaster2Mapper(rom=rom), 8192),
+        (Ascii16Sram2Mapper(rom=rom), 2048),
+        (Ascii16Sram8Mapper(rom=rom), 8192),
+        (HalnoteMapper(rom=bytes(1048576)), 16384),
+        (FmPac(rom=bytes(65536), opll=Opll()), 8192),
+    ]
+    for mapper, size in cases:
+        image = mapper.sram_medium()
+        assert isinstance(image, SramImage), type(mapper).__name__
+        assert len(image) == size, type(mapper).__name__
+        assert mapper.sram_medium() is image  # the same image for its lifetime
 
 
 def test_reset_does_not_raise_on_a_mapper_with_no_bank_state() -> None:
@@ -182,9 +209,16 @@ def test_every_banktracingmapper_subclass_overrides_reset() -> None:
         )
 
 
-def test_save_sram_is_a_no_op_when_has_sram_is_false(tmp_path) -> None:
-    flat = FlatMapper(cartridge=None)
-    assert flat.has_sram is False
-    target = tmp_path / "should-not-exist.sram"
-    flat.save_sram(target)
-    assert not target.exists()
+def test_a_mapper_without_sram_has_no_medium() -> None:
+    # cart-rom-mapper "A mapper with no SRAM has no SRAM medium",
+    # memory-ram-mapper "RamMapper declares no SRAM medium".
+    for mapper in (FlatMapper(cartridge=None), Ascii8Mapper(rom=bytes(range(256)) * 128),
+                   RamMapper()):
+        assert mapper.sram_medium() is None
+
+
+def test_every_mapper_class_exposes_sram_medium() -> None:
+    # cart-rom-mapper "Every concrete Mapper implementer satisfies the
+    # widened protocol".
+    for cls in _ALL_MAPPER_CLASSES:
+        assert callable(getattr(cls, "sram_medium", None)), cls.__name__

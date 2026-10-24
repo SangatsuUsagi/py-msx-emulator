@@ -53,8 +53,8 @@ Gaps this file fills:
     both the debugger (_cmd_fdd) and the RPC handler (_h_fdd_swap) guard
     the index themselves before ever calling FloppyDisk.mount()/swap(), so
     no existing test reaches msx/fdc/interface.py's own (guardless) list
-    indexing; confirmed by reading msx/debugger/prompt.py:724 and
-    msx/rpc_server.py's _h_fdd_swap, neither of which delegates an
+    indexing; confirmed by reading host/debugger/prompt.py:724 and
+    host/rpc_server.py's _h_fdd_swap, neither of which delegates an
     out-of-range index down to the interface layer
   - ReadTrackFromController, ReadSectorFromController -- no test anywhere
     reads 0x7FF9/0x7FFA back through the memory window (existing tests
@@ -102,9 +102,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -160,13 +160,13 @@ def test_mount_out_of_range_drive_raises(tmp_path: Path) -> None:
     index, not a graceful rejection."""
     iface = _iface(drives=1)
     with pytest.raises(IndexError):
-        iface.mount(DskDiskImage(_blank(tmp_path / "d.dsk")), drive=1)
+        iface.mount(dsk_image(_blank(tmp_path / "d.dsk")), drive=1)
 
 
 def test_swap_out_of_range_drive_raises(tmp_path: Path) -> None:
     iface = _iface(drives=1)
     with pytest.raises(IndexError):
-        iface.swap(1, DskDiskImage(_blank(tmp_path / "d.dsk")))
+        iface.swap(1, dsk_image(_blank(tmp_path / "d.dsk")))
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_unconnected_register_reads_open_bus() -> None:
 
 def test_drq_status_byte_active_low(tmp_path: Path) -> None:
     iface = _iface()
-    iface.drives[0].image = DskDiskImage(_blank(tmp_path / "d.dsk"))
+    iface.drives[0].image = dsk_image(_blank(tmp_path / "d.dsk"))
     iface.write_mem(_TRACK, 0)
     iface.write_mem(_SECTOR, 1)
     iface.write_mem(_CMD, 0x80)  # READ SECTOR -> DRQ asserted

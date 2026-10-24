@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import msx.machine_loader as machine_loader
-from msx.app_config import AppConfig
+import host.machine_config as machine_config
+from host.app_config import AppConfig
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
@@ -22,10 +22,12 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     run_mock = MagicMock(name="run")
-    build_mock = MagicMock(name="build_machine")
+    # load_machine_config receives the cartridge/mapper arguments main()
+    # resolved; build_machine only the resulting config.
+    build_mock = MagicMock(name="load_machine_config")
     extension_mock = MagicMock(name="load_extension_overlay", return_value=None)
     spec_spy = MagicMock(name="load_machine_spec",
-                         side_effect=machine_loader.load_machine_spec)
+                         side_effect=machine_config.load_machine_spec)
 
     patches = [
         patch.object(sys, "argv", [".", *argv]),
@@ -37,13 +39,14 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         patch.object(Path, "exists", lambda self: True),
         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768),
         patch("frontend.sdl2_frontend.run", run_mock),
-        patch("msx.debugger.prompt.Debugger"),
-        patch("msx.machine_loader.build_machine", build_mock),
-        patch("msx.machine_loader.load_extension_overlay", extension_mock),
-        patch("msx.machine_loader.load_machine_spec", spec_spy),
+        patch("host.debugger.prompt.Debugger"),
+        patch("host.machine_config.load_machine_config", build_mock),
+        patch("msx.machine_loader.build_machine", MagicMock(name="build_machine")),
+        patch("host.machine_config.load_extension_overlay", extension_mock),
+        patch("host.machine_config.load_machine_spec", spec_spy),
     ]
     if app_cfg is not None:
-        patches.append(patch("msx.app_config.load_app_config", lambda root: app_cfg))
+        patches.append(patch("host.app_config.load_app_config", lambda root: app_cfg))
 
     for p in patches:
         p.start()
@@ -114,13 +117,13 @@ def test_builtin_scale_when_neither_set() -> None:
 def test_cli_mapper_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper", "Konami"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "Konami"
+    assert build_mock.call_args.kwargs["mapper1"] == "Konami"
 
 
 def test_builtin_mapper_auto_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 def test_config_mapper_attr_has_no_effect() -> None:
@@ -130,7 +133,7 @@ def test_config_mapper_attr_has_no_effect() -> None:
     cfg = AppConfig()
     cfg.mapper = "KonamiSCC"  # type: ignore[attr-defined]
     _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +356,7 @@ def test_no_slot2_cartridge_when_neither_set() -> None:
 def test_cli_slot1_used_when_given() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot1", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
@@ -361,20 +364,20 @@ def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
     # naming symmetry with --mapper's alias for --mapper1.
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_config_slot1_used_when_cli_omitted() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig(slot1="game.rom"))
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_positional_cartridge_is_slot1_mapper1_auto_shorthand() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 def test_positional_cartridge_and_slot1_together_rejected() -> None:
@@ -388,7 +391,7 @@ def test_positional_cartridge_and_slot1_together_rejected() -> None:
 def test_mapper1_alias_for_mapper() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper1", "Konami"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "Konami"
+    assert build_mock.call_args.kwargs["mapper1"] == "Konami"
 
 
 def test_mapper1_accepts_sram_backed_type() -> None:
@@ -396,7 +399,7 @@ def test_mapper1_accepts_sram_backed_type() -> None:
         ["--machine", "cbios_msx1", "--mapper1", "GameMaster2"], app_cfg=AppConfig())
     assert code == 0
     assert err == ""
-    assert build_mock.call_args.kwargs["mapper"] == "GameMaster2"
+    assert build_mock.call_args.kwargs["mapper1"] == "GameMaster2"
 
 
 # ---------------------------------------------------------------------------
@@ -513,22 +516,17 @@ def test_builtin_frame_skip_auto_when_neither_set() -> None:
 # keyboard_joystick.buttons -> InputState.joy_map, threaded to build_machine
 # ---------------------------------------------------------------------------
 
-def test_keyboard_joy_map_passed_to_build_machine() -> None:
-    from msx.input import JOY_MAP, _K_j
-
+def test_keyboard_joystick_names_passed_to_run() -> None:
+    # The frontend resolves the names; build_machine takes no key map.
     cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    joy_map = build_mock.call_args.kwargs["joy_map"]
-    assert joy_map[_K_j] == (0, 4)
-    assert joy_map is not JOY_MAP
+    _c, _o, _e, run_mock, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
+    assert run_mock.call_args.kwargs["keyboard_joystick"] == {"trigger_a": "j"}
+    assert "joy_map" not in build_mock.call_args.kwargs
 
 
-def test_default_keyboard_joy_map_passed_when_no_override() -> None:
-    from msx.input import JOY_MAP
-
-    _c, _o, _e, _run, build_mock, *_ = _run_main(
-        ["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["joy_map"] is JOY_MAP
+def test_default_keyboard_joystick_passed_when_no_override() -> None:
+    _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
+    assert run_mock.call_args.kwargs["keyboard_joystick"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +534,7 @@ def test_default_keyboard_joy_map_passed_when_no_override() -> None:
 # ---------------------------------------------------------------------------
 
 def test_config_rpc_enabled_starts_server() -> None:
-    with patch("msx.rpc_server.DebugServer") as rpc_mock:
+    with patch("host.rpc_server.DebugServer") as rpc_mock:
         _run_main(["--machine", "cbios_msx1"],
                   app_cfg=AppConfig(rpc_enabled=True, rpc_socket="/tmp/cfg.sock"))
     rpc_mock.assert_called_once()
@@ -544,7 +542,7 @@ def test_config_rpc_enabled_starts_server() -> None:
 
 
 def test_cli_rpc_socket_overrides_config_socket() -> None:
-    with patch("msx.rpc_server.DebugServer") as rpc_mock:
+    with patch("host.rpc_server.DebugServer") as rpc_mock:
         _run_main(["--machine", "cbios_msx1", "--rpc", "--rpc-socket", "/tmp/cli.sock"],
                   app_cfg=AppConfig(rpc_enabled=True, rpc_socket="/tmp/cfg.sock"))
     assert rpc_mock.call_args.kwargs["sock_path"] == "/tmp/cli.sock"
@@ -587,11 +585,16 @@ def test_cli_fdd1_overrides_config_fdd1() -> None:
 # ---------------------------------------------------------------------------
 
 def test_config_hotkeys_passed_to_the_frontend() -> None:
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
     cfg = AppConfig(hotkeys={"mute": "shift+f8"})
     _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    assert run_mock.call_args.kwargs["hotkey_bindings"] == cfg.hotkey_bindings()
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == resolve_hotkeys(cfg.hotkey_bindings())
 
 
 def test_no_hotkeys_config_passes_the_built_in_table() -> None:
+    from frontend.sdl2_keyboard import resolve_hotkeys
+
     _c, _o, _e, run_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert run_mock.call_args.kwargs["hotkey_bindings"] == AppConfig().hotkey_bindings()
+    assert run_mock.call_args.kwargs["hotkey_bindings"] == resolve_hotkeys(
+        AppConfig().hotkey_bindings())

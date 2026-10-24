@@ -10,11 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from host.machine_config import build_machine_from_spec
+from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.machine import Machine
-from msx.machine_loader import MachineSpec, _ExtensionOverlay, _RomEntry, build_machine
-from msx.state import load_state, save_state
+from msx.machine_spec import ExtensionOverlay, MachineSpec, _RomEntry
 
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 _BANK_SIZE = 0x4000
 
 
@@ -25,10 +27,10 @@ def _bank_rom(num_banks: int = 4) -> bytes:
     return bytes(buf)
 
 
-def _make_fmpac_overlay(rom_dir: Path) -> _ExtensionOverlay:
+def _make_fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     rom_dir.mkdir(parents=True, exist_ok=True)
     (rom_dir / "fmpac.rom").write_bytes(_bank_rom())
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=rom_dir,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
@@ -62,7 +64,7 @@ def _fmpac_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     overlay = _make_fmpac_overlay(tmp_path / f"{name}_fmpac_rom")
-    machine = build_machine(_msx1_spec(main_dir), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(main_dir), extension_overlay2=overlay)
     assert machine.fmpac is not None
     return machine
 
@@ -191,7 +193,7 @@ def test_roundtrip_preserves_rhythm_state(saves_dir: Path, tmp_path: Path) -> No
 def test_machine_without_fmpac_roundtrips(saves_dir: Path, tmp_path: Path) -> None:
     main_dir = tmp_path / "main_rom"
     main_dir.mkdir()
-    machine = build_machine(_msx1_spec(main_dir))
+    machine = build_machine_from_spec(_msx1_spec(main_dir))
     assert machine.fmpac is None
     machine.cpu.registers.A = 0x42
     save_state(machine, _RGB, "test")

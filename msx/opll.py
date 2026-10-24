@@ -36,6 +36,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable, TypedDict
 
+from msx.clock import CPU_CLOCK_HZ
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import (
     I64_MAX,
@@ -48,8 +49,6 @@ from msx.snapshot_schema import (
 )
 
 __all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
-
-_CLOCK = 3_579_545  # Hz — full MSX CPU clock; the chip runs at clk / 72.
 
 # --- fixed-point / range constants (emu2413 names) ---
 _DP_BITS = 19
@@ -258,7 +257,7 @@ def note_frequency(fnum: int, block: int) -> float:
     documentation and tests; the synthesis path uses the phase accumulator
     directly (calc_phase), which is mathematically equivalent.
     """
-    return fnum * (1 << block) * _CLOCK / (1 << 19) / 72.0
+    return fnum * (1 << block) * CPU_CLOCK_HZ / (1 << 19) / 72.0
 
 
 @dataclass
@@ -1098,7 +1097,7 @@ class Opll:
         loud channels sits comfortably below full scale.
         """
         out = bytearray(n * 2)
-        out_step = _CLOCK / 72.0
+        out_step = CPU_CLOCK_HZ / 72.0
         inp_step = float(SAMPLE_RATE)
         out_time = self._out_time
         for i in range(n):

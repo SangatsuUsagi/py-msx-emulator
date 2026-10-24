@@ -2,7 +2,7 @@
 
 純粋な Python 3.10+ で書いた、機能的に正確な MSX1/MSX2 エミュレータ。機械可読なコンポーネント仕様に基づいて実装している。
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3672%20passing-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-3814%20passing-brightgreen)
 
 [English README is here](README.md)
 
@@ -145,7 +145,7 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 | 有効化 | `--extension1`/`--extension2 fmpac`（[`docs/README_extension_ja.md`](docs/README_extension_ja.md#fm-pac)参照）。ROM は `roms/fmpac/fmpac.rom` |
 | メモリマップ | 0x4000-0x7FFF に 64 KB ROM（16 KB × 4 バンク、バンクレジスタ 0x7FF7）。8 KB SRAM（openMSX 準拠の 0x1FFE バイト有効領域、0x5FFE/0x5FFF へのマジック値書き込みでアンロック）。メモリマップされた OPLL レジスタ（0x7FF4/0x7FF5）、イネーブルレジスタ（0x7FF6） |
 | I/O ポート | 0x7C/0x7D、イネーブルレジスタの bit 0 でゲート |
-| SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、終了時に保存 |
+| SRAM 永続化 | `saves/sram/fmpac.sram`。起動時にロード、変更があれば終了時に保存 |
 | OPLL 音源合成 | emu2413 v1.5.9 の忠実移植：対数ドメイン合成（log-sin + exp テーブル）、キースケール付きの実機エンベロープレートテーブル、AM/PM LFO、YM2413 音色 ROM、実機のショートノイズ/LFSR タップに基づくリズムモード（レジスタ 0x0E：バスドラム、スネア、タム、トップシンバル、ハイハット） |
 
 - 既知の制限：
@@ -171,14 +171,14 @@ PPI ポートC の bit 7（I/O ポート 0xAA）は 1 ビット DAC を駆動す
 | 漢字ROM I/O | ポート `0xD8-0xDB`：bit 1 でJISレベル（1/2）を選択、bit 0 で列/行書き込みとデータ読み出しを区別。5ビットの読み出しカウンタが読み出しごとに自動インクリメントし、32回読み出すごとに同じ文字の先頭バイトへラップする |
 | サブスロット0 | `HalnoteMapper`：1 MB ROM（128 × 8 KBバンク）、`0x0000-0x3FFF` に16 KB SRAM（バンク0レジスタのbit 7）、`0x7000-0x7FFF` をシャドウするJIS2辞書サブマッパー（バンク1レジスタのbit 7） |
 | サブスロット1 | `0x4000-0xBFFF` にフラット32 KB漢字ドライバ+BASIC ROM。`0x0000-0x3FFF`/`0xC000-0xFFFF` はオープンバス |
-| SRAM 永続化 | `saves/sram/hbi-j1_msx-je.sram`。起動時にロード、終了時に保存 |
+| SRAM 永続化 | `saves/sram/hbi-j1_msx-je.sram`。起動時にロード、変更があれば終了時に保存 |
 | 既知の制限 | アドレスを書き換えずに漢字 ROM を 32 回続けて読んだ後の実機の動作は確認していない。この実装は openMSX の動作（同じ文字のバイト 0 に戻る）を正解として扱う |
 
 ### オーディオ出力フィルタ
 
 実機 MSX の音声出力の RC フィルタを模した、アナログ風の出力ローパスフィルタ（2 極バターワース）。ミックス後の PSG/SCC/DAC/OPLL/キークリックの信号から、残ったイメージングとエイリアシングを取り除く。
 
-- 実装：`msx/audio_filter.py`
+- 実装：`frontend/audio_filter.py`。フロントエンドがかける。コアの音声出力はフィルタ前のミックス
 
 ### PPI（Programmable Peripheral Interface）：Intel i8255
 
@@ -220,8 +220,9 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 ポート 0xB4〜0xB5 のリアルタイムクロック。バッテリーバックアップの CMOS RAM（ブロック 2/3、計 26 ニブル）と、12/24 時間モードの切り替え（レジスタ 10 の bit 0）も持つ。
 
 - 実装：`msx/rtc.py`
-- CMOS RAM の保存先：`saves/sram/rtc_<machine_id>.sram`。マシンごとに 1 ファイル。カートリッジの SRAM と違い、実機は 1 台に 1 個の RTC と電池を持つため。起動時に読み込み、終了時に保存する
-- 既知の制限：時計はホストのシステム時刻を返す。アラームとタイマー出力はない。
+- CMOS RAM の保存先：`saves/sram/rtc_<machine_id>.sram`。マシンごとに 1 ファイル。カートリッジの SRAM と違い、実機は 1 台に 1 個の RTC と電池を持つため。起動時に読み込み、変更があれば終了時に保存する
+- 時計：マシンを作るときにホストの現在時刻から始まり、その後はエミュレーションの時間だけで進む。このため同じ入力なら毎回同じ動作になる。時計はエミュレーションの速さで進む（早送り中は速く、一時停止中は止まる）
+- 既知の制限：MSX 側から時刻を設定しても時計は変わらない。アラームとタイマー出力はない。
 
 ### カートリッジマッパー
 
@@ -242,7 +243,7 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 | `KoeiSRAM32Mapper` | ASCII8 + 32 KB バッテリーバックアップ SRAM。SRAM 選択可能ウィンドウに 0x4000 を追加 |
 | `GameMaster2Mapper` | Konami 系 128 KB ROM + 8 KB バッテリーバックアップ SRAM。各バンクレジスタで ROM ページまたは 4 KB SRAM 半分（8 KB ウィンドウ内でミラー）を選択、SRAM 書き込みは 0xB000–0xBFFF |
 
-スロット 1 とスロット 2 はそれぞれ独立にマッパーを選ぶ（`--mapper`/`--mapper1` と `--mapper2`、どちらもデフォルトは自動）。SRAM 付きのタイプも含め、両スロットは同じマッパーに対応する。各スロットの SRAM は、それぞれ `saves/sram/<カートリッジの SHA1>.sram` に保存する。
+スロット 1 とスロット 2 はそれぞれ独立にマッパーを選ぶ（`--mapper`/`--mapper1` と `--mapper2`、どちらもデフォルトは自動）。SRAM 付きのタイプも含め、両スロットは同じマッパーに対応する。各スロットの SRAM は、それぞれ `saves/sram/<カートリッジの SHA1>.sram` に、変更があれば終了時に保存する。
 
 `KonamiSCC` はどちらのスロットでも実際の Konami-SCC チップを作る。実機の Konami-SCC カートリッジは、Konami のスロットコンバータなどを使えばどちらのスロットにも挿せるため。ただし、スロット 1 と 2 はマシンに 1 つだけの `SCC` チップを共有する。次の場合は `MachineLoadError` になる。
 
@@ -251,7 +252,9 @@ MSX1 は 4 ページ × 4 スロットで振り分ける。スロット 0 に BI
 
 ### フロッピーディスクドライブ（WD2793）
 
-汎用の FDC（フロッピーディスクコントローラ）層は、ディスクイメージ、ドライブ、コントローラ、接続方式の 4 つの部分からなる。この層の上に、Sony HB-F1XD と同じ WD2793 コントローラと Sony/Philips 接続方式を実装している。レジスタはスロット 3 のサブスロット 0 にメモリマップされる。`--fdd1` で `*.dsk` イメージをマウントする。Disk BASIC の起動、`CALL FORMAT`、ファイルの読み書き（終了時にファイルへ書き戻す）に対応する。実行中のディスク交換は、F6/Shift+F6（[エミュレータ内のキー操作](#エミュレータ内のキー操作)参照）かデバッガ REPL（`fdd1`/`fdd2`）でできる。
+汎用の FDC（フロッピーディスクコントローラ）層は、ディスクイメージ、ドライブ、コントローラ、接続方式の 4 つの部分からなる。この層の上に、Sony HB-F1XD と同じ WD2793 コントローラと Sony/Philips 接続方式を実装している。レジスタはスロット 3 のサブスロット 0 にメモリマップされる。`--fdd1` で `*.dsk` イメージをマウントする。Disk BASIC の起動、`CALL FORMAT`、ファイルの読み書きに対応する。書き込んだセクタは、終了時、ステートセーブの前、ディスクを入れ替えたときに `.dsk` ファイルへ書き戻す。実行中のディスク交換は、F6/Shift+F6（[エミュレータ内のキー操作](#エミュレータ内のキー操作)参照）かデバッガ REPL（`fdd1`/`fdd2`）でできる。
+
+ステートセーブの読み込みでは、ディスクは入れ替えない。各ドライブには、保存したときと同じディスク（同じ `.dsk` ファイルで、中身も同じもの）が入っている必要がある。違う場合は読み込みを拒否し、何も変えない。複数ディスクのゲームでは、先に F6 でそのディスクに入れ替えるか、`--resume` のときに `--fdd1` の先頭にそのディスクを置く。
 
 - 実装：`msx/fdc/wd2793.py`、`msx/fdc/interface.py`
 - 既知の制限：
@@ -279,7 +282,7 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 | 項目 | 詳細 |
 | --- | --- |
-| 実装 | `msx/romdb.py` |
+| 実装 | `host/romdb.py` |
 | データソース | [openMSX ソフトウェアデータベース](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml)（参照元。すべてのエントリは独自に収集した事実情報） |
 | フォールバック | ROM がデータベースにない場合は、タイトルなしで起動し、`--mapper auto` の推定でマッパーを選ぶ |
 
@@ -293,9 +296,9 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 | 項目 | 詳細 |
 | --- | --- |
-| キーボード | `msx/input.py`。MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー |
-| 物理ジョイスティック | `msx/joystick.py`。SDL2 GameController API（優先）と生ジョイスティックのフォールバック。ホットプラグ対応 |
-| キーボードエミュレーション | WASD = Joy1 方向。Z/X または ,/. = トリガ A/B。矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
+| キーボード | `msx/input.py`（マトリクス：MSX テクニカルハンドブック準拠の 11 行 × 8 ビット、アクティブロー）と `frontend/sdl2_keyboard.py`（ホストのキーからマトリクスのセルへの変換） |
+| 物理ジョイスティック | `frontend/sdl2_joystick.py`。SDL2 GameController API（優先）と生ジョイスティックのフォールバック。ホットプラグ対応 |
+| キーボードエミュレーション | `frontend/sdl2_keyboard.py`。WASD = Joy1 方向。Z/X または ,/. = トリガ A/B。矢印キーも対応。各機能のキーは `py_emulator.yaml` の `keyboard_joystick.buttons` で上書き可能 |
 
 - 既知の制限：
   - MSX のテンキー（マトリクスの行 9〜10）に割り当てたホストのキーはない。
@@ -324,20 +327,19 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 ほかに、ハードウェアパレット、アナログ風ローパスを通した 44100 Hz モノラル音声、フルスクリーン切り替え、スクリーンショット、ステートセーブ/ロード、一時停止、早送り、ミュート、リセットがある。ウィンドウタイトルには fps、`[PAUSED]`/`[FF]`/`[MUTE]`、ドライブ A のディスクを表示する。早送り中は音声を再生しない。自動フレームスキップは[パフォーマンス](#パフォーマンス)を参照。
 
-- 実装：`frontend/sdl2_frontend.py`
-- 既知の制限：音声デバイスが開いていないとき（ヘッドレスや `--benchmark` の実行など）は PSG/SCC/OPLL の合成が呼ばれないので、その間はエンベロープや LFO の状態が進まない。
+- 実装：`frontend/sdl2_frontend.py`。音声のミックスはコアが毎フレーム行う（`msx/audio_mixer.py`）。ヘッドレスの実行でも同じ。フロントエンドはそれをキューに積むだけ。
 
 ### ステートセーブ/ロード
 
 ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、マウント中のディスクの識別情報を含む。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
 
-- 実装：`msx/state.py`
+- 実装：`msx/state.py`（スナップショットのエンコード）、`host/state_files.py`（ファイル）
 
 ### インタラクティブデバッガ
 
 Ctrl+C かブレークポイントで開く REPL。ブレークポイントとウォッチポイント、ステップ実行、レジスタと VRAM のダンプ、逆アセンブル、VDP トレース、マッパートレース、スロットの表示、フロッピーの交換（`fdd1`/`fdd2 [FILE|-]`）がある。全コマンドは [`docs/debugger_ja.md`](docs/debugger_ja.md) を参照。
 
-- 実装：`msx/debugger/`
+- 実装：`host/debugger/`
 
 ### デバッグツール
 
@@ -375,40 +377,42 @@ All VRAM addresses SHALL be masked to 14 bits (`& 0x3FFF`).
 
 ## パフォーマンス
 
-数値は `--benchmark` オプションで計測した。ヘッドレスで速度制限なし（`FrameTimer` の調整なし）に、コールドブートから指定フレーム数まで動かすので、BIOS の起動時間も含む。CPU のエミュレーションと、オフスクリーンバッファへの VDP 描画は、通常のプレイと同じく毎フレーム行う。ただし `--benchmark` は SDL ウィンドウを開かず、音声サンプルも作らず、テクスチャの転送もしない。実際のプレイは、下の数値より少し遅くなる。
+数値は `--benchmark` オプションで計測した。ヘッドレスで速度制限なし（`FrameTimer` の調整なし）に、コールドブートから指定フレーム数まで動かすので、BIOS の起動時間も含む。CPU のエミュレーション、オフスクリーンバッファへの VDP 描画と RGB への変換、そのフレームの音声のミックスは、通常のプレイと同じく毎フレーム行う。ただし `--benchmark` は SDL ウィンドウを開かず、音声をキューに積まず、テクスチャの転送もしない。実際のプレイは、下の数値より少し遅くなる。
+
+v2.8.0 からコアとフロントエンドを分け、ヘッドレスの実行でもコアが毎フレーム音源を合成するようになった。`--benchmark` は、フロントエンドが表示するフレームと同じく、毎フレームを RGB にも変換する。このため `--benchmark` の数値には音声合成と RGB 変換のコストが含まれ、実際のプレイの速さに近くなった。v2.7.8 までの `--benchmark` はどちらも行っていなかったので、下の数値を v2.7.8 以前の数値と比べることはできない。RGB 変換は、前のフレームまでに変換した行を使い回すので、ほとんどのフレームでは CPython でも PyPy でも負荷が小さい。
 
 （ランタイム、ゲーム）の組み合わせごとに 10000 フレームの計測を 10 回行い、最速と最遅を除いた 8 回の平均をスコアにした。
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 292.67 | 約 4.9 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 705.33 | 約 11.8 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 313.11 | 約 5.2 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1226.14 | 約 20.4 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1412.82 | 約 23.5 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 1151.97 | 約 19.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 76.25 | 約 1.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 191.72 | 約 3.2 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 84.96 | 約 1.4 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 353.01 | 約 5.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 472.98 | 約 7.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 307.53 | 約 5.1 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 250.41 | 約 4.2 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 564.56 | 約 9.4 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 97.96 | 約 1.6 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1132.41 | 約 18.9 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 1371.70 | 約 22.9 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 685.36 | 約 11.4 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 64.98 | 約 1.1 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 149.91 | 約 2.5 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 26.45 | 約 0.44 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 235.19 | 約 3.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー4（CPU+V9938+PSG） | 291.29 | 約 4.9 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 144.27 | 約 2.4 倍 |
 
-計測したすべての組み合わせが 60 fps を上回った。余裕が最も小さいのは Raspberry Pi 5 の CPython で沙羅曼蛇を動かした場合で、約 1.3 倍。沙羅曼蛇（MSX1、KonamiSCC マッパー）は対象タイトルの中で描画と音声の負荷が最も重い。PyPy にすると、同じ組み合わせで約 5.9 倍になる。
+計測した組み合わせのすべてが 60 fps に届くわけではない。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.44 倍と目標を下回る。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重い。PyPy にすると、同じ組み合わせで約 2.4 倍になる。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届くが、沙羅曼蛇は約 1.1 倍とぎりぎり。
 
-Raspberry Pi 5 より遅いハードウェアや、もっと重いタイトルでは、60 fps を下回ることがある。そのときゲームは、出たフレームレートに比例してスローモーションになる。音声も劣化する（クリックや無音）。音声のサンプルはフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費するため。PyPy3 はそのまま置き換えて使え、遅いハードウェアでの処理速度を大きく上げる。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧める。
+Raspberry Pi 5 の CPython で FM-PAC を使うタイトル、Raspberry Pi 5 より遅いハードウェア、もっと重いタイトルでは、60 fps を下回る。そのときゲームは、出たフレームレートに比例してスローモーションになる。音声も劣化する（クリックや無音）。音声のサンプルはフレームごとに作るのに、音声デバイスは常に 44100 Hz で消費するため。PyPy3 はそのまま置き換えて使え、遅いハードウェアでの処理速度を大きく上げる。Raspberry Pi のような非力な環境で余裕を持たせたいなら PyPy を勧める。
 
 PyPy の数値は、OS のスケジューリングや発熱による速度低下のためか、CPython より実行ごとのばらつきが大きい。目安として見てほしい。
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.7.5 までの平均 FPS（`--benchmark`）の推移を、プラットフォームとランタイムごとに示す。どのバージョンも上と同じコールドブートの方法で計測した。
+v0.1.0 から v2.7.5 までの平均 FPS（`--benchmark`）の推移を、プラットフォームとランタイムごとに示す。どのバージョンも上と同じコールドブートの方法で、ただし音声合成なし（v2.7.8 までの方法）で計測した。このため、このグラフは上の v2.8.0 の数値にはつながらない。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
 ![Raspberry Pi 5 でのベンチマーク推移](assets/bench-history-rpi5.png)
 
-自動フレームスキップ（`--frame-skip auto`、デフォルト）は、間に合わなかったフレームで VDP のピクセル描画を省く。VBlank 割り込みは毎フレーム起きる。60 fps にあと少し届かないホストで、表示がなめらかになる。音質には効かず、60 fps に届かない環境では音切れが続く。無効にするには `--frame-skip none` を使う。
+自動フレームスキップ（`--frame-skip auto`、デフォルト）は、間に合わなかったフレームで VDP のピクセル描画を省く。VBlank 割り込みは毎フレーム起き、スプライトの衝突や 5 枚目・9 枚目のフラグも計算するので、スキップしたフレームでもゲームから見える状態は変わらない。省けるのは描画だけなので、FM-PAC のタイトルのように音声合成が重いタイトルでは効果が小さい。60 fps にあと少し届かないホストで、表示がなめらかになる。音質には効かず、60 fps に届かない環境では音切れが続く。無効にするには `--frame-skip none` を使う。
 
 `--speed` は目標のフレームレートを変える。たとえば `--speed 2.0` は、十分に速いホストでゲームを 2 倍速で動かす。遅いホストの処理不足は補えず、遅いハードウェアでの音質もよくならない。
 
@@ -513,9 +517,9 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _（なし）_ | スロット 2 カートリッジ ROM のパス。`--extension2` と併用不可 |
 | `--mapper2 TYPE` | `auto` | スロット 2 のマッパー。タイプ一覧は `--mapper1` と同じで、KonamiSCC と SRAM 付きのタイプもすべて含む。スロット 2 の SRAM もスロット 1 と同じく保存する。KonamiSCC はマシンに 1 つの SCC チップをスロット 1 と共有するので、スロット 1 も KonamiSCC になる場合や、スロット 1 が `--extension1 scc_plus` を選んでいる場合はエラーになる |
 | `--extension1 ID`、`--extension2 ID`、`--extension ID` | _（なし）_ | スロット 1/2 に拡張デバイスを追加する。id の一覧と説明は [`docs/README_extension_ja.md`](docs/README_extension_ja.md) を参照。`--extension1` は位置引数 `cartridge`、`--slot1`、`--mapper1` と、`--extension2` は `--slot2`、`--mapper2` と併用できない。同じ拡張 id（`--slot1`/`--slot2` なら同じ ROM）を両方のスロットに指定すると、起動時にエラーになる。`none` を指定すると、`py_emulator.yaml` がそのスロットに拡張を設定していても拡張なしになり、そのスロットの `--slotN`/`--mapperN` を CLI で使えるようになる。`--extension` は `--extension2` の別名（`--extension1`/`--extension2` ができる前と同じ意味） |
-| `--fdd1 DSK [DSK ...]` | _（なし）_ | ドライブ A 用のフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。起動時に先頭のイメージをマウントし、F6 で一覧を順に切り替える。書き込みは終了時にファイルへ反映。位置引数の `cartridge` は `--fdd1` より前に書くか `--slot1` を使うこと（後ろに書くとディスクイメージとして読まれる） |
+| `--fdd1 DSK [DSK ...]` | _（なし）_ | ドライブ A 用のフロッピー `*.dsk` イメージ（FDC 搭載機、例：`hb_f1xd`）。起動時に先頭のイメージをマウントし、F6 で一覧を順に切り替える。書き込みは終了時、ステートセーブの前、ディスクの入れ替え時にファイルへ反映。位置引数の `cartridge` は `--fdd1` より前に書くか `--slot1` を使うこと（後ろに書くとディスクイメージとして読まれる） |
 | `--fdd2 DSK` | _（なし）_ | ドライブ B にマウントするフロッピーの `*.dsk` イメージ（ドライブが 2 台あるマシンだけ） |
-| `--resume [FILE]` | _（なし）_ | `saves/states/latest.state`（引数なし）か、指定した `.state` ファイルから再開する |
+| `--resume [FILE]` | _（なし）_ | `saves/states/latest.state`（引数なし）か、指定した `.state` ファイルから再開する。保存時と同じディスクをマウントしておく（`--fdd1` の先頭は、保存時にドライブ A に入っていたイメージにする） |
 | `--mouse [1\|2]` | _（なし）_ | MSX マウスをジョイスティックポートにつなぐ（引数なしは Joy2）。`py_emulator.yaml` の `mouse` 設定より優先する。ヘッドレス実行では無視する |
 | `--frame-skip MODE` | `auto` | フレームスキップ。`auto` は遅れたフレームの VDP 描画を省く。`none` は無効にする |
 | `--debug` | オフ | 構造化診断ログを stderr に出力 |
@@ -624,7 +628,7 @@ hotkeys: {}              # フロントエンドのホットキーの上書き�
 | F7（押している間） | 早送り：押している間だけ速度制限なしで動かす |
 | Shift + F7 | 早送りの固定 ON/OFF |
 | F8 | ステートセーブ（`saves/states/<title>_YYYYMMDD_HHMMSS.state` に保存）* |
-| F9 | 最新のステートセーブを読み込む |
+| F9 | 最新のステートセーブを読み込む。ドライブには保存時と同じディスクが入っている必要がある（ディスクは入れ替えない） |
 | F10 | スクリーンショットを保存（`saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png`） |
 | F11 | 一時停止/再開（RPC の一時停止とは別。どちらも相手の一時停止は解除しない） |
 | Shift + F11 | フルスクリーン切り替え |
@@ -812,7 +816,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 3672 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 3814 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -836,15 +840,30 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI エントリポイント（python .）
 ├── frontend/
-│   └── sdl2_frontend.py   # SDL2 ウィンドウ、オーディオ、イベントループ
-├── msx/                   # コアエミュレータパッケージ
+│   ├── audio_filter.py    # アナログ的な出力ローパス（BiquadLowPass）
+│   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
+│   ├── sdl2_frontend.py   # SDL2 ウィンドウ、音声のキュー投入、イベントループ
+│   ├── sdl2_joystick.py   # 物理ジョイスティックマネージャ（SDL2）
+│   └── sdl2_keyboard.py   # ホストのキーボードから MSX マトリクス／キーボードジョイスティックへ（SDL2）
+├── host/                  # ホスト側のサービス（ファイル、設定、デバッグ用の窓口）
+│   ├── machine_config.py  # YAML のマシン設定と ROM/SRAM/ディスクファイルの読み込み
+│   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
+│   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
+│   ├── media.py           # SRAM とディスクイメージのファイル（変更の保存、ディスク交換）
+│   ├── input_state.py     # 入力の組み立て：キーボード/ゲームパッド/マウス/RPC → フレームごとの InputFrame
+│   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
+│   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
+│   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
+│   └── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
+├── msx/                   # コアエミュレータパッケージ（ファイル入出力・ホスト時計なし）
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
 │   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インタフェース）
 │   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
-│   ├── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
-│   ├── machine.py         # コンポーネント配線とフレームループ
-│   ├── machine_loader.py  # YAML ベースのマシン設定ローダ
+│   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
+│   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
+│   ├── machine_spec.py    # 解決済みのマシン記述
+│   ├── machine_loader.py  # 読み込んだ設定からマシンを組み立てる
 │   ├── memory.py          # スロットベースのメモリバス
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
 │   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
@@ -852,22 +871,17 @@ py-msx-emulator/
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（16 KB セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
 │   ├── psg.py             # AY-3-8910 PSG + オーディオ合成（サブフレーム PCM）
-│   ├── audio_filter.py    # アナログ的な出力ローパス（BiquadLowPass）
+│   ├── audio_mixer.py     # フレームごとの音声ミックス（Machine.run_frame が実行）
 │   ├── dac.py             # 書き込み駆動型の DAC チャンネル（Majutsushi DAC、キークリック）
 │   ├── scc.py             # Konami SCC ウェーブテーブルシンセサイザ
 │   ├── fmpac.py           # FM-PAC カートリッジ（バンク ROM、SRAM、OPLL ルーティング）
 │   ├── opll.py            # YM2413（OPLL）FM 音源チップ
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
 │   ├── io.py              # I/O バス（ポートディスパッチ）
-│   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
-│   ├── joystick.py        # 物理ジョイスティックマネージャ（SDL2）
+│   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
-│   ├── frame_timer.py     # フレームの速度調整（NTSC 60 fps / PAL 50 fps）と FPS 計測
-│   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
-│   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
-│   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
-│   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
-│   └── state.py           # マシン状態のセーブ/ロード（JSON + PNG）
+│   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
+│   └── state.py           # マシン状態のスナップショット（バージョン付き JSON）
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
@@ -881,7 +895,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（3672 テスト）
+├── tests/                 # テストスイート（3814 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴

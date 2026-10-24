@@ -14,7 +14,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from msx.rpc_server import (
+from host.rpc_server import (
     ERR_INVALID_PARAMS,
     ERR_METHOD_NOT_FOUND,
     ERR_PARSE,

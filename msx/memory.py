@@ -573,7 +573,7 @@ class Memory:
     # ------------------------------------------------------------- debug REPL
     #
     # The three methods below back the debugger's `sl`/`st` slot-inspector
-    # commands (msx/debugger/prompt.py). They exist so that debugger code
+    # commands (host/debugger/prompt.py). They exist so that debugger code
     # never needs to reflect on Memory's private fields (_mapper/_mapper2)
     # from outside this class -- see openspec/changes/archive/
     # *-debugger-slot-mapper-interface.

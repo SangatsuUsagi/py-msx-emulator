@@ -6,18 +6,15 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, NoReturn, TextIO, TypeVar
 
-from msx.app_config import VALID_EXTENSIONS, VALID_MAPPERS
+from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
-    from msx.app_config import AppConfig
+    from host.app_config import AppConfig
+    from host.rpc_server import DebugServer
+    from msx.boundary import MediaId, RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
-    from msx.machine_loader import (
-        MachineSpec,
-        _ExpandedExtensionOverlay,
-        _ExtensionOverlay,
-    )
-    from msx.rpc_server import DebugServer
+    from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -275,13 +272,13 @@ def _resolve_machine_id(
 
 def _print_extension_summary_line(
     slot_num: int,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_overlay: "AnyExtensionOverlay | None",
     extension_id: str | None,
 ) -> None:
     if extension_overlay is None:
         return
-    from msx.machine_loader import _ExpandedExtensionOverlay
-    if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+    from msx.machine_spec import ExpandedExtensionOverlay
+    if isinstance(extension_overlay, ExpandedExtensionOverlay):
         print(
             f"extension: {extension_id} (expanded slot {slot_num}: "
             f"{len(extension_overlay.subslots)} sub-slot(s)"
@@ -290,7 +287,7 @@ def _print_extension_summary_line(
         )
     elif extension_overlay.rom_entry is not None:
         # rom_base_dir is always set together with rom_entry (see
-        # _ExtensionOverlay's docstring: both are None only for a device
+        # ExtensionOverlay's docstring: both are None only for a device
         # with no ROM file, e.g. scc_i_cart) -- asserted here only to
         # narrow the type for mypy, not a runtime possibility.
         assert extension_overlay.rom_base_dir is not None
@@ -305,8 +302,8 @@ def _print_extension_summary_line(
 
 def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_paths: list[Path], fdd2_path: Path | None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_overlay1: "AnyExtensionOverlay | None",
+    extension_overlay2: "AnyExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
@@ -319,7 +316,7 @@ def _print_startup_summary(
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
     _print_extension_summary_line(1, extension_overlay1, args.extension1)
-    _print_extension_summary_line(2, extension_overlay, args.extension2)
+    _print_extension_summary_line(2, extension_overlay2, args.extension2)
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -334,25 +331,45 @@ def _print_startup_summary(
 
 
 def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
-    """Run exactly `count_frame` frames headlessly (no SDL window)."""
+    """Run exactly `count_frame` frames headlessly (no SDL window).
+
+    No host input and no video: emulated state does not depend on rendering.
+    """
+    from msx.input import InputFrame
+
     if resume is not None:
-        from msx.state import load_state
-        load_state(machine, path=Path(resume) if resume else None)
+        from host.state_files import resume_state
+        resume_state(machine, resume)
+    no_input = InputFrame()
     for _ in range(count_frame):
-        machine.run_frame()
+        machine.step_frame(no_input, render_video=False)
+
+
+def _host_rtc_time() -> "RtcTime":
+    """The host's local time, handed to the core once to start the RTC."""
+    import datetime
+
+    from msx.boundary import RtcTime
+
+    now = datetime.datetime.now()
+    return RtcTime(now.year, now.month, now.day, now.hour, now.minute, now.second)
 
 
 def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
     import time
 
-    from msx.state import load_state
+    from host.state_files import resume_state
     if resume is not None:
-        load_state(machine, path=Path(resume) if resume else None)
+        resume_state(machine, resume)
 
+    from msx.input import InputFrame
+
+    # Every frame renders RGB video, as interactive play does.
+    no_input = InputFrame()
     start = time.perf_counter()
     for _ in range(frames):
-        machine.run_frame()
+        machine.step_frame(no_input, render_video=True)
     elapsed = time.perf_counter() - start
 
     print(f"frames  : {frames}")
@@ -363,6 +380,7 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
+    sram_files: "dict[MediaId, Path]",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -374,15 +392,10 @@ def _cleanup(
     if mapper_trace_file is not None:
         mapper_trace_file.close()
     if machine is not None:
-        # machine.sram_sources() -- one generic list instead of one
-        # _save_sram_if_present call per SRAM-backed device (see
-        # design.md Decision D2 Option B).
-        for source, save_path in machine.sram_sources():
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            source.save_sram(save_path)
-        # Flush any disk writes (FORMAT / file save) back to the *.dsk on exit.
-        if machine.fdc is not None:
-            machine.fdc.flush()
+        # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
+        # FORMAT / file save) back to its file.
+        from host.media import persist_dirty_media
+        persist_dirty_media(machine, sram_files)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -422,7 +435,7 @@ def _resolve_effective_options(
     file < CLI argument precedence. A CLI flag left unset is None (see the
     sentinel defaults in _build_arg_parser), so it never masks a config value.
     """
-    from msx.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
+    from host.app_config import DEFAULT_MAPPER, DEFAULT_SCALE, DEFAULT_SPEED
 
     if app_cfg.frame_skip is None:
         frame_skip_cfg = None
@@ -501,7 +514,7 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
-    from msx.app_config import AppConfigError, load_app_config
+    from host.app_config import AppConfigError, load_app_config
     try:
         app_cfg = load_app_config(_PROJECT_ROOT)
     except AppConfigError as exc:
@@ -510,7 +523,7 @@ def main() -> None:
     opts = _resolve_effective_options(args, app_cfg)
     _validate_options(args, opts)
 
-    from msx.romdb import lookup, lookup_system, lookup_title
+    from host.romdb import lookup, lookup_system, lookup_title
 
     paths = _resolve_paths(args, opts.slot1, opts.slot2, opts.fdd1)
     fdd1_paths = paths.fdd1_paths
@@ -523,13 +536,15 @@ def main() -> None:
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
 
     # --- Load machine spec from YAML ---
-    from msx.machine_loader import (
-        MachineLoadError,
-        build_machine,
+    from host.machine_config import (
         load_device_registry,
         load_extension_overlay,
+        load_machine_config,
         load_machine_spec,
+        sram_paths,
     )
+    from msx.machine_loader import build_machine
+    from msx.machine_spec import MachineLoadError
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
         spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
@@ -537,7 +552,7 @@ def main() -> None:
             load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension1 is not None else None
         )
-        extension_overlay = (
+        extension_overlay2 = (
             load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension2 is not None else None
         )
@@ -563,7 +578,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay,
+        spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay2,
         opts.mouse_port, args,
     )
 
@@ -583,29 +598,30 @@ def main() -> None:
     logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
     rpc_server = None
+    sram_files: "dict[MediaId, Path]" = {}
     try:
         try:
-            machine = build_machine(
+            config = load_machine_config(
                 spec,
-                cartridge=cartridge,
-                mapper=opts.mapper1,
+                cartridge1=cartridge,
+                mapper1=opts.mapper1,
                 cartridge2=cartridge2,
                 mapper2=opts.mapper2,
-                logger=logger,
-                tracer=tracer,
                 fdd1=fdd1_paths[0] if fdd1_paths else None,
                 fdd2=fdd2_path,
-                extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
-                joy_map=app_cfg.keyboard_joy_map(),
+                extension_overlay2=extension_overlay2,
+                rtc_initial_time=_host_rtc_time(),
             )
+            sram_files = sram_paths(config)
+            machine = build_machine(config, logger=logger, tracer=tracer)
         except MachineLoadError as exc:
             _fail(str(exc))
 
         # Attach the interactive debugger for all machines so Ctrl-C drops into
         # the REPL on MSX1 too (the slot/mapper tools are most useful there).
-        from msx.debugger.prompt import Debugger
-        machine._debugger = Debugger(machine)
+        from host.debugger.prompt import Debugger
+        machine.attach_debugger(Debugger(machine))
 
         if breakpoint_addrs:
             machine.set_breakpoints(breakpoint_addrs)
@@ -627,20 +643,24 @@ def main() -> None:
             _run_benchmark(machine, args.benchmark, args.resume)
         else:
             if opts.rpc_enabled:
-                from msx.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
+                from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
                 rpc_server = DebugServer(machine, sock_path=sock_path)
                 machine.set_pause_hook(rpc_server.on_pause)
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
+            from frontend.sdl2_joystick import resolve_gamepad_maps
+            from frontend.sdl2_keyboard import resolve_hotkeys
             run(machine, scale=opts.scale, speed=opts.speed, game_title=game_title,
                 resume=args.resume, frame_skip=opts.frame_skip, rpc_server=rpc_server,
-                gamepad_map=app_cfg.gamepad_maps(), turbo_period=app_cfg.turbo_period(),
+                gamepad_map=resolve_gamepad_maps(app_cfg.gamepad_buttons_resolved()),
+                turbo_period=app_cfg.turbo_period(),
                 mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
-                hotkey_bindings=app_cfg.hotkey_bindings())
+                hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
+                keyboard_joystick=app_cfg.keyboard_joystick_buttons)
     finally:
-        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file)
+        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files)
 
 
 if __name__ == "__main__":

@@ -7,22 +7,23 @@ from pathlib import Path
 
 import pytest
 
-from msx.kanji import KanjiRom
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    _ExpandedExtensionOverlay,
-    _ExpandedSubslotDevice,
-    _make_mapper,
+from host.machine_config import (
     _parse_fdc,
     _parse_slot0,
     _parse_slot3_msx2,
-    _require_scc,
-    _RomEntry,
-    _Slot0RamEntry,
-    build_machine,
+    build_machine_from_spec,
     load_device_registry,
     load_machine_spec,
+)
+from msx.kanji import KanjiRom
+from msx.machine_loader import _make_mapper, _require_scc
+from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    MachineLoadError,
+    MachineSpec,
+    _ExpandedSubslotDevice,
+    _RomEntry,
+    _Slot0RamEntry,
 )
 from msx.ppi import PpiControlRead
 from msx.ram_mapper import RamMapper
@@ -351,14 +352,14 @@ def _make_msx2_spec(tmp_path: Path) -> MachineSpec:
 
 def test_build_machine_msx1_vdp_type(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert isinstance(machine.vdp, VDP)
     assert not isinstance(machine.vdp, V9938)
 
 
 def test_build_machine_msx1_no_ram_mapper(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.ram_mapper is None
 
 
@@ -368,7 +369,7 @@ def test_build_machine_msx1_slot0_ram_entry_reaches_memory(tmp_path: Path) -> No
     spec = dataclasses.replace(
         _make_msx1_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
     )
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.slot0_ram is not None
     assert len(machine.memory.slot0_ram) == 16 * 1024
     assert machine.memory.slot0_ram_page == 3
@@ -376,7 +377,7 @@ def test_build_machine_msx1_slot0_ram_entry_reaches_memory(tmp_path: Path) -> No
 
 def test_build_machine_msx1_no_slot0_ram_entry_leaves_slot0_ram_none(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.slot0_ram is None
 
 
@@ -392,7 +393,7 @@ def test_real_hb_10_config_has_no_slot3_ram() -> None:
     assert spec.slot0_ram_entry.size_kb == 16
     assert spec.slot0_ram_entry.page == 3
 
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert len(machine.memory.ram) == 0
     assert machine.memory.slot0_ram is not None
     assert len(machine.memory.slot0_ram) == 16 * 1024
@@ -406,7 +407,7 @@ def test_real_hb_10_64k_config_moves_ram_to_slot3() -> None:
     assert spec.ram_size_kb == 64
     assert spec.slot0_ram_entry is None
 
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.slot0_ram is None
     assert len(machine.memory.ram) == 64 * 1024
     machine.memory.set_slot_register(0xFF)  # all pages -> slot 3
@@ -416,7 +417,7 @@ def test_real_hb_10_64k_config_moves_ram_to_slot3() -> None:
 
 def test_build_machine_msx2_vdp_type(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
     )
     assert isinstance(machine.vdp, V9938)
@@ -424,7 +425,7 @@ def test_build_machine_msx2_vdp_type(tmp_path: Path) -> None:
 
 def test_build_machine_msx2_has_ram_mapper(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
     )
     assert isinstance(machine.memory.ram_mapper, RamMapper)
@@ -432,7 +433,7 @@ def test_build_machine_msx2_has_ram_mapper(tmp_path: Path) -> None:
 
 def test_build_machine_msx2_ram_mapper_default_size_is_128kb(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
     )
     assert machine.memory.ram_mapper is not None
@@ -441,7 +442,7 @@ def test_build_machine_msx2_ram_mapper_default_size_is_128kb(tmp_path: Path) -> 
 
 def test_build_machine_msx2_ram_mapper_honours_configured_size(tmp_path: Path) -> None:
     spec = dataclasses.replace(_make_msx2_spec(tmp_path), ram_mapper_size_kb=256)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
     )
     assert machine.memory.ram_mapper is not None
@@ -451,14 +452,14 @@ def test_build_machine_msx2_ram_mapper_honours_configured_size(tmp_path: Path) -
 def test_build_machine_bios_override_no_disk_needed(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
     # rom_base_dir points at a directory that has no ROM files — override must bypass disk
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.read(0x0000) == 0x00  # first byte of _FAKE_ROM_32K
 
 
 def test_build_machine_extrom_override_msx2(tmp_path: Path) -> None:
     spec = _make_msx2_spec(tmp_path)
     custom_sub = bytes([0xAB] + [0x00] * 32767)
-    machine = build_machine(
+    machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=custom_sub
     )
     assert machine.memory.sub0_rom is not None
@@ -528,7 +529,7 @@ def test_ppi_control_read_override_reaches_the_ppi(tmp_path: Path) -> None:
     config_dir, registry = _ppi_control_read_machine(tmp_path, "open_bus")
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
     assert spec.ppi_control_read is PpiControlRead.OPEN_BUS
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.ppi is not None
     machine.ppi.write_port(0xAB, 0x82)
     assert machine.ppi.read_port(0xAB) == 0xFF
@@ -663,7 +664,7 @@ def test_keyboard_type_null_override_is_rejected_not_defaulted(tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_build_machine_input_state_keyboard_type_reaches_machine(tmp_path: Path) -> None:
+def test_build_machine_keyboard_type_reaches_machine(tmp_path: Path) -> None:
     config_dir, registry = _full_registry(tmp_path)
     _write(
         config_dir / "devices" / "ppi8255.yaml",
@@ -678,8 +679,8 @@ def test_build_machine_input_state_keyboard_type_reaches_machine(tmp_path: Path)
     _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
     assert spec.keyboard_type == "jp"
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
-    assert machine.input.keyboard_type == "jp"
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
+    assert machine.keyboard_layout == "jp"
 
 
 # ---------------------------------------------------------------------------
@@ -1001,7 +1002,7 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
         file="nonexistent_logo.rom", size_kb=32, pages=[2], sha1=None
     )
     custom_logo = bytes([0xCD] + [0x00] * 32767)
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, logo_override=custom_logo)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K, logo_override=custom_logo)
     assert machine.memory.extrom is not None
     assert machine.memory.extrom[0] == 0xCD
 
@@ -1024,7 +1025,9 @@ def test_real_cbios_msx2_machines_resolve_128kb_ram_mapper(machine_id: str) -> N
     spec = load_machine_spec(machine_id, _REPO_CONFIG, registry, _REPO_ROOT)
     assert spec.has_ram_mapper is True
     assert spec.ram_mapper_size_kb == 128
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
+    )
     assert machine.memory.ram_mapper is not None
     assert len(machine.memory.ram_mapper.ram) == 131072
 
@@ -1188,7 +1191,7 @@ def test_build_machine_wires_machine_declared_kanji_device(tmp_path: Path) -> No
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
         ),
     )
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert isinstance(machine.kanji, KanjiRom)
 
 
@@ -1205,7 +1208,7 @@ def test_build_machine_missing_machine_declared_kanji_rom_raises_naming_file(
         ),
     )
     with pytest.raises(MachineLoadError, match="kanjifont.rom"):
-        build_machine(spec, bios_override=_FAKE_ROM_32K)
+        build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
 
 
 def test_build_machine_machine_declared_and_overlay_io_device_conflict(
@@ -1217,7 +1220,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     # MSX2: an expanded extension overlay has no MSX1 counterpart (see
     # cart-extension-overlay's "Expanded extension overlay requires an MSX2
     # base machine" Requirement) -- unrelated to the io_device conflict this
-    # test targets, but _ExpandedExtensionOverlay's empty `subslots={}` still
+    # test targets, but ExpandedExtensionOverlay's empty `subslots={}` still
     # goes through _wire_expanded_overlay, which now checks generation first.
     spec = dataclasses.replace(
         _make_msx2_spec(tmp_path),
@@ -1229,7 +1232,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     overlay_rom_dir = tmp_path / "overlay_kanji_rom_dir"
     overlay_rom_dir.mkdir()
     (overlay_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={},
         io_device=_ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=overlay_rom_dir,
@@ -1237,9 +1240,9 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
         ),
     )
     with pytest.raises(MachineLoadError, match="cannot coexist"):
-        build_machine(
+        build_machine_from_spec(
             spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
@@ -1273,7 +1276,9 @@ def test_build_machine_msx2_slot0_ram_entry_reaches_memory(tmp_path: Path) -> No
     spec = dataclasses.replace(
         _make_msx2_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
     )
-    machine = build_machine(spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K)
+    machine = build_machine_from_spec(
+        spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
+    )
     assert machine.memory.slot0_ram is not None
     assert len(machine.memory.slot0_ram) == 16 * 1024
     assert machine.memory.slot0_ram_page == 3

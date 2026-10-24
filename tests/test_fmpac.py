@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from msx.fmpac import SRAM_SIZE, FmPac
-from msx.machine_loader import (
-    MachineLoadError,
-    MachineSpec,
-    _ExtensionOverlay,
-    _RomEntry,
-    build_machine,
+from host.machine_config import (
+    build_machine_from_spec,
     load_extension_overlay,
+    load_machine_config,
+    sram_paths,
 )
+from msx.fmpac import SRAM_SIZE, FmPac
+from msx.machine_loader import build_machine
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
 
@@ -271,9 +271,8 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
     src.write(0x5FFE, 0x4D)
     src.write(0x5FFF, 0x69)
     src.write(0x4000, 0xAB)
-    path = tmp_path / "fmpac.sram"
-    src.save_sram(path)
-    data = path.read_bytes()
+    assert src.sram_image.dirty is True
+    data = src.sram_image.data()
     assert len(data) == SRAM_SIZE
 
     dst = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(data))
@@ -285,7 +284,7 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
 def test_wrong_size_sram_starts_blank() -> None:
     # The constructor replaces a wrong-size SRAM image with a fresh blank one.
     fmpac = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(b"\x00" * 100))
-    assert fmpac.sram == bytearray(SRAM_SIZE)
+    assert fmpac.sram_image.data() == bytearray(SRAM_SIZE)
 
 
 def test_restore_with_missing_key_does_not_partially_mutate() -> None:
@@ -296,7 +295,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     fmpac.write(0x5FFF, 0x69)
     fmpac.write(0x4000, 0xAB)
     snap = dict(fmpac.snapshot())
-    pre_sram = bytes(fmpac.sram)
+    pre_sram = fmpac.sram_image.data()
     pre_bank = fmpac._bank
     pre_enable = fmpac._enable
     pre_r1ffe = fmpac._r1ffe
@@ -306,7 +305,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     with pytest.raises(SchemaError, match="r1fff"):
         fmpac.restore(snap)
 
-    assert bytes(fmpac.sram) == pre_sram
+    assert fmpac.sram_image.data() == pre_sram
     assert fmpac._bank == pre_bank
     assert fmpac._enable == pre_enable
     assert fmpac._r1ffe == pre_r1ffe
@@ -450,9 +449,9 @@ def test_fmpac_device_without_rom_block_rejected(tmp_path: Path) -> None:
 # Machine wiring: slot-2 dispatch via a built machine (synthetic ROMs)
 # ---------------------------------------------------------------------------
 
-def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
+def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     (tmp_path / "fmpac.rom").write_bytes(_bank_rom())
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
@@ -478,10 +477,11 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
 
 def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    config = load_machine_config(_msx1_spec(tmp_path), extension_overlay2=overlay)
+    machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
-    assert machine.fmpac_sram_save_path == overlay.sram_save_path
+    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
 
 
 def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
@@ -492,16 +492,17 @@ def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
     # and ran, but silently never persisted) -- now resolved from
     # _ExtensionWiring, which is slot-agnostic.
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    config = load_machine_config(_msx1_spec(tmp_path), extension_overlay1=overlay)
+    machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper is machine.fmpac
-    assert machine.fmpac_sram_save_path == overlay.sram_save_path
-    assert (machine.fmpac, overlay.sram_save_path) in machine.sram_sources()
+    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
+    assert machine.sram_media()["fmpac.sram"] is machine.fmpac.sram_image
 
 
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)  # page 1 (0x4000-0x7FFF) -> slot 2
     assert mem.read(0x4000) == 0  # FM-PAC ROM bank 0 marker byte
@@ -509,7 +510,7 @@ def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:
 
 def test_machine_io_ports_gated_by_enable(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=overlay)
     mem = machine.memory
     mem.set_slot_register(0x08)
     assert machine.fmpac is not None
@@ -530,7 +531,7 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
     saved[0] = 0xEE
     overlay.sram_save_path.write_bytes(bytes(saved))
 
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x5FFE, 0x4D)
     machine.fmpac.write(0x5FFF, 0x69)
@@ -538,19 +539,19 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
 
 
 def test_missing_fmpac_rom_raises(tmp_path: Path) -> None:
-    overlay = _ExtensionOverlay(
+    overlay = ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
     with pytest.raises(MachineLoadError, match="fmpac.rom"):
-        build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+        build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=overlay)
 
 
 def test_machine_reset_resets_fmpac(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
-    machine = build_machine(_msx1_spec(tmp_path), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(tmp_path), extension_overlay2=overlay)
     assert machine.fmpac is not None
     machine.fmpac.write(0x7FF7, 0x03)
     machine.reset()

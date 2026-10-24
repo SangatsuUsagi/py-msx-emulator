@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from msx.state import StateLoadError, load_state, save_state
+from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
+from msx.state import StateLoadError
 from tests.factories import make_machine, make_machine_msx2
 
 
@@ -23,8 +25,8 @@ def _rewrite_state_version(path: Path, version: int) -> None:
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
-_RGB_MSX1 = bytearray(256 * 192 * 3)
-_RGB_MSX2 = bytearray(256 * 192 * 3)
+_RGB_MSX1 = RgbFrame(256, 192, bytes(256 * 192 * 3))
+_RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()
@@ -391,11 +393,23 @@ def test_msx2_v9938_state_is_one_object(saves_dir):
         assert key not in data
 
 
-def test_new_save_uses_format_version_15(saves_dir):
+def test_new_save_uses_format_version_16(saves_dir):
+    # machine-state "New save uses the current format version 16".
     machine = make_machine_msx2(_ROM, _EXTROM)
     state_path = save_state(machine, _RGB_MSX2, "test")
 
-    assert _load_state_json(state_path)["format_version"] == 15
+    assert _load_state_json(state_path)["format_version"] == 16
+
+
+def test_format_version_15_rejected(saves_dir):
+    # machine-state "An earlier format version is rejected".
+    machine = make_machine_msx2(_ROM, _EXTROM)
+    state_path = save_state(machine, _RGB_MSX2, "test")
+
+    _rewrite_state_version(state_path, 15)
+
+    with pytest.raises(ValueError, match="15"):
+        load_state(machine, state_path)
 
 
 def test_format_version_13_rejected(saves_dir):
@@ -649,7 +663,8 @@ def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
 
 def _make_msx2_no_ram_mapper():
     """Build an MSX2 machine (V9938) that has no RAM mapper (ram_mapper is None)."""
-    from msx.machine_loader import MachineSpec, _RomEntry, build_machine
+    from host.machine_config import build_machine_from_spec
+    from msx.machine_spec import MachineSpec, _RomEntry
     spec = MachineSpec(
         name="test_msx2_nomap",
         generation="msx2",
@@ -662,7 +677,7 @@ def _make_msx2_no_ram_mapper():
         has_v9938=True,
         has_rtc=True,
     )
-    return build_machine(spec, bios_override=_ROM, extrom_override=_EXTROM)
+    return build_machine_from_spec(spec, bios_override=_ROM, extrom_override=_EXTROM)
 
 
 def test_msx2_roundtrip_without_ram_mapper(saves_dir):

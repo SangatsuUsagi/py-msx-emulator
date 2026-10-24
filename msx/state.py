@@ -1,21 +1,16 @@
-"""Save and restore complete machine state to/from disk.
+"""Encode and decode a complete machine snapshot as versioned JSON bytes.
 
-The on-disk `.state` file is a stdlib-only JSON container (no pickle): scalar and
+The snapshot is a stdlib-only JSON container (no pickle): scalar and
 structured fields are stored as JSON, and byte blobs (RAM, VRAM, SRAM) are wrapped
 as ``{"__b64__": "<base64>"}``. `format_version` guards compatibility.
 """
 from __future__ import annotations
 
 import base64
-import datetime
 import json
-import os
-import re
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import MISSING, asdict, dataclass
 from dataclasses import fields as dataclass_fields
-from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from msx.mapper import MapperKind
@@ -42,7 +37,9 @@ if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
+    from msx.mouse import MouseState
     from msx.psg import PsgSynthState
+    from msx.rtc import RtcState
     from msx.scc import SccState
 
 _T = TypeVar("_T")
@@ -105,7 +102,11 @@ _T = TypeVar("_T")
 #   openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
 #   configured page" Requirement). None unless machine.memory.slot0_ram is
 #   configured.
-CURRENT_FORMAT_VERSION: int = 15
+# Version 16: rtc_state and mouse_state added (the RTC's start time,
+#   elapsed emulated cycles and register blocks; the mouse's scan state),
+#   each None when the machine has no RTC / no attached mouse. See
+#   openspec/changes/enforce-core-boundary.
+CURRENT_FORMAT_VERSION: int = 16
 
 
 class StateLoadError(ValueError):
@@ -216,6 +217,10 @@ class MachineSnapshot:
     # openspec/specs/memory-slot-bus's "Slot 0 MAY host flat RAM at a
     # configured page" Requirement.
     slot0_ram: bytearray | None = None
+    # RTC (None when the machine has none) and attached mouse (None when no
+    # mouse is attached); see RTC.snapshot() / MouseDevice.snapshot().
+    rtc_state: dict[str, object] | None = None
+    mouse_state: dict[str, object] | None = None
 
 
 # --- internal helpers ---------------------------------------------------------
@@ -256,32 +261,34 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     return cast(dict[str, object], machine.scc.snapshot())
 
 
-def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -> None:
-    if (scc_state is None) != (machine.scc is None):
+def _rtc_to_dict(machine: "Machine") -> dict[str, object] | None:
+    if machine.rtc is None:
+        return None
+    return cast(dict[str, object], machine.rtc.snapshot())
+
+
+def _mouse_to_dict(machine: "Machine") -> dict[str, object] | None:
+    mouse = machine.psg.mouse
+    if mouse is None:
+        return None
+    return cast(dict[str, object], mouse.snapshot(machine.cycle_count))
+
+
+def _check_optional_wiring(
+    name: str, running: bool, state: dict[str, object] | None
+) -> None:
+    if (state is None) == running:
         raise SnapshotMismatchError(
-            "SCC wiring mismatch: "
-            f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
-            f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
+            f"{name} wiring mismatch: "
+            f"running machine has {'a' if running else 'no'} {name}, "
+            f"saved state has {name + ' state' if state is not None else 'no ' + name + ' state'}"
         )
 
 
 def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
-    # Flush pending disk writes first so the disk-identity hash
-    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
-    # the .dsk file's own on-disk bytes.
-    machine.fdc.flush()
     return machine.fdc.snapshot()
-
-
-def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
-    if (fdc_state is None) != (machine.fdc is None):
-        raise SnapshotMismatchError(
-            "FDC wiring mismatch: "
-            f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
-            f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
-        )
 
 
 def _check_slot0_ram_wiring(machine: "Machine", slot0_ram: bytearray | None) -> None:
@@ -440,6 +447,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         mapper1_subslot_kinds=mapper1_subslot_kinds,
         mapper1_subslot_states=mapper1_subslot_states,
         slot0_ram=slot0_ram,
+        rtc_state=_rtc_to_dict(machine),
+        mouse_state=_mouse_to_dict(machine),
     )
 
 
@@ -530,7 +539,7 @@ def _parse_vdp9938(value: object, msx2: bool, vdp_latch: int | None) -> V9938Sta
     return state
 
 
-def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
+def _check_snapshot_keys(data: dict[str, object], source: str) -> None:
     """Refuse a file whose top-level keys are not MachineSnapshot's: an
     unknown key, or a missing key that has no default."""
     known: set[str] = set()
@@ -545,12 +554,12 @@ def _check_snapshot_keys(data: dict[str, object], resolved: Path) -> None:
             unknown.append(key)
     if unknown or missing:
         raise ValueError(
-            f"incompatible state file layout ({resolved}): "
+            f"incompatible state file layout ({source}): "
             f"unknown keys {sorted(unknown)}, missing keys {sorted(missing)}"
         )
 
 
-def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
+def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
     """Turn a decoded state file into a MachineSnapshot, checking the format
     version, then the key set, then every top-level value's type, range and
     (where the snapshot fixes it) length. A bad value raises StateLoadError
@@ -559,15 +568,15 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
     parse_state, which needs the running machine. Nothing here touches a
     machine."""
     if not isinstance(decoded, dict):
-        raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
+        raise ValueError(f"corrupt or unsupported save state: {source} (not an object)")
     data = cast(dict[str, object], decoded)
     version = data.get("format_version")
     if version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {version}, "
-            f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
+            f"expected {CURRENT_FORMAT_VERSION} ({source})"
         )
-    _check_snapshot_keys(data, resolved)
+    _check_snapshot_keys(data, source)
 
     def machine_type_of() -> str:
         text = check_str(data["machine_type"], "machine_type")
@@ -647,6 +656,8 @@ def parse_snapshot(decoded: object, resolved: Path) -> MachineSnapshot:
             "mapper1_subslot_states", lambda v, k: _parse_paired_states(mapper1_kinds, v, k)
         ),
         slot0_ram=parse_field("slot0_ram", check_optional_bytes),
+        rtc_state=parse_field("rtc_state", check_optional_object),
+        mouse_state=parse_field("mouse_state", check_optional_object),
     )
 
 
@@ -695,7 +706,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
                 "ram_mapper_ram",
                 ValueError(f"ram_mapper_ram must be {size} bytes, got {len(snap.ram_mapper_ram)}"),
             )
-    _check_fdc_wiring(machine, snap.fdc_state)
+    _check_optional_wiring("FDC", machine.fdc is not None, snap.fdc_state)
     _check_expanded_subslots(
         1, machine.memory.slot1_sub_slot_enabled, machine.memory._mapper1_subslots,
         snap.mapper1_subslot_kinds,
@@ -704,8 +715,10 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
         2, machine.memory.slot2_sub_slot_enabled, machine.memory._mapper2_subslots,
         snap.mapper2_subslot_kinds,
     )
-    _check_scc_wiring(machine, snap.scc_state)
+    _check_optional_wiring("SCC", machine.scc is not None, snap.scc_state)
     _check_slot0_ram_wiring(machine, snap.slot0_ram)
+    _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc_state)
+    _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse_state)
     return _parse_producer_objects(machine, snap)
 
 
@@ -723,6 +736,8 @@ class _ParsedProducers:
     psg_synth: "PsgSynthState"
     scc: "SccState | None"
     fdc: "FloppyDiskParsed | None"
+    rtc: "RtcState | None"
+    mouse: "MouseState | None"
 
 
 def _parse_subslot_producers(
@@ -782,7 +797,21 @@ def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _Parse
     fdc_parsed = None
     if fdc is not None and fdc_state is not None:
         fdc_parsed = _parse_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc_state"))
-    return _ParsedProducers(mappers, psg_synth, scc_parsed, fdc_parsed)
+    rtc = machine.rtc
+    rtc_state = snap.rtc_state
+    rtc_parsed = None
+    if rtc is not None and rtc_state is not None:
+        rtc_parsed = _parse_producer("rtc", lambda: rtc.parse_state(rtc_state, "rtc_state"))
+    mouse = machine.psg.mouse
+    mouse_state = snap.mouse_state
+    mouse_parsed = None
+    if mouse is not None and mouse_state is not None:
+        mouse_parsed = _parse_producer(
+            "mouse", lambda: mouse.parse_state(mouse_state, "mouse_state")
+        )
+    return _ParsedProducers(
+        mappers, psg_synth, scc_parsed, fdc_parsed, rtc_parsed, mouse_parsed
+    )
 
 
 def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
@@ -842,29 +871,14 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.memory.set_slot2_sub_slot_reg(snap.slot2_sub_slot_reg)
     if machine.memory.slot0_ram is not None and snap.slot0_ram is not None:
         machine.memory.slot0_ram[:] = snap.slot0_ram
+    if machine.rtc is not None and parsed.rtc is not None:
+        machine.rtc.apply_state(parsed.rtc)
+    mouse = machine.psg.mouse
+    if mouse is not None and parsed.mouse is not None:
+        mouse.apply_state(parsed.mouse, machine.cycle_count)
 
 
-# --- symlink helper -----------------------------------------------------------
-
-def _update_symlink(link: Path, target: Path) -> None:
-    """Atomically update (or create) a symlink to point at target."""
-    tmp_link = link.with_suffix(link.suffix + ".tmp")
-    try:
-        if tmp_link.exists() or tmp_link.is_symlink():
-            tmp_link.unlink()
-        os.symlink(target.name, tmp_link)
-        os.replace(tmp_link, link)
-    except OSError as exc:
-        print(f"warning: could not update symlink {link}: {exc}", file=sys.stderr)
-
-
-# --- public API ---------------------------------------------------------------
-
-def _sanitise_title(title: str) -> str:
-    """Replace spaces with underscores and strip filesystem-unsafe characters."""
-    title = title.replace(" ", "_")
-    return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
-
+# --- encoding ---------------------------------------------------------------
 
 def _to_jsonable(node: object) -> object:
     """Recursively convert a snapshot dict to JSON-serialisable form.
@@ -892,80 +906,38 @@ def _from_jsonable(node: object) -> object:
     return node
 
 
-def save_state(machine: "Machine", rgb_buf: bytes | bytearray, title: str) -> Path:
-    """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
+def save_state(machine: "Machine") -> bytes:
+    """Encode the machine's snapshot as the versioned JSON state format.
 
-    Args:
-        machine: Running machine to snapshot.
-        rgb_buf: Current frame as 256×192 RGB24 bytearray.
-        title: Human-readable title used in the filename.
-
-    Returns:
-        Path of the written .state file.
+    Chooses no file name and writes nothing: host/state_files.py stores the
+    bytes (with a screenshot and the latest.* links).
     """
-    saves_dir = Path("saves") / "states"
-    saves_dir.mkdir(parents=True, exist_ok=True)
-
-    stem = f"{_sanitise_title(title)}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    state_path = saves_dir / f"{stem}.state"
-    png_path = saves_dir / f"{stem}.png"
-
     snap = _snapshot_from_machine(machine)
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(_to_jsonable(asdict(snap)), f)
-
-    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    from msx.screenshot import write_rgb24_png
-    write_rgb24_png(rgb_buf, SCREEN_WIDTH, SCREEN_HEIGHT, png_path)
-
-    _update_symlink(saves_dir / "latest.state", state_path)
-    _update_symlink(saves_dir / "latest.png", png_path)
-
-    print(f"state saved: {state_path}")
-    return state_path
+    return json.dumps(_to_jsonable(asdict(snap))).encode("utf-8")
 
 
-def load_state(machine: "Machine", path: Path | None = None) -> None:
-    """Restore machine state from a save file.
-
-    Args:
-        machine: Running machine to restore into (callbacks remain intact).
-        path: Explicit .state file to load. When None, loads saves/states/latest.state.
+def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None:
+    """Restore a machine from save_state() bytes. `source` names the data in
+    error messages (the host passes the file path).
 
     Raises:
-        FileNotFoundError: If the target file does not exist.
         StateLoadError: If a field or producer object is malformed.
-        ValueError: If the file is not a state file of this format version and
+        ValueError: If the data is not a state of this format version and
             layout, or does not match the running machine (machine type,
             mapper kind, slot / FDC / SCC wiring). Nothing is restored then.
     """
-    if path is None:
-        link = Path("saves") / "states" / "latest.state"
-        if not link.exists():
-            raise FileNotFoundError(
-                "no save state found: saves/states/latest.state does not exist"
-            )
-        resolved = link.resolve()
-    else:
-        if not path.exists():
-            raise FileNotFoundError(f"save state not found: {path}")
-        resolved = path
-
-    with open(resolved, "rb") as f:
-        raw = f.read()
     # Legacy pickle files (format_version <= 4) start with a pickle opcode byte,
     # not JSON. Refuse to unpickle them; the format is now stdlib JSON.
-    stripped = raw.lstrip()
-    if not stripped[:1] == b"{":
+    stripped = data.lstrip()
+    if stripped[:1] != b"{":
         raise ValueError(
             "legacy pickle save states are no longer supported; please re-save "
-            f"({resolved})"
+            f"({source})"
         )
     try:
-        data = json.loads(raw.decode("utf-8"))
+        decoded = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"corrupt or unsupported save state: {resolved} ({exc})") from exc
+        raise ValueError(f"corrupt or unsupported save state: {source} ({exc})") from exc
 
-    snap = parse_snapshot(_from_jsonable(data), resolved)
+    snap = parse_snapshot(_from_jsonable(decoded), source)
     _restore_snapshot(machine, snap)
-    print(f"state loaded: {resolved}")

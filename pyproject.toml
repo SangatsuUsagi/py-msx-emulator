@@ -1,6 +1,6 @@
 [project]
 name = "py-msx-emulator"
-version = "2.7.8"
+version = "2.8.0"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0", "Pillow>=12.0", "pysdl2>=0.9.16"]
 
@@ -49,7 +49,7 @@ ignore_missing_imports = true
 
 # The test suite is intentionally not held to --strict: tests rely on fixtures,
 # monkeypatch, and base-typed handles (e.g. machine.vdp) that make full typing
-# high-effort and low-value. Source (msx/, frontend/, scripts/) stays strict.
+# high-effort and low-value. Source (msx/, frontend/, host/, scripts/) stays strict.
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
@@ -58,7 +58,7 @@ ignore_errors = true
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["msx", "frontend"]
+source = ["msx", "frontend", "host"]
 
 # numpy is not a project dependency; it is pulled into the dev env only as a
 # transitive dep of scalene, and its type stubs use Python 3.12 `type` syntax

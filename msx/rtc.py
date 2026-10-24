@@ -3,7 +3,8 @@
 Faithful to openMSX's RP5C01 and the RP5C01 data sheet
 (references/docs/RICOH_RP5C01.md): 4 register blocks of 13 nibbles each, selected by
 the low two bits of the mode register (reg 13). Blocks 0/1 are the clock and
-alarm/settings (block 0 time digits reflect the host clock captured at power-on);
+alarm/settings (block 0 time digits are the start time the host supplied once,
+advanced by emulated time);
 blocks 2/3 are 13 nibbles each of battery-backed CMOS RAM that must persist
 written values — the MSX2 BIOS stores its boot configuration there and reads it
 back during power-on, looping forever if the read-back is invalid.
@@ -11,26 +12,20 @@ back during power-on, looping forever if the read-back is invalid.
 The chip is a 4-bit device: only the low nibble of each data byte is meaningful,
 and the MSX floats the high nibble to 1s (reads return 0xF0 | nibble).
 
-PORT-NOTE: the host clock is read exactly once, at construction (via
-  __post_init__ -> _time_to_nibbles), and converted to fixed BCD nibbles
-  (`_time_block0` / `_leap`); nothing on the read path (_refresh_time_regs)
-  touches a date/calendar library.
-Rust equivalent: capture std::time::SystemTime (or chrono::Local::now()) once
-  at construction, convert to the BCD nibbles there; the register-read path
-  stays a plain integer copy.
-C++ equivalent: capture std::chrono::system_clock::now() once at
-  construction, convert with <ctime>/a date lib there only.
-Kept as-is here because: real hardware's RTC read path is a plain register
-  copy -- repeating calendar computation on every register read would be
-  both slower and non-deterministic across a run; capturing once at
-  construction matches real hardware and keeps the hot read path
-  integer-only.
+The core never reads the host clock: the host passes the start time once
+(RtcTime) and the time advances with emulated cycles only, so a run is
+deterministic. Calendar arithmetic is integer-only (days-from-civil).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
+from collections.abc import Callable
+from dataclasses import InitVar, dataclass, field
+from typing import TypedDict
+
+from msx.boundary import RTC_DEFAULT_START, RtcTime
+from msx.clock import CPU_CLOCK_HZ
+from msx.snapshot_schema import I64_MAX, check_int, check_int_list, check_object
+from msx.sram import SramImage
 
 MODE_REG = 13
 TEST_REG = 14
@@ -56,6 +51,23 @@ _MASK: tuple[tuple[int, ...], ...] = (
 )
 
 
+class RtcState(TypedDict):
+    """Save-state schema for RTC.snapshot()/apply_state(). The time is saved
+    as the start time plus the emulated cycles since it, because the
+    machine's cycle counter itself is not part of a snapshot."""
+
+    start: list[int]          # year, month, day, hour, minute, second
+    elapsed_cycles: int
+    addr: int
+    mode: int
+    test: int
+    reset: int
+    regs: list[int]
+
+
+_RTC_STATE_KEYS: frozenset[str] = frozenset(RtcState.__annotations__)
+
+
 @dataclass
 class RTC:
     """RP-5C01 RTC: ports 0xB4 (register select) and 0xB5 (4-bit data)."""
@@ -65,55 +77,80 @@ class RTC:
     _test: int = 0
     _reset: int = 0
     # 4 blocks x 13 nibbles. Blocks 2/3 hold the BIOS CMOS config.
-    _regs: list[int] = field(default_factory=lambda: [0] * (4 * REGS_PER_BLOCK), repr=False)
-    # Blocks 2/3's persisted image, seeded into _regs[26:52] at construction;
-    # save_sram() reads current state back from _regs, not from this field --
-    # matches _epoch below (consumed once, kept for inspectability).
-    sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE), repr=False)
-    # Clock reference captured once at construction (frozen), deterministic within a
-    # run and non-zero, which is all the BIOS power-on check needs.
-    _epoch: datetime = field(default_factory=datetime.now, repr=False)
-    # Block-0 BCD nibbles + block-1 leap counter, derived once from _epoch.
-    _time_block0: list[int] = field(default_factory=list, init=False, repr=False)
-    _leap: int = field(default=0, init=False, repr=False)
-    # Raw 0-23 hour, kept separately from _time_block0 so registers 4/5 can be
-    # re-encoded against HOUR_MODE_REG's *current* value on every read (that
-    # register is writable after construction, unlike the rest of block 0).
-    _hour: int = field(default=0, init=False, repr=False)
+    # Blocks 0/1 (time and alarm/settings), 2 x 13 nibbles.
+    _regs: list[int] = field(default_factory=lambda: [0] * (2 * REGS_PER_BLOCK), repr=False)
+    # Blocks 2/3's persisted image, the initial bytes of `cmos` (blank when
+    # not SRAM_SIZE bytes).
+    sram: InitVar[bytes | bytearray | None] = None
+    # Blocks 2/3 (the BIOS CMOS config), one nibble per byte: the medium the
+    # host persists. A write or restore that changes a nibble marks it dirty.
+    cmos: SramImage = field(init=False, repr=False)
+    # Time at emulated cycle _start_cycle, supplied once by the host.
+    start: RtcTime = RTC_DEFAULT_START
+    # Emulated cycle source (machine.cycle_count), wired by build_machine. A
+    # bare RTC without one stays at its start time.
+    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    _start_cycle: int = field(default=0, repr=False)
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != SRAM_SIZE:
-            self.sram = bytearray(SRAM_SIZE)
-        self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK] = list(self.sram)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.cmos = SramImage.of(SRAM_SIZE, sram)
         # Default to 24-hour (register 10 defaults to all-zero storage
         # otherwise, which would read as 12-hour) -- matches this
         # implementation's behaviour before 12-hour support existed.
         self._regs[REGS_PER_BLOCK + HOUR_MODE_REG] = HOUR_MODE_24H
-        self._time_block0, self._leap, self._hour = self._time_to_nibbles(self._epoch)
 
-    @staticmethod
-    def _time_to_nibbles(now: datetime) -> tuple[list[int], int, int]:
-        """Convert a timestamp to the 13 block-0 BCD nibbles, the leap
-        counter, and the raw 0-23 hour (see _hour)."""
-        year = (now.year - 1980) % 100
-        rp_wday = (now.weekday() + 1) % 7  # Python Mon=0..Sun=6 -> RP5C01 Sun=0
-        block0 = [
-            now.second % 10, now.second // 10,
-            now.minute % 10, now.minute // 10,
-            now.hour % 10, now.hour // 10,  # placeholders: _refresh_time_regs
-            # always re-encodes indices 4/5 via _encode_hour(self._hour)
-            # instead, since HOUR_MODE_REG can change after construction.
-            rp_wday,
-            now.day % 10, now.day // 10,
-            now.month % 10, now.month // 10,
-            year % 10, year // 10,
-        ]
-        return block0, (now.year - 1980) % 4, now.hour
+    def _elapsed_seconds(self) -> int:
+        return self._elapsed_cycles() // CPU_CLOCK_HZ
 
-    def save_sram(self, path: Path) -> None:
-        """Write blocks 2/3's current 26 nibbles to path, one raw byte per
-        nibble (battery-save format, no packing)."""
-        path.write_bytes(bytes(self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK]))
+    def snapshot(self) -> RtcState:
+        """Capture the RTC for save-state (paired with apply_state)."""
+        st = self.start
+        return {
+            "start": [st.year, st.month, st.day, st.hour, st.minute, st.second],
+            "elapsed_cycles": self._elapsed_cycles(),
+            "addr": self._addr,
+            "mode": self._mode,
+            "test": self._test,
+            "reset": self._reset,
+            "regs": self._regs + list(self.cmos.data()),
+        }
+
+    def parse_state(self, obj: object, label: str) -> RtcState:
+        """Validate a snapshot() object without touching the chip."""
+        state = check_object(obj, label, _RTC_STATE_KEYS)
+        start = check_int_list(state["start"], f"{label}.start", 6, 0, 9999)
+        _check_start(start, f"{label}.start")
+        return {
+            "start": start,
+            "elapsed_cycles": check_int(
+                state["elapsed_cycles"], f"{label}.elapsed_cycles", 0, I64_MAX
+            ),
+            "addr": check_int(state["addr"], f"{label}.addr", 0, 0x0F),
+            "mode": check_int(state["mode"], f"{label}.mode", 0, 0x0F),
+            "test": check_int(state["test"], f"{label}.test", 0, 0x0F),
+            "reset": check_int(state["reset"], f"{label}.reset", 0, 0x0F),
+            "regs": check_int_list(
+                state["regs"], f"{label}.regs", 4 * REGS_PER_BLOCK, 0, 0x0F
+            ),
+        }
+
+    def apply_state(self, state: RtcState) -> None:
+        """Assign an already-parsed RtcState (see parse_state)."""
+        y, mo, d, h, mi, sec = state["start"]
+        self.start = RtcTime(y, mo, d, h, mi, sec)
+        now = self._get_cycle() if self._get_cycle is not None else 0
+        self._start_cycle = now - state["elapsed_cycles"]
+        self._addr = state["addr"]
+        self._mode = state["mode"]
+        self._test = state["test"]
+        self._reset = state["reset"]
+        self._regs = list(state["regs"][:2 * REGS_PER_BLOCK])
+        self.cmos.restore(bytes(state["regs"][2 * REGS_PER_BLOCK:]))
+
+    def _elapsed_cycles(self) -> int:
+        if self._get_cycle is None:
+            return 0
+        return self._get_cycle() - self._start_cycle
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.
@@ -139,8 +176,9 @@ class RTC:
         if reg in (TEST_REG, RESET_REG):
             return 0x0F  # write-only
         block = self._mode & MODE_BLOCK_SELECT
-        if block <= 1:
-            self._refresh_time_regs()
+        if block >= 2:
+            return self.cmos.read((block - 2) * REGS_PER_BLOCK + reg) & _MASK[block][reg]
+        self._refresh_time_regs()
         return self._regs[block * REGS_PER_BLOCK + reg] & _MASK[block][reg]
 
     def _write_reg(self, reg: int, value: int) -> None:
@@ -154,16 +192,48 @@ class RTC:
             self._reset = value
             return
         block = self._mode & MODE_BLOCK_SELECT
-        self._regs[block * REGS_PER_BLOCK + reg] = value & _MASK[block][reg]
+        masked = value & _MASK[block][reg]
+        if block >= 2:
+            self.cmos.write((block - 2) * REGS_PER_BLOCK + reg, masked)
+            return
+        self._regs[block * REGS_PER_BLOCK + reg] = masked
 
     def _refresh_time_regs(self) -> None:
-        """Copy the (frozen) BCD time into block 0 and the leap counter into
-        block 1. Integer-only: no date library on the read path. Hour
-        registers 4/5 are re-encoded against HOUR_MODE_REG's current value
-        every call, since that register can be written after construction."""
-        self._regs[0:REGS_PER_BLOCK] = self._time_block0
-        self._regs[4], self._regs[5] = self._encode_hour(self._hour)
-        self._regs[1 * REGS_PER_BLOCK + 11] = self._leap
+        """Write the current time into block 0 and the leap counter into
+        block 1. Hour registers 4/5 are encoded against HOUR_MODE_REG's
+        current value, since that register can be written at any time."""
+        # PORT-NOTE: `//` and `%` below are floor division/modulo, and their
+        #   left operands go negative for a start before 1970 (total, days)
+        #   or before 1980 (year - 1980).
+        # Rust/C++/Zig equivalent: div_euclid/rem_euclid (Rust), a
+        #   floor-adjusting helper (C++), @divFloor/@mod (Zig) -- plain `/`
+        #   and `%` truncate there and give different digits.
+        # Kept as-is here because: semantic necessity -- the start year is
+        #   any calendar year the host supplies, not only the chip's
+        #   1980-2079.
+        st = self.start
+        total = (_days_from_civil(st.year, st.month, st.day) * 86_400
+                 + st.hour * 3_600 + st.minute * 60 + st.second
+                 + self._elapsed_seconds())
+        days = total // 86_400
+        secs = total % 86_400
+        year, month, day = _civil_from_days(days)
+        hour = secs // 3_600
+        minute = (secs // 60) % 60
+        second = secs % 60
+        weekday = (days + 4) % 7          # 1970-01-01 was a Thursday; Sun=0
+        rp_year = (year - 1980) % 100
+        hour_lo, hour_hi = self._encode_hour(hour)
+        self._regs[0:REGS_PER_BLOCK] = [
+            second % 10, second // 10,
+            minute % 10, minute // 10,
+            hour_lo, hour_hi,
+            weekday,
+            day % 10, day // 10,
+            month % 10, month // 10,
+            rp_year % 10, rp_year // 10,
+        ]
+        self._regs[1 * REGS_PER_BLOCK + 11] = (year - 1980) % 4
 
     def _encode_hour(self, hour: int) -> tuple[int, int]:
         """BCD-encode `hour` (0-23) into (units, tens) registers per block 1
@@ -175,3 +245,38 @@ class RTC:
             return hour % 10, hour // 10
         hour12 = hour % 12 or 12
         return hour12 % 10, hour12 // 10 + (2 if hour >= 12 else 0)
+
+
+def _check_start(start: list[int], label: str) -> None:
+    """Reject a start time that is not a real calendar date and time."""
+    year, month, day, hour, minute, second = start
+    if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59
+            and second <= 59):
+        raise ValueError(f"{label}: invalid date/time {start}")
+    if _civil_from_days(_days_from_civil(year, month, day)) != (year, month, day):
+        raise ValueError(f"{label}: invalid date {year}-{month}-{day}")
+
+
+def _days_from_civil(year: int, month: int, day: int) -> int:
+    """Days since 1970-01-01 for a Gregorian date (integer-only)."""
+    y = year - 1 if month <= 2 else year
+    era = (y if y >= 0 else y - 399) // 400
+    yoe = y - era * 400
+    mp = (month + 9) % 12
+    doy = (153 * mp + 2) // 5 + day - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146_097 + doe - 719_468
+
+
+def _civil_from_days(days: int) -> tuple[int, int, int]:
+    """Gregorian (year, month, day) for a day count since 1970-01-01."""
+    z = days + 719_468
+    era = (z if z >= 0 else z - 146_096) // 146_097
+    doe = z - era * 146_097
+    yoe = (doe - doe // 1460 + doe // 36_524 - doe // 146_096) // 365
+    doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    mp = (5 * doy + 2) // 153
+    day = doy - (153 * mp + 2) // 5 + 1
+    month = mp + 3 if mp < 10 else mp - 9
+    year = yoe + era * 400 + (1 if month <= 2 else 0)
+    return year, month, day

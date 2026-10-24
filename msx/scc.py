@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TypedDict
 
+from msx.clock import CPU_CLOCK_HZ
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import check_int, check_int_list, check_list, check_object
 
-SCC_CLOCK: int = 3_579_545  # Hz — full MSX CPU clock
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
 NUM_CHANNELS: int = 5
 WAVE_BANKS: int = 5
@@ -25,7 +25,7 @@ WAVE_LEN: int = 32          # bytes per waveform bank, and steps per playback cy
 #   Python; the fields are still constant-size in practice, so a plain list
 #   costs nothing extra here versus a hypothetical fixed-array wrapper.
 
-__all__ = ["SCC", "SCC_CLOCK", "SAMPLES_PER_FRAME", "SccState"]
+__all__ = ["SCC", "SAMPLES_PER_FRAME", "SccState"]
 
 
 class SccState(TypedDict):
@@ -279,7 +279,7 @@ class SCC:
         pi0, pi1, pi2, pi3, pi4 = self._phase_idx
 
         for i in range(n):
-            clk += SCC_CLOCK
+            clk += CPU_CLOCK_HZ
             ticks = clk // SAMPLE_RATE
             clk %= SAMPLE_RATE
 

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from host.machine_config import build_machine_from_spec
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import (
     REG_DATA,
@@ -25,9 +26,10 @@ from msx.fdc.interface import (
     FloppyDiskParsed,
 )
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
-from msx.machine_loader import MachineSpec, _FdcDef, _RomEntry, build_machine
+from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from msx.snapshot_schema import SchemaError
 from msx.state import _from_jsonable, _to_jsonable
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 _KINDS = ["wd2793", "tc8566af"]
@@ -69,7 +71,7 @@ def _fdc(tmp_path: Path, kind: str) -> FloppyDisk:
     dsk_b = tmp_path / "b.dsk"
     dsk_a.write_bytes(bytes([0x11]) * _2DD)
     dsk_b.write_bytes(bytes([0x22]) * _2DD)
-    machine = build_machine(_spec(tmp_path, kind), fdd1=dsk_a, fdd2=dsk_b)
+    machine = build_machine_from_spec(_spec(tmp_path, kind), fdd1=dsk_a, fdd2=dsk_b)
     assert machine.fdc is not None
     return machine.fdc
 
@@ -368,7 +370,7 @@ def test_drive_identity_reads_the_mounted_image(tmp_path: Path) -> None:
     snap = _roundtrip(fdc.snapshot())
     other = tmp_path / "c.dsk"
     other.write_bytes(bytes([0x33]) * _2DD)
-    fdc.mount(DskDiskImage(other), drive=1)
+    fdc.mount(dsk_image(other), drive=1)
     with pytest.raises(ValueError, match=r"fdc_state\.drives\[1\].*disk mismatch"):
         fdc.parse_state(snap, "fdc_state")
 

@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from host.rpc_server import DebugServer
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
-from msx.rpc_server import DebugServer
 from tests.factories import make_machine
 
 _2DD = 737280

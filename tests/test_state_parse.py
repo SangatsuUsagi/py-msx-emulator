@@ -11,12 +11,14 @@ import json
 
 import pytest
 
-from msx.state import StateLoadError, load_state, save_state
+from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
+from msx.state import StateLoadError
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 def _blob(n: int) -> dict[str, str]:
@@ -251,7 +253,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
     machine = make_machine(_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     state_path = _edited(tmp_path, monkeypatch, machine, edit)
     _disturb(machine)
-    machine.memory._mapper.sram[0] = 0x5A
+    machine.memory._mapper.sram_image.write(0, 0x5A)
     before = _producer_fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
@@ -259,7 +261,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
 
     assert exc_info.value.producer == producer
     assert _producer_fingerprint(machine) == before
-    assert machine.memory._mapper.sram[0] == 0x5A
+    assert machine.memory._mapper.sram_image.read(0) == 0x5A
 
 
 def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:

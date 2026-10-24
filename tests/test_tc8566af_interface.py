@@ -9,9 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import TC8566AFInterface
 from msx.fdc.tc8566af import CMD_READ_DATA, TC8566AF
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -22,7 +22,7 @@ def _iface(tmp_path: Path, *, with_disk: bool = True) -> TC8566AFInterface:
     if with_disk:
         p = tmp_path / "d.dsk"
         p.write_bytes(bytes(_2DD))
-        image = DskDiskImage(p)
+        image = dsk_image(p)
     drive = DiskDrive(image)
     return TC8566AFInterface(TC8566AF(drives=[drive]), [drive], disk_rom=disk_rom)
 

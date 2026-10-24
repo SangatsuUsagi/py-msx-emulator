@@ -11,8 +11,8 @@ from array import array
 
 import pytest
 
+from msx.clock import CPU_CLOCK_HZ
 from msx.opll import (
-    _CLOCK,
     _DAMPER_RATE,
     _DEFAULT_INST,
     _EG_MAX,
@@ -336,7 +336,7 @@ def test_register_write_masks_out_of_range_value_to_eight_bits() -> None:
 
 
 def test_envelope_and_clock_constants_match_spec() -> None:
-    assert _CLOCK == 3_579_545
+    assert CPU_CLOCK_HZ == 3_579_545
     assert _EG_MUTE == 127
     assert _EG_MAX == 123
     assert _DAMPER_RATE == 12

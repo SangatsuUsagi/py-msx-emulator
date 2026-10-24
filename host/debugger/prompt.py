@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from msx.debugger.disasm import disassemble
+from host.debugger.disasm import disassemble
 from msx.mapper import BankTracingMapper
 
 try:
@@ -610,7 +610,7 @@ class Debugger:
         return render_current_rgb24(self._machine.vdp)
 
     def _cmd_screenshot(self) -> None:
-        from msx.screenshot import save_screenshot
+        from host.screenshot import save_screenshot
         try:
             rgb, w, h = self._render_rgb24()
         except Exception as exc:  # rendering is best-effort for a debug command
@@ -624,9 +624,8 @@ class Debugger:
         TITLE (a default is used when omitted) becomes the filename stem, matching
         the RPC `state.save` contract — it is not a file path. REPL stays open.
         """
-        from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-        from msx.screenshot import scale_rgb24
-        from msx.state import save_state
+        from host.state_files import save_state
+        from msx.boundary import RgbFrame
 
         title = args[0] if args else "msx_dbg_checkpoint"
         try:
@@ -634,9 +633,7 @@ class Debugger:
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"sv: render failed: {exc}")
             return
-        if (w, h) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-            rgb = scale_rgb24(rgb, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
-        save_state(self._machine, rgb, title)
+        save_state(self._machine, RgbFrame(w, h, rgb), title)
 
     def _cmd_state_load(self, args: list[str]) -> None:
         """`ld FILE`: restore machine state from a previously saved .state file.
@@ -646,7 +643,7 @@ class Debugger:
         """
         from pathlib import Path
 
-        from msx.state import load_state
+        from host.state_files import load_state
 
         if not args:
             print("Usage: ld FILE")
@@ -715,7 +712,7 @@ class Debugger:
         # Local imports keep the debugger free of an FDC import at module load.
         from pathlib import Path
 
-        from msx.fdc.disk_image import DskDiskImage
+        from host.media import swap_disk
 
         label = f"fdd{drive_index + 1}"
         fdc = self._machine.fdc
@@ -725,16 +722,15 @@ class Debugger:
         if drive_index >= len(fdc.drives):
             print(f"{label}: machine has only {len(fdc.drives)} drive(s)")
             return
-        drive = fdc.drives[drive_index]
         if not args:
-            if drive.image is not None:
-                print(f"{label}: {drive.image.path}")
+            if self._machine.disk_mounted(drive_index):
+                print(f"{label}: {self._machine.disk_path(drive_index)}")
             else:
                 print(f"{label}: empty")
             return
         arg = args[0]
         if arg == "-":
-            fdc.swap(drive_index, None)
+            swap_disk(self._machine, drive_index, None)
             print(f"{label}: ejected")
             return
         path = Path(arg).expanduser()
@@ -742,11 +738,10 @@ class Debugger:
             print(f"{label}: file not found: {path}")
             return
         try:
-            image = DskDiskImage(path)
+            swap_disk(self._machine, drive_index, path)
         except (ValueError, OSError) as exc:
             print(f"{label}: cannot mount {path}: {exc}")
             return
-        fdc.swap(drive_index, image)
         print(f"{label}: mounted {path}")
 
 

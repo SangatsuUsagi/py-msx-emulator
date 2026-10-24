@@ -1,12 +1,13 @@
-"""Tests for msx.debugger.prompt — Debugger REPL command handlers."""
+"""Tests for host.debugger.prompt — Debugger REPL command handlers."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from host.debugger import prompt as prompt_module
+from host.debugger.prompt import Debugger
+from msx.boundary import RgbFrame
 from msx.cpu.registers import Registers
-from msx.debugger import prompt as prompt_module
-from msx.debugger.prompt import Debugger
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
@@ -979,30 +980,27 @@ class TestStateSave:
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
-            with patch("msx.state.save_state") as mock_save:
+            with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, rgb, "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint")
 
     def test_sv_with_title_argument(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
-            with patch("msx.state.save_state") as mock_save:
+            with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save(["my-checkpoint"])
-        mock_save.assert_called_once_with(m, rgb, "my-checkpoint")
+        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "my-checkpoint")
 
-    def test_sv_scales_a_taller_than_native_frame(self, capsys):
+    def test_sv_passes_a_taller_frame_with_its_size(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
         tall_rgb = b"\x00" * (256 * 212 * 3)
-        native_rgb = b"\x00" * (256 * 192 * 3)
         with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
-            with patch("msx.screenshot.scale_rgb24", return_value=native_rgb) as mock_scale:
-                with patch("msx.state.save_state") as mock_save:
-                    dbg._cmd_state_save([])
-        mock_scale.assert_called_once_with(tall_rgb, 256, 212, 256, 192)
-        mock_save.assert_called_once_with(m, native_rgb, "msx_dbg_checkpoint")
+            with patch("host.state_files.save_state") as mock_save:
+                dbg._cmd_state_save([])
+        mock_save.assert_called_once_with(m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint")
 
 
 # ---------------------------------------------------------------------------
@@ -1017,20 +1015,20 @@ class TestStateLoad:
 
     def test_ld_calls_load_state(self, capsys):
         m = _make_machine()
-        with patch("msx.state.load_state") as mock_load:
+        with patch("host.state_files.load_state") as mock_load:
             Debugger(m)._cmd_state_load(["saves/states/foo.state"])
         assert mock_load.call_count == 1
         assert mock_load.call_args[0][0] is m
 
     def test_ld_missing_file_reports_error_without_raising(self, capsys):
         m = _make_machine()
-        with patch("msx.state.load_state", side_effect=FileNotFoundError("no such file")):
+        with patch("host.state_files.load_state", side_effect=FileNotFoundError("no such file")):
             Debugger(m)._cmd_state_load(["saves/states/missing.state"])
         assert "ld:" in capsys.readouterr().out
 
     def test_ld_incompatible_snapshot_reports_error_without_raising(self, capsys):
         m = _make_machine()
-        with patch("msx.state.load_state", side_effect=ValueError("machine type mismatch")):
+        with patch("host.state_files.load_state", side_effect=ValueError("machine type mismatch")):
             Debugger(m)._cmd_state_load(["saves/states/bad.state"])
         assert "ld:" in capsys.readouterr().out
 

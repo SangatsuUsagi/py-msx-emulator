@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Protocol
+from typing import TYPE_CHECKING, Callable, ClassVar, Protocol
 
 from msx.vdp import renderer
+from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
@@ -40,12 +41,12 @@ class VdpDevice(Protocol):
     Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
     `debug_disable_sprites`) too -- both classes declare these identically
     (wired at machine-construction time by msx/machine_loader.py, consumed
-    by msx/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    by host/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
     Several callers (msx/machine.py, msx/state.py,
-    msx/rpc_server.py, msx/debugger/prompt.py, msx/machine_loader.py)
+    host/rpc_server.py, host/debugger/prompt.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
     `_reg_write_log`). For the Rust/C++ target of that narrowing pattern
@@ -129,15 +130,106 @@ def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> by
     C++ equivalent: std::transform with the LUT, or an explicit loop —
       MSVC/GCC/Clang all auto-vectorize a LUT transform reasonably.
     Kept as-is here because: this is the dominant cost of to_rgb24(), called
-      once per frame per pixel plane.
+      once per frame per pixel plane; Rgb24RowCache does the same translate
+      only for rows it has not converted before.
     """
     rtab, gtab, btab = channels
-    out = bytearray(len(src) * 3)
+    out = ZERO_BYTE * (len(src) * 3)
     out[0::3] = src.translate(rtab)
     out[1::3] = src.translate(gtab)
     out[2::3] = src.translate(btab)
     return bytes(out)
 
+
+Channels = tuple[bytes, bytes, bytes]
+
+
+class Rgb24RowCache:
+    """Memoises RGB24 rows by their palette-index bytes and colour tables.
+
+    Most rows of a frame are the same as in the previous frame, so a row
+    already seen is reused instead of translated again; a new row is
+    translated the way _translate_rgb24 does, inline. Keyed by the tables' contents (a palette
+    change makes new tables, so a stale row is impossible), bounded to
+    LIMIT rows across all tables and cleared wholesale when full. Derived
+    data only: not emulated state and not in a snapshot (vdp-renderer
+    "RGB24 conversion may memoise rows").
+
+    PORT-NOTE: exists because Python's per-call overhead makes hashing a row
+      cheaper than translating it; a native port converts each pixel with
+      the same 256-entry tables in a plain loop and needs no memo.
+    Rust/C++ equivalent: drop the cache; keep `to_rgb24` a pure LUT loop.
+    Kept as-is here because: it is the dominant cost of a shown frame on
+      PyPy (~680 -> ~130 us) and halves it on CPython.
+    """
+
+    LIMIT: ClassVar[int] = 4096
+
+    def __init__(self) -> None:
+        self._tables: dict[Channels, dict[bytes, bytes]] = {}
+        self._rows = 0
+        self._last_key: Channels | None = None
+        self._last_rows: dict[bytes, bytes] = {}
+
+    def __len__(self) -> int:
+        return self._rows
+
+    def _rows_for(self, channels: Channels) -> dict[bytes, bytes]:
+        last = self._last_key
+        if last is not None and (channels is last or channels == last):
+            return self._last_rows
+        rows = self._tables.get(channels)
+        if rows is None:
+            rows = {}
+            self._tables[channels] = rows
+        self._last_key = channels
+        self._last_rows = rows
+        return rows
+
+    def _miss(
+        self, rows: dict[bytes, bytes], key: bytes, channels: Channels
+    ) -> tuple[dict[bytes, bytes], bytes]:
+        """Convert `key` (one row) and memoise it; returns the (possibly
+        fresh, after a clear) row dict and the RGB24 bytes."""
+        rtab, gtab, btab = channels
+        buf = ZERO_BYTE * (len(key) * 3)
+        buf[0::3] = key.translate(rtab)
+        buf[1::3] = key.translate(gtab)
+        buf[2::3] = key.translate(btab)
+        rgb = bytes(buf)
+        if self._rows >= self.LIMIT:
+            self._tables.clear()
+            self._rows = 0
+            self._last_key = None
+            rows = self._rows_for(channels)
+        rows[key] = rgb
+        self._rows += 1
+        return rows, rgb
+
+    def row(self, row: bytes | bytearray, channels: Channels) -> bytes:
+        """RGB24 bytes of one index row through `channels`."""
+        key = bytes(row)
+        rows = self._rows_for(channels)
+        rgb = rows.get(key)
+        if rgb is None:
+            rows, rgb = self._miss(rows, key, channels)
+        return rgb
+
+    def frame(self, src: bytearray, channels: Channels) -> bytes:
+        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`. A
+        buffer that is not OUTPUT_H whole rows is converted without the memo."""
+        width = len(src) // OUTPUT_H
+        if width == 0 or width * OUTPUT_H != len(src):
+            return _translate_rgb24(src, channels)
+        rows = self._rows_for(channels)
+        parts: list[bytes] = []
+        for y in range(0, len(src), width):
+            key = bytes(src[y:y + width])
+            rgb = rows.get(key)
+            if rgb is None:
+                rows, rgb = self._miss(rows, key, channels)
+            parts.append(rgb)
+        return b"".join(parts)
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
 # Index 0 = transparent (rendered as black).
@@ -210,6 +302,10 @@ class VDP:
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     debug_disable_sprites: bool = field(default=False, repr=False)
+    # Memoised RGB24 rows (see Rgb24RowCache): derived data, not emulated state.
+    _rgb_rows: Rgb24RowCache = field(
+        default_factory=Rgb24RowCache, init=False, repr=False, compare=False
+    )
 
     @property
     def display_height(self) -> int:
@@ -386,4 +482,4 @@ class VDP:
         overrides this with its programmable palette / SCREEN 8 / banded paths.
         Keeping conversion on the VDP lets the frontend stay display-only.
         """
-        return _translate_rgb24(src, _TMS_CHANNELS)
+        return self._rgb_rows.frame(src, _TMS_CHANNELS)

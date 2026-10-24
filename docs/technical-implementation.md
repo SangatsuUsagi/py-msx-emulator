@@ -391,9 +391,14 @@ XOR, NOT) per pixel.
 Five sources render audio: the PSG (`msx/psg.py`), the SCC (`msx/scc.py`), the
 OPLL of the FM-PAC (`msx/opll.py`), the Majutsushi DAC, and the PPI key click.
 Each one renders signed 16-bit mono PCM at 44,100 Hz. A frame has 735 samples
-on NTSC machines and 882 on PAL machines. The `_mix_audio()` function of the
-SDL2 frontend adds the outputs of the chips that the machine
-has. It clamps the result to 16 bits and queues the buffer to SDL.
+on NTSC machines and 882 on PAL machines. At the end of every
+`Machine.run_frame()`, `AudioMixer` (`msx/audio_mixer.py`) adds the outputs of
+the chips that the machine has and clamps the result to 16 bits. This happens
+with or without a frontend, so the chips advance the same way in a headless
+run. The SDL2 frontend gets the buffer in `step_frame`'s `FrameOutput` (see
+[Frame API](#frame-api)), passes it through the output low-pass filter, and
+queues it to SDL. The machine holds
+only the latest frame, so audio that nobody takes does not accumulate.
 
 The Majutsushi DAC and the key click (PPI Port C bit 7) share one write-driven
 DAC channel, `EventDac` in `msx/dac.py`. The owner converts each write to a
@@ -401,7 +406,7 @@ signed 16-bit level and passes it with the cycle of the write. A write that
 does not change the level records nothing. `generate_samples` places each
 change at sample `(cycle - frame_start) * n // (frame_end - frame_start)` and
 holds the level until the next change. When a frame has no change and the
-level is 0, it returns `None`, and `_mix_audio()` mixes nothing for that
+level is 0, it returns `None`, and the mixer mixes nothing for that
 channel.
 
 ### Sub-frame software PCM
@@ -439,12 +444,13 @@ ultrasonic carrier changes: it becomes its band-limited duty average.
 
 ### Output low-pass filter
 
-`msx/audio_filter.py` (`BiquadLowPass`) is a stateful 2-pole Butterworth
+`frontend/audio_filter.py` (`BiquadLowPass`) is a stateful 2-pole Butterworth
 low-pass filter (8 kHz, RBJ coefficients, Direct Form I). The frontend applies
-it to the final mixed buffer before `SDL_QueueAudio`. It models the analog RC
-filter on the real MSX audio output. A single instance carries its
-`x1/x2/y1/y2` state across frames, and the frontend resets it when the audio
-device opens.
+it to each frame's PCM from the machine. It models the analog RC filter on the
+real MSX audio output. It uses floating point, so it stays out of the core:
+the core's audio output is the same on every host. The frontend owns a single
+instance, which carries its `x1/x2/y1/y2` state across frames. The reset
+hotkey clears it.
 
 The filter removes the residual high-frequency imaging and aliasing that
 point-sampling synthesis leaves near Nyquist. Its cost is ~1 % of the
@@ -516,7 +522,7 @@ with the Sony/Philips style, and the TC8566AF with its own style.
 
 | Layer      | File                             | Responsibility                                                                                                                                                                                                                                                    |
 | ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk image | `disk_image.py` (`DskDiskImage`) | Reads a `*.dsk` sector image. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and writes them back to the file on exit |
+| Disk image | `disk_image.py` (`DskDiskImage`) | Holds a `*.dsk` sector image built from the file's bytes. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and marks the image dirty; `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk is swapped out |
 | Drive      | `disk_drive.py` (`DiskDrive`)    | One physical drive. Holds the mounted image, tracks the head position, and gives sector read/write                                                                                                                                                                  |
 | Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I-IV command decode, status register, data/track/sector registers, `abort()`. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register |
 | Interface  | `interface.py`                   | Connection style between the controller and the memory bus. Both styles map the DISK ROM at 0x4000-0x7FFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8-0x7FFF and uses the disk-change bit. `TC8566AFInterface` puts two control registers, the Main Status Register, and the Data Register at 0x7FF8-0x7FFB. Both styles share `swap()`, which mounts and ejects disks at runtime |
@@ -540,12 +546,13 @@ images. Three paths swap disks at runtime, and all of them call
 - The `fdd.swap` method of the socket RPC server.
 
 The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and
-writes files with write-back on exit.
+writes files; written sectors go back to the `.dsk` file on exit, before a
+save state, and when the disk is swapped out.
 `machine.fdc` is `None` on machines with no floppy interface.
 
 ## Machine and extension YAML schema
 
-`msx/machine_loader.py` is the single source of truth for three YAML surfaces:
+`host/machine_config.py` is the single source of truth for three YAML surfaces:
 device definitions (`config/devices/*.yaml`), machine specifications
 (`config/machines/*.yaml`), and extension overlays
 (`config/extensions/*.yaml`). All three are `TypedDict` shapes that the loader
@@ -861,7 +868,7 @@ ROM-bearing field in the loader.
 
 ### Two-pass resolution
 
-`msx/machine_loader.py` resolves the hardware topology in two passes:
+`host/machine_config.py` resolves the hardware topology in two passes:
 
 1. **Device registry pass.** `load_device_registry(config_dir)` reads every
    `*.yaml` file in `config/devices/` into a dict with the device `id` as key.
@@ -876,10 +883,17 @@ ROM-bearing field in the loader.
    `schema_version`, or an absent necessary ROM entry, it raises a
    `MachineLoadError` that gives the file and the field.
 
-### build_machine()
+### load_machine_config() and build_machine()
 
-`build_machine(spec, cartridge, mapper, ...)` constructs a `Machine` from a
-resolved `MachineSpec`. The `spec.generation` field selects the concrete types:
+Building is split between the host and the core.
+`load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py`
+reads every file the machine needs into a `MachineConfig` value
+(`msx/boundary.py`): the ROM images by role, the cartridges with their mappers
+(an `auto` mapper is resolved here through the ROM database), the saved SRAM
+images, the disk images and the RTC start time. `build_machine(config)` in
+`msx/machine_loader.py` then constructs the `Machine` from those bytes only. It
+opens no file and consults no database, so the same config always builds the
+same machine. The `spec.generation` field selects the concrete types:
 
 - `"msx1"`: `VDP` (TMS9918A), flat slot 3 RAM, no RTC or RAM mapper
 - `"msx2"`: `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`
@@ -891,6 +905,33 @@ boots do not fail. Every device in `config/devices/` is currently
 `implemented: true`.
 
 ---
+
+## Frame API
+
+`Machine.step_frame(frame_input, render_video)` is the core's per-frame call
+(`allium/core-frontend.allium`). It takes one `InputFrame` value
+(`msx/input.py`), which cannot be changed once built: the 11 keyboard matrix
+rows, both joystick ports (each already merged from its keyboard and gamepad
+sources), and the frame's mouse motion (in MSX counts) and buttons. It
+applies the value to the machine's input lines (`InputLines`, which the PPI
+and PSG read), so the input stays the same for the whole frame, and feeds the
+mouse its motion once. It then runs the frame and returns a `FrameOutput` (`msx/boundary.py`):
+the RGB24 video when `render_video` is true, the frame's audio before the
+output filter, and the frame number. `render_video` decides only whether
+video is produced: a skipped frame still runs the sprite pass, so the VDP
+status is the same.
+
+The input is built outside the core, in `host/input_state.py`'s `InputState`.
+The keyboard, the gamepads, the mouse and the RPC input methods write to it,
+and it keeps the keyboard-joystick and gamepad sources of each port apart
+until it merges them. Each frame the frontend passes `take_frame()` to
+`step_frame`, which also zeroes the builder's mouse motion. RPC injection
+calls `Machine.apply_input`, which sets the lines and mouse buttons at once
+without running a frame, so a paused machine sees the input on its next
+instruction. Headless runs (`--count-frame`, `--benchmark`) pass an empty
+`InputFrame()`.
+`Machine.run_frame()` remains as the internal step that the debugger and the
+break handling use.
 
 ## Portability
 

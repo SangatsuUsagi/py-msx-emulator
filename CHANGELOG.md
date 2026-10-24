@@ -2,6 +2,21 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.8.0** (2026-10-24): Separate the emulator core from the host and the frontend, to make a later port to
+  another language easier.
+  - The core (`msx/`) now has a defined boundary: it takes a machine configuration of bytes and one input value per
+    frame, and returns the frame's video, audio and changed media. It reads no files, never reads the host clock, and
+    imports no SDL2 or host code; a test enforces this. File access, config parsing, the RPC server and the debugger
+    move to the new `host/` package. SDL2 keyboard, joystick, mouse, frame pacing and the audio output filter move to
+    `frontend/`.
+  - The core mixes the audio every frame, also in headless runs, so the sound chips advance the same way with or
+    without an audio device. `--benchmark` numbers now include sound synthesis and the RGB conversion, and cannot be
+    compared with numbers from v2.7.8 or earlier.
+  - The RTC starts at the host time when the machine is created and then follows emulated time, so a run with the same
+    input is the same every time.
+  - SRAM and disk images are written back only when they changed. Loading a save state does not swap disks: each drive
+    must already hold the disk it held when the state was saved.
+  - Save-state format 16: the RTC and the mouse are saved too. Older save states cannot be loaded.
 - **v2.7.8** (2026-10-17): Fix keyboard, V9938 and machine-loader behaviour that did not match the specs.
   - Keyboard: SHIFT+"0" reaches the "_" cell on the Japanese (JIS) layout only. On the International layout it now
     types ")" as on real hardware.

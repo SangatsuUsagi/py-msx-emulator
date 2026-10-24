@@ -3,7 +3,7 @@
 import math
 import struct
 
-from msx.audio_filter import _BUTTERWORTH_Q, _DEFAULT_CUTOFF_HZ, BiquadLowPass
+from frontend.audio_filter import _BUTTERWORTH_Q, _DEFAULT_CUTOFF_HZ, BiquadLowPass
 from msx.psg import SAMPLE_RATE
 
 

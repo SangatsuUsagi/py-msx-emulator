@@ -105,16 +105,16 @@ def _assert_rejected(fmpac: FmPac, mutate: Callable[[dict[str, Any]], None], pat
     with pytest.raises(ValueError, match=path):
         fmpac.restore(bad)
     assert fmpac.snapshot() == pre
-    assert len(fmpac.sram) == SRAM_SIZE
+    assert len(fmpac.sram_image) == SRAM_SIZE
 
 
 def test_short_sram_rejected_without_resizing(fmpac: FmPac) -> None:
     def mutate(s: dict[str, Any]) -> None:
         s["sram"] = bytes(100)
 
-    pre_sram = bytes(fmpac.sram)
+    pre_sram = fmpac.sram_image.data()
     _assert_rejected(fmpac, mutate, r"state\.sram")
-    assert bytes(fmpac.sram) == pre_sram
+    assert fmpac.sram_image.data() == pre_sram
 
 
 def test_bank_past_a_16kb_rom_rejected() -> None:

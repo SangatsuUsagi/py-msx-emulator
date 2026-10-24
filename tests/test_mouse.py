@@ -16,7 +16,7 @@ def _drive(device: MouseDevice, *values: int) -> None:
 
 
 def test_main_cycle_reports_real_delta() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.add_motion(5, -1)
     # YLOW2 -> XHIGH1 (rising edge) latches the accumulated delta.
     device.write_pin8(1)
@@ -28,7 +28,7 @@ def test_main_cycle_reports_real_delta() -> None:
 
 
 def test_alternate_cycle_reports_zero_regardless_of_new_motion() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.add_motion(10, 20)
     _drive(device, 1, 0, 1, 0)  # YLOW2 -> XHIGH1 -> XLOW1 -> YHIGH1 -> YLOW1
     assert device._phase == PHASE_YLOW1
@@ -45,15 +45,24 @@ def test_alternate_cycle_reports_zero_regardless_of_new_motion() -> None:
 
 
 def test_clamp_beyond_range_carries_remainder() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.add_motion(200, 0)
     device.write_pin8(1)  # YLOW2 -> XHIGH1, latches clamped delta
     assert device._x_rel == 127
     assert device._cur_x_rel == 73  # 200 - 127 carried to next scan round
 
 
+def test_running_accumulator_is_bounded() -> None:
+    # input-mouse "Running accumulator is bounded".
+    device = MouseDevice()
+    device.add_motion(40000, -40000)
+    assert (device._cur_x_rel, device._cur_y_rel) == (32767, -32767)
+    device.add_motion(-50000, 0)
+    assert device._cur_x_rel == -17233
+
+
 def test_negative_delta_encodes_two_complement() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.add_motion(-1, 0)
     device.write_pin8(1)  # YLOW2 -> XHIGH1
     assert device.read() & 0x0F == 0xF
@@ -62,7 +71,7 @@ def test_negative_delta_encodes_two_complement() -> None:
 
 
 def test_button_bits_independent_of_phase() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     assert device.read() & 0x30 == 0x30  # both released
     device.set_button(4, True)  # left pressed
     assert device.read() & 0x30 == 0x20
@@ -74,7 +83,7 @@ def test_button_bits_independent_of_phase() -> None:
 
 def test_timeout_resync_before_processing_new_value() -> None:
     cycle = [0]
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     device.write_pin8(0, cycle[0])  # XHIGH1 -> XLOW1
     assert device._phase == PHASE_XLOW1
@@ -88,7 +97,7 @@ def test_timeout_resync_before_processing_new_value() -> None:
 
 def test_normal_inter_nibble_timing_does_not_resync() -> None:
     cycle = [0]
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     cycle[0] = 100
     device.write_pin8(0, cycle[0])  # XHIGH1 -> XLOW1 (well within timeout)
@@ -99,7 +108,7 @@ def test_normal_inter_nibble_timing_does_not_resync() -> None:
 
 
 def test_repeated_identical_pin8_value_is_noop() -> None:
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.write_pin8(0)  # matches initial _last_pin8 (0) — no-op
     assert device._phase == PHASE_YLOW2
     device.write_pin8(1)
@@ -114,7 +123,7 @@ def test_same_value_writes_refresh_the_idle_timer() -> None:
     # spaced within the timeout -- even though the *cumulative* span since
     # the original edge exceeds it -- must not resync.
     cycle = [0]
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     assert device._phase == PHASE_XHIGH1
     for _ in range(3):
@@ -123,14 +132,11 @@ def test_same_value_writes_refresh_the_idle_timer() -> None:
     assert device._phase == PHASE_XHIGH1, "no resync: each gap was refreshed in time"
 
 
-def test_add_motion_subpixel_remainder_accumulates() -> None:
-    device = MouseDevice(_scale=3)
-    device.add_motion(1, 0)
-    assert device._cur_x_rel == 0
-    device.add_motion(1, 0)
-    assert device._cur_x_rel == 0
-    device.add_motion(1, 0)
-    assert device._cur_x_rel == 1
+def test_add_motion_takes_msx_counts_as_given() -> None:
+    # input-mouse "add_motion takes MSX counts as given".
+    device = MouseDevice()
+    device.add_motion(5, -3)
+    assert (device._cur_x_rel, device._cur_y_rel) == (5, -3)
 
 
 def test_noop_write_still_triggers_resync() -> None:
@@ -139,7 +145,7 @@ def test_noop_write_still_triggers_resync() -> None:
     # elapsed time is checked before the value is inspected), so a repeated
     # value after a long gap still resyncs to PHASE_YLOW2.
     cycle = [0]
-    device = MouseDevice(_scale=1)
+    device = MouseDevice()
     device.write_pin8(1, cycle[0])  # YLOW2 -> XHIGH1
     assert device._phase == PHASE_XHIGH1
     cycle[0] = 100_000  # far beyond the timeout
@@ -166,7 +172,7 @@ def test_resync_from_every_phase_lands_on_ylow2() -> None:
     ]
     for start_phase, pin8_values, expected_after_resync in cases:
         cycle = [0]
-        device = MouseDevice(_scale=1)
+        device = MouseDevice()
         for v in pin8_values:
             device.write_pin8(v, cycle[0])
         assert device._phase == start_phase
@@ -175,13 +181,3 @@ def test_resync_from_every_phase_lands_on_ylow2() -> None:
         next_value = 1 - pin8_values[-1]
         device.write_pin8(next_value, cycle[0])
         assert device._phase == expected_after_resync
-
-
-def test_add_motion_negative_delta_uses_floor_division() -> None:
-    # Locks in Python's flooring divmod semantics (quotient toward -inf,
-    # remainder in [0, scale)) — a naive truncating '/'/'%' port would give
-    # (-2, -1) here instead of (-3, 2), corrupting the sub-pixel carry.
-    device = MouseDevice(_scale=3)
-    device.add_motion(-7, 0)
-    assert device._cur_x_rel == -3
-    assert device._frac_x == 2

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
+
+from msx.snapshot_schema import I64_MAX, check_int, check_object
 
 # 8-phase scan cycle: a main cycle reporting the real relative X/Y delta,
 # immediately followed by an alternate cycle forced to zero delta. MSX BIOS
@@ -37,6 +40,10 @@ _MOUSE_TIMEOUT_CYCLES = 5_369
 # two's-complement byte's sign symmetry.
 _MAX_ABS_DELTA = 127
 
+# Bound on the not-yet-reported motion per axis, so it fits a signed 16-bit
+# value; a burst beyond it is dropped, not queued.
+_MAX_PENDING_MOTION = 32767
+
 # Bit indices for set_button() below: 1 << TRIGGER_A_BIT == _STATUS_TRIGGER_A,
 # 1 << TRIGGER_B_BIT == _STATUS_TRIGGER_B. Public so callers (the frontend's
 # mouse-button handling) can name them instead of hardcoding 4/5.
@@ -46,6 +53,25 @@ TRIGGER_B_BIT = 5  # right button
 _STATUS_TRIGGER_A = 0x10  # left button
 _STATUS_TRIGGER_B = 0x20  # right button
 _STATUS_DEFAULT = _STATUS_TRIGGER_A | _STATUS_TRIGGER_B  # both released
+
+
+class MouseState(TypedDict):
+    """Save-state schema for MouseDevice.snapshot()/apply_state(). The last
+    pin-8 write is saved as its age in cycles, because the machine's cycle
+    counter itself is not part of a snapshot."""
+
+    phase: int
+    x_rel: int
+    y_rel: int
+    cur_x_rel: int
+    cur_y_rel: int
+    status: int
+    last_pin8: int
+    last_cycle_age: int
+
+
+_MOUSE_STATE_KEYS: frozenset[str] = frozenset(MouseState.__annotations__)
+_I64_MIN = -I64_MAX - 1
 
 
 @dataclass
@@ -59,15 +85,11 @@ class MouseDevice:
     left/right mouse button state on every read, independent of phase.
     """
 
-    _scale: int = 1
-
     _phase: int = field(default=PHASE_YLOW2, init=False)
     _x_rel: int = field(default=0, init=False)
     _y_rel: int = field(default=0, init=False)
     _cur_x_rel: int = field(default=0, init=False)
     _cur_y_rel: int = field(default=0, init=False)
-    _frac_x: int = field(default=0, init=False)
-    _frac_y: int = field(default=0, init=False)
     _status: int = field(default=_STATUS_DEFAULT, init=False)
     _last_pin8: int = field(default=0, init=False)
     _last_cycle: int = field(default=0, init=False)
@@ -130,23 +152,13 @@ class MouseDevice:
         self._x_rel = 0
         self._y_rel = 0
 
-    def add_motion(self, dx_px: int, dy_px: int) -> None:
-        # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
-        #   the remainder keeps the sign of _scale (always in [0, _scale)),
-        #   regardless of dx_px/dy_px's sign.
-        # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
-        #   truncate toward zero).
-        # C++ equivalent: std::div with an explicit floor adjustment, or a
-        #   hand-written floor-division helper -- plain '/'/'%' also truncate
-        #   toward zero in C++.
-        # Kept as-is here because: semantic necessity, not performance -- the
-        #   sub-pixel carry (_frac_x/_frac_y) must stay in [0, _scale)
-        #   regardless of motion sign; truncating division would flip its
-        #   sign for negative motion and corrupt the carry.
-        dx, self._frac_x = divmod(dx_px + self._frac_x, self._scale)
-        dy, self._frac_y = divmod(dy_px + self._frac_y, self._scale)
-        self._cur_x_rel += dx
-        self._cur_y_rel += dy
+    def add_motion(self, dx: int, dy: int) -> None:
+        """Add relative motion, already in MSX mouse counts, to the running
+        total, bounded to +/-_MAX_PENDING_MOTION per axis."""
+        x = self._cur_x_rel + dx
+        y = self._cur_y_rel + dy
+        self._cur_x_rel = max(-_MAX_PENDING_MOTION, min(_MAX_PENDING_MOTION, x))
+        self._cur_y_rel = max(-_MAX_PENDING_MOTION, min(_MAX_PENDING_MOTION, y))
 
     def set_button(self, bit: int, pressed: bool) -> None:
         """Set the left (TRIGGER_A_BIT) or right (TRIGGER_B_BIT) button state.
@@ -158,3 +170,44 @@ class MouseDevice:
             self._status &= ~(1 << bit) & 0xFF
         else:
             self._status |= (1 << bit)
+
+    def snapshot(self, cycle: int) -> MouseState:
+        """Capture the scan state at machine cycle `cycle` (see apply_state)."""
+        return {
+            "phase": self._phase,
+            "x_rel": self._x_rel,
+            "y_rel": self._y_rel,
+            "cur_x_rel": self._cur_x_rel,
+            "cur_y_rel": self._cur_y_rel,
+            "status": self._status,
+            "last_pin8": self._last_pin8,
+            "last_cycle_age": cycle - self._last_cycle,
+        }
+
+    def parse_state(self, obj: object, label: str) -> MouseState:
+        """Validate a snapshot() object without touching the device."""
+        state = check_object(obj, label, _MOUSE_STATE_KEYS)
+        delta = _MAX_ABS_DELTA
+        return {
+            "phase": check_int(state["phase"], f"{label}.phase", 0, 7),
+            "x_rel": check_int(state["x_rel"], f"{label}.x_rel", -delta, delta),
+            "y_rel": check_int(state["y_rel"], f"{label}.y_rel", -delta, delta),
+            "cur_x_rel": check_int(state["cur_x_rel"], f"{label}.cur_x_rel", _I64_MIN, I64_MAX),
+            "cur_y_rel": check_int(state["cur_y_rel"], f"{label}.cur_y_rel", _I64_MIN, I64_MAX),
+            "status": check_int(state["status"], f"{label}.status", 0, 0xFF),
+            "last_pin8": check_int(state["last_pin8"], f"{label}.last_pin8", 0, 1),
+            "last_cycle_age": check_int(
+                state["last_cycle_age"], f"{label}.last_cycle_age", _I64_MIN, I64_MAX
+            ),
+        }
+
+    def apply_state(self, state: MouseState, cycle: int) -> None:
+        """Assign an already-parsed MouseState at machine cycle `cycle`."""
+        self._phase = state["phase"]
+        self._x_rel = state["x_rel"]
+        self._y_rel = state["y_rel"]
+        self._cur_x_rel = state["cur_x_rel"]
+        self._cur_y_rel = state["cur_y_rel"]
+        self._status = state["status"]
+        self._last_pin8 = state["last_pin8"]
+        self._last_cycle = cycle - state["last_cycle_age"]

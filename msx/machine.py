@@ -1,54 +1,57 @@
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from msx.audio_mixer import AudioMixer
+from msx.boundary import (
+    DiskMedium,
+    FrameOutput,
+    MediaId,
+    RgbFrame,
+    drive_media_id,
+)
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
-from msx.input import InputState
+from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
+from msx.machine_spec import KeyboardLayout
 from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
-from msx.mouse import MouseDevice
+from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
-from msx.psg import PSG, JoystickPort
+from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
-from msx.vdp._geometry import VideoStandard
+from msx.sram import Medium, SramImage
+from msx.vdp._geometry import OUTPUT_H, VideoStandard
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
 from msx.vdp.vdp import VDP, VdpDevice
 
 if TYPE_CHECKING:
-    from msx.debugger.prompt import Debugger
+    from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import FloppyDisk
     from msx.fmpac import FmPac
     from msx.rtc import RTC
 
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
-# MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
-SCREEN_WIDTH: int = 256
-SCREEN_HEIGHT: int = 192
 
+class DebuggerHook(Protocol):
+    """The interactive debugger the host may attach (host/debugger/prompt.py's
+    Debugger); the core only asks it to take over at a break."""
 
-class SramSource(Protocol):
-    """Structural type for anything Machine.sram_sources() can hand
-    __main__.py's cleanup path -- any object with a save_sram(path) method
-    (every Mapper, per cart-rom-mapper's "Mapper protocol" Requirement, plus
-    FmPac/HalnoteMapper/RTC, which duck-type the same shape without being
-    Mappers themselves)."""
-
-    def save_sram(self, path: Path) -> None: ...
+    def enter(self) -> None: ...
 
 
 class PauseReason(str, enum.Enum):
     """Why the emulator paused — passed to the pause hook, and the single source
-    of truth shared with the RPC adapter (msx/rpc_server.py imports it).
+    of truth shared with the RPC adapter (host/rpc_server.py imports it).
 
     Subclasses `str` so each member serializes to its wire value (e.g.
     ``"breakpoint"``) and compares equal to that string, keeping the JSON-RPC
@@ -91,8 +94,13 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
-    input: InputState = field(default_factory=InputState)
+    input: InputLines = field(default_factory=InputLines)
+    # Per-frame audio mix, produced by run_frame() and read with take_audio().
+    audio: AudioMixer = field(default_factory=AudioMixer, repr=False)
     video_standard: VideoStandard = VideoStandard.NTSC
+    # The keyboard matrix layout, from the machine definition (frontends pick
+    # their host-key table from it).
+    keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
     # Free-running T-state clock, never reset.
     #
     # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
@@ -102,18 +110,10 @@ class Machine:
     #   arbitrary-precision int never wraps, so this width requirement is
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
-    sram_save_path: "Path | None" = field(default=None, repr=False)
-    # Slot 2's cartridge-mapper SRAM path, symmetric to sram_save_path (slot
-    # 1). This and sram_save_path/fmpac_sram_save_path/
-    # halnote_sram_save_path/rtc_sram_save_path are candidates for the
-    # generic (has_sram source, path) list design.md's D2 proposes -- not
-    # yet migrated (a later phase of slot1-slot2-symmetrization).
-    sram_save_path2: "Path | None" = field(default=None, repr=False)
-    fmpac_sram_save_path: "Path | None" = field(default=None, repr=False)
-    halnote_sram_save_path: "Path | None" = field(default=None, repr=False)
-    rtc_sram_save_path: "Path | None" = field(default=None, repr=False)
     _logger: DebugLogger | None = field(default=None, repr=False)
-    _debugger: Debugger | None = field(default=None, repr=False)
+    _debugger: DebuggerHook | None = field(default=None, repr=False)
+    # SRAM media by id, filled once by build_machine (see sram_media()).
+    _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
     _pause_hook: Callable[[PauseReason, int], None] | None = field(
@@ -193,6 +193,7 @@ class Machine:
         wire-cartridge-mapper-and-ppi-reset."""
         self.cpu.reset()
         self.psg.reset()
+        self.audio.reset()
         if self.scc is not None:
             self.scc.reset()
         if self.fmpac is not None:
@@ -224,27 +225,68 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
 
-    def sram_sources(self) -> list[tuple[SramSource, Path]]:
-        """(has_sram source, save path) pairs to load-on-start/save-on-exit,
-        computed from this Machine's already-resolved device references and
-        paths -- replaces enumerating each device's own
-        `_save_sram_if_present` call at the __main__.py cleanup site (see
-        design.md Decision D2 Option B). A future SRAM-backed device needs
-        only its own field pair added here, not a new cleanup call site."""
-        sources: list[tuple[SramSource, Path]] = []
-        mapper = self.memory._mapper
-        if mapper.has_sram and self.sram_save_path is not None:
-            sources.append((mapper, self.sram_save_path))
-        mapper2 = self.memory._mapper2
-        if mapper2.has_sram and self.sram_save_path2 is not None:
-            sources.append((mapper2, self.sram_save_path2))
-        if self.fmpac is not None and self.fmpac_sram_save_path is not None:
-            sources.append((self.fmpac, self.fmpac_sram_save_path))
-        if self.halnote_cart is not None and self.halnote_sram_save_path is not None:
-            sources.append((self.halnote_cart, self.halnote_sram_save_path))
-        if self.rtc is not None and self.rtc_sram_save_path is not None:
-            sources.append((self.rtc, self.rtc_sram_save_path))
-        return sources
+    def sram_media(self) -> Mapping[MediaId, SramImage]:
+        """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
+        mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
+        `rtc.cmos`. Fixed when build_machine finished wiring (no device is
+        replaced afterwards), so this is a read-only view of that table."""
+        return self._sram_table
+
+    def _media(self) -> dict[MediaId, Medium]:
+        media: dict[MediaId, Medium] = dict(self.sram_media())
+        if self.fdc is not None:
+            for index, drive in enumerate(self.fdc.drives):
+                if drive.image is not None:
+                    media[drive_media_id(index)] = drive.image
+        return media
+
+    def dirty_media(self) -> list[MediaId]:
+        """Ids of the media written since they were last persisted."""
+        dirty: list[MediaId] = []
+        for media_id, medium in self._media().items():
+            if medium.dirty:
+                dirty.append(media_id)
+        return dirty
+
+    def read_media(self, media_id: MediaId) -> bytes:
+        """A medium's current bytes. Raises KeyError for an unknown id."""
+        return self._media()[media_id].data()
+
+    def mark_persisted(self, media_id: MediaId) -> None:
+        """Clear a medium's dirty flag after the host has written it."""
+        self._media()[media_id].mark_persisted()
+
+    def mount_disk(self, drive: int, medium: DiskMedium | None) -> bytes | None:
+        """Swap `medium` (None ejects) into `drive` (0 = A). Returns the
+        outgoing image's bytes when it held unpersisted writes, for the host to
+        write back. Raises ValueError, changing nothing, for a machine without
+        that drive or an image whose size is not a positive multiple of 512."""
+        from msx.fdc.disk_image import DskDiskImage
+
+        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+            raise ValueError(f"no floppy drive {drive} on this machine")
+        new_image = None
+        if medium is not None:
+            new_image = DskDiskImage(
+                medium.data, write_protected=medium.write_protected, path=medium.path
+            )
+        outgoing = self.fdc.swap(drive, new_image)
+        return outgoing.data() if outgoing is not None else None
+
+    def disk_mounted(self, drive: int) -> bool:
+        """Whether `drive` (0 = A) exists and holds an image."""
+        return self._mounted_image(drive) is not None
+
+    def disk_path(self, drive: int) -> Path | None:
+        """The host's name for the image in `drive` (DiskMedium.path), or None
+        when the drive is empty, absent, or its image was mounted unnamed."""
+        image = self._mounted_image(drive)
+        return image.path if image is not None else None
+
+    def _mounted_image(self, drive: int) -> DskDiskImage | None:
+        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+            return None
+        return self.fdc.drives[drive].image
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.
@@ -255,7 +297,7 @@ class Machine:
         `PauseReason` member.
 
         PORT-NOTE: this is the *only* seam the core exposes to the RPC adapter
-          (msx/rpc_server.py). The core has no knowledge of sockets, JSON, or
+          (host/rpc_server.py). The core has no knowledge of sockets, JSON, or
           threads -- it just calls this generic callback.
         Rust equivalent: a `trait PauseSink` (with `reason: PauseReason`), so
           the RPC layer can live in a separate, feature-gated crate.
@@ -264,7 +306,7 @@ class Machine:
         Kept as-is here because: this is already the target shape (a generic
           callback seam), not a Python-specific pattern needing translation
           -- noted for completeness, and see the crate-split note in
-          msx/rpc_server.py for how the RPC layer sits behind it.
+          host/rpc_server.py for how the RPC layer sits behind it.
         """
         self._pause_hook = hook
 
@@ -276,6 +318,11 @@ class Machine:
         never reach into `PSG`'s internals.
         """
         self.psg.attach_mouse(device, port)
+
+    def attach_debugger(self, debugger: DebuggerHook | None) -> None:
+        """Attach (or detach) the interactive debugger a break enters when no
+        pause hook is set."""
+        self._debugger = debugger
 
     def enter_debugger_if_attached(self) -> bool:
         """Break into the attached interactive debugger REPL, if one is attached.
@@ -458,9 +505,11 @@ class Machine:
 
         Returns a `width * OUTPUT_H` buffer (the frame's width, see
         v9938_renderer.render_frame), or an empty bytearray when
-        `skip_render` is set. Advances the VDP frame counter either way. A break
+        `skip_render` is set. Advances the VDP frame counter and mixes the
+        frame's audio (read it with take_audio()) either way. A break
         (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
-        is still rendered and counted, and the next call restarts at line 0.
+        is still rendered, counted and mixed, and the next call restarts at
+        line 0.
 
         Both VDP variants render at the start of vertical blanking, not at the
         end of the scanline loop, and both raise their VBlank flag/interrupt at
@@ -475,6 +524,7 @@ class Machine:
         right after the render.
         """
         self._frame_interrupted = False
+        frame_start_cycle = self.cycle_count
         lpf = self.lines_per_frame
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
         # begin_scanline(line) runs *after* that line's cycles, so the
@@ -496,6 +546,7 @@ class Machine:
             self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
         # Frame counting is owned here (orchestration), for both VDP variants.
         self.vdp.increment_frame()
+        self._mix_frame_audio(frame_start_cycle)
         # Frame breakpoint (debugger 'gf'): checked once per frame, after the
         # frame is fully rendered and counted, so it never forces the slower
         # per-instruction debug loop the way a PC breakpoint does.
@@ -503,6 +554,60 @@ class Machine:
             self._frame_breakpoint = None
             self._enter_break(PauseReason.BREAKPOINT)
         return result
+
+    def samples_per_frame(self) -> int:
+        """Audio samples per frame: the output rate over the pacing rate (735 at
+        60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
+        return int(SAMPLE_RATE // self.video_standard.target_fps)
+
+    def apply_input(self, frame_input: InputFrame) -> None:
+        """Replace the input lines and mouse buttons with `frame_input`'s,
+        effective for the next instruction (machine-core "apply_input
+        replaces the input lines at once"). Feeds no mouse motion, so it can
+        be called any number of times between frames (RPC injection)."""
+        self.input.apply(frame_input)
+        mouse = self.psg.mouse
+        if mouse is not None:
+            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
+            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
+
+    def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
+        """Run one frame with `frame_input` held for the whole frame (the
+        core's per-frame API, allium/core-frontend.allium FrameStepping).
+
+        Applies the input (apply_input), feeds the frame's mouse motion to the
+        attached mouse once, runs the frame, and returns its RGB24 video (when
+        `render_video`), its pre-filter audio and the frame number.
+        `render_video` never changes emulated state.
+        """
+        self.apply_input(frame_input)
+        mouse = self.psg.mouse
+        if mouse is not None:
+            mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
+        index_buf = self.run_frame(skip_render=not render_video)
+        video: RgbFrame | None = None
+        if render_video:
+            video = RgbFrame(
+                len(index_buf) // OUTPUT_H, OUTPUT_H, self.vdp.to_rgb24(index_buf)
+            )
+        return FrameOutput(video, self.take_audio(), self.vdp.frame_count)
+
+    def take_audio(self) -> bytes:
+        """Return the mixed PCM of the most recent run_frame() and clear it."""
+        return self.audio.take()
+
+    def _mix_frame_audio(self, frame_start_cycle: int) -> None:
+        """Synthesize this frame's audio from every present sound source."""
+        self.audio.mix_frame(
+            self.samples_per_frame(),
+            frame_start_cycle,
+            self.cycle_count,
+            self.psg,
+            self.scc,
+            self.dac,
+            self.ppi.click if self.ppi is not None else None,
+            self.fmpac.opll if self.fmpac is not None else None,
+        )
 
     def _on_frame_interrupt(self) -> None:
         """Ctrl-C handling shared by the frame loops: notify the pause hook or

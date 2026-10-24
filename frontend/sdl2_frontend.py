@@ -3,38 +3,41 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
-from array import array
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 
-from msx.app_config import AppConfig
-from msx.audio_filter import BiquadLowPass
-from msx.fdc.disk_image import DskDiskImage
-from msx.frame_timer import FrameTimer
-from msx.input import (
-    KEY_NAME_TO_CELL,
-    SDLK_HOST_APOSTROPHE_KEY,
-    SDLK_JIS_RO,
-    SDLK_JIS_YEN,
-    InputState,
-)
-from msx.joystick import (
+from frontend.audio_filter import BiquadLowPass
+from frontend.frame_timer import FrameTimer
+from frontend.sdl2_joystick import (
     _DEFAULT_GC_BUTTON_BIT,
     _DEFAULT_GC_TURBO_BUTTON_BIT,
     TURBO_PERIOD,
     JoystickManager,
 )
+from frontend.sdl2_keyboard import (
+    SDLK_HOST_APOSTROPHE_KEY,
+    SDLK_JIS_RO,
+    SDLK_JIS_YEN,
+    SdlKeyboard,
+    resolve_hotkeys,
+    resolve_keyboard_joy_map,
+)
+from host.app_config import AppConfig
+from host.input_state import InputState
+from host.media import swap_disk
+from host.screenshot import save_screenshot
+from host.state_files import load_state, resume_state, save_state
+from msx.boundary import RgbFrame
+from msx.input import KEY_NAME_TO_CELL
 from msx.machine import Machine
-from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
-from msx.psg import JoystickPort
-from msx.screenshot import save_screenshot
-from msx.state import load_state, save_state
+from msx.mouse import MouseDevice
+from msx.psg import SAMPLE_RATE, JoystickPort
 from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
-    from msx.rpc_server import DebugServer
+    from host.rpc_server import DebugServer
 
 _APP_NAME = "py-msx-emulator"
 _SCREEN_WIDTH = 256
@@ -44,24 +47,14 @@ _SCREEN_WIDTH = 256
 _SCREEN_HEIGHT = OUTPUT_H
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format. Each emulated frame generates _AUDIO_SAMPLE_RATE /
-# target_fps samples (see _samples_per_frame_for).
-_AUDIO_SAMPLE_RATE: int = 44100
+# Audio output format: the core's mix rate (msx.psg.SAMPLE_RATE), mono S16LE.
+# Machine.run_frame() mixes each frame; the frontend only queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
-_S16_MAX: int = 32767   # signed 16-bit sample clamp range
-_S16_MIN: int = -32768
 
 # Auto frame-skip: bump the skip counter when a frame overruns its budget by
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
-
-def _samples_per_frame_for(machine: Machine) -> int:
-    """Audio samples to generate per emulated frame: the device rate over the
-    pacing rate, so the stream advances as fast as frames are paced (735 at
-    60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
-    return int(_AUDIO_SAMPLE_RATE // machine.video_standard.target_fps)
-
 
 def _target_fps_for(machine: Machine) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
@@ -182,7 +175,7 @@ def _init_sdl(
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     desired = sdl2.SDL_AudioSpec(
-        _AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+        SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
     )
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:
@@ -199,6 +192,37 @@ class _ActiveCombo:
     """A Ctrl+F-key combo currently asserting a synthetic MSX key."""
     fkey: int
     cell: tuple[int, int]
+
+
+@dataclass
+class _HostMouse:
+    """Host mouse input for the frame's InputState, in MSX counts.
+
+    One host pixel of pointer motion is one MSX count at the displayed size,
+    so motion is divided by the window's integer scale factor. The remainder
+    carries to the next event, so slow motion is not dropped. Motion
+    accumulates in `input` until the frame loop hands it to the machine.
+    """
+
+    input: InputState
+    scale: int
+    frac_x: int = 0
+    frac_y: int = 0
+
+    def motion(self, dx_px: int, dy_px: int) -> None:
+        """Convert host pixels to MSX counts and add them to the frame's input."""
+        # PORT-NOTE: divmod() floors -- the quotient rounds toward -inf and
+        #   the remainder stays in [0, scale) whatever the motion's sign.
+        # Rust equivalent: div_euclid/rem_euclid, not plain '/'/'%' (which
+        #   truncate toward zero).
+        # C++ equivalent: a hand-written floor-division helper -- plain
+        #   '/'/'%' also truncate toward zero in C++.
+        # Kept as-is here because: semantic necessity -- truncating division
+        #   would flip the carry's sign for negative motion and corrupt it.
+        dx, self.frac_x = divmod(dx_px + self.frac_x, self.scale)
+        dy, self.frac_y = divmod(dy_px + self.frac_y, self.scale)
+        self.input.mouse_dx += dx
+        self.input.mouse_dy += dy
 
 
 @dataclass
@@ -264,6 +288,9 @@ class _HotkeyState:
     ff_locked: bool = False
     muted: bool = False
     fullscreen: bool = False
+    # Output low-pass applied to the machine's PCM; one instance so its state
+    # carries across frames. The reset action clears it with the machine.
+    audio_filter: BiquadLowPass = field(default_factory=BiquadLowPass)
 
     @property
     def fast_forward(self) -> bool:
@@ -327,28 +354,28 @@ class _EventApi(Protocol):
 
 def _handle_ctrl_combo_keydown(
     sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState,
-    ctrl_fkey_cells: dict[int, tuple[int, int]], machine: Machine,
+    ctrl_fkey_cells: dict[int, tuple[int, int]], keyboard: SdlKeyboard,
 ) -> bool:
     """Ctrl+F1..F5 combo KEYDOWN handling. Returns True if `sym` was consumed
     (Ctrl itself, or an F-key while at least one Ctrl side is held)."""
     if sym == sdl2.SDLK_LCTRL:
         ctrl_combo.lctrl_held = True
         if ctrl_combo.active is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if sym == sdl2.SDLK_RCTRL:
         ctrl_combo.rctrl_held = True
         if ctrl_combo.active is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if sym in ctrl_fkey_cells and (ctrl_combo.lctrl_held or ctrl_combo.rctrl_held):
         if ctrl_combo.active is None:
             if ctrl_combo.lctrl_held:
-                machine.input.key_up(sdl2.SDLK_LCTRL)
+                keyboard.key_up(sdl2.SDLK_LCTRL)
             if ctrl_combo.rctrl_held:
-                machine.input.key_up(sdl2.SDLK_RCTRL)
+                keyboard.key_up(sdl2.SDLK_RCTRL)
             row, bit = ctrl_fkey_cells[sym]
-            machine.input.set_key_state(row, bit, True)
+            keyboard.input_state.set_key_state(row, bit, True)
             ctrl_combo.active = _ActiveCombo(sym, (row, bit))
         # else: a second F-key pressed while a combo is already active is
         # ignored until the active one releases.
@@ -357,7 +384,7 @@ def _handle_ctrl_combo_keydown(
 
 
 def _handle_ctrl_combo_keyup(
-    sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState, machine: Machine,
+    sdl2: _EventApi, sym: int, ctrl_combo: _CtrlComboState, keyboard: SdlKeyboard,
 ) -> bool:
     """Ctrl+F1..F5 combo KEYUP handling. Returns True if `sym` was consumed."""
     if sym in (sdl2.SDLK_LCTRL, sdl2.SDLK_RCTRL):
@@ -371,33 +398,32 @@ def _handle_ctrl_combo_keyup(
             # later KEYUP will then find `active` already None and fall through
             # to the caller's plain key_up path (harmless — that key's KEYDOWN
             # was never forwarded there either, since the combo intercepted it).
-            ctrl_combo.release_active(machine.input)
-        machine.input.key_up(sym)
+            ctrl_combo.release_active(keyboard.input_state)
+        keyboard.key_up(sym)
         return True
     if ctrl_combo.active is not None and sym == ctrl_combo.active.fkey:
         # The F-key side of the combo releasing: end it and re-assert plain
         # CTRL for whichever side(s) are still physically held, so a lingering
         # Ctrl press reads as ordinary CTRL again rather than nothing at all.
-        ctrl_combo.release_active(machine.input)
+        ctrl_combo.release_active(keyboard.input_state)
         if ctrl_combo.lctrl_held:
-            machine.input.key_down(sdl2.SDLK_LCTRL)
+            keyboard.key_down(sdl2.SDLK_LCTRL)
         if ctrl_combo.rctrl_held:
-            machine.input.key_down(sdl2.SDLK_RCTRL)
+            keyboard.key_down(sdl2.SDLK_RCTRL)
         return True
     return False
 
 
 def _mount_disk(machine: Machine, path: Path) -> bool:
-    """Swap `path` into drive A via `FloppyDisk.swap` (flush, disk change,
-    transfer abort). Returns False, leaving the drive as it was, if the image
-    cannot be opened."""
+    """Swap `path` into drive A via `host.media.swap_disk` (outgoing image
+    written back, disk change, transfer abort). Returns False, leaving the
+    drive as it was, if the image cannot be opened."""
     assert machine.fdc is not None
     try:
-        image = DskDiskImage(path)
+        swap_disk(machine, 0, path)
     except (ValueError, OSError) as exc:
         print(f"disk swap failed: {exc}", file=sys.stderr)
         return False
-    machine.fdc.swap(0, image)
     return True
 
 
@@ -415,10 +441,10 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
     drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
     if machine.fdc is None or not disks.paths:
         return
-    if machine.fdc.drives[0].image is None:
+    if not machine.disk_mounted(0):
         _mount_disk(machine, disks.paths[disks.index])
     else:
-        machine.fdc.swap(0, None)
+        swap_disk(machine, 0, None)
 
 
 def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
@@ -448,11 +474,12 @@ def _run_hotkey_action(
         hotkeys.muted = not hotkeys.muted
     elif action == "reset":
         machine.reset()
+        hotkeys.audio_filter.reset()
 
 
 def _handle_bound_hotkey_keydown(
-    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, window: object,
-    ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
+    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, keyboard: SdlKeyboard,
+    window: object, ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
     was consumed (Shift itself, or a bound key with no Ctrl side held)."""
@@ -463,7 +490,7 @@ def _handle_bound_hotkey_keydown(
         else:
             shift.rshift_held = True
         if shift.active_key is None:
-            machine.input.key_down(sym)
+            keyboard.key_down(sym)
         return True
     if ctrl_combo.lctrl_held or ctrl_combo.rctrl_held:
         return False
@@ -475,16 +502,16 @@ def _handle_bound_hotkey_keydown(
         return True
     if shift_held and shift.active_key is None:
         if shift.lshift_held:
-            machine.input.key_up(sdl2.SDLK_LSHIFT)
+            keyboard.key_up(sdl2.SDLK_LSHIFT)
         if shift.rshift_held:
-            machine.input.key_up(sdl2.SDLK_RSHIFT)
+            keyboard.key_up(sdl2.SDLK_RSHIFT)
         shift.active_key = sym
     _run_hotkey_action(sdl2, action, sym, machine, window, hotkeys)
     return True
 
 
 def _handle_bound_hotkey_keyup(
-    sdl2: _EventApi, sym: int, machine: Machine, hotkeys: _HotkeyState,
+    sdl2: _EventApi, sym: int, keyboard: SdlKeyboard, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking, fast-forward hold release and Shift+hotkey KEYUP
     handling. Returns True if `sym` was consumed."""
@@ -501,14 +528,14 @@ def _handle_bound_hotkey_keyup(
             shift.rshift_held = False
         if not (shift.lshift_held or shift.rshift_held):
             shift.active_key = None
-        machine.input.key_up(sym)
+        keyboard.key_up(sym)
         return True
     if shift.active_key is not None and sym == shift.active_key:
         shift.active_key = None
         if shift.lshift_held:
-            machine.input.key_down(sdl2.SDLK_LSHIFT)
+            keyboard.key_down(sdl2.SDLK_LSHIFT)
         if shift.rshift_held:
-            machine.input.key_down(sdl2.SDLK_RSHIFT)
+            keyboard.key_down(sdl2.SDLK_RSHIFT)
         return True
     return consumed
 
@@ -544,7 +571,7 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False
     if sym == sdl2.SDLK_F8:
-        save_state(machine, rgb_buf, game_title)
+        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title)
         return True, running
     if sym == sdl2.SDLK_F9:
         try:
@@ -628,11 +655,11 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
 
 
 def _handle_events(
-    sdl2: _EventApi, event: _EventLike, machine: Machine, window: object,
-    joy_manager: JoystickManager,
+    sdl2: _EventApi, event: _EventLike, machine: Machine, keyboard: SdlKeyboard,
+    window: object, joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    mouse_device: MouseDevice | None = None, hotkeys: _HotkeyState | None = None,
+    mouse: _HostMouse | None = None, hotkeys: _HotkeyState | None = None,
 ) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
@@ -653,7 +680,7 @@ def _handle_events(
         elif event.type == sdl2.SDL_KEYDOWN:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
             if hotkeys is not None and _handle_bound_hotkey_keydown(
-                sdl2, sym, event.key.repeat, machine, window, ctrl_combo, hotkeys
+                sdl2, sym, event.key.repeat, machine, keyboard, window, ctrl_combo, hotkeys
             ):
                 continue
             consumed, running = _handle_hotkey_keydown(
@@ -661,97 +688,31 @@ def _handle_events(
                 game_title, rgb_buf, tex_w, tex_h, running,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
-                sdl2, sym, ctrl_combo, ctrl_fkey_cells, machine
+                sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
             ):
-                machine.input.key_down(sym)
+                keyboard.key_down(sym)
         elif event.type == sdl2.SDL_KEYUP:
             sym = _resolve_key_sym(sdl2, event.key.keysym)
-            if hotkeys is not None and _handle_bound_hotkey_keyup(sdl2, sym, machine, hotkeys):
+            if hotkeys is not None and _handle_bound_hotkey_keyup(sdl2, sym, keyboard, hotkeys):
                 continue
-            if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, machine):
-                machine.input.key_up(sym)
+            if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, keyboard):
+                keyboard.key_up(sym)
         elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
             joy_manager.handle_event(event)
-        elif mouse_device is not None and event.type == sdl2.SDL_MOUSEMOTION:
+        elif mouse is not None and event.type == sdl2.SDL_MOUSEMOTION:
             # Host motion is negated on both axes when converting to MSX
             # relative counts (matches openMSX src/input/Mouse.cc).
-            mouse_device.add_motion(-int(event.motion.xrel), -int(event.motion.yrel))
-        elif mouse_device is not None and event.type in (
+            mouse.motion(-int(event.motion.xrel), -int(event.motion.yrel))
+        elif mouse is not None and event.type in (
             sdl2.SDL_MOUSEBUTTONDOWN, sdl2.SDL_MOUSEBUTTONUP,
         ):
             button = int(event.button.button)
             pressed = event.type == sdl2.SDL_MOUSEBUTTONDOWN
             if button == sdl2.SDL_BUTTON_LEFT:
-                mouse_device.set_button(TRIGGER_A_BIT, pressed)
+                mouse.input.mouse_left = pressed
             elif button == sdl2.SDL_BUTTON_RIGHT:
-                mouse_device.set_button(TRIGGER_B_BIT, pressed)
+                mouse.input.mouse_right = pressed
     return running
-
-
-def _mix_audio(
-    machine: Machine,
-    frame_start_cycle: int,
-    frame_end_cycle: int,
-    audio_filter: BiquadLowPass | None = None,
-) -> bytes:
-    """Generate one frame of audio: PSG plus SCC/DAC/OPLL (FM-PAC) and the PPI
-    key click when present, mixed and clamped to signed 16-bit. A DAC or key
-    click that is silent for the frame returns None and is not mixed, so an
-    idle machine keeps the PSG-only path. When `audio_filter` is given,
-    the final mixed buffer is passed through it (modelling the analog output
-    low-pass) before being returned. Returns the PCM bytes to queue."""
-    samples = _samples_per_frame_for(machine)
-    psg_buf = machine.psg.generate_samples(samples, frame_start_cycle, frame_end_cycle)
-    extra_bufs = []
-    if machine.scc is not None:
-        extra_bufs.append(machine.scc.generate_samples(samples))
-    if machine.dac is not None:
-        dac_buf = machine.dac.generate_samples(samples, frame_start_cycle, frame_end_cycle)
-        if dac_buf is not None:
-            extra_bufs.append(dac_buf)
-    if machine.ppi is not None:
-        click_buf = machine.ppi.click.generate_samples(
-            samples, frame_start_cycle, frame_end_cycle
-        )
-        if click_buf is not None:
-            extra_bufs.append(click_buf)
-    if machine.fmpac is not None:
-        extra_bufs.append(machine.fmpac.opll.generate_samples(samples))
-    if not extra_bufs:
-        return audio_filter.filter(bytes(psg_buf)) if audio_filter else bytes(psg_buf)
-
-    # Batch-decode each PCM buffer to signed 16-bit samples via array("h") (one
-    # C call per buffer) instead of a per-sample struct.unpack_from/pack_into.
-    # Sums are taken in Python ints so the clamp applies to the full mix, then
-    # re-encoded once. (array("h") is native byte order, matching the LE PCM on
-    # LE hosts.)
-    #
-    # PORT-NOTE: benchmarked the per-sample clamp loop below (timeit, 735
-    #   samples/frame, 1-2 extra channels) against min()/max() clamping and a
-    #   zip()+sum() rewrite -- the if/elif clamp here is already at or near
-    #   the fastest of the three, and the whole loop costs ~40-55us/frame
-    #   against a 16.6ms (60fps) budget either way. Not worth restructuring
-    #   pre-port; a native port's per-sample loop is trivially fast regardless
-    #   of which of these shapes it's translated from.
-    psg_arr = array("h")
-    psg_arr.frombytes(psg_buf)
-    extra_arrs = []
-    for buf in extra_bufs:
-        chan_arr = array("h")
-        chan_arr.frombytes(buf)
-        extra_arrs.append(chan_arr)
-    out_arr = array("h", bytes(2 * samples))
-    for i in range(samples):
-        total = psg_arr[i]
-        for chan_arr in extra_arrs:
-            total += chan_arr[i]
-        if total > _S16_MAX:
-            total = _S16_MAX
-        elif total < _S16_MIN:
-            total = _S16_MIN
-        out_arr[i] = total
-    mixed = out_arr.tobytes()
-    return audio_filter.filter(mixed) if audio_filter else mixed
 
 
 class _UploadTextureApi(Protocol):
@@ -823,13 +784,13 @@ class _ResizeTextureApi(Protocol):
 
 def _resize_texture_if_needed(
     sdl2: _ResizeTextureApi, renderer: object, window: object, texture: object,
-    index_buf: bytearray, tex_w: int, tex_h: int, scale: int,
+    frame_w: int, tex_w: int, tex_h: int, scale: int,
 ) -> tuple[object, int, int, bool]:
     """Recreate the streaming texture and resize the window when the frame width
     changes (SCREEN 6/7 is 512-wide; the output height is constant). Returns the
     (possibly new) texture, its width/height, and False if recreation failed."""
     new_h = _SCREEN_HEIGHT
-    new_w = (len(index_buf) // new_h) if index_buf else tex_w
+    new_w = frame_w
     if (new_w, new_h) == (tex_w, tex_h):
         return texture, tex_w, tex_h, True
     tex_w, tex_h = new_w, new_h
@@ -920,12 +881,13 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
     if machine.fdc is None or not disks.paths:
         return ""
     count = len(disks.paths)
-    image = machine.fdc.drives[0].image
-    if image is None:
+    if not machine.disk_mounted(0):
         return f"disk {disks.index + 1}/{count}: (ejected)"
-    if image.path == disks.paths[disks.index]:
-        return f"disk {disks.index + 1}/{count}: {image.path.name}"
-    return f"disk -/{count}: {image.path.name}"
+    path = machine.disk_path(0)
+    name = path.name if path is not None else "?"
+    if path == disks.paths[disks.index]:
+        return f"disk {disks.index + 1}/{count}: {name}"
+    return f"disk -/{count}: {name}"
 
 
 def _window_title(
@@ -988,12 +950,12 @@ def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
 
 
 def _run_frame(
-    sdl2: SDL2Api, machine: Machine, window: object, renderer: object,
+    sdl2: SDL2Api, machine: Machine, keyboard: SdlKeyboard, window: object, renderer: object,
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
-    mouse_device: MouseDevice | None, event: _EventLike,
+    mouse: _HostMouse | None, event: _EventLike,
     rpc_server: "DebugServer | None", frame_timer: FrameTimer,
-    frame_skip: str, audio_dev: int, audio_filter: BiquadLowPass, scale: int,
+    frame_skip: str, audio_dev: int, scale: int,
     hotkeys: _HotkeyState,
 ) -> None:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
@@ -1003,8 +965,8 @@ def _run_frame(
     """
     # Process events (input + hotkeys); updates running.
     state.running = _handle_events(
-        sdl2, event, machine, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse_device, hotkeys,
+        sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
+        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse, hotkeys,
     )
     if not state.running:
         return
@@ -1043,27 +1005,27 @@ def _run_frame(
         skip_this_frame = since_present < 1.0 / frame_timer.fps
     else:
         skip_this_frame = state.skip_counter > 0
-    frame_start_cycle = machine.cycle_count
-    index_buf = machine.run_frame(skip_render=skip_this_frame)
-    frame_end_cycle = machine.cycle_count
-    if not skip_this_frame:
-        state.rgb_buf = machine.vdp.to_rgb24(index_buf)
+    out = machine.step_frame(
+        keyboard.input_state.take_frame(), render_video=not skip_this_frame
+    )
+    if out.video is not None:
+        state.rgb_buf = out.video.pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
         # 512-wide). Recreate the texture / resize the window on a width
         # change before uploading, or the texture copy would overflow.
         state.texture, state.tex_w, state.tex_h, state.running = _resize_texture_if_needed(
-            sdl2, renderer, window, state.texture, index_buf, state.tex_w, state.tex_h, scale
+            sdl2, renderer, window, state.texture, out.video.width, state.tex_w, state.tex_h,
+            scale,
         )
         if not state.running:
             return
 
-    # Generate audio (PSG + SCC + OPLL + DAC + key click, as present) every frame so the
-    # chips advance; queue it unless fast-forwarding, as silence when muted.
+    # step_frame() already mixed the frame's audio; filter it every
+    # frame (also with no device, so the filter state stays continuous) and
+    # queue it unless fast-forwarding, as silence when muted.
+    audio_buf = hotkeys.audio_filter.filter(out.audio)
     if audio_dev > 0:
-        audio_buf = _mix_audio(
-            machine, frame_start_cycle, frame_end_cycle, audio_filter
-        )
         if hotkeys.muted:
             audio_buf = bytes(len(audio_buf))
         if not fast_forward:
@@ -1103,6 +1065,7 @@ def run(
     mouse_port: int | None = None,
     fdd1_images: list[Path] | None = None,
     hotkey_bindings: dict[tuple[int, bool], str] | None = None,
+    keyboard_joystick: Mapping[str, str] | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1125,9 +1088,11 @@ def run(
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
             first entry is the one build_machine already mounted.
-        hotkey_bindings: (SDL keycode, Shift held) -> action table from
-            py_emulator.yaml (`AppConfig.hotkey_bindings`); None uses the
+        hotkey_bindings: (SDL keycode, Shift held) -> action table resolved
+            from py_emulator.yaml (`resolve_hotkeys(AppConfig.hotkey_bindings())`); None uses the
             built-in table.
+        keyboard_joystick: keyboard_joystick.buttons (function -> key name)
+            from py_emulator.yaml; None or empty uses the built-in key map.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1160,10 +1125,6 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
-    # Analog-style output low-pass; one persistent instance so IIR state carries
-    # across frames (it starts from the clean state __init__ already zeroes).
-    audio_filter = BiquadLowPass()
-
     # Falls back to the same default tables JoystickManager's own dataclass
     # fields would use, resolved here (not left to the field defaults)
     # because an explicit gamepad_map always needs `dict(...)`-copying into
@@ -1172,18 +1133,28 @@ def run(
         gamepad_map if gamepad_map is not None
         else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
     )
+    # Host input accumulates here and reaches the machine once per frame
+    # through step_frame (allium/core-frontend.allium InputHeldForFrame).
+    frame_input = InputState()
+    if rpc_server is not None:
+        rpc_server.input_target = frame_input
     joy_manager = JoystickManager(
-        _input=machine.input,
+        _input=frame_input,
         _sdl=sdl2,
         _gc_button_bit=dict(gc_button_bit),
         _gc_turbo_button_bit=dict(gc_turbo_button_bit),
         _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
     )
 
-    mouse_device: MouseDevice | None = None
+    keyboard = SdlKeyboard(
+        frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
+        keyboard_layout=machine.keyboard_layout,
+    )
+
+    mouse: _HostMouse | None = None
     if mouse_port is not None:
-        mouse_device = MouseDevice(_scale=scale)
-        machine.attach_mouse(mouse_device, JoystickPort(mouse_port))
+        mouse = _HostMouse(keyboard.input_state, scale)
+        machine.attach_mouse(MouseDevice(), JoystickPort(mouse_port))
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
@@ -1201,14 +1172,15 @@ def run(
 
     hotkeys = _HotkeyState(
         bindings=dict(
-            hotkey_bindings if hotkey_bindings is not None else AppConfig().hotkey_bindings()
+            hotkey_bindings if hotkey_bindings is not None
+            else resolve_hotkeys(AppConfig().hotkey_bindings())
         ),
         disks=_DiskList(list(fdd1_images) if fdd1_images else []),
     )
 
     if resume is not None:
         try:
-            load_state(machine, path=Path(resume) if resume else None)
+            resume_state(machine, resume)
         except Exception as exc:
             print(f"resume failed: {exc}", file=sys.stderr)
 
@@ -1224,9 +1196,9 @@ def run(
         while state.running:
             try:
                 _run_frame(
-                    sdl2, machine, window, renderer, state, joy_manager, ctrl_combo,
-                    ctrl_fkey_cells, game_title, mouse_device, event, rpc_server,
-                    frame_timer, frame_skip, audio_dev, audio_filter, scale, hotkeys,
+                    sdl2, machine, keyboard, window, renderer, state, joy_manager, ctrl_combo,
+                    ctrl_fkey_cells, game_title, mouse, event, rpc_server,
+                    frame_timer, frame_skip, audio_dev, scale, hotkeys,
                 )
                 last_title = _update_window_title(
                     sdl2, window,

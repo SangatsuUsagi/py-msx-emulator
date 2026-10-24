@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from msx.fdc.disk_drive import DiskDrive
-from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
+from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.wd2793 import (
     BUSY,
     NOT_READY,
@@ -19,6 +19,7 @@ from msx.fdc.wd2793 import (
     Mode,
 )
 from msx.snapshot_schema import SchemaError
+from tests.disk_factories import dsk_image
 
 _2DD = 737280
 
@@ -26,7 +27,7 @@ _2DD = 737280
 def _ctrl(tmp_path: Path, *, fill: int = 0x00, write_protected: bool = False):
     p = tmp_path / "d.dsk"
     p.write_bytes(bytes([fill]) * _2DD)
-    image = DskDiskImage(p, write_protected=write_protected)
+    image = dsk_image(p, write_protected=write_protected)
     drive = DiskDrive(image)
     return WD2793(drive=drive), drive, image
 

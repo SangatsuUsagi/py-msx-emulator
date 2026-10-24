@@ -257,9 +257,9 @@ R#44（COL）への書き込みが、HMMC/LMMC の転送ラッチ（`_cmd_transf
 
 ## オーディオ
 
-音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。SDL2 フロントエンドの `_mix_audio()` が、マシンにあるチップの出力を足し、16 ビットに収めて SDL のキューに積む。
+音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。`Machine.run_frame()` の最後に、`AudioMixer`（`msx/audio_mixer.py`）がマシンにあるチップの出力を足し、16 ビットに収める。フロントエンドの有無に関係なく行うので、ヘッドレスの実行でもチップの状態は同じように進む。SDL2 フロントエンドは `step_frame` の `FrameOutput` でそのバッファを受け取り（[フレーム API](#フレーム-api) を参照）、出力ローパスフィルタを通して SDL のキューに積む。マシンが持つのは最新の 1 フレーム分だけなので、受け取られない音声がたまることはない。
 
-Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込みで動く DAC チャンネル 1 つ（`msx/dac.py` の `EventDac`）を共有する。持ち主は書き込みを符号付き 16 ビットのレベルに変え、書き込んだサイクルと一緒に渡す。レベルが変わらない書き込みは記録しない。`generate_samples` は各変化をサンプル位置 `(cycle - frame_start) * n // (frame_end - frame_start)` に置き、次の変化までレベルを保つ。変化がなくレベルが 0 のフレームでは `None` を返し、`_mix_audio()` はそのチャンネルを混ぜない。
+Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込みで動く DAC チャンネル 1 つ（`msx/dac.py` の `EventDac`）を共有する。持ち主は書き込みを符号付き 16 ビットのレベルに変え、書き込んだサイクルと一緒に渡す。レベルが変わらない書き込みは記録しない。`generate_samples` は各変化をサンプル位置 `(cycle - frame_start) * n // (frame_end - frame_start)` に置き、次の変化までレベルを保つ。変化がなくレベルが 0 のフレームでは `None` を返し、ミキサーはそのチャンネルを混ぜない。
 
 ### サブフレーム・ソフトウェア PCM
 
@@ -280,7 +280,7 @@ Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込み
 
 ### 出力ローパスフィルタ
 
-`msx/audio_filter.py`（`BiquadLowPass`）は、状態を持つ 2 極バターワースのローパスフィルタ（8 kHz、RBJ の係数、Direct Form I）。フロントエンドは、最後にミックスしたバッファに `SDL_QueueAudio` の前にこのフィルタをかける。実機 MSX の音声出力の RC フィルタを模している。1 つのインスタンスが `x1/x2/y1/y2` の状態をフレームをまたいで保ち、音声デバイスを開くときにフロントエンドがリセットする。
+`frontend/audio_filter.py`（`BiquadLowPass`）は、状態を持つ 2 極バターワースのローパスフィルタ（8 kHz、RBJ の係数、Direct Form I）。フロントエンドが、マシンから受け取った毎フレームの PCM にこのフィルタをかける。実機 MSX の音声出力の RC フィルタを模している。浮動小数点を使うのでコアには置かない。こうすることで、コアの音声出力はどのホストでも同じになる。フロントエンドが 1 つのインスタンスを持ち、`x1/x2/y1/y2` の状態をフレームをまたいで保つ。リセットのホットキーで状態を消す。
 
 フィルタは、点サンプリングの合成がナイキスト周波数の近くに残す高域のイメージングとエイリアシングを取り除く。コストは 1 フレームの音声処理の約 1%。実際の PSG の音楽のエネルギーはカットオフよりずっと低いので、聞こえる帯域と全体の音量はほとんど変わらない。
 
@@ -333,7 +333,7 @@ MSX2 のデフォルトの配置：
 
 | 層 | ファイル | 役割 |
 | --- | --- | --- |
-| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | `*.dsk` のセクタイメージを読む。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためて、終了時にファイルに書き戻す |
+| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | ファイルから読んだバイト列で `*.dsk` のセクタイメージを持つ。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためてイメージを dirty にし、`host/media.py` が終了時、ステートセーブの前、ディスクの入れ替え時にファイルへ書き戻す |
 | ドライブ | `disk_drive.py`（`DiskDrive`） | 物理ドライブ 1 台。マウント中のイメージを持ち、ヘッドの位置を追い、セクタを読み書きする |
 | コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持たない |
 | インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000〜0x7FFF にマップする。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使う。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置く。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
@@ -349,11 +349,11 @@ MSX2 のデフォルトの配置：
 - デバッガの `fdd1`/`fdd2` コマンド。
 - ソケット RPC サーバの `fdd.swap` メソッド。
 
-この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする（終了時にファイルへ書き戻す）。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
+この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする（書き込んだセクタは終了時、ステートセーブの前、ディスクの入れ替え時に `.dsk` ファイルへ書き戻す）。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
 
 ## マシンと拡張の YAML スキーマ
 
-`msx/machine_loader.py` は、3 種類の YAML の唯一の基準になる。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。
+`host/machine_config.py` は、3 種類の YAML の唯一の基準になる。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。
 
 この節の各フィールドは、ローダの中の明示的な `.get()` 呼び出しに対応する。ローダが読まないキーは、YAML のコメントに何と書いてあっても説明のためだけのもの。各プライマリスロットに何を入れられるかの利用者向けのまとめは、[README_extension_ja.md の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照。この節では、その結果を生む YAML の書き方を説明する。
 
@@ -640,15 +640,15 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### 2 パス解決
 
-`msx/machine_loader.py` は、ハードウェアの構成を 2 段階で決める。
+`host/machine_config.py` は、ハードウェアの構成を 2 段階で決める。
 
 1. **デバイスレジストリの段階。** `load_device_registry(config_dir)` が、`config/devices/` のすべての `*.yaml` を、デバイスの `id` をキーにした辞書に読み込む。各ファイルは 1 つのハードウェア（VDP の種類、PSG、PPI、RTC、RAM マッパー）を、マシンとは関係なく単独で書く。
 
 2. **マシン仕様の段階。** `load_machine_spec(machine_id, config_dir, device_registry, project_root)` が `config/machines/<machine_id>.yaml` を読み、必須のフィールドを検証する。`builtin_devices` の各 `ref` をレジストリで解決し、`MachineSpec` データクラスを返す。解決できない `ref`、知らない `schema_version`、必須の ROM エントリの欠けがあれば、ファイルとフィールドを示した `MachineLoadError` を出す。
 
-### build_machine()
+### load_machine_config() と build_machine()
 
-`build_machine(spec, cartridge, mapper, ...)` は、解決した `MachineSpec` から `Machine` を作る。`spec.generation` で具体的な型が決まる。
+マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
 - `"msx2"`：`V9938`、サブ ROM と `RamMapper` を持つ拡張スロット 3、`RTC`
@@ -656,6 +656,12 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 読み込み時、ローダは `implemented: false` のデバイス YAML を飛ばし、stderr に警告を出す。マシンのほかの部分はふつうに動くので、エミュレーションができる前にデバイス定義だけをコミットしても、起動は失敗しない。今 `config/devices/` にあるデバイスはすべて `implemented: true`。
 
 ---
+
+## フレーム API
+
+`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し（`allium/core-frontend.allium`）。作ったあとは変更できない `InputFrame`（`msx/input.py`）の値を 1 つ受け取る。中身は、キーボードマトリクスの 11 行、2 つのジョイスティックポート（それぞれキーボードとゲームパッドの入力を合成済み）、そのフレームのマウスの移動量（MSX 側の単位）とボタン。この値をマシンの入力線（PPI と PSG が読む `InputLines`）に反映するので、入力はフレームの間ずっと変わらない。マウスには移動量を 1 回だけ渡す。その後フレームを実行し、`FrameOutput`（`msx/boundary.py`）を返す。中身は、`render_video` が真のときの RGB24 の映像、出力フィルタ前のそのフレームの音声、フレーム番号。`render_video` が決めるのは映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP の状態は同じになる。
+
+入力はコアの外、`host/input_state.py` の `InputState` で組み立てる。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込み、各ポートのキーボード側とゲームパッド側の入力は、合成するまで別々に持つ。フロントエンドは毎フレーム `take_frame()` を `step_frame` に渡し、そのとき組み立て側のマウスの移動量も 0 に戻る。RPC からの入力は `Machine.apply_input` を呼ぶ。これはフレームを動かさずに入力線とマウスのボタンをすぐ反映するので、一時停止中のマシンも次の命令から入力を見る。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputFrame()` を渡す。`Machine.run_frame()` は、デバッガとブレーク処理が使う内部の処理として残っている。
 
 ## 移植性
 

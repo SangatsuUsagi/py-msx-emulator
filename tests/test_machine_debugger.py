@@ -59,6 +59,15 @@ class TestDefaultState:
         m = make_machine(rom=_NOP_ROM)
         assert m._debugger is None
 
+    def test_attach_debugger_is_what_a_break_enters(self):
+        m = make_machine(rom=_NOP_ROM)
+        dbg = MagicMock()
+        m.attach_debugger(dbg)
+        assert m.enter_debugger_if_attached() is True
+        dbg.enter.assert_called_once_with()
+        m.attach_debugger(None)
+        assert m.enter_debugger_if_attached() is False
+
     def test_empty_breakpoints_by_default(self):
         m = make_machine(rom=_NOP_ROM)
         assert m._breakpoints == frozenset()

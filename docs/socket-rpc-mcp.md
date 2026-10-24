@@ -5,7 +5,7 @@ a shell script, a test harness, or an AI coding agent like Claude Code. The
 tool can pause the emulator, examine the Z80/VDP state, send input, and capture
 screenshots, all without the SDL window. Two parts work together:
 
-- **Socket RPC** (`msx/rpc_server.py`): a JSON-RPC server on a Unix domain
+- **Socket RPC** (`host/rpc_server.py`): a JSON-RPC server on a Unix domain
   socket, built into the emulator. Enable it with `--rpc`.
 - **MCP server** (`tools/mcp_server.py`): a standalone process that wraps the
   socket RPC as MCP tools, so Claude Code can call them directly.
@@ -26,7 +26,7 @@ behind a decision. For the current behavior, use this document.
 ## Architecture
 
 ```
-MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  msx/rpc_server.py (in-process)
+MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  host/rpc_server.py (in-process)
 ```
 
 `tools/mcp_server.py` holds no emulator state of its own. For each tool call,
@@ -35,7 +35,7 @@ closes the connection. The MCP server thus continues to work if the emulator
 restarts between calls. If nothing listens on the socket yet, the request
 fails.
 
-In the emulator process, `DebugServer` (`msx/rpc_server.py`) runs its socket
+In the emulator process, `DebugServer` (`host/rpc_server.py`) runs its socket
 accept/read loop on a background daemon thread. This thread parses requests
 but never executes them. It puts each request on a queue. The main thread of
 the emulator processes the queue when the host loop calls
@@ -48,10 +48,10 @@ until the next pause event. The server thus handles it directly on that thread
 and does not queue it (see `DebugServer._continue_sync`).
 
 The core emulator (`machine`, `cpu`, `vdp`, `memory`) has no knowledge of RPC.
-For this feature, `msx/rpc_server.py` is the only place that uses `socket`,
+For this feature, `host/rpc_server.py` is the only place that uses `socket`,
 `json`, and `threading`. The core gives only a generic pause seam
 (`Machine.set_pause_hook`), where the RPC server installs itself. The
-portability note at the top of `msx/rpc_server.py` describes how this layering
+portability note at the top of `host/rpc_server.py` describes how this layering
 maps to a non-Python port.
 
 ---

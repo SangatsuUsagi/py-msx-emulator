@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from msx.input import KEY_NAME_TO_CELL, InputState
+from host.input_state import InputState
+from msx.input import KEY_NAME_TO_CELL
 
 
 def test_set_key_state_press_clears_bit() -> None:

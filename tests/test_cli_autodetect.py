@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from msx.app_config import AppConfig
+from host.app_config import AppConfig
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
@@ -50,7 +50,7 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
          )), \
          patch.object(Path, "exists", fake_exists), \
          patch.object(Path, "read_bytes", fake_read_bytes), \
-         patch("msx.app_config.load_app_config", lambda root: AppConfig()), \
+         patch("host.app_config.load_app_config", lambda root: AppConfig()), \
          patch("frontend.sdl2_frontend.run"):
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
@@ -68,7 +68,7 @@ def _run_main(argv: list[str], bios_exists: bool = True, ext_exists: bool = True
 # ---------------------------------------------------------------------------
 
 def test_default_machine_is_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup", lambda _c: "KonamiSCC")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: "TestGame")
 
@@ -80,7 +80,7 @@ def test_default_machine_is_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_machine_flag_overrides_db(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX")
     monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -91,7 +91,7 @@ def test_machine_flag_overrides_db(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_missing_auto_bios_exits_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -103,7 +103,7 @@ def test_missing_auto_bios_exits_with_error(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_unknown_cart_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -115,7 +115,7 @@ def test_unknown_cart_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_no_cartridge_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -131,7 +131,7 @@ def test_no_cartridge_defaults_to_msx2_jp(monkeypatch: pytest.MonkeyPatch) -> No
 # ---------------------------------------------------------------------------
 
 def test_msx2_summary_includes_ext_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX2")
     monkeypatch.setattr(romdb, "lookup", lambda _c: "KonamiSCC")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -146,7 +146,7 @@ def test_msx2_summary_includes_ext_line(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_msx1_summary_omits_ext_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: "MSX")
     monkeypatch.setattr(romdb, "lookup", lambda _c: "Mirrored")
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)
@@ -160,7 +160,7 @@ def test_msx1_summary_omits_ext_line(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_no_cartridge_shows_mapper_auto(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msx.romdb as romdb
+    import host.romdb as romdb
     monkeypatch.setattr(romdb, "lookup_system", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup", lambda _c: None)
     monkeypatch.setattr(romdb, "lookup_title", lambda _c: None)

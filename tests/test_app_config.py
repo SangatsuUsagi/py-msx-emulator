@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from msx.app_config import (
+from host.app_config import (
     DEFAULT_TURBO_PERIOD,
     AppConfig,
     AppConfigError,
@@ -262,19 +262,18 @@ def test_wrong_type_speed_rejected(tmp_path: Path) -> None:
 # Gamepad map resolution
 # ---------------------------------------------------------------------------
 
-def test_default_gamepad_maps_match_builtin() -> None:
-    direct, turbo = AppConfig().gamepad_maps()
-    # dpad up/down/left/right → bits 0-3, A→4, B→5 (direct)
-    assert direct == {11: 0, 12: 1, 13: 2, 14: 3, 0: 4, 1: 5}
-    # Y (index 3) → trigger A turbo (bit 4); X (index 2) → trigger B turbo (bit 5)
-    assert turbo == {3: 4, 2: 5}
+def test_default_gamepad_buttons_match_builtin() -> None:
+    assert AppConfig().gamepad_buttons_resolved() == {
+        "up": "dpup", "down": "dpdown", "left": "dpleft", "right": "dpright",
+        "trigger_a": "a", "trigger_b": "b", "turbo_a": "y", "turbo_b": "x",
+    }
 
 
 def test_trigger_swap_rebinds_buttons() -> None:
+    # app-config-file "Custom trigger assignment resolved" (config side).
     cfg = AppConfig(gamepad_buttons={"trigger_a": "b", "trigger_b": "a"})
-    direct, _turbo = cfg.gamepad_maps()
-    assert direct[1] == 4  # SDL button b (index 1) → Trigger A (bit 4)
-    assert direct[0] == 5  # SDL button a (index 0) → Trigger B (bit 5)
+    resolved = cfg.gamepad_buttons_resolved()
+    assert (resolved["trigger_a"], resolved["trigger_b"]) == ("b", "a")
 
 
 def test_duplicate_button_assignment_rejected(tmp_path: Path) -> None:
@@ -286,44 +285,27 @@ def test_duplicate_button_assignment_rejected(tmp_path: Path) -> None:
 
 def test_turbo_override_rebinds_button() -> None:
     cfg = AppConfig(gamepad_buttons={"turbo_a": "leftshoulder"})
-    _direct, turbo = cfg.gamepad_maps()
-    assert turbo[9] == 4  # leftshoulder index 9 → trigger A turbo bit 4
-    assert 3 not in turbo  # default Y no longer turbo-a
+    resolved = cfg.gamepad_buttons_resolved()
+    assert resolved["turbo_a"] == "leftshoulder"
+    assert resolved["up"] == "dpup"  # omitted function keeps its default
+
+
+def test_loader_output_contains_no_sdl_numbers(tmp_path: Path) -> None:
+    # app-config-file "Loader output contains no SDL numbers".
+    _write(tmp_path, "joystick:\n  buttons:\n    trigger_a: x\n    turbo_b: a\n"
+                     "keyboard_joystick:\n  buttons:\n    up: j\n"
+                     "hotkeys:\n  mute: shift+f8\n")
+    cfg = load_app_config(tmp_path)
+    resolved = [cfg.gamepad_buttons_resolved(), cfg.keyboard_joystick_buttons]
+    for table in resolved:
+        assert all(isinstance(k, str) and isinstance(v, str) for k, v in table.items())
+    for (key_name, shift), action in cfg.hotkey_bindings().items():
+        assert isinstance(key_name, str) and isinstance(shift, bool) and isinstance(action, str)
 
 
 # ---------------------------------------------------------------------------
 # Keyboard joystick (Joy1) map resolution
 # ---------------------------------------------------------------------------
-
-def test_default_keyboard_joy_map_is_builtin_joy_map() -> None:
-    from msx.input import JOY_MAP
-    assert AppConfig().keyboard_joy_map() is JOY_MAP
-
-
-def test_keyboard_joy_map_override_replaces_default_keys() -> None:
-    from msx.input import _K_COMMA, _K_j, _K_z
-
-    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    resolved = cfg.keyboard_joy_map()
-    assert resolved[_K_j] == (0, 4)
-    assert _K_z not in resolved
-    assert _K_COMMA not in resolved
-
-
-def test_keyboard_joy_map_omitted_function_keeps_default() -> None:
-    from msx.input import _K_UP, _K_w
-
-    cfg = AppConfig(keyboard_joystick_buttons={"trigger_a": "j"})
-    resolved = cfg.keyboard_joy_map()
-    assert resolved[_K_w] == (0, 0)
-    assert resolved[_K_UP] == (0, 0)
-
-
-def test_keyboard_joy_map_duplicate_key_rejected() -> None:
-    cfg = AppConfig(keyboard_joystick_buttons={"up": "j", "down": "j"})
-    with pytest.raises(AppConfigError):
-        cfg.keyboard_joy_map()
-
 
 # ---------------------------------------------------------------------------
 # Turbo period
@@ -392,8 +374,9 @@ def test_mouse_port_index_honors_configured_port() -> None:
 def test_valid_mappers_match_supported_mappers() -> None:
     # app_config.VALID_MAPPERS duplicates machine_loader._SUPPORTED_MAPPERS
     # (plus "auto") to avoid an import cycle; guard against the two drifting.
-    from msx.app_config import VALID_MAPPERS
-    from msx.machine_loader import _MAPPER_BUILDERS, _SUPPORTED_MAPPERS
+    from host.app_config import VALID_MAPPERS
+    from host.machine_config import _SUPPORTED_MAPPERS
+    from msx.machine_loader import _MAPPER_BUILDERS
 
     assert set(VALID_MAPPERS) == _SUPPORTED_MAPPERS | {"auto"}
     # Every non-"auto" accepted name must actually have a builder.
@@ -438,19 +421,7 @@ def test_fdd1_of_wrong_type_rejected(tmp_path: Path, value: str) -> None:
 # hotkeys (SDL2 frontend hotkey assignment)
 # ---------------------------------------------------------------------------
 
-_F6, _F8, _F12 = 1073741887, 1073741889, 1073741893
-
-
-def test_hotkey_keycodes_match_real_sdl2_constants() -> None:
-    import sdl2
-
-    from msx.app_config import _FKEY_KEYCODES
-
-    assert _FKEY_KEYCODES == {
-        "f1": sdl2.SDLK_F1, "f2": sdl2.SDLK_F2, "f3": sdl2.SDLK_F3, "f4": sdl2.SDLK_F4,
-        "f5": sdl2.SDLK_F5, "f6": sdl2.SDLK_F6, "f7": sdl2.SDLK_F7, "f8": sdl2.SDLK_F8,
-        "f9": sdl2.SDLK_F9, "f10": sdl2.SDLK_F10, "f11": sdl2.SDLK_F11, "f12": sdl2.SDLK_F12,
-    }
+_F6, _F8, _F12 = "f6", "f8", "f12"
 
 
 def test_hotkeys_group_parsed(tmp_path: Path) -> None:
@@ -461,7 +432,7 @@ def test_hotkeys_group_parsed(tmp_path: Path) -> None:
 
 
 def test_unset_hotkeys_gives_the_built_in_table(tmp_path: Path) -> None:
-    from msx.app_config import DEFAULT_HOTKEYS
+    from host.app_config import DEFAULT_HOTKEYS
 
     _write(tmp_path, "speed: 1.0\n")
     bindings = load_app_config(tmp_path).hotkey_bindings()

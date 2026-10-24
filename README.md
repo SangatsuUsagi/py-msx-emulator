@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3672%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3814%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -247,7 +247,7 @@ mixes the chip output into the audio output with PSG/SCC.
 | Activation | `--extension1`/`--extension2 fmpac` (see [`docs/README_extension.md`](docs/README_extension.md#fm-pac)), ROM at `roms/fmpac/fmpac.rom` |
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by bit 0 of the enable register |
-| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit |
+| SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit if it changed |
 | OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
 
 - Known limitations:
@@ -285,7 +285,7 @@ hardware, not only documentation.
 | Kanji-ROM I/O | Ports `0xD8-0xDB`: bit 1 selects JIS level (1/2), bit 0 selects column/row write vs. data read. A 5-bit read counter auto-increments per read and wraps to byte 0 of the same glyph every 32 reads |
 | Sub-slot 0 | `HalnoteMapper`: 1 MB ROM (128 × 8 KB banks), 16 KB SRAM at `0x0000-0x3FFF` (bank-0 register bit 7), JIS2 dictionary sub-mapper over `0x7000-0x7FFF` (bank-1 register bit 7) |
 | Sub-slot 1 | Flat 32 KB Kanji driver + BASIC ROM at `0x4000-0xBFFF`. `0x0000-0x3FFF`/`0xC000-0xFFFF` are open bus |
-| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit |
+| SRAM persistence | `saves/sram/hbi-j1_msx-je.sram`. The emulator loads it on start and saves it on exit if it changed |
 | Known limitations | The real-hardware behavior after 32 consecutive Kanji-ROM reads without an address rewrite is unverified. This implementation uses the documented openMSX behavior (wrap to byte 0 of the same glyph) as ground truth |
 
 ### Audio output filter
@@ -294,7 +294,8 @@ An analog-style output low-pass filter (2-pole Butterworth) models the RC
 filter on the real MSX audio output. It removes residual imaging and aliasing
 from the mixed PSG/SCC/DAC/OPLL/key-click signal.
 
-- Implementation: `msx/audio_filter.py`
+- Implementation: `frontend/audio_filter.py`. The frontend applies it; the
+  core's audio output is the unfiltered mix
 
 ### PPI (Programmable Peripheral Interface): Intel i8255
 
@@ -356,9 +357,14 @@ CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
 - Implementation: `msx/rtc.py`
 - CMOS RAM persistence: `saves/sram/rtc_<machine_id>.sram`, one file per
   machine. Real hardware has one physical RTC and battery per machine, unlike
-  cartridge SRAM. The emulator loads the file on start and saves it on exit.
-- Known limitations: clock reads return the host system time. There is no
-  alarm or timer output.
+  cartridge SRAM. The emulator loads the file on start and saves it on exit
+  if it changed.
+- Clock: starts at the host's local time when the machine is created, then
+  advances with emulated time only. The emulation is thus the same on every
+  run with the same input, and the clock runs at the emulated speed (fast
+  under fast-forward, stopped while paused).
+- Known limitations: setting the clock from the MSX does not change it.
+  There is no alarm or timer output.
 
 ### Cartridge mappers
 
@@ -387,7 +393,7 @@ the same type list.
 Slot 1 and slot 2 each select their mapper independently (`--mapper`/`--mapper1`
 and `--mapper2`, both auto-detected by default). Both slots support the same
 mapper set, including the SRAM-backed types. The SRAM of each slot persists to
-its own `saves/sram/<cartridge SHA1>.sram` path.
+its own `saves/sram/<cartridge SHA1>.sram` path, written on exit if it changed.
 
 `KonamiSCC` in either slot builds a real Konami-SCC chip, because a real
 Konami-SCC cartridge can occupy either slot (for example, behind a Konami
@@ -405,9 +411,15 @@ drive, controller, and connection-style interface. On this layer, the emulator
 implements a WD2793 controller with the Sony/Philips connection style, as used
 by the Sony HB-F1XD. The registers are memory-mapped in slot 3 sub-slot 0.
 `--fdd1` mounts a `*.dsk` image. The emulator supports Disk BASIC boot,
-`CALL FORMAT`, and file read/write with write-back on exit. You can swap disks
+`CALL FORMAT`, and file read/write. Written sectors go back to the `.dsk` file
+on exit, before a save state, and when the disk is swapped out. You can swap disks
 at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
 or from the debugger REPL (`fdd1`/`fdd2`).
+
+Loading a save state does not swap disks. Each drive must already hold the disk
+it held when the state was saved: the same `.dsk` file, with the same contents.
+Otherwise the load is refused and nothing changes. For a multi-disk game, swap to
+that disk with F6 first, or, with `--resume`, list it first after `--fdd1`.
 
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
@@ -456,7 +468,7 @@ SHA1 title lookup for automatic game-title detection and mapper selection.
 
 | Item | Detail |
 | --- | --- |
-| Implementation | `msx/romdb.py` |
+| Implementation | `host/romdb.py` |
 | Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (reference only. This project compiled all entries independently as factual data) |
 | Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
 
@@ -471,9 +483,9 @@ registered handler.
 
 | Item | Detail |
 | --- | --- |
-| Keyboard | `msx/input.py`. 11 rows × 8 bits, active-low, as in the MSX Technical Handbook |
-| Physical joystick | `msx/joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
-| Keyboard emulation | WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
+| Keyboard | `msx/input.py` (the matrix: 11 rows × 8 bits, active-low, as in the MSX Technical Handbook) and `frontend/sdl2_keyboard.py` (host key to matrix cell mapping) |
+| Physical joystick | `frontend/sdl2_joystick.py`. SDL2 GameController (preferred) with a raw joystick fallback. Hot-plug and unplug |
+| Keyboard emulation | `frontend/sdl2_keyboard.py`. WASD = Joy1 directions. Z/X or ,/. = Trigger A/B. The arrow keys also give the directions. To override the key for a function, set `keyboard_joystick.buttons` in `py_emulator.yaml` |
 
 - Known limitations:
   - No host key maps to the MSX numeric keypad (matrix rows 9-10).
@@ -526,10 +538,9 @@ title shows the fps, `[PAUSED]`/`[FF]`/`[MUTE]` and the drive A disk.
 Fast-forward does not play audio. For automatic frame skip, see
 [Performance](#performance).
 
-- Implementation: `frontend/sdl2_frontend.py`
-- Known limitations: when no audio device is open (e.g. headless or
-  `--benchmark` runs), PSG/SCC/OPLL get no synthesis tick. Their internal
-  envelope and LFO state thus does not advance during that time.
+- Implementation: `frontend/sdl2_frontend.py`. The core mixes the audio
+  every frame (`msx/audio_mixer.py`), also in headless runs. The frontend
+  only queues it.
 
 ### State save/load
 
@@ -541,7 +552,7 @@ records the mounted `.dsk` by path, size, and SHA1. If the current disk does
 not match at load time, the load fails with an error and does not continue
 silently.
 
-- Implementation: `msx/state.py`
+- Implementation: `msx/state.py` (snapshot encoding), `host/state_files.py` (files)
 
 ### Interactive debugger
 
@@ -550,7 +561,7 @@ watchpoints, step execution, register and VRAM dumps, disassembly, VDP trace,
 mapper trace, a slot inspector, and floppy disk swap (`fdd1`/`fdd2 [FILE|-]`).
 For the full command reference, see [`docs/debugger.md`](docs/debugger.md).
 
-- Implementation: `msx/debugger/`
+- Implementation: `host/debugger/`
 
 ### Debug tooling
 
@@ -601,10 +612,22 @@ existing component, the spec changes first and the implementation follows.
 The `--benchmark` CLI flag gives these measurements. It does a headless,
 unthrottled run (no `FrameTimer` pacing) from a cold boot through the full
 frame count. The measurement thus includes the BIOS boot time. Every frame
-still runs full CPU emulation and renders the VDP output to an offscreen
-buffer, as in interactive play. But `--benchmark` never opens an SDL window,
-generates audio samples, or uploads and blits textures. Real interactive
-sessions thus run somewhat slower than the numbers below.
+still runs full CPU emulation, renders the VDP output to an offscreen buffer
+and converts it to RGB, as in interactive play, and mixes the frame's audio.
+But
+`--benchmark` never opens an SDL window, queues audio, or uploads and blits
+textures. Real interactive sessions thus run somewhat slower than the numbers
+below.
+
+Since v2.8.0 the core and the frontend are separate, and the core synthesizes
+the sound chips every frame, also in headless runs. `--benchmark` also
+converts every frame to RGB, as the frontend does for a shown frame. The
+`--benchmark` numbers thus include the cost of sound synthesis and of the RGB
+conversion, and are closer to the real speed of interactive play. Up to
+v2.7.8, `--benchmark` did neither. Do not compare the numbers below with
+numbers from v2.7.8 or earlier. The RGB conversion reuses each row it already
+converted for an earlier frame, so on most frames it costs little, under PyPy
+as well as under CPython.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames
 each. The score is the average of the remaining 8 runs, after the removal of
@@ -612,26 +635,27 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 292.67 | ~4.9× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 705.33 | ~11.8× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 313.11 | ~5.2× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1226.14 | ~20.4× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1412.82 | ~23.5× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 1151.97 | ~19.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 76.25 | ~1.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 191.72 | ~3.2× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 84.96 | ~1.4× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 353.01 | ~5.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 472.98 | ~7.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 307.53 | ~5.1× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 250.41 | ~4.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 564.56 | ~9.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.96 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1132.41 | ~18.9× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1371.70 | ~22.9× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 685.36 | ~11.4× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.98 | ~1.1× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 149.91 | ~2.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.45 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 235.19 | ~3.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 291.29 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 144.27 | ~2.4× |
 
-Every tested combination is faster than the raw 60 fps target. The smallest
-margin is ~1.3×, on Raspberry Pi 5 with CPython and Salamander. Salamander
-(MSX1, KonamiSCC mapper) has the heaviest rendering and audio load of the
-target titles. PyPy increases the same case to ~5.9×.
+Not every tested combination reaches the raw 60 fps target. The smallest
+margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
+Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the
+target titles. PyPy increases the same case to ~2.4×. The other Raspberry Pi 5
+and CPython combinations reach the target, Salamander only just (~1.1×).
 
-On hardware slower than a Raspberry Pi 5, or with a heavier title, a run can
-still go below 60 fps. If this occurs, the game runs in slow motion, at a rate
+With CPython on a Raspberry Pi 5 and an FM-PAC title, on hardware slower than
+a Raspberry Pi 5, or with a heavier title, a run goes below 60 fps. If this occurs, the game runs in slow motion, at a rate
 proportional to the achieved frame rate. Audio also degrades (clicks or
 silence). The cause is that the emulator generates samples per frame, but the
 audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative
@@ -644,7 +668,9 @@ because of OS scheduling and thermal throttling. Treat them as approximate.
 ### Benchmark history
 
 Avg FPS (`--benchmark`) from v0.1.0 through v2.7.5, per platform and runtime.
-The author measured all versions with the same cold-boot method as above.
+The author measured all versions with the same cold-boot method as above, but
+without sound synthesis (the method up to v2.7.8). These charts thus do not
+continue into the v2.8.0 numbers above.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -652,7 +678,10 @@ The author measured all versions with the same cold-boot method as above.
 
 Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel
 rendering on frames that miss the deadline. The VBlank interrupt still fires
-every frame. This makes the display smoother on hosts that are near but below
+every frame, and the sprite collision and 5th/9th-sprite flags are still
+computed, so a skipped frame never changes what the game sees. Frame skip
+saves only the drawing: on a title where sound synthesis dominates, such as an
+FM-PAC title, it gains little. This makes the display smoother on hosts that are near but below
 the 60 fps target. Frame skip has no effect on audio quality: underruns stay on
 any platform below 60 fps. To disable frame skip, use `--frame-skip none`.
 
@@ -763,9 +792,9 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
 | `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1. The emulator rejects it if slot 1 also resolves to KonamiSCC, or if slot 1 selects `--extension1 scc_plus` |
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
+| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk is swapped out. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
-| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
+| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
@@ -879,7 +908,7 @@ button and key-name labels.
 | F7 (hold) | Fast-forward: run without the speed limit while the key is held |
 | Shift + F7 | Turn fast-forward on or off (latched) |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
-| F9 | Load most recent save state |
+| F9 | Load most recent save state. The drives must hold the disks they held at the save (it does not swap disks) |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
 | Shift + F11 | Toggle fullscreen |
@@ -1107,7 +1136,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3672 tests and covers all major components. It includes
+The test suite has 3814 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1134,15 +1163,30 @@ python -m pytest -k "psg"
 py-msx-emulator/
 ├── __main__.py            # CLI entry point (python .)
 ├── frontend/
-│   └── sdl2_frontend.py   # SDL2 window, audio, event loop
-├── msx/                   # Core emulator package
+│   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
+│   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
+│   ├── sdl2_frontend.py   # SDL2 window, audio queueing, event loop
+│   ├── sdl2_joystick.py   # Physical joystick manager (SDL2)
+│   └── sdl2_keyboard.py   # Host keyboard to MSX matrix / keyboard joystick (SDL2)
+├── host/                  # Host services: files, configuration, debugging surfaces
+│   ├── machine_config.py  # YAML machine configuration + ROM/SRAM/disk file loading
+│   ├── romdb.py           # SHA1-based ROM title/mapper database
+│   ├── app_config.py      # py_emulator.yaml startup defaults
+│   ├── media.py           # SRAM and disk image files (save changed media, disk swap)
+│   ├── input_state.py     # Input builder: keyboard/gamepad/mouse/RPC input -> per-frame InputFrame
+│   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
+│   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
+│   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
+│   └── debugger/          # Interactive REPL (prompt, disassembler)
+├── msx/                   # Core emulator package (no file I/O, no host clock)
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
 │   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
 │   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
-│   ├── debugger/          # Interactive REPL (prompt, disassembler)
-│   ├── machine.py         # Component wiring and frame loop
-│   ├── machine_loader.py  # YAML-based machine configuration loader
+│   ├── boundary.py        # Values passed across the core boundary (config, frame output)
+│   ├── machine.py         # Component wiring, frame loop (step_frame)
+│   ├── machine_spec.py    # Resolved machine description
+│   ├── machine_loader.py  # Builds a machine from a loaded configuration
 │   ├── memory.py          # Slot-based memory bus
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
@@ -1150,22 +1194,17 @@ py-msx-emulator/
 │   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
 │   ├── psg.py             # AY-3-8910 PSG + audio synthesis (sub-frame software PCM)
-│   ├── audio_filter.py    # Analog-style output low-pass (BiquadLowPass)
+│   ├── audio_mixer.py     # Per-frame audio mix (run by Machine.run_frame)
 │   ├── dac.py             # Write-driven DAC channel (Majutsushi DAC, key click)
 │   ├── scc.py             # Konami SCC wavetable synthesiser
 │   ├── fmpac.py           # FM-PAC cartridge (banked ROM, SRAM, OPLL routing)
 │   ├── opll.py            # YM2413 (OPLL) FM sound chip
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
 │   ├── io.py              # I/O bus (port dispatch)
-│   ├── input.py           # Keyboard matrix + joystick input state
-│   ├── joystick.py        # Physical joystick manager (SDL2)
+│   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
-│   ├── frame_timer.py     # Frame pacing (60 fps NTSC / 50 fps PAL) + FPS measurement
-│   ├── app_config.py      # py_emulator.yaml startup defaults
-│   ├── romdb.py           # SHA1-based ROM title/mapper database
-│   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
-│   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
-│   └── state.py           # Save/load machine state (JSON + PNG)
+│   ├── screenshot.py      # Current-frame RGB24 capture
+│   └── state.py           # Machine state snapshot (versioned JSON)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
@@ -1179,7 +1218,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (3672 tests)
+├── tests/                 # Test suite (3814 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

@@ -4,8 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from msx.input import InputState
-from msx.joystick import JoystickManager
+from frontend.sdl2_joystick import JoystickManager
+from host.input_state import InputState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -438,3 +438,35 @@ def test_configured_button_map_rebinds_trigger() -> None:
     _open_single_gc(mgr, sdl)
     mgr.handle_event(gc_event(sdl.SDL_CONTROLLERBUTTONDOWN, 42, button=1))
     assert inp.joy1 & (1 << 4) == 0  # Trigger A pressed via button b
+
+
+# --- joystick.buttons resolution (app-config-file) --------------------------
+
+def test_resolve_gamepad_maps_defaults() -> None:
+    from frontend.sdl2_joystick import resolve_gamepad_maps
+    from host.app_config import AppConfig
+
+    direct, turbo = resolve_gamepad_maps(AppConfig().gamepad_buttons_resolved())
+    # dpad up/down/left/right -> bits 0-3, A -> 4, B -> 5 (direct)
+    assert direct == {11: 0, 12: 1, 13: 2, 14: 3, 0: 4, 1: 5}
+    # Y (index 3) -> trigger A turbo (bit 4); X (index 2) -> trigger B turbo (bit 5)
+    assert turbo == {3: 4, 2: 5}
+
+
+def test_resolve_gamepad_maps_custom_trigger() -> None:
+    # app-config-file "Custom trigger assignment resolved".
+    from frontend.sdl2_joystick import resolve_gamepad_maps
+    from host.app_config import AppConfig
+
+    cfg = AppConfig(gamepad_buttons={"trigger_a": "b", "trigger_b": "a"})
+    direct, _turbo = resolve_gamepad_maps(cfg.gamepad_buttons_resolved())
+    assert direct[1] == 4 and direct[0] == 5
+
+
+def test_every_config_button_label_translates() -> None:
+    # app-config-file "Every accepted name translates in the frontend" (buttons).
+    from frontend.sdl2_joystick import GAMEPAD_FUNCTION_BITS, GC_BUTTON_NAME_TO_INDEX
+    from host.app_config import GAMEPAD_FUNCTION_KEYS, GC_BUTTON_NAMES
+
+    assert set(GC_BUTTON_NAMES) == set(GC_BUTTON_NAME_TO_INDEX)
+    assert set(GAMEPAD_FUNCTION_KEYS) == set(GAMEPAD_FUNCTION_BITS)
