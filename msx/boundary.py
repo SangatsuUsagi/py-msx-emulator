@@ -89,7 +89,13 @@ class RgbFrame:
 
 @dataclass(frozen=True)
 class FrameOutput:
-    """What Machine.step_frame returns for one frame."""
+    """What Machine.step_frame returns for one frame.
+
+    `video` and `audio` are guaranteed only until the next step_frame call
+    (allium/core-frontend.allium FrameOutputValidUntilNextStep); a frontend
+    that keeps them longer copies them. Here they are fresh immutable bytes,
+    which satisfies that, but a native port may reuse its buffers.
+    """
 
     video: RgbFrame | None   # absent when the frame was not rendered
     audio: bytes             # signed 16-bit LE mono PCM, before any output filter
