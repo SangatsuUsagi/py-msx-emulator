@@ -13,8 +13,7 @@ from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from msx.canonical_json import decode_strict, encode_canonical, mismatched_version
-from msx.canonical_json import to_jsonable as _to_jsonable
+from msx.canonical_json import decode_strict, encode_canonical, mismatched_version, to_jsonable
 from msx.mapper import MapperKind
 from msx.snapshot_schema import (
     SAFE_INT_MAX,
@@ -25,6 +24,7 @@ from msx.snapshot_schema import (
     check_int,
     check_int_list,
     check_list,
+    check_lower_hex,
     check_object,
     check_optional_bytes,
     check_optional_int,
@@ -110,12 +110,14 @@ _T = TypeVar("_T")
 # Version 17: RFC 8785 canonical JSON; blobs as plain base64 strings (no
 #   {"__b64__": ...} wrapper); floats, NaN/Infinity, duplicate keys and
 #   integers beyond +-(2**53 - 1) rejected. See
-#   openspec/changes/portable-snapshot-json.
+#   openspec/changes/archive/2026-10-24-portable-snapshot-json.
 # Version 18: machine_config_sha256 added -- the SHA-256 of the canonical
 #   MachineConfig document the machine was built from; a state loads only into
 #   a machine built from the same document. See
-#   openspec/changes/portable-machine-config.
+#   openspec/changes/archive/2026-10-25-portable-machine-config.
 CURRENT_FORMAT_VERSION: int = 18
+
+_SHA256_HEX_LEN = 64
 
 
 class StateLoadError(ValueError):
@@ -146,7 +148,7 @@ def _parse_producer(producer: str, parse: Callable[[], _T]) -> _T:
         raise StateLoadError(producer, exc) from exc
 
 
-# The snapshot layout (format 17): one dataclass per JSON object, so
+# The snapshot layout (format 18): one dataclass per JSON object, so
 # asdict(MachineSnapshot) is the document and parse_snapshot builds the same
 # tree. Every field is always present in the file; None (JSON null) means the
 # machine has no such part. msx/snapshot.schema.json states the same layout
@@ -634,7 +636,7 @@ def _parse_vdp(value: object, msx2: bool) -> VdpSnapshot:
     else:
         if obj["v9938"] is None:
             raise SchemaError("vdp.v9938 is required in an MSX2 snapshot")
-        v9938 = parse_v9938_state(obj["v9938"], "vdp.v9938")
+        v9938 = parse_v9938_state(obj["v9938"])
         # `latch` is the V9938 latch's port-0x99 view; reject a file where
         # the two disagree instead of letting restore order pick one.
         expected = v9938["first_byte"] if v9938["control_pending"] else None
@@ -709,11 +711,9 @@ def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
 
     def config_sha256_of() -> str:
         text = check_str(data["machine_config_sha256"], "machine_config_sha256")
-        if text != "" and (len(text) != 64 or text.strip("0123456789abcdef") != ""):
-            raise SchemaError(
-                f"machine_config_sha256 must be 64 lowercase hex digits, got {text!r}"
-            )
-        return text
+        if text == "":
+            return text
+        return check_lower_hex(text, "machine_config_sha256", _SHA256_HEX_LEN)
 
     machine_type = _field("machine_type", machine_type_of)
     msx2 = machine_type == "msx2"
@@ -962,7 +962,7 @@ def save_state(machine: "Machine") -> bytes:
     bytes (with a screenshot and the latest.* links).
     """
     snap = _snapshot_from_machine(machine)
-    return encode_canonical(_to_jsonable(asdict(snap)))
+    return encode_canonical(to_jsonable(asdict(snap)))
 
 
 def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None:
@@ -973,7 +973,9 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
         StateLoadError: If a field or producer object is malformed.
         ValueError: If the data is not a state of this format version and
             layout, or does not match the running machine (machine type,
-            mapper kind, slot / FDC / SCC wiring). Nothing is restored then.
+            mapper kind, slot / slot-0 RAM / FDC / SCC / RTC / mouse wiring,
+            or the MachineConfig the machine was built from, by its SHA-256).
+            Nothing is restored then.
     """
     # Legacy pickle files (format_version <= 4) start with a pickle opcode byte,
     # not JSON. Refuse to unpickle them; the format is now stdlib JSON.

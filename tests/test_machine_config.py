@@ -232,13 +232,14 @@ def test_every_machine_round_trips_through_its_document(
     document = config.document
     parsed = parse_machine_config(document)
     roms_by_role = {role: config.roms[ref.sha1] for role, ref in parsed.roms.items()}
-    again = encode_machine_config(
+    again, images = encode_machine_config(
         parsed.spec, roms_by_role,
         mapper1=parsed.mapper1, mapper2=parsed.mapper2,
         extension_overlay1=parsed.extension_overlay1,
         extension_overlay2=parsed.extension_overlay2,
     )
     assert again == document
+    assert images == config.roms
 
 
 # ---------------------------------------------------------------------------

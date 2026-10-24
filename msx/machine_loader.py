@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
 
 if TYPE_CHECKING:
@@ -207,16 +207,16 @@ class _ResolvedConfig:
     "slot<n>.<sub>") to its image; `mapper1`/`mapper2` are resolved names."""
 
     spec: MachineSpec
-    roms: dict[str, bytes] = field(default_factory=dict)
-    cartridge1: bytes | None = None
-    mapper1: str = "Mirrored"
-    cartridge2: bytes | None = None
-    mapper2: str = "Mirrored"
-    extension_overlay1: AnyExtensionOverlay | None = None
-    extension_overlay2: AnyExtensionOverlay | None = None
-    media: dict[MediaId, bytes] = field(default_factory=dict)
-    disks: dict[MediaId, DiskMedium] = field(default_factory=dict)
-    rtc_initial_time: RtcTime | None = None
+    roms: dict[str, bytes]
+    cartridge1: bytes | None
+    mapper1: str
+    cartridge2: bytes | None
+    mapper2: str
+    extension_overlay1: AnyExtensionOverlay | None
+    extension_overlay2: AnyExtensionOverlay | None
+    media: dict[MediaId, bytes]
+    disks: dict[MediaId, DiskMedium]
+    rtc_initial_time: RtcTime | None
 
 
 def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:

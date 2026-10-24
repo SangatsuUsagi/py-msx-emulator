@@ -1240,42 +1240,15 @@ def _overlay_roms(
     return roms
 
 
-def load_machine_config(
+def _load_spec_roms(
     spec: MachineSpec,
-    cartridge1: bytes | None = None,
-    mapper1: str = "auto",
-    cartridge2: bytes | None = None,
-    mapper2: str = "auto",
-    bios_override: bytes | None = None,
-    logo_override: bytes | None = None,
-    extrom_override: bytes | None = None,
-    disk_rom_override: bytes | None = None,
-    fdd1: Path | None = None,
-    fdd2: Path | None = None,
-    extension_overlay1: AnyExtensionOverlay | None = None,
-    extension_overlay2: AnyExtensionOverlay | None = None,
-    rtc_initial_time: RtcTime | None = None,
-) -> LoadedMachineConfig:
-    """Read every file `spec` and the arguments name into a MachineConfig for
-    msx.machine_loader.build_machine.
-
-    Args:
-        spec: Fully-resolved MachineSpec from load_machine_spec().
-        cartridge1, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
-        mapper1, mapper2: Mapper names; "auto" is resolved here through the
-            ROM database (Mirrored when unknown).
-        bios_override, logo_override, extrom_override, disk_rom_override:
-            Bytes used instead of the main, logo, SUB (MSX2) or DISK ROM file.
-        fdd1, fdd2: Disk images for drives A and B (machines with an FDC).
-        extension_overlay1, extension_overlay2: Resolved --extension1 /
-            --extension2 overlays (see load_extension_overlay).
-        rtc_initial_time: The RTC's start time (the host's clock).
-
-    Raises:
-        MachineLoadError: If a required ROM file is missing and no override
-            is given.
-        OSError: If a disk image cannot be read.
-    """
+    bios_override: bytes | None,
+    logo_override: bytes | None,
+    extrom_override: bytes | None,
+    disk_rom_override: bytes | None,
+) -> dict[str, bytes]:
+    """The machine's own ROM images by role (main, logo, sub, disk,
+    io_device), each override replacing its file."""
     def spec_rom(filename: str, required: bool) -> bytes | None:
         if spec.rom_base_dir is None:
             raise MachineLoadError(f"machine '{spec.name}' has no rom_base_dir to read {filename}")
@@ -1294,63 +1267,118 @@ def load_machine_config(
         logo = spec_rom(spec.logo_rom_entry.file, False)
         if logo is not None:
             roms["logo"] = logo
-    mapper1_name = _resolve_mapper_type(mapper1, cartridge1)
-    mapper2_name = _resolve_mapper_type(mapper2, cartridge2)
     if spec.io_device is not None and spec.io_device.device == "kanji_rom":
         roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
-    roms.update(_overlay_roms(1, extension_overlay1))
-    roms.update(_overlay_roms(2, extension_overlay2))
+    if spec.generation != "msx2":
+        return roms
+    if extrom_override is not None:
+        roms["sub"] = extrom_override
+    elif spec.sub_rom_entry is not None:
+        sub = spec_rom(spec.sub_rom_entry.file, True)
+        assert sub is not None
+        roms["sub"] = sub
+    if spec.fdc is not None:
+        if disk_rom_override is not None:
+            roms["disk"] = disk_rom_override
+        else:
+            disk = spec_rom(spec.fdc.disk_rom_entry.file, True)
+            assert disk is not None
+            roms["disk"] = disk
+    return roms
 
+
+def _load_disks(
+    spec: MachineSpec, fdd1: Path | None, fdd2: Path | None
+) -> dict[MediaId, DiskMedium]:
+    """The disk images for the drives an MSX2 machine's FDC has."""
     disks: dict[MediaId, DiskMedium] = {}
-    if spec.generation == "msx2":
-        if extrom_override is not None:
-            roms["sub"] = extrom_override
-        elif spec.sub_rom_entry is not None:
-            sub = spec_rom(spec.sub_rom_entry.file, True)
-            assert sub is not None
-            roms["sub"] = sub
-        if spec.fdc is not None:
-            if disk_rom_override is not None:
-                roms["disk"] = disk_rom_override
-            else:
-                disk = spec_rom(spec.fdc.disk_rom_entry.file, True)
-                assert disk is not None
-                roms["disk"] = disk
-            for index, path in enumerate((fdd1, fdd2)):
-                if path is not None and index >= spec.fdc.drives:
-                    print(
-                        f"warning: --fdd{index + 1} given but machine has only "
-                        f"{spec.fdc.drives} drive(s); ignoring",
-                        file=sys.stderr,
-                    )
-                elif path is not None:
-                    disks[drive_media_id(index)] = read_disk_medium(path)
+    if spec.generation != "msx2" or spec.fdc is None:
+        return disks
+    for index, path in enumerate((fdd1, fdd2)):
+        if path is not None and index >= spec.fdc.drives:
+            print(
+                f"warning: --fdd{index + 1} given but machine has only "
+                f"{spec.fdc.drives} drive(s); ignoring",
+                file=sys.stderr,
+            )
+        elif path is not None:
+            disks[drive_media_id(index)] = read_disk_medium(path)
+    return disks
 
-    carts = _Cartridges(
-        cartridge1=cartridge1, mapper1=mapper1_name,
-        cartridge2=cartridge2, mapper2=mapper2_name,
-        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
-    )
-    document = encode_machine_config(
-        spec, roms,
-        cartridge1=cartridge1, mapper1=mapper1_name,
-        cartridge2=cartridge2, mapper2=mapper2_name,
-        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
-    )
-    images: dict[str, bytes] = {}
-    for data in (*roms.values(), cartridge1, cartridge2):
-        if data is not None:
-            images[hashlib.sha1(data, usedforsecurity=False).hexdigest()] = data
-    sram_files = _sram_paths(spec, carts)
+
+def _load_media(
+    sram_files: dict[MediaId, Path], carts: _Cartridges
+) -> dict[MediaId, bytes]:
+    """The saved image of each battery-backed medium that has one."""
     media: dict[MediaId, bytes] = {}
     for media_id, path in sram_files.items():
         size, label = _sram_size_and_label(carts, media_id)
         sram = _load_sram_or_warn(path, size, label)
         if sram is not None:
             media[media_id] = bytes(sram)
+    return media
+
+
+def load_machine_config(
+    spec: MachineSpec,
+    cartridge1: bytes | None = None,
+    mapper1: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+    bios_override: bytes | None = None,
+    logo_override: bytes | None = None,
+    extrom_override: bytes | None = None,
+    disk_rom_override: bytes | None = None,
+    fdd1: Path | None = None,
+    fdd2: Path | None = None,
+    extension_overlay1: AnyExtensionOverlay | None = None,
+    extension_overlay2: AnyExtensionOverlay | None = None,
+    rtc_initial_time: RtcTime | None = None,
+) -> LoadedMachineConfig:
+    """Read every file `spec` and the arguments name, and encode the
+    MachineConfig document, for msx.machine_loader.build_machine: the
+    document, the ROM images it references keyed by SHA1, the run inputs
+    (saved SRAM/CMOS images, disks, RTC start time), and the file each
+    battery-backed medium is persisted in (sram_files).
+
+    Args:
+        spec: Fully-resolved MachineSpec from load_machine_spec().
+        cartridge1, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
+        mapper1, mapper2: Mapper names; "auto" is resolved here through the
+            ROM database (Mirrored when unknown).
+        bios_override, logo_override, extrom_override, disk_rom_override:
+            Bytes used instead of the main, logo, SUB (MSX2) or DISK ROM file.
+        fdd1, fdd2: Disk images for drives A and B (machines with an FDC).
+        extension_overlay1, extension_overlay2: Resolved --extension1 /
+            --extension2 overlays (see load_extension_overlay).
+        rtc_initial_time: The RTC's start time (the host's clock).
+
+    Raises:
+        MachineLoadError: If a required ROM file is missing and no override
+            is given, or `spec` has no rom_base_dir to read a ROM file from.
+        OSError: If a disk image cannot be read.
+    """
+    roms = _load_spec_roms(spec, bios_override, logo_override, extrom_override, disk_rom_override)
+    roms.update(_overlay_roms(1, extension_overlay1))
+    roms.update(_overlay_roms(2, extension_overlay2))
+    disks = _load_disks(spec, fdd1, fdd2)
+    carts = _Cartridges(
+        cartridge1=cartridge1, mapper1=_resolve_mapper_type(mapper1, cartridge1),
+        cartridge2=cartridge2, mapper2=_resolve_mapper_type(mapper2, cartridge2),
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
+    )
+    document, images = encode_machine_config(
+        spec, roms,
+        cartridge1=carts.cartridge1, mapper1=carts.mapper1,
+        cartridge2=carts.cartridge2, mapper2=carts.mapper2,
+        extension_overlay1=carts.extension_overlay1,
+        extension_overlay2=carts.extension_overlay2,
+    )
+    sram_files = _sram_paths(spec, carts)
     return LoadedMachineConfig(
-        document=document, roms=images, media=media, disks=disks,
-        rtc_initial_time=rtc_initial_time, sram_files=sram_files,
+        document=document, roms=images, media=_load_media(sram_files, carts),
+        disks=disks, rtc_initial_time=rtc_initial_time,
+        sram_files=sram_files,
     )
 
 

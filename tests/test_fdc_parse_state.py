@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from host.machine_config import build_machine_from_spec
+from msx.canonical_json import to_jsonable
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import (
     REG_DATA,
@@ -28,7 +29,6 @@ from msx.fdc.interface import (
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from msx.snapshot_schema import SchemaError
-from msx.state import _to_jsonable
 from tests.disk_factories import dsk_image
 
 _2DD = 737280
@@ -102,7 +102,7 @@ def _activity(fdc: FloppyDisk, track: int) -> None:
 
 def _roundtrip(snap: dict[str, object]) -> Any:
     """The load path's own view of a snapshot: JSON-encoded and decoded."""
-    return json.loads(json.dumps(_to_jsonable(snap)))
+    return json.loads(json.dumps(to_jsonable(snap)))
 
 
 def _as_snapshot(fdc: FloppyDisk, parsed: FloppyDiskParsed) -> dict[str, object]:

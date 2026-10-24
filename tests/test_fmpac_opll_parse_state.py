@@ -10,10 +10,10 @@ from typing import Any, Callable
 
 import pytest
 
+from msx.canonical_json import to_jsonable
 from msx.fmpac import SRAM_SIZE, FmPac
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
-from msx.state import _to_jsonable
 
 _BANK_SIZE = 0x4000
 
@@ -77,7 +77,7 @@ def test_opll_own_snapshot_parses_and_equals_itself(fmpac: FmPac) -> None:
 def test_json_round_tripped_snapshot_parses(fmpac: FmPac) -> None:
     """The load path hands parse_state bytearray blobs and JSON numbers."""
     snap = fmpac.snapshot()
-    decoded = json.loads(json.dumps(_to_jsonable(snap)))
+    decoded = json.loads(json.dumps(to_jsonable(snap)))
     assert fmpac.parse_state(decoded, "state") == snap
 
 

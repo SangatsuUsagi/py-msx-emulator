@@ -9,7 +9,7 @@ file is read. The document holds no host path. Each ROM is a reference
 the debugger), and the image itself travels beside the document, keyed by
 SHA1. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are
 not part of it. msx/machine_config.schema.json states the same layout
-language-neutrally; see openspec/changes/portable-machine-config.
+language-neutrally; see openspec/changes/archive/2026-10-25-portable-machine-config.
 """
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ from msx.snapshot_schema import (
     check_bool,
     check_int,
     check_int_list,
+    check_lower_hex,
     check_object,
     check_optional_int,
     check_str,
@@ -46,8 +47,8 @@ from msx.vdp._geometry import VideoStandard
 
 _T = TypeVar("_T")
 
-# Version 1: the first MachineConfig document (openspec/changes/
-#   portable-machine-config).
+# Version 1: the first MachineConfig document (openspec/changes/archive/
+#   2026-10-25-portable-machine-config).
 MACHINE_CONFIG_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
@@ -97,49 +98,50 @@ def _ref_object(ref: RomRef) -> dict[str, object]:
 
 
 def _entry_ref(
-    role: str, name: str, pages: list[int], roms: dict[str, bytes], refs: dict[str, RomRef]
+    role: str, name: str, pages: list[int], roms: dict[str, bytes], images: dict[str, bytes]
 ) -> dict[str, object] | None:
-    """The reference of the image the host loaded for `role`, or None when it
-    loaded none (an optional ROM whose file is absent)."""
+    """The reference of the image the host loaded for `role` (also recorded
+    in `images` by SHA1), or None when it loaded none (an optional ROM whose
+    file is absent)."""
     data = roms.get(role)
     if data is None:
         return None
     ref = rom_ref(name, data, pages)
-    refs[role] = ref
+    images[ref.sha1] = data
     return _ref_object(ref)
 
 
 def _device_object(
-    device: _ExpandedSubslotDevice, role: str, roms: dict[str, bytes], refs: dict[str, RomRef]
+    device: _ExpandedSubslotDevice, role: str, roms: dict[str, bytes], images: dict[str, bytes]
 ) -> dict[str, object]:
     rom = None
     if device.rom_entry is not None:
-        rom = _entry_ref(role, device.rom_entry.file, [], roms, refs)
+        rom = _entry_ref(role, device.rom_entry.file, [], roms, images)
     return {"device": device.device, "rom": rom, "size_kb": device.size_kb}
 
 
 def _overlay_object(
     slot: int, overlay: AnyExtensionOverlay | None, roms: dict[str, bytes],
-    refs: dict[str, RomRef],
+    images: dict[str, bytes],
 ) -> dict[str, object] | None:
     if overlay is None:
         return None
     if isinstance(overlay, ExpandedExtensionOverlay):
         subslots: dict[str, object] = {}
         for index, sub in sorted(overlay.subslots.items()):
-            subslots[str(index)] = _device_object(sub, f"slot{slot}.{index}", roms, refs)
+            subslots[str(index)] = _device_object(sub, f"slot{slot}.{index}", roms, images)
         io_device = None
         if overlay.io_device is not None:
-            io_device = _device_object(overlay.io_device, f"slot{slot}.io_device", roms, refs)
+            io_device = _device_object(overlay.io_device, f"slot{slot}.io_device", roms, images)
         return {"shape": "expanded", "subslots": subslots, "io_device": io_device}
     rom = None
     if overlay.rom_entry is not None:
-        rom = _entry_ref(f"slot{slot}.ext", overlay.rom_entry.file, [], roms, refs)
+        rom = _entry_ref(f"slot{slot}.ext", overlay.rom_entry.file, [], roms, images)
     return {"shape": "flat", "device": overlay.device, "rom": rom}
 
 
 def _machine_object(
-    spec: MachineSpec, roms: dict[str, bytes], refs: dict[str, RomRef]
+    spec: MachineSpec, roms: dict[str, bytes], images: dict[str, bytes]
 ) -> dict[str, object]:
     main = spec.main_rom_entry
     # A logo image is used whenever the host loaded one (an override needs no
@@ -147,11 +149,11 @@ def _machine_object(
     logo_entry = spec.logo_rom_entry
     logo = _entry_ref(
         "logo", logo_entry.file if logo_entry is not None else "",
-        logo_entry.pages if logo_entry is not None else [2], roms, refs,
+        logo_entry.pages if logo_entry is not None else [2], roms, images,
     )
     sub = None
     if spec.sub_rom_entry is not None:
-        sub = _entry_ref("sub", spec.sub_rom_entry.file, spec.sub_rom_entry.pages, roms, refs)
+        sub = _entry_ref("sub", spec.sub_rom_entry.file, spec.sub_rom_entry.pages, roms, images)
     slot0_ram = None
     if spec.slot0_ram_entry is not None:
         slot0_ram = {"size_kb": spec.slot0_ram_entry.size_kb, "page": spec.slot0_ram_entry.page}
@@ -162,15 +164,15 @@ def _machine_object(
             "controller": spec.fdc.controller,
             "connection_style": spec.fdc.connection_style,
             "drives": spec.fdc.drives,
-            "disk_rom": _entry_ref("disk", disk.file, disk.pages, roms, refs),
+            "disk_rom": _entry_ref("disk", disk.file, disk.pages, roms, images),
         }
     io_device = None
     if spec.io_device is not None:
-        io_device = _device_object(spec.io_device, "io_device", roms, refs)
+        io_device = _device_object(spec.io_device, "io_device", roms, images)
     io_ports: dict[str, object] = {}
     for device_id, (first, last) in sorted(spec.device_io_ports.items()):
         io_ports[device_id] = [first, last]
-    main_ref = _entry_ref("main", main.file, main.pages, roms, refs)
+    main_ref = _entry_ref("main", main.file, main.pages, roms, images)
     if main_ref is None:
         raise MachineLoadError(f"{spec.machine_id}: no main ROM image to describe")
     return {
@@ -201,12 +203,12 @@ def _machine_object(
 
 
 def _cartridge_object(
-    slot: int, cartridge: bytes | None, mapper: str, refs: dict[str, RomRef]
+    cartridge: bytes | None, mapper: str, images: dict[str, bytes]
 ) -> dict[str, object]:
     rom = None
     if cartridge is not None:
         ref = rom_ref("", cartridge, [])
-        refs[f"cartridge{slot}"] = ref
+        images[ref.sha1] = cartridge
         rom = _ref_object(ref)
     return {"mapper": mapper, "rom": rom}
 
@@ -221,24 +223,25 @@ def encode_machine_config(
     mapper2: str = "Mirrored",
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
-) -> bytes:
-    """The canonical document of a resolved machine. `roms` holds the images
+) -> tuple[bytes, dict[str, bytes]]:
+    """The canonical document of a resolved machine, and the images it
+    references keyed by SHA1 (MachineConfig.roms). `roms` holds the images
     the host loaded, by role; `mapper1`/`mapper2` are resolved names, never
     "auto"."""
-    refs: dict[str, RomRef] = {}
+    images: dict[str, bytes] = {}
     document = {
         "format_version": MACHINE_CONFIG_FORMAT_VERSION,
-        "machine": _machine_object(spec, roms, refs),
+        "machine": _machine_object(spec, roms, images),
         "cartridges": {
-            "slot1": _cartridge_object(1, cartridge1, mapper1, refs),
-            "slot2": _cartridge_object(2, cartridge2, mapper2, refs),
+            "slot1": _cartridge_object(cartridge1, mapper1, images),
+            "slot2": _cartridge_object(cartridge2, mapper2, images),
         },
         "extensions": {
-            "slot1": _overlay_object(1, extension_overlay1, roms, refs),
-            "slot2": _overlay_object(2, extension_overlay2, roms, refs),
+            "slot1": _overlay_object(1, extension_overlay1, roms, images),
+            "slot2": _overlay_object(2, extension_overlay2, roms, images),
         },
     }
-    return encode_canonical(document)
+    return encode_canonical(document), images
 
 
 # --- parsing ------------------------------------------------------------------
@@ -277,9 +280,7 @@ def _enum(value: object, label: str, enum_type: Callable[[str], _T], names: list
 
 def _rom(value: object, label: str) -> RomRef:
     obj = check_object(value, label, _ROM_KEYS)
-    sha1 = check_str(obj["sha1"], f"{label}.sha1")
-    if len(sha1) != _SHA1_HEX_LEN or sha1.strip("0123456789abcdef") != "":
-        raise SchemaError(f"{label}.sha1 must be 40 lowercase hex digits, got {sha1!r}")
+    sha1 = check_lower_hex(obj["sha1"], f"{label}.sha1", _SHA1_HEX_LEN)
     pages_obj = obj["pages"]
     if not isinstance(pages_obj, list) or len(pages_obj) > _PAGES:
         raise SchemaError(f"{label}.pages must be a list of at most {_PAGES} pages")
