@@ -1,5 +1,5 @@
 """Machine.step_frame: the core's per-frame API (machine-core "step_frame is the
-core's per-frame API" / "One InputState value per frame")."""
+core's per-frame API" / "One InputFrame value per frame")."""
 from __future__ import annotations
 
 from host.input_state import InputState
