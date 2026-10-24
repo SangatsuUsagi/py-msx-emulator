@@ -2,7 +2,7 @@
 msx/vdp/v9938.py's parse_v9938_state and each producer's parse_state.
 
 Each helper returns the value with its type narrowed, or raises SchemaError
-naming the field path (e.g. `cpu_regs.A`). A leaf module: it imports nothing
+naming the field path (e.g. `cpu.registers.A`). A leaf module: it imports nothing
 from the emulator, so every parser can use it without an import cycle.
 """
 from __future__ import annotations
@@ -120,6 +120,15 @@ def _decode_base64(text: str, label: str) -> bytearray:
     return bytearray(raw)
 
 
+def check_lower_hex(value: object, label: str, length: int) -> str:
+    """Return `value` if it is a string of exactly `length` lowercase hex
+    digits (a SHA-1 / SHA-256 digest)."""
+    text = check_str(value, label)
+    if len(text) != length or text.strip("0123456789abcdef") != "":
+        raise SchemaError(f"{label} must be {length} lowercase hex digits, got {text!r}")
+    return text
+
+
 def check_choice(value: object, label: str, choices: tuple[int, ...]) -> int:
     """Return `value` if it is an int (not a bool) equal to one of `choices`."""
     if isinstance(value, bool) or not isinstance(value, int) or value not in choices:
@@ -157,15 +166,6 @@ def check_optional_bytes(value: object, label: str) -> bytearray | None:
     if value is None:
         return None
     return check_bytes(value, label)
-
-
-def check_optional_int_list(
-    value: object, label: str, length: int, lo: int, hi: int
-) -> list[int] | None:
-    """Return `value` if it is None or a list of `length` ints in [lo, hi]."""
-    if value is None:
-        return None
-    return check_int_list(value, label, length, lo, hi)
 
 
 def check_optional_object(value: object, label: str) -> dict[str, object] | None:

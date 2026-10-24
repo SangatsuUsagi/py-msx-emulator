@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from msx.canonical_json import to_jsonable
 from msx.mapper import (
     Ascii8Mapper,
     Ascii8Sram2Mapper,
@@ -33,7 +34,6 @@ from msx.mapper import (
 from msx.ram_mapper import RamMapper
 from msx.scc import SCC
 from msx.snapshot_schema import SchemaError
-from msx.state import _to_jsonable
 
 _PAGE_8K = 8192
 
@@ -252,7 +252,7 @@ def test_own_snapshot_parses_to_itself(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(_STATEFUL))
 def test_json_decoded_snapshot_parses_and_restores(name: str) -> None:
     m = _STATEFUL[name]()
-    decoded = json.loads(json.dumps(_to_jsonable(dict(m.snapshot()))))
+    decoded = json.loads(json.dumps(to_jsonable(dict(m.snapshot()))))
     assert isinstance(decoded, dict)
     assert m.parse_state(decoded, "state") == m.snapshot()
     fresh = _STATEFUL[name]()

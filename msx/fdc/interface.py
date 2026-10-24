@@ -340,7 +340,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
             "connection_style": self._snapshot_connection_style(),
         }
         # Returned as a plain dict: msx/state.py stores it as the snapshot's
-        # dict[str, object] fdc_state field.
+        # dict[str, object] `fdc` object.
         return dict(state)
 
     def parse_state(self, obj: object, label: str) -> FloppyDiskParsedBase[S, C]:

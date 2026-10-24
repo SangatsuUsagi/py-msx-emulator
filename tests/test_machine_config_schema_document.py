@@ -63,14 +63,14 @@ def _documents() -> dict[str, bytes]:
         spec = _spec(machine_id)
         documents[machine_id] = encode_machine_config(
             spec, _machine_roms(spec), cartridge1=bytes(range(256)) * 64, mapper1="ASCII8"
-        )
+        )[0]
     spec = _spec("hb_f1xd")
     for extension_id in _EXTENSIONS:
         overlay = load_extension_overlay(extension_id, _CONFIG, _PROJECT)
         roms = {**_machine_roms(spec), **_overlay_roms(2, overlay)}
         documents[f"hb_f1xd + {extension_id}"] = encode_machine_config(
             spec, roms, extension_overlay2=overlay
-        )
+        )[0]
     return documents
 
 

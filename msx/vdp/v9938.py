@@ -272,7 +272,7 @@ class V9938State(TypedDict):
     V9938-only field. VRAM, R#0-R#27, S#0, the VRAM address and read-ahead
     buffer are shared with the TMS9918A and saved by msx/state.py through the
     common VdpDevice fields. The port latch (`first_byte` and both pending
-    flags) is complete here; the common `vdp_latch` is only its port-0x99
+    flags) is complete here; the common `vdp.latch` is only its port-0x99
     view, and msx/state.py checks the two agree."""
 
     palette: list[int]
