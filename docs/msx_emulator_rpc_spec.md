@@ -42,14 +42,14 @@
 ┌────────────────────────────────────────────────────────┐
 │  py-msx-emulator process                               │
 │                                                         │
-│  msx/rpc_server.py   (Level 2 — Socket RPC)            │
+│  host/rpc_server.py   (Level 2 — Socket RPC)            │
 │  ↕  queue.Queue  ↕                                     │
 │  msx/machine.py  (main emulator loop)                  │
 │    ├─ msx/cpu/z80.py                                   │
 │    ├─ msx/vdp/  (TMS9918A / V9938)                     │
 │    ├─ msx/input.py   (keyboard / joystick matrix)      │
-│    ├─ msx/debugger/prompt.py                           │
-│    └─ msx/screenshot.py                                │
+│    ├─ host/debugger/prompt.py                           │
+│    └─ host/screenshot.py                                │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -71,9 +71,9 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 
 | Capability | Feasibility | Rationale |
 |---|---|---|
-| **Debugger control** | Green | `msx/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
+| **Debugger control** | Green | `host/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
 | **Game input injection** | Green | `msx/input.py` holds an `InputState` object with an `_rows[11]` byte array; any code with a reference to that object can set/clear bits directly, and the PPI reads the same array every frame. |
-| **Screenshot capture** | Green | `msx/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
+| **Screenshot capture** | Green | `host/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
 
 ---
 
@@ -440,7 +440,7 @@ named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
 
 | File | Purpose |
 |---|---|
-| `msx/rpc_server.py` | `DebugServer` class — socket listener + queue bridge |
+| `host/rpc_server.py` | `DebugServer` class — socket listener + queue bridge |
 | `tools/rpc_client.py` | Thin CLI client for manual testing |
 
 ### Changes to existing files
@@ -449,7 +449,7 @@ named `_DISPATCH_TIMEOUT_S` that answers with a `"dispatch timeout"` error.
 |---|---|
 | `msx/machine.py` | Instantiate `DebugServer`; call `_drain_rpc_queue()` in frame loop |
 | `msx/input.py` | Add `set_key_state(row, bit, pressed)` public method |
-| `msx/debugger/prompt.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop |
+| `host/debugger/prompt.py` | Extract `handle_command(cmd: str) -> dict` from REPL loop |
 | `__main__.py` | Add `--rpc-socket PATH` / `--no-rpc` CLI flags. *Shipped as opt-in instead:* `--rpc` enables the server and `--rpc-socket PATH` sets the path; there is no `--no-rpc`, since a run without `--rpc` never opens a socket. |
 
 ### Frame loop integration
@@ -464,7 +464,7 @@ while True:
     self.frame_timer.wait()
 ```
 
-### `msx/rpc_server.py` skeleton
+### `host/rpc_server.py` skeleton
 
 ```python
 import json, queue, socket, threading

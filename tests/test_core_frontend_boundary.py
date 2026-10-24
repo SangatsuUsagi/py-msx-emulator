@@ -1,4 +1,6 @@
-"""The core package (msx/) must not depend on SDL2 or the frontend package."""
+"""The core package (msx/) must not depend on SDL2, the frontend or the host,
+open files or read the host clock (machine-core "Core package has no frontend
+dependency")."""
 from __future__ import annotations
 
 import ast
@@ -7,7 +9,7 @@ import sys
 from pathlib import Path
 
 _MSX_DIR = Path(__file__).resolve().parent.parent / "msx"
-_FORBIDDEN_ROOTS = ("sdl2", "frontend")
+_FORBIDDEN_ROOTS = ("sdl2", "frontend", "host")
 
 # Imports every msx module in a fresh interpreter where `import sdl2` fails, so
 # a module already imported by another test cannot hide an SDL2 dependency.
@@ -77,3 +79,39 @@ def test_no_sdl_key_codes_in_the_core() -> None:
 def test_no_wall_clock_pacing_in_the_core() -> None:
     # machine-core "No wall-clock pacing in the core".
     assert list(_MSX_DIR.rglob("frame_timer.py")) == []
+
+
+# Debug logging writes its own log file; it stays out of scope until a
+# DebugControl contract exists (allium/core-frontend.allium open question).
+_IO_EXEMPT_DIR = _MSX_DIR / "diagnostics"
+_FILE_CALLS = ("open", "read_bytes", "write_bytes", "read_text", "write_text")
+_CLOCK_ROOTS = ("datetime", "time", "PIL")
+
+
+def _file_calls(tree: ast.AST) -> list[tuple[int, str]]:
+    calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in _FILE_CALLS:
+            calls.append((node.lineno, func.id))
+        elif isinstance(func, ast.Attribute) and func.attr in _FILE_CALLS:
+            calls.append((node.lineno, func.attr))
+    return calls
+
+
+def test_no_file_io_or_host_clock_in_the_core() -> None:
+    # machine-core "No file I/O or host clock in the core".
+    offenders = []
+    for path in sorted(_MSX_DIR.rglob("*.py")):
+        if _IO_EXEMPT_DIR in path.parents:
+            continue
+        rel = path.relative_to(_MSX_DIR.parent)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for lineno, name in _file_calls(tree):
+            offenders.append(f"{rel}:{lineno}: {name}()")
+        for root in _imported_roots(path):
+            if root in _CLOCK_ROOTS:
+                offenders.append(f"{rel}: import {root}")
+    assert offenders == []

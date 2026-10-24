@@ -353,7 +353,7 @@ MSX2 のデフォルトの配置：
 
 ## マシンと拡張の YAML スキーマ
 
-`msx/machine_loader.py` は、3 種類の YAML の唯一の基準になる。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。
+`host/machine_config.py` は、3 種類の YAML の唯一の基準になる。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。
 
 この節の各フィールドは、ローダの中の明示的な `.get()` 呼び出しに対応する。ローダが読まないキーは、YAML のコメントに何と書いてあっても説明のためだけのもの。各プライマリスロットに何を入れられるかの利用者向けのまとめは、[README_extension_ja.md の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照。この節では、その結果を生む YAML の書き方を説明する。
 
@@ -640,15 +640,15 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### 2 パス解決
 
-`msx/machine_loader.py` は、ハードウェアの構成を 2 段階で決める。
+`host/machine_config.py` は、ハードウェアの構成を 2 段階で決める。
 
 1. **デバイスレジストリの段階。** `load_device_registry(config_dir)` が、`config/devices/` のすべての `*.yaml` を、デバイスの `id` をキーにした辞書に読み込む。各ファイルは 1 つのハードウェア（VDP の種類、PSG、PPI、RTC、RAM マッパー）を、マシンとは関係なく単独で書く。
 
 2. **マシン仕様の段階。** `load_machine_spec(machine_id, config_dir, device_registry, project_root)` が `config/machines/<machine_id>.yaml` を読み、必須のフィールドを検証する。`builtin_devices` の各 `ref` をレジストリで解決し、`MachineSpec` データクラスを返す。解決できない `ref`、知らない `schema_version`、必須の ROM エントリの欠けがあれば、ファイルとフィールドを示した `MachineLoadError` を出す。
 
-### build_machine()
+### load_machine_config() と build_machine()
 
-`build_machine(spec, cartridge, mapper, ...)` は、解決した `MachineSpec` から `Machine` を作る。`spec.generation` で具体的な型が決まる。
+マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge, mapper, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
 - `"msx2"`：`V9938`、サブ ROM と `RamMapper` を持つ拡張スロット 3、`RTC`
