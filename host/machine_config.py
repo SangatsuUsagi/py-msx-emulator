@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeGuard, cast
 
@@ -1156,16 +1156,41 @@ def _cartridge_sram_path(cartridge: bytes) -> Path:
     return Path("saves") / "sram" / f"{sha1}.sram"
 
 
-def sram_paths(config: MachineConfig) -> dict[MediaId, Path]:
+@dataclass
+class LoadedMachineConfig(MachineConfig):
+    """The MachineConfig load_machine_config() produces, plus host data that
+    never reaches the core: the file each battery-backed medium is persisted
+    in (see sram_paths). build_machine() reads only the MachineConfig part."""
+
+    sram_files: dict[MediaId, Path] = field(default_factory=dict)
+
+
+def sram_paths(config: LoadedMachineConfig) -> dict[MediaId, Path]:
     """The file each battery-backed medium of `config` is persisted in, by
     media id: an SRAM cartridge's `saves/sram/<sha1>.sram`, an extension's
     own `sram:` file, and an RTC machine's `saves/sram/rtc_<machine_id>.sram`."""
+    return dict(config.sram_files)
+
+
+@dataclass
+class _Cartridges:
+    """The resolved cartridge choices load_machine_config works from."""
+
+    cartridge1: bytes | None
+    mapper1: str
+    cartridge2: bytes | None
+    mapper2: str
+    extension_overlay1: AnyExtensionOverlay | None
+    extension_overlay2: AnyExtensionOverlay | None
+
+
+def _sram_paths(spec: MachineSpec, carts: _Cartridges) -> dict[MediaId, Path]:
     paths: dict[MediaId, Path] = {}
-    carts = ((1, config.cartridge1, config.mapper1), (2, config.cartridge2, config.mapper2))
-    for slot, cartridge, mapper in carts:
+    slots = ((1, carts.cartridge1, carts.mapper1), (2, carts.cartridge2, carts.mapper2))
+    for slot, cartridge, mapper in slots:
         if cartridge is not None and mapper in _SRAM_SIZES:
             paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
-    overlays = ((1, config.extension_overlay1), (2, config.extension_overlay2))
+    overlays = ((1, carts.extension_overlay1), (2, carts.extension_overlay2))
     for slot, overlay in overlays:
         if isinstance(overlay, ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
@@ -1174,17 +1199,17 @@ def sram_paths(config: MachineConfig) -> dict[MediaId, Path]:
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
             paths[MediaId.FMPAC_SRAM] = overlay.sram_save_path
-    if config.spec.generation == "msx2" and config.spec.has_rtc:
-        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
+    if spec.generation == "msx2" and spec.has_rtc:
+        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
     return paths
 
 
-def _sram_size_and_label(config: MachineConfig, media_id: MediaId) -> tuple[int, str]:
-    """Expected image size and warning label of an id sram_paths produced."""
+def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, str]:
+    """Expected image size and warning label of an id _sram_paths produced."""
     if media_id == slot_sram_id(1):
-        return _SRAM_SIZES[config.mapper1], ""
+        return _SRAM_SIZES[carts.mapper1], ""
     if media_id == slot_sram_id(2):
-        return _SRAM_SIZES[config.mapper2], ""
+        return _SRAM_SIZES[carts.mapper2], ""
     if media_id == MediaId.FMPAC_SRAM:
         return FMPAC_SRAM_SIZE, "FM-PAC "
     if media_id == MediaId.RTC_CMOS:
@@ -1230,7 +1255,7 @@ def load_machine_config(
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
-) -> MachineConfig:
+) -> LoadedMachineConfig:
     """Read every file `spec` and the arguments name into a MachineConfig for
     msx.machine_loader.build_machine.
 
@@ -1301,31 +1326,31 @@ def load_machine_config(
                 elif path is not None:
                     disks[drive_media_id(index)] = read_disk_medium(path)
 
-    config = MachineConfig(
-        spec=spec, roms=roms,
+    carts = _Cartridges(
         cartridge1=cartridge1, mapper1=mapper1_name,
         cartridge2=cartridge2, mapper2=mapper2_name,
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
-        disks=disks, rtc_initial_time=rtc_initial_time,
     )
-    for media_id, path in sram_paths(config).items():
-        size, label = _sram_size_and_label(config, media_id)
-        data = _load_sram_or_warn(path, size, label)
+    document = encode_machine_config(
+        spec, roms,
+        cartridge1=cartridge1, mapper1=mapper1_name,
+        cartridge2=cartridge2, mapper2=mapper2_name,
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
+    )
+    images: dict[str, bytes] = {}
+    for data in (*roms.values(), cartridge1, cartridge2):
         if data is not None:
-            config.media[media_id] = bytes(data)
-    return config
-
-
-def machine_config_document(config: MachineConfig) -> bytes:
-    """The canonical MachineConfig document of `config`: its resolved spec,
-    cartridges and overlays, with every ROM image it holds as a reference
-    (see msx/machine_config.py). Run inputs and host paths are not in it."""
-    return encode_machine_config(
-        config.spec, config.roms,
-        cartridge1=config.cartridge1, mapper1=config.mapper1,
-        cartridge2=config.cartridge2, mapper2=config.mapper2,
-        extension_overlay1=config.extension_overlay1,
-        extension_overlay2=config.extension_overlay2,
+            images[hashlib.sha1(data, usedforsecurity=False).hexdigest()] = data
+    sram_files = _sram_paths(spec, carts)
+    media: dict[MediaId, bytes] = {}
+    for media_id, path in sram_files.items():
+        size, label = _sram_size_and_label(carts, media_id)
+        sram = _load_sram_or_warn(path, size, label)
+        if sram is not None:
+            media[media_id] = bytes(sram)
+    return LoadedMachineConfig(
+        document=document, roms=images, media=media, disks=disks,
+        rtc_initial_time=rtc_initial_time, sram_files=sram_files,
     )
 
 

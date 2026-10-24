@@ -15,7 +15,6 @@ from host.machine_config import (
     load_extension_overlay,
     load_machine_config,
     load_machine_spec,
-    machine_config_document,
 )
 from msx.boundary import RtcTime
 from msx.input import InputFrame
@@ -48,7 +47,7 @@ def test_auto_mapper_is_resolved_before_building(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(romdb, "lookup", lambda cartridge: "Konami")
     config = make_config(_ROM, cartridge=_CART, mapper="auto")
-    assert config.mapper1 == "Konami"
+    assert parse_machine_config(config.document).mapper1 == "Konami"
 
     def no_lookup(cartridge: bytes) -> str | None:
         raise AssertionError("build_machine looked up the ROM database")
@@ -131,7 +130,7 @@ def _overrides(spec) -> dict[str, bytes]:
 def _document(machine_id: str = "hb_f1xd", **kwargs: object) -> bytes:
     spec = _spec(machine_id)
     args = {**_overrides(spec), **kwargs}
-    return machine_config_document(load_machine_config(spec, **args))
+    return load_machine_config(spec, **args).document
 
 
 def _walk(node: object) -> list[object]:
@@ -195,10 +194,10 @@ def test_an_override_rom_is_referenced_by_its_own_sha1(
     config = load_machine_config(
         _spec("cbios_msx1"), bios_override=bios, logo_override=bytes(16384)
     )
-    main = json.loads(machine_config_document(config))["machine"]["main_rom"]
+    main = json.loads(config.document)["machine"]["main_rom"]
     assert main["sha1"] == hashlib.sha1(bios).hexdigest()
     assert main["size"] == len(bios)
-    assert config.roms["main"] == bios
+    assert config.roms[main["sha1"]] == bios
 
 
 def test_a_cbios_rom_with_no_sha1_in_its_yaml_gets_one(
@@ -230,12 +229,51 @@ def test_every_machine_round_trips_through_its_document(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id)))
-    document = machine_config_document(config)
+    document = config.document
     parsed = parse_machine_config(document)
+    roms_by_role = {role: config.roms[ref.sha1] for role, ref in parsed.roms.items()}
     again = encode_machine_config(
-        parsed.spec, config.roms,
+        parsed.spec, roms_by_role,
         mapper1=parsed.mapper1, mapper2=parsed.mapper2,
         extension_overlay1=parsed.extension_overlay1,
         extension_overlay2=parsed.extension_overlay2,
     )
     assert again == document
+
+
+# ---------------------------------------------------------------------------
+# machine-loader "build_machine checks the document and its ROM images"
+# ---------------------------------------------------------------------------
+
+def _hb_f1xd_config(tmp_path: Path):
+    spec = _spec("hb_f1xd")
+    return load_machine_config(spec, **_overrides(spec))
+
+
+def test_a_missing_rom_image_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+    sub = json.loads(config.document)["machine"]["sub_rom"]["sha1"]
+    del config.roms[sub]
+    with pytest.raises(MachineLoadError, match=sub):
+        build_machine(config)
+
+
+def test_a_rom_image_of_the_wrong_content_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+    main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
+    config.roms[main] = bytes([0xFF]) * len(config.roms[main])
+    with pytest.raises(MachineLoadError, match="does not match its reference"):
+        build_machine(config)
+
+
+def test_a_machine_keeps_the_hash_of_its_document(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _hb_f1xd_config(tmp_path)
+    expected = hashlib.sha256(config.document).hexdigest()
+    assert build_machine(config).machine_config_sha256 == expected

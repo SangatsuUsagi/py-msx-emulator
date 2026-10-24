@@ -142,9 +142,13 @@ def _machine_object(
     spec: MachineSpec, roms: dict[str, bytes], refs: dict[str, RomRef]
 ) -> dict[str, object]:
     main = spec.main_rom_entry
-    logo = None
-    if spec.logo_rom_entry is not None:
-        logo = _entry_ref("logo", spec.logo_rom_entry.file, spec.logo_rom_entry.pages, roms, refs)
+    # A logo image is used whenever the host loaded one (an override needs no
+    # YAML entry), as build_machine always has.
+    logo_entry = spec.logo_rom_entry
+    logo = _entry_ref(
+        "logo", logo_entry.file if logo_entry is not None else "",
+        logo_entry.pages if logo_entry is not None else [2], roms, refs,
+    )
     sub = None
     if spec.sub_rom_entry is not None:
         sub = _entry_ref("sub", spec.sub_rom_entry.file, spec.sub_rom_entry.pages, roms, refs)
