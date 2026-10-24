@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
@@ -15,6 +15,7 @@ from msx.snapshot_schema import (
     check_list,
     check_object,
 )
+from msx.sram import SramImage
 
 if TYPE_CHECKING:
     from msx.mapper_tracer import MapperTracer
@@ -158,17 +159,10 @@ class Mapper(Protocol):
     def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank_info(self, page: int) -> str | None: ...
     def reset(self) -> None: ...
-    # Whether this mapper carries battery-backed SRAM that the host persists
-    # -- declared on the Protocol so a generic caller (e.g. the media list)
-    # can ask directly instead of probing for the method's existence with
-    # hasattr. sram_data() returns the SRAM image (empty without SRAM);
-    # sram_dirty is set by a guest write that changes a byte and cleared by
-    # mark_sram_persisted() once the host has written the image.
-    has_sram: ClassVar[bool]
-    def sram_data(self) -> bytes: ...
-    @property
-    def sram_dirty(self) -> bool: ...
-    def mark_sram_persisted(self) -> None: ...
+    # The battery-backed SRAM the host persists, or None for a mapper without
+    # one -- declared on the Protocol so a generic caller (e.g. the media
+    # list) asks directly instead of probing with hasattr.
+    def sram_medium(self) -> SramImage | None: ...
 
 
 def _format_bank_info(banks: list[int], page: int) -> str | None:
@@ -215,8 +209,6 @@ class BankTracingMapper:
     _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
-    has_sram: ClassVar[bool] = False
-
     def debug_bank_info(self, page: int) -> str | None:
         """Default for BankTracingMapper subclasses with no _banks list (e.g.
         RTypeMapper, which has a single _bank: int) -- overridden by the
@@ -237,17 +229,9 @@ class BankTracingMapper:
         that no subclass silently falls back to it."""
         pass
 
-    def sram_data(self) -> bytes:
-        """Default for BankTracingMapper subclasses with has_sram = False --
-        overridden by the SRAM-carrying subclasses (SramMediumMixin)."""
-        return b""
-
-    @property
-    def sram_dirty(self) -> bool:
-        return False
-
-    def mark_sram_persisted(self) -> None:
-        pass
+    def sram_medium(self) -> SramImage | None:
+        """None: overridden by the SRAM-carrying subclasses."""
+        return None
 
     def parse_state(self, obj: object, label: str) -> Mapping[str, object]:
         """Overridden by every concrete subclass with its own state schema."""
@@ -305,8 +289,6 @@ class _NoStateMapperMixin:
     """Shared no-op write/snapshot/restore for mappers with no persisted state
     (no bank registers, no SRAM)."""
 
-    has_sram: ClassVar[bool] = False
-
     def write(self, addr: int, value: int) -> None:
         pass
 
@@ -329,44 +311,8 @@ class _NoStateMapperMixin:
     def reset(self) -> None:
         pass
 
-    def sram_data(self) -> bytes:
-        return b""
-
-    @property
-    def sram_dirty(self) -> bool:
-        return False
-
-    def mark_sram_persisted(self) -> None:
-        pass
-
-
-class SramMediumMixin:
-    """SRAM image and dirty flag for an SRAM-carrying mapper (listed first in
-    the bases so it overrides BankTracingMapper's no-SRAM defaults)."""
-
-    sram: bytearray
-    _sram_dirty = False
-
-    def sram_data(self) -> bytes:
-        return bytes(self.sram)
-
-    @property
-    def sram_dirty(self) -> bool:
-        return self._sram_dirty
-
-    def mark_sram_persisted(self) -> None:
-        self._sram_dirty = False
-
-    def _write_sram(self, offset: int, value: int) -> None:
-        if self.sram[offset] != value:
-            self.sram[offset] = value
-            self._sram_dirty = True
-
-    def _restore_sram(self, image: bytes | bytearray) -> None:
-        # A restored state that differs from the persisted image is unsaved.
-        if self.sram != image:
-            self.sram[:] = image
-            self._sram_dirty = True
+    def sram_medium(self) -> SramImage | None:
+        return None
 
 
 @dataclass
@@ -695,7 +641,7 @@ _ASCII8_SRAM2_KEYS: frozenset[str] = frozenset(Ascii8Sram2MapperState.__annotati
 
 
 @dataclass
-class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
+class Ascii8Sram2Mapper(Ascii8Mapper):
     """ASCII8 mapper + 2 KB battery-backed SRAM (generic ASCII8-SRAM).
 
     Following openMSX RomAscii8_8: a window maps SRAM when its bank register
@@ -717,19 +663,18 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
-    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
 
-    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
-    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
-    # default_factory below); __post_init__ normalizes either case to exactly
-    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
-    sram: bytearray = field(default_factory=bytearray)
+    # `sram` is the initial image only (a loaded save, or omitted for a
+    # zero-filled one); __post_init__ copies it into sram_image, starting
+    # blank when it is not exactly `_SRAM_SIZE` bytes.
+    sram: InitVar[bytes | bytearray | None] = None
+    sram_image: SramImage = field(init=False, repr=False)
     # Per-window flag: True while that window currently maps SRAM. Read()
-    # routes SRAM-mapped windows straight to self.sram and ROM-mapped windows
+    # routes SRAM-mapped windows straight to sram_image and ROM-mapped windows
     # to the inherited flat mirror -- no window is ever both at once, so no
     # write-through between the two is needed.
     #
@@ -743,9 +688,8 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
         default_factory=lambda: [False, False, False, False], init=False, repr=False,
     )
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != self._SRAM_SIZE:
-            self.sram = bytearray(self._SRAM_SIZE)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.sram_image = SramImage.of(self._SRAM_SIZE, sram)
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
             self._sync_window(window)
@@ -768,7 +712,7 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
 
     def _sync_window(self, window: int) -> None:
         if self._is_sram_bank(window):
-            # SRAM-mapped: read() routes this window to self.sram directly,
+            # SRAM-mapped: read() routes this window to sram_image directly,
             # so _flat is left untouched (stale but unread) for this window.
             self._window_is_sram[window] = True
             return
@@ -781,7 +725,7 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
             window = idx >> 13  # idx // _PAGE_8K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_8K
-                return self.sram[self._sram_offset(window, addr, base)]
+                return self.sram_image.read(self._sram_offset(window, addr, base))
             return self._flat[idx]
         # Outside the four windows: open bus, not a mirror (see the
         # class docstring's "No mirroring" note).
@@ -810,10 +754,13 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
         else:
             window, base = 3, 0xA000
         if self._is_sram_bank(window):
-            self._write_sram(self._sram_offset(window, addr, base), value & 0xFF)
+            self.sram_image.write(self._sram_offset(window, addr, base), value & 0xFF)
+
+    def sram_medium(self) -> SramImage | None:
+        return self.sram_image
 
     def snapshot(self) -> Ascii8Sram2MapperState:
-        return {**super().snapshot(), "sram": bytearray(self.sram)}
+        return {**super().snapshot(), "sram": bytearray(self.sram_image.data())}
 
     def parse_state(self, obj: object, label: str) -> Ascii8Sram2MapperState:
         state = check_object(obj, label, _ASCII8_SRAM2_KEYS)
@@ -825,7 +772,7 @@ class Ascii8Sram2Mapper(SramMediumMixin, Ascii8Mapper):
     def apply_state(self, state: Mapping[str, object]) -> None:
         st = cast(Ascii8Sram2MapperState, state)
         super().apply_state(st)
-        self._restore_sram(st["sram"])
+        self.sram_image.restore(st["sram"])
 
 
 @dataclass
@@ -863,7 +810,7 @@ _GM2_KEYS: frozenset[str] = frozenset(GameMaster2MapperState.__annotations__)
 
 
 @dataclass
-class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
+class GameMaster2Mapper(BankTracingMapper):
     """Konami Game Master 2 mapper: 128 KB ROM + 8 KB battery-backed SRAM.
 
     Follows openMSX RomGameMaster2.cc, cross-checked against the Game Master 2
@@ -892,7 +839,6 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.GAME_MASTER2
-    has_sram: ClassVar[bool] = True
     # Bank-register bit fields and the 4 KB SRAM-half geometry, named to match
     # the decode table in the class docstring.
     _SRAM_BIT: ClassVar[int] = 0x10        # bit 4: 1 = SRAM, 0 = ROM
@@ -902,11 +848,11 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
     _HALF_MASK: ClassVar[int] = 0x0FFF     # offset within a 4 KB half
 
     rom: bytes
-    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
-    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
-    # default_factory below); __post_init__ normalizes either case to exactly
-    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
-    sram: bytearray = field(default_factory=bytearray)
+    # `sram` is the initial image only (a loaded save, or omitted for a
+    # zero-filled one); __post_init__ copies it into sram_image, starting
+    # blank when it is not exactly `_SRAM_SIZE` bytes.
+    sram: InitVar[bytes | bytearray | None] = None
+    sram_image: SramImage = field(init=False, repr=False)
     _SRAM_SIZE: ClassVar[int] = 8192
 
     # PORT-NOTE: `_banks`, `_window_is_sram` and `_window_sram_half` are all
@@ -945,9 +891,8 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
     _sram_enabled: bool = field(default=False, init=False, repr=False)
     _num_pages: int = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != self._SRAM_SIZE:
-            self.sram = bytearray(self._SRAM_SIZE)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.sram_image = SramImage.of(self._SRAM_SIZE, sram)
         self._num_pages = max(1, len(self.rom) // _PAGE_8K)
         self._flat = bytearray(4 * _PAGE_8K)
         for window in range(4):
@@ -960,7 +905,7 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
         # register stays 0, so its SRAM bit is never set in practice -- the
         # guard just makes window 0 immune to a corrupt restore payload.
         if window != 0 and (value & self._SRAM_BIT):
-            # SRAM-mapped: read() routes this window to self.sram directly, so
+            # SRAM-mapped: read() routes this window to sram_image directly, so
             # _flat is left untouched (stale but unread) for this window.
             self._window_is_sram[window] = True
             return
@@ -981,7 +926,7 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
             window = idx >> 13  # idx // _PAGE_8K
             if self._window_is_sram[window]:
                 offset = self._window_sram_half[window] | (addr & self._HALF_MASK)
-                return self.sram[offset]
+                return self.sram_image.read(offset)
             return self._flat[idx]
         return 0xFF  # outside 0x4000-0xBFFF: open bus
 
@@ -1011,7 +956,7 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
         elif 0xB000 <= addr < 0xC000:
             if self._sram_enabled:
                 offset = self._sram_half | (addr & self._HALF_MASK)
-                self._write_sram(offset, value & 0xFF)
+                self.sram_image.write(offset, value & 0xFF)
 
     # PORT-NOTE: snapshot/restore round-trips a heterogeneous `dict[str,
     #   object]` (list[int], int, bool, bytes) with runtime casts, like every
@@ -1029,13 +974,16 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
     #   redesign spans ~13 mapper classes plus msx/state.py and
     #   msx/machine_loader.py -- large-scope item, tracked for a separate
     #   OpenSpec proposal rather than a mechanical refactor here.
+    def sram_medium(self) -> SramImage | None:
+        return self.sram_image
+
     def snapshot(self) -> GameMaster2MapperState:
         return {
             "banks": list(self._banks),
             "sram_half": self._sram_half,
             "window_sram_half": list(self._window_sram_half),
             "sram_enabled": self._sram_enabled,
-            "sram": bytearray(self.sram),
+            "sram": bytearray(self.sram_image.data()),
         }
 
     def parse_state(self, obj: object, label: str) -> GameMaster2MapperState:
@@ -1064,7 +1012,7 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
         self._sram_half = st["sram_half"]
         self._window_sram_half[:] = st["window_sram_half"]
         self._sram_enabled = st["sram_enabled"]
-        self._restore_sram(st["sram"])
+        self.sram_image.restore(st["sram"])
         for window in range(4):
             self._sync_window(window)
 
@@ -1075,7 +1023,7 @@ class GameMaster2Mapper(SramMediumMixin, BankTracingMapper):
         """Restore all four bank registers to their power-on pages
         (0, 1, 2, 3), the SRAM-enable/half tracking to construction
         defaults, and resync the flat read-path mirror + per-window SRAM
-        flags. self.sram's bytes are never touched."""
+        flags. sram_image's bytes are never touched."""
         self._banks[:] = [0, 1, 2, 3]
         self._window_sram_half[:] = [0, 0, 0, 0]
         self._sram_half = 0
@@ -1092,7 +1040,7 @@ _ASCII16_SRAM2_KEYS: frozenset[str] = frozenset(Ascii16Sram2MapperState.__annota
 
 
 @dataclass
-class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
+class Ascii16Sram2Mapper(Ascii16Mapper):
     """ASCII16 mapper + 2 KB battery-backed SRAM (openMSX RomAscii16_2).
 
     Either window can be SRAM-mapped: a window's SRAM is selected when its
@@ -1109,19 +1057,18 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
-    has_sram: ClassVar[bool] = True
     _SRAM_SIZE: ClassVar[int] = 2048
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
 
-    # `sram` is a plain (non-Optional) bytearray field: the loader may pass a
-    # preloaded save, or omit it to get a fresh zero-filled buffer (via the
-    # default_factory below); __post_init__ normalizes either case to exactly
-    # `_SRAM_SIZE` bytes, replacing a wrong-size or empty buffer in place.
-    sram: bytearray = field(default_factory=bytearray)
+    # `sram` is the initial image only (a loaded save, or omitted for a
+    # zero-filled one); __post_init__ copies it into sram_image, starting
+    # blank when it is not exactly `_SRAM_SIZE` bytes.
+    sram: InitVar[bytes | bytearray | None] = None
+    sram_image: SramImage = field(init=False, repr=False)
     # Per-window flag: True while that window currently maps SRAM (either
     # window, independently). Read() routes an SRAM-mapped window straight
-    # to self.sram and a ROM-mapped window to the inherited flat mirror --
+    # to sram_image and a ROM-mapped window to the inherited flat mirror --
     # no window is ever both at once, so no write-through between the two
     # is needed.
     #
@@ -1135,9 +1082,8 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
         default_factory=lambda: [False, False], init=False, repr=False,
     )
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != self._SRAM_SIZE:
-            self.sram = bytearray(self._SRAM_SIZE)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.sram_image = SramImage.of(self._SRAM_SIZE, sram)
         self._flat = bytearray(2 * _PAGE_16K)
         for window in range(2):
             self._sync_window(window)
@@ -1152,7 +1098,7 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
 
     def _sync_window(self, window: int) -> None:
         if self._is_sram_bank(window):
-            # SRAM-mapped: read() routes this window to self.sram directly,
+            # SRAM-mapped: read() routes this window to sram_image directly,
             # so _flat is left untouched (stale but unread) for this window.
             self._window_is_sram[window] = True
             return
@@ -1165,7 +1111,7 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
             window = idx >> 14  # idx // _PAGE_16K, as a shift
             if self._window_is_sram[window]:
                 base = 0x4000 + window * _PAGE_16K
-                return self.sram[(addr - base) & self._SRAM_MASK]
+                return self.sram_image.read((addr - base) & self._SRAM_MASK)
             return self._flat[idx]
         return self._read_out_of_window(addr)
 
@@ -1197,10 +1143,13 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
             # windows is open bus, not a mirror, so a write there reaches
             # no real chip and must not fall through into SRAM.
             if self._is_sram_bank(1):
-                self._write_sram((addr - 0x8000) & self._SRAM_MASK, value & 0xFF)
+                self.sram_image.write((addr - 0x8000) & self._SRAM_MASK, value & 0xFF)
+
+    def sram_medium(self) -> SramImage | None:
+        return self.sram_image
 
     def snapshot(self) -> Ascii16Sram2MapperState:
-        return {**super().snapshot(), "sram": bytearray(self.sram)}
+        return {**super().snapshot(), "sram": bytearray(self.sram_image.data())}
 
     def parse_state(self, obj: object, label: str) -> Ascii16Sram2MapperState:
         state = check_object(obj, label, _ASCII16_SRAM2_KEYS)
@@ -1212,7 +1161,7 @@ class Ascii16Sram2Mapper(SramMediumMixin, Ascii16Mapper):
     def apply_state(self, state: Mapping[str, object]) -> None:
         st = cast(Ascii16Sram2MapperState, state)
         super().apply_state(st)
-        self._restore_sram(st["sram"])
+        self.sram_image.restore(st["sram"])
 
 
 @dataclass
@@ -1918,7 +1867,7 @@ _HALNOTE_KEYS: frozenset[str] = frozenset(HalnoteMapperState.__annotations__)
 
 
 @dataclass
-class HalnoteMapper(SramMediumMixin, BankTracingMapper):
+class HalnoteMapper(BankTracingMapper):
     """Sony HBI-J1's Halnote mapper (MSX-JE word-processor ROM): a 1 MB ROM
     as 128 x 8 KB banks, a JIS2 dictionary sub-mapper, and 16 KB SRAM.
 
@@ -1943,10 +1892,11 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.HALNOTE
-    has_sram: ClassVar[bool] = True
 
     rom: bytes
-    sram: bytearray = field(default_factory=lambda: bytearray(_HALNOTE_SRAM_SIZE))
+    # The initial image only; see Ascii8Sram2Mapper's `sram`.
+    sram: InitVar[bytes | bytearray | None] = None
+    sram_image: SramImage = field(init=False, repr=False)
 
     _banks: list[int] = field(default_factory=lambda: [0, 1, 2, 3], repr=False)
     _subbanks: list[int] = field(default_factory=lambda: [0, 0], repr=False)
@@ -1954,14 +1904,13 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
     _submapper_enabled: bool = field(default=False, init=False, repr=False)
     _flat: bytearray = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
         if len(self.rom) != _HALNOTE_ROM_SIZE:
             raise ValueError(
                 f"HalnoteMapper: expected a {_HALNOTE_ROM_SIZE}-byte ROM, "
                 f"got {len(self.rom)}"
             )
-        if len(self.sram) != _HALNOTE_SRAM_SIZE:
-            self.sram = bytearray(_HALNOTE_SRAM_SIZE)
+        self.sram_image = SramImage.of(_HALNOTE_SRAM_SIZE, sram)
         self._flat = bytearray(_WINDOW_BYTES)
         for window in range(4):
             self._sync_window(window)
@@ -1985,7 +1934,7 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
 
     def read(self, addr: int) -> int:
         if addr < 0x4000:
-            return self.sram[addr] if self._sram_enabled else 0xFF
+            return self.sram_image.read(addr) if self._sram_enabled else 0xFF
         if addr < 0xC000:
             if self._submapper_enabled and 0x7000 <= addr < 0x8000:
                 subbank = 0 if addr < 0x7800 else 1
@@ -2001,7 +1950,7 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
     def write(self, addr: int, value: int) -> None:
         if addr < 0x4000:
             if self._sram_enabled:
-                self._write_sram(addr, value & 0xFF)
+                self.sram_image.write(addr, value & 0xFF)
             return
         if addr >= 0xC000:
             return  # always unmapped
@@ -2019,6 +1968,9 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
             self._sync_window(window)
             _trace_bank(self, window, old, value, addr)
 
+    def sram_medium(self) -> SramImage | None:
+        return self.sram_image
+
     def snapshot(self) -> HalnoteMapperState:
         # sram_enabled/submapper_enabled are not persisted here -- they are
         # fully determined by bank_0/bank_1's top bit (see apply_state(), which
@@ -2027,7 +1979,7 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
         return {
             "banks": list(self._banks),
             "subbanks": list(self._subbanks),
-            "sram": bytearray(self.sram),
+            "sram": bytearray(self.sram_image.data()),
         }
 
     def parse_state(self, obj: object, label: str) -> HalnoteMapperState:
@@ -2048,7 +2000,7 @@ class HalnoteMapper(SramMediumMixin, BankTracingMapper):
         # with (e.g. a hand-edited or foreign-generated state file).
         self._sram_enabled = bool(self._banks[0] & _HALNOTE_SRAM_ENABLE_BIT)
         self._submapper_enabled = bool(self._banks[1] & _HALNOTE_SUBMAPPER_ENABLE_BIT)
-        self._restore_sram(st["sram"])
+        self.sram_image.restore(st["sram"])
         for window in range(4):
             self._sync_window(window)
 

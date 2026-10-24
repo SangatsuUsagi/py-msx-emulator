@@ -28,6 +28,7 @@ from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
 from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
+from msx.sram import Medium, SramImage
 from msx.vdp._geometry import OUTPUT_H, VideoStandard
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
@@ -48,17 +49,6 @@ class DebuggerHook(Protocol):
     Debugger); the core only asks it to take over at a break."""
 
     def enter(self) -> None: ...
-
-
-class SramMedium(Protocol):
-    """Structural type for a battery-backed SRAM owner exposed as a medium
-    (every Mapper, per cart-rom-mapper's "Mapper protocol" Requirement, plus
-    FmPac/RTC, which duck-type the same shape without being Mappers)."""
-
-    def sram_data(self) -> bytes: ...
-    @property
-    def sram_dirty(self) -> bool: ...
-    def mark_sram_persisted(self) -> None: ...
 
 
 class PauseReason(str, enum.Enum):
@@ -232,30 +222,34 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
 
-    def sram_media(self) -> dict[str, SramMedium]:
+    def sram_media(self) -> dict[str, SramImage]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
         mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
         `rtc.cmos`. The FM-PAC is listed only under its own id even when it is
         a slot's mapper."""
-        media: dict[str, SramMedium] = {}
+        media: dict[str, SramImage] = {}
         if self.fmpac is not None:
-            media[FMPAC_SRAM_ID] = self.fmpac
+            media[FMPAC_SRAM_ID] = self.fmpac.sram_image
         if self.rtc is not None:
-            media[RTC_CMOS_ID] = self.rtc
+            media[RTC_CMOS_ID] = self.rtc.cmos
         slots = (
             (1, self.memory._mapper, self.memory._mapper1_subslots),
             (2, self.memory._mapper2, self.memory._mapper2_subslots),
         )
         for slot, mapper, subslots in slots:
-            if mapper.has_sram and mapper is not self.fmpac:
-                media[slot_sram_id(slot)] = mapper
+            image = mapper.sram_medium()
+            if image is not None and mapper is not self.fmpac:
+                media[slot_sram_id(slot)] = image
             for sub, sub_mapper in enumerate(subslots):
-                if sub_mapper is not None and sub_mapper.has_sram and sub_mapper is not self.fmpac:
-                    media[subslot_sram_id(slot, sub)] = sub_mapper
+                if sub_mapper is None or sub_mapper is self.fmpac:
+                    continue
+                sub_image = sub_mapper.sram_medium()
+                if sub_image is not None:
+                    media[subslot_sram_id(slot, sub)] = sub_image
         return media
 
-    def _disk_media(self) -> dict[str, DskDiskImage]:
-        media: dict[str, DskDiskImage] = {}
+    def _media(self) -> dict[str, Medium]:
+        media: dict[str, Medium] = dict(self.sram_media())
         if self.fdc is not None:
             for index, drive in enumerate(self.fdc.drives):
                 if drive.image is not None:
@@ -265,28 +259,18 @@ class Machine:
     def dirty_media(self) -> list[str]:
         """Ids of the media written since they were last persisted."""
         dirty: list[str] = []
-        for media_id, sram in self.sram_media().items():
-            if sram.sram_dirty:
-                dirty.append(media_id)
-        for media_id, image in self._disk_media().items():
-            if image.dirty:
+        for media_id, medium in self._media().items():
+            if medium.dirty:
                 dirty.append(media_id)
         return dirty
 
     def read_media(self, media_id: str) -> bytes:
         """A medium's current bytes. Raises KeyError for an unknown id."""
-        disks = self._disk_media()
-        if media_id in disks:
-            return disks[media_id].data()
-        return self.sram_media()[media_id].sram_data()
+        return self._media()[media_id].data()
 
     def mark_persisted(self, media_id: str) -> None:
         """Clear a medium's dirty flag after the host has written it."""
-        disks = self._disk_media()
-        if media_id in disks:
-            disks[media_id].mark_persisted()
-            return
-        self.sram_media()[media_id].mark_sram_persisted()
+        self._media()[media_id].mark_persisted()
 
     def mount_disk(self, drive: int, medium: DiskMedium | None) -> bytes | None:
         """Swap `medium` (None ejects) into `drive` (0 = A). Returns the

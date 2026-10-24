@@ -175,7 +175,7 @@ def test_leap_counter_write_never_survives_read() -> None:
 
 
 def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
-    """sram_data()'s bytes, passed back as sram=, reproduce the same RAM."""
+    """cmos.data()'s bytes, passed back as sram=, reproduce the same RAM."""
     rtc = RTC()
     _set_block(rtc, 2)
     for reg in range(13):
@@ -186,8 +186,8 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
         _select(rtc, reg)
         rtc.write_port(0xB5, (reg + 2) & 0x0F)
 
-    assert rtc.sram_dirty is True
-    image = rtc.sram_data()
+    assert rtc.cmos.dirty is True
+    image = rtc.cmos.data()
     assert len(image) == SRAM_SIZE
 
     reloaded = RTC(sram=bytearray(image))
@@ -382,3 +382,44 @@ def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
     assert machine.rtc is not None
     machine.cycle_count = 3 * 3_579_545
     assert _read_block0(machine.rtc)[0:2] == [3, 0]
+
+
+# RTC.snapshot() captured before the CMOS RAM moved from _regs[26:52] to
+# RTC.cmos (openspec/changes/sram-image-composition): the 52-entry `regs`
+# list must stay byte-for-byte the same. The initial image deliberately
+# holds values above 0x0F, which are stored as given and masked on read.
+_CAPTURED_REGS = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0,
+    0, 3, 6, 9, 12, 15, 2, 5, 8, 11, 14, 1, 4,
+    13, 14, 15, 16, 17, 10, 19, 20, 21, 22, 23, 24, 25,
+]
+
+
+def test_snapshot_regs_layout_is_unchanged() -> None:
+    rtc = RTC(sram=bytearray(range(26)))
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x02)  # block 2
+    for reg in range(13):
+        rtc.write_port(0xB4, reg)
+        rtc.write_port(0xB5, (reg * 3) & 0x0F)
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x03)  # block 3
+    rtc.write_port(0xB4, 5)
+    rtc.write_port(0xB5, 0x0A)
+    rtc.write_port(0xB4, 13)
+    rtc.write_port(0xB5, 0x01)  # block 1
+    rtc.write_port(0xB4, 11)
+    rtc.write_port(0xB5, 0x02)
+    assert rtc.snapshot()["regs"] == _CAPTURED_REGS
+    assert list(rtc.cmos.data()) == _CAPTURED_REGS[26:]
+    assert rtc.cmos.dirty is True
+
+
+def test_restoring_regs_with_different_cmos_marks_it_dirty() -> None:
+    rtc = RTC()
+    state = rtc.parse_state(rtc.snapshot(), "rtc")
+    state["regs"] = state["regs"][:26] + [0x5] * 26
+    rtc.apply_state(state)
+    assert rtc.cmos.dirty is True
+    assert rtc.snapshot()["regs"][26:] == [0x5] * 26

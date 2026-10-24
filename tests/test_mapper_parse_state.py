@@ -64,8 +64,8 @@ def _ascii8_sram(cls: type[Ascii8Sram2Mapper]) -> Callable[[], Any]:
         m = cls(rom=_rom(8))
         m.write(0x6000, 2)
         m.write(0x7000, 4)
-        m.sram[0] = 0x5A
-        m.sram[-1] = 0xA5
+        m.sram_image.write(0, 0x5A)
+        m.sram_image.write(-1, 0xA5)
         return m
     return make
 
@@ -74,8 +74,8 @@ def _ascii16_sram(cls: type[Ascii16Sram2Mapper]) -> Callable[[], Any]:
     def make() -> Any:
         m = cls(rom=_rom(8))
         m.write(0x6000, 2)
-        m.sram[0] = 0x5A
-        m.sram[-1] = 0xA5
+        m.sram_image.write(0, 0x5A)
+        m.sram_image.write(-1, 0xA5)
         return m
     return make
 
