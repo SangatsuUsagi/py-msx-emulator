@@ -253,7 +253,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
     machine = make_machine(_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     state_path = _edited(tmp_path, monkeypatch, machine, edit)
     _disturb(machine)
-    machine.memory._mapper.sram[0] = 0x5A
+    machine.memory._mapper.sram_image.write(0, 0x5A)
     before = _producer_fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
@@ -261,7 +261,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
 
     assert exc_info.value.producer == producer
     assert _producer_fingerprint(machine) == before
-    assert machine.memory._mapper.sram[0] == 0x5A
+    assert machine.memory._mapper.sram_image.read(0) == 0x5A
 
 
 def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:

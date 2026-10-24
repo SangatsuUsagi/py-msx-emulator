@@ -74,23 +74,23 @@ class TestSramRouting:
     def test_sram_4k_mirror_across_window(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0x8000, 0x10)  # window 2 -> SRAM, first 4 KB half
-        m.sram[0x100] = 0xAB
-        m.sram[0x1100] = 0xCD  # upper half, must not be seen
+        m.sram_image.write(0x100, 0xAB)
+        m.sram_image.write(0x1100, 0xCD)  # upper half, must not be seen
         assert m.read(0x8100) == 0xAB  # low half of window
         assert m.read(0x9100) == 0xAB  # high half mirrors the same 4 KB
 
     def test_bit5_selects_second_sram_half(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0x8000, 0x30)  # SRAM enabled, bit 5 set -> second 4 KB half
-        m.sram[0x1100] = 0x42
+        m.sram_image.write(0x1100, 0x42)
         assert m.read(0x8100) == 0x42
 
     def test_two_windows_hold_independent_sram_halves(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0x8000, 0x10)  # window 2 -> SRAM half 0
         m.write(0xA000, 0x30)  # window 3 -> SRAM half 1
-        m.sram[0x0100] = 0x11
-        m.sram[0x1100] = 0x22
+        m.sram_image.write(0x0100, 0x11)
+        m.sram_image.write(0x1100, 0x22)
         assert m.read(0x8100) == 0x11  # window 2 keeps its captured half 0
         assert m.read(0xA100) == 0x22  # window 3 keeps its captured half 1
 
@@ -98,13 +98,13 @@ class TestSramRouting:
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x10)  # window 3 SRAM enabled -> sram_enabled True
         m.write(0xB100, 0x55)
-        assert m.sram[0x100] == 0x55
+        assert m.sram_image.read(0x100) == 0x55
 
     def test_sram_write_ignored_when_bank4_not_sram(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x02)  # window 3 selects ROM -> sram_enabled False
         m.write(0xB100, 0x77)
-        assert m.sram[0x100] == 0x00  # write ignored
+        assert m.sram_image.read(0x100) == 0x00  # write ignored
 
     def test_sram_write_outside_0xb000_zone_has_no_effect_even_when_enabled(self):
         # allium/konami-mapper.allium GameMaster2WriteSram: its own requires
@@ -117,13 +117,13 @@ class TestSramRouting:
         m.write(0xA000, 0x10)  # window 3 SRAM enabled -> sram_enabled True
         m.write(0x5000, 0x11)  # nowhere near any register or SRAM zone
         m.write(0xA500, 0x22)  # window 3's own low-4KB (BankSelect's zone, not WriteSram's)
-        assert m.sram == bytearray(8192)
+        assert m.sram_image.data() == bytearray(8192)
 
     def test_bank4_enable_uses_selected_half_for_write(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x30)  # SRAM enabled, second half selected
         m.write(0xB100, 0x99)
-        assert m.sram[0x1100] == 0x99
+        assert m.sram_image.read(0x1100) == 0x99
 
 
 class TestSnapshotRestore:
@@ -135,7 +135,7 @@ class TestSnapshotRestore:
 
         m2 = GameMaster2Mapper(rom=_ROM_128K)
         m2.restore(snap)
-        assert m2.sram[0x100] == 0x99
+        assert m2.sram_image.read(0x100) == 0x99
 
     def test_restore_with_missing_key_does_not_partially_mutate(self):
         """A malformed state dict must not leave the mapper half-restored:
@@ -151,7 +151,7 @@ class TestSnapshotRestore:
         pre_sram_half = m._sram_half
         pre_window_sram_half = list(m._window_sram_half)
         pre_sram_enabled = m._sram_enabled
-        pre_sram = bytes(m.sram)
+        pre_sram = m.sram_image.data()
 
         del snap["sram_enabled"]
         with pytest.raises(ValueError):
@@ -161,13 +161,13 @@ class TestSnapshotRestore:
         assert m._sram_half == pre_sram_half
         assert list(m._window_sram_half) == pre_window_sram_half
         assert m._sram_enabled == pre_sram_enabled
-        assert bytes(m.sram) == pre_sram
+        assert m.sram_image.data() == pre_sram
 
     def test_restore_rebuilds_rom_and_sram_windows(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0x6000, 0x07)  # window 1 -> ROM page 7
         m.write(0x8000, 0x10)  # window 2 -> SRAM
-        m.sram[0x100] = 0x5A
+        m.sram_image.write(0x100, 0x5A)
         snap = m.snapshot()
 
         m2 = GameMaster2Mapper(rom=_ROM_128K)
@@ -178,10 +178,10 @@ class TestSnapshotRestore:
     def test_snapshot_survives_mutation(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0x8000, 0x10)
-        m.sram[0x100] = 0x3C
+        m.sram_image.write(0x100, 0x3C)
         snap = m.snapshot()
         m.write(0x8000, 0x04)  # mutate: window 2 back to ROM
-        m.sram[0x100] = 0xFF
+        m.sram_image.write(0x100, 0xFF)
         m.restore(snap)
         assert m.read(0x8100) == 0x3C
 
@@ -200,31 +200,31 @@ class TestInvariants:
 class TestSramConstruction:
     def test_none_gives_zeroed_8k_sram(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
-        assert m.sram is not None
-        assert len(m.sram) == 8192
-        assert all(b == 0 for b in m.sram)
+        assert m.sram_image is not None
+        assert len(m.sram_image) == 8192
+        assert m.sram_image.data() == bytes(8192)
 
     def test_preloaded_sram_used(self):
         pre = bytearray(8192)
         pre[0x100] = 0x7E
         m = GameMaster2Mapper(rom=_ROM_128K, sram=pre)
-        assert m.sram is pre
+        assert m.sram_image.data() == bytes(pre)  # a copy of the loaded image
 
     def test_wrong_size_sram_replaced(self):
         m = GameMaster2Mapper(rom=_ROM_128K, sram=bytearray(16))
-        assert m.sram is not None
-        assert len(m.sram) == 8192
+        assert m.sram_image is not None
+        assert len(m.sram_image) == 8192
 
     def test_save_sram_returns_bytes(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x10)
         m.write(0xB100, 0x42)
-        assert m.sram_dirty is True
-        data = m.sram_data()
+        assert m.sram_image.dirty is True
+        data = m.sram_image.data()
         assert data[0x100] == 0x42
         assert len(data) == 8192
-        m.mark_sram_persisted()
-        assert m.sram_dirty is False
+        m.sram_image.mark_persisted()
+        assert m.sram_image.dirty is False
 
 
 class TestReset:
@@ -245,16 +245,16 @@ class TestReset:
         assert m.read(0xA010) == _rom_byte(3, 0x10)
         # 0xB000-0xBFFF writes no longer reach SRAM once disabled.
         m.write(0xB100, 0x99)
-        assert m.sram[0x100] != 0x99
+        assert m.sram_image.read(0x100) != 0x99
 
     def test_reset_does_not_erase_sram_contents(self):
         m = GameMaster2Mapper(rom=_ROM_128K)
         m.write(0xA000, 0x10)  # window 3: SRAM enabled
         m.write(0xB100, 0x42)
-        assert m.sram[0x100] == 0x42
+        assert m.sram_image.read(0x100) == 0x42
 
         m.reset()
 
-        assert m.sram[0x100] == 0x42  # contents survive
+        assert m.sram_image.read(0x100) == 0x42  # contents survive
         m.write(0xA000, 0x10)  # re-enable SRAM
         assert m.read(0xA100) == 0x42  # previously-written byte visible again

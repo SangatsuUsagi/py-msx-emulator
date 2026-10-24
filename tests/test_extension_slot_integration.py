@@ -210,7 +210,7 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
     machine = build_machine(config)
     assert machine.fmpac is not None
     assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
-    assert machine.sram_media()["fmpac.sram"] is machine.fmpac
+    assert machine.sram_media()["fmpac.sram"] is machine.fmpac.sram_image
 
 
 def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:

@@ -14,11 +14,12 @@ https://gigamix.hatenablog.com/entry/devmsx/pac-sram-access
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
-from msx.mapper import MapperKind, SramMediumMixin
+from msx.mapper import MapperKind
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
+from msx.sram import SramImage
 
 if TYPE_CHECKING:
     from msx.opll import Opll, OpllState
@@ -73,23 +74,24 @@ _STATE_KEYS: frozenset[str] = frozenset(FmPacState.__annotations__)
 
 
 @dataclass
-class FmPac(SramMediumMixin):
+class FmPac:
     """FM-PAC device. Installed as a primary slot's mapper (`read`/`write`)."""
 
     kind: ClassVar[MapperKind] = MapperKind.FMPAC
-    has_sram: ClassVar[bool] = True
     rom: bytes
     opll: "Opll"
-    sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE))
+    # The initial image only (a loaded save, or omitted for a zero-filled
+    # one); __post_init__ copies it into sram_image, blank when the size is wrong.
+    sram: InitVar[bytes | bytearray | None] = None
+    sram_image: SramImage = field(init=False, repr=False)
     _bank: int = field(default=0, init=False, repr=False)
     _enable: int = field(default=0, init=False, repr=False)
     _r1ffe: int = field(default=0, init=False, repr=False)
     _r1fff: int = field(default=0, init=False, repr=False)
     _sram_enabled: bool = field(default=False, init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != SRAM_SIZE:
-            self.sram = bytearray(SRAM_SIZE)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.sram_image = SramImage.of(SRAM_SIZE, sram)
 
     # ------------------------------------------------------------- CPU memory
 
@@ -106,7 +108,7 @@ class FmPac(SramMediumMixin):
             return self._bank
         if self._sram_enabled:
             if off < _OFF_MAGIC_LO:
-                return self.sram[off]
+                return self.sram_image.read(off)
             if off == _OFF_MAGIC_LO:
                 return self._r1ffe
             if off == _OFF_MAGIC_HI:
@@ -155,7 +157,7 @@ class FmPac(SramMediumMixin):
             self._bank = value & 0x03
             return
         if self._sram_enabled and off < _OFF_MAGIC_LO:
-            self._write_sram(off, value)
+            self.sram_image.write(off, value)
 
     def _check_sram_enable(self) -> None:
         self._sram_enabled = self._r1ffe == _MAGIC_R1FFE and self._r1fff == _MAGIC_R1FFF
@@ -192,9 +194,10 @@ class FmPac(SramMediumMixin):
 
     # ---------------------------------------------------------------------- SRAM
 
-    # sram_data/sram_dirty/mark_sram_persisted come from SramMediumMixin.
-    # Loading a saved SRAM image is done by passing it as the `sram=`
-    # constructor argument; __post_init__ blanks a wrong-size image.
+    def sram_medium(self) -> SramImage | None:
+        """The 8 KB battery-backed SRAM (loaded through the `sram=`
+        constructor argument)."""
+        return self.sram_image
 
     # ------------------------------------------------------------- save-state
     # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
@@ -207,7 +210,7 @@ class FmPac(SramMediumMixin):
         including the carried OPLL's own state.
         """
         return {
-            "sram": bytes(self.sram),
+            "sram": self.sram_image.data(),
             "bank": self._bank,
             "enable": self._enable,
             "r1ffe": self._r1ffe,
@@ -248,7 +251,7 @@ class FmPac(SramMediumMixin):
         Protocol; the value must come from this device's parse_state.
         """
         parsed = cast(FmPacState, state)
-        self._restore_sram(parsed["sram"])
+        self.sram_image.restore(parsed["sram"])
         self._bank = parsed["bank"]
         self._enable = parsed["enable"]
         self._r1ffe = parsed["r1ffe"]

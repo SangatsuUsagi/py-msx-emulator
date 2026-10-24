@@ -11,6 +11,7 @@ from typing import ClassVar, TypedDict, cast
 
 from msx.mapper import MapperKind
 from msx.snapshot_schema import check_bytes, check_int_list, check_object
+from msx.sram import SramImage
 
 _BANK_SIZE = 0x4000  # 16 KB
 _DEFAULT_SIZE_KB = 128  # 8 banks, matching every machine before size became configurable
@@ -53,10 +54,10 @@ class RamMapper:
             bit width fixed at 3 bits.
     """
 
+    # Persisted entirely through the generic save-state mechanism
+    # (snapshot()/restore()), never through a standalone .sram file -- see
+    # sram_medium().
     kind: ClassVar[MapperKind] = MapperKind.RAM_MAPPER
-    # Persisted entirely through the generic slot-2 save-state mechanism
-    # (snapshot()/restore()), never through a standalone .sram file.
-    has_sram: ClassVar[bool] = False
     size_kb: int = _DEFAULT_SIZE_KB
     ram: bytearray = field(init=False, repr=False)
     banks: list[int] = field(init=False, default_factory=lambda: [0, 0, 0, 0])
@@ -82,16 +83,9 @@ class RamMapper:
         matching Machine.reset()'s "Memory/VRAM contents are retained"."""
         self.banks[:] = [0, 0, 0, 0]
 
-    def sram_data(self) -> bytes:
-        """Empty: RamMapper has no SRAM medium, see has_sram."""
-        return b""
-
-    @property
-    def sram_dirty(self) -> bool:
-        return False
-
-    def mark_sram_persisted(self) -> None:
-        pass
+    def sram_medium(self) -> SramImage | None:
+        """None: RamMapper is main RAM, never a persisted medium."""
+        return None
 
     def _phys(self, addr: int) -> int:
         page = (addr & 0xFFFF) >> 14

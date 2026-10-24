@@ -19,12 +19,13 @@ deterministic. Calendar arithmetic is integer-only (days-from-civil).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
 from msx.clock import CPU_CLOCK_HZ
 from msx.snapshot_schema import I64_MAX, check_int, check_int_list, check_object
+from msx.sram import SramImage
 
 MODE_REG = 13
 TEST_REG = 14
@@ -76,13 +77,14 @@ class RTC:
     _test: int = 0
     _reset: int = 0
     # 4 blocks x 13 nibbles. Blocks 2/3 hold the BIOS CMOS config.
-    _regs: list[int] = field(default_factory=lambda: [0] * (4 * REGS_PER_BLOCK), repr=False)
-    # Blocks 2/3's persisted image, seeded into _regs[26:52] at construction;
-    # sram_data() reads current state back from _regs, not from this field.
-    sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE), repr=False)
-    # Set when a write or restore changes a block 2/3 nibble; cleared by
-    # mark_sram_persisted() once the host has written sram_data().
-    _sram_dirty: bool = field(default=False, init=False, repr=False)
+    # Blocks 0/1 (time and alarm/settings), 2 x 13 nibbles.
+    _regs: list[int] = field(default_factory=lambda: [0] * (2 * REGS_PER_BLOCK), repr=False)
+    # Blocks 2/3's persisted image, the initial bytes of `cmos` (blank when
+    # not SRAM_SIZE bytes).
+    sram: InitVar[bytes | bytearray | None] = None
+    # Blocks 2/3 (the BIOS CMOS config), one nibble per byte: the medium the
+    # host persists. A write or restore that changes a nibble marks it dirty.
+    cmos: SramImage = field(init=False, repr=False)
     # Time at emulated cycle _start_cycle, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
     # Emulated cycle source (machine.cycle_count), wired by build_machine. A
@@ -90,10 +92,8 @@ class RTC:
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     _start_cycle: int = field(default=0, repr=False)
 
-    def __post_init__(self) -> None:
-        if len(self.sram) != SRAM_SIZE:
-            self.sram = bytearray(SRAM_SIZE)
-        self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK] = list(self.sram)
+    def __post_init__(self, sram: bytes | bytearray | None) -> None:
+        self.cmos = SramImage.of(SRAM_SIZE, sram)
         # Default to 24-hour (register 10 defaults to all-zero storage
         # otherwise, which would read as 12-hour) -- matches this
         # implementation's behaviour before 12-hour support existed.
@@ -112,7 +112,7 @@ class RTC:
             "mode": self._mode,
             "test": self._test,
             "reset": self._reset,
-            "regs": list(self._regs),
+            "regs": self._regs + list(self.cmos.data()),
         }
 
     def parse_state(self, obj: object, label: str) -> RtcState:
@@ -144,27 +144,13 @@ class RTC:
         self._mode = state["mode"]
         self._test = state["test"]
         self._reset = state["reset"]
-        cmos = slice(2 * REGS_PER_BLOCK, 4 * REGS_PER_BLOCK)
-        if state["regs"][cmos] != self._regs[cmos]:
-            self._sram_dirty = True
-        self._regs = list(state["regs"])
+        self._regs = list(state["regs"][:2 * REGS_PER_BLOCK])
+        self.cmos.restore(bytes(state["regs"][2 * REGS_PER_BLOCK:]))
 
     def _elapsed_cycles(self) -> int:
         if self._get_cycle is None:
             return 0
         return self._get_cycle() - self._start_cycle
-
-    def sram_data(self) -> bytes:
-        """Blocks 2/3's current 26 nibbles, one raw byte per nibble
-        (battery-save format, no packing)."""
-        return bytes(self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK])
-
-    @property
-    def sram_dirty(self) -> bool:
-        return self._sram_dirty
-
-    def mark_sram_persisted(self) -> None:
-        self._sram_dirty = False
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.
@@ -190,8 +176,9 @@ class RTC:
         if reg in (TEST_REG, RESET_REG):
             return 0x0F  # write-only
         block = self._mode & MODE_BLOCK_SELECT
-        if block <= 1:
-            self._refresh_time_regs()
+        if block >= 2:
+            return self.cmos.read((block - 2) * REGS_PER_BLOCK + reg) & _MASK[block][reg]
+        self._refresh_time_regs()
         return self._regs[block * REGS_PER_BLOCK + reg] & _MASK[block][reg]
 
     def _write_reg(self, reg: int, value: int) -> None:
@@ -205,11 +192,11 @@ class RTC:
             self._reset = value
             return
         block = self._mode & MODE_BLOCK_SELECT
-        index = block * REGS_PER_BLOCK + reg
         masked = value & _MASK[block][reg]
-        if block >= 2 and self._regs[index] != masked:
-            self._sram_dirty = True
-        self._regs[index] = masked
+        if block >= 2:
+            self.cmos.write((block - 2) * REGS_PER_BLOCK + reg, masked)
+            return
+        self._regs[block * REGS_PER_BLOCK + reg] = masked
 
     def _refresh_time_regs(self) -> None:
         """Write the current time into block 0 and the leap counter into

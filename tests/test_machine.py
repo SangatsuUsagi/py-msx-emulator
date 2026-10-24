@@ -329,8 +329,8 @@ def test_auto_known_gamemaster2_selects_gamemaster2_mapper(
     m = make_machine(rom=_NOP_ROM, cartridge=cart, mapper="auto")
     mapper = m.memory._mapper
     assert isinstance(mapper, GameMaster2Mapper)
-    assert mapper.sram is not None
-    assert len(mapper.sram) == 8192
+    assert mapper.sram_image is not None
+    assert len(mapper.sram_image) == 8192
     assert "unsupported mapper type" not in capsys.readouterr().err
 
 
@@ -573,7 +573,7 @@ def test_sram_media_empty_when_nothing_carries_sram() -> None:
 
 def test_sram_media_includes_slot1_mapper_when_sram_backed() -> None:
     m = make_machine(rom=_NOP_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
-    assert m.sram_media() == {"slot1.sram": m.memory._mapper}
+    assert m.sram_media() == {"slot1.sram": m.memory._mapper.sram_medium()}
 
 
 def test_sram_media_excludes_slot1_mapper_without_sram() -> None:
@@ -588,8 +588,8 @@ def test_sram_media_includes_both_slots_independently() -> None:
         cartridge2=bytes(range(256)) * 32, mapper2="GameMaster2",
     )
     media = m.sram_media()
-    assert media["slot1.sram"] is m.memory._mapper
-    assert media["slot2.sram"] is m.memory._mapper2
+    assert media["slot1.sram"] is m.memory._mapper.sram_medium()
+    assert media["slot2.sram"] is m.memory._mapper2.sram_medium()
 
 
 def test_sram_media_includes_fmpac_and_an_expanded_slot_device() -> None:
@@ -603,7 +603,7 @@ def test_sram_media_includes_fmpac_and_an_expanded_slot_device() -> None:
     m.memory._mapper2_subslots[0] = halnote
 
     media = m.sram_media()
-    assert media == {"fmpac.sram": m.fmpac, "slot2.0.sram": halnote}
+    assert media == {"fmpac.sram": m.fmpac.sram_image, "slot2.0.sram": halnote.sram_image}
 
 
 # ---------------------------------------------------------------------------
