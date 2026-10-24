@@ -25,7 +25,6 @@ from msx.boundary import (
 )
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
-from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 from msx.fmpac import FmPac
 from msx.input import InputState
 from msx.io import IOBus
@@ -38,7 +37,6 @@ from msx.machine_spec import (
     _ExpandedSubslotDevice,
 )
 from msx.mapper import (
-    HALNOTE_SRAM_SIZE,
     Ascii8Mapper,
     Ascii8Sram2Mapper,
     Ascii8Sram8Mapper,
@@ -64,7 +62,6 @@ from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
-from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
 from msx.sram import SramImage
 from msx.vdp.tracer import Tracer
@@ -91,31 +88,24 @@ def _require_scc(scc: SCC | None) -> SCC:
     return scc
 
 
-def _sram_or_empty(sram: bytearray | None) -> bytearray:
-    """Adapt an Optional preloaded save to the SRAM mappers' non-Optional
-    `sram` field -- an empty buffer is the "no preload" sentinel each
-    mapper's __post_init__ already replaces with a correctly-sized one."""
-    return sram if sram is not None else bytearray()
-
-
 # mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
 # scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
 # with None normalised to b"". FlatMapper keeps the None-able cartridge (it
 # treats "no ROM" specially); the bank-switching mappers take rom_bytes.
 _MAPPER_BUILDERS: dict[
-    str, Callable[[bytes | None, bytes, bytearray | None, SCC | None], Mapper]
+    str, Callable[[bytes | None, bytes, bytes | None, SCC | None], Mapper]
 ] = {
     "Mirrored":     lambda cart, rom, sram, scc: FlatMapper(cart),
     "Normal":       lambda cart, rom, sram, scc: FlatMapper(cart),
     "ASCII8":       lambda cart, rom, sram, scc: Ascii8Mapper(rom),
-    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=_sram_or_empty(sram)),
-    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=_sram_or_empty(sram)),
+    "ASCII8SRAM2":  lambda cart, rom, sram, scc: Ascii8Sram2Mapper(rom, sram=sram),
+    "ASCII8SRAM8":  lambda cart, rom, sram, scc: Ascii8Sram8Mapper(rom, sram=sram),
     "ASCII16":      lambda cart, rom, sram, scc: Ascii16Mapper(rom),
     "ASCII16SRAM2": lambda cart, rom, sram, scc: Ascii16Sram2Mapper(
-        rom, sram=_sram_or_empty(sram)
+        rom, sram=sram
     ),
     "ASCII16SRAM8": lambda cart, rom, sram, scc: Ascii16Sram8Mapper(
-        rom, sram=_sram_or_empty(sram)
+        rom, sram=sram
     ),
     "Konami":       lambda cart, rom, sram, scc: KonamiMapper(rom),
     "Majutsushi":   lambda cart, rom, sram, scc: MajutsushiMapper(rom),
@@ -126,8 +116,8 @@ _MAPPER_BUILDERS: dict[
     "Page2":        lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
     "0x4000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x4000),
     "0x8000":       lambda cart, rom, sram, scc: FixedPageMapper(rom, base=0x8000),
-    "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=_sram_or_empty(sram)),
-    "GameMaster2":  lambda cart, rom, sram, scc: GameMaster2Mapper(rom, sram=_sram_or_empty(sram)),
+    "KoeiSRAM32":   lambda cart, rom, sram, scc: KoeiSRAM32Mapper(rom, sram=sram),
+    "GameMaster2":  lambda cart, rom, sram, scc: GameMaster2Mapper(rom, sram=sram),
 }
 
 
@@ -135,7 +125,7 @@ def _make_mapper(
     mapper_type: str,
     cartridge: bytes | None,
     scc: SCC | None = None,
-    sram: bytearray | None = None,
+    sram: bytes | None = None,
 ) -> Mapper:
     builder = _MAPPER_BUILDERS.get(mapper_type)
     if builder is None:
@@ -288,8 +278,7 @@ def _build_expanded_subslot_device(
         halnote_sram = config.media.get(subslot_sram_id(slot, index))
         halnote_device = HalnoteMapper(
             rom=_rom(config, rom_role),
-            sram=bytearray(halnote_sram) if halnote_sram is not None
-            else bytearray(HALNOTE_SRAM_SIZE),
+            sram=halnote_sram,
         )
         return _ExpandedSubslotDeviceWiring(halnote_device, halnote_device)
     if subslot.device == "flat_rom":
@@ -454,8 +443,7 @@ def _wire_flat_overlay(
         fmpac_device = FmPac(
             rom=_rom(config, f"slot{slot}.ext"),
             opll=Opll(),
-            sram=bytearray(fmpac_sram) if fmpac_sram is not None
-            else bytearray(FMPAC_SRAM_SIZE),
+            sram=fmpac_sram,
         )
         return _FlatOverlayWiring(mapper_instance=fmpac_device, scc=scc, fmpac_device=fmpac_device)
     if extension_overlay.device == "scc_i_cart":
@@ -629,8 +617,7 @@ def _resolve_cartridge_slot(
     -- `build_machine` reconciles the two via `_resolve_shared_scc`, since
     `Machine` has a single `scc` field."""
     scc: SCC | None = SCC() if mapper == "KonamiSCC" else None
-    sram_data = bytearray(sram) if sram is not None and mapper in _SRAM_SIZES else None
-    mapper_instance: Mapper = _make_mapper(mapper, cartridge, scc=scc, sram=sram_data)
+    mapper_instance: Mapper = _make_mapper(mapper, cartridge, scc=scc, sram=sram)
     return _CartridgeSlotSetup(mapper_instance, scc)
 
 
@@ -1026,7 +1013,7 @@ def _build_msx2(
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
         start = config.rtc_initial_time
         rtc = RTC(
-            sram=bytearray(rtc_sram) if rtc_sram is not None else bytearray(RTC_SRAM_SIZE),
+            sram=rtc_sram,
             start=start if start is not None else RTC_DEFAULT_START,
         )
     ppi = PPI(
