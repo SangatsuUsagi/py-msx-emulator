@@ -722,10 +722,9 @@ class Debugger:
         if drive_index >= len(fdc.drives):
             print(f"{label}: machine has only {len(fdc.drives)} drive(s)")
             return
-        drive = fdc.drives[drive_index]
         if not args:
-            if drive.image is not None:
-                print(f"{label}: {drive.image.path}")
+            if self._machine.disk_mounted(drive_index):
+                print(f"{label}: {self._machine.disk_path(drive_index)}")
             else:
                 print(f"{label}: empty")
             return

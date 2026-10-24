@@ -23,7 +23,8 @@ def _dbg(drives: int = 1) -> tuple[Debugger, SonyPhilipsInterface]:
         WD2793(), [DiskDrive() for _ in range(drives)], disk_rom=bytes(16384)
     )
     machine = types.SimpleNamespace(fdc=iface)
-    machine.mount_disk = functools.partial(Machine.mount_disk, machine)
+    for name in ("mount_disk", "disk_mounted", "disk_path", "_mounted_image"):
+        setattr(machine, name, functools.partial(getattr(Machine, name), machine))
     return Debugger(machine), iface  # type: ignore[arg-type]
 
 
@@ -95,7 +96,8 @@ def _loop_dbg(iface: SonyPhilipsInterface) -> Debugger:
         ),
         vdp=types.SimpleNamespace(frame_count=0),
     )
-    machine.mount_disk = functools.partial(Machine.mount_disk, machine)
+    for name in ("mount_disk", "disk_mounted", "disk_path", "_mounted_image"):
+        setattr(machine, name, functools.partial(getattr(Machine, name), machine))
     return Debugger(machine)  # type: ignore[arg-type]
 
 

@@ -220,7 +220,7 @@ class TestSramConstruction:
         m.write(0xA000, 0x10)
         m.write(0xB100, 0x42)
         assert m.sram_dirty is True
-        data = m.save_sram()
+        data = m.sram_data()
         assert data[0x100] == 0x42
         assert len(data) == 8192
         m.mark_sram_persisted()

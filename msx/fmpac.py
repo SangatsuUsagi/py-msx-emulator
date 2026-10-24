@@ -192,7 +192,7 @@ class FmPac(SramMediumMixin):
 
     # ---------------------------------------------------------------------- SRAM
 
-    # save_sram/sram_dirty/mark_sram_persisted come from SramMediumMixin.
+    # sram_data/sram_dirty/mark_sram_persisted come from SramMediumMixin.
     # Loading a saved SRAM image is done by passing it as the `sram=`
     # constructor argument; __post_init__ blanks a wrong-size image.
 

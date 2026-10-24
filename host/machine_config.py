@@ -35,7 +35,6 @@ C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
 from __future__ import annotations
 
 import hashlib
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,7 +46,17 @@ if TYPE_CHECKING:
 import yaml
 
 import host.romdb as romdb
-from msx.boundary import DiskMedium, MachineConfig, RtcTime
+from host.media import read_disk_medium
+from msx.boundary import (
+    FMPAC_SRAM_ID,
+    RTC_CMOS_ID,
+    DiskMedium,
+    MachineConfig,
+    RtcTime,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 from msx.machine_loader import _SRAM_SIZES, build_machine
@@ -1153,31 +1162,36 @@ def sram_paths(config: MachineConfig) -> dict[str, Path]:
     carts = ((1, config.cartridge1, config.mapper1), (2, config.cartridge2, config.mapper2))
     for slot, cartridge, mapper in carts:
         if cartridge is not None and mapper in _SRAM_SIZES:
-            paths[f"slot{slot}.sram"] = _cartridge_sram_path(cartridge)
+            paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
     overlays = ((1, config.extension_overlay1), (2, config.extension_overlay2))
     for slot, overlay in overlays:
         if isinstance(overlay, _ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
                 if sub.device == "halnote" and sub.sram_save_path is not None:
-                    paths[f"slot{slot}.{index}.sram"] = sub.sram_save_path
+                    paths[subslot_sram_id(slot, index)] = sub.sram_save_path
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
-            paths["fmpac.sram"] = overlay.sram_save_path
+            paths[FMPAC_SRAM_ID] = overlay.sram_save_path
     if config.spec.generation == "msx2" and config.spec.has_rtc:
-        paths["rtc.cmos"] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
+        paths[RTC_CMOS_ID] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
     return paths
 
 
 def _sram_size_and_label(config: MachineConfig, media_id: str) -> tuple[int, str]:
-    if media_id == "slot1.sram":
+    """Expected image size and warning label of an id sram_paths produced."""
+    if media_id == slot_sram_id(1):
         return _SRAM_SIZES[config.mapper1], ""
-    if media_id == "slot2.sram":
+    if media_id == slot_sram_id(2):
         return _SRAM_SIZES[config.mapper2], ""
-    if media_id == "fmpac.sram":
+    if media_id == FMPAC_SRAM_ID:
         return FMPAC_SRAM_SIZE, "FM-PAC "
-    if media_id == "rtc.cmos":
+    if media_id == RTC_CMOS_ID:
         return RTC_SRAM_SIZE, "RTC "
-    return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
+    for slot in (1, 2):
+        for sub in range(_MAX_SUB_SLOT_INDEX + 1):
+            if media_id == subslot_sram_id(slot, sub):
+                return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
+    raise ValueError(f"unknown SRAM media id {media_id!r}")
 
 
 def _overlay_roms(
@@ -1235,8 +1249,6 @@ def load_machine_config(
             is given.
         OSError: If a disk image cannot be read.
     """
-    from msx.machine import drive_media_id
-
     roms: dict[str, bytes] = {}
     if bios_override is not None:
         roms["main"] = bios_override
@@ -1280,9 +1292,7 @@ def load_machine_config(
                         file=sys.stderr,
                     )
                 elif path is not None:
-                    disks[drive_media_id(index)] = DiskMedium(
-                        path.read_bytes(), not os.access(path, os.W_OK), path
-                    )
+                    disks[drive_media_id(index)] = read_disk_medium(path)
 
     config = MachineConfig(
         spec=spec, roms=roms,

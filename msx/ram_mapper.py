@@ -82,7 +82,7 @@ class RamMapper:
         matching Machine.reset()'s "Memory/VRAM contents are retained"."""
         self.banks[:] = [0, 0, 0, 0]
 
-    def save_sram(self) -> bytes:
+    def sram_data(self) -> bytes:
         """Empty: RamMapper has no SRAM medium, see has_sram."""
         return b""
 

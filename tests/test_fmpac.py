@@ -272,7 +272,7 @@ def test_sram_save_and_load_round_trip(tmp_path: Path) -> None:
     src.write(0x5FFF, 0x69)
     src.write(0x4000, 0xAB)
     assert src.sram_dirty is True
-    data = src.save_sram()
+    data = src.sram_data()
     assert len(data) == SRAM_SIZE
 
     dst = FmPac(rom=_bank_rom(), opll=Opll(), sram=bytearray(data))

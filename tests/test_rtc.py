@@ -175,7 +175,7 @@ def test_leap_counter_write_never_survives_read() -> None:
 
 
 def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
-    """save_sram()'s bytes, passed back as sram=, reproduce the same RAM."""
+    """sram_data()'s bytes, passed back as sram=, reproduce the same RAM."""
     rtc = RTC()
     _set_block(rtc, 2)
     for reg in range(13):
@@ -187,7 +187,7 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
         rtc.write_port(0xB5, (reg + 2) & 0x0F)
 
     assert rtc.sram_dirty is True
-    image = rtc.save_sram()
+    image = rtc.sram_data()
     assert len(image) == SRAM_SIZE
 
     reloaded = RTC(sram=bytearray(image))

@@ -1,12 +1,13 @@
 """host/media.py: files <-> the machine's media bytes."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from host.machine_config import sram_paths
-from host.media import persist_dirty_media, swap_disk
+from host.media import persist_dirty_media, read_disk_medium, swap_disk
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
@@ -133,3 +134,18 @@ def test_swap_of_a_missing_drive_keeps_everything(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         swap_disk(m, 1, _dsk(tmp_path / "a.dsk"))
     assert m.fdc.drives[0].image is None
+
+
+def test_readonly_file_is_read_write_protected(tmp_path: Path) -> None:
+    p = _dsk(tmp_path / "ro.dsk")
+    os.chmod(p, 0o444)
+    try:
+        assert read_disk_medium(p).write_protected is True
+    finally:
+        os.chmod(p, 0o644)
+
+
+def test_writable_file_is_read_writable_and_named(tmp_path: Path) -> None:
+    p = _dsk(tmp_path / "rw.dsk")
+    medium = read_disk_medium(p)
+    assert (medium.write_protected, medium.path, medium.data) == (False, p, p.read_bytes())

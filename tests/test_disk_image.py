@@ -1,12 +1,10 @@
 """Tests for DskDiskImage and DiskDrive (fixed 2DD geometry)."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-from host.media import load_disk_image
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 from tests.disk_factories import _2DD_BYTES, dsk_image
@@ -64,16 +62,6 @@ def test_write_protected_rejects_write(tmp_path: Path) -> None:
     img = dsk_image(_make_dsk(tmp_path / "d.dsk"), write_protected=True)
     with pytest.raises(PermissionError):
         img.write_sector(0, b"\x00" * SECTOR_SIZE)
-
-
-def test_readonly_file_is_write_protected(tmp_path: Path) -> None:
-    p = _make_dsk(tmp_path / "ro.dsk")
-    os.chmod(p, 0o444)
-    try:
-        img = load_disk_image(p)
-        assert img.write_protected is True
-    finally:
-        os.chmod(p, 0o644)
 
 
 # --- DiskDrive geometry --------------------------------------------------
@@ -203,12 +191,6 @@ def test_bpb_invalid_heads_falls_back(tmp_path: Path) -> None:
     # heads must be exactly 1 or 2; any other value is an unrecognised BPB.
     img = dsk_image(_bpb_image(tmp_path / "heads3.dsk", total=1440, spt=9, heads=3))
     assert (img.sectors_per_track, img.sides) == (9, 2)
-
-
-def test_writable_file_is_not_write_protected(tmp_path: Path) -> None:
-    img = load_disk_image(_make_dsk(tmp_path / "rw.dsk"))
-    assert img.write_protected is False
-    img.write_sector(0, b"\x00" * SECTOR_SIZE)  # must not raise
 
 
 def test_clean_image_is_not_dirty(tmp_path: Path) -> None:

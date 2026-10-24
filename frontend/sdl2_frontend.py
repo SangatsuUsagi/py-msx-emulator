@@ -440,7 +440,7 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
     drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
     if machine.fdc is None or not disks.paths:
         return
-    if machine.fdc.drives[0].image is None:
+    if not machine.disk_mounted(0):
         _mount_disk(machine, disks.paths[disks.index])
     else:
         swap_disk(machine, 0, None)
@@ -880,11 +880,11 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
     if machine.fdc is None or not disks.paths:
         return ""
     count = len(disks.paths)
-    image = machine.fdc.drives[0].image
-    if image is None:
+    if not machine.disk_mounted(0):
         return f"disk {disks.index + 1}/{count}: (ejected)"
-    name = image.path.name if image.path is not None else "?"
-    if image.path == disks.paths[disks.index]:
+    path = machine.disk_path(0)
+    name = path.name if path is not None else "?"
+    if path == disks.paths[disks.index]:
         return f"disk {disks.index + 1}/{count}: {name}"
     return f"disk -/{count}: {name}"
 

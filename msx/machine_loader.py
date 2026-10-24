@@ -15,7 +15,15 @@ if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDisk
     from msx.machine import Machine
 
-from msx.boundary import RTC_DEFAULT_START, MachineConfig
+from msx.boundary import (
+    FMPAC_SRAM_ID,
+    RTC_CMOS_ID,
+    RTC_DEFAULT_START,
+    MachineConfig,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
@@ -277,7 +285,7 @@ def _build_expanded_subslot_device(
     spec = config.spec
     rom_role = f"slot{slot}.{index}"
     if subslot.device == "halnote":
-        halnote_sram = config.media.get(f"{rom_role}.sram")
+        halnote_sram = config.media.get(subslot_sram_id(slot, index))
         halnote_device = HalnoteMapper(
             rom=_rom(config, rom_role),
             sram=bytearray(halnote_sram) if halnote_sram is not None
@@ -442,7 +450,7 @@ def _wire_flat_overlay(
                 "cartridge slots at once: real hardware has one FM-PAC "
                 "cartridge, and Machine has a single fmpac field"
             )
-        fmpac_sram = config.media.get("fmpac.sram")
+        fmpac_sram = config.media.get(FMPAC_SRAM_ID)
         fmpac_device = FmPac(
             rom=_rom(config, f"slot{slot}.ext"),
             opll=Opll(),
@@ -741,10 +749,10 @@ def build_machine(
     logo_bytes = bios.logo_bytes
 
     slot1 = _resolve_cartridge_slot(
-        config.mapper1, config.cartridge1, config.media.get("slot1.sram")
+        config.mapper1, config.cartridge1, config.media.get(slot_sram_id(1))
     )
     slot2 = _resolve_cartridge_slot(
-        config.mapper2, config.cartridge2, config.media.get("slot2.sram")
+        config.mapper2, config.cartridge2, config.media.get(slot_sram_id(2))
     )
     mapper_instance = slot1.mapper_instance
     mapper2_instance = slot2.mapper_instance
@@ -895,7 +903,6 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
     from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
     from msx.fdc.tc8566af import TC8566AF
     from msx.fdc.wd2793 import WD2793
-    from msx.machine import drive_media_id
 
     spec = config.spec
     assert spec.fdc is not None
@@ -989,7 +996,7 @@ def _build_msx2(
     vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
     rtc: RTC | None = None
     if spec.has_rtc:
-        rtc_sram = config.media.get("rtc.cmos")
+        rtc_sram = config.media.get(RTC_CMOS_ID)
         start = config.rtc_initial_time
         rtc = RTC(
             sram=bytearray(rtc_sram) if rtc_sram is not None else bytearray(RTC_SRAM_SIZE),
