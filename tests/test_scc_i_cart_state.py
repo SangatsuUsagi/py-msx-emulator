@@ -16,10 +16,11 @@ import pytest
 
 from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.machine import Machine
 from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
 
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 def _msx1_spec(main_rom_dir: Path) -> MachineSpec:

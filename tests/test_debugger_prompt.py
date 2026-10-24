@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
+from msx.boundary import RgbFrame
 from msx.cpu.registers import Registers
 from msx.mapper import FlatMapper
 from msx.memory import Memory
@@ -981,7 +982,7 @@ class TestStateSave:
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, rgb, "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint")
 
     def test_sv_with_title_argument(self, capsys):
         m = _make_machine()
@@ -990,19 +991,16 @@ class TestStateSave:
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save(["my-checkpoint"])
-        mock_save.assert_called_once_with(m, rgb, "my-checkpoint")
+        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "my-checkpoint")
 
-    def test_sv_scales_a_taller_than_native_frame(self, capsys):
+    def test_sv_passes_a_taller_frame_with_its_size(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
         tall_rgb = b"\x00" * (256 * 212 * 3)
-        native_rgb = b"\x00" * (256 * 192 * 3)
         with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
-            with patch("host.screenshot.scale_rgb24", return_value=native_rgb) as mock_scale:
-                with patch("host.state_files.save_state") as mock_save:
-                    dbg._cmd_state_save([])
-        mock_scale.assert_called_once_with(tall_rgb, 256, 212, 256, 192)
-        mock_save.assert_called_once_with(m, native_rgb, "msx_dbg_checkpoint")
+            with patch("host.state_files.save_state") as mock_save:
+                dbg._cmd_state_save([])
+        mock_save.assert_called_once_with(m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint")
 
 
 # ---------------------------------------------------------------------------

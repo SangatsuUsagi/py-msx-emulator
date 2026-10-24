@@ -33,10 +33,6 @@ if TYPE_CHECKING:
 
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
-# MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
-SCREEN_WIDTH: int = 256
-SCREEN_HEIGHT: int = 192
-
 
 class DebuggerHook(Protocol):
     """The interactive debugger the host may attach (host/debugger/prompt.py's

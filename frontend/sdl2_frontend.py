@@ -28,6 +28,7 @@ from host.app_config import AppConfig
 from host.media import swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
 from msx.mouse import MouseDevice
@@ -569,7 +570,7 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False
     if sym == sdl2.SDLK_F8:
-        save_state(machine, rgb_buf, game_title)
+        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title)
         return True, running
     if sym == sdl2.SDLK_F9:
         try:

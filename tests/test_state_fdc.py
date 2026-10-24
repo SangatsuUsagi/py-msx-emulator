@@ -8,6 +8,7 @@ import pytest
 
 from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
@@ -17,7 +18,7 @@ from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from tests.disk_factories import dsk_image
 
 _2DD = 737280
-_RGB_MSX2 = bytearray(256 * 192 * 3)
+_RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()

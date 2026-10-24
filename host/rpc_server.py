@@ -766,16 +766,12 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     from host.state_files import save_state
-    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+    from msx.boundary import RgbFrame
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
     rgb, width, height = server.capture_rgb()
-    # save_state writes a fixed native-resolution (256x192) thumbnail, so match
-    # that size for V9938 modes whose frame can be taller (e.g. 212 lines).
-    if (width, height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-        rgb = scale_rgb24(rgb, width, height, SCREEN_WIDTH, SCREEN_HEIGHT)
-    saved = save_state(server.machine, rgb, title)
+    saved = save_state(server.machine, RgbFrame(width, height, rgb), title)
     return {"path": str(saved)}
 
 

@@ -16,6 +16,7 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_machine_config, sram_paths
 from host.media import persist_dirty_media
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
     MachineLoadError,
@@ -257,7 +258,7 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
 # never got a save path wired at all).
 # ---------------------------------------------------------------------------
 
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()

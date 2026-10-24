@@ -624,9 +624,8 @@ class Debugger:
         TITLE (a default is used when omitted) becomes the filename stem, matching
         the RPC `state.save` contract — it is not a file path. REPL stays open.
         """
-        from host.screenshot import scale_rgb24
         from host.state_files import save_state
-        from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
+        from msx.boundary import RgbFrame
 
         title = args[0] if args else "msx_dbg_checkpoint"
         try:
@@ -634,9 +633,7 @@ class Debugger:
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"sv: render failed: {exc}")
             return
-        if (w, h) != (SCREEN_WIDTH, SCREEN_HEIGHT):
-            rgb = scale_rgb24(rgb, w, h, SCREEN_WIDTH, SCREEN_HEIGHT)
-        save_state(self._machine, rgb, title)
+        save_state(self._machine, RgbFrame(w, h, rgb), title)
 
     def _cmd_state_load(self, args: list[str]) -> None:
         """`ld FILE`: restore machine state from a previously saved .state file.

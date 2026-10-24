@@ -15,6 +15,7 @@ import json
 import pytest
 
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.snapshot_schema import SchemaError
 from msx.state import StateLoadError
 from msx.vdp.v9938 import V9938, parse_v9938_state
@@ -22,7 +23,7 @@ from tests.factories import make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
-_RGB_MSX2 = bytearray(256 * 192 * 3)
+_RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 def _busy_vdp() -> V9938:

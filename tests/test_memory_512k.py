@@ -19,6 +19,7 @@ from host.machine_config import (
     load_machine_spec,
 )
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.machine_spec import (
     MachineLoadError,
     _ExpandedExtensionOverlay,
@@ -464,7 +465,7 @@ def test_real_hb_f1xd_has_no_ram_mapper(tmp_path: Path) -> None:
 # Save-state round-trip (task 4.4)
 # ---------------------------------------------------------------------------
 
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()
