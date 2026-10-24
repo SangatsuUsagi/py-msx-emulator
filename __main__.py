@@ -11,7 +11,7 @@ from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 if TYPE_CHECKING:
     from host.app_config import AppConfig
     from host.rpc_server import DebugServer
-    from msx.boundary import RtcTime
+    from msx.boundary import MediaId, RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
@@ -380,7 +380,7 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_files: "dict[str, Path]",
+    sram_files: "dict[MediaId, Path]",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -598,7 +598,7 @@ def main() -> None:
     logger = DebugLogger(log_path=args.log) if args.debug else None
     machine = None
     rpc_server = None
-    sram_files: dict[str, Path] = {}
+    sram_files: "dict[MediaId, Path]" = {}
     try:
         try:
             config = load_machine_config(

@@ -13,7 +13,7 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import DiskMedium
+from msx.boundary import DiskMedium, MediaId
 from msx.fdc.disk_image import DskDiskImage
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
@@ -245,6 +245,7 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
 def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     config = load_machine_config(_fdc_spec(tmp_path))
-    config.disks["drive_b"] = DiskMedium(bytes(_2DD))
-    with pytest.raises(MachineLoadError, match="drive_b"):
+    config.disks[MediaId.DRIVE_B] = DiskMedium(bytes(_2DD))
+    # The message names the id by its value (not "MediaId.DRIVE_B").
+    with pytest.raises(MachineLoadError, match="disk for drive_b but"):
         build_machine(config)

@@ -8,10 +8,9 @@ from typing import TYPE_CHECKING, Protocol
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
-    FMPAC_SRAM_ID,
-    RTC_CMOS_ID,
     DiskMedium,
     FrameOutput,
+    MediaId,
     RgbFrame,
     drive_media_id,
     slot_sram_id,
@@ -222,16 +221,16 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
 
-    def sram_media(self) -> dict[str, SramImage]:
+    def sram_media(self) -> dict[MediaId, SramImage]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
         mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
         `rtc.cmos`. The FM-PAC is listed only under its own id even when it is
         a slot's mapper."""
-        media: dict[str, SramImage] = {}
+        media: dict[MediaId, SramImage] = {}
         if self.fmpac is not None:
-            media[FMPAC_SRAM_ID] = self.fmpac.sram_image
+            media[MediaId.FMPAC_SRAM] = self.fmpac.sram_image
         if self.rtc is not None:
-            media[RTC_CMOS_ID] = self.rtc.cmos
+            media[MediaId.RTC_CMOS] = self.rtc.cmos
         slots = (
             (1, self.memory._mapper, self.memory._mapper1_subslots),
             (2, self.memory._mapper2, self.memory._mapper2_subslots),
@@ -248,27 +247,27 @@ class Machine:
                     media[subslot_sram_id(slot, sub)] = sub_image
         return media
 
-    def _media(self) -> dict[str, Medium]:
-        media: dict[str, Medium] = dict(self.sram_media())
+    def _media(self) -> dict[MediaId, Medium]:
+        media: dict[MediaId, Medium] = dict(self.sram_media())
         if self.fdc is not None:
             for index, drive in enumerate(self.fdc.drives):
                 if drive.image is not None:
                     media[drive_media_id(index)] = drive.image
         return media
 
-    def dirty_media(self) -> list[str]:
+    def dirty_media(self) -> list[MediaId]:
         """Ids of the media written since they were last persisted."""
-        dirty: list[str] = []
+        dirty: list[MediaId] = []
         for media_id, medium in self._media().items():
             if medium.dirty:
                 dirty.append(media_id)
         return dirty
 
-    def read_media(self, media_id: str) -> bytes:
+    def read_media(self, media_id: MediaId) -> bytes:
         """A medium's current bytes. Raises KeyError for an unknown id."""
         return self._media()[media_id].data()
 
-    def mark_persisted(self, media_id: str) -> None:
+    def mark_persisted(self, media_id: MediaId) -> None:
         """Clear a medium's dirty flag after the host has written it."""
         self._media()[media_id].mark_persisted()
 
@@ -280,7 +279,7 @@ class Machine:
         from msx.fdc.disk_image import DskDiskImage
 
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
-            raise ValueError(f"no floppy drive {drive_media_id(drive)} on this machine")
+            raise ValueError(f"no floppy drive {drive} on this machine")
         new_image = None
         if medium is not None:
             new_image = DskDiskImage(

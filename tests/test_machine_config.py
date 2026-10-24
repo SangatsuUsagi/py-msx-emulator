@@ -57,3 +57,12 @@ def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(Path, "read_bytes", no_read)
     monkeypatch.setattr(Path, "exists", lambda self: pytest.fail(f"checked {self}"))
     assert build_machine(config).rtc is not None
+
+
+def test_sram_size_of_a_non_sram_id_names_it_by_value() -> None:
+    from host.machine_config import _sram_size_and_label
+    from msx.boundary import MediaId
+
+    config = make_config(_ROM)
+    with pytest.raises(ValueError, match="unknown SRAM media id 'drive_a'"):
+        _sram_size_and_label(config, MediaId.DRIVE_A)
