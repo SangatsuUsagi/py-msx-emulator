@@ -130,8 +130,8 @@ def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> by
     C++ equivalent: std::transform with the LUT, or an explicit loop —
       MSVC/GCC/Clang all auto-vectorize a LUT transform reasonably.
     Kept as-is here because: this is the dominant cost of to_rgb24(), called
-      once per frame per pixel plane; Rgb24RowCache calls it only for rows it
-      has not converted before.
+      once per frame per pixel plane; Rgb24RowCache does the same translate
+      only for rows it has not converted before.
     """
     rtab, gtab, btab = channels
     out = ZERO_BYTE * (len(src) * 3)
@@ -148,8 +148,8 @@ class Rgb24RowCache:
     """Memoises RGB24 rows by their palette-index bytes and colour tables.
 
     Most rows of a frame are the same as in the previous frame, so a row
-    already seen is reused instead of translated again; a new row goes
-    through _translate_rgb24. Keyed by the tables' contents (a palette
+    already seen is reused instead of translated again; a new row is
+    translated the way _translate_rgb24 does, inline. Keyed by the tables' contents (a palette
     change makes new tables, so a stale row is impossible), bounded to
     LIMIT rows across all tables and cleared wholesale when full. Derived
     data only: not emulated state and not in a snapshot (vdp-renderer
@@ -186,20 +186,33 @@ class Rgb24RowCache:
         self._last_rows = rows
         return rows
 
+    def _miss(
+        self, rows: dict[bytes, bytes], key: bytes, channels: Channels
+    ) -> tuple[dict[bytes, bytes], bytes]:
+        """Convert `key` (one row) and memoise it; returns the (possibly
+        fresh, after a clear) row dict and the RGB24 bytes."""
+        rtab, gtab, btab = channels
+        buf = ZERO_BYTE * (len(key) * 3)
+        buf[0::3] = key.translate(rtab)
+        buf[1::3] = key.translate(gtab)
+        buf[2::3] = key.translate(btab)
+        rgb = bytes(buf)
+        if self._rows >= self.LIMIT:
+            self._tables.clear()
+            self._rows = 0
+            self._last_key = None
+            rows = self._rows_for(channels)
+        rows[key] = rgb
+        self._rows += 1
+        return rows, rgb
+
     def row(self, row: bytes | bytearray, channels: Channels) -> bytes:
         """RGB24 bytes of one index row through `channels`."""
         key = bytes(row)
         rows = self._rows_for(channels)
         rgb = rows.get(key)
         if rgb is None:
-            rgb = _translate_rgb24(bytearray(key), channels)
-            if self._rows >= self.LIMIT:
-                self._tables.clear()
-                self._rows = 0
-                self._last_key = None
-                rows = self._rows_for(channels)
-            rows[key] = rgb
-            self._rows += 1
+            rows, rgb = self._miss(rows, key, channels)
         return rgb
 
     def frame(self, src: bytearray, channels: Channels) -> bytes:
@@ -208,9 +221,14 @@ class Rgb24RowCache:
         width = len(src) // OUTPUT_H
         if width == 0 or width * OUTPUT_H != len(src):
             return _translate_rgb24(src, channels)
+        rows = self._rows_for(channels)
         parts: list[bytes] = []
         for y in range(0, len(src), width):
-            parts.append(self.row(src[y:y + width], channels))
+            key = bytes(src[y:y + width])
+            rgb = rows.get(key)
+            if rgb is None:
+                rows, rgb = self._miss(rows, key, channels)
+            parts.append(rgb)
         return b"".join(parts)
 
 # Standard TMS9918A hardware palette — 16 (R, G, B) triples.
