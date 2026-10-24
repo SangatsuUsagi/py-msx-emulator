@@ -3,6 +3,7 @@ byte encoding (canonical JSON, strict decoding, base64 blobs)."""
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from msx.boundary import RgbFrame
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.snapshot_schema import SnapshotMismatchError
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = bytes(32 * 1024)
@@ -226,8 +228,8 @@ def test_no_private_names_in_the_file() -> None:
 def test_an_msx1_machine_without_extras() -> None:
     decoded = json.loads(state.save_state(_ran(1)))
     assert set(decoded) == {
-        "format_version", "machine_type", "cpu", "memory", "slots", "vdp", "psg",
-        "scc", "fdc", "rtc", "mouse",
+        "format_version", "machine_type", "machine_config_sha256", "cpu", "memory", "slots",
+        "vdp", "psg", "scc", "fdc", "rtc", "mouse",
     }
     for key in ("scc", "fdc", "rtc", "mouse"):
         assert decoded[key] is None
@@ -317,9 +319,63 @@ def test_an_earlier_version_with_a_float_is_rejected_as_a_version_mismatch() -> 
     # refused for its version, not reported as a corrupt file.
     decoded = json.loads(state.save_state(_ran(1)))
     decoded["format_version"] = 16
-    decoded["out_time"] = 22458.33333141287
+    decoded["out_time"] = 22458.33333141287   # an older format with a float
     target = _ran(1)
     before = state.save_state(target)
-    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 17"):
+    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 18"):
         state.load_state(target, json.dumps(decoded).encode("utf-8"))
     assert state.save_state(target) == before
+
+
+# ---------------------------------------------------------------------------
+# machine-state "A snapshot is bound to its machine configuration"
+# ---------------------------------------------------------------------------
+
+def _konami_machine(cartridge: bytes) -> Machine:
+    return make_machine(rom=_ROM, cartridge=cartridge, mapper="Konami")
+
+
+def test_the_same_configuration_loads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    from tests.factories import make_config
+
+    config = make_config(_ROM, cartridge=bytes(0x20000), mapper="Konami")
+    saved = _konami_machine(bytes(0x20000))
+    data = state.save_state(saved)
+    assert json.loads(data)["machine_config_sha256"] == hashlib.sha256(config.document).hexdigest()
+    state.load_state(_konami_machine(bytes(0x20000)), data)
+
+
+def test_a_different_cartridge_rom_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    data = state.save_state(_konami_machine(bytes(0x20000)))
+    other = _konami_machine(bytes([0xFF]) * 0x20000)
+    before = state.save_state(other)
+    with pytest.raises(SnapshotMismatchError, match="machine configuration mismatch") as exc_info:
+        state.load_state(other, data)
+    assert json.loads(data)["machine_config_sha256"] in str(exc_info.value)
+    assert other.machine_config_sha256 in str(exc_info.value)
+    assert state.save_state(other) == before
+
+
+def test_a_difference_the_specific_checks_see_is_named_by_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from msx.machine_spec import ExtensionOverlay
+
+    fmpac_dir = tmp_path / "fmpac"
+    fmpac_dir.mkdir()
+    (fmpac_dir / "fmpac.rom").write_bytes(bytes(65536))
+    fmpac = ExtensionOverlay(
+        device="fmpac", rom_base_dir=fmpac_dir,
+        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        sram_save_path=fmpac_dir / "fmpac.sram",
+    )
+    data = state.save_state(make_machine(rom=_ROM, extension_overlay=fmpac))
+    scc_plus = make_machine(rom=_ROM, extension_overlay=ExtensionOverlay(device="scc_i_cart"))
+    with pytest.raises(SnapshotMismatchError, match="slot 2 mapper mismatch") as exc_info:
+        state.load_state(scc_plus, data)
+    assert "fmpac" in str(exc_info.value) and "scc_i_cart" in str(exc_info.value)
