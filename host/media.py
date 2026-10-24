@@ -12,18 +12,16 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.fdc.disk_image import DskDiskImage
-from msx.machine import drive_media_id
+from msx.boundary import DiskMedium, drive_media_id
 
 if TYPE_CHECKING:
     from msx.machine import Machine
 
 
-def load_disk_image(path: Path) -> DskDiskImage:
-    """Read a .dsk file into an image, write-protected when the file is not
-    writable. Raises OSError (missing/unreadable) or ValueError (bad size)."""
-    data = path.read_bytes()
-    return DskDiskImage(data, write_protected=not os.access(path, os.W_OK), path=path)
+def read_disk_medium(path: Path) -> DiskMedium:
+    """Read a .dsk file, write-protected when the file is not writable.
+    Raises OSError when it cannot be read."""
+    return DiskMedium(path.read_bytes(), not os.access(path, os.W_OK), path)
 
 
 def media_paths(machine: Machine, sram_paths: Mapping[str, Path]) -> dict[str, Path]:
@@ -32,9 +30,10 @@ def media_paths(machine: Machine, sram_paths: Mapping[str, Path]) -> dict[str, P
     machine's config) plus each mounted disk's own file."""
     paths = dict(sram_paths)
     if machine.fdc is not None:
-        for index, drive in enumerate(machine.fdc.drives):
-            if drive.image is not None and drive.image.path is not None:
-                paths[drive_media_id(index)] = drive.image.path
+        for index in range(len(machine.fdc.drives)):
+            path = machine.disk_path(index)
+            if path is not None:
+                paths[drive_media_id(index)] = path
     return paths
 
 
@@ -59,17 +58,8 @@ def swap_disk(machine: Machine, drive: int, path: Path | None) -> None:
     relative to the working directory, with `~` expanded. Raises OSError or
     ValueError, leaving the drive as it was, when the file cannot be read, is
     not a valid image, or the drive does not exist."""
-    data: bytes | None = None
-    write_protected = False
-    if path is not None:
-        path = path.expanduser()
-        data = path.read_bytes()
-        write_protected = not os.access(path, os.W_OK)
-    outgoing_path: Path | None = None
-    if machine.fdc is not None and 0 <= drive < len(machine.fdc.drives):
-        current = machine.fdc.drives[drive].image
-        if current is not None:
-            outgoing_path = current.path
-    outgoing = machine.mount_disk(drive, data, write_protected, path)
+    medium = read_disk_medium(path.expanduser()) if path is not None else None
+    outgoing_path = machine.disk_path(drive)
+    outgoing = machine.mount_disk(drive, medium)
     if outgoing is not None and outgoing_path is not None:
         outgoing_path.write_bytes(outgoing)

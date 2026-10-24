@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from msx.vdp import renderer
+from msx.vdp._geometry import ZERO_BYTE
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
@@ -132,7 +133,7 @@ def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> by
       once per frame per pixel plane.
     """
     rtab, gtab, btab = channels
-    out = bytearray(len(src) * 3)
+    out = ZERO_BYTE * (len(src) * 3)
     out[0::3] = src.translate(rtab)
     out[1::3] = src.translate(gtab)
     out[2::3] = src.translate(btab)

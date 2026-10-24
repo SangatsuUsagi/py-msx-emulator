@@ -14,9 +14,9 @@ from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineSpec,
-    _ExpandedExtensionOverlay,
-    _ExtensionOverlay,
     _RomEntry,
 )
 from msx.vdp.tracer import Tracer
@@ -60,18 +60,18 @@ def make_config(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logrom: bytes | None = None,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
 ) -> MachineConfig:
     return load_machine_config(
         _msx1_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
+        cartridge1=cartridge,
+        mapper1=mapper,
         cartridge2=cartridge2,
         mapper2=mapper2,
         bios_override=rom,
         logo_override=logrom,
-        extension_overlay=extension_overlay,
+        extension_overlay2=extension_overlay,
         extension_overlay1=extension_overlay1,
     )
 
@@ -88,8 +88,8 @@ def make_config_msx2(
 ) -> MachineConfig:
     return load_machine_config(
         _msx2_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
+        cartridge1=cartridge,
+        mapper1=mapper,
         cartridge2=cartridge2,
         mapper2=mapper2,
         bios_override=rom,
@@ -107,8 +107,8 @@ def make_machine(
     mapper2: str = "auto",
     logrom: bytes | None = None,
     tracer: Tracer | None = None,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
 ) -> Machine:
     config = make_config(
         rom, cartridge, mapper, cartridge2, mapper2, logrom,

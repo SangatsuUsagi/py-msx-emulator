@@ -116,7 +116,7 @@ LinuxではUSB FDDは(`/dev/fd0` ではなく)ブロックデバイスとして 
 ンスタンスを一時停止・検査・操作できます。2つの層があります:
 
 - **Socket RPC** — エミュレータプロセスに組み込まれたUnixドメインソケットの
-  JSON-RPCサーバー(`msx/rpc_server.py`)。**既定では無効**で、`--rpc` で有効
+  JSON-RPCサーバー(`host/rpc_server.py`)。**既定では無効**で、`--rpc` で有効
   化します。
 - **MCPサーバー** — 下記の [`mcp_server.py`](#mcp_serverpy)。Socket RPCを
   [Model Context Protocol](https://modelcontextprotocol.io) ツールとしてラッ

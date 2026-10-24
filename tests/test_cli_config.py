@@ -117,13 +117,13 @@ def test_builtin_scale_when_neither_set() -> None:
 def test_cli_mapper_used() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper", "Konami"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "Konami"
+    assert build_mock.call_args.kwargs["mapper1"] == "Konami"
 
 
 def test_builtin_mapper_auto_when_neither_set() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 def test_config_mapper_attr_has_no_effect() -> None:
@@ -133,7 +133,7 @@ def test_config_mapper_attr_has_no_effect() -> None:
     cfg = AppConfig()
     cfg.mapper = "KonamiSCC"  # type: ignore[attr-defined]
     _c, _o, _e, _run, build_mock, *_ = _run_main(["--machine", "cbios_msx1"], app_cfg=cfg)
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ def test_no_slot2_cartridge_when_neither_set() -> None:
 def test_cli_slot1_used_when_given() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot1", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
@@ -364,20 +364,20 @@ def test_cli_bare_slot_is_an_alias_for_slot1() -> None:
     # naming symmetry with --mapper's alias for --mapper1.
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--slot", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_config_slot1_used_when_cli_omitted() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1"], app_cfg=AppConfig(slot1="game.rom"))
-    assert build_mock.call_args.kwargs["cartridge"] is not None
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
 
 
 def test_positional_cartridge_is_slot1_mapper1_auto_shorthand() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "game.rom"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["cartridge"] is not None
-    assert build_mock.call_args.kwargs["mapper"] == "auto"
+    assert build_mock.call_args.kwargs["cartridge1"] is not None
+    assert build_mock.call_args.kwargs["mapper1"] == "auto"
 
 
 def test_positional_cartridge_and_slot1_together_rejected() -> None:
@@ -391,7 +391,7 @@ def test_positional_cartridge_and_slot1_together_rejected() -> None:
 def test_mapper1_alias_for_mapper() -> None:
     _c, _o, _e, _run, build_mock, *_ = _run_main(
         ["--machine", "cbios_msx1", "--mapper1", "Konami"], app_cfg=AppConfig())
-    assert build_mock.call_args.kwargs["mapper"] == "Konami"
+    assert build_mock.call_args.kwargs["mapper1"] == "Konami"
 
 
 def test_mapper1_accepts_sram_backed_type() -> None:
@@ -399,7 +399,7 @@ def test_mapper1_accepts_sram_backed_type() -> None:
         ["--machine", "cbios_msx1", "--mapper1", "GameMaster2"], app_cfg=AppConfig())
     assert code == 0
     assert err == ""
-    assert build_mock.call_args.kwargs["mapper"] == "GameMaster2"
+    assert build_mock.call_args.kwargs["mapper1"] == "GameMaster2"
 
 
 # ---------------------------------------------------------------------------

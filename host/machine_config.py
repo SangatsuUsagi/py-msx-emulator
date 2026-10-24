@@ -35,7 +35,6 @@ C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
 from __future__ import annotations
 
 import hashlib
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,16 +46,27 @@ if TYPE_CHECKING:
 import yaml
 
 import host.romdb as romdb
-from msx.boundary import DiskMedium, MachineConfig, RtcTime
+from host.media import read_disk_medium
+from msx.boundary import (
+    FMPAC_SRAM_ID,
+    RTC_CMOS_ID,
+    DiskMedium,
+    MachineConfig,
+    RtcTime,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 from msx.machine_loader import _SRAM_SIZES, build_machine
 from msx.machine_spec import (
+    AnyExtensionOverlay,
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
-    _ExtensionOverlay,
     _FdcDef,
     _RomEntry,
     _Slot0RamEntry,
@@ -96,28 +106,22 @@ _SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 _MAX_SUB_SLOT_INDEX = 3
 
 
-def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> tuple[str, str | None]:
-    """Resolve the mapper type and return it with the cartridge sha1 (computed
-    once here so callers can reuse it for the SRAM save path)."""
-    sha1 = (
-        hashlib.sha1(cartridge, usedforsecurity=False).hexdigest()
-        if cartridge is not None
-        else None
-    )
+def _resolve_mapper_type(mapper: str, cartridge: bytes | None) -> str:
+    """Resolve "auto" through the ROM database; any other name passes through."""
     if mapper != "auto":
-        return mapper, sha1
+        return mapper
     if cartridge is None:
-        return "Mirrored", sha1
+        return "Mirrored"
     found = romdb.lookup(cartridge)
     if found is None:
         print("warning: cartridge not found in ROM database, using Mirrored mapper",
               file=sys.stderr)
-        return "Mirrored", sha1
+        return "Mirrored"
     if found not in _SUPPORTED_MAPPERS:
         print(f"warning: unsupported mapper type {found!r} from ROM database, "
               "using Mirrored mapper", file=sys.stderr)
-        return "Mirrored", sha1
-    return found, sha1
+        return "Mirrored"
+    return found
 
 
 @dataclass
@@ -977,7 +981,7 @@ def _parse_expanded_device(
 
 def _parse_expanded_extension_overlay(
     raw: ExtensionOverlayYaml, path: Path, project_root: Path
-) -> _ExpandedExtensionOverlay:
+) -> ExpandedExtensionOverlay:
     rom_base: str = str(raw.get("rom_base", ""))
     rom_base_dir = project_root / rom_base
 
@@ -1013,12 +1017,12 @@ def _parse_expanded_extension_overlay(
             _KNOWN_IO_DEVICES, _IO_DEVICES_REQUIRING_ROM,
         )
 
-    return _ExpandedExtensionOverlay(subslots=subslots, io_device=io_device)
+    return ExpandedExtensionOverlay(subslots=subslots, io_device=io_device)
 
 
 def load_extension_overlay(
     extension_id: str, config_dir: Path, project_root: Path
-) -> _ExtensionOverlay | _ExpandedExtensionOverlay:
+) -> AnyExtensionOverlay:
     """Load and validate an extension overlay fragment.
 
     Args:
@@ -1029,7 +1033,7 @@ def load_extension_overlay(
             path relative paths.
 
     Returns:
-        A resolved _ExtensionOverlay (flat shape) or _ExpandedExtensionOverlay
+        A resolved ExtensionOverlay (flat shape) or ExpandedExtensionOverlay
         (expanded shape), ready for build_machine(extension_overlay=...).
 
     Raises:
@@ -1081,7 +1085,7 @@ def load_extension_overlay(
         raw, rom_base_dir, f"extension overlay '{path}'",
         _KNOWN_EXTENSION_DEVICES, _EXTENSION_DEVICES_REQUIRING_ROM,
     )
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device=resolved.device,
         rom_base_dir=resolved.rom_base_dir,
         rom_entry=resolved.rom_entry,
@@ -1128,7 +1132,7 @@ def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytea
     return None
 
 
-def _load_device_rom(device: _ExpandedSubslotDevice | _ExtensionOverlay, label: str) -> bytes:
+def _load_device_rom(device: _ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
     """Load a resolved device's required ROM file. `rom_base_dir`/
     `rom_entry` are asserted non-None: every caller here already resolved
     `device` from a role (machine io_device, an expanded sub-slot/
@@ -1159,38 +1163,43 @@ def sram_paths(config: MachineConfig) -> dict[str, Path]:
     carts = ((1, config.cartridge1, config.mapper1), (2, config.cartridge2, config.mapper2))
     for slot, cartridge, mapper in carts:
         if cartridge is not None and mapper in _SRAM_SIZES:
-            paths[f"slot{slot}.sram"] = _cartridge_sram_path(cartridge)
+            paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
     overlays = ((1, config.extension_overlay1), (2, config.extension_overlay2))
     for slot, overlay in overlays:
-        if isinstance(overlay, _ExpandedExtensionOverlay):
+        if isinstance(overlay, ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
                 if sub.device == "halnote" and sub.sram_save_path is not None:
-                    paths[f"slot{slot}.{index}.sram"] = sub.sram_save_path
+                    paths[subslot_sram_id(slot, index)] = sub.sram_save_path
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
-            paths["fmpac.sram"] = overlay.sram_save_path
+            paths[FMPAC_SRAM_ID] = overlay.sram_save_path
     if config.spec.generation == "msx2" and config.spec.has_rtc:
-        paths["rtc.cmos"] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
+        paths[RTC_CMOS_ID] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
     return paths
 
 
 def _sram_size_and_label(config: MachineConfig, media_id: str) -> tuple[int, str]:
-    if media_id == "slot1.sram":
+    """Expected image size and warning label of an id sram_paths produced."""
+    if media_id == slot_sram_id(1):
         return _SRAM_SIZES[config.mapper1], ""
-    if media_id == "slot2.sram":
+    if media_id == slot_sram_id(2):
         return _SRAM_SIZES[config.mapper2], ""
-    if media_id == "fmpac.sram":
+    if media_id == FMPAC_SRAM_ID:
         return FMPAC_SRAM_SIZE, "FM-PAC "
-    if media_id == "rtc.cmos":
+    if media_id == RTC_CMOS_ID:
         return RTC_SRAM_SIZE, "RTC "
-    return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
+    for slot in (1, 2):
+        for sub in range(_MAX_SUB_SLOT_INDEX + 1):
+            if media_id == subslot_sram_id(slot, sub):
+                return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
+    raise ValueError(f"unknown SRAM media id {media_id!r}")
 
 
 def _overlay_roms(
-    slot: int, overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None
+    slot: int, overlay: AnyExtensionOverlay | None
 ) -> dict[str, bytes]:
     roms: dict[str, bytes] = {}
-    if isinstance(overlay, _ExpandedExtensionOverlay):
+    if isinstance(overlay, ExpandedExtensionOverlay):
         for index, sub in overlay.subslots.items():
             if sub.rom_entry is not None:
                 roms[f"slot{slot}.{index}"] = _load_device_rom(
@@ -1207,8 +1216,8 @@ def _overlay_roms(
 
 def load_machine_config(
     spec: MachineSpec,
-    cartridge: bytes | None = None,
-    mapper: str = "auto",
+    cartridge1: bytes | None = None,
+    mapper1: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     bios_override: bytes | None = None,
@@ -1217,8 +1226,8 @@ def load_machine_config(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
-    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay1: AnyExtensionOverlay | None = None,
+    extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> MachineConfig:
     """Read every file `spec` and the arguments name into a MachineConfig for
@@ -1226,14 +1235,14 @@ def load_machine_config(
 
     Args:
         spec: Fully-resolved MachineSpec from load_machine_spec().
-        cartridge, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
-        mapper, mapper2: Mapper names; "auto" is resolved here through the
+        cartridge1, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
+        mapper1, mapper2: Mapper names; "auto" is resolved here through the
             ROM database (Mirrored when unknown).
         bios_override, logo_override, extrom_override, disk_rom_override:
             Bytes used instead of the main, logo, SUB (MSX2) or DISK ROM file.
         fdd1, fdd2: Disk images for drives A and B (machines with an FDC).
-        extension_overlay, extension_overlay1: Resolved --extension2 /
-            --extension1 overlays (see load_extension_overlay).
+        extension_overlay1, extension_overlay2: Resolved --extension1 /
+            --extension2 overlays (see load_extension_overlay).
         rtc_initial_time: The RTC's start time (the host's clock).
 
     Raises:
@@ -1241,8 +1250,6 @@ def load_machine_config(
             is given.
         OSError: If a disk image cannot be read.
     """
-    from msx.machine import drive_media_id
-
     roms: dict[str, bytes] = {}
     if bios_override is not None:
         roms["main"] = bios_override
@@ -1256,12 +1263,12 @@ def load_machine_config(
         logo = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
         if logo is not None:
             roms["logo"] = logo
-    mapper1_name, _ = _resolve_mapper_type(mapper, cartridge)
-    mapper2_name, _ = _resolve_mapper_type(mapper2, cartridge2)
+    mapper1_name = _resolve_mapper_type(mapper1, cartridge1)
+    mapper2_name = _resolve_mapper_type(mapper2, cartridge2)
     if spec.io_device is not None and spec.io_device.device == "kanji_rom":
         roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
     roms.update(_overlay_roms(1, extension_overlay1))
-    roms.update(_overlay_roms(2, extension_overlay))
+    roms.update(_overlay_roms(2, extension_overlay2))
 
     disks: dict[str, DiskMedium] = {}
     if spec.generation == "msx2":
@@ -1279,16 +1286,20 @@ def load_machine_config(
                 assert disk is not None
                 roms["disk"] = disk
             for index, path in enumerate((fdd1, fdd2)):
-                if path is not None:
-                    disks[drive_media_id(index)] = DiskMedium(
-                        path.read_bytes(), not os.access(path, os.W_OK), path
+                if path is not None and index >= spec.fdc.drives:
+                    print(
+                        f"warning: --fdd{index + 1} given but machine has only "
+                        f"{spec.fdc.drives} drive(s); ignoring",
+                        file=sys.stderr,
                     )
+                elif path is not None:
+                    disks[drive_media_id(index)] = read_disk_medium(path)
 
     config = MachineConfig(
         spec=spec, roms=roms,
-        cartridge1=cartridge, mapper1=mapper1_name,
+        cartridge1=cartridge1, mapper1=mapper1_name,
         cartridge2=cartridge2, mapper2=mapper2_name,
-        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay,
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         disks=disks, rtc_initial_time=rtc_initial_time,
     )
     for media_id, path in sram_paths(config).items():
@@ -1301,8 +1312,8 @@ def load_machine_config(
 
 def build_machine_from_spec(
     spec: MachineSpec,
-    cartridge: bytes | None = None,
-    mapper: str = "auto",
+    cartridge1: bytes | None = None,
+    mapper1: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
@@ -1313,18 +1324,18 @@ def build_machine_from_spec(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
-    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay1: AnyExtensionOverlay | None = None,
+    extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> Machine:
     """load_machine_config() then build_machine(), for callers that need no
     access to the MachineConfig (see load_machine_config for the arguments)."""
     config = load_machine_config(
-        spec, cartridge, mapper, cartridge2, mapper2,
+        spec, cartridge1, mapper1, cartridge2, mapper2,
         bios_override=bios_override, logo_override=logo_override,
         extrom_override=extrom_override, disk_rom_override=disk_rom_override,
         fdd1=fdd1, fdd2=fdd2,
-        extension_overlay=extension_overlay, extension_overlay1=extension_overlay1,
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
     return build_machine(config, logger=logger, tracer=tracer)

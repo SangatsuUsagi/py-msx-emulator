@@ -20,6 +20,6 @@ def make_dsk(path: Path, size: int = _2DD_BYTES, fill: int = 0x00) -> Path:
 
 def dsk_image(path: Path, *, write_protected: bool = False) -> DskDiskImage:
     """A DskDiskImage built from the file's bytes, named by its path (what
-    host.media.load_disk_image does, with write protection chosen by the
-    test instead of the file mode)."""
+    host.media.read_disk_medium plus Machine.mount_disk do, with write
+    protection chosen by the test instead of the file mode)."""
     return DskDiskImage(path.read_bytes(), write_protected=write_protected, path=path)

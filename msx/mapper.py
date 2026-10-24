@@ -161,11 +161,11 @@ class Mapper(Protocol):
     # Whether this mapper carries battery-backed SRAM that the host persists
     # -- declared on the Protocol so a generic caller (e.g. the media list)
     # can ask directly instead of probing for the method's existence with
-    # hasattr. save_sram() returns the SRAM image (empty without SRAM);
+    # hasattr. sram_data() returns the SRAM image (empty without SRAM);
     # sram_dirty is set by a guest write that changes a byte and cleared by
     # mark_sram_persisted() once the host has written the image.
     has_sram: ClassVar[bool]
-    def save_sram(self) -> bytes: ...
+    def sram_data(self) -> bytes: ...
     @property
     def sram_dirty(self) -> bool: ...
     def mark_sram_persisted(self) -> None: ...
@@ -237,7 +237,7 @@ class BankTracingMapper:
         that no subclass silently falls back to it."""
         pass
 
-    def save_sram(self) -> bytes:
+    def sram_data(self) -> bytes:
         """Default for BankTracingMapper subclasses with has_sram = False --
         overridden by the SRAM-carrying subclasses (SramMediumMixin)."""
         return b""
@@ -329,7 +329,7 @@ class _NoStateMapperMixin:
     def reset(self) -> None:
         pass
 
-    def save_sram(self) -> bytes:
+    def sram_data(self) -> bytes:
         return b""
 
     @property
@@ -347,7 +347,7 @@ class SramMediumMixin:
     sram: bytearray
     _sram_dirty = False
 
-    def save_sram(self) -> bytes:
+    def sram_data(self) -> bytes:
         return bytes(self.sram)
 
     @property

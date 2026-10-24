@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.state import StateLoadError
 from tests.factories import make_machine, make_machine_msx2
 
@@ -24,8 +25,8 @@ def _rewrite_state_version(path: Path, version: int) -> None:
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
-_RGB_MSX1 = bytearray(256 * 192 * 3)
-_RGB_MSX2 = bytearray(256 * 192 * 3)
+_RGB_MSX1 = RgbFrame(256, 192, bytes(256 * 192 * 3))
+_RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()

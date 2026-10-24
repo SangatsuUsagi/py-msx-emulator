@@ -7,7 +7,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from msx.audio_mixer import AudioMixer
-from msx.boundary import FrameOutput, RgbFrame
+from msx.boundary import (
+    FMPAC_SRAM_ID,
+    RTC_CMOS_ID,
+    DiskMedium,
+    FrameOutput,
+    RgbFrame,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
@@ -33,10 +42,6 @@ if TYPE_CHECKING:
 
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
-# MSX1 (SCREEN 0-3) visible resolution, used for screenshots.
-SCREEN_WIDTH: int = 256
-SCREEN_HEIGHT: int = 192
-
 
 class DebuggerHook(Protocol):
     """The interactive debugger the host may attach (host/debugger/prompt.py's
@@ -50,15 +55,10 @@ class SramMedium(Protocol):
     (every Mapper, per cart-rom-mapper's "Mapper protocol" Requirement, plus
     FmPac/RTC, which duck-type the same shape without being Mappers)."""
 
-    def save_sram(self) -> bytes: ...
+    def sram_data(self) -> bytes: ...
     @property
     def sram_dirty(self) -> bool: ...
     def mark_sram_persisted(self) -> None: ...
-
-
-def drive_media_id(index: int) -> str:
-    """Media id of floppy drive `index` (0 -> "drive_a")."""
-    return "drive_" + chr(ord("a") + index)
 
 
 class PauseReason(str, enum.Enum):
@@ -239,19 +239,19 @@ class Machine:
         a slot's mapper."""
         media: dict[str, SramMedium] = {}
         if self.fmpac is not None:
-            media["fmpac.sram"] = self.fmpac
+            media[FMPAC_SRAM_ID] = self.fmpac
         if self.rtc is not None:
-            media["rtc.cmos"] = self.rtc
+            media[RTC_CMOS_ID] = self.rtc
         slots = (
             (1, self.memory._mapper, self.memory._mapper1_subslots),
             (2, self.memory._mapper2, self.memory._mapper2_subslots),
         )
         for slot, mapper, subslots in slots:
             if mapper.has_sram and mapper is not self.fmpac:
-                media[f"slot{slot}.sram"] = mapper
+                media[slot_sram_id(slot)] = mapper
             for sub, sub_mapper in enumerate(subslots):
                 if sub_mapper is not None and sub_mapper.has_sram and sub_mapper is not self.fmpac:
-                    media[f"slot{slot}.{sub}.sram"] = sub_mapper
+                    media[subslot_sram_id(slot, sub)] = sub_mapper
         return media
 
     def _disk_media(self) -> dict[str, DskDiskImage]:
@@ -278,7 +278,7 @@ class Machine:
         disks = self._disk_media()
         if media_id in disks:
             return disks[media_id].data()
-        return self.sram_media()[media_id].save_sram()
+        return self.sram_media()[media_id].sram_data()
 
     def mark_persisted(self, media_id: str) -> None:
         """Clear a medium's dirty flag after the host has written it."""
@@ -288,25 +288,37 @@ class Machine:
             return
         self.sram_media()[media_id].mark_sram_persisted()
 
-    def mount_disk(
-        self, drive: int, image: bytes | None, write_protected: bool = False,
-        path: Path | None = None,
-    ) -> bytes | None:
-        """Swap `image` (None ejects) into `drive` (0 = A). Returns the
+    def mount_disk(self, drive: int, medium: DiskMedium | None) -> bytes | None:
+        """Swap `medium` (None ejects) into `drive` (0 = A). Returns the
         outgoing image's bytes when it held unpersisted writes, for the host to
-        write back. `path` is only recorded as the image's name (see
-        DskDiskImage). Raises ValueError, changing nothing, for a machine
-        without that drive or an image whose size is not a positive multiple of
-        512."""
+        write back. Raises ValueError, changing nothing, for a machine without
+        that drive or an image whose size is not a positive multiple of 512."""
         from msx.fdc.disk_image import DskDiskImage
 
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
             raise ValueError(f"no floppy drive {drive_media_id(drive)} on this machine")
         new_image = None
-        if image is not None:
-            new_image = DskDiskImage(image, write_protected=write_protected, path=path)
+        if medium is not None:
+            new_image = DskDiskImage(
+                medium.data, write_protected=medium.write_protected, path=medium.path
+            )
         outgoing = self.fdc.swap(drive, new_image)
         return outgoing.data() if outgoing is not None else None
+
+    def disk_mounted(self, drive: int) -> bool:
+        """Whether `drive` (0 = A) exists and holds an image."""
+        return self._mounted_image(drive) is not None
+
+    def disk_path(self, drive: int) -> Path | None:
+        """The host's name for the image in `drive` (DiskMedium.path), or None
+        when the drive is empty, absent, or its image was mounted unnamed."""
+        image = self._mounted_image(drive)
+        return image.path if image is not None else None
+
+    def _mounted_image(self, drive: int) -> DskDiskImage | None:
+        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+            return None
+        return self.fdc.drives[drive].image
 
     def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
         """Install (or clear) a programmatic pause sink.
@@ -338,6 +350,11 @@ class Machine:
         never reach into `PSG`'s internals.
         """
         self.psg.attach_mouse(device, port)
+
+    def attach_debugger(self, debugger: DebuggerHook | None) -> None:
+        """Attach (or detach) the interactive debugger a break enters when no
+        pause hook is set."""
+        self._debugger = debugger
 
     def enter_debugger_if_attached(self) -> bool:
         """Break into the attached interactive debugger REPL, if one is attached.
@@ -575,22 +592,23 @@ class Machine:
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
         return int(SAMPLE_RATE // self.video_standard.target_fps)
 
-    def step_frame(self, input: InputState, render_video: bool) -> FrameOutput:
-        """Run one frame with `input` held for the whole frame (the core's
-        per-frame API, allium/core-frontend.allium FrameStepping).
+    def step_frame(self, frame_input: InputState, render_video: bool) -> FrameOutput:
+        """Run one frame with `frame_input` held for the whole frame (the
+        core's per-frame API, allium/core-frontend.allium FrameStepping).
 
         Copies the input lines into the machine's own InputState, feeds the
         frame's mouse motion and buttons to the attached mouse once, runs the
         frame, and returns its RGB24 video (when `render_video`), its
         pre-filter audio and the frame number. `render_video` never changes
-        emulated state.
+        emulated state. `mouse_dx`/`mouse_dy` are this frame's motion only: a
+        caller reusing one InputState zeroes them before the next frame.
         """
-        self.input.copy_from(input)
+        self.input.copy_from(frame_input)
         mouse = self.psg.mouse
         if mouse is not None:
-            mouse.add_motion(input.mouse_dx, input.mouse_dy)
-            mouse.set_button(TRIGGER_A_BIT, input.mouse_left)
-            mouse.set_button(TRIGGER_B_BIT, input.mouse_right)
+            mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
+            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
+            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
         index_buf = self.run_frame(skip_render=not render_video)
         video: RgbFrame | None = None
         if render_video:

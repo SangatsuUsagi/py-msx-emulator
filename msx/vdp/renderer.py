@@ -3,7 +3,7 @@ from __future__ import annotations
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
-from msx.vdp._geometry import OUTPUT_H, pad_to_output_height
+from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE, pad_to_output_height
 
 if TYPE_CHECKING:
     from msx.vdp.vdp import VDP
@@ -87,7 +87,7 @@ def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
     m3 = (r0 >> 1) & 1
 
     h = vdp.display_height
-    buf = bytearray(_W * h)
+    buf = ZERO_BYTE * (_W * h)
 
     if skip_render:
         # A skipped frame still runs the sprite pass, so S#0 never depends on
@@ -274,8 +274,8 @@ def _render_sprites(vdp: VDP, buf: bytearray, status: int) -> int:
     # colour-0 sprite still collides on real TMS9918A/TMS9129 hardware,
     # openMSX VDP.hh canSpriteColor0Collide(); TI TMS9918A data manual
     # Sec. 2.3.2: "Transparent colored sprites ... are also considered").
-    sprite_painted = bytearray(_W * _H)
-    sprite_touched = bytearray(_W * _H)
+    sprite_painted = ZERO_BYTE * (_W * _H)
+    sprite_touched = ZERO_BYTE * (_W * _H)
     coincidence = False
 
     for i in range(32):

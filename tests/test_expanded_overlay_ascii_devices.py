@@ -14,9 +14,9 @@ import pytest
 
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
 )
@@ -88,7 +88,7 @@ def test_ascii8_subslot_yaml_parses(tmp_path: Path) -> None:
         """,
     )
     overlay = load_extension_overlay("test_ascii8", config_dir, tmp_path)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert overlay.subslots[0].device == "ascii8"
     assert overlay.subslots[0].rom_entry is not None
     assert overlay.subslots[0].rom_entry.file == "game.rom"
@@ -117,7 +117,7 @@ def test_ascii16_subslot_yaml_parses(tmp_path: Path) -> None:
         """,
     )
     overlay = load_extension_overlay("test_ascii16", config_dir, tmp_path)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert overlay.subslots[0].device == "ascii16"
     assert overlay.subslots[0].rom_entry is not None
     assert overlay.subslots[0].rom_entry.file == "game.rom"
@@ -222,7 +222,7 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
     rom_dir = tmp_path / "ascii8_rom"
     rom_dir.mkdir()
     (rom_dir / "game.rom").write_bytes(_page_marked_rom(8192, 8))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(
                 device="ascii8", rom_base_dir=rom_dir,
@@ -232,7 +232,7 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, Ascii8Mapper)
@@ -246,7 +246,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
     rom_dir = tmp_path / "ascii16_rom"
     rom_dir.mkdir()
     (rom_dir / "game.rom").write_bytes(_page_marked_rom(16384, 4))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(
                 device="ascii16", rom_base_dir=rom_dir,
@@ -256,7 +256,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, Ascii16Mapper)
@@ -273,7 +273,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
 def test_missing_ascii8_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     rom_dir = tmp_path / "ascii8_rom"
     rom_dir.mkdir()
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(
                 device="ascii8", rom_base_dir=rom_dir,
@@ -284,14 +284,14 @@ def test_missing_ascii8_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="missing.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
 def test_missing_ascii16_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     rom_dir = tmp_path / "ascii16_rom"
     rom_dir.mkdir()
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(
                 device="ascii16", rom_base_dir=rom_dir,
@@ -302,5 +302,5 @@ def test_missing_ascii16_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="missing.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )

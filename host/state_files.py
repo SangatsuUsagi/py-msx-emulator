@@ -15,11 +15,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from host.media import persist_dirty_media
-from host.screenshot import write_rgb24_png
+from host.screenshot import scale_rgb24, write_rgb24_png
 from msx import state
+from msx.boundary import RgbFrame
 
 if TYPE_CHECKING:
     from msx.machine import Machine
+
+# The saved PNG thumbnail's size (MSX1 native resolution), whatever the frame's.
+THUMBNAIL_W = 256
+THUMBNAIL_H = 192
 
 
 def _update_symlink(link: Path, target: Path) -> None:
@@ -40,12 +45,13 @@ def _sanitise_title(title: str) -> str:
     return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
-def save_state(machine: Machine, rgb_buf: bytes | bytearray, title: str) -> Path:
+def save_state(machine: Machine, frame: RgbFrame, title: str) -> Path:
     """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
 
     Args:
         machine: Running machine to snapshot.
-        rgb_buf: Current frame as 256×192 RGB24 bytearray.
+        frame: Current frame, any size; the PNG is it scaled to
+            THUMBNAIL_W x THUMBNAIL_H.
         title: Human-readable title used in the filename.
 
     Returns:
@@ -64,8 +70,10 @@ def save_state(machine: Machine, rgb_buf: bytes | bytearray, title: str) -> Path
     persist_dirty_media(machine)
     state_path.write_bytes(state.save_state(machine))
 
-    from msx.machine import SCREEN_HEIGHT, SCREEN_WIDTH
-    write_rgb24_png(rgb_buf, SCREEN_WIDTH, SCREEN_HEIGHT, png_path)
+    pixels = frame.pixels
+    if (frame.width, frame.height) != (THUMBNAIL_W, THUMBNAIL_H):
+        pixels = scale_rgb24(pixels, frame.width, frame.height, THUMBNAIL_W, THUMBNAIL_H)
+    write_rgb24_png(pixels, THUMBNAIL_W, THUMBNAIL_H, png_path)
 
     _update_symlink(saves_dir / "latest.state", state_path)
     _update_symlink(saves_dir / "latest.png", png_path)
@@ -100,3 +108,9 @@ def load_state(machine: Machine, path: Path | None = None) -> None:
 
     state.load_state(machine, resolved.read_bytes(), str(resolved))
     print(f"state loaded: {resolved}")
+
+
+def resume_state(machine: Machine, resume: str) -> None:
+    """Load the `--resume` argument: a .state path, or "" for
+    saves/states/latest.state. Raises as load_state does."""
+    load_state(machine, path=Path(resume) if resume else None)

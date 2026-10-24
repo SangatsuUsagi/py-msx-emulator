@@ -19,9 +19,9 @@ import pytest
 
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
 )
@@ -100,7 +100,7 @@ def test_extension1_msxdos2_512k_alone_boots() -> None:
 
 def test_load_msxdos2_512k_overlay_parses_real_yaml() -> None:
     overlay = load_extension_overlay("msxdos2_512k", _CONFIG, _ROOT)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert set(overlay.subslots) == {0, 1}
     assert overlay.subslots[0].device == "ram_mapper"
     assert overlay.subslots[0].size_kb == 512
@@ -154,9 +154,9 @@ def _msx2_spec(has_ram_mapper: bool = False) -> MachineSpec:
     )
 
 
-def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> _ExpandedExtensionOverlay:
+def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> ExpandedExtensionOverlay:
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
-    return _ExpandedExtensionOverlay(
+    return ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
             1: _ExpandedSubslotDevice(
@@ -172,7 +172,7 @@ def test_build_machine_wires_ram_mapper_and_kernel_rom_subslots(tmp_path: Path) 
     rom_dir.mkdir()
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_msxdos2_512k_overlay(rom_dir),
+        extension_overlay2=_msxdos2_512k_overlay(rom_dir),
     )
     assert machine.memory.slot2_sub_slot_enabled is True
 
@@ -188,7 +188,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     rom_dir = tmp_path / "msxdos2_rom"
     rom_dir.mkdir()
     (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
             1: _ExpandedSubslotDevice(
@@ -199,7 +199,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     sub1 = machine.memory._mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
@@ -213,7 +213,7 @@ def test_standard_ports_still_register_alongside_kernel_rom(tmp_path: Path) -> N
     rom_dir.mkdir()
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_msxdos2_512k_overlay(rom_dir),
+        extension_overlay2=_msxdos2_512k_overlay(rom_dir),
     )
     machine.io.write_port(0xFC, 5)
     assert machine.io.read_port(0xFC) & 0x1F == 5
@@ -256,7 +256,7 @@ def test_rejected_when_both_slots_claim_ram_mapper(tmp_path: Path) -> None:
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_msxdos2_512k_overlay(rom_dir1),
-            extension_overlay=_msxdos2_512k_overlay(rom_dir2),
+            extension_overlay2=_msxdos2_512k_overlay(rom_dir2),
         )
 
 
@@ -271,7 +271,7 @@ def test_rejected_on_machine_with_existing_ram_mapper(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="has_ram_mapper"):
         build_machine_from_spec(
             spec, bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=_msxdos2_512k_overlay(rom_dir),
+            extension_overlay2=_msxdos2_512k_overlay(rom_dir),
         )
 
 
@@ -285,7 +285,7 @@ def test_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     rom_dir.mkdir()
     with pytest.raises(MachineLoadError, match="MSX1"):
         build_machine_from_spec(
-            _msx1_spec(main_dir), extension_overlay=_msxdos2_512k_overlay(rom_dir)
+            _msx1_spec(main_dir), extension_overlay2=_msxdos2_512k_overlay(rom_dir)
         )
 
 
@@ -301,5 +301,5 @@ def test_missing_kernel_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="msxd22s.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )

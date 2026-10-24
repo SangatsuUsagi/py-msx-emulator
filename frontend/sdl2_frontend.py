@@ -27,7 +27,8 @@ from frontend.sdl2_keyboard import (
 from host.app_config import AppConfig
 from host.media import swap_disk
 from host.screenshot import save_screenshot
-from host.state_files import load_state, save_state
+from host.state_files import load_state, resume_state, save_state
+from msx.boundary import RgbFrame
 from msx.input import KEY_NAME_TO_CELL, InputState
 from msx.machine import Machine
 from msx.mouse import MouseDevice
@@ -439,7 +440,7 @@ def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
     drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
     if machine.fdc is None or not disks.paths:
         return
-    if machine.fdc.drives[0].image is None:
+    if not machine.disk_mounted(0):
         _mount_disk(machine, disks.paths[disks.index])
     else:
         swap_disk(machine, 0, None)
@@ -569,7 +570,7 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False
     if sym == sdl2.SDLK_F8:
-        save_state(machine, rgb_buf, game_title)
+        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title)
         return True, running
     if sym == sdl2.SDLK_F9:
         try:
@@ -879,11 +880,11 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
     if machine.fdc is None or not disks.paths:
         return ""
     count = len(disks.paths)
-    image = machine.fdc.drives[0].image
-    if image is None:
+    if not machine.disk_mounted(0):
         return f"disk {disks.index + 1}/{count}: (ejected)"
-    name = image.path.name if image.path is not None else "?"
-    if image.path == disks.paths[disks.index]:
+    path = machine.disk_path(0)
+    name = path.name if path is not None else "?"
+    if path == disks.paths[disks.index]:
         return f"disk {disks.index + 1}/{count}: {name}"
     return f"disk -/{count}: {name}"
 
@@ -1177,7 +1178,7 @@ def run(
 
     if resume is not None:
         try:
-            load_state(machine, path=Path(resume) if resume else None)
+            resume_state(machine, resume)
         except Exception as exc:
             print(f"resume failed: {exc}", file=sys.stderr)
 

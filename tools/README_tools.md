@@ -121,7 +121,7 @@ as shell scripts, a test harness, or an AI coding agent. These tools can pause,
 examine, and drive a running instance. There are two layers:
 
 - **Socket RPC**: a Unix-domain-socket JSON-RPC server in the emulator process
-  (`msx/rpc_server.py`). It is **off by default**. Enable it with `--rpc`.
+  (`host/rpc_server.py`). It is **off by default**. Enable it with `--rpc`.
 - **MCP server**: [`mcp_server.py`](#mcp_serverpy) below, a standalone stdio
   server that wraps the socket RPC as
   [Model Context Protocol](https://modelcontextprotocol.io) tools. A client

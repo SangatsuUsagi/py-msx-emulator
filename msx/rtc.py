@@ -80,10 +80,10 @@ class RTC:
     # 4 blocks x 13 nibbles. Blocks 2/3 hold the BIOS CMOS config.
     _regs: list[int] = field(default_factory=lambda: [0] * (4 * REGS_PER_BLOCK), repr=False)
     # Blocks 2/3's persisted image, seeded into _regs[26:52] at construction;
-    # save_sram() reads current state back from _regs, not from this field.
+    # sram_data() reads current state back from _regs, not from this field.
     sram: bytearray = field(default_factory=lambda: bytearray(SRAM_SIZE), repr=False)
     # Set when a write or restore changes a block 2/3 nibble; cleared by
-    # mark_sram_persisted() once the host has written save_sram().
+    # mark_sram_persisted() once the host has written sram_data().
     _sram_dirty: bool = field(default=False, init=False, repr=False)
     # Time at emulated cycle _start_cycle, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
@@ -156,7 +156,7 @@ class RTC:
             return 0
         return self._get_cycle() - self._start_cycle
 
-    def save_sram(self) -> bytes:
+    def sram_data(self) -> bytes:
         """Blocks 2/3's current 26 nibbles, one raw byte per nibble
         (battery-save format, no packing)."""
         return bytes(self._regs[2 * REGS_PER_BLOCK:4 * REGS_PER_BLOCK])

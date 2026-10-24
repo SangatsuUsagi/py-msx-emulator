@@ -552,7 +552,7 @@ class TestSramConstructorParam:
 
 
 # ---------------------------------------------------------------------------
-# save_sram
+# sram_data
 # ---------------------------------------------------------------------------
 
 class TestSaveSram:
@@ -560,7 +560,7 @@ class TestSaveSram:
         m = Ascii8Sram2Mapper(rom=_ROM_16K)
         m.sram[0] = 0x42
         m.sram[10] = 0xFF
-        data = m.save_sram()
+        data = m.sram_data()
         assert len(data) == 2048
         assert data[0] == 0x42
         assert data[10] == 0xFF
@@ -568,14 +568,14 @@ class TestSaveSram:
     def test_save_sram8(self):
         m = Ascii8Sram8Mapper(rom=_ROM_16K)
         m.sram[0x1FFF] = 0x99
-        data = m.save_sram()
+        data = m.sram_data()
         assert len(data) == 8192
         assert data[0x1FFF] == 0x99
 
     def test_save_ascii16sram2(self):
         m = Ascii16Sram2Mapper(rom=_ROM_32K)
         m.sram[0x7FF] = 0x55
-        data = m.save_sram()
+        data = m.sram_data()
         assert len(data) == 2048
         assert data[0x7FF] == 0x55
 

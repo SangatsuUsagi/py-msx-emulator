@@ -126,6 +126,9 @@ class _FakeMachine:
 
     # The real swap path, so host.media.swap_disk drives the FloppyDisk.
     mount_disk = Machine.mount_disk
+    disk_mounted = Machine.disk_mounted
+    disk_path = Machine.disk_path
+    _mounted_image = Machine._mounted_image
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:

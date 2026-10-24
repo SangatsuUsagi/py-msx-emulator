@@ -16,13 +16,14 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_machine_config, sram_paths
 from host.media import persist_dirty_media
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
-    _ExtensionOverlay,
     _RomEntry,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
@@ -50,11 +51,11 @@ def _msx2_spec() -> MachineSpec:
     )
 
 
-def _hbi_j1_overlay(rom_dir: Path) -> _ExpandedExtensionOverlay:
+def _hbi_j1_overlay(rom_dir: Path) -> ExpandedExtensionOverlay:
     (rom_dir / "msx-je.rom").write_bytes(bytes(_HALNOTE_ROM_SIZE))
     (rom_dir / "kanjibasic.rom").write_bytes(bytes(_KANJIBASIC_ROM_SIZE))
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
-    return _ExpandedExtensionOverlay(
+    return ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(
                 device="halnote", rom_base_dir=rom_dir,
@@ -73,9 +74,9 @@ def _hbi_j1_overlay(rom_dir: Path) -> _ExpandedExtensionOverlay:
     )
 
 
-def _msxdos2_512k_overlay(rom_dir: Path) -> _ExpandedExtensionOverlay:
+def _msxdos2_512k_overlay(rom_dir: Path) -> ExpandedExtensionOverlay:
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
-    return _ExpandedExtensionOverlay(
+    return ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
             1: _ExpandedSubslotDevice(
@@ -86,9 +87,9 @@ def _msxdos2_512k_overlay(rom_dir: Path) -> _ExpandedExtensionOverlay:
     )
 
 
-def _fmpac_overlay(rom_dir: Path) -> _ExtensionOverlay:
+def _fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     (rom_dir / "fmpac.rom").write_bytes(bytes(65536))
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac", rom_base_dir=rom_dir,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=rom_dir / "fmpac.sram",
@@ -109,7 +110,7 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_hbi_j1_overlay(hbi_dir),
-        extension_overlay=_msxdos2_512k_overlay(dos2_dir),
+        extension_overlay2=_msxdos2_512k_overlay(dos2_dir),
     )
 
     # Slot 1: HBI-J1's halnote + flat Kanji driver/BASIC ROM.
@@ -150,7 +151,7 @@ def test_two_halnote_overlays_at_once_rejected(tmp_path: Path) -> None:
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_hbi_j1_overlay(hbi_dir1),
-            extension_overlay=_hbi_j1_overlay(hbi_dir2),
+            extension_overlay2=_hbi_j1_overlay(hbi_dir2),
         )
 
 
@@ -166,14 +167,14 @@ def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
     other_dir = tmp_path / "other_kanji_rom"
     other_dir.mkdir()
     (other_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
-    overlay1 = _ExpandedExtensionOverlay(
+    overlay1 = ExpandedExtensionOverlay(
         subslots={},
         io_device=_ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=hbi_dir,
             rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
-    overlay2 = _ExpandedExtensionOverlay(
+    overlay2 = ExpandedExtensionOverlay(
         subslots={},
         io_device=_ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=other_dir,
@@ -183,7 +184,7 @@ def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="Kanji-ROM"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay1=overlay1, extension_overlay=overlay2,
+            extension_overlay1=overlay1, extension_overlay2=overlay2,
         )
 
 
@@ -204,7 +205,7 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
-        extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        extension_overlay2=ExtensionOverlay(device="scc_i_cart"),
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
@@ -221,8 +222,8 @@ def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
     fmpac_overlay = _fmpac_overlay(fmpac_dir)
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
-        extension_overlay=fmpac_overlay,
+        extension_overlay1=ExtensionOverlay(device="scc_i_cart"),
+        extension_overlay2=fmpac_overlay,
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
@@ -243,7 +244,7 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_fmpac_overlay(fmpac_dir1),
-            extension_overlay=_fmpac_overlay(fmpac_dir2),
+            extension_overlay2=_fmpac_overlay(fmpac_dir2),
         )
 
 
@@ -257,7 +258,7 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
 # never got a save path wired at all).
 # ---------------------------------------------------------------------------
 
-_RGB = bytearray(256 * 192 * 3)
+_RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
 @pytest.fixture()
@@ -277,7 +278,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
-        extension_overlay=_hbi_j1_overlay(hbi_dir),
+        extension_overlay2=_hbi_j1_overlay(hbi_dir),
     )
     machine = build_machine(config)
     assert machine.fmpac is not None

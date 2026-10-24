@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from host.state_files import load_state, save_state
+from msx.boundary import RgbFrame
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
@@ -217,7 +218,7 @@ def test_state_restore_rederives_irq_level(
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x80
-    path = save_state(machine, bytes(256 * OUTPUT_H * 3), "irq")
+    path = save_state(machine, RgbFrame(256, OUTPUT_H, bytes(256 * OUTPUT_H * 3)), "irq")
 
     vdp.irq = False  # stale pre-restore value
     load_state(machine, path)
@@ -234,7 +235,7 @@ def test_state_restore_drops_stale_irq_when_f_clear(
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x00
-    path = save_state(machine, bytes(256 * OUTPUT_H * 3), "irq-low")
+    path = save_state(machine, RgbFrame(256, OUTPUT_H, bytes(256 * OUTPUT_H * 3)), "irq-low")
 
     vdp.irq = True  # stale pre-restore value
     load_state(machine, path)

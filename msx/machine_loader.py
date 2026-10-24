@@ -7,7 +7,6 @@ devices from those bytes. It reads no file and looks up no database.
 """
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
@@ -16,7 +15,15 @@ if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDisk
     from msx.machine import Machine
 
-from msx.boundary import RTC_DEFAULT_START, MachineConfig
+from msx.boundary import (
+    FMPAC_SRAM_ID,
+    RTC_CMOS_ID,
+    RTC_DEFAULT_START,
+    MachineConfig,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
@@ -25,11 +32,11 @@ from msx.input import InputState
 from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
-    _ExtensionOverlay,
 )
 from msx.mapper import (
     HALNOTE_SRAM_SIZE,
@@ -215,11 +222,11 @@ class _ExtensionWiring:
     """Every device/flag `_wire_extension_overlay` can produce from a
     machine-declared `io_device` and/or a `--extension1`/`--extension2`
     overlay, bundled for `build_machine` to unpack into `Memory` constructor
-    arguments and `Machine` attributes. `mapper_instance`/`mapper2_instance`
+    arguments and `Machine` attributes. `mapper1_instance`/`mapper2_instance`
     are each independently either unchanged (no overlay on that slot) or
     replaced by that slot's flat overlay's device."""
 
-    mapper_instance: Mapper
+    mapper1_instance: Mapper
     mapper2_instance: Mapper
     scc: SCC | None
     slot1_sub_slot_enabled: bool
@@ -278,7 +285,7 @@ def _build_expanded_subslot_device(
     spec = config.spec
     rom_role = f"slot{slot}.{index}"
     if subslot.device == "halnote":
-        halnote_sram = config.media.get(f"{rom_role}.sram")
+        halnote_sram = config.media.get(subslot_sram_id(slot, index))
         halnote_device = HalnoteMapper(
             rom=_rom(config, rom_role),
             sram=bytearray(halnote_sram) if halnote_sram is not None
@@ -306,7 +313,7 @@ def _build_expanded_subslot_device(
 def _wire_expanded_overlay(
     config: MachineConfig,
     slot: int,
-    extension_overlay: _ExpandedExtensionOverlay,
+    extension_overlay: ExpandedExtensionOverlay,
     kanji_device: KanjiRom | None,
     other_slot_ram_mapper_claimed: bool = False,
     other_slot_halnote_claimed: bool = False,
@@ -410,7 +417,7 @@ class _FlatOverlayWiring:
 def _wire_flat_overlay(
     config: MachineConfig,
     slot: int,
-    extension_overlay: _ExtensionOverlay,
+    extension_overlay: ExtensionOverlay,
     scc: SCC | None,
     existing_fmpac: FmPac | None = None,
 ) -> _FlatOverlayWiring:
@@ -443,7 +450,7 @@ def _wire_flat_overlay(
                 "cartridge slots at once: real hardware has one FM-PAC "
                 "cartridge, and Machine has a single fmpac field"
             )
-        fmpac_sram = config.media.get("fmpac.sram")
+        fmpac_sram = config.media.get(FMPAC_SRAM_ID)
         fmpac_device = FmPac(
             rom=_rom(config, f"slot{slot}.ext"),
             opll=Opll(),
@@ -482,13 +489,13 @@ def _wire_flat_overlay(
 
 def _wire_extension_overlay(
     config: MachineConfig,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     scc: SCC | None,
 ) -> _ExtensionWiring:
     """Resolve every device a machine-declared `io_device` and/or either
     slot's `--extensionN` overlay contribute, and how they change that
-    slot's dispatch. `mapper_instance`/`mapper2_instance`/`scc` are the
+    slot's dispatch. `mapper1_instance`/`mapper2_instance`/`scc` are the
     values `build_machine` already resolved from `cartridge`/`mapper`/
     `cartridge2`/`mapper2` -- a flat overlay's device (fmpac/scc_i_cart)
     unconditionally replaces its slot's mapper instance, and `scc_i_cart`
@@ -536,7 +543,7 @@ def _wire_extension_overlay(
     # other_slot_halnote_claimed), differing only in which slot's
     # variables they populate. A future third cross-slot conflict type
     # needs adding to both blocks.
-    if isinstance(extension_overlay1, _ExpandedExtensionOverlay):
+    if isinstance(extension_overlay1, ExpandedExtensionOverlay):
         expanded1 = _wire_expanded_overlay(config, 1, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
         mapper1_subslots = expanded1.subslots
@@ -547,14 +554,14 @@ def _wire_extension_overlay(
         slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
     elif extension_overlay1 is not None:
         flat1 = _wire_flat_overlay(config, 1, extension_overlay1, scc)
-        mapper_instance = flat1.mapper_instance
+        mapper1_instance = flat1.mapper_instance
         scc = flat1.scc
         if flat1.fmpac_device is not None:
             fmpac_device = flat1.fmpac_device
 
     # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
     # replacing whatever slot-2 cartridge mapper was resolved above.
-    if isinstance(extension_overlay2, _ExpandedExtensionOverlay):
+    if isinstance(extension_overlay2, ExpandedExtensionOverlay):
         expanded2 = _wire_expanded_overlay(
             config, 2, extension_overlay2, kanji_device,
             other_slot_ram_mapper_claimed=slot1_ram_mapper_claimed,
@@ -573,7 +580,7 @@ def _wire_extension_overlay(
             fmpac_device = flat2.fmpac_device
 
     return _ExtensionWiring(
-        mapper_instance=mapper_instance,
+        mapper1_instance=mapper1_instance,
         mapper2_instance=mapper2_instance,
         scc=scc,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
@@ -662,7 +669,7 @@ def _is_ram_mapper(mapper: Mapper | None) -> TypeGuard[RamMapper]:
 
 
 def _resolve_shared_dac(
-    spec: MachineSpec, mapper_instance: Mapper, mapper2_instance: Mapper
+    spec: MachineSpec, mapper1_instance: Mapper, mapper2_instance: Mapper
 ) -> MajutsushiMapper | None:
     """Cross-slot Majutsushi-DAC-sharing check between the two cartridge
     slots' final mapper instances. Takes the post-extension-overlay-wiring
@@ -671,7 +678,7 @@ def _resolve_shared_dac(
     fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     with it. `Machine` has a single `dac` field and real hardware never has
     two Majutsushi-style DAC cartridges attached at once."""
-    dac1 = mapper_instance if _is_majutsushi_mapper(mapper_instance) else None
+    dac1 = mapper1_instance if _is_majutsushi_mapper(mapper1_instance) else None
     dac2 = mapper2_instance if _is_majutsushi_mapper(mapper2_instance) else None
     if dac1 is not None and dac2 is not None:
         raise MachineLoadError(
@@ -742,12 +749,12 @@ def build_machine(
     logo_bytes = bios.logo_bytes
 
     slot1 = _resolve_cartridge_slot(
-        config.mapper1, config.cartridge1, config.media.get("slot1.sram")
+        config.mapper1, config.cartridge1, config.media.get(slot_sram_id(1))
     )
     slot2 = _resolve_cartridge_slot(
-        config.mapper2, config.cartridge2, config.media.get("slot2.sram")
+        config.mapper2, config.cartridge2, config.media.get(slot_sram_id(2))
     )
-    mapper_instance = slot1.mapper_instance
+    mapper1_instance = slot1.mapper_instance
     mapper2_instance = slot2.mapper_instance
     scc = _resolve_shared_scc(spec, slot1.scc, slot2.scc)
 
@@ -756,8 +763,8 @@ def build_machine(
     # machine-declared one) and, when present, unconditionally occupy their
     # target slot, replacing whatever cartridge mapper was resolved above --
     # see _wire_extension_overlay.
-    wiring = _wire_extension_overlay(config, mapper_instance, mapper2_instance, scc)
-    mapper_instance = wiring.mapper_instance
+    wiring = _wire_extension_overlay(config, mapper1_instance, mapper2_instance, scc)
+    mapper1_instance = wiring.mapper1_instance
     mapper2_instance = wiring.mapper2_instance
     scc = wiring.scc
     slot1_sub_slot_enabled = wiring.slot1_sub_slot_enabled
@@ -768,7 +775,7 @@ def build_machine(
     # an extension overlay replacing a slot's mapper (e.g. --extension1
     # fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     # with it, and either slot's mapper can resolve to Majutsushi.
-    dac = _resolve_shared_dac(spec, mapper_instance, mapper2_instance)
+    dac = _resolve_shared_dac(spec, mapper1_instance, mapper2_instance)
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     psg = PSG(_input=input_state)
@@ -796,7 +803,7 @@ def build_machine(
             config=config,
             main_bytes=main_bytes,
             logo_bytes=logo_bytes,
-            mapper_instance=mapper_instance,
+            mapper1_instance=mapper1_instance,
             mapper2_instance=mapper2_instance,
             dac=dac,
             scc=scc,
@@ -816,7 +823,7 @@ def build_machine(
             spec=spec,
             main_bytes=main_bytes,
             logo_bytes=logo_bytes,
-            mapper_instance=mapper_instance,
+            mapper1_instance=mapper1_instance,
             mapper2_instance=mapper2_instance,
             dac=dac,
             scc=scc,
@@ -840,7 +847,7 @@ def _build_msx1(
     spec: MachineSpec,
     main_bytes: bytes,
     logo_bytes: bytes | None,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
@@ -858,7 +865,7 @@ def _build_msx1(
     memory = Memory(
         rom=main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
-        _mapper=mapper_instance,
+        _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
@@ -896,7 +903,6 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
     from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
     from msx.fdc.tc8566af import TC8566AF
     from msx.fdc.wd2793 import WD2793
-    from msx.machine import drive_media_id
 
     spec = config.spec
     assert spec.fdc is not None
@@ -908,16 +914,16 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
     else:
         device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
-    for idx in range(max(len(drives), 2)):
-        disk = config.disks.get(drive_media_id(idx))
-        if disk is None:
-            continue
-        if idx >= len(drives):
-            print(
-                f"warning: --fdd{idx + 1} given but machine has only "
-                f"{len(drives)} drive(s); ignoring",
-                file=sys.stderr,
+    drive_ids = [drive_media_id(idx) for idx in range(len(drives))]
+    for media_id in config.disks:
+        if media_id not in drive_ids:
+            raise MachineLoadError(
+                f"MachineConfig has a disk for {media_id} but the machine has "
+                f"{len(drives)} drive(s)"
             )
+    for idx, media_id in enumerate(drive_ids):
+        disk = config.disks.get(media_id)
+        if disk is None:
             continue
         image = DskDiskImage(disk.data, write_protected=disk.write_protected, path=disk.path)
         device.mount(image, drive=idx)
@@ -929,7 +935,7 @@ def _build_msx2(
     config: MachineConfig,
     main_bytes: bytes,
     logo_bytes: bytes | None,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
@@ -964,7 +970,7 @@ def _build_msx2(
     memory = Memory(
         rom=main_bytes,
         ram=ram_bytes,
-        _mapper=mapper_instance,
+        _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
@@ -990,7 +996,7 @@ def _build_msx2(
     vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
     rtc: RTC | None = None
     if spec.has_rtc:
-        rtc_sram = config.media.get("rtc.cmos")
+        rtc_sram = config.media.get(RTC_CMOS_ID)
         start = config.rtc_initial_time
         rtc = RTC(
             sram=bytearray(rtc_sram) if rtc_sram is not None else bytearray(RTC_SRAM_SIZE),
@@ -1025,6 +1031,8 @@ def _build_msx2(
         ppi=ppi,
     )
     if rtc is not None:
+        # PORT-NOTE: same back-reference as _wire_post_construction_attrs' cycle
+        #   closures; a port shares a narrow cycle counter with the RTC.
         rtc._get_cycle = lambda: machine.cycle_count
         rtc._start_cycle = machine.cycle_count
     if tracer is not None and isinstance(vdp, V9938):

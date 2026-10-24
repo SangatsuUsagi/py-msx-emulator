@@ -1,6 +1,6 @@
-"""Save and restore complete machine state to/from disk.
+"""Encode and decode a complete machine snapshot as versioned JSON bytes.
 
-The on-disk `.state` file is a stdlib-only JSON container (no pickle): scalar and
+The snapshot is a stdlib-only JSON container (no pickle): scalar and
 structured fields are stored as JSON, and byte blobs (RAM, VRAM, SRAM) are wrapped
 as ``{"__b64__": "<base64>"}``. `format_version` guards compatibility.
 """
@@ -261,15 +261,6 @@ def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
     return cast(dict[str, object], machine.scc.snapshot())
 
 
-def _check_scc_wiring(machine: "Machine", scc_state: dict[str, object] | None) -> None:
-    if (scc_state is None) != (machine.scc is None):
-        raise SnapshotMismatchError(
-            "SCC wiring mismatch: "
-            f"running machine has {'an SCC' if machine.scc is not None else 'no SCC'}, "
-            f"saved state has {'SCC state' if scc_state is not None else 'no SCC state'}"
-        )
-
-
 def _rtc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.rtc is None:
         return None
@@ -298,15 +289,6 @@ def _fdc_to_dict(machine: "Machine") -> dict[str, object] | None:
     if machine.fdc is None:
         return None
     return machine.fdc.snapshot()
-
-
-def _check_fdc_wiring(machine: "Machine", fdc_state: dict[str, object] | None) -> None:
-    if (fdc_state is None) != (machine.fdc is None):
-        raise SnapshotMismatchError(
-            "FDC wiring mismatch: "
-            f"running machine has {'an FDC' if machine.fdc is not None else 'no FDC'}, "
-            f"saved state has {'FDC state' if fdc_state is not None else 'no FDC state'}"
-        )
 
 
 def _check_slot0_ram_wiring(machine: "Machine", slot0_ram: bytearray | None) -> None:
@@ -557,7 +539,7 @@ def _parse_vdp9938(value: object, msx2: bool, vdp_latch: int | None) -> V9938Sta
     return state
 
 
-def _check_snapshot_keys(data: dict[str, object], resolved: str) -> None:
+def _check_snapshot_keys(data: dict[str, object], source: str) -> None:
     """Refuse a file whose top-level keys are not MachineSnapshot's: an
     unknown key, or a missing key that has no default."""
     known: set[str] = set()
@@ -572,12 +554,12 @@ def _check_snapshot_keys(data: dict[str, object], resolved: str) -> None:
             unknown.append(key)
     if unknown or missing:
         raise ValueError(
-            f"incompatible state file layout ({resolved}): "
+            f"incompatible state file layout ({source}): "
             f"unknown keys {sorted(unknown)}, missing keys {sorted(missing)}"
         )
 
 
-def parse_snapshot(decoded: object, resolved: str) -> MachineSnapshot:
+def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
     """Turn a decoded state file into a MachineSnapshot, checking the format
     version, then the key set, then every top-level value's type, range and
     (where the snapshot fixes it) length. A bad value raises StateLoadError
@@ -586,15 +568,15 @@ def parse_snapshot(decoded: object, resolved: str) -> MachineSnapshot:
     parse_state, which needs the running machine. Nothing here touches a
     machine."""
     if not isinstance(decoded, dict):
-        raise ValueError(f"corrupt or unsupported save state: {resolved} (not an object)")
+        raise ValueError(f"corrupt or unsupported save state: {source} (not an object)")
     data = cast(dict[str, object], decoded)
     version = data.get("format_version")
     if version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {version}, "
-            f"expected {CURRENT_FORMAT_VERSION} ({resolved})"
+            f"expected {CURRENT_FORMAT_VERSION} ({source})"
         )
-    _check_snapshot_keys(data, resolved)
+    _check_snapshot_keys(data, source)
 
     def machine_type_of() -> str:
         text = check_str(data["machine_type"], "machine_type")
@@ -724,7 +706,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
                 "ram_mapper_ram",
                 ValueError(f"ram_mapper_ram must be {size} bytes, got {len(snap.ram_mapper_ram)}"),
             )
-    _check_fdc_wiring(machine, snap.fdc_state)
+    _check_optional_wiring("FDC", machine.fdc is not None, snap.fdc_state)
     _check_expanded_subslots(
         1, machine.memory.slot1_sub_slot_enabled, machine.memory._mapper1_subslots,
         snap.mapper1_subslot_kinds,
@@ -733,7 +715,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
         2, machine.memory.slot2_sub_slot_enabled, machine.memory._mapper2_subslots,
         snap.mapper2_subslot_kinds,
     )
-    _check_scc_wiring(machine, snap.scc_state)
+    _check_optional_wiring("SCC", machine.scc is not None, snap.scc_state)
     _check_slot0_ram_wiring(machine, snap.slot0_ram)
     _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc_state)
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse_state)
@@ -947,7 +929,7 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
     # Legacy pickle files (format_version <= 4) start with a pickle opcode byte,
     # not JSON. Refuse to unpickle them; the format is now stdlib JSON.
     stripped = data.lstrip()
-    if not stripped[:1] == b"{":
+    if stripped[:1] != b"{":
         raise ValueError(
             "legacy pickle save states are no longer supported; please re-save "
             f"({source})"
