@@ -905,6 +905,7 @@ def _build_msx1(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
         video_standard=spec.video_standard,
+        keyboard_layout=spec.keyboard_type,
         ppi=ppi,
     )
 
@@ -1040,6 +1041,7 @@ def _build_msx2(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
         input=input_state, _logger=logger,
         video_standard=spec.video_standard,
+        keyboard_layout=spec.keyboard_type,
         fdc=fdc_device,
         rtc=rtc,
         ppi=ppi,

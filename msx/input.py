@@ -33,6 +33,54 @@ KEY_NAME_TO_CELL: dict[str, tuple[int, int]] = {
 }
 
 _NUM_ROWS = 11
+_RELEASED_ROW = 0xFF
+_JOY_LINES_MASK = 0x3F  # bits 0-5: up/down/left/right/trigger A/trigger B
+
+
+@dataclass(frozen=True)
+class InputFrame:
+    """One frame's input, the value the core takes (allium/core-frontend.allium
+    InputState): 11 active-low keyboard matrix rows, both merged 6-bit
+    active-low joystick ports, this frame's mouse motion in MSX counts and the
+    two mouse buttons. Immutable, so a caller cannot change it after handing
+    it over; the defaults are "nothing pressed, no motion".
+    """
+
+    key_matrix: tuple[int, ...] = (_RELEASED_ROW,) * _NUM_ROWS
+    joystick_ports: tuple[int, int] = (_JOY_LINES_MASK, _JOY_LINES_MASK)
+    mouse_dx: int = 0
+    mouse_dy: int = 0
+    mouse_left: bool = False
+    mouse_right: bool = False
+
+    def __post_init__(self) -> None:
+        if len(self.key_matrix) != _NUM_ROWS:
+            raise ValueError(f"key_matrix needs {_NUM_ROWS} rows, got {len(self.key_matrix)}")
+        for row in self.key_matrix:
+            if not 0 <= row <= 0xFF:
+                raise ValueError(f"key_matrix row out of range: {row}")
+        if len(self.joystick_ports) != 2:
+            raise ValueError(f"joystick_ports needs 2 ports, got {len(self.joystick_ports)}")
+        for port in self.joystick_ports:
+            if not 0 <= port <= _JOY_LINES_MASK:
+                raise ValueError(f"joystick port value out of range: {port}")
+
+
+@dataclass
+class InputLines:
+    """The input lines the PPI (keyboard rows) and the PSG (joystick ports)
+    read, owned by the Machine and set from an InputFrame by apply()."""
+
+    matrix: list[int] = field(default_factory=lambda: [_RELEASED_ROW] * _NUM_ROWS)
+    joy1: int = _JOY_LINES_MASK
+    joy2: int = _JOY_LINES_MASK
+
+    def apply(self, frame: InputFrame) -> None:
+        """Take `frame`'s rows and ports. The matrix list object is kept, so
+        readers holding this InputLines see the new rows."""
+        self.matrix[:] = frame.key_matrix
+        self.joy1 = frame.joystick_ports[0]
+        self.joy2 = frame.joystick_ports[1]
 
 
 @dataclass

@@ -9,11 +9,20 @@ core receives every ROM and SRAM image as bytes in a MachineConfig
 """
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from msx.ppi import PpiControlRead
 from msx.vdp._geometry import VideoStandard
+
+
+class KeyboardLayout(str, enum.Enum):
+    """A machine's keyboard matrix layout; the values are the machine-YAML
+    spellings (ppi8255 `keyboard_type`). Format one with `.value`."""
+
+    INTERNATIONAL = "int"
+    JAPANESE = "jp"
 
 
 class MachineLoadError(Exception):
@@ -77,8 +86,8 @@ class MachineSpec:
     # field's addition).
     slot0_ram_entry: _Slot0RamEntry | None = None
 
-    # Keyboard layout resolved from the ppi8255 device ("int" or "jp")
-    keyboard_type: str = "int"
+    # Keyboard layout resolved from the ppi8255 device
+    keyboard_type: KeyboardLayout = KeyboardLayout.INTERNATIONAL
 
     # What a port 0xAB read returns, resolved from the ppi8255 device
     # (open_bus on the S1985 machines, bus_latch on the S3527 ones -- see

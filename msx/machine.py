@@ -19,6 +19,7 @@ from msx.diagnostics.logger import DebugLogger
 from msx.input import InputState
 from msx.io import IOBus
 from msx.kanji import KanjiRom
+from msx.machine_spec import KeyboardLayout
 from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
@@ -97,6 +98,9 @@ class Machine:
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
     audio: AudioMixer = field(default_factory=AudioMixer, repr=False)
     video_standard: VideoStandard = VideoStandard.NTSC
+    # The keyboard matrix layout, from the machine definition (frontends pick
+    # their host-key table from it).
+    keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
     # Free-running T-state clock, never reset.
     #
     # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.

@@ -66,3 +66,22 @@ def test_sram_size_of_a_non_sram_id_names_it_by_value() -> None:
     config = make_config(_ROM)
     with pytest.raises(ValueError, match="unknown SRAM media id 'drive_a'"):
         _sram_size_and_label(config, MediaId.DRIVE_A)
+
+
+def test_machine_keyboard_layout_defaults_to_international() -> None:
+    # input-keyboard "Default layout is International".
+    from msx.machine_spec import KeyboardLayout
+
+    machine = build_machine(make_config(_ROM))
+    assert machine.keyboard_layout is KeyboardLayout.INTERNATIONAL
+    assert machine.keyboard_layout == "int"
+
+
+def test_a_jis_machine_definition_gives_the_japanese_layout() -> None:
+    from host.machine_config import load_device_registry, load_machine_spec
+    from msx.machine_spec import KeyboardLayout
+
+    root = Path(__file__).resolve().parent.parent
+    config_dir = root / "config"
+    spec = load_machine_spec("hb_f1xd", config_dir, load_device_registry(config_dir), root)
+    assert spec.keyboard_type is KeyboardLayout.JAPANESE

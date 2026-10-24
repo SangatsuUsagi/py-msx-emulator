@@ -63,6 +63,7 @@ from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
     ExtensionOverlay,
+    KeyboardLayout,
     MachineLoadError,
     MachineSpec,
     _ExpandedSubslotDevice,
@@ -661,7 +662,7 @@ def _validate_slot3(context: str, result: _Slot3Msx2) -> None:
 class _BuiltinDevices(NamedTuple):
     has_v9938: bool
     has_rtc: bool
-    keyboard_type: str
+    keyboard_type: KeyboardLayout
     ppi_control_read: PpiControlRead
     io_ports: dict[str, tuple[int, int]]
 
@@ -674,7 +675,7 @@ def _parse_builtin_devices(
     """Resolve the `builtin_devices` list against the device registry."""
     has_v9938 = False
     has_rtc = False
-    keyboard_type = "int"
+    keyboard_type = KeyboardLayout.INTERNATIONAL
     ppi_control_read = PpiControlRead.CONTROL
     device_io_ports: dict[str, tuple[int, int]] = {}
 
@@ -711,7 +712,7 @@ def _parse_builtin_devices(
                 raise MachineLoadError(
                     f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
                 )
-            keyboard_type = kt
+            keyboard_type = KeyboardLayout(kt)
             if "control_readback" in dev.raw or (
                 isinstance(overrides, dict) and "control_readback" in overrides
             ):
