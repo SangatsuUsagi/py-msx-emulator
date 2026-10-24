@@ -668,6 +668,14 @@ def test_every_config_key_name_translates() -> None:
     assert set(KEYBOARD_KEY_NAMES) == set(KEY_NAME_TO_SDLKEY)
 
 
+def test_config_joystick_functions_match_the_frontend_port_bits() -> None:
+    # keyboard_joystick.buttons function names are listed twice (the host
+    # validator cannot import the SDL frontend); the two lists must agree.
+    from frontend.sdl2_keyboard import _KEYBOARD_JOY_FUNCTIONS as FRONTEND_FUNCTIONS
+    from host.app_config import _KEYBOARD_JOY_FUNCTIONS as CONFIG_FUNCTIONS
+    assert set(CONFIG_FUNCTIONS) == set(FRONTEND_FUNCTIONS)
+
+
 def test_every_config_hotkey_name_translates() -> None:
     # app-config-file "Every accepted name translates in the frontend" (hotkeys).
     from frontend.sdl2_keyboard import FKEY_NAME_TO_SDLKEY
