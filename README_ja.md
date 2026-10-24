@@ -331,9 +331,9 @@ SHA1 でタイトルを引き、ゲームタイトルとマッパーを自動で
 
 ### ステートセーブ/ロード
 
-ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、マウント中のディスクの識別情報を含む。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
+ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報を含む。ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になる。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持つ。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定める。形式のバージョンは 17 で、それより前のバージョンのステートは読み込めない。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
 
-- 実装：`msx/state.py`（スナップショットのエンコード）、`host/state_files.py`（ファイル）
+- 実装：`msx/state.py`（スナップショットのエンコード）、`msx/snapshot.schema.json`（構成）、`host/state_files.py`（ファイル）
 
 ### インタラクティブデバッガ
 
@@ -881,7 +881,8 @@ py-msx-emulator/
 │   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
-│   └── state.py           # マシン状態のスナップショット（バージョン付き JSON）
+│   ├── snapshot.schema.json # ステートの構成を定める JSON Schema
+│   └── state.py           # マシン状態のスナップショット（正規化した JSON）
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）

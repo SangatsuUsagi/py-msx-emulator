@@ -546,13 +546,20 @@ Fast-forward does not play audio. For automatic frame skip, see
 
 A complete hardware snapshot in a stdlib JSON container. It includes the CPU,
 RAM, VDP, PSG, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state,
-and the identity of the mounted disk. Each save also writes a PNG screenshot
+the RTC, the mouse, and the identity of the mounted disk. The file is
+canonical JSON (RFC 8785): the same machine state always gives the same
+bytes, also from another implementation. It holds integers only, and byte
+blobs such as RAM and VRAM as base64 strings.
+[`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines
+its layout. The format version is 17. Save states from earlier versions do
+not load. Each save also writes a PNG screenshot
 and updates the `saves/states/latest.*` symlinks for quick resume. A save
 records the mounted `.dsk` by path, size, and SHA1. If the current disk does
 not match at load time, the load fails with an error and does not continue
 silently.
 
-- Implementation: `msx/state.py` (snapshot encoding), `host/state_files.py` (files)
+- Implementation: `msx/state.py` (snapshot encoding), `msx/snapshot.schema.json`
+  (layout), `host/state_files.py` (files)
 
 ### Interactive debugger
 
@@ -1204,7 +1211,8 @@ py-msx-emulator/
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── screenshot.py      # Current-frame RGB24 capture
-│   └── state.py           # Machine state snapshot (versioned JSON)
+│   ├── snapshot.schema.json # JSON Schema of the save-state layout
+│   └── state.py           # Machine state snapshot (canonical JSON)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
