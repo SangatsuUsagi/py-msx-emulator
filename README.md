@@ -625,9 +625,9 @@ converts every frame to RGB, as the frontend does for a shown frame. The
 `--benchmark` numbers thus include the cost of sound synthesis and of the RGB
 conversion, and are closer to the real speed of interactive play. Up to
 v2.7.8, `--benchmark` did neither. Do not compare the numbers below with
-numbers from v2.7.8 or earlier. Under PyPy the RGB conversion costs about as
-much as the emulation itself, so the PyPy numbers are about half of what the
-old method gave. The speed of interactive play did not change.
+numbers from v2.7.8 or earlier. The RGB conversion reuses each row it already
+converted for an earlier frame, so on most frames it costs little, under PyPy
+as well as under CPython.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames
 each. The score is the average of the remaining 8 runs, after the removal of
@@ -635,23 +635,23 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 247.18 | ~4.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 543.03 | ~9.1× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.78 | ~1.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 497.22 | ~8.3× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 544.26 | ~9.1× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 418.23 | ~7.0× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.39 | ~1.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 145.63 | ~2.4× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.16 | ~0.44× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 125.42 | ~2.1× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 140.78 | ~2.3× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 95.78 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 250.41 | ~4.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 564.56 | ~9.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.96 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1132.41 | ~18.9× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1371.70 | ~22.9× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 685.36 | ~11.4× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.98 | ~1.1× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 149.91 | ~2.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.45 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 235.19 | ~3.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 291.29 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 144.27 | ~2.4× |
 
 Not every tested combination reaches the raw 60 fps target. The smallest
 margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
 Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the
-target titles. PyPy increases the same case to ~1.6×. The other Raspberry Pi 5
+target titles. PyPy increases the same case to ~2.4×. The other Raspberry Pi 5
 and CPython combinations reach the target, Salamander only just (~1.1×).
 
 With CPython on a Raspberry Pi 5 and an FM-PAC title, on hardware slower than
