@@ -65,13 +65,13 @@ def make_config(
 ) -> MachineConfig:
     return load_machine_config(
         _msx1_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
+        cartridge1=cartridge,
+        mapper1=mapper,
         cartridge2=cartridge2,
         mapper2=mapper2,
         bios_override=rom,
         logo_override=logrom,
-        extension_overlay=extension_overlay,
+        extension_overlay2=extension_overlay,
         extension_overlay1=extension_overlay1,
     )
 
@@ -88,8 +88,8 @@ def make_config_msx2(
 ) -> MachineConfig:
     return load_machine_config(
         _msx2_spec(),
-        cartridge=cartridge,
-        mapper=mapper,
+        cartridge1=cartridge,
+        mapper1=mapper,
         cartridge2=cartridge2,
         mapper2=mapper2,
         bios_override=rom,

@@ -1215,8 +1215,8 @@ def _overlay_roms(
 
 def load_machine_config(
     spec: MachineSpec,
-    cartridge: bytes | None = None,
-    mapper: str = "auto",
+    cartridge1: bytes | None = None,
+    mapper1: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     bios_override: bytes | None = None,
@@ -1225,8 +1225,8 @@ def load_machine_config(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> MachineConfig:
     """Read every file `spec` and the arguments name into a MachineConfig for
@@ -1234,14 +1234,14 @@ def load_machine_config(
 
     Args:
         spec: Fully-resolved MachineSpec from load_machine_spec().
-        cartridge, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
-        mapper, mapper2: Mapper names; "auto" is resolved here through the
+        cartridge1, cartridge2: Optional cartridge ROM bytes for slots 1 and 2.
+        mapper1, mapper2: Mapper names; "auto" is resolved here through the
             ROM database (Mirrored when unknown).
         bios_override, logo_override, extrom_override, disk_rom_override:
             Bytes used instead of the main, logo, SUB (MSX2) or DISK ROM file.
         fdd1, fdd2: Disk images for drives A and B (machines with an FDC).
-        extension_overlay, extension_overlay1: Resolved --extension2 /
-            --extension1 overlays (see load_extension_overlay).
+        extension_overlay1, extension_overlay2: Resolved --extension1 /
+            --extension2 overlays (see load_extension_overlay).
         rtc_initial_time: The RTC's start time (the host's clock).
 
     Raises:
@@ -1262,12 +1262,12 @@ def load_machine_config(
         logo = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
         if logo is not None:
             roms["logo"] = logo
-    mapper1_name = _resolve_mapper_type(mapper, cartridge)
+    mapper1_name = _resolve_mapper_type(mapper1, cartridge1)
     mapper2_name = _resolve_mapper_type(mapper2, cartridge2)
     if spec.io_device is not None and spec.io_device.device == "kanji_rom":
         roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
     roms.update(_overlay_roms(1, extension_overlay1))
-    roms.update(_overlay_roms(2, extension_overlay))
+    roms.update(_overlay_roms(2, extension_overlay2))
 
     disks: dict[str, DiskMedium] = {}
     if spec.generation == "msx2":
@@ -1296,9 +1296,9 @@ def load_machine_config(
 
     config = MachineConfig(
         spec=spec, roms=roms,
-        cartridge1=cartridge, mapper1=mapper1_name,
+        cartridge1=cartridge1, mapper1=mapper1_name,
         cartridge2=cartridge2, mapper2=mapper2_name,
-        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay,
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         disks=disks, rtc_initial_time=rtc_initial_time,
     )
     for media_id, path in sram_paths(config).items():
@@ -1311,8 +1311,8 @@ def load_machine_config(
 
 def build_machine_from_spec(
     spec: MachineSpec,
-    cartridge: bytes | None = None,
-    mapper: str = "auto",
+    cartridge1: bytes | None = None,
+    mapper1: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
@@ -1323,18 +1323,18 @@ def build_machine_from_spec(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> Machine:
     """load_machine_config() then build_machine(), for callers that need no
     access to the MachineConfig (see load_machine_config for the arguments)."""
     config = load_machine_config(
-        spec, cartridge, mapper, cartridge2, mapper2,
+        spec, cartridge1, mapper1, cartridge2, mapper2,
         bios_override=bios_override, logo_override=logo_override,
         extrom_override=extrom_override, disk_rom_override=disk_rom_override,
         fdd1=fdd1, fdd2=fdd2,
-        extension_overlay=extension_overlay, extension_overlay1=extension_overlay1,
+        extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
     return build_machine(config, logger=logger, tracer=tracer)

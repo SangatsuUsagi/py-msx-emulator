@@ -64,7 +64,7 @@ def _fmpac_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     overlay = _make_fmpac_overlay(tmp_path / f"{name}_fmpac_rom")
-    machine = build_machine_from_spec(_msx1_spec(main_dir), extension_overlay=overlay)
+    machine = build_machine_from_spec(_msx1_spec(main_dir), extension_overlay2=overlay)
     assert machine.fmpac is not None
     return machine
 

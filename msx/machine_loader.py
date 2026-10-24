@@ -222,11 +222,11 @@ class _ExtensionWiring:
     """Every device/flag `_wire_extension_overlay` can produce from a
     machine-declared `io_device` and/or a `--extension1`/`--extension2`
     overlay, bundled for `build_machine` to unpack into `Memory` constructor
-    arguments and `Machine` attributes. `mapper_instance`/`mapper2_instance`
+    arguments and `Machine` attributes. `mapper1_instance`/`mapper2_instance`
     are each independently either unchanged (no overlay on that slot) or
     replaced by that slot's flat overlay's device."""
 
-    mapper_instance: Mapper
+    mapper1_instance: Mapper
     mapper2_instance: Mapper
     scc: SCC | None
     slot1_sub_slot_enabled: bool
@@ -489,13 +489,13 @@ def _wire_flat_overlay(
 
 def _wire_extension_overlay(
     config: MachineConfig,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     scc: SCC | None,
 ) -> _ExtensionWiring:
     """Resolve every device a machine-declared `io_device` and/or either
     slot's `--extensionN` overlay contribute, and how they change that
-    slot's dispatch. `mapper_instance`/`mapper2_instance`/`scc` are the
+    slot's dispatch. `mapper1_instance`/`mapper2_instance`/`scc` are the
     values `build_machine` already resolved from `cartridge`/`mapper`/
     `cartridge2`/`mapper2` -- a flat overlay's device (fmpac/scc_i_cart)
     unconditionally replaces its slot's mapper instance, and `scc_i_cart`
@@ -554,7 +554,7 @@ def _wire_extension_overlay(
         slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
     elif extension_overlay1 is not None:
         flat1 = _wire_flat_overlay(config, 1, extension_overlay1, scc)
-        mapper_instance = flat1.mapper_instance
+        mapper1_instance = flat1.mapper_instance
         scc = flat1.scc
         if flat1.fmpac_device is not None:
             fmpac_device = flat1.fmpac_device
@@ -580,7 +580,7 @@ def _wire_extension_overlay(
             fmpac_device = flat2.fmpac_device
 
     return _ExtensionWiring(
-        mapper_instance=mapper_instance,
+        mapper1_instance=mapper1_instance,
         mapper2_instance=mapper2_instance,
         scc=scc,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
@@ -669,7 +669,7 @@ def _is_ram_mapper(mapper: Mapper | None) -> TypeGuard[RamMapper]:
 
 
 def _resolve_shared_dac(
-    spec: MachineSpec, mapper_instance: Mapper, mapper2_instance: Mapper
+    spec: MachineSpec, mapper1_instance: Mapper, mapper2_instance: Mapper
 ) -> MajutsushiMapper | None:
     """Cross-slot Majutsushi-DAC-sharing check between the two cartridge
     slots' final mapper instances. Takes the post-extension-overlay-wiring
@@ -678,7 +678,7 @@ def _resolve_shared_dac(
     fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     with it. `Machine` has a single `dac` field and real hardware never has
     two Majutsushi-style DAC cartridges attached at once."""
-    dac1 = mapper_instance if _is_majutsushi_mapper(mapper_instance) else None
+    dac1 = mapper1_instance if _is_majutsushi_mapper(mapper1_instance) else None
     dac2 = mapper2_instance if _is_majutsushi_mapper(mapper2_instance) else None
     if dac1 is not None and dac2 is not None:
         raise MachineLoadError(
@@ -754,7 +754,7 @@ def build_machine(
     slot2 = _resolve_cartridge_slot(
         config.mapper2, config.cartridge2, config.media.get(slot_sram_id(2))
     )
-    mapper_instance = slot1.mapper_instance
+    mapper1_instance = slot1.mapper_instance
     mapper2_instance = slot2.mapper_instance
     scc = _resolve_shared_scc(spec, slot1.scc, slot2.scc)
 
@@ -763,8 +763,8 @@ def build_machine(
     # machine-declared one) and, when present, unconditionally occupy their
     # target slot, replacing whatever cartridge mapper was resolved above --
     # see _wire_extension_overlay.
-    wiring = _wire_extension_overlay(config, mapper_instance, mapper2_instance, scc)
-    mapper_instance = wiring.mapper_instance
+    wiring = _wire_extension_overlay(config, mapper1_instance, mapper2_instance, scc)
+    mapper1_instance = wiring.mapper1_instance
     mapper2_instance = wiring.mapper2_instance
     scc = wiring.scc
     slot1_sub_slot_enabled = wiring.slot1_sub_slot_enabled
@@ -775,7 +775,7 @@ def build_machine(
     # an extension overlay replacing a slot's mapper (e.g. --extension1
     # fmpac over a Majutsushi cartridge) removes that slot's own DAC along
     # with it, and either slot's mapper can resolve to Majutsushi.
-    dac = _resolve_shared_dac(spec, mapper_instance, mapper2_instance)
+    dac = _resolve_shared_dac(spec, mapper1_instance, mapper2_instance)
 
     input_state = InputState(keyboard_type=spec.keyboard_type)
     psg = PSG(_input=input_state)
@@ -803,7 +803,7 @@ def build_machine(
             config=config,
             main_bytes=main_bytes,
             logo_bytes=logo_bytes,
-            mapper_instance=mapper_instance,
+            mapper1_instance=mapper1_instance,
             mapper2_instance=mapper2_instance,
             dac=dac,
             scc=scc,
@@ -823,7 +823,7 @@ def build_machine(
             spec=spec,
             main_bytes=main_bytes,
             logo_bytes=logo_bytes,
-            mapper_instance=mapper_instance,
+            mapper1_instance=mapper1_instance,
             mapper2_instance=mapper2_instance,
             dac=dac,
             scc=scc,
@@ -847,7 +847,7 @@ def _build_msx1(
     spec: MachineSpec,
     main_bytes: bytes,
     logo_bytes: bytes | None,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
@@ -865,7 +865,7 @@ def _build_msx1(
     memory = Memory(
         rom=main_bytes,
         ram=bytearray(spec.ram_size_kb * 1024),
-        _mapper=mapper_instance,
+        _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,
@@ -935,7 +935,7 @@ def _build_msx2(
     config: MachineConfig,
     main_bytes: bytes,
     logo_bytes: bytes | None,
-    mapper_instance: Mapper,
+    mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     dac: MajutsushiMapper | None,
     scc: SCC | None,
@@ -970,7 +970,7 @@ def _build_msx2(
     memory = Memory(
         rom=main_bytes,
         ram=ram_bytes,
-        _mapper=mapper_instance,
+        _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
         _logger=logger,

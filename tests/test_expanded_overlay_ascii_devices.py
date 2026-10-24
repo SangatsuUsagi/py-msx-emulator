@@ -232,7 +232,7 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, Ascii8Mapper)
@@ -256,7 +256,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     sub0 = machine.memory._mapper2_subslots[0]
     assert isinstance(sub0, Ascii16Mapper)
@@ -284,7 +284,7 @@ def test_missing_ascii8_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="missing.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
@@ -302,5 +302,5 @@ def test_missing_ascii16_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="missing.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )

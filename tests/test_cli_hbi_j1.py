@@ -246,7 +246,7 @@ def _hbi_j1_machine(tmp_path: Path, name: str = "m") -> Machine:
     rom_dir.mkdir()
     return build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_hbi_j1_overlay(rom_dir),
+        extension_overlay2=_hbi_j1_overlay(rom_dir),
     )
 
 
@@ -290,7 +290,7 @@ def test_build_machine_expands_slot2_on_msx2_alongside_slot3(tmp_path: Path) -> 
         _msx2_spec(),
         bios_override=bytes(32768),
         extrom_override=bytes(32768),
-        extension_overlay=_hbi_j1_overlay(rom_dir),
+        extension_overlay2=_hbi_j1_overlay(rom_dir),
     )
     assert machine.memory.slot2_sub_slot_enabled is True
     assert isinstance(machine.memory._mapper2_subslots[0], HalnoteMapper)
@@ -436,7 +436,7 @@ def test_subslot1_dispatches_to_flat_kanji_driver_rom(tmp_path: Path) -> None:
     rom_dir.mkdir()
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=_hbi_j1_overlay_with_marker(rom_dir),
+        extension_overlay2=_hbi_j1_overlay_with_marker(rom_dir),
     )
     mem = machine.memory
     # Route both page0 and page1 to primary slot 2 (bits[1:0]=2, bits[3:2]=2)
@@ -477,7 +477,7 @@ def test_build_machine_loads_existing_halnote_sram(tmp_path: Path) -> None:
     overlay = _hbi_j1_overlay(rom_dir, sram_path=sram_path)
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
 
     cart = machine.halnote_cart
@@ -494,7 +494,7 @@ def test_hbi_j1_rejected_on_msx1_base_machine(tmp_path: Path) -> None:
     rom_dir = tmp_path / "hbi_j1_rom"
     rom_dir.mkdir()
     with pytest.raises(MachineLoadError, match="MSX1"):
-        build_machine_from_spec(_msx1_spec(main_dir), extension_overlay=_hbi_j1_overlay(rom_dir))
+        build_machine_from_spec(_msx1_spec(main_dir), extension_overlay2=_hbi_j1_overlay(rom_dir))
 
 
 def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path) -> None:
@@ -505,7 +505,7 @@ def test_build_machine_flat_overlay_leaves_expanded_fields_unset(tmp_path: Path)
     (fmpac_dir / "fmpac.rom").write_bytes(bytes(65536))
     machine = build_machine_from_spec(
         _msx1_spec(main_dir),
-        extension_overlay=_ExtensionOverlay(
+        extension_overlay2=_ExtensionOverlay(
             device="fmpac", rom_base_dir=fmpac_dir,
             rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         ),
@@ -536,7 +536,7 @@ def test_missing_msx_je_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="msx-je.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
@@ -548,7 +548,7 @@ def test_missing_kanjibasic_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="kanjibasic.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
@@ -560,7 +560,7 @@ def test_missing_kanjifont_rom_raises_naming_file(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="kanjifont.rom"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 
@@ -608,7 +608,7 @@ def test_roundtrip_preserves_halnote_sram_and_banks(saves_dir: Path, tmp_path: P
     )
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=overlay,
+        extension_overlay2=overlay,
     )
     cart = machine.halnote_cart
     assert cart is not None
@@ -693,7 +693,7 @@ def test_loading_state_with_mismatched_subslot_kind_raises(
     )
     other_machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-        extension_overlay=other_overlay,
+        extension_overlay2=other_overlay,
     )
 
     with pytest.raises(ValueError, match="slot 2 sub-slot 0 mapper mismatch") as exc_info:

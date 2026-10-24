@@ -110,7 +110,7 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
     machine = build_machine_from_spec(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_hbi_j1_overlay(hbi_dir),
-        extension_overlay=_msxdos2_512k_overlay(dos2_dir),
+        extension_overlay2=_msxdos2_512k_overlay(dos2_dir),
     )
 
     # Slot 1: HBI-J1's halnote + flat Kanji driver/BASIC ROM.
@@ -151,7 +151,7 @@ def test_two_halnote_overlays_at_once_rejected(tmp_path: Path) -> None:
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_hbi_j1_overlay(hbi_dir1),
-            extension_overlay=_hbi_j1_overlay(hbi_dir2),
+            extension_overlay2=_hbi_j1_overlay(hbi_dir2),
         )
 
 
@@ -184,7 +184,7 @@ def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
     with pytest.raises(MachineLoadError, match="Kanji-ROM"):
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
-            extension_overlay1=overlay1, extension_overlay=overlay2,
+            extension_overlay1=overlay1, extension_overlay2=overlay2,
         )
 
 
@@ -205,7 +205,7 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
-        extension_overlay=_ExtensionOverlay(device="scc_i_cart"),
+        extension_overlay2=_ExtensionOverlay(device="scc_i_cart"),
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
@@ -223,7 +223,7 @@ def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=_ExtensionOverlay(device="scc_i_cart"),
-        extension_overlay=fmpac_overlay,
+        extension_overlay2=fmpac_overlay,
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
@@ -244,7 +244,7 @@ def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
         build_machine_from_spec(
             _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
             extension_overlay1=_fmpac_overlay(fmpac_dir1),
-            extension_overlay=_fmpac_overlay(fmpac_dir2),
+            extension_overlay2=_fmpac_overlay(fmpac_dir2),
         )
 
 
@@ -278,7 +278,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     config = load_machine_config(
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay1=fmpac_overlay,
-        extension_overlay=_hbi_j1_overlay(hbi_dir),
+        extension_overlay2=_hbi_j1_overlay(hbi_dir),
     )
     machine = build_machine(config)
     assert machine.fmpac is not None

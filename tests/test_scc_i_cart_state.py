@@ -49,7 +49,7 @@ def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     return build_machine_from_spec(
-        _msx1_spec(main_dir), extension_overlay=_ExtensionOverlay(device="scc_i_cart")
+        _msx1_spec(main_dir), extension_overlay2=_ExtensionOverlay(device="scc_i_cart")
     )
 
 

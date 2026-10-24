@@ -1242,7 +1242,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     with pytest.raises(MachineLoadError, match="cannot coexist"):
         build_machine_from_spec(
             spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K,
-            extension_overlay=overlay,
+            extension_overlay2=overlay,
         )
 
 

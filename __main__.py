@@ -307,7 +307,7 @@ def _print_extension_summary_line(
 def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_paths: list[Path], fdd2_path: Path | None,
     extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_overlay2: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")
@@ -320,7 +320,7 @@ def _print_startup_summary(
     if fdd2_path is not None:
         print(f"fdd2    : {fdd2_path}")
     _print_extension_summary_line(1, extension_overlay1, args.extension1)
-    _print_extension_summary_line(2, extension_overlay, args.extension2)
+    _print_extension_summary_line(2, extension_overlay2, args.extension2)
     if mouse_port is not None:
         print(f"mouse   : Joy{mouse_port + 1}")
     print(f"mapper  : {display_mapper}")
@@ -556,7 +556,7 @@ def main() -> None:
             load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension1 is not None else None
         )
-        extension_overlay = (
+        extension_overlay2 = (
             load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
             if opts.extension2 is not None else None
         )
@@ -582,7 +582,7 @@ def main() -> None:
     watchpoint_entries = _parse_watchpoints(args.watch_point)
 
     _print_startup_summary(
-        spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay,
+        spec, display_mapper, fdd1_paths, fdd2_path, extension_overlay1, extension_overlay2,
         opts.mouse_port, args,
     )
 
@@ -607,14 +607,14 @@ def main() -> None:
         try:
             config = load_machine_config(
                 spec,
-                cartridge=cartridge,
-                mapper=opts.mapper1,
+                cartridge1=cartridge,
+                mapper1=opts.mapper1,
                 cartridge2=cartridge2,
                 mapper2=opts.mapper2,
                 fdd1=fdd1_paths[0] if fdd1_paths else None,
                 fdd2=fdd2_path,
-                extension_overlay=extension_overlay,
                 extension_overlay1=extension_overlay1,
+                extension_overlay2=extension_overlay2,
                 rtc_initial_time=_host_rtc_time(),
             )
             media_files = sram_paths(config)
