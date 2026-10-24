@@ -1,8 +1,9 @@
 """SDL2 host keyboard: host key codes to MSX matrix cells and joystick lines.
 
-The core InputState takes keyboard input only as matrix cells
-(set_key_state) and keyboard-sourced joystick lines
-(keyboard_joystick_down/up). Everything keyed by SDL key codes lives here:
+The input builder (host/input_state.py InputState) takes keyboard input
+only as matrix cells (set_key_state) and keyboard-sourced joystick lines
+(keyboard_joystick_down/up); the core sees them once per frame as an
+InputFrame. Everything keyed by SDL key codes lives here:
 the INT/JP matrix tables, the keyboard-joystick overlay, the shared
 SHIFT/CTRL cells and the JIS SHIFT+"0" redirect.
 """
@@ -12,7 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from msx.input import InputState
+from host.input_state import InputState
+from msx.machine_spec import KeyboardLayout
 
 # SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
 # ASCII-range keys share values between SDL2 and pygame; special keys use SDL2 SDLK_* values.
@@ -142,7 +144,7 @@ _K_ZERO_SHIFT = -1
 # editing keys are identical between the International and Japanese (JIS) MSX
 # keyboards. Only a handful of row-1/row-2 symbol cells differ, so the shared
 # cells live in _COMMON_MATRIX and the layout-specific symbols are overlaid from
-# _INT_SYMBOLS / _JP_SYMBOLS. SdlKeyboard selects one via the machine's keyboard_type.
+# _INT_SYMBOLS / _JP_SYMBOLS. SdlKeyboard selects one via the machine's keyboard layout.
 # (openMSX unicodemap.int / unicodemap.jp_jis; map.grauw.nl keymatrix.)
 #
 # PORT-LIBRARY-NOTE: _COMMON_MATRIX/_INT_SYMBOLS/_JP_SYMBOLS/KEY_MATRIX_INT/
@@ -400,13 +402,15 @@ def resolve_hotkeys(bindings: Mapping[tuple[str, bool], str]) -> dict[tuple[int,
 class SdlKeyboard:
     """Feeds SDL key events into an InputState as matrix cells and joystick lines.
 
-    The matrix table is chosen once from the machine's keyboard_type.
+    The matrix table is chosen once from the machine's keyboard layout.
     """
 
     input_state: InputState
     # Joy1 keyboard overlay: SDL key -> (port, bit). Defaults to JOY_MAP; a
     # config-resolved map replaces it wholesale (resolve_keyboard_joy_map).
     joy_map: Mapping[int, tuple[int, int]] = field(default_factory=lambda: JOY_MAP)
+    # The machine's keyboard layout (Machine.keyboard_layout).
+    keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
     _matrix_map: dict[int, tuple[int, int]] = field(
         default_factory=lambda: KEY_MATRIX_INT, init=False, repr=False
     )
@@ -419,7 +423,7 @@ class SdlKeyboard:
     _zero_shift_redirect: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        jp = self.input_state.keyboard_type == "jp"
+        jp = self.keyboard_layout is KeyboardLayout.JAPANESE
         self._matrix_map = KEY_MATRIX_JP if jp else KEY_MATRIX_INT
 
     def _shift_held(self) -> bool:

@@ -33,105 +33,51 @@ KEY_NAME_TO_CELL: dict[str, tuple[int, int]] = {
 }
 
 _NUM_ROWS = 11
+_RELEASED_ROW = 0xFF
+_JOY_LINES_MASK = 0x3F  # bits 0-5: up/down/left/right/trigger A/trigger B
 
 
-@dataclass
-class InputState:
-    """MSX-side input state: the keyboard matrix and both joystick ports.
-
-    Host input arrives only as matrix cells (set_key_state) and joystick
-    lines. Each port has a keyboard-sourced and a pad-sourced line state; a
-    line reads as pressed while either source holds it.
+@dataclass(frozen=True)
+class InputFrame:
+    """One frame's input, the value the core takes (allium/core-frontend.allium
+    InputState): 11 active-low keyboard matrix rows, both merged 6-bit
+    active-low joystick ports, this frame's mouse motion in MSX counts and the
+    two mouse buttons. Immutable, so a caller cannot change it after handing
+    it over; the defaults are "nothing pressed, no motion".
     """
 
-    matrix: list[int] = field(default_factory=lambda: [0xFF] * _NUM_ROWS)
-    # The machine's keyboard layout: "int" (International) or "jp"
-    # (Japanese/JIS). A hardware fact from the machine definition; host
-    # keyboards read it to pick their key-to-cell table.
-    keyboard_type: str = "int"
-    # Per-joystick 6-bit active-low state: bits 0-5 = up/down/left/right/trigA/trigB
-    _joy1_kbd: int = field(default=0x3F, init=False, repr=False)
-    _joy1_hw:  int = field(default=0x3F, init=False, repr=False)
-    _joy2_kbd: int = field(default=0x3F, init=False, repr=False)
-    _joy2_hw:  int = field(default=0x3F, init=False, repr=False)
-    # Mouse input for one frame: motion in MSX counts accumulated by the
-    # frontend, and the two buttons. Machine.step_frame feeds them to the
-    # attached mouse once per frame.
+    key_matrix: tuple[int, ...] = (_RELEASED_ROW,) * _NUM_ROWS
+    joystick_ports: tuple[int, int] = (_JOY_LINES_MASK, _JOY_LINES_MASK)
     mouse_dx: int = 0
     mouse_dy: int = 0
     mouse_left: bool = False
     mouse_right: bool = False
 
-    def copy_from(self, other: "InputState") -> None:
-        """Take every input line from `other` (one frame's input value).
+    def __post_init__(self) -> None:
+        if len(self.key_matrix) != _NUM_ROWS:
+            raise ValueError(f"key_matrix needs {_NUM_ROWS} rows, got {len(self.key_matrix)}")
+        for row in self.key_matrix:
+            if not 0 <= row <= 0xFF:
+                raise ValueError(f"key_matrix row out of range: {row}")
+        if len(self.joystick_ports) != 2:
+            raise ValueError(f"joystick_ports needs 2 ports, got {len(self.joystick_ports)}")
+        for port in self.joystick_ports:
+            if not 0 <= port <= _JOY_LINES_MASK:
+                raise ValueError(f"joystick port value out of range: {port}")
 
-        `keyboard_type` is a machine fact and is not copied.
-        """
-        self.matrix[:] = other.matrix
-        self._joy1_kbd = other._joy1_kbd
-        self._joy1_hw = other._joy1_hw
-        self._joy2_kbd = other._joy2_kbd
-        self._joy2_hw = other._joy2_hw
-        self.mouse_dx = other.mouse_dx
-        self.mouse_dy = other.mouse_dy
-        self.mouse_left = other.mouse_left
-        self.mouse_right = other.mouse_right
 
-    @property
-    def joy1(self) -> int:
-        return self._joy1_kbd & self._joy1_hw
+@dataclass
+class InputLines:
+    """The input lines the PPI (keyboard rows) and the PSG (joystick ports)
+    read, owned by the Machine and set from an InputFrame by apply()."""
 
-    @property
-    def joy2(self) -> int:
-        return self._joy2_kbd & self._joy2_hw
+    matrix: list[int] = field(default_factory=lambda: [_RELEASED_ROW] * _NUM_ROWS)
+    joy1: int = _JOY_LINES_MASK
+    joy2: int = _JOY_LINES_MASK
 
-    def set_key_state(self, row: int, bit: int, pressed: bool) -> None:
-        """Assert or release a matrix cell directly by (row, bit).
-
-        The matrix is active-low, so a pressed key clears the bit and a released
-        key sets it. Host keyboards (frontend) and programmatic key injection
-        (e.g. the RPC server) both press keys through it. It does no
-        shared-cell bookkeeping, so callers own their press/release pairing.
-
-        Args:
-            row: Matrix row index (0-10).
-            bit: Bit index within the row (0-7).
-            pressed: True to press (clear the bit), False to release (set it).
-
-        Raises:
-            ValueError: If row or bit is out of range.
-        """
-        if not 0 <= row < _NUM_ROWS:
-            raise ValueError(f"row out of range: {row}")
-        if not 0 <= bit <= 7:
-            raise ValueError(f"bit out of range: {bit}")
-        if pressed:
-            self.matrix[row] &= ~(1 << bit) & 0xFF
-        else:
-            self.matrix[row] |= (1 << bit) & 0xFF
-
-    def joystick_button_down(self, port: int, bit: int) -> None:
-        if port == 0:
-            self._joy1_hw &= ~(1 << bit) & 0x3F
-        else:
-            self._joy2_hw &= ~(1 << bit) & 0x3F
-
-    def joystick_button_up(self, port: int, bit: int) -> None:
-        if port == 0:
-            self._joy1_hw |= (1 << bit)
-        else:
-            self._joy2_hw |= (1 << bit)
-
-    def keyboard_joystick_down(self, port: int, bit: int) -> None:
-        """Press a keyboard-sourced joystick line (active-low)."""
-        if port == 0:
-            self._joy1_kbd &= ~(1 << bit) & 0x3F
-        else:
-            self._joy2_kbd &= ~(1 << bit) & 0x3F
-
-    def keyboard_joystick_up(self, port: int, bit: int) -> None:
-        """Release a keyboard-sourced joystick line."""
-        if port == 0:
-            self._joy1_kbd |= (1 << bit)
-        else:
-            self._joy2_kbd |= (1 << bit)
+    def apply(self, frame: InputFrame) -> None:
+        """Take `frame`'s rows and ports. The matrix list object is kept, so
+        readers holding this InputLines see the new rows."""
+        self.matrix[:] = frame.key_matrix
+        self.joy1 = frame.joystick_ports[0]
+        self.joy2 = frame.joystick_ports[1]

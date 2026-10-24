@@ -16,9 +16,10 @@ from msx.boundary import (
 )
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
-from msx.input import InputState
+from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
+from msx.machine_spec import KeyboardLayout
 from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
@@ -93,10 +94,13 @@ class Machine:
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
-    input: InputState = field(default_factory=InputState)
+    input: InputLines = field(default_factory=InputLines)
     # Per-frame audio mix, produced by run_frame() and read with take_audio().
     audio: AudioMixer = field(default_factory=AudioMixer, repr=False)
     video_standard: VideoStandard = VideoStandard.NTSC
+    # The keyboard matrix layout, from the machine definition (frontends pick
+    # their host-key table from it).
+    keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
     # Free-running T-state clock, never reset.
     #
     # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
@@ -556,23 +560,30 @@ class Machine:
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
         return int(SAMPLE_RATE // self.video_standard.target_fps)
 
-    def step_frame(self, frame_input: InputState, render_video: bool) -> FrameOutput:
+    def apply_input(self, frame_input: InputFrame) -> None:
+        """Replace the input lines and mouse buttons with `frame_input`'s,
+        effective for the next instruction (machine-core "apply_input
+        replaces the input lines at once"). Feeds no mouse motion, so it can
+        be called any number of times between frames (RPC injection)."""
+        self.input.apply(frame_input)
+        mouse = self.psg.mouse
+        if mouse is not None:
+            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
+            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
+
+    def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
         """Run one frame with `frame_input` held for the whole frame (the
         core's per-frame API, allium/core-frontend.allium FrameStepping).
 
-        Copies the input lines into the machine's own InputState, feeds the
-        frame's mouse motion and buttons to the attached mouse once, runs the
-        frame, and returns its RGB24 video (when `render_video`), its
-        pre-filter audio and the frame number. `render_video` never changes
-        emulated state. `mouse_dx`/`mouse_dy` are this frame's motion only: a
-        caller reusing one InputState zeroes them before the next frame.
+        Applies the input (apply_input), feeds the frame's mouse motion to the
+        attached mouse once, runs the frame, and returns its RGB24 video (when
+        `render_video`), its pre-filter audio and the frame number.
+        `render_video` never changes emulated state.
         """
-        self.input.copy_from(frame_input)
+        self.apply_input(frame_input)
         mouse = self.psg.mouse
         if mouse is not None:
             mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
-            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
-            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
         index_buf = self.run_frame(skip_render=not render_video)
         video: RgbFrame | None = None
         if render_video:

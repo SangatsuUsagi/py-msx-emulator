@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from frontend.sdl2_joystick import JoystickManager
-from msx.input import InputState
+from host.input_state import InputState
 
 # ---------------------------------------------------------------------------
 # Helpers

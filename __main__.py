@@ -335,12 +335,12 @@ def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | Non
 
     No host input and no video: emulated state does not depend on rendering.
     """
-    from msx.input import InputState
+    from msx.input import InputFrame
 
     if resume is not None:
         from host.state_files import resume_state
         resume_state(machine, resume)
-    no_input = InputState()
+    no_input = InputFrame()
     for _ in range(count_frame):
         machine.step_frame(no_input, render_video=False)
 
@@ -363,10 +363,10 @@ def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
     if resume is not None:
         resume_state(machine, resume)
 
-    from msx.input import InputState
+    from msx.input import InputFrame
 
     # Every frame renders RGB video, as interactive play does.
-    no_input = InputState()
+    no_input = InputFrame()
     start = time.perf_counter()
     for _ in range(frames):
         machine.step_frame(no_input, render_video=True)

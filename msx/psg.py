@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
-from msx.input import InputState
+from msx.input import InputLines
 from msx.mouse import MouseDevice
 from msx.snapshot_schema import (
     check_bool,
@@ -43,7 +43,7 @@ class _GenState(NamedTuple):
     clk_frac: int
 
 # Which joystick port a mouse (or, in read_port's joystick composition, an
-# InputState read) targets. IntEnum, not a bare int: its two values are used
+# InputLines read) targets. IntEnum, not a bare int: its two values are used
 # directly as the register 15 bit 6 (JOY_SELECT) value throughout this file,
 # so IntEnum keeps that "== 0 / == 1" comparison code unchanged while still
 # giving MouseSlot.port a named, exhaustive type instead of an unconstrained
@@ -104,7 +104,7 @@ _PSG_SYNTH_KEYS: frozenset[str] = frozenset(PsgSynthState.__annotations__)
 class PSG:
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
-    _input: InputState | None = field(default=None, repr=False)
+    _input: InputLines | None = field(default=None, repr=False)
     _mouse: MouseSlot | None = field(default=None, repr=False)
 
     # Sub-frame audio: register writes are timestamped (cycle, reg, value) via
