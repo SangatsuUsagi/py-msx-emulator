@@ -15,6 +15,7 @@ references/emu2149/
 references/emu2413/
 references/msx-msxlib/
 references/openMSX/
+references/x88_1_5_3_src/
 references/z80/
 roms/**/*.lzh
 roms/**/*.rom
@@ -266,7 +267,8 @@ __marimo__/
 __MACOSX/
 .AppleDouble
 .LSOverride
-Icon[]
+Icon[
+]
 
 # Resource forks
 ._*
@@ -287,7 +289,8 @@ Icon[]
 .file
 .disk_label*
 lost+found
-.HFS+ Private Directory Data[]
+.HFS+ Private Directory Data[
+]
 
 # Directories potentially created on remote AFP share
 .AppleDB
