@@ -909,20 +909,27 @@ boots do not fail. Every device in `config/devices/` is currently
 ## Frame API
 
 `Machine.step_frame(frame_input, render_video)` is the core's per-frame call
-(`allium/core-frontend.allium`). It takes one `InputState` value: the 11
-keyboard matrix rows, both joystick ports, and the frame's mouse motion (in
-MSX counts) and buttons. It copies the value into the machine's own input
-lines, so the input stays the same for the whole frame, and feeds the mouse
-once. It then runs the frame and returns a `FrameOutput` (`msx/boundary.py`):
+(`allium/core-frontend.allium`). It takes one `InputFrame` value
+(`msx/input.py`), which cannot be changed once built: the 11 keyboard matrix
+rows, both joystick ports (each already merged from its keyboard and gamepad
+sources), and the frame's mouse motion (in MSX counts) and buttons. It
+applies the value to the machine's input lines (`InputLines`, which the PPI
+and PSG read), so the input stays the same for the whole frame, and feeds the
+mouse its motion once. It then runs the frame and returns a `FrameOutput` (`msx/boundary.py`):
 the RGB24 video when `render_video` is true, the frame's audio before the
 output filter, and the frame number. `render_video` decides only whether
 video is produced: a skipped frame still runs the sprite pass, so the VDP
 status is the same.
 
-The SDL2 frontend keeps its own `InputState` as an accumulator. The keyboard,
-the gamepads, the mouse and the RPC input methods write to it, and each frame
-it passes the accumulator to `step_frame` and clears the mouse motion.
-Headless runs (`--count-frame`, `--benchmark`) pass an empty `InputState`.
+The input is built outside the core, in `host/input_state.py`'s `InputState`.
+The keyboard, the gamepads, the mouse and the RPC input methods write to it,
+and it keeps the keyboard-joystick and gamepad sources of each port apart
+until it merges them. Each frame the frontend passes `take_frame()` to
+`step_frame`, which also zeroes the builder's mouse motion. RPC injection
+calls `Machine.apply_input`, which sets the lines and mouse buttons at once
+without running a frame, so a paused machine sees the input on its next
+instruction. Headless runs (`--count-frame`, `--benchmark`) pass an empty
+`InputFrame()`.
 `Machine.run_frame()` remains as the internal step that the debugger and the
 break handling use.
 

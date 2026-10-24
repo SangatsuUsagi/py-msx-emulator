@@ -72,7 +72,7 @@ The MCP server is a thin adapter; all real work happens in the Socket RPC layer.
 | Capability | Feasibility | Rationale |
 |---|---|---|
 | **Debugger control** | Green | `host/debugger/prompt.py` dispatches string commands through a central handler; the same function can be called from a socket thread without touching the REPL loop. |
-| **Game input injection** | Green | `msx/input.py` holds an `InputState` object with an `_rows[11]` byte array; any code with a reference to that object can set/clear bits directly, and the PPI reads the same array every frame. |
+| **Game input injection** | Green | `host/input_state.py`'s `InputState` builds the input (an 11-row matrix plus joystick lines); the RPC server sets/clears bits there and hands the result to the machine with `Machine.apply_input`, which the PPI reads from its next access, paused or running. |
 | **Screenshot capture** | Green | `host/screenshot.py` already exports a function that returns a PNG byte stream (used by F10 and save-state); the RPC returns base64-encoded PNG; the MCP server returns it as `ImageContent` so Claude can visually inspect the frame. |
 
 ---
@@ -335,7 +335,7 @@ Works in both paused and running state.
 | 8   | →     | ↓     | ↑     | ←     | DEL   | INS   | HOME  | SPACE |
 
 Rows 9 and 10 are the numeric keypad. The emulator allocates all 11 rows
-(`InputState.matrix`) but binds no host key to them, so `input.press_key` by raw
+(`InputFrame.key_matrix`) but binds no host key to them, so `input.press_key` by raw
 row/bit is the only way to reach a keypad key.
 
 Common keys: SPACE(8,0) RETURN(7,7) ESC(7,2) UP(8,5) DOWN(8,6) LEFT(8,4) RIGHT(8,7) SHIFT(6,0) CTRL(6,1)

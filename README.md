@@ -1173,6 +1173,7 @@ py-msx-emulator/
 │   ├── romdb.py           # SHA1-based ROM title/mapper database
 │   ├── app_config.py      # py_emulator.yaml startup defaults
 │   ├── media.py           # SRAM and disk image files (save changed media, disk swap)
+│   ├── input_state.py     # Input builder: keyboard/gamepad/mouse/RPC input -> per-frame InputFrame
 │   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
@@ -1200,7 +1201,7 @@ py-msx-emulator/
 │   ├── opll.py            # YM2413 (OPLL) FM sound chip
 │   ├── ppi.py             # i8255 PPI (slot register, keyboard, key click)
 │   ├── io.py              # I/O bus (port dispatch)
-│   ├── input.py           # Keyboard matrix + joystick input state
+│   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── screenshot.py      # Current-frame RGB24 capture
 │   └── state.py           # Machine state snapshot (versioned JSON)

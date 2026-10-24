@@ -850,6 +850,7 @@ py-msx-emulator/
 │   ├── romdb.py           # SHA1 ベースの ROM タイトル/マッパーデータベース
 │   ├── app_config.py      # py_emulator.yaml の起動時デフォルト値
 │   ├── media.py           # SRAM とディスクイメージのファイル（変更の保存、ディスク交換）
+│   ├── input_state.py     # 入力の組み立て：キーボード/ゲームパッド/マウス/RPC → フレームごとの InputFrame
 │   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
@@ -877,7 +878,7 @@ py-msx-emulator/
 │   ├── opll.py            # YM2413（OPLL）FM 音源チップ
 │   ├── ppi.py             # i8255 PPI（スロットレジスタ、キーボード、キークリック）
 │   ├── io.py              # I/O バス（ポートディスパッチ）
-│   ├── input.py           # キーボードマトリクス + ジョイスティック入力状態
+│   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
 │   └── state.py           # マシン状態のスナップショット（バージョン付き JSON）
