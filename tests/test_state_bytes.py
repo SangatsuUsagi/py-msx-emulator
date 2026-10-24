@@ -310,3 +310,16 @@ def test_round_trip_is_byte_identical(tmp_path: Path) -> None:
     fresh = _loaded_machine(tmp_path)
     state.load_state(fresh, first)
     assert state.save_state(fresh) == first
+
+
+def test_an_earlier_version_with_a_float_is_rejected_as_a_version_mismatch() -> None:
+    # Format 16 saved the OPLL resampler phase as a float; such a file must be
+    # refused for its version, not reported as a corrupt file.
+    decoded = json.loads(state.save_state(_ran(1)))
+    decoded["format_version"] = 16
+    decoded["out_time"] = 22458.33333141287
+    target = _ran(1)
+    before = state.save_state(target)
+    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 17"):
+        state.load_state(target, json.dumps(decoded).encode("utf-8"))
+    assert state.save_state(target) == before

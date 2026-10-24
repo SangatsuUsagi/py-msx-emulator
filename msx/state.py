@@ -991,6 +991,24 @@ def _decode_strict(data: bytes) -> object:
     )
 
 
+def _check_other_version(data: bytes, source: str) -> None:
+    """Called when strict decoding failed: if the data is ordinary JSON from
+    another format version (format 16 saved the OPLL phase as a float), report
+    the version mismatch rather than the strict-decoding error."""
+    try:
+        lenient = json.loads(data.decode("utf-8"))
+    except ValueError:
+        return
+    if not isinstance(lenient, dict):
+        return
+    version = lenient.get("format_version")
+    if version != CURRENT_FORMAT_VERSION:
+        raise ValueError(
+            f"incompatible state file: version {version}, "
+            f"expected {CURRENT_FORMAT_VERSION} ({source})"
+        )
+
+
 def save_state(machine: "Machine") -> bytes:
     """Encode the machine's snapshot as the versioned JSON state format.
 
@@ -1022,6 +1040,7 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
     try:
         decoded = _decode_strict(data)
     except ValueError as exc:  # also UnicodeDecodeError and json.JSONDecodeError
+        _check_other_version(data, source)
         raise ValueError(f"corrupt or unsupported save state: {source} ({exc})") from exc
 
     snap = parse_snapshot(decoded, source)
