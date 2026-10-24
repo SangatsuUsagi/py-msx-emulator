@@ -3,7 +3,6 @@
 The mixer hands off the unfiltered mix; the output filter is the frontend's
 (tests/test_sdl2_frontend_audio.py).
 """
-from array import array
 
 from msx.audio_mixer import AudioMixer
 from msx.psg import SAMPLES_PER_FRAME
@@ -12,8 +11,9 @@ N = SAMPLES_PER_FRAME
 
 
 def _pcm(value: int, n: int = N) -> bytes:
-    """n signed-16 samples of `value`, as native-order bytes."""
-    return array("h", [value] * n).tobytes()
+    """n signed-16 little-endian samples of `value` (the sources' and the
+    mix's encoding on every host)."""
+    return value.to_bytes(2, "little", signed=True) * n
 
 
 class _Gen:

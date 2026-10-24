@@ -23,14 +23,12 @@ from dataclasses import dataclass, field
 from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
+from msx.clock import CPU_CLOCK_HZ
 from msx.snapshot_schema import I64_MAX, check_int, check_int_list, check_object
 
 MODE_REG = 13
 TEST_REG = 14
 RESET_REG = 15
-
-# Emulated time base: Z80 T-states per second (3.579545 MHz).
-CPU_CLOCK_HZ = 3_579_545
 
 MODE_TIMER_ENABLE = 0x08
 MODE_BLOCK_SELECT = 0x03
@@ -217,6 +215,15 @@ class RTC:
         """Write the current time into block 0 and the leap counter into
         block 1. Hour registers 4/5 are encoded against HOUR_MODE_REG's
         current value, since that register can be written at any time."""
+        # PORT-NOTE: `//` and `%` below are floor division/modulo, and their
+        #   left operands go negative for a start before 1970 (total, days)
+        #   or before 1980 (year - 1980).
+        # Rust/C++/Zig equivalent: div_euclid/rem_euclid (Rust), a
+        #   floor-adjusting helper (C++), @divFloor/@mod (Zig) -- plain `/`
+        #   and `%` truncate there and give different digits.
+        # Kept as-is here because: semantic necessity -- the start year is
+        #   any calendar year the host supplies, not only the chip's
+        #   1980-2079.
         st = self.start
         total = (_days_from_civil(st.year, st.month, st.day) * 86_400
                  + st.hour * 3_600 + st.minute * 60 + st.second

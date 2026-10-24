@@ -886,7 +886,7 @@ ROM-bearing field in the loader.
 ### load_machine_config() and build_machine()
 
 Building is split between the host and the core.
-`load_machine_config(spec, cartridge, mapper, ...)` in `host/machine_config.py`
+`load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py`
 reads every file the machine needs into a `MachineConfig` value
 (`msx/boundary.py`): the ROM images by role, the cartridges with their mappers
 (an `auto` mapper is resolved here through the ROM database), the saved SRAM
@@ -908,7 +908,7 @@ boots do not fail. Every device in `config/devices/` is currently
 
 ## Frame API
 
-`Machine.step_frame(input, render_video)` is the core's per-frame call
+`Machine.step_frame(frame_input, render_video)` is the core's per-frame call
 (`allium/core-frontend.allium`). It takes one `InputState` value: the 11
 keyboard matrix rows, both joystick ports, and the frame's mouse motion (in
 MSX counts) and buttons. It copies the value into the machine's own input

@@ -7,6 +7,7 @@ frontend's (frontend/audio_filter.py): the core hands off the unfiltered mix.
 """
 from __future__ import annotations
 
+import sys
 from array import array
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
 
 _S16_MAX: int = 32767
 _S16_MIN: int = -32768
+# Every source and the mixed output are little-endian; array("h") is native.
+_SWAP_BYTES: bool = sys.byteorder == "big"
 
 
 class AudioMixer:
@@ -85,7 +88,7 @@ def _sum_and_clamp(n: int, psg_buf: bytes | bytearray, extra_bufs: list[bytearra
     Each buffer is batch-decoded with array("h") (one C call per buffer)
     instead of a per-sample struct.unpack_from. Sums are taken in Python ints
     so the clamp applies to the full mix. array("h") is native byte order,
-    which matches the LE PCM on LE hosts.
+    so a big-endian host swaps each buffer in and the result out.
     """
     # PORT-NOTE: benchmarked the per-sample clamp loop below (timeit, 735
     #   samples/frame, 1-2 extra channels) against min()/max() clamping and a
@@ -96,10 +99,14 @@ def _sum_and_clamp(n: int, psg_buf: bytes | bytearray, extra_bufs: list[bytearra
     #   of which of these shapes it's translated from.
     psg_arr = array("h")
     psg_arr.frombytes(psg_buf)
+    if _SWAP_BYTES:
+        psg_arr.byteswap()
     extra_arrs = []
     for buf in extra_bufs:
         chan_arr = array("h")
         chan_arr.frombytes(buf)
+        if _SWAP_BYTES:
+            chan_arr.byteswap()
         extra_arrs.append(chan_arr)
     out_arr = array("h", bytes(2 * n))
     for i in range(n):
@@ -111,4 +118,6 @@ def _sum_and_clamp(n: int, psg_buf: bytes | bytearray, extra_bufs: list[bytearra
         elif total < _S16_MIN:
             total = _S16_MIN
         out_arr[i] = total
+    if _SWAP_BYTES:
+        out_arr.byteswap()
     return out_arr.tobytes()

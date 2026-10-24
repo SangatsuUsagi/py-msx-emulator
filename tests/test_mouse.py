@@ -52,6 +52,15 @@ def test_clamp_beyond_range_carries_remainder() -> None:
     assert device._cur_x_rel == 73  # 200 - 127 carried to next scan round
 
 
+def test_running_accumulator_is_bounded() -> None:
+    # input-mouse "Running accumulator is bounded".
+    device = MouseDevice()
+    device.add_motion(40000, -40000)
+    assert (device._cur_x_rel, device._cur_y_rel) == (32767, -32767)
+    device.add_motion(-50000, 0)
+    assert device._cur_x_rel == -17233
+
+
 def test_negative_delta_encodes_two_complement() -> None:
     device = MouseDevice()
     device.add_motion(-1, 0)
