@@ -416,6 +416,11 @@ on exit, before a save state, and when the disk is swapped out. You can swap dis
 at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
 or from the debugger REPL (`fdd1`/`fdd2`).
 
+Loading a save state does not swap disks. Each drive must already hold the disk
+it held when the state was saved: the same `.dsk` file, with the same contents.
+Otherwise the load is refused and nothing changes. For a multi-disk game, swap to
+that disk with F6 first, or, with `--resume`, list it first after `--fdd1`.
+
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
   - No timing model: commands execute instantly. There is no seek/step rate,
@@ -789,7 +794,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
 | `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk is swapped out. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
-| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file |
+| `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
@@ -903,7 +908,7 @@ button and key-name labels.
 | F7 (hold) | Fast-forward: run without the speed limit while the key is held |
 | Shift + F7 | Turn fast-forward on or off (latched) |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
-| F9 | Load most recent save state |
+| F9 | Load most recent save state. The drives must hold the disks they held at the save (it does not swap disks) |
 | F10 | Save screenshot to `saves/screenshots/screenshot_YYYYMMDD_HHMMSS.png` |
 | F11 | Pause or resume (separate from the RPC pause: neither one resumes the other) |
 | Shift + F11 | Toggle fullscreen |
