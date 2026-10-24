@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TypedDict
 
-from msx.snapshot_schema import I64_MAX, check_int, check_object
+from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_object
 
 # 8-phase scan cycle: a main cycle reporting the real relative X/Y delta,
 # immediately followed by an alternate cycle forced to zero delta. MSX BIOS
@@ -71,7 +71,7 @@ class MouseState(TypedDict):
 
 
 _MOUSE_STATE_KEYS: frozenset[str] = frozenset(MouseState.__annotations__)
-_I64_MIN = -I64_MAX - 1
+_SAFE_INT_MIN = -SAFE_INT_MAX
 
 
 @dataclass
@@ -192,12 +192,16 @@ class MouseDevice:
             "phase": check_int(state["phase"], f"{label}.phase", 0, 7),
             "x_rel": check_int(state["x_rel"], f"{label}.x_rel", -delta, delta),
             "y_rel": check_int(state["y_rel"], f"{label}.y_rel", -delta, delta),
-            "cur_x_rel": check_int(state["cur_x_rel"], f"{label}.cur_x_rel", _I64_MIN, I64_MAX),
-            "cur_y_rel": check_int(state["cur_y_rel"], f"{label}.cur_y_rel", _I64_MIN, I64_MAX),
+            "cur_x_rel": check_int(
+                state["cur_x_rel"], f"{label}.cur_x_rel", _SAFE_INT_MIN, SAFE_INT_MAX
+            ),
+            "cur_y_rel": check_int(
+                state["cur_y_rel"], f"{label}.cur_y_rel", _SAFE_INT_MIN, SAFE_INT_MAX
+            ),
             "status": check_int(state["status"], f"{label}.status", 0, 0xFF),
             "last_pin8": check_int(state["last_pin8"], f"{label}.last_pin8", 0, 1),
             "last_cycle_age": check_int(
-                state["last_cycle_age"], f"{label}.last_cycle_age", _I64_MIN, I64_MAX
+                state["last_cycle_age"], f"{label}.last_cycle_age", _SAFE_INT_MIN, SAFE_INT_MAX
             ),
         }
 

@@ -21,8 +21,8 @@ _EXTROM = b"\x00" * 0x4000
 _RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
 
-def _blob(n: int) -> dict[str, str]:
-    return {"__b64__": base64.b64encode(bytes(n)).decode("ascii")}
+def _blob(n: int) -> str:
+    return base64.b64encode(bytes(n)).decode("ascii")
 
 
 def _edited(tmp_path, monkeypatch, machine, edit):

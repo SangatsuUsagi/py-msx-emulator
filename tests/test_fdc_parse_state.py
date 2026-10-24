@@ -28,7 +28,7 @@ from msx.fdc.interface import (
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from msx.snapshot_schema import SchemaError
-from msx.state import _from_jsonable, _to_jsonable
+from msx.state import _to_jsonable
 from tests.disk_factories import dsk_image
 
 _2DD = 737280
@@ -102,7 +102,7 @@ def _activity(fdc: FloppyDisk, track: int) -> None:
 
 def _roundtrip(snap: dict[str, object]) -> Any:
     """The load path's own view of a snapshot: JSON-encoded and decoded."""
-    return _from_jsonable(json.loads(json.dumps(_to_jsonable(snap))))
+    return json.loads(json.dumps(_to_jsonable(snap)))
 
 
 def _as_snapshot(fdc: FloppyDisk, parsed: FloppyDiskParsed) -> dict[str, object]:
@@ -126,8 +126,8 @@ def test_own_snapshot_parses_and_equals_itself(tmp_path: Path, kind: str) -> Non
     snap = fdc.snapshot()
     assert _as_snapshot(fdc, fdc.parse_state(snap, "fdc_state")) == snap
     decoded = _roundtrip(snap)
-    assert _as_snapshot(fdc, fdc.parse_state(decoded, "fdc_state")) == decoded
-    assert decoded == snap
+    # Blobs are base64 strings in the file; parsing decodes them back.
+    assert _as_snapshot(fdc, fdc.parse_state(decoded, "fdc_state")) == snap
 
 
 @pytest.mark.parametrize("kind", _KINDS)
@@ -146,7 +146,7 @@ def test_restore_of_decoded_snapshot_restores_it(tmp_path: Path, kind: str) -> N
     saved = _roundtrip(fdc.snapshot())
     _activity(fdc, 9)
     fdc.restore(saved)
-    assert fdc.snapshot() == saved
+    assert _roundtrip(fdc.snapshot()) == saved
 
 
 @pytest.mark.parametrize("kind", _KINDS)
@@ -159,7 +159,7 @@ def test_apply_state_of_parsed_snapshot_restores_it(tmp_path: Path, kind: str) -
     if kind == "wd2793":
         fdc.write_mem(REG_DRIVE, 0x01)  # select drive B; the restore reselects A
     fdc.apply_state(fdc.parse_state(saved, "fdc_state"))
-    assert fdc.snapshot() == saved
+    assert _roundtrip(fdc.snapshot()) == saved
     assert fdc.controller.drive is selected
 
 
