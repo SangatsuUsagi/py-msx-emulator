@@ -136,7 +136,7 @@ _NO_SRAM_DEFAULTS = (BankTracingMapper.sram_medium, FlatMapper.sram_medium,
 
 
 def test_sram_medium_is_overridden_exactly_by_the_sram_carrying_set() -> None:
-    # cart-sram-mapper "has_sram is True for every SRAM-carrying mapper class"
+    # cart-sram-mapper "Every SRAM-carrying mapper class has an SRAM medium"
     # (class level): an SRAM class must not fall back to a None default.
     for cls in _ALL_MAPPER_CLASSES:
         overridden = cls.sram_medium not in _NO_SRAM_DEFAULTS
@@ -144,8 +144,8 @@ def test_sram_medium_is_overridden_exactly_by_the_sram_carrying_set() -> None:
 
 
 def test_sram_carrying_instances_return_an_image_of_their_size() -> None:
-    # cart-sram-mapper "has_sram is True for every SRAM-carrying mapper
-    # class", cart-fmpac / cart-halnote "has_sram is True".
+    # cart-sram-mapper "Every SRAM-carrying mapper class has an SRAM
+    # medium", cart-fmpac / cart-halnote "<class> has an SRAM medium".
     rom = bytes(range(256)) * 128
     cases: list[tuple[Mapper, int]] = [
         (Ascii8Sram2Mapper(rom=rom), 2048),
@@ -210,8 +210,8 @@ def test_every_banktracingmapper_subclass_overrides_reset() -> None:
 
 
 def test_a_mapper_without_sram_has_no_medium() -> None:
-    # cart-rom-mapper "A mapper with no SRAM has has_sram False and a no-op
-    # sram_data", memory-ram-mapper "RamMapper declares no SRAM capability".
+    # cart-rom-mapper "A mapper with no SRAM has no SRAM medium",
+    # memory-ram-mapper "RamMapper declares no SRAM medium".
     for mapper in (FlatMapper(cartridge=None), Ascii8Mapper(rom=bytes(range(256)) * 128),
                    RamMapper()):
         assert mapper.sram_medium() is None
