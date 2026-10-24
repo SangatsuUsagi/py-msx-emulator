@@ -58,6 +58,7 @@ from msx.boundary import (
 )
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
+from msx.machine_config import encode_machine_config
 from msx.machine_loader import _SRAM_SIZES, build_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
@@ -1250,17 +1251,22 @@ def load_machine_config(
             is given.
         OSError: If a disk image cannot be read.
     """
+    def spec_rom(filename: str, required: bool) -> bytes | None:
+        if spec.rom_base_dir is None:
+            raise MachineLoadError(f"machine '{spec.name}' has no rom_base_dir to read {filename}")
+        return _load_rom(spec.rom_base_dir, filename, required=required)
+
     roms: dict[str, bytes] = {}
     if bios_override is not None:
         roms["main"] = bios_override
     else:
-        main = _load_rom(spec.rom_base_dir, spec.main_rom_entry.file, required=True)
+        main = spec_rom(spec.main_rom_entry.file, True)
         assert main is not None
         roms["main"] = main
     if logo_override is not None:
         roms["logo"] = logo_override
     elif spec.logo_rom_entry is not None:
-        logo = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
+        logo = spec_rom(spec.logo_rom_entry.file, False)
         if logo is not None:
             roms["logo"] = logo
     mapper1_name = _resolve_mapper_type(mapper1, cartridge1)
@@ -1275,14 +1281,14 @@ def load_machine_config(
         if extrom_override is not None:
             roms["sub"] = extrom_override
         elif spec.sub_rom_entry is not None:
-            sub = _load_rom(spec.rom_base_dir, spec.sub_rom_entry.file, required=True)
+            sub = spec_rom(spec.sub_rom_entry.file, True)
             assert sub is not None
             roms["sub"] = sub
         if spec.fdc is not None:
             if disk_rom_override is not None:
                 roms["disk"] = disk_rom_override
             else:
-                disk = _load_rom(spec.rom_base_dir, spec.fdc.disk_rom_entry.file, required=True)
+                disk = spec_rom(spec.fdc.disk_rom_entry.file, True)
                 assert disk is not None
                 roms["disk"] = disk
             for index, path in enumerate((fdd1, fdd2)):
@@ -1308,6 +1314,19 @@ def load_machine_config(
         if data is not None:
             config.media[media_id] = bytes(data)
     return config
+
+
+def machine_config_document(config: MachineConfig) -> bytes:
+    """The canonical MachineConfig document of `config`: its resolved spec,
+    cartridges and overlays, with every ROM image it holds as a reference
+    (see msx/machine_config.py). Run inputs and host paths are not in it."""
+    return encode_machine_config(
+        config.spec, config.roms,
+        cartridge1=config.cartridge1, mapper1=config.mapper1,
+        cartridge2=config.cartridge2, mapper2=config.mapper2,
+        extension_overlay1=config.extension_overlay1,
+        extension_overlay2=config.extension_overlay2,
+    )
 
 
 def build_machine_from_spec(

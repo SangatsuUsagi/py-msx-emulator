@@ -1,0 +1,462 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "py-msx-emulator MachineConfig document, format 1",
+  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document.",
+  "type": "object",
+  "properties": {
+    "format_version": {
+      "const": 1
+    },
+    "machine": {
+      "$ref": "#/$defs/Machine"
+    },
+    "cartridges": {
+      "type": "object",
+      "properties": {
+        "slot1": {
+          "$ref": "#/$defs/Cartridge"
+        },
+        "slot2": {
+          "$ref": "#/$defs/Cartridge"
+        }
+      },
+      "required": [
+        "slot1",
+        "slot2"
+      ],
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "properties": {
+        "slot1": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FlatOverlay"
+                },
+                {
+                  "$ref": "#/$defs/ExpandedOverlay"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slot2": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FlatOverlay"
+                },
+                {
+                  "$ref": "#/$defs/ExpandedOverlay"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "slot1",
+        "slot2"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "cartridges",
+    "extensions",
+    "format_version",
+    "machine"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Cartridge": {
+      "type": "object",
+      "properties": {
+        "mapper": {
+          "type": "string",
+          "not": {
+            "const": "auto"
+          }
+        },
+        "rom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RomRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mapper",
+        "rom"
+      ],
+      "additionalProperties": false
+    },
+    "Device": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "rom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RomRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size_kb": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "device",
+        "rom",
+        "size_kb"
+      ],
+      "additionalProperties": false
+    },
+    "ExpandedOverlay": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "const": "expanded"
+        },
+        "subslots": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/Device"
+          }
+        },
+        "io_device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Device"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "io_device",
+        "shape",
+        "subslots"
+      ],
+      "additionalProperties": false
+    },
+    "FlatOverlay": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "const": "flat"
+        },
+        "device": {
+          "type": "string"
+        },
+        "rom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RomRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "device",
+        "rom",
+        "shape"
+      ],
+      "additionalProperties": false
+    },
+    "Machine": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "generation": {
+          "enum": [
+            "msx1",
+            "msx2"
+          ]
+        },
+        "video_standard": {
+          "enum": [
+            "ntsc",
+            "pal"
+          ]
+        },
+        "m1_wait_states": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "keyboard_layout": {
+          "enum": [
+            "int",
+            "jp"
+          ]
+        },
+        "ppi_control_read": {
+          "enum": [
+            "control",
+            "open_bus",
+            "bus_latch"
+          ]
+        },
+        "has_v9938": {
+          "type": "boolean"
+        },
+        "has_rtc": {
+          "type": "boolean"
+        },
+        "main_rom": {
+          "$ref": "#/$defs/RomRef"
+        },
+        "logo_rom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RomRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slot0_ram": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "size_kb": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 64
+                },
+                "page": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 3
+                }
+              },
+              "required": [
+                "page",
+                "size_kb"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ram_size_kb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "sub_rom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RomRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sub_rom_subslot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "has_ram_mapper": {
+          "type": "boolean"
+        },
+        "ram_mapper_size_kb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "flat_ram_subslot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flat_ram_size_kb": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "fdc": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "controller": {
+                  "type": "string"
+                },
+                "connection_style": {
+                  "type": "string"
+                },
+                "drives": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4
+                },
+                "disk_rom": {
+                  "$ref": "#/$defs/RomRef"
+                }
+              },
+              "required": [
+                "connection_style",
+                "controller",
+                "disk_rom",
+                "drives"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fdc_subslot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "io_device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Device"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device_io_ports": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      },
+      "required": [
+        "device_io_ports",
+        "fdc",
+        "fdc_subslot",
+        "flat_ram_size_kb",
+        "flat_ram_subslot",
+        "generation",
+        "has_ram_mapper",
+        "has_rtc",
+        "has_v9938",
+        "id",
+        "io_device",
+        "keyboard_layout",
+        "logo_rom",
+        "m1_wait_states",
+        "main_rom",
+        "name",
+        "ppi_control_read",
+        "ram_mapper_size_kb",
+        "ram_size_kb",
+        "slot0_ram",
+        "sub_rom",
+        "sub_rom_subslot",
+        "video_standard"
+      ],
+      "additionalProperties": false
+    },
+    "RomRef": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha1": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "maxItems": 4
+        }
+      },
+      "required": [
+        "name",
+        "pages",
+        "sha1",
+        "size"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
