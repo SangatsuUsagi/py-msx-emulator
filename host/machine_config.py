@@ -61,11 +61,12 @@ from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 from msx.machine_loader import _SRAM_SIZES, build_machine
 from msx.machine_spec import (
+    AnyExtensionOverlay,
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
-    _ExtensionOverlay,
     _FdcDef,
     _RomEntry,
     _Slot0RamEntry,
@@ -980,7 +981,7 @@ def _parse_expanded_device(
 
 def _parse_expanded_extension_overlay(
     raw: ExtensionOverlayYaml, path: Path, project_root: Path
-) -> _ExpandedExtensionOverlay:
+) -> ExpandedExtensionOverlay:
     rom_base: str = str(raw.get("rom_base", ""))
     rom_base_dir = project_root / rom_base
 
@@ -1016,12 +1017,12 @@ def _parse_expanded_extension_overlay(
             _KNOWN_IO_DEVICES, _IO_DEVICES_REQUIRING_ROM,
         )
 
-    return _ExpandedExtensionOverlay(subslots=subslots, io_device=io_device)
+    return ExpandedExtensionOverlay(subslots=subslots, io_device=io_device)
 
 
 def load_extension_overlay(
     extension_id: str, config_dir: Path, project_root: Path
-) -> _ExtensionOverlay | _ExpandedExtensionOverlay:
+) -> AnyExtensionOverlay:
     """Load and validate an extension overlay fragment.
 
     Args:
@@ -1032,7 +1033,7 @@ def load_extension_overlay(
             path relative paths.
 
     Returns:
-        A resolved _ExtensionOverlay (flat shape) or _ExpandedExtensionOverlay
+        A resolved ExtensionOverlay (flat shape) or ExpandedExtensionOverlay
         (expanded shape), ready for build_machine(extension_overlay=...).
 
     Raises:
@@ -1084,7 +1085,7 @@ def load_extension_overlay(
         raw, rom_base_dir, f"extension overlay '{path}'",
         _KNOWN_EXTENSION_DEVICES, _EXTENSION_DEVICES_REQUIRING_ROM,
     )
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device=resolved.device,
         rom_base_dir=resolved.rom_base_dir,
         rom_entry=resolved.rom_entry,
@@ -1131,7 +1132,7 @@ def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytea
     return None
 
 
-def _load_device_rom(device: _ExpandedSubslotDevice | _ExtensionOverlay, label: str) -> bytes:
+def _load_device_rom(device: _ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
     """Load a resolved device's required ROM file. `rom_base_dir`/
     `rom_entry` are asserted non-None: every caller here already resolved
     `device` from a role (machine io_device, an expanded sub-slot/
@@ -1165,7 +1166,7 @@ def sram_paths(config: MachineConfig) -> dict[str, Path]:
             paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
     overlays = ((1, config.extension_overlay1), (2, config.extension_overlay2))
     for slot, overlay in overlays:
-        if isinstance(overlay, _ExpandedExtensionOverlay):
+        if isinstance(overlay, ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
                 if sub.device == "halnote" and sub.sram_save_path is not None:
                     paths[subslot_sram_id(slot, index)] = sub.sram_save_path
@@ -1195,10 +1196,10 @@ def _sram_size_and_label(config: MachineConfig, media_id: str) -> tuple[int, str
 
 
 def _overlay_roms(
-    slot: int, overlay: _ExtensionOverlay | _ExpandedExtensionOverlay | None
+    slot: int, overlay: AnyExtensionOverlay | None
 ) -> dict[str, bytes]:
     roms: dict[str, bytes] = {}
-    if isinstance(overlay, _ExpandedExtensionOverlay):
+    if isinstance(overlay, ExpandedExtensionOverlay):
         for index, sub in overlay.subslots.items():
             if sub.rom_entry is not None:
                 roms[f"slot{slot}.{index}"] = _load_device_rom(
@@ -1225,8 +1226,8 @@ def load_machine_config(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
-    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay1: AnyExtensionOverlay | None = None,
+    extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> MachineConfig:
     """Read every file `spec` and the arguments name into a MachineConfig for
@@ -1323,8 +1324,8 @@ def build_machine_from_spec(
     disk_rom_override: bytes | None = None,
     fdd1: Path | None = None,
     fdd2: Path | None = None,
-    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
-    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None,
+    extension_overlay1: AnyExtensionOverlay | None = None,
+    extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> Machine:
     """load_machine_config() then build_machine(), for callers that need no

@@ -18,7 +18,7 @@ from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine import Machine
-from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineSpec, _RomEntry
 
 _RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
@@ -49,7 +49,7 @@ def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
     main_dir = tmp_path / f"{name}_main_rom"
     main_dir.mkdir()
     return build_machine_from_spec(
-        _msx1_spec(main_dir), extension_overlay2=_ExtensionOverlay(device="scc_i_cart")
+        _msx1_spec(main_dir), extension_overlay2=ExtensionOverlay(device="scc_i_cart")
     )
 
 

@@ -32,11 +32,11 @@ from msx.input import InputState
 from msx.io import IOBus
 from msx.kanji import KanjiRom
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
-    _ExtensionOverlay,
 )
 from msx.mapper import (
     HALNOTE_SRAM_SIZE,
@@ -313,7 +313,7 @@ def _build_expanded_subslot_device(
 def _wire_expanded_overlay(
     config: MachineConfig,
     slot: int,
-    extension_overlay: _ExpandedExtensionOverlay,
+    extension_overlay: ExpandedExtensionOverlay,
     kanji_device: KanjiRom | None,
     other_slot_ram_mapper_claimed: bool = False,
     other_slot_halnote_claimed: bool = False,
@@ -417,7 +417,7 @@ class _FlatOverlayWiring:
 def _wire_flat_overlay(
     config: MachineConfig,
     slot: int,
-    extension_overlay: _ExtensionOverlay,
+    extension_overlay: ExtensionOverlay,
     scc: SCC | None,
     existing_fmpac: FmPac | None = None,
 ) -> _FlatOverlayWiring:
@@ -543,7 +543,7 @@ def _wire_extension_overlay(
     # other_slot_halnote_claimed), differing only in which slot's
     # variables they populate. A future third cross-slot conflict type
     # needs adding to both blocks.
-    if isinstance(extension_overlay1, _ExpandedExtensionOverlay):
+    if isinstance(extension_overlay1, ExpandedExtensionOverlay):
         expanded1 = _wire_expanded_overlay(config, 1, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
         mapper1_subslots = expanded1.subslots
@@ -561,7 +561,7 @@ def _wire_extension_overlay(
 
     # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
     # replacing whatever slot-2 cartridge mapper was resolved above.
-    if isinstance(extension_overlay2, _ExpandedExtensionOverlay):
+    if isinstance(extension_overlay2, ExpandedExtensionOverlay):
         expanded2 = _wire_expanded_overlay(
             config, 2, extension_overlay2, kanji_device,
             other_slot_ram_mapper_claimed=slot1_ram_mapper_claimed,

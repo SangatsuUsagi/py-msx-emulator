@@ -14,9 +14,9 @@ from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
+    ExtensionOverlay,
     MachineSpec,
-    _ExpandedExtensionOverlay,
-    _ExtensionOverlay,
     _RomEntry,
 )
 from msx.vdp.tracer import Tracer
@@ -60,8 +60,8 @@ def make_config(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logrom: bytes | None = None,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
 ) -> MachineConfig:
     return load_machine_config(
         _msx1_spec(),
@@ -107,8 +107,8 @@ def make_machine(
     mapper2: str = "auto",
     logrom: bytes | None = None,
     tracer: Tracer | None = None,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None" = None,
+    extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
 ) -> Machine:
     config = make_config(
         rom, cartridge, mapper, cartridge2, mapper2, logrom,

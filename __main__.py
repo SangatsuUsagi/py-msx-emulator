@@ -14,11 +14,7 @@ if TYPE_CHECKING:
     from msx.boundary import RtcTime
     from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
-    from msx.machine_spec import (
-        MachineSpec,
-        _ExpandedExtensionOverlay,
-        _ExtensionOverlay,
-    )
+    from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
@@ -276,13 +272,13 @@ def _resolve_machine_id(
 
 def _print_extension_summary_line(
     slot_num: int,
-    extension_overlay: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_overlay: "AnyExtensionOverlay | None",
     extension_id: str | None,
 ) -> None:
     if extension_overlay is None:
         return
-    from msx.machine_spec import _ExpandedExtensionOverlay
-    if isinstance(extension_overlay, _ExpandedExtensionOverlay):
+    from msx.machine_spec import ExpandedExtensionOverlay
+    if isinstance(extension_overlay, ExpandedExtensionOverlay):
         print(
             f"extension: {extension_id} (expanded slot {slot_num}: "
             f"{len(extension_overlay.subslots)} sub-slot(s)"
@@ -291,7 +287,7 @@ def _print_extension_summary_line(
         )
     elif extension_overlay.rom_entry is not None:
         # rom_base_dir is always set together with rom_entry (see
-        # _ExtensionOverlay's docstring: both are None only for a device
+        # ExtensionOverlay's docstring: both are None only for a device
         # with no ROM file, e.g. scc_i_cart) -- asserted here only to
         # narrow the type for mypy, not a runtime possibility.
         assert extension_overlay.rom_base_dir is not None
@@ -306,8 +302,8 @@ def _print_extension_summary_line(
 
 def _print_startup_summary(
     spec: "MachineSpec", display_mapper: str, fdd1_paths: list[Path], fdd2_path: Path | None,
-    extension_overlay1: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
-    extension_overlay2: "_ExtensionOverlay | _ExpandedExtensionOverlay | None",
+    extension_overlay1: "AnyExtensionOverlay | None",
+    extension_overlay2: "AnyExtensionOverlay | None",
     mouse_port: int | None, args: argparse.Namespace,
 ) -> None:
     print(f"machine : {spec.name}")

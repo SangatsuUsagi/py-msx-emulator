@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from msx.machine_spec import MachineSpec, _ExpandedExtensionOverlay, _ExtensionOverlay
+    from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 
 @dataclass(frozen=True)
@@ -106,8 +106,8 @@ class MachineConfig:
     mapper1: str = "Mirrored"
     cartridge2: bytes | None = None
     mapper2: str = "Mirrored"
-    extension_overlay1: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None
-    extension_overlay2: _ExtensionOverlay | _ExpandedExtensionOverlay | None = None
+    extension_overlay1: AnyExtensionOverlay | None = None
+    extension_overlay2: AnyExtensionOverlay | None = None
     media: dict[str, bytes] = field(default_factory=dict)
     disks: dict[str, DiskMedium] = field(default_factory=dict)
     rtc_initial_time: RtcTime | None = None

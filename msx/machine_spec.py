@@ -147,10 +147,10 @@ class MachineSpec:
 
 
 @dataclass
-class _ExtensionOverlay:
+class ExtensionOverlay:
     """Resolved extension overlay (config/extensions/<id>.yaml): the device
     kind plus optional ROM/SRAM paths for the --extension flag. Not a machine
-    spec — applied on top of one, always in primary slot 2.
+    spec — applied on top of one, in cartridge slot 1 or 2.
 
     `rom_base_dir`/`rom_entry`/`sram_save_path` are None for a device with no
     ROM file and no persisted SRAM (e.g. "scc_i_cart", whose RAM starts
@@ -166,7 +166,7 @@ class _ExtensionOverlay:
 @dataclass
 class _ExpandedSubslotDevice:
     """One sub-slot's (or the io_device's) resolved device declaration
-    within an expanded extension overlay -- same shape as _ExtensionOverlay
+    within an expanded extension overlay -- same shape as ExtensionOverlay
     above, since a sub-slot declaration uses the identical device/rom/sram
     schema a flat overlay's top level does (see cart-extension-overlay's
     "Extension overlay shape: flat vs expanded" Requirement), plus a
@@ -181,15 +181,19 @@ class _ExpandedSubslotDevice:
 
 
 @dataclass
-class _ExpandedExtensionOverlay:
+class ExpandedExtensionOverlay:
     """Resolved expanded-shape extension overlay (config/extensions/<id>.yaml
-    with `shape: expanded`, e.g. hbi_j1.yaml): primary slot 2 becomes an
+    with `shape: expanded`, e.g. hbi_j1.yaml): its cartridge slot becomes an
     expanded slot with one device per declared sub-slot index, plus an
     optional slot-independent global I/O device (e.g. the Kanji-ROM font
     device, which has no cartridge-slot address decode of its own)."""
 
     subslots: dict[int, _ExpandedSubslotDevice]
     io_device: _ExpandedSubslotDevice | None = None
+
+
+# Either overlay shape, as carried by MachineConfig.extension_overlay1/2.
+AnyExtensionOverlay = ExtensionOverlay | ExpandedExtensionOverlay
 
 
 # ---------------------------------------------------------------------------

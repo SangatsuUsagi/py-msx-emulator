@@ -21,8 +21,8 @@ from host.machine_config import (
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
     MachineLoadError,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
 )
 from msx.ram_mapper import RamMapper
@@ -202,7 +202,7 @@ def _has_mapper_spec(tmp_path: Path):
 
 def test_memory_512k_yaml_resolves_ram_mapper_subslot() -> None:
     overlay = load_extension_overlay("memory_512k", _CONFIG, _ROOT)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert set(overlay.subslots) == {0}
     subslot = overlay.subslots[0]
     assert subslot.device == "ram_mapper"
@@ -267,7 +267,7 @@ def test_ram_mapper_subslot_with_size_kb_parses(tmp_path: Path) -> None:
         """,
     )
     overlay = load_extension_overlay("custom", config_dir, tmp_path)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert overlay.subslots[0].size_kb == 128
 
 
@@ -298,8 +298,8 @@ def test_two_ram_mapper_subslots_in_one_overlay_rejected(tmp_path: Path) -> None
 # build_machine wiring: sub-slot device, ports, open-bus sub-slots (task 2.2, 4.1-4.3)
 # ---------------------------------------------------------------------------
 
-def _ram_mapper_overlay(size_kb: int = 512) -> _ExpandedExtensionOverlay:
-    return _ExpandedExtensionOverlay(
+def _ram_mapper_overlay(size_kb: int = 512) -> ExpandedExtensionOverlay:
+    return ExpandedExtensionOverlay(
         subslots={0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb)},
     )
 

@@ -14,7 +14,7 @@ from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine import Machine
-from msx.machine_spec import MachineSpec, _ExtensionOverlay, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineSpec, _RomEntry
 
 _RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 _BANK_SIZE = 0x4000
@@ -27,10 +27,10 @@ def _bank_rom(num_banks: int = 4) -> bytes:
     return bytes(buf)
 
 
-def _make_fmpac_overlay(rom_dir: Path) -> _ExtensionOverlay:
+def _make_fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     rom_dir.mkdir(parents=True, exist_ok=True)
     (rom_dir / "fmpac.rom").write_bytes(_bank_rom())
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=rom_dir,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),

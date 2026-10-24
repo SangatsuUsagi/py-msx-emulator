@@ -16,7 +16,7 @@ from host.machine_config import (
 )
 from msx.fmpac import SRAM_SIZE, FmPac
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineLoadError, MachineSpec, _ExtensionOverlay, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
 
@@ -449,9 +449,9 @@ def test_fmpac_device_without_rom_block_rejected(tmp_path: Path) -> None:
 # Machine wiring: slot-2 dispatch via a built machine (synthetic ROMs)
 # ---------------------------------------------------------------------------
 
-def _make_fmpac_overlay(tmp_path: Path) -> _ExtensionOverlay:
+def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     (tmp_path / "fmpac.rom").write_bytes(_bank_rom())
-    return _ExtensionOverlay(
+    return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
@@ -539,7 +539,7 @@ def test_build_machine_loads_existing_fmpac_sram(tmp_path: Path) -> None:
 
 
 def test_missing_fmpac_rom_raises(tmp_path: Path) -> None:
-    overlay = _ExtensionOverlay(
+    overlay = ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
         rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),

@@ -19,9 +19,9 @@ import pytest
 
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
 )
@@ -100,7 +100,7 @@ def test_extension1_msxdos2_512k_alone_boots() -> None:
 
 def test_load_msxdos2_512k_overlay_parses_real_yaml() -> None:
     overlay = load_extension_overlay("msxdos2_512k", _CONFIG, _ROOT)
-    assert isinstance(overlay, _ExpandedExtensionOverlay)
+    assert isinstance(overlay, ExpandedExtensionOverlay)
     assert set(overlay.subslots) == {0, 1}
     assert overlay.subslots[0].device == "ram_mapper"
     assert overlay.subslots[0].size_kb == 512
@@ -154,9 +154,9 @@ def _msx2_spec(has_ram_mapper: bool = False) -> MachineSpec:
     )
 
 
-def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> _ExpandedExtensionOverlay:
+def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> ExpandedExtensionOverlay:
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
-    return _ExpandedExtensionOverlay(
+    return ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
             1: _ExpandedSubslotDevice(
@@ -188,7 +188,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     rom_dir = tmp_path / "msxdos2_rom"
     rom_dir.mkdir()
     (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={
             0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
             1: _ExpandedSubslotDevice(

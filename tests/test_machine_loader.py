@@ -18,9 +18,9 @@ from host.machine_config import (
 from msx.kanji import KanjiRom
 from msx.machine_loader import _make_mapper, _require_scc
 from msx.machine_spec import (
+    ExpandedExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedExtensionOverlay,
     _ExpandedSubslotDevice,
     _RomEntry,
     _Slot0RamEntry,
@@ -1220,7 +1220,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     # MSX2: an expanded extension overlay has no MSX1 counterpart (see
     # cart-extension-overlay's "Expanded extension overlay requires an MSX2
     # base machine" Requirement) -- unrelated to the io_device conflict this
-    # test targets, but _ExpandedExtensionOverlay's empty `subslots={}` still
+    # test targets, but ExpandedExtensionOverlay's empty `subslots={}` still
     # goes through _wire_expanded_overlay, which now checks generation first.
     spec = dataclasses.replace(
         _make_msx2_spec(tmp_path),
@@ -1232,7 +1232,7 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     overlay_rom_dir = tmp_path / "overlay_kanji_rom_dir"
     overlay_rom_dir.mkdir()
     (overlay_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
-    overlay = _ExpandedExtensionOverlay(
+    overlay = ExpandedExtensionOverlay(
         subslots={},
         io_device=_ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=overlay_rom_dir,
