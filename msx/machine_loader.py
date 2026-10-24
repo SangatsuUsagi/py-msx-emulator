@@ -34,7 +34,7 @@ from msx.fmpac import FmPac
 from msx.input import InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
-from msx.machine_config import RomRef, document_sha256, parse_machine_config
+from msx.machine_config import RomRef, parse_machine_config
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
@@ -204,7 +204,8 @@ class _ResolvedConfig:
     """A MachineConfig with its document parsed and its ROM images checked:
     the values the wiring below reads. `roms` maps each ROM role ("main",
     "logo", "sub", "disk", "io_device", "slot<n>.ext", "slot<n>.io_device",
-    "slot<n>.<sub>") to its image; `mapper1`/`mapper2` are resolved names."""
+    "slot<n>.<sub>") to its image; `mapper1`/`mapper2` are resolved names;
+    `config_sha256` is the configuration identity (ParsedMachineConfig)."""
 
     spec: MachineSpec
     roms: dict[str, bytes]
@@ -217,6 +218,7 @@ class _ResolvedConfig:
     media: dict[MediaId, bytes]
     disks: dict[MediaId, DiskMedium]
     rtc_initial_time: RtcTime | None
+    config_sha256: str
 
 
 def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:
@@ -257,6 +259,7 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
         media=config.media,
         disks=config.disks,
         rtc_initial_time=config.rtc_initial_time,
+        config_sha256=parsed.config_sha256,
     )
 
 
@@ -897,7 +900,7 @@ def build_machine(
 
     _wire_post_construction_attrs(machine, io, dac, wiring)
     machine._sram_table = _sram_table(machine)
-    machine.machine_config_sha256 = document_sha256(machine_config.document)
+    machine.machine_config_sha256 = config.config_sha256
     return machine
 
 

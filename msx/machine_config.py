@@ -70,7 +70,9 @@ class RomRef:
 class ParsedMachineConfig:
     """A document parsed back into the values build_machine wires from.
     `roms` maps each ROM role the wiring reads ("main", "sub", "slot2.ext",
-    ...) to the reference whose image it needs."""
+    ..., and "cartridge1"/"cartridge2") to the reference whose image it
+    needs. `config_sha256` is the configuration identity: the SHA-256 of the
+    document's canonical form, whatever whitespace and key order it came in."""
 
     spec: MachineSpec
     mapper1: str
@@ -78,6 +80,7 @@ class ParsedMachineConfig:
     extension_overlay1: AnyExtensionOverlay | None
     extension_overlay2: AnyExtensionOverlay | None
     roms: dict[str, RomRef]
+    config_sha256: str
 
 
 def rom_ref(name: str, data: bytes, pages: list[int]) -> RomRef:
@@ -448,7 +451,7 @@ def _parse_overlay(
     )
 
 
-def _parse(decoded: object) -> ParsedMachineConfig:
+def _parse(decoded: object, config_sha256: str) -> ParsedMachineConfig:
     obj = check_object(decoded, "document", _TOP_KEYS)
     version = obj["format_version"]
     if version != MACHINE_CONFIG_FORMAT_VERSION:
@@ -466,12 +469,14 @@ def _parse(decoded: object) -> ParsedMachineConfig:
         extension_overlay1=_parse_overlay(extensions["slot1"], 1, roms),
         extension_overlay2=_parse_overlay(extensions["slot2"], 2, roms),
         roms=roms,
+        config_sha256=config_sha256,
     )
 
 
 def parse_machine_config(document: bytes) -> ParsedMachineConfig:
     """Parse a MachineConfig document strictly: every key required, no
-    unknown key, every value's type and range checked.
+    unknown key, every value's type and range checked. Any whitespace and
+    key order is accepted; the identity is taken from the canonical form.
 
     Raises:
         MachineLoadError: For anything malformed, naming the field; for
@@ -479,6 +484,7 @@ def parse_machine_config(document: bytes) -> ParsedMachineConfig:
     """
     try:
         decoded = decode_strict(document)
+        canonical = encode_canonical(decoded)
     except ValueError as exc:
         version = mismatched_version(document, MACHINE_CONFIG_FORMAT_VERSION)
         if version is not None:
@@ -488,6 +494,6 @@ def parse_machine_config(document: bytes) -> ParsedMachineConfig:
             ) from exc
         raise MachineLoadError(f"MachineConfig document is not valid JSON: {exc}") from exc
     try:
-        return _parse(decoded)
+        return _parse(decoded, document_sha256(canonical))
     except SchemaError as exc:
         raise MachineLoadError(f"MachineConfig document: {exc}") from exc

@@ -6,6 +6,7 @@ build_machine(), so construction logic lives in one place.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from host.machine_config import load_machine_config
@@ -20,6 +21,23 @@ from msx.machine_spec import (
     _RomEntry,
 )
 from msx.vdp.tracer import Tracer
+
+
+def _reversed_keys(node: object) -> object:
+    if isinstance(node, dict):
+        result: dict[str, object] = {}
+        for key in reversed(list(node)):
+            result[key] = _reversed_keys(node[key])
+        return result
+    if isinstance(node, list):
+        return [_reversed_keys(item) for item in node]
+    return node
+
+
+def reformat_document(document: bytes) -> bytes:
+    """The same MachineConfig document, not in canonical form: indented,
+    every object's keys in reverse order."""
+    return json.dumps(_reversed_keys(json.loads(document)), indent=2).encode("utf-8")
 
 
 def _msx1_spec() -> MachineSpec:

@@ -3,6 +3,7 @@ byte encoding (canonical JSON, strict decoding, base64 blobs)."""
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import re
@@ -16,8 +17,10 @@ from host.machine_config import build_machine_from_spec
 from host.state_files import save_state as save_state_file
 from msx import state
 from msx.boundary import RgbFrame
+from msx.canonical_json import encode_canonical
 from msx.input import InputFrame
 from msx.machine import Machine
+from msx.machine_loader import build_machine
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from tests.factories import make_machine, make_machine_msx2
@@ -342,8 +345,23 @@ def test_the_same_configuration_loads(monkeypatch: pytest.MonkeyPatch, tmp_path:
     config = make_config(_ROM, cartridge=bytes(0x20000), mapper="Konami")
     saved = _konami_machine(bytes(0x20000))
     data = state.save_state(saved)
-    assert json.loads(data)["machine_config_sha256"] == hashlib.sha256(config.document).hexdigest()
+    canonical = encode_canonical(json.loads(config.document))
+    assert json.loads(data)["machine_config_sha256"] == hashlib.sha256(canonical).hexdigest()
     state.load_state(_konami_machine(bytes(0x20000)), data)
+
+
+def test_a_reformatted_document_loads_the_same_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from tests.factories import make_config, reformat_document
+
+    config = make_config(_ROM, cartridge=bytes(0x20000), mapper="Konami")
+    data = state.save_state(build_machine(config))
+    reformatted = dataclasses.replace(config, document=reformat_document(config.document))
+    target = build_machine(reformatted)
+    state.load_state(target, data)
+    assert state.save_state(target) == data
 
 
 def test_a_different_cartridge_rom_is_rejected(
