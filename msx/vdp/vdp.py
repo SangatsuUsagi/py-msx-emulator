@@ -130,7 +130,8 @@ def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> by
     C++ equivalent: std::transform with the LUT, or an explicit loop —
       MSVC/GCC/Clang all auto-vectorize a LUT transform reasonably.
     Kept as-is here because: this is the dominant cost of to_rgb24(), called
-      once per frame per pixel plane.
+      once per frame per pixel plane; Rgb24RowCache calls it only for rows it
+      has not converted before.
     """
     rtab, gtab, btab = channels
     out = ZERO_BYTE * (len(src) * 3)
@@ -202,8 +203,11 @@ class Rgb24RowCache:
         return rgb
 
     def frame(self, src: bytearray, channels: Channels) -> bytes:
-        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`."""
+        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`. A
+        buffer that is not OUTPUT_H whole rows is converted without the memo."""
         width = len(src) // OUTPUT_H
+        if width == 0 or width * OUTPUT_H != len(src):
+            return _translate_rgb24(src, channels)
         parts: list[bytes] = []
         for y in range(0, len(src), width):
             parts.append(self.row(src[y:y + width], channels))
@@ -460,4 +464,4 @@ class VDP:
         overrides this with its programmable palette / SCREEN 8 / banded paths.
         Keeping conversion on the VDP lets the frontend stay display-only.
         """
-        return _translate_rgb24(src, _TMS_CHANNELS)
+        return self._rgb_rows.frame(src, _TMS_CHANNELS)

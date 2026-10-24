@@ -30,6 +30,13 @@ def test_frame_equals_the_uncached_conversion(width: int, repeat_rows: bool) -> 
             assert cache.frame(src, channels) == _translate_rgb24(src, channels)
 
 
+def test_a_buffer_that_is_not_whole_rows_converts_without_the_memo() -> None:
+    cache = Rgb24RowCache()
+    for src in (bytearray(b"\x01\x08\x0f"), bytearray(256 * OUTPUT_H + 1)):
+        assert cache.frame(src, _TMS_CHANNELS) == _translate_rgb24(src, _TMS_CHANNELS)
+    assert len(cache) == 0
+
+
 def test_row_equals_a_row_sized_conversion() -> None:
     cache = Rgb24RowCache()
     row = bytes(range(256))
@@ -98,3 +105,66 @@ def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
     state.load_state(loaded, saved, "test")
     expected = converted.step_frame(InputState(), render_video=True).video
     assert loaded.step_frame(InputState(), render_video=True).video == expected
+
+
+class _Uncached:
+    """Stand-in for Rgb24RowCache that converts every row afresh."""
+
+    def frame(self, src: bytearray, channels):  # type: ignore[no-untyped-def]
+        return _translate_rgb24(src, channels)
+
+    def row(self, row, channels):  # type: ignore[no-untyped-def]
+        return _translate_rgb24(bytearray(row), channels)
+
+
+def _v9938(mode_r0: int):  # type: ignore[no-untyped-def]
+    from msx.vdp.v9938 import V9938
+
+    vdp = V9938()
+    vdp.regs[0] = mode_r0
+    vdp.regs[1] = 0x40
+    for i in range(16):
+        vdp.palette[i] = (i * 37) & 0x1FF
+    return vdp
+
+
+def _banded_v9938():  # type: ignore[no-untyped-def]
+    from msx.vdp._v9938_defs import _PaletteChange
+
+    vdp = _v9938(0x06)  # SCREEN 5
+    vdp.begin_scanline(0)
+    vdp.palette[1] = 0b111_111_111
+    vdp._reg_write_log.append(_PaletteChange(64, 1, 0b111_111_111))
+    vdp.palette[2] = 0b000_111_000
+    vdp._reg_write_log.append(_PaletteChange(150, 2, 0b000_111_000))
+    return vdp
+
+
+@pytest.mark.parametrize(("label", "make", "width"), [
+    ("TMS9918A", lambda: __import__("msx.vdp.vdp", fromlist=["VDP"]).VDP(), 256),
+    ("V9938 SCREEN 5", lambda: _v9938(0x06), 256),
+    ("V9938 SCREEN 7", lambda: _v9938(0x0A), 512),
+    ("V9938 SCREEN 8", lambda: _v9938(0x0E), 256),
+    ("V9938 banded", _banded_v9938, 256),
+])
+def test_memoised_output_equals_the_uncached_conversion(label, make, width) -> None:  # type: ignore[no-untyped-def]
+    # vdp-renderer "Memoised output equals the uncached conversion".
+    memo, plain = make(), make()
+    plain._rgb_rows = _Uncached()
+    frames = [_frame(width, seed, repeat_rows=True) for seed in range(3)]
+    frames += [_frame(width, 9, repeat_rows=False)]
+    for src in frames + frames:  # the second pass hits the memo
+        assert memo.to_rgb24(bytearray(src)) == plain.to_rgb24(bytearray(src)), label
+    assert len(memo._rgb_rows) > 0
+
+
+def test_a_palette_change_is_not_hidden_by_the_memo() -> None:
+    # vdp-renderer "A palette change is not hidden by the memo".
+    vdp = _v9938(0x06)
+    src = bytearray([3]) * (256 * OUTPUT_H)
+    before = vdp.to_rgb24(src)
+    vdp.palette[3] = 0b111_111_111  # index 3 -> white
+    after = vdp.to_rgb24(bytearray(src))
+    assert tuple(before[:3]) != (255, 255, 255)
+    assert tuple(after[:3]) == (255, 255, 255)
+    assert tuple(after[-3:]) == (255, 255, 255)
