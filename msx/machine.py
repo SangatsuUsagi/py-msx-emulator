@@ -114,6 +114,10 @@ class Machine:
     _debugger: DebuggerHook | None = field(default=None, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
+    # SHA-256 (hex) of the MachineConfig document this machine was built from;
+    # a snapshot records it and loads only into a machine with the same one.
+    # Empty for a Machine constructed by hand.
+    machine_config_sha256: str = field(default="", repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
     _pause_hook: Callable[[PauseReason, int], None] | None = field(
