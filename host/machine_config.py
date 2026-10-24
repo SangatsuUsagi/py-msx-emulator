@@ -48,10 +48,9 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
-    FMPAC_SRAM_ID,
-    RTC_CMOS_ID,
     DiskMedium,
     MachineConfig,
+    MediaId,
     RtcTime,
     drive_media_id,
     slot_sram_id,
@@ -1155,11 +1154,11 @@ def _cartridge_sram_path(cartridge: bytes) -> Path:
     return Path("saves") / "sram" / f"{sha1}.sram"
 
 
-def sram_paths(config: MachineConfig) -> dict[str, Path]:
+def sram_paths(config: MachineConfig) -> dict[MediaId, Path]:
     """The file each battery-backed medium of `config` is persisted in, by
     media id: an SRAM cartridge's `saves/sram/<sha1>.sram`, an extension's
     own `sram:` file, and an RTC machine's `saves/sram/rtc_<machine_id>.sram`."""
-    paths: dict[str, Path] = {}
+    paths: dict[MediaId, Path] = {}
     carts = ((1, config.cartridge1, config.mapper1), (2, config.cartridge2, config.mapper2))
     for slot, cartridge, mapper in carts:
         if cartridge is not None and mapper in _SRAM_SIZES:
@@ -1172,27 +1171,27 @@ def sram_paths(config: MachineConfig) -> dict[str, Path]:
                     paths[subslot_sram_id(slot, index)] = sub.sram_save_path
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
-            paths[FMPAC_SRAM_ID] = overlay.sram_save_path
+            paths[MediaId.FMPAC_SRAM] = overlay.sram_save_path
     if config.spec.generation == "msx2" and config.spec.has_rtc:
-        paths[RTC_CMOS_ID] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
+        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
     return paths
 
 
-def _sram_size_and_label(config: MachineConfig, media_id: str) -> tuple[int, str]:
+def _sram_size_and_label(config: MachineConfig, media_id: MediaId) -> tuple[int, str]:
     """Expected image size and warning label of an id sram_paths produced."""
     if media_id == slot_sram_id(1):
         return _SRAM_SIZES[config.mapper1], ""
     if media_id == slot_sram_id(2):
         return _SRAM_SIZES[config.mapper2], ""
-    if media_id == FMPAC_SRAM_ID:
+    if media_id == MediaId.FMPAC_SRAM:
         return FMPAC_SRAM_SIZE, "FM-PAC "
-    if media_id == RTC_CMOS_ID:
+    if media_id == MediaId.RTC_CMOS:
         return RTC_SRAM_SIZE, "RTC "
     for slot in (1, 2):
         for sub in range(_MAX_SUB_SLOT_INDEX + 1):
             if media_id == subslot_sram_id(slot, sub):
                 return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
-    raise ValueError(f"unknown SRAM media id {media_id!r}")
+    raise ValueError(f"unknown SRAM media id {media_id.value!r}")
 
 
 def _overlay_roms(
@@ -1270,7 +1269,7 @@ def load_machine_config(
     roms.update(_overlay_roms(1, extension_overlay1))
     roms.update(_overlay_roms(2, extension_overlay2))
 
-    disks: dict[str, DiskMedium] = {}
+    disks: dict[MediaId, DiskMedium] = {}
     if spec.generation == "msx2":
         if extrom_override is not None:
             roms["sub"] = extrom_override

@@ -5,6 +5,7 @@ core, or receive them from it. No module here reads files or the host clock.
 """
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,25 +32,47 @@ class RtcTime:
 # Start time when the host supplies none (a Saturday).
 RTC_DEFAULT_START = RtcTime(2000, 1, 1, 0, 0, 0)
 
-# Media ids: how the host and the core name each battery-backed image and
-# each floppy drive (MachineConfig.media/disks, Machine.read_media, ...).
-FMPAC_SRAM_ID = "fmpac.sram"
-RTC_CMOS_ID = "rtc.cmos"
+class MediaId(str, enum.Enum):
+    """How the host and the core name each battery-backed image and each
+    floppy drive (MachineConfig.media/disks, Machine.read_media, ...): a
+    closed set whose values are the ids' strings. Format one with `.value`,
+    never str() or an f-string, whose output differs between Python
+    versions."""
+
+    SLOT1_SRAM = "slot1.sram"
+    SLOT2_SRAM = "slot2.sram"
+    SLOT1_SUB0_SRAM = "slot1.0.sram"
+    SLOT1_SUB1_SRAM = "slot1.1.sram"
+    SLOT1_SUB2_SRAM = "slot1.2.sram"
+    SLOT1_SUB3_SRAM = "slot1.3.sram"
+    SLOT2_SUB0_SRAM = "slot2.0.sram"
+    SLOT2_SUB1_SRAM = "slot2.1.sram"
+    SLOT2_SUB2_SRAM = "slot2.2.sram"
+    SLOT2_SUB3_SRAM = "slot2.3.sram"
+    FMPAC_SRAM = "fmpac.sram"
+    RTC_CMOS = "rtc.cmos"
+    DRIVE_A = "drive_a"
+    DRIVE_B = "drive_b"
 
 
-def slot_sram_id(slot: int) -> str:
-    """Media id of cartridge slot `slot`'s mapper SRAM ("slot1.sram")."""
-    return f"slot{slot}.sram"
+def slot_sram_id(slot: int) -> MediaId:
+    """Media id of cartridge slot `slot`'s mapper SRAM (1 -> SLOT1_SRAM).
+    Raises ValueError for a slot other than 1 or 2."""
+    return MediaId(f"slot{slot}.sram")
 
 
-def subslot_sram_id(slot: int, sub: int) -> str:
-    """Media id of an expanded-slot device's SRAM ("slot2.1.sram")."""
-    return f"slot{slot}.{sub}.sram"
+def subslot_sram_id(slot: int, sub: int) -> MediaId:
+    """Media id of an expanded-slot device's SRAM (2, 1 -> SLOT2_SUB1_SRAM).
+    Raises ValueError outside slots 1-2 / sub-slots 0-3."""
+    return MediaId(f"slot{slot}.{sub}.sram")
 
 
-def drive_media_id(index: int) -> str:
-    """Media id of floppy drive `index` (0 -> "drive_a")."""
-    return "drive_" + chr(ord("a") + index)
+def drive_media_id(index: int) -> MediaId:
+    """Media id of floppy drive `index` (0 -> DRIVE_A). Raises ValueError
+    for a drive other than 0 or 1."""
+    if not 0 <= index <= 1:
+        raise ValueError(f"no media id for floppy drive {index}")
+    return MediaId("drive_" + chr(ord("a") + index))
 
 
 @dataclass(frozen=True)
@@ -108,6 +131,6 @@ class MachineConfig:
     mapper2: str = "Mirrored"
     extension_overlay1: AnyExtensionOverlay | None = None
     extension_overlay2: AnyExtensionOverlay | None = None
-    media: dict[str, bytes] = field(default_factory=dict)
-    disks: dict[str, DiskMedium] = field(default_factory=dict)
+    media: dict[MediaId, bytes] = field(default_factory=dict)
+    disks: dict[MediaId, DiskMedium] = field(default_factory=dict)
     rtc_initial_time: RtcTime | None = None

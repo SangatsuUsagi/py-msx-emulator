@@ -16,10 +16,9 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 from msx.boundary import (
-    FMPAC_SRAM_ID,
-    RTC_CMOS_ID,
     RTC_DEFAULT_START,
     MachineConfig,
+    MediaId,
     drive_media_id,
     slot_sram_id,
     subslot_sram_id,
@@ -450,7 +449,7 @@ def _wire_flat_overlay(
                 "cartridge slots at once: real hardware has one FM-PAC "
                 "cartridge, and Machine has a single fmpac field"
             )
-        fmpac_sram = config.media.get(FMPAC_SRAM_ID)
+        fmpac_sram = config.media.get(MediaId.FMPAC_SRAM)
         fmpac_device = FmPac(
             rom=_rom(config, f"slot{slot}.ext"),
             opll=Opll(),
@@ -918,7 +917,7 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
     for media_id in config.disks:
         if media_id not in drive_ids:
             raise MachineLoadError(
-                f"MachineConfig has a disk for {media_id} but the machine has "
+                f"MachineConfig has a disk for {media_id.value} but the machine has "
                 f"{len(drives)} drive(s)"
             )
     for idx, media_id in enumerate(drive_ids):
@@ -996,7 +995,7 @@ def _build_msx2(
     vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
     rtc: RTC | None = None
     if spec.has_rtc:
-        rtc_sram = config.media.get(RTC_CMOS_ID)
+        rtc_sram = config.media.get(MediaId.RTC_CMOS)
         start = config.rtc_initial_time
         rtc = RTC(
             sram=bytearray(rtc_sram) if rtc_sram is not None else bytearray(RTC_SRAM_SIZE),

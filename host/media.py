@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import DiskMedium, drive_media_id
+from msx.boundary import DiskMedium, MediaId, drive_media_id
 
 if TYPE_CHECKING:
     from msx.machine import Machine
@@ -24,7 +24,9 @@ def read_disk_medium(path: Path) -> DiskMedium:
     return DiskMedium(path.read_bytes(), not os.access(path, os.W_OK), path)
 
 
-def media_paths(machine: Machine, sram_paths: Mapping[str, Path]) -> dict[str, Path]:
+def media_paths(
+    machine: Machine, sram_paths: Mapping[MediaId, Path]
+) -> dict[MediaId, Path]:
     """The file each persisted medium is written to, by media id: the SRAM
     files `sram_paths` names (host.machine_config.sram_paths of the
     machine's config) plus each mounted disk's own file."""
@@ -38,7 +40,7 @@ def media_paths(machine: Machine, sram_paths: Mapping[str, Path]) -> dict[str, P
 
 
 def persist_dirty_media(
-    machine: Machine, sram_paths: Mapping[str, Path] | None = None
+    machine: Machine, sram_paths: Mapping[MediaId, Path] | None = None
 ) -> None:
     """Write every dirty medium that has a file back to it. Without
     `sram_paths` only disk images are written."""

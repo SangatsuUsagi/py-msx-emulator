@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from msx.boundary import DiskMedium
+from msx.boundary import (
+    DiskMedium,
+    MediaId,
+    drive_media_id,
+    slot_sram_id,
+    subslot_sram_id,
+)
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
@@ -97,3 +103,24 @@ def test_disk_queries_report_the_mounted_image() -> None:
     m.mount_disk(0, DiskMedium(_2DD))
     assert (m.disk_mounted(0), m.disk_path(0)) == (True, None)
     assert (m.disk_mounted(1), m.disk_path(1)) == (False, None)
+
+
+def test_media_ids_keep_their_string_values() -> None:
+    # machine-core "Media ids keep their string values".
+    m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    m.memory._mapper.sram_image.write(0, 0x42)
+    assert m.dirty_media() == ["slot1.sram"]
+    assert MediaId.FMPAC_SRAM == "fmpac.sram"
+    assert MediaId.RTC_CMOS == "rtc.cmos"
+    assert drive_media_id(0) == "drive_a" and drive_media_id(0) is MediaId.DRIVE_A
+    assert slot_sram_id(2) is MediaId.SLOT2_SRAM
+    assert subslot_sram_id(2, 3) is MediaId.SLOT2_SUB3_SRAM
+    assert {"slot1.sram": 1}[MediaId.SLOT1_SRAM] == 1  # a str-keyed lookup matches
+
+
+@pytest.mark.parametrize("make_id", [
+    lambda: slot_sram_id(3), lambda: subslot_sram_id(1, 4), lambda: drive_media_id(2),
+])
+def test_an_id_outside_the_closed_set_raises(make_id) -> None:
+    with pytest.raises(ValueError):
+        make_id()
