@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import enum
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -13,8 +13,6 @@ from msx.boundary import (
     MediaId,
     RgbFrame,
     drive_media_id,
-    slot_sram_id,
-    subslot_sram_id,
 )
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
@@ -110,6 +108,8 @@ class Machine:
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
     _debugger: DebuggerHook | None = field(default=None, repr=False)
+    # SRAM media by id, filled once by build_machine (see sram_media()).
+    _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
     _pause_hook: Callable[[PauseReason, int], None] | None = field(
@@ -221,31 +221,12 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
 
-    def sram_media(self) -> dict[MediaId, SramImage]:
+    def sram_media(self) -> Mapping[MediaId, SramImage]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
         mapper), `slot<n>.<sub>.sram` (expanded-slot device), `fmpac.sram`,
-        `rtc.cmos`. The FM-PAC is listed only under its own id even when it is
-        a slot's mapper."""
-        media: dict[MediaId, SramImage] = {}
-        if self.fmpac is not None:
-            media[MediaId.FMPAC_SRAM] = self.fmpac.sram_image
-        if self.rtc is not None:
-            media[MediaId.RTC_CMOS] = self.rtc.cmos
-        slots = (
-            (1, self.memory._mapper, self.memory._mapper1_subslots),
-            (2, self.memory._mapper2, self.memory._mapper2_subslots),
-        )
-        for slot, mapper, subslots in slots:
-            image = mapper.sram_medium()
-            if image is not None and mapper is not self.fmpac:
-                media[slot_sram_id(slot)] = image
-            for sub, sub_mapper in enumerate(subslots):
-                if sub_mapper is None or sub_mapper is self.fmpac:
-                    continue
-                sub_image = sub_mapper.sram_medium()
-                if sub_image is not None:
-                    media[subslot_sram_id(slot, sub)] = sub_image
-        return media
+        `rtc.cmos`. Fixed when build_machine finished wiring (no device is
+        replaced afterwards), so this is a read-only view of that table."""
+        return self._sram_table
 
     def _media(self) -> dict[MediaId, Medium]:
         media: dict[MediaId, Medium] = dict(self.sram_media())
