@@ -648,7 +648,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### load_machine_config() と build_machine()
 
-マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge, mapper, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
+マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
 - `"msx2"`：`V9938`、サブ ROM と `RamMapper` を持つ拡張スロット 3、`RTC`
@@ -659,7 +659,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ## フレーム API
 
-`Machine.step_frame(input, render_video)` は、コアを 1 フレーム進める呼び出し（`allium/core-frontend.allium`）。`InputState` の値を 1 つ受け取る。中身は、キーボードマトリクスの 11 行、2 つのジョイスティックポート、そのフレームのマウスの移動量（MSX 側の単位）とボタン。この値をマシン自身の入力に写すので、入力はフレームの間ずっと変わらない。マウスには移動量を 1 回だけ渡す。その後フレームを実行し、`FrameOutput`（`msx/boundary.py`）を返す。中身は、`render_video` が真のときの RGB24 の映像、出力フィルタ前のそのフレームの音声、フレーム番号。`render_video` が決めるのは映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP の状態は同じになる。
+`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し（`allium/core-frontend.allium`）。`InputState` の値を 1 つ受け取る。中身は、キーボードマトリクスの 11 行、2 つのジョイスティックポート、そのフレームのマウスの移動量（MSX 側の単位）とボタン。この値をマシン自身の入力に写すので、入力はフレームの間ずっと変わらない。マウスには移動量を 1 回だけ渡す。その後フレームを実行し、`FrameOutput`（`msx/boundary.py`）を返す。中身は、`render_video` が真のときの RGB24 の映像、出力フィルタ前のそのフレームの音声、フレーム番号。`render_video` が決めるのは映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP の状態は同じになる。
 
 SDL2 フロントエンドは、入力の溜め置き場として自分の `InputState` を持つ。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込む。フロントエンドは毎フレームそれを `step_frame` に渡し、マウスの移動量を 0 に戻す。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputState` を渡す。`Machine.run_frame()` は、デバッガとブレーク処理が使う内部の処理として残っている。
 
