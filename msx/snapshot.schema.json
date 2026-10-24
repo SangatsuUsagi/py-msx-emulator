@@ -1,17 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "py-msx-emulator machine snapshot, format 17",
+  "title": "py-msx-emulator machine snapshot, format 18",
   "description": "The save-state layout written by msx/state.py save_state(): RFC 8785 (JCS) canonical JSON, integers only (within +-(2^53 - 1)), byte blobs as padded RFC 4648 base64 strings. Every property is required; null means the machine has no such part. Lengths that depend on the machine (RAM, VRAM, SRAM sizes) and cross-field rules are checked by the loader, not here.",
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 17
+      "const": 18
     },
     "machine_type": {
       "enum": [
         "msx1",
         "msx2"
       ]
+    },
+    "machine_config_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 (lowercase hex) of the canonical MachineConfig document the machine was built from (msx/machine_config.schema.json); empty only for a machine constructed without one."
     },
     "cpu": {
       "$ref": "#/$defs/Cpu"
@@ -73,6 +78,7 @@
     "cpu",
     "fdc",
     "format_version",
+    "machine_config_sha256",
     "machine_type",
     "memory",
     "mouse",

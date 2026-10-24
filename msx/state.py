@@ -111,7 +111,11 @@ _T = TypeVar("_T")
 #   {"__b64__": ...} wrapper); floats, NaN/Infinity, duplicate keys and
 #   integers beyond +-(2**53 - 1) rejected. See
 #   openspec/changes/portable-snapshot-json.
-CURRENT_FORMAT_VERSION: int = 17
+# Version 18: machine_config_sha256 added -- the SHA-256 of the canonical
+#   MachineConfig document the machine was built from; a state loads only into
+#   a machine built from the same document. See
+#   openspec/changes/portable-machine-config.
+CURRENT_FORMAT_VERSION: int = 18
 
 
 class StateLoadError(ValueError):
@@ -248,6 +252,9 @@ class PsgSnapshot:
 class MachineSnapshot:
     format_version: int
     machine_type: str  # "msx1" or "msx2"
+    # Lowercase hex SHA-256 of the MachineConfig document (Machine.
+    # machine_config_sha256); empty for a Machine constructed by hand.
+    machine_config_sha256: str
     cpu: CpuSnapshot
     memory: MemorySnapshot
     slots: SlotsSnapshot
@@ -428,6 +435,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type="msx2" if vdp9938 is not None else "msx1",
+        machine_config_sha256=machine.machine_config_sha256,
         cpu=CpuSnapshot(
             registers=_cpu_regs_to_dict(machine),
             halted=machine.cpu.halted,
@@ -699,11 +707,20 @@ def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
             raise SchemaError(f"machine_type must be 'msx1' or 'msx2', got {text!r}")
         return text
 
+    def config_sha256_of() -> str:
+        text = check_str(data["machine_config_sha256"], "machine_config_sha256")
+        if text != "" and (len(text) != 64 or text.strip("0123456789abcdef") != ""):
+            raise SchemaError(
+                f"machine_config_sha256 must be 64 lowercase hex digits, got {text!r}"
+            )
+        return text
+
     machine_type = _field("machine_type", machine_type_of)
     msx2 = machine_type == "msx2"
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type=machine_type,
+        machine_config_sha256=_field("machine_config_sha256", config_sha256_of),
         cpu=_field("cpu", lambda: _parse_cpu(data["cpu"])),
         memory=_field("memory", lambda: _parse_memory(data["memory"], msx2)),
         slots=_field("slots", lambda: _parse_slots(data["slots"], msx2)),
@@ -720,7 +737,8 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     """Every check against the running machine that must pass before
     _restore_snapshot writes anything: format version, machine type, mapper
     kinds, RAM and RAM-mapper sizes, the FDC, expanded-slot and SCC wiring,
-    and every producer object's parse_state, whose results it returns.
+    the configuration hash, and every producer object's parse_state, whose
+    results it returns.
     (parse_snapshot has already checked everything the snapshot alone decides.)"""
     # parse_snapshot already checked the version; this guards a MachineSnapshot
     # built by hand (tests, tools).
@@ -767,7 +785,17 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_slot0_ram_wiring(machine, snap.memory.slot0_ram)
     _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc)
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
-    return _parse_producer_objects(machine, snap)
+    parsed = _parse_producer_objects(machine, snap)
+    # Last of the identity checks: the specific ones above and in the
+    # producers (FDC kind, mounted disks) name what differs; this one catches
+    # what they cannot see (cartridge ROM bytes, the machine definition).
+    if snap.machine_config_sha256 != machine.machine_config_sha256:
+        raise SnapshotMismatchError(
+            "machine configuration mismatch: running "
+            f"{machine.machine_config_sha256 or '(none)'}, "
+            f"saved {snap.machine_config_sha256 or '(none)'}"
+        )
+    return parsed
 
 
 _MapperStates = list[tuple["Mapper", Mapping[str, object]]]
