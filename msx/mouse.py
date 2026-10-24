@@ -40,6 +40,10 @@ _MOUSE_TIMEOUT_CYCLES = 5_369
 # two's-complement byte's sign symmetry.
 _MAX_ABS_DELTA = 127
 
+# Bound on the not-yet-reported motion per axis, so it fits a signed 16-bit
+# value; a burst beyond it is dropped, not queued.
+_MAX_PENDING_MOTION = 32767
+
 # Bit indices for set_button() below: 1 << TRIGGER_A_BIT == _STATUS_TRIGGER_A,
 # 1 << TRIGGER_B_BIT == _STATUS_TRIGGER_B. Public so callers (the frontend's
 # mouse-button handling) can name them instead of hardcoding 4/5.
@@ -149,9 +153,12 @@ class MouseDevice:
         self._y_rel = 0
 
     def add_motion(self, dx: int, dy: int) -> None:
-        """Add relative motion, already in MSX mouse counts, to the running total."""
-        self._cur_x_rel += dx
-        self._cur_y_rel += dy
+        """Add relative motion, already in MSX mouse counts, to the running
+        total, bounded to +/-_MAX_PENDING_MOTION per axis."""
+        x = self._cur_x_rel + dx
+        y = self._cur_y_rel + dy
+        self._cur_x_rel = max(-_MAX_PENDING_MOTION, min(_MAX_PENDING_MOTION, x))
+        self._cur_y_rel = max(-_MAX_PENDING_MOTION, min(_MAX_PENDING_MOTION, y))
 
     def set_button(self, bit: int, pressed: bool) -> None:
         """Set the left (TRIGGER_A_BIT) or right (TRIGGER_B_BIT) button state.
