@@ -193,7 +193,7 @@ def test_load_state_rejects_previous_version_mapper_class_save(machine, saves_di
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     data["format_version"] = CURRENT_FORMAT_VERSION - 1
-    del data["mapper_kind"]
+    del data["slots"]
     data["mapper_class"] = "FlatMapper"
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
@@ -225,7 +225,7 @@ def test_malformed_mapper_state_raises_state_load_error(saves_dir):
 
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    del data["mapper_state"]["banks"]
+    del data["slots"]["slot1"]["mapper"]["state"]["banks"]
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -243,7 +243,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
 
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    del data["psg_synth"]["_tone_cnt"]
+    del data["psg"]["synth"]["tone_cnt"]
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -270,8 +270,8 @@ def test_snapshot_persists_mapper_kind_value_not_class_name(saves_dir):
 
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    assert data["mapper_kind"] == "konami_scc"
-    assert data["mapper_kind"] != "KonamiSCCMapper"
+    assert data["slots"]["slot1"]["mapper"]["kind"] == "konami_scc"
+    assert data["slots"]["slot1"]["mapper"]["kind"] != "KonamiSCCMapper"
 
 
 def test_mapper_kind_mismatch_raises_value_error(saves_dir):
@@ -297,7 +297,7 @@ def test_snapshot_persists_mapper2_kind(saves_dir):
 
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    assert data["mapper2_kind"] == "ascii16"
+    assert data["slots"]["slot2"]["mapper"]["kind"] == "ascii16"
 
 
 def test_mapper2_kind_mismatch_raises_value_error(saves_dir):
@@ -314,7 +314,7 @@ def test_mapper2_kind_mismatch_raises_value_error(saves_dir):
 
 def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
     """A machine with nothing in slot 2 (an empty FlatMapper) still has a
-    real mapper2_kind/mapper2_state, and round-trips cleanly."""
+    real slots.slot2.mapper, and round-trips cleanly."""
     machine = make_machine(rom=_ROM)
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
@@ -348,13 +348,14 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
     state_path = save_state(machine, rgb, "test")
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    data["vdp_latch"] = value
+    data["vdp"]["latch"] = value
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
     with pytest.raises(StateLoadError) as exc_info:
         load_state(machine, state_path)
-    assert exc_info.value.producer == "vdp_latch"
+    assert exc_info.value.producer == "vdp"
+    assert "vdp.latch" in str(exc_info.value)
 
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):

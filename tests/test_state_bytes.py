@@ -152,16 +152,17 @@ def _load_edited(edit: Callable[[str], str]) -> None:
 
 
 def test_a_float_value_is_rejected() -> None:
-    _load_edited(lambda text: re.sub(r'"cpu_im":\d+', '"cpu_im":0.0', text, count=1))
+    _load_edited(lambda text: re.sub(r'"im":\d+', '"im":0.0', text, count=1))
 
 
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
 def test_nan_and_infinity_are_rejected(constant: str) -> None:
-    _load_edited(lambda text: re.sub(r'"cpu_im":\d+', f'"cpu_im":{constant}', text, count=1))
+    _load_edited(lambda text: re.sub(r'"im":\d+', f'"im":{constant}', text, count=1))
 
 
 def test_a_duplicate_key_is_rejected() -> None:
-    _load_edited(lambda text: text.replace('"cpu_im":', '"cpu_im":0,"cpu_im":', 1))
+    # "im" is a key of the "cpu" object only.
+    _load_edited(lambda text: text.replace('"im":', '"im":0,"im":', 1))
 
 
 def test_a_pretty_printed_file_still_loads() -> None:
@@ -186,7 +187,7 @@ def test_vram_is_a_plain_base64_string() -> None:
     machine = make_machine_msx2(_ROM, bytes(0x4000))
     machine.vdp.vram[0x1FFFF] = 0x5A
     decoded = json.loads(state.save_state(machine))
-    vram = decoded["vdp_vram"]
+    vram = decoded["vdp"]["vram"]
     assert isinstance(vram, str)
     raw = base64.b64decode(vram, validate=True)
     assert len(raw) == 131072 and raw[-1] == 0x5A
@@ -195,6 +196,117 @@ def test_vram_is_a_plain_base64_string() -> None:
 def test_invalid_base64_is_rejected_naming_the_field() -> None:
     machine = _ran(1)
     decoded = json.loads(state.save_state(machine))
-    decoded["ram"] = "*" + decoded["ram"][1:]
-    with pytest.raises(state.StateLoadError, match="ram"):
+    decoded["memory"]["ram"] = "*" + decoded["memory"]["ram"][1:]
+    with pytest.raises(state.StateLoadError, match="memory.ram"):
         state.load_state(_ran(1), json.dumps(decoded).encode("utf-8"))
+
+
+def _keys(node: object) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.append(key)
+            found.extend(_keys(value))
+    elif isinstance(node, list):
+        for value in node:
+            found.extend(_keys(value))
+    return found
+
+
+def test_no_private_names_in_the_file() -> None:
+    machine = make_machine(rom=_ROM, cartridge=bytes(0x20000), mapper="KonamiSCC")
+    assert machine.scc is not None
+    for _ in range(2):
+        machine.step_frame(InputFrame(), render_video=False)
+    keys = _keys(json.loads(state.save_state(machine)))
+    assert "lfsr" in keys and "waves" in keys
+    assert [key for key in keys if key.startswith("_")] == []
+
+
+def test_an_msx1_machine_without_extras() -> None:
+    decoded = json.loads(state.save_state(_ran(1)))
+    assert set(decoded) == {
+        "format_version", "machine_type", "cpu", "memory", "slots", "vdp", "psg",
+        "scc", "fdc", "rtc", "mouse",
+    }
+    for key in ("scc", "fdc", "rtc", "mouse"):
+        assert decoded[key] is None
+    assert decoded["vdp"]["v9938"] is None
+    assert decoded["memory"]["ram_mapper"] is None
+    assert decoded["slots"]["slot3"]["secondary_slot_register"] is None
+
+
+# ---------------------------------------------------------------------------
+# machine-state "Save, load and save again gives the same bytes"
+# ---------------------------------------------------------------------------
+
+def _loaded_machine(tmp_path: Path) -> Machine:
+    """An MSX2 machine with an RTC, a RAM mapper, a WD2793 FDC with a disk,
+    a Konami SCC cartridge in slot 1, an FM-PAC in slot 2 and a mouse."""
+    from msx.boundary import RtcTime
+    from msx.machine_spec import ExtensionOverlay
+    from msx.mouse import MouseDevice
+    from msx.psg import JoystickPort
+
+    for name, size in (("main.rom", 32768), ("sub.rom", 16384), ("disk.rom", 16384),
+                       ("fmpac.rom", 65536)):
+        path = tmp_path / name
+        if not path.exists():
+            path.write_bytes(bytes(size))
+    disk = tmp_path / "disk.dsk"
+    if not disk.exists():
+        disk.write_bytes(bytes(737280))
+    spec = MachineSpec(
+        name="round_trip", generation="msx2", rom_base_dir=tmp_path,
+        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        logo_rom_entry=None,
+        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        has_ram_mapper=True, ram_size_kb=128, has_v9938=True, has_rtc=True,
+        fdc=_FdcDef(
+            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+            controller="wd2793", connection_style="sony", drives=1,
+        ),
+    )
+    fmpac = ExtensionOverlay(
+        device="fmpac", rom_base_dir=tmp_path,
+        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        sram_save_path=tmp_path / "fmpac.sram",
+    )
+    machine = build_machine_from_spec(
+        spec, cartridge1=bytes(0x20000), mapper1="KonamiSCC", fdd1=disk,
+        extension_overlay2=fmpac, rtc_initial_time=RtcTime(2026, 10, 24, 12, 0, 0),
+    )
+    machine.attach_mouse(MouseDevice(), JoystickPort.JOY2)
+    return machine
+
+
+def test_round_trip_is_byte_identical(tmp_path: Path) -> None:
+    saved = _loaded_machine(tmp_path)
+    assert saved.scc is not None and saved.fmpac is not None and saved.fdc is not None
+    assert saved.rtc is not None and saved.psg.mouse is not None
+    for reg, value in ((8, 0x0F), (0, 0x40)):          # PSG channel A audible
+        saved.io.write_port(0xA0, reg)
+        saved.io.write_port(0xA1, value)
+    saved.memory._mapper.write(0x9000, 0x3F)           # SCC on, then a wave and a tone
+    saved.memory._mapper.write(0x9800, 0x7F)
+    saved.memory._mapper.write(0x9880, 0x20)
+    saved.memory._mapper.write(0x988A, 0x0F)
+    saved.memory._mapper.write(0x988F, 0x01)
+    saved.fmpac.write(0x7FF4, 0x30)                    # OPLL channel 0: key on
+    saved.fmpac.write(0x7FF5, 0x10)
+    saved.fmpac.write(0x7FF4, 0x10)
+    saved.fmpac.write(0x7FF5, 0x50)
+    saved.fmpac.write(0x7FF4, 0x20)
+    saved.fmpac.write(0x7FF5, 0x17)
+    saved.psg.mouse.add_motion(5, -3)
+    for _ in range(10):
+        saved.step_frame(InputFrame(), render_video=False)
+    first = state.save_state(saved)
+    decoded = json.loads(first)
+    for key in ("scc", "fdc", "rtc", "mouse"):
+        assert decoded[key] is not None
+    assert decoded["slots"]["slot2"]["mapper"]["kind"] == "fmpac"
+
+    fresh = _loaded_machine(tmp_path)
+    state.load_state(fresh, first)
+    assert state.save_state(fresh) == first

@@ -77,21 +77,22 @@ class PsgSynthState(TypedDict):
     """Save-state schema for PSG.snapshot_synth()/PSG.restore_synth().
 
     Covers only the internal tone/noise/envelope generator state; the
-    register file (regs/latch) is captured directly as plain
-    MachineSnapshot fields (psg_regs/psg_latch) and is out of scope here.
+    register file (regs/latch) is captured directly as the snapshot's
+    psg.registers/psg.latch and is out of scope here. Keys are the
+    attribute names without their leading underscore.
     """
 
-    _tone_cnt: list[int]
-    _tone_out: list[int]
-    _noise_cnt: int
-    _lfsr: int
-    _env_cnt: int
-    _env_step: int
-    _env_attack: int
-    _env_alternate: bool
-    _env_hold_flag: bool
-    _env_holding: bool
-    _clk_frac: int
+    tone_cnt: list[int]
+    tone_out: list[int]
+    noise_cnt: int
+    lfsr: int
+    env_cnt: int
+    env_step: int
+    env_attack: int
+    env_alternate: bool
+    env_hold_flag: bool
+    env_holding: bool
+    clk_frac: int
 
 
 # PORT-NOTE: key set read from the TypedDict at import time (see
@@ -251,17 +252,17 @@ class PSG:
         PsgSynthState docstring.
         """
         return {
-            "_tone_cnt": list(self._tone_cnt),
-            "_tone_out": list(self._tone_out),
-            "_noise_cnt": self._noise_cnt,
-            "_lfsr": self._lfsr,
-            "_env_cnt": self._env_cnt,
-            "_env_step": self._env_step,
-            "_env_attack": self._env_attack,
-            "_env_alternate": self._env_alternate,
-            "_env_hold_flag": self._env_hold_flag,
-            "_env_holding": self._env_holding,
-            "_clk_frac": self._clk_frac,
+            "tone_cnt": list(self._tone_cnt),
+            "tone_out": list(self._tone_out),
+            "noise_cnt": self._noise_cnt,
+            "lfsr": self._lfsr,
+            "env_cnt": self._env_cnt,
+            "env_step": self._env_step,
+            "env_attack": self._env_attack,
+            "env_alternate": self._env_alternate,
+            "env_hold_flag": self._env_hold_flag,
+            "env_holding": self._env_holding,
+            "clk_frac": self._clk_frac,
         }
 
     def parse_synth_state(self, obj: object, label: str) -> PsgSynthState:
@@ -273,19 +274,19 @@ class PSG:
         """
         state = check_object(obj, label, _PSG_SYNTH_KEYS)
         return {
-            "_tone_cnt": check_int_list(state["_tone_cnt"], f"{label}._tone_cnt", 3, 1, 0xFFF),
-            "_tone_out": check_int_list(state["_tone_out"], f"{label}._tone_out", 3, 0, 1),
-            "_noise_cnt": check_int(state["_noise_cnt"], f"{label}._noise_cnt", 1, 62),
-            "_lfsr": check_int(state["_lfsr"], f"{label}._lfsr", 1, 0x1FFFF),
-            "_env_cnt": check_int(state["_env_cnt"], f"{label}._env_cnt", -16, 0xFFFF),
-            "_env_step": check_int(state["_env_step"], f"{label}._env_step", 0, 0x1F),
-            "_env_attack": check_choice(
-                state["_env_attack"], f"{label}._env_attack", (0x00, 0x1F)
+            "tone_cnt": check_int_list(state["tone_cnt"], f"{label}.tone_cnt", 3, 1, 0xFFF),
+            "tone_out": check_int_list(state["tone_out"], f"{label}.tone_out", 3, 0, 1),
+            "noise_cnt": check_int(state["noise_cnt"], f"{label}.noise_cnt", 1, 62),
+            "lfsr": check_int(state["lfsr"], f"{label}.lfsr", 1, 0x1FFFF),
+            "env_cnt": check_int(state["env_cnt"], f"{label}.env_cnt", -16, 0xFFFF),
+            "env_step": check_int(state["env_step"], f"{label}.env_step", 0, 0x1F),
+            "env_attack": check_choice(
+                state["env_attack"], f"{label}.env_attack", (0x00, 0x1F)
             ),
-            "_env_alternate": check_bool(state["_env_alternate"], f"{label}._env_alternate"),
-            "_env_hold_flag": check_bool(state["_env_hold_flag"], f"{label}._env_hold_flag"),
-            "_env_holding": check_bool(state["_env_holding"], f"{label}._env_holding"),
-            "_clk_frac": check_int(state["_clk_frac"], f"{label}._clk_frac", 0, SAMPLE_RATE - 1),
+            "env_alternate": check_bool(state["env_alternate"], f"{label}.env_alternate"),
+            "env_hold_flag": check_bool(state["env_hold_flag"], f"{label}.env_hold_flag"),
+            "env_holding": check_bool(state["env_holding"], f"{label}.env_holding"),
+            "clk_frac": check_int(state["clk_frac"], f"{label}.clk_frac", 0, SAMPLE_RATE - 1),
         }
 
     def restore_synth(self, state: dict[str, object]) -> None:
@@ -293,21 +294,21 @@ class PSG:
         Parses the whole object first, so a rejected state leaves the PSG
         unchanged.
         """
-        self.apply_synth_state(self.parse_synth_state(state, "psg_synth"))
+        self.apply_synth_state(self.parse_synth_state(state, "psg.synth"))
 
     def apply_synth_state(self, state: PsgSynthState) -> None:
         """Assign an already-parsed PsgSynthState (see parse_synth_state)."""
-        self._tone_cnt = list(state["_tone_cnt"])
-        self._tone_out = list(state["_tone_out"])
-        self._noise_cnt = state["_noise_cnt"]
-        self._lfsr = state["_lfsr"]
-        self._env_cnt = state["_env_cnt"]
-        self._env_step = state["_env_step"]
-        self._env_attack = state["_env_attack"]
-        self._env_alternate = state["_env_alternate"]
-        self._env_hold_flag = state["_env_hold_flag"]
-        self._env_holding = state["_env_holding"]
-        self._clk_frac = state["_clk_frac"]
+        self._tone_cnt = list(state["tone_cnt"])
+        self._tone_out = list(state["tone_out"])
+        self._noise_cnt = state["noise_cnt"]
+        self._lfsr = state["lfsr"]
+        self._env_cnt = state["env_cnt"]
+        self._env_step = state["env_step"]
+        self._env_attack = state["env_attack"]
+        self._env_alternate = state["env_alternate"]
+        self._env_hold_flag = state["env_hold_flag"]
+        self._env_holding = state["env_holding"]
+        self._clk_frac = state["clk_frac"]
 
     # --------------------------------------------------------- envelope reset
 

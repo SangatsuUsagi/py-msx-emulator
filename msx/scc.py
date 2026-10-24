@@ -36,13 +36,13 @@ class SccState(TypedDict):
     separate register-file/synth split, so one method pair covers it all.
     """
 
-    _waves: list[list[int]]
-    _freq: list[int]
-    _vol: list[int]
-    _enable: int
-    _phase_cnt: list[int]
-    _phase_idx: list[int]
-    _clk_frac: int
+    waves: list[list[int]]
+    freq: list[int]
+    vol: list[int]
+    enable: int
+    phase_cnt: list[int]
+    phase_idx: list[int]
+    clk_frac: int
 
 
 # PORT-NOTE: key set read from the TypedDict at import time (see
@@ -187,58 +187,58 @@ class SCC:
     def snapshot(self) -> SccState:
         """Capture full chip state for save-state (paired with restore)."""
         return {
-            "_waves": [list(w) for w in self._waves],
-            "_freq": list(self._freq),
-            "_vol": list(self._vol),
-            "_enable": self._enable,
-            "_phase_cnt": list(self._phase_cnt),
-            "_phase_idx": list(self._phase_idx),
-            "_clk_frac": self._clk_frac,
+            "waves": [list(w) for w in self._waves],
+            "freq": list(self._freq),
+            "vol": list(self._vol),
+            "enable": self._enable,
+            "phase_cnt": list(self._phase_cnt),
+            "phase_idx": list(self._phase_idx),
+            "clk_frac": self._clk_frac,
         }
 
     def parse_state(self, obj: object, label: str) -> SccState:
         """Validate a snapshot() object without touching the chip."""
         state = check_object(obj, label, _SCC_STATE_KEYS)
-        waves_label = f"{label}._waves"
-        waves_obj = check_list(state["_waves"], waves_label, WAVE_BANKS)
+        waves_label = f"{label}.waves"
+        waves_obj = check_list(state["waves"], waves_label, WAVE_BANKS)
         waves: list[list[int]] = []
         for bank in range(WAVE_BANKS):
             waves.append(
                 check_int_list(waves_obj[bank], f"{waves_label}[{bank}]", WAVE_LEN, 0, 0xFF)
             )
         return {
-            "_waves": waves,
-            "_freq": check_int_list(state["_freq"], f"{label}._freq", NUM_CHANNELS, 0, 0xFFF),
-            "_vol": check_int_list(state["_vol"], f"{label}._vol", NUM_CHANNELS, 0, 0x0F),
-            "_enable": check_int(state["_enable"], f"{label}._enable", 0, 0x1F),
+            "waves": waves,
+            "freq": check_int_list(state["freq"], f"{label}.freq", NUM_CHANNELS, 0, 0xFFF),
+            "vol": check_int_list(state["vol"], f"{label}.vol", NUM_CHANNELS, 0, 0x0F),
+            "enable": check_int(state["enable"], f"{label}.enable", 0, 0x1F),
             # The period counter wraps modulo freq + 1 <= 4096.
-            "_phase_cnt": check_int_list(
-                state["_phase_cnt"], f"{label}._phase_cnt", NUM_CHANNELS, 0, 0xFFF
+            "phase_cnt": check_int_list(
+                state["phase_cnt"], f"{label}.phase_cnt", NUM_CHANNELS, 0, 0xFFF
             ),
-            "_phase_idx": check_int_list(
-                state["_phase_idx"], f"{label}._phase_idx", NUM_CHANNELS, 0, WAVE_LEN - 1
+            "phase_idx": check_int_list(
+                state["phase_idx"], f"{label}.phase_idx", NUM_CHANNELS, 0, WAVE_LEN - 1
             ),
-            "_clk_frac": check_int(state["_clk_frac"], f"{label}._clk_frac", 0, SAMPLE_RATE - 1),
+            "clk_frac": check_int(state["clk_frac"], f"{label}.clk_frac", 0, SAMPLE_RATE - 1),
         }
 
     def restore(self, state: dict[str, object]) -> None:
         """Restore chip state produced by snapshot(). Parses the whole
         object first, so a rejected state leaves the chip unchanged.
         """
-        self.apply_state(self.parse_state(state, "scc_state"))
+        self.apply_state(self.parse_state(state, "scc"))
 
     def apply_state(self, state: SccState) -> None:
         """Assign an already-parsed SccState (see parse_state)."""
         waves: list[list[int]] = []
-        for w in state["_waves"]:
+        for w in state["waves"]:
             waves.append(list(w))
         self._waves = waves
-        self._freq = list(state["_freq"])
-        self._vol = list(state["_vol"])
-        self._enable = state["_enable"]
-        self._phase_cnt = list(state["_phase_cnt"])
-        self._phase_idx = list(state["_phase_idx"])
-        self._clk_frac = state["_clk_frac"]
+        self._freq = list(state["freq"])
+        self._vol = list(state["vol"])
+        self._enable = state["enable"]
+        self._phase_cnt = list(state["phase_cnt"])
+        self._phase_idx = list(state["phase_idx"])
+        self._clk_frac = state["clk_frac"]
 
     # -------------------------------------------------------- sample generation
 

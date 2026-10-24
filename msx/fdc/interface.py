@@ -226,7 +226,7 @@ class FloppyDiskState(Generic[S]):
     def restore(self, state: dict[str, object]) -> None:
         """Restore the controller's and every drive's own state produced by
         snapshot(); the whole state is validated before anything is assigned."""
-        self.apply_state(self.parse_state(state, "fdc_state"))
+        self.apply_state(self.parse_state(state, "fdc"))
 
     def apply_state(self, state: FloppyDiskStateParsed[S]) -> None:
         """Assign a state returned by parse_state()."""
@@ -389,7 +389,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         Raises:
             ValueError: See parse_state().
         """
-        self.apply_state(self.parse_state(state, "fdc_state"))
+        self.apply_state(self.parse_state(state, "fdc"))
 
     @abc.abstractmethod
     def read_mem(self, addr: int) -> int:
