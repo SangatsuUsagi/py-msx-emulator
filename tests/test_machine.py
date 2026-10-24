@@ -602,6 +602,11 @@ def test_sram_media_includes_fmpac_and_an_expanded_slot_device() -> None:
     halnote = HalnoteMapper(rom=bytes(1048576))
     m.memory._mapper2_subslots[0] = halnote
 
+    from msx.machine_loader import _sram_table
+
+    # A hand-built machine has no table; build_machine fills it the same way.
+    assert m.sram_media() == {}
+    m._sram_table = _sram_table(m)
     media = m.sram_media()
     assert media == {"fmpac.sram": m.fmpac.sram_image, "slot2.0.sram": halnote.sram_image}
 

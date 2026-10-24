@@ -124,3 +124,20 @@ def test_media_ids_keep_their_string_values() -> None:
 def test_an_id_outside_the_closed_set_raises(make_id) -> None:
     with pytest.raises(ValueError):
         make_id()
+
+
+def test_an_id_outside_the_machines_media_is_rejected() -> None:
+    # machine-core "An id outside the machine's media is rejected".
+    m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    before = m.dirty_media()
+    with pytest.raises(KeyError):
+        m.read_media(MediaId.FMPAC_SRAM)
+    with pytest.raises(KeyError):
+        m.mark_persisted(MediaId.FMPAC_SRAM)
+    assert m.dirty_media() == before
+
+
+def test_the_sram_table_is_built_once() -> None:
+    m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
+    assert m.sram_media() is m.sram_media()
+    assert m.sram_media()[MediaId.SLOT1_SRAM] is m.memory._mapper.sram_medium()

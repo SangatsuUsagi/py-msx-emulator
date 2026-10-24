@@ -66,6 +66,7 @@ from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.scc import SCC
+from msx.sram import SramImage
 from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP, VdpDevice
@@ -838,7 +839,34 @@ def build_machine(
         )
 
     _wire_post_construction_attrs(machine, io, dac, wiring)
+    machine._sram_table = _sram_table(machine)
     return machine
+
+
+def _sram_table(machine: Machine) -> dict[MediaId, SramImage]:
+    """Every SRAM medium of the wired machine by id. The FM-PAC is listed
+    only under its own id even when it is a slot's mapper."""
+    table: dict[MediaId, SramImage] = {}
+    if machine.fmpac is not None:
+        table[MediaId.FMPAC_SRAM] = machine.fmpac.sram_image
+    if machine.rtc is not None:
+        table[MediaId.RTC_CMOS] = machine.rtc.cmos
+    memory = machine.memory
+    slots = (
+        (1, memory._mapper, memory._mapper1_subslots),
+        (2, memory._mapper2, memory._mapper2_subslots),
+    )
+    for slot, mapper, subslots in slots:
+        image = mapper.sram_medium()
+        if image is not None and mapper is not machine.fmpac:
+            table[slot_sram_id(slot)] = image
+        for sub, sub_mapper in enumerate(subslots):
+            if sub_mapper is None or sub_mapper is machine.fmpac:
+                continue
+            sub_image = sub_mapper.sram_medium()
+            if sub_image is not None:
+                table[subslot_sram_id(slot, sub)] = sub_image
+    return table
 
 
 def _build_msx1(
