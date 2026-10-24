@@ -243,7 +243,7 @@ def test_malformed_psg_synth_raises_state_load_error(machine, saves_dir):
 
     with open(state_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    del data["psg_synth"]["_tone_cnt"]
+    del data["psg_synth"]["tone_cnt"]
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(data, f)
 

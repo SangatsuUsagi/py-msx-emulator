@@ -240,8 +240,8 @@ def _producer_fingerprint(machine) -> tuple:
 @pytest.mark.parametrize(
     ("edit", "producer"),
     [
-        (_set_in("psg_synth", "_noise_cnt", -1_000_000), "psg"),
-        (_set_in("psg_synth", "_tone_cnt", [1, 1]), "psg"),
+        (_set_in("psg_synth", "noise_cnt", -1_000_000), "psg"),
+        (_set_in("psg_synth", "tone_cnt", [1, 1]), "psg"),
         (_set_in("mapper_state", "sram", _blob(10)), "mapper (ascii8_sram2)"),
         (_set_in("mapper_state", "banks", [0, 0, 0, 256]), "mapper (ascii8_sram2)"),
         (_set_in("mapper_state", "extra", 0), "mapper (ascii8_sram2)"),

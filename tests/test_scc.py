@@ -327,8 +327,8 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     pre = scc.snapshot()
 
     snap = dict(pre)
-    del snap["_clk_frac"]
-    with pytest.raises(ValueError, match="_clk_frac"):
+    del snap["clk_frac"]
+    with pytest.raises(ValueError, match="clk_frac"):
         scc.restore(snap)
 
     assert scc.snapshot() == pre

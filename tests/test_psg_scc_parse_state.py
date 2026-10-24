@@ -59,7 +59,7 @@ def test_psg_parse_returns_fresh_lists() -> None:
     psg = _active_psg()
     snap = psg.snapshot_synth()
     parsed = psg.parse_synth_state(snap, "psg_synth")
-    assert parsed["_tone_cnt"] is not snap["_tone_cnt"]
+    assert parsed["tone_cnt"] is not snap["tone_cnt"]
 
 
 def _psg_bad(field: str, value: object) -> dict[str, object]:
@@ -69,32 +69,32 @@ def _psg_bad(field: str, value: object) -> dict[str, object]:
 
 
 _PSG_BAD_CASES: list[tuple[str, object]] = [
-    ("_tone_cnt", [1, 1]),
-    ("_tone_cnt", [1, 1, 1, 1]),
-    ("_tone_cnt", [0, 1, 1]),
-    ("_tone_cnt", [1, 4096, 1]),
-    ("_tone_cnt", "12"),
-    ("_tone_out", [0, 2, 0]),
-    ("_tone_out", [0, True, 0]),
-    ("_noise_cnt", -1000000),
-    ("_noise_cnt", 0),
-    ("_noise_cnt", 63),
-    ("_noise_cnt", "12"),
-    ("_noise_cnt", 12.0),
-    ("_noise_cnt", True),
-    ("_lfsr", 0),
-    ("_lfsr", 0x20000),
-    ("_env_cnt", -17),
-    ("_env_cnt", 65536),
-    ("_env_step", 32),
-    ("_env_step", -1),
-    ("_env_attack", 1),
-    ("_env_attack", 0x0F),
-    ("_env_alternate", 1),
-    ("_env_hold_flag", "true"),
-    ("_env_holding", None),
-    ("_clk_frac", 44100),
-    ("_clk_frac", -1),
+    ("tone_cnt", [1, 1]),
+    ("tone_cnt", [1, 1, 1, 1]),
+    ("tone_cnt", [0, 1, 1]),
+    ("tone_cnt", [1, 4096, 1]),
+    ("tone_cnt", "12"),
+    ("tone_out", [0, 2, 0]),
+    ("tone_out", [0, True, 0]),
+    ("noise_cnt", -1000000),
+    ("noise_cnt", 0),
+    ("noise_cnt", 63),
+    ("noise_cnt", "12"),
+    ("noise_cnt", 12.0),
+    ("noise_cnt", True),
+    ("lfsr", 0),
+    ("lfsr", 0x20000),
+    ("env_cnt", -17),
+    ("env_cnt", 65536),
+    ("env_step", 32),
+    ("env_step", -1),
+    ("env_attack", 1),
+    ("env_attack", 0x0F),
+    ("env_alternate", 1),
+    ("env_hold_flag", "true"),
+    ("env_holding", None),
+    ("clk_frac", 44100),
+    ("clk_frac", -1),
 ]
 
 
@@ -115,8 +115,8 @@ def test_psg_malformed_field_rejected_and_restore_leaves_psg_unchanged(
 def test_psg_env_cnt_small_negative_accepted() -> None:
     psg = PSG()
     snap: dict[str, object] = dict(psg.snapshot_synth())
-    snap["_env_cnt"] = -16
-    assert psg.parse_synth_state(snap, "psg_synth")["_env_cnt"] == -16
+    snap["env_cnt"] = -16
+    assert psg.parse_synth_state(snap, "psg_synth")["env_cnt"] == -16
 
 
 def test_psg_missing_and_unknown_keys_rejected() -> None:
@@ -124,7 +124,7 @@ def test_psg_missing_and_unknown_keys_rejected() -> None:
     pre = copy.deepcopy(psg.snapshot_synth())
 
     missing: dict[str, object] = dict(copy.deepcopy(pre))
-    del missing["_clk_frac"]
+    del missing["clk_frac"]
     with pytest.raises(ValueError, match="missing"):
         psg.restore_synth(missing)
 
@@ -141,8 +141,8 @@ def test_psg_missing_and_unknown_keys_rejected() -> None:
 
 def test_psg_label_appears_in_message() -> None:
     psg = PSG()
-    bad = _psg_bad("_lfsr", 0)
-    with pytest.raises(ValueError, match=r"custom\._lfsr"):
+    bad = _psg_bad("lfsr", 0)
+    with pytest.raises(ValueError, match=r"custom\.lfsr"):
         psg.parse_synth_state(bad, "custom")
 
 
@@ -184,26 +184,26 @@ def _waves_with(bank: int, entry: object) -> list[list[object]]:
 
 
 _SCC_BAD_CASES: list[tuple[str, object]] = [
-    ("_waves", [[0] * 32 for _ in range(4)]),
-    ("_waves", [[0] * 32 for _ in range(6)]),
-    ("_waves", [[0] * 31] + [[0] * 32 for _ in range(4)]),
-    ("_waves", _waves_with(2, 256)),
-    ("_waves", _waves_with(4, -1)),
-    ("_waves", _waves_with(0, "12")),
-    ("_waves", "blob"),
-    ("_freq", [0, 0, 0, 0]),
-    ("_freq", [0, 0x1000, 0, 0, 0]),
-    ("_freq", [0, 0, 0, 0, 1.5]),
-    ("_vol", [0, 16, 0, 0, 0]),
-    ("_vol", [0, 0, 0, 0, True]),
-    ("_enable", 0x20),
-    ("_enable", "12"),
-    ("_phase_cnt", [0, 0, 4096, 0, 0]),
-    ("_phase_cnt", [0, 0, -1, 0, 0]),
-    ("_phase_idx", [0, 0, 0, 32, 0]),
-    ("_phase_idx", [0, 0, 0, 0, 0, 0]),
-    ("_clk_frac", 44100),
-    ("_clk_frac", 12.0),
+    ("waves", [[0] * 32 for _ in range(4)]),
+    ("waves", [[0] * 32 for _ in range(6)]),
+    ("waves", [[0] * 31] + [[0] * 32 for _ in range(4)]),
+    ("waves", _waves_with(2, 256)),
+    ("waves", _waves_with(4, -1)),
+    ("waves", _waves_with(0, "12")),
+    ("waves", "blob"),
+    ("freq", [0, 0, 0, 0]),
+    ("freq", [0, 0x1000, 0, 0, 0]),
+    ("freq", [0, 0, 0, 0, 1.5]),
+    ("vol", [0, 16, 0, 0, 0]),
+    ("vol", [0, 0, 0, 0, True]),
+    ("enable", 0x20),
+    ("enable", "12"),
+    ("phase_cnt", [0, 0, 4096, 0, 0]),
+    ("phase_cnt", [0, 0, -1, 0, 0]),
+    ("phase_idx", [0, 0, 0, 32, 0]),
+    ("phase_idx", [0, 0, 0, 0, 0, 0]),
+    ("clk_frac", 44100),
+    ("clk_frac", 12.0),
 ]
 
 
@@ -226,7 +226,7 @@ def test_scc_missing_and_unknown_keys_rejected() -> None:
     pre = copy.deepcopy(scc.snapshot())
 
     missing: dict[str, object] = dict(copy.deepcopy(pre))
-    del missing["_waves"]
+    del missing["waves"]
     with pytest.raises(ValueError, match="missing"):
         scc.restore(missing)
 
@@ -243,7 +243,7 @@ def test_scc_restore_does_not_alias_the_input_lists() -> None:
     snap: dict[str, object] = dict(copy.deepcopy(src.snapshot()))
     dst = SCC()
     dst.restore(snap)
-    waves = snap["_waves"]
+    waves = snap["waves"]
     assert isinstance(waves, list)
     waves[0][0] = 0x99 if waves[0][0] != 0x99 else 0x98
     assert dst.snapshot() == src.snapshot()

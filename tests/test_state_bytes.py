@@ -198,3 +198,25 @@ def test_invalid_base64_is_rejected_naming_the_field() -> None:
     decoded["ram"] = "*" + decoded["ram"][1:]
     with pytest.raises(state.StateLoadError, match="ram"):
         state.load_state(_ran(1), json.dumps(decoded).encode("utf-8"))
+
+
+def _keys(node: object) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.append(key)
+            found.extend(_keys(value))
+    elif isinstance(node, list):
+        for value in node:
+            found.extend(_keys(value))
+    return found
+
+
+def test_no_private_names_in_the_file() -> None:
+    machine = make_machine(rom=_ROM, cartridge=bytes(0x20000), mapper="KonamiSCC")
+    assert machine.scc is not None
+    for _ in range(2):
+        machine.step_frame(InputFrame(), render_video=False)
+    keys = _keys(json.loads(state.save_state(machine)))
+    assert "lfsr" in keys and "waves" in keys
+    assert [key for key in keys if key.startswith("_")] == []
