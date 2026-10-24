@@ -7,6 +7,8 @@ from the emulator, so every parser can use it without an import cycle.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import cast
 
 # PORT-NOTE: these helpers are the hand-written form of what a port gets from
@@ -19,8 +21,9 @@ from typing import cast
 # Kept as-is here because: the standard library has no schema layer, and the
 #   parsers stay explicit field-by-field code that maps line for line.
 
-# Largest value a non-negative counter may hold (i64 in a port).
-I64_MAX: int = (1 << 63) - 1
+# Largest magnitude any snapshot integer may have: the integers an IEEE double
+# (JSON readers in JavaScript, RFC 8785 tools) represents exactly.
+SAFE_INT_MAX: int = (1 << 53) - 1
 
 
 class SchemaError(ValueError):
@@ -89,9 +92,12 @@ def check_bytes(
     value: object, label: str, length: int | None = None, *, max_length: int | None = None
 ) -> bytearray:
     """Return `value` as a byte blob, of exactly `length` bytes, or at most
-    `max_length` bytes, when given. A file's blob decodes as bytearray; a
-    producer's own snapshot may hold bytes, which is accepted and copied."""
-    if isinstance(value, bytes):
+    `max_length` bytes, when given. A file stores a blob as a canonical
+    base64 string (RFC 4648, standard alphabet, padded); an in-memory
+    snapshot holds bytes or a bytearray, which is accepted and copied."""
+    if isinstance(value, str):
+        value = _decode_base64(value, label)
+    elif isinstance(value, bytes):
         value = bytearray(value)
     if not isinstance(value, bytearray):
         raise SchemaError(f"{label} must be a byte blob, got {type(value).__name__}")
@@ -102,22 +108,23 @@ def check_bytes(
     return value
 
 
+def _decode_base64(text: str, label: str) -> bytearray:
+    """Decode a canonical base64 string: any other character, wrong padding,
+    or non-zero unused bits (which a re-encode would not reproduce) raise."""
+    try:
+        raw = base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise SchemaError(f"{label} must be a base64 string: {exc}") from None
+    if base64.b64encode(raw).decode("ascii") != text:
+        raise SchemaError(f"{label} must be canonical base64")
+    return bytearray(raw)
+
+
 def check_choice(value: object, label: str, choices: tuple[int, ...]) -> int:
     """Return `value` if it is an int (not a bool) equal to one of `choices`."""
     if isinstance(value, bool) or not isinstance(value, int) or value not in choices:
         raise SchemaError(f"{label} must be one of {list(choices)}, got {value!r}")
     return value
-
-
-def check_float(value: object, label: str, lo: float, hi: float) -> float:
-    """Return `value` as a finite float in [lo, hi] (an int is accepted, as
-    JSON writes a whole-valued float without a fraction)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SchemaError(f"{label} must be a number, got {value!r}")
-    number = float(value)
-    if not lo <= number <= hi:  # also rejects NaN; infinities fall outside the range
-        raise SchemaError(f"{label} must be a number in [{lo}, {hi}], got {value!r}")
-    return number
 
 
 def check_object(

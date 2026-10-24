@@ -1,8 +1,10 @@
 """Encode and decode a complete machine snapshot as versioned JSON bytes.
 
-The snapshot is a stdlib-only JSON container (no pickle): scalar and
-structured fields are stored as JSON, and byte blobs (RAM, VRAM, SRAM) are wrapped
-as ``{"__b64__": "<base64>"}``. `format_version` guards compatibility.
+The snapshot is a stdlib-only JSON container (no pickle) written in RFC 8785
+(JCS) canonical form: sorted keys, no whitespace, UTF-8, integers only (each
+within +-SAFE_INT_MAX). Byte blobs (RAM, VRAM, SRAM) are plain base64
+strings, which each field's parser decodes. `format_version` guards
+compatibility.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from msx.mapper import MapperKind
 from msx.snapshot_schema import (
-    I64_MAX,
+    SAFE_INT_MAX,
     SchemaError,
     SnapshotMismatchError,
     check_bool,
@@ -106,7 +108,11 @@ _T = TypeVar("_T")
 #   elapsed emulated cycles and register blocks; the mouse's scan state),
 #   each None when the machine has no RTC / no attached mouse. See
 #   openspec/changes/enforce-core-boundary.
-CURRENT_FORMAT_VERSION: int = 16
+# Version 17: RFC 8785 canonical JSON; blobs as plain base64 strings (no
+#   {"__b64__": ...} wrapper); floats, NaN/Infinity, duplicate keys and
+#   integers beyond +-(2**53 - 1) rejected. See
+#   openspec/changes/portable-snapshot-json.
+CURRENT_FORMAT_VERSION: int = 17
 
 
 class StateLoadError(ValueError):
@@ -630,7 +636,9 @@ def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
         vdp_latch=vdp_latch,
         vdp_addr=parse_field("vdp_addr", lambda v, k: check_int(v, k, 0, addr_max)),
         vdp_read_buf=byte("vdp_read_buf"),
-        vdp_frame_count=parse_field("vdp_frame_count", lambda v, k: check_int(v, k, 0, I64_MAX)),
+        vdp_frame_count=parse_field(
+            "vdp_frame_count", lambda v, k: check_int(v, k, 0, SAFE_INT_MAX)
+        ),
         psg_regs=parse_field(
             "psg_regs", lambda v, k: check_int_list(v, k, _PSG_REG_COUNT, 0, 0xFF)
         ),
@@ -883,27 +891,65 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
 def _to_jsonable(node: object) -> object:
     """Recursively convert a snapshot dict to JSON-serialisable form.
 
-    Byte blobs become ``{"__b64__": "<base64>"}``; lists and dicts recurse;
-    scalars pass through unchanged.
+    Byte blobs become base64 strings; lists and dicts recurse; other scalars
+    pass through. A float, or an int beyond +-SAFE_INT_MAX, raises ValueError
+    (a writer bug: such a file would not read back the same everywhere).
     """
     if isinstance(node, (bytes, bytearray)):
-        return {"__b64__": base64.b64encode(bytes(node)).decode("ascii")}
+        return base64.b64encode(bytes(node)).decode("ascii")
     if isinstance(node, dict):
-        return {k: _to_jsonable(v) for k, v in node.items()}
+        result: dict[str, object] = {}
+        for key, value in node.items():
+            result[key] = _to_jsonable(value)
+        return result
     if isinstance(node, (list, tuple)):
-        return [_to_jsonable(v) for v in node]
+        items: list[object] = []
+        for value in node:
+            items.append(_to_jsonable(value))
+        return items
+    if isinstance(node, float):
+        raise ValueError(f"snapshot holds a float ({node!r}); only integers are portable")
+    if isinstance(node, int) and not isinstance(node, bool):
+        if not -SAFE_INT_MAX <= node <= SAFE_INT_MAX:
+            raise ValueError(f"snapshot integer {node} is outside +-(2**53 - 1)")
     return node
 
 
-def _from_jsonable(node: object) -> object:
-    """Inverse of _to_jsonable: restore byte blobs (as bytearray) and containers."""
-    if isinstance(node, dict):
-        if "__b64__" in node and len(node) == 1:
-            return bytearray(base64.b64decode(node["__b64__"]))
-        return {k: _from_jsonable(v) for k, v in node.items()}
-    if isinstance(node, list):
-        return [_from_jsonable(v) for v in node]
-    return node
+def _encode_canonical(document: object) -> bytes:
+    """RFC 8785 (JCS) form of a document with ASCII keys and no floats:
+    sorted keys, no whitespace, minimal string escaping, raw UTF-8."""
+    text = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    return text.encode("utf-8")
+
+
+def _reject_float(text: str) -> object:
+    raise ValueError(f"floating-point number {text} (only integers are allowed)")
+
+
+def _reject_constant(text: str) -> object:
+    raise ValueError(f"{text} is not allowed")
+
+
+def _object_without_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key {key!r}")
+        result[key] = value
+    return result
+
+
+def _decode_strict(data: bytes) -> object:
+    """Parse JSON text, rejecting floats, NaN/Infinity and duplicate keys.
+    Whitespace and key order are free (only writing is canonical)."""
+    return json.loads(
+        data.decode("utf-8"),
+        parse_float=_reject_float,
+        parse_constant=_reject_constant,
+        object_pairs_hook=_object_without_duplicates,
+    )
 
 
 def save_state(machine: "Machine") -> bytes:
@@ -913,7 +959,7 @@ def save_state(machine: "Machine") -> bytes:
     bytes (with a screenshot and the latest.* links).
     """
     snap = _snapshot_from_machine(machine)
-    return json.dumps(_to_jsonable(asdict(snap))).encode("utf-8")
+    return _encode_canonical(_to_jsonable(asdict(snap)))
 
 
 def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None:
@@ -935,9 +981,9 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
             f"({source})"
         )
     try:
-        decoded = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        decoded = _decode_strict(data)
+    except ValueError as exc:  # also UnicodeDecodeError and json.JSONDecodeError
         raise ValueError(f"corrupt or unsupported save state: {source} ({exc})") from exc
 
-    snap = parse_snapshot(_from_jsonable(decoded), source)
+    snap = parse_snapshot(decoded, source)
     _restore_snapshot(machine, snap)

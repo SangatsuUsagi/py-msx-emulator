@@ -39,9 +39,8 @@ from typing import Callable, TypedDict
 from msx.clock import CPU_CLOCK_HZ
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import (
-    I64_MAX,
+    SAFE_INT_MAX,
     check_bytes,
-    check_float,
     check_int,
     check_int_list,
     check_list,
@@ -413,7 +412,7 @@ class OpllState(TypedDict):
     slot_key_status: int
     eg_counter: int
     ch_out: list[int]
-    out_time: float
+    resample_phase: int
 
 
 @dataclass
@@ -459,7 +458,7 @@ class Opll:
     _slot_key_status: int = field(default=0, init=False, repr=False)
     _eg_counter: int = field(default=0, init=False, repr=False)
     _ch_out: list[int] = field(default_factory=lambda: [0] * 14, init=False, repr=False)
-    _out_time: float = field(default=0.0, init=False, repr=False)
+    _resample_phase: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.reset()
@@ -503,7 +502,7 @@ class Opll:
         self._eg_counter = 0
         self._short_noise = 0
         self._test_flag = 0
-        self._out_time = 0.0
+        self._resample_phase = 0
         for i in range(18):
             self._slot[i] = _Slot(i)
         # Build the default YM2413 patch bank (mod/car per instrument).
@@ -1097,17 +1096,19 @@ class Opll:
         loud channels sits comfortably below full scale.
         """
         out = bytearray(n * 2)
-        out_step = CPU_CLOCK_HZ / 72.0
-        inp_step = float(SAMPLE_RATE)
-        out_time = self._out_time
+        # The decimator phase, scaled by 72 so it stays an exact integer: a
+        # native tick (CPU_CLOCK_HZ / 72 per second) adds 72 * SAMPLE_RATE,
+        # an output sample subtracts CPU_CLOCK_HZ. It stays in
+        # [0, _PHASE_PER_TICK), the range parse_state accepts.
+        phase = self._resample_phase
         for i in range(n):
             acc = 0
             cnt = 0
-            while out_step > out_time:
-                out_time += inp_step
+            while CPU_CLOCK_HZ > phase:
+                phase += _PHASE_PER_TICK
                 acc += self._update_output()
                 cnt += 1
-            out_time -= out_step
+            phase -= CPU_CLOCK_HZ
             raw = (acc // cnt) if cnt else 0
             scaled = raw * _OUTPUT_GAIN
             if scaled > 32767:
@@ -1116,7 +1117,7 @@ class Opll:
                 scaled = -32768
             out[i * 2] = scaled & 0xFF
             out[i * 2 + 1] = (scaled >> 8) & 0xFF
-        self._out_time = out_time
+        self._resample_phase = phase
         return out
 
     # --------------------------------------------------------- save / restore
@@ -1157,7 +1158,7 @@ class Opll:
             "slot_key_status": self._slot_key_status,
             "eg_counter": self._eg_counter,
             "ch_out": list(self._ch_out),
-            "out_time": self._out_time,
+            "resample_phase": self._resample_phase,
         }
 
     def parse_state(self, obj: object, label: str) -> OpllState:
@@ -1193,12 +1194,14 @@ class Opll:
             "slot_key_status": check_int(
                 d["slot_key_status"], f"{label}.slot_key_status", 0, 0x3FFFF
             ),
-            "eg_counter": check_int(d["eg_counter"], f"{label}.eg_counter", 0, I64_MAX),
+            "eg_counter": check_int(d["eg_counter"], f"{label}.eg_counter", 0, SAFE_INT_MAX),
             "ch_out": check_int_list(
                 d["ch_out"], f"{label}.ch_out", 14, _OUTPUT_MIN, _OUTPUT_MAX
             ),
-            # generate_samples leaves out_time in [0, SAMPLE_RATE).
-            "out_time": check_float(d["out_time"], f"{label}.out_time", 0.0, float(SAMPLE_RATE)),
+            # generate_samples leaves the phase in [0, _PHASE_PER_TICK).
+            "resample_phase": check_int(
+                d["resample_phase"], f"{label}.resample_phase", 0, _PHASE_PER_TICK - 1
+            ),
         }
 
     def restore(self, state: dict[str, object]) -> None:
@@ -1234,13 +1237,15 @@ class Opll:
         self._slot_key_status = state["slot_key_status"]
         self._eg_counter = state["eg_counter"]
         self._ch_out = list(state["ch_out"])
-        self._out_time = state["out_time"]
+        self._resample_phase = state["resample_phase"]
 
 
 # Output gain from the chip's raw mix (each channel roughly ±4000 pre-mix,
 # melody halved) to signed 16-bit. Tuned so a loud chord peaks well under
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
+# generate_samples' integer decimator phase step per native tick (see there).
+_PHASE_PER_TICK = 72 * SAMPLE_RATE
 
 # Save-state field helpers for OPLL.snapshot()/apply_state() -- see the
 # PORT-LIBRARY-NOTE on OPLL.snapshot() for the explicit-field-vs-reflection

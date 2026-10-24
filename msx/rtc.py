@@ -24,7 +24,7 @@ from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
 from msx.clock import CPU_CLOCK_HZ
-from msx.snapshot_schema import I64_MAX, check_int, check_int_list, check_object
+from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_int_list, check_object
 from msx.sram import SramImage
 
 MODE_REG = 13
@@ -123,7 +123,7 @@ class RTC:
         return {
             "start": start,
             "elapsed_cycles": check_int(
-                state["elapsed_cycles"], f"{label}.elapsed_cycles", 0, I64_MAX
+                state["elapsed_cycles"], f"{label}.elapsed_cycles", 0, SAFE_INT_MAX
             ),
             "addr": check_int(state["addr"], f"{label}.addr", 0, 0x0F),
             "mode": check_int(state["mode"], f"{label}.mode", 0, 0x0F),

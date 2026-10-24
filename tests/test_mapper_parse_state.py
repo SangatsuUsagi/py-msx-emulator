@@ -5,8 +5,9 @@ malformed object with the mapper unchanged.
 """
 from __future__ import annotations
 
+import copy
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -32,7 +33,7 @@ from msx.mapper import (
 from msx.ram_mapper import RamMapper
 from msx.scc import SCC
 from msx.snapshot_schema import SchemaError
-from msx.state import _from_jsonable, _to_jsonable
+from msx.state import _to_jsonable
 
 _PAGE_8K = 8192
 
@@ -230,8 +231,14 @@ def _perturbed(m: Any, snap: dict[str, object]) -> dict[str, object]:
 
 
 def _copy(snap: object) -> dict[str, object]:
-    copied = _from_jsonable(_to_jsonable(snap))
-    assert isinstance(copied, dict)
+    """A deep copy whose blobs are bytearrays, as an in-memory snapshot holds them."""
+    assert isinstance(snap, Mapping)
+    copied: dict[str, object] = {}
+    for key, value in snap.items():
+        if isinstance(value, (bytes, bytearray)):
+            copied[key] = bytearray(value)
+        else:
+            copied[key] = copy.deepcopy(value)
     return copied
 
 
@@ -245,7 +252,7 @@ def test_own_snapshot_parses_to_itself(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(_STATEFUL))
 def test_json_decoded_snapshot_parses_and_restores(name: str) -> None:
     m = _STATEFUL[name]()
-    decoded = _from_jsonable(json.loads(json.dumps(_to_jsonable(dict(m.snapshot())))))
+    decoded = json.loads(json.dumps(_to_jsonable(dict(m.snapshot()))))
     assert isinstance(decoded, dict)
     assert m.parse_state(decoded, "state") == m.snapshot()
     fresh = _STATEFUL[name]()

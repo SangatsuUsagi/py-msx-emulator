@@ -515,8 +515,52 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     pre = o.snapshot()
 
     snap = dict(pre)
-    del snap["out_time"]
-    with pytest.raises(SchemaError, match="out_time"):
+    del snap["resample_phase"]
+    with pytest.raises(SchemaError, match="resample_phase"):
         o.restore(snap)
 
     assert o.snapshot() == pre
+
+
+# ---------------------------------------------------------------------------
+# Output rate conversion (audio-ym2413 "OPLL output rate conversion uses exact
+# integer arithmetic")
+# ---------------------------------------------------------------------------
+
+_PHASE_RANGE = 72 * SAMPLE_RATE
+
+
+def test_the_phase_is_an_integer_in_range() -> None:
+    o = Opll()
+    _key_on(o, 0)
+    for n in (1, 7, 735, 882, 4410):
+        o.generate_samples(n)
+        phase = o.snapshot()["resample_phase"]
+        assert type(phase) is int
+        assert 0 <= phase < _PHASE_RANGE
+
+
+def test_native_ticks_per_sample_follow_the_exact_ratio() -> None:
+    o = Opll()
+    ticks = 0
+    update = o._update_output
+
+    def counting_update() -> int:
+        nonlocal ticks
+        ticks += 1
+        return update()
+
+    o._update_output = counting_update  # type: ignore[method-assign]
+    o.generate_samples(SAMPLE_RATE)
+    assert ticks == -(-SAMPLE_RATE * CPU_CLOCK_HZ // _PHASE_RANGE) == 49716
+    assert o.snapshot()["resample_phase"] == 49716 * _PHASE_RANGE - SAMPLE_RATE * CPU_CLOCK_HZ
+    assert o.snapshot()["resample_phase"] == 308700
+
+
+@pytest.mark.parametrize("phase", [_PHASE_RANGE, -1, 0.5])
+def test_a_phase_outside_the_range_is_rejected(phase: object) -> None:
+    o = Opll()
+    state = dict(o.snapshot())
+    state["resample_phase"] = phase
+    with pytest.raises(SchemaError, match="resample_phase"):
+        o.parse_state(state, "opll")
