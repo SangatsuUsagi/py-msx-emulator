@@ -122,6 +122,7 @@ class _FakeMachine:
         self.fdc: SonyPhilipsInterface | None = None
         self.reset_calls = 0
         self.shift_at_reset: bool | None = None
+        self._sram_table: dict[object, object] = {}
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -132,6 +133,11 @@ class _FakeMachine:
     disk_mounted = Machine.disk_mounted
     disk_path = Machine.disk_path
     _mounted_image = Machine._mounted_image
+    dirty_media = Machine.dirty_media
+    read_media = Machine.read_media
+    mark_persisted = Machine.mark_persisted
+    _media = Machine._media
+    sram_media = Machine.sram_media
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:
