@@ -660,7 +660,7 @@ def test_keyboard_type_null_override_is_rejected_not_defaulted(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# Resolved keyboard_type reaches the built Machine's InputState (allium B-6)
+# Resolved keyboard_type reaches the built Machine's keyboard_layout (allium B-6)
 # ---------------------------------------------------------------------------
 
 
