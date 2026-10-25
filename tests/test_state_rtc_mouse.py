@@ -104,3 +104,40 @@ def test_rtc_state_with_an_invalid_date_is_rejected() -> None:
     snap.rtc["start"] = [2026, 2, 30, 0, 0, 0]
     with pytest.raises(ValueError, match="rtc"):
         _restore_snapshot(_msx2(RtcTime(2026, 1, 1, 0, 0, 0)), snap)
+
+
+def _with_mouse_machine() -> Machine:
+    machine = make_machine(_ROM)
+    _with_mouse(machine)
+    return machine
+
+
+@pytest.mark.parametrize(
+    ("edit", "field"),
+    [
+        ({"status": 0x31}, "mouse.status"),          # a data-nibble bit set
+        ({"cur_x_rel": 32768}, "mouse.cur_x_rel"),   # beyond the pending-motion bound
+        ({"cur_y_rel": -32768}, "mouse.cur_y_rel"),
+        ({"phase": 5, "x_rel": 3}, "phase 5"),       # alternate cycle with a delta
+    ],
+)
+def test_a_mouse_state_the_device_cannot_hold_is_rejected(
+    edit: dict[str, int], field: str
+) -> None:
+    saved = make_machine(_ROM)
+    _with_mouse(saved)
+    snap = _snapshot_from_machine(saved)
+    assert snap.mouse is not None
+    snap.mouse.update(edit)
+    with pytest.raises(ValueError, match=field):
+        _restore_snapshot(_with_mouse_machine(), snap)
+
+
+def test_a_resynced_scan_may_hold_a_delta_in_its_last_phase() -> None:
+    # PHASE_YLOW2 after a timeout keeps the main cycle's delta; it must load.
+    saved = make_machine(_ROM)
+    _with_mouse(saved)
+    snap = _snapshot_from_machine(saved)
+    assert snap.mouse is not None
+    snap.mouse.update({"phase": 7, "x_rel": 3})
+    _restore_snapshot(_with_mouse_machine(), snap)

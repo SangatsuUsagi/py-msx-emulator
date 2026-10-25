@@ -1028,28 +1028,31 @@
         },
         "x_rel": {
           "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
+          "minimum": -127,
+          "maximum": 127
         },
         "y_rel": {
           "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
+          "minimum": -127,
+          "maximum": 127
         },
         "cur_x_rel": {
           "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
+          "minimum": -32767,
+          "maximum": 32767
         },
         "cur_y_rel": {
           "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
+          "minimum": -32767,
+          "maximum": 32767
         },
         "status": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 255
+          "enum": [
+            0,
+            16,
+            32,
+            48
+          ]
         },
         "last_pin8": {
           "type": "integer",
@@ -1072,7 +1075,28 @@
         "x_rel",
         "y_rel"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "phase": {
+            "enum": [
+              4,
+              5,
+              6
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "x_rel": {
+            "const": 0
+          },
+          "y_rel": {
+            "const": 0
+          }
+        }
+      }
     },
     "NoStateMapperState": {
       "type": "object",
