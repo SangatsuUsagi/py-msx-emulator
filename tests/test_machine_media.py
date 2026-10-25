@@ -113,13 +113,14 @@ def test_media_ids_keep_their_string_values() -> None:
     assert MediaId.FMPAC_SRAM == "fmpac.sram"
     assert MediaId.RTC_CMOS == "rtc.cmos"
     assert drive_media_id(0) == "drive_a" and drive_media_id(0) is MediaId.DRIVE_A
+    assert drive_media_id(3) is MediaId.DRIVE_D
     assert slot_sram_id(2) is MediaId.SLOT2_SRAM
     assert subslot_sram_id(2, 3) is MediaId.SLOT2_SUB3_SRAM
     assert {"slot1.sram": 1}[MediaId.SLOT1_SRAM] == 1  # a str-keyed lookup matches
 
 
 @pytest.mark.parametrize("make_id", [
-    lambda: slot_sram_id(3), lambda: subslot_sram_id(1, 4), lambda: drive_media_id(2),
+    lambda: slot_sram_id(3), lambda: subslot_sram_id(1, 4), lambda: drive_media_id(4),
 ])
 def test_an_id_outside_the_closed_set_raises(make_id) -> None:
     with pytest.raises(ValueError):

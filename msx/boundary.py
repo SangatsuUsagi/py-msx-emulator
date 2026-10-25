@@ -49,6 +49,8 @@ class MediaId(str, enum.Enum):
     RTC_CMOS = "rtc.cmos"
     DRIVE_A = "drive_a"
     DRIVE_B = "drive_b"
+    DRIVE_C = "drive_c"
+    DRIVE_D = "drive_d"
 
 
 def slot_sram_id(slot: int) -> MediaId:
@@ -64,9 +66,9 @@ def subslot_sram_id(slot: int, sub: int) -> MediaId:
 
 
 def drive_media_id(index: int) -> MediaId:
-    """Media id of floppy drive `index` (0 -> DRIVE_A). Raises ValueError
-    for a drive other than 0 or 1."""
-    if not 0 <= index <= 1:
+    """Media id of floppy drive `index` (0 -> DRIVE_A ... 3 -> DRIVE_D, the
+    four drives a TC8566AF selects). Raises ValueError for any other index."""
+    if not 0 <= index <= 3:
         raise ValueError(f"no media id for floppy drive {index}")
     return MediaId("drive_" + chr(ord("a") + index))
 

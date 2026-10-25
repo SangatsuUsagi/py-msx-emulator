@@ -249,3 +249,21 @@ def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
     # The message names the id by its value (not "MediaId.DRIVE_B").
     with pytest.raises(MachineLoadError, match="disk for drive_b but"):
         build_machine(config)
+
+
+def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
+    # machine-core "Every drive of a four-drive FDC has a media id".
+    _make_roms(tmp_path)
+    spec = _fdc_spec(tmp_path)
+    spec.fdc = _FdcDef(
+        disk_rom_entry=spec.fdc.disk_rom_entry,
+        controller="tc8566af",
+        connection_style="tc8566af",
+        drives=4,
+    )
+    machine = build_machine_from_spec(spec)
+    assert machine.fdc is not None
+    assert len(machine.fdc.drives) == 4
+    image = bytes([0x5A]) * _2DD
+    machine.mount_disk(2, DiskMedium(image, False, None))
+    assert machine.read_media(MediaId.DRIVE_C) == image
