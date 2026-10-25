@@ -2,6 +2,24 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.8.1** (2026-10-25): Portable save states and machine configurations, and disk write-back fixes.
+  - Save states are canonical JSON (RFC 8785): the same machine state gives the same bytes. `msx/snapshot.schema.json`
+    (JSON Schema) defines the layout. Each save state records the SHA-256 of its machine configuration, and a state
+    loads only into the same machine, cartridge ROMs and extensions. The PPI (Port C, control word, bus latch) is
+    saved too. Save-state format 19: older save states cannot be loaded.
+  - The host resolves the YAML machine, device and extension definitions into one canonical JSON document, the
+    MachineConfig (`msx/machine_config.schema.json`). The core takes this document and the ROM images, keyed by SHA1,
+    checks every ROM's size and SHA1, and stops with an error on an unknown mapper, FDC or device name. The YAML
+    files stay the authored source.
+  - The ROM database is `roms/msx_romdb.json` (before: `roms/msx_romdb.yaml`).
+  - Fix: a disk swap writes a changed outgoing disk image back to its file before it mounts the next one. If that
+    write fails, the swap fails and the drive keeps its disk.
+  - Fix: a machine whose FDC has 3 or 4 drives failed to build. It builds now, and drives C and D hold disks like
+    drives A and B. The CLI still mounts drives A and B only.
+  - Fix: a flat extension reads a ROM file only for a device that uses one (the FM-PAC). Before, an unused `rom:`
+    entry with a missing file stopped the load.
+  - `docs/technical-implementation.md` has a new section on the core boundary, with an embedding example and a guide
+    for a port to another language. The README benchmark charts cover v0.1.0 through v2.8.1.
 - **v2.8.0** (2026-10-24): Separate the emulator core from the host and the frontend, to make a later port to
   another language easier.
   - The core (`msx/`) now has a defined boundary: it takes a machine configuration of bytes and one input value per
