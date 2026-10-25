@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -270,6 +271,103 @@ def test_a_rom_image_of_the_wrong_content_is_rejected(
     config.roms[main] = bytes([0xFF]) * len(config.roms[main])
     with pytest.raises(MachineLoadError, match="does not match its reference"):
         build_machine(config)
+
+
+def _edited(config, edit) -> object:
+    """`config` with its document decoded, changed by `edit` and re-encoded."""
+    decoded = json.loads(config.document)
+    edit(decoded)
+    return dataclasses.replace(config, document=json.dumps(decoded).encode("utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("controller", "style", "field"),
+    [
+        ("xyz", "sony", "machine.fdc.controller"),
+        ("wd2793", "xyz", "machine.fdc.connection_style"),
+        ("wd2793", "tc8566af", "machine.fdc"),
+    ],
+)
+def test_an_unsupported_fdc_controller_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, controller: str, style: str, field: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def edit(decoded: dict) -> None:
+        decoded["machine"]["fdc"]["controller"] = controller
+        decoded["machine"]["fdc"]["connection_style"] = style
+
+    with pytest.raises(MachineLoadError, match=re.escape(field)):
+        build_machine(_edited(_hb_f1xd_config(tmp_path), edit))
+
+
+_FLAT = {"shape": "flat", "device": "fmpac", "rom": None}
+_EXPANDED_DEVICE = {"device": "flat_rom", "rom": None, "size_kb": None}
+
+
+def _expanded(device: dict) -> dict:
+    return {"shape": "expanded", "subslots": {"0": device}, "io_device": None}
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "field"),
+    [
+        (("cartridges", "slot1", "mapper"), "Unknown", "cartridges.slot1.mapper"),
+        (("extensions", "slot2"), {**_FLAT, "device": "halnote"}, "extensions.slot2.device"),
+        (
+            ("extensions", "slot2"), _expanded({**_EXPANDED_DEVICE, "device": "fmpac"}),
+            "extensions.slot2.subslots.0.device",
+        ),
+        (
+            ("machine", "io_device"), {**_EXPANDED_DEVICE, "device": "halnote"},
+            "machine.io_device.device",
+        ),
+    ],
+)
+def test_an_unsupported_mapper_or_device_name_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    path: tuple[str, ...], value: object, field: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def edit(decoded: dict) -> None:
+        node = decoded
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = value
+
+    with pytest.raises(MachineLoadError, match=re.escape(field) + ".*must be one of"):
+        build_machine(_edited(_hb_f1xd_config(tmp_path), edit))
+
+
+@pytest.mark.parametrize(
+    ("overlay", "field"),
+    [
+        (_FLAT, "extensions.slot2.rom"),
+        (
+            _expanded({**_EXPANDED_DEVICE, "device": "ram_mapper"}),
+            "extensions.slot2.subslots.0.size_kb",
+        ),
+        (_expanded(_EXPANDED_DEVICE), "extensions.slot2.subslots.0.rom"),
+    ],
+)
+def test_a_device_without_its_required_rom_or_size_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overlay: dict, field: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def edit(decoded: dict) -> None:
+        decoded["extensions"]["slot2"] = overlay
+
+    with pytest.raises(MachineLoadError, match=re.escape(field) + " is required"):
+        build_machine(_edited(_hb_f1xd_config(tmp_path), edit))
+
+
+def test_the_mapper_builders_cover_exactly_the_mapper_names() -> None:
+    from msx.machine_config import MAPPER_NAMES
+    from msx.machine_loader import _MAPPER_BUILDERS
+
+    assert set(_MAPPER_BUILDERS) == MAPPER_NAMES
 
 
 def test_a_machine_keeps_the_hash_of_its_document(

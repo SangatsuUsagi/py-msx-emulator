@@ -58,6 +58,25 @@ from msx.boundary import (
 )
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
+
+# The closed vocabularies are defined once, in the core's document parser,
+# which enforces them too; the YAML loader checks the authored files against
+# the same sets under its historical names.
+from msx.machine_config import EXTENSION_DEVICES as _KNOWN_EXTENSION_DEVICES
+from msx.machine_config import EXTENSION_DEVICES_REQUIRING_ROM as _EXTENSION_DEVICES_REQUIRING_ROM
+from msx.machine_config import FDC_CONNECTION_STYLES as _SUPPORTED_FDC_STYLES
+from msx.machine_config import FDC_CONTROLLERS as _SUPPORTED_FDC_CONTROLLERS
+from msx.machine_config import FDC_PAIRS as _SUPPORTED_FDC_PAIRS
+from msx.machine_config import IO_DEVICES as _KNOWN_IO_DEVICES
+from msx.machine_config import IO_DEVICES_REQUIRING_ROM as _IO_DEVICES_REQUIRING_ROM
+from msx.machine_config import MAPPER_NAMES as _SUPPORTED_MAPPERS
+from msx.machine_config import SUBSLOT_DEVICES as _KNOWN_EXPANDED_SUBSLOT_DEVICES
+from msx.machine_config import (
+    SUBSLOT_DEVICES_REQUIRING_ROM as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM,
+)
+from msx.machine_config import (
+    SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
+)
 from msx.machine_config import encode_machine_config
 from msx.machine_loader import _SRAM_SIZES, build_machine
 from msx.machine_spec import (
@@ -77,25 +96,6 @@ from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.vdp._geometry import VideoStandard
 from msx.vdp.tracer import Tracer
-
-_SUPPORTED_MAPPERS = frozenset({
-    "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
-    "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
-})
-
-# Supported FDC controller chips and connection styles, selected by machine YAML.
-# New entries here (plus a builder branch in _build_fdc) add hardware without
-# touching Memory.
-_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793", "tc8566af"})
-_SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
-# (controller, connection_style) pairs _build_fdc actually knows how to
-# construct -- each controller family has exactly one style today, but the
-# two are independent axes in the YAML schema, so validate the pair
-# explicitly rather than silently defaulting a mismatched combo (e.g.
-# controller: wd2793 + connection_style: tc8566af) to whichever branch
-# _build_fdc happens to fall into.
-_SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -902,35 +902,6 @@ def load_machine_spec(
 # ---------------------------------------------------------------------------
 # Extension overlay (config/extensions/<id>.yaml)
 # ---------------------------------------------------------------------------
-
-# Device kinds build_machine's extension_overlay dispatch (msx/machine_loader.py)
-# knows how to construct. Kept here, next to the overlay loader, as the single
-# place a new extension's device kind must be added.
-_KNOWN_EXTENSION_DEVICES = frozenset({"fmpac", "scc_i_cart"})
-
-# Device kinds whose overlay YAML MUST declare a 'rom' block (fmpac's device
-# construction requires a ROM; scc_i_cart's RAM starts blank, no file loaded).
-_EXTENSION_DEVICES_REQUIRING_ROM = frozenset({"fmpac"})
-
-# Device kinds an expanded overlay's per-sub-slot declaration may name
-# (build_machine's expanded-overlay dispatch knows how to construct each) --
-# a separate namespace from _KNOWN_EXTENSION_DEVICES above (flat-overlay-only
-# device names), which happens to share no members with it today.
-_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset(
-    {"halnote", "flat_rom", "ram_mapper", "ascii8", "ascii16"}
-)
-_EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM = frozenset(
-    {"halnote", "flat_rom", "ascii8", "ascii16"}
-)
-# ram_mapper carries no ROM -- it's configured by size instead (see
-# _ExpandedSubslotDevice.size_kb).
-_EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE = frozenset({"ram_mapper"})
-
-# Device kinds an expanded overlay's optional top-level io_device may name
-# (a device with no cartridge-slot address decode of its own, e.g. the
-# Kanji-ROM font device at fixed I/O ports).
-_KNOWN_IO_DEVICES = frozenset({"kanji_rom"})
-_IO_DEVICES_REQUIRING_ROM = frozenset({"kanji_rom"})
 
 
 def _parse_expanded_device(
