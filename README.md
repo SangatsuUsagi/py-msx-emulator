@@ -546,13 +546,13 @@ Fast-forward does not play audio. For automatic frame skip, see
 ### State save/load
 
 A complete hardware snapshot in a stdlib JSON container. It includes the CPU,
-RAM, VDP, PSG, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state,
-the RTC, the mouse, and the identity of the mounted disk. The file is
+RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register
+and phase state, the RTC, the mouse, and the identity of the mounted disk. The file is
 canonical JSON (RFC 8785): the same machine state always gives the same
 bytes, also from another implementation. It holds integers only, and byte
 blobs such as RAM and VRAM as base64 strings.
 [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines
-its layout. The format version is 18. Save states from earlier versions do
+its layout. The format version is 19. Save states from earlier versions do
 not load. A save state also records which machine configuration it was saved
 from (see [Machine configuration](#machine-configuration)), and loads only into
 the same machine, extensions and cartridge ROM. Each save also writes a PNG screenshot
