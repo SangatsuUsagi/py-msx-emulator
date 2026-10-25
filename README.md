@@ -644,23 +644,23 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 250.41 | ~4.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 564.56 | ~9.4× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.96 | ~1.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1132.41 | ~18.9× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1371.70 | ~22.9× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 685.36 | ~11.4× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.98 | ~1.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 149.91 | ~2.5× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.45 | ~0.44× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 235.19 | ~3.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 291.29 | ~4.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 144.27 | ~2.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 252.95 | ~4.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 566.61 | ~9.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 98.79 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1158.95 | ~19.3× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1391.30 | ~23.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 692.39 | ~11.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 65.07 | ~1.1× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 150.28 | ~2.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.54 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 218.16 | ~3.6× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 294.20 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 147.14 | ~2.5× |
 
 Not every tested combination reaches the raw 60 fps target. The smallest
 margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
 Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the
-target titles. PyPy increases the same case to ~2.4×. The other Raspberry Pi 5
+target titles. PyPy increases the same case to ~2.5×. The other Raspberry Pi 5
 and CPython combinations reach the target, Salamander only just (~1.1×).
 
 A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an
@@ -677,10 +677,12 @@ because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.7.5, per platform and runtime.
-The author measured all versions with the same cold-boot method as above, but
-without sound synthesis (the method up to v2.7.8). These charts thus do not
-continue into the v2.8.0 numbers above.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.8.1, one chart per platform.
+Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author
+measured with the same cold-boot method as above, but without sound synthesis
+(the method up to v2.7.8). From v2.8.1 the author measured with the method
+above. You cannot compare the numbers of the two methods, so the lines break
+where the method changes.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
