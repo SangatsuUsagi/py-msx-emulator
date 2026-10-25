@@ -997,7 +997,7 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     assert spec.fdc is not None
     disk_rom = _rom(config, "disk")
     drives = [DiskDrive() for _ in range(spec.fdc.drives)]
-    # controller/connection_style were validated by the loader (_SUPPORTED_FDC_*).
+    # controller/connection_style were validated by the document parser (FDC_*).
     device: SonyPhilipsInterface | TC8566AFInterface
     if spec.fdc.controller == "tc8566af":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)

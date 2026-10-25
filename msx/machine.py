@@ -220,8 +220,8 @@ class Machine:
         self.memory._mapper2.reset()
         # halnote_cart (when present) is always also one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
-        # overlay's device allow-list, does not include "halnote") -- so
+        # constructs a HalnoteMapper (EXTENSION_DEVICES, the flat overlay's
+        # device allow-list in msx/machine_config.py, lacks "halnote") -- so
         # resetting it via this loop, not a separate halnote_cart branch,
         # covers it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.

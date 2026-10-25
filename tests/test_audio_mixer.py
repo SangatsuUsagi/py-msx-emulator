@@ -100,7 +100,7 @@ def test_cycle_stamped_sources_get_the_frame_window() -> None:
     assert opll.calls == [(N,)]
 
 
-def test_filter_applies_after_the_sum() -> None:
+def test_sources_are_summed() -> None:
     mixed = _mix(_pcm(100), scc=_pcm(50), dac=_pcm(25), opll=_pcm(25))
     assert mixed == _pcm(200)
 
@@ -120,7 +120,7 @@ def test_untaken_frame_is_replaced() -> None:
     assert mixer.take() == _pcm(3000)
 
 
-def test_reset_clears_filter_history_and_pending_frame() -> None:
+def test_reset_clears_the_pending_frame() -> None:
     psg = _pcm(20000)
     mixer = AudioMixer()
     mixer.mix_frame(N, 0, 100, _Gen(psg), None, None, None, None)

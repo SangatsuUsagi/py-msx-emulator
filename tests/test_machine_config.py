@@ -22,7 +22,12 @@ from msx.boundary import RtcTime
 from msx.input import InputFrame
 from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineLoadError
+from msx.machine_spec import (
+    ExtensionOverlay,
+    MachineLoadError,
+    _ExpandedSubslotDevice,
+    _RomEntry,
+)
 from msx.state import _snapshot_from_machine
 from tests.factories import _msx2_spec, make_config, make_config_msx2, reformat_document
 
@@ -393,3 +398,33 @@ def test_a_reformatted_document_has_the_canonical_identity(
     canonical = build_machine(config).machine_config_sha256
     assert build_machine(reformatted).machine_config_sha256 == canonical
     assert canonical == hashlib.sha256(config.document).hexdigest()
+
+
+def test_an_scc_i_fragment_rom_block_is_ignored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The SCC-I has no ROM: a `rom:` block in its fragment is not read (so a
+    # missing file is no error) and the document references no image for it.
+    monkeypatch.chdir(tmp_path)
+    overlay = ExtensionOverlay(
+        device="scc_i_cart", rom_base_dir=tmp_path,
+        rom_entry=_RomEntry(file="missing_scc.rom", size_kb=64, pages=[]),
+    )
+    spec = _spec("hb_f1xd")
+    config = load_machine_config(spec, **_overrides(spec), extension_overlay2=overlay)
+    assert json.loads(config.document)["extensions"]["slot2"] == {
+        "shape": "flat", "device": "scc_i_cart", "rom": None,
+    }
+    assert build_machine(config).scc is not None
+
+
+def test_a_device_without_a_rom_file_to_read_is_a_load_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A kanji io_device parsed back from a document has no rom_base_dir.
+    monkeypatch.chdir(tmp_path)
+    spec = dataclasses.replace(
+        _spec("hb_f1xd"), io_device=_ExpandedSubslotDevice(device="kanji_rom")
+    )
+    with pytest.raises(MachineLoadError, match="machine io_device: no ROM file to read"):
+        load_machine_config(spec, **_overrides(spec))
