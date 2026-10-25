@@ -23,8 +23,8 @@ PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
 Rust crate candidates: serde + serde_yaml (or saphyr) deserializing directly
   into the equivalent MachineSpec/AppConfig structs, replacing this hand-
   written validation layer with derive-macro-generated checks -- would need
-  custom Deserialize impls to reproduce the exact error messages and
-  _KNOWN_*_KEYS unknown-key warnings this file emits. The TypedDict shapes
+  custom Deserialize impls to reproduce the exact error messages this file
+  emits. The TypedDict shapes
   this file now declares are a reasonable 1:1 map to the equivalent serde
   structs, should a Rust port be undertaken.
 C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
