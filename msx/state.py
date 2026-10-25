@@ -170,6 +170,8 @@ class CpuSnapshot:
     int_pending: bool
     nmi_pending: bool
     im: int
+    q: int  # Z80.q / q_next: the SCF/CCF flag latch (see msx/cpu/z80.py)
+    q_next: int
 
 
 @dataclass
@@ -468,6 +470,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
             int_pending=machine.cpu.int_pending,
             nmi_pending=machine.cpu.nmi_pending,
             im=machine.cpu.im,
+            q=machine.cpu.q,
+            q_next=machine.cpu.q_next,
         ),
         memory=MemorySnapshot(
             ram=bytearray(memory.ram),
@@ -577,6 +581,8 @@ def _parse_cpu(value: object) -> CpuSnapshot:
         int_pending=check_bool(obj["int_pending"], "cpu.int_pending"),
         nmi_pending=check_bool(obj["nmi_pending"], "cpu.nmi_pending"),
         im=check_int(obj["im"], "cpu.im", 0, 2),
+        q=_byte(obj["q"], "cpu.q"),
+        q_next=_byte(obj["q_next"], "cpu.q_next"),
     )
 
 
@@ -935,6 +941,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.int_pending = cpu.int_pending
     machine.cpu.nmi_pending = cpu.nmi_pending
     machine.cpu.im = cpu.im
+    machine.cpu.q = cpu.q
+    machine.cpu.q_next = cpu.q_next
 
     memory.ram[:] = snap.memory.ram
     memory.set_slot_register(snap.memory.primary_slot_register)
