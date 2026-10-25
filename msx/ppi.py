@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import ClassVar
+from typing import ClassVar, TypedDict
 
 from msx.dac import EventDac
 from msx.input import InputLines
@@ -28,6 +28,16 @@ class PpiControlRead(str, Enum):
     # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
     # 2026-10-08.
     BUS_LATCH = "bus_latch"
+
+
+class PpiState(TypedDict):
+    """Save-state schema for PPI.snapshot_state()/apply_state(): the Port C
+    latch, the last mode-set control word and the port-0xAB bus latch. Port A
+    is Memory.slot_register, saved with the memory; Port B is input."""
+
+    port_c: int
+    control: int
+    bus_latch: int
 
 
 @dataclass
@@ -97,6 +107,17 @@ class PPI:
         self._control = self._POST_RESET_CONTROL
         self._port_c = 0
         self.click.reset(0)
+
+    def snapshot_state(self) -> PpiState:
+        return {"port_c": self._port_c, "control": self._control, "bus_latch": self._bus_latch}
+
+    def apply_state(self, state: PpiState) -> None:
+        """Restore a snapshot_state(). The key click holds the level Port C
+        bit 7 implies, with no click recorded for the change."""
+        self._port_c = state["port_c"]
+        self._control = state["control"]
+        self._bus_latch = state["bus_latch"]
+        self.click.reset(KEY_CLICK_LEVEL if self._port_c & 0x80 else 0)
 
     def read_port(self, port: int) -> int:
         if port == 0xAB:

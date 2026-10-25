@@ -115,7 +115,9 @@ _T = TypeVar("_T")
 #   MachineConfig document the machine was built from; a state loads only into
 #   a machine built from the same document. See
 #   openspec/changes/archive/2026-10-25-portable-machine-config.
-CURRENT_FORMAT_VERSION: int = 18
+# Version 19: ppi added -- the PPI's Port C latch, last mode-set control word
+#   and port-0xAB bus latch. See openspec/changes/snapshot-ppi-state.
+CURRENT_FORMAT_VERSION: int = 19
 
 _SHA256_HEX_LEN = 64
 
@@ -251,6 +253,13 @@ class PsgSnapshot:
 
 
 @dataclass
+class PpiSnapshot:
+    port_c: int
+    control: int     # a mode-set word: bit 7 always set
+    bus_latch: int
+
+
+@dataclass
 class MachineSnapshot:
     format_version: int
     machine_type: str  # "msx1" or "msx2"
@@ -262,6 +271,9 @@ class MachineSnapshot:
     slots: SlotsSnapshot
     vdp: VdpSnapshot
     psg: PsgSnapshot
+    # None only for a Machine constructed without a PPI (test fixtures);
+    # build_machine always wires one.
+    ppi: PpiSnapshot | None
     # Each None when the machine has no such device: SCC.snapshot(),
     # FloppyDisk.snapshot(), RTC.snapshot(), MouseDevice.snapshot().
     scc: dict[str, object] | None
@@ -321,8 +333,17 @@ def _mouse_to_dict(machine: "Machine") -> dict[str, object] | None:
     return cast(dict[str, object], mouse.snapshot(machine.cycle_count))
 
 
+def _ppi_snapshot(machine: "Machine") -> PpiSnapshot | None:
+    if machine.ppi is None:
+        return None
+    state = machine.ppi.snapshot_state()
+    return PpiSnapshot(
+        port_c=state["port_c"], control=state["control"], bus_latch=state["bus_latch"]
+    )
+
+
 def _check_optional_wiring(
-    name: str, running: bool, state: dict[str, object] | None
+    name: str, running: bool, state: object
 ) -> None:
     if (state is None) == running:
         raise SnapshotMismatchError(
@@ -482,6 +503,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
             latch=machine.psg.latch,
             synth=cast(dict[str, object], machine.psg.snapshot_synth()),
         ),
+        ppi=_ppi_snapshot(machine),
         scc=_scc_to_dict(machine),
         fdc=_fdc_to_dict(machine),
         rtc=_rtc_to_dict(machine),
@@ -514,6 +536,7 @@ _SLOT3_KEYS = _keys_of(Slot3Snapshot)
 _SLOTS_KEYS = _keys_of(SlotsSnapshot)
 _VDP_KEYS = _keys_of(VdpSnapshot)
 _PSG_KEYS = _keys_of(PsgSnapshot)
+_PPI_KEYS = _keys_of(PpiSnapshot)
 
 _TMS_VRAM_SIZE = 0x4000
 _V9938_VRAM_SIZE = 0x20000
@@ -665,6 +688,17 @@ def _parse_psg(value: object) -> PsgSnapshot:
     )
 
 
+def _parse_ppi(value: object) -> PpiSnapshot | None:
+    if value is None:
+        return None
+    obj = check_object(value, "ppi", _PPI_KEYS)
+    return PpiSnapshot(
+        port_c=check_int(obj["port_c"], "ppi.port_c", 0, 0xFF),
+        control=check_int(obj["control"], "ppi.control", 0x80, 0xFF),
+        bus_latch=check_int(obj["bus_latch"], "ppi.bus_latch", 0, 0xFF),
+    )
+
+
 def _check_top_level_keys(data: dict[str, object], source: str) -> None:
     """Refuse a file whose top-level keys are not the layout's: an unknown
     or a missing key."""
@@ -726,6 +760,7 @@ def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
         slots=_field("slots", lambda: _parse_slots(data["slots"], msx2)),
         vdp=_field("vdp", lambda: _parse_vdp(data["vdp"], msx2)),
         psg=_field("psg", lambda: _parse_psg(data["psg"])),
+        ppi=_field("ppi", lambda: _parse_ppi(data["ppi"])),
         scc=_field("scc", lambda: check_optional_object(data["scc"], "scc")),
         fdc=_field("fdc", lambda: check_optional_object(data["fdc"], "fdc")),
         rtc=_field("rtc", lambda: check_optional_object(data["rtc"], "rtc")),
@@ -785,6 +820,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     _check_slot0_ram_wiring(machine, snap.memory.slot0_ram)
     _check_optional_wiring("RTC", machine.rtc is not None, snap.rtc)
     _check_optional_wiring("mouse", machine.psg.mouse is not None, snap.mouse)
+    _check_optional_wiring("PPI", machine.ppi is not None, snap.ppi)
     parsed = _parse_producer_objects(machine, snap)
     # Last of the identity checks: the specific ones above and in the
     # producers (FDC kind, mounted disks) name what differs; this one catches
@@ -934,6 +970,11 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.psg.regs[:] = snap.psg.registers
     machine.psg.latch = snap.psg.latch
     machine.psg.apply_synth_state(parsed.psg_synth)
+    ppi = snap.ppi
+    if machine.ppi is not None and ppi is not None:
+        machine.ppi.apply_state(
+            {"port_c": ppi.port_c, "control": ppi.control, "bus_latch": ppi.bus_latch}
+        )
     if machine.scc is not None and parsed.scc is not None:
         machine.scc.apply_state(parsed.scc)
     if machine.fdc is not None and parsed.fdc is not None:
