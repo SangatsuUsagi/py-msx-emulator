@@ -59,9 +59,16 @@ def swap_disk(machine: Machine, drive: int, path: Path | None) -> None:
     outgoing image back to its file first when it is dirty. `path` is taken
     relative to the working directory, with `~` expanded. Raises OSError or
     ValueError, leaving the drive as it was, when the file cannot be read, is
-    not a valid image, or the drive does not exist."""
+    not a valid image, the drive does not exist, or the outgoing image cannot
+    be written back (it then stays dirty)."""
     medium = read_disk_medium(path.expanduser()) if path is not None else None
     outgoing_path = machine.disk_path(drive)
+    if outgoing_path is not None:
+        media_id = drive_media_id(drive)
+        if media_id in machine.dirty_media():
+            outgoing_path.write_bytes(machine.read_media(media_id))
+            machine.mark_persisted(media_id)
     outgoing = machine.mount_disk(drive, medium)
+    # Normally None: the image was persisted just above.
     if outgoing is not None and outgoing_path is not None:
         outgoing_path.write_bytes(outgoing)
