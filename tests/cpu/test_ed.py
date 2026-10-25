@@ -5,6 +5,8 @@ from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 
+_YX = F.FLAG_Y | F.FLAG_X
+
 
 def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
@@ -761,3 +763,66 @@ def test_retn_sets_memptr_to_return_address() -> None:
     cpu.write_byte(0xF001, 0x56)
     cpu.step()
     assert cpu.registers.WZ == 0x5678
+
+
+# --- Repeating block instructions: PC-derived Y/X -------------------------
+
+
+def _cpu_at(addr: int, code: list[int]) -> Z80:
+    rom = [0] * 32768
+    rom[addr:addr + len(code)] = code
+    cpu = make_cpu(rom)
+    cpu.registers.PC = addr
+    cpu.write_byte(0xC000, 0x00)  # the source/compare byte at HL
+    return cpu
+
+
+def test_repeating_ldir_takes_yx_from_the_instruction_address() -> None:
+    # Spec "A repeating LDIR takes Y and X from the instruction address".
+    cpu = _cpu_at(0x2800, [0xED, 0xB0])  # LDIR at 0x2800
+    cpu.registers.HL = 0xC000  # byte 0x00
+    cpu.registers.DE = 0xD000
+    cpu.registers.BC = 0x0002
+    cpu.registers.A = 0x00
+    cpu.step()
+    assert cpu.registers.PC == 0x2800
+    assert cpu.registers.F & _YX == _YX
+    assert cpu.registers.WZ == 0x2802
+
+
+def test_last_ldir_iteration_takes_yx_from_a_plus_byte() -> None:
+    # Spec "The last LDIR iteration takes Y and X from A + the byte".
+    cpu = _cpu_at(0x2800, [0xED, 0xB0])
+    cpu.registers.HL = 0xC000
+    cpu.registers.DE = 0xD000
+    cpu.registers.BC = 0x0001
+    cpu.registers.A = 0x00
+    cpu.registers.F = _YX
+    cpu.step()
+    assert cpu.registers.PC == 0x2802
+    assert cpu.registers.F & _YX == 0
+
+
+def test_repeating_cpir_takes_yx_from_the_instruction_address() -> None:
+    # Spec "A repeating CPIR takes Y and X from the instruction address".
+    cpu = _cpu_at(0x0800, [0xED, 0xB1])  # CPIR at 0x0800
+    cpu.registers.HL = 0xC000  # byte 0x00, no match for A = 0x01
+    cpu.registers.BC = 0x0002
+    cpu.registers.A = 0x01
+    cpu.step()
+    assert cpu.registers.PC == 0x0800
+    assert cpu.registers.F & F.FLAG_X
+    assert not (cpu.registers.F & F.FLAG_Y)
+    assert cpu.registers.WZ == 0x0802
+
+
+def test_repeating_lddr_and_cpdr_take_yx_from_the_instruction_address() -> None:
+    for code in ([0xED, 0xB8], [0xED, 0xB9]):  # LDDR / CPDR at 0x2000
+        cpu = _cpu_at(0x2000, code)
+        cpu.registers.HL = 0xC000
+        cpu.registers.DE = 0xD000
+        cpu.registers.BC = 0x0002
+        cpu.registers.A = 0x01
+        cpu.step()
+        assert cpu.registers.PC == 0x2000, code
+        assert cpu.registers.F & _YX == F.FLAG_Y, code
