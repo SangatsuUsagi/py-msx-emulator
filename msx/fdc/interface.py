@@ -54,8 +54,8 @@ class FdcController(Protocol[S]):
 class FdcKind(str, Enum):
     """Closed save-state identity discriminant for a FloppyDisk connection
     style, mirroring MapperKind's own rationale (msx/mapper.py): one member
-    per (controller, connection_style) pair msx/machine_loader.py's own
-    _SUPPORTED_FDC_PAIRS validates -- a class rename must not change
+    per (controller, connection_style) pair in msx/machine_config.py's
+    FDC_PAIRS -- a class rename must not change
     save-state compatibility."""
 
     WD2793_SONY = "wd2793_sony"
