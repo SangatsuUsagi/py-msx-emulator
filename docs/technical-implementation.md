@@ -112,10 +112,14 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
 boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
-documented per-instruction rules. The emulator does not model three sources
-of Y and X: the internal MEMPTR register (`BIT n,(HL)` leaves them clear), the
-PC of a repeating block instruction, and the previous instruction
-(`SCF`/`CCF`).
+documented per-instruction rules, including three less common sources:
+`BIT n,(HL)` takes them from the internal MEMPTR register, a repeating
+`LDIR`/`LDDR`/`CPIR`/`CPDR` takes them from its own address, and `SCF`/`CCF`
+depend on whether the previous instruction changed the flags. `SCF`/`CCF`
+follow the Zilog NMOS rule; NEC and ST CMOS Z80s differ
+([Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)).
+TODO: confirm on real hardware which rule the HB-F1XD and HB-10 follow. The
+repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep the simpler per-iteration flags.
 
 ---
 
