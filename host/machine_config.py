@@ -1206,7 +1206,10 @@ def _overlay_roms(
             roms[f"slot{slot}.io_device"] = _load_device_rom(
                 overlay.io_device, "expanded overlay io_device"
             )
-    elif overlay is not None and overlay.rom_entry is not None:
+    elif (overlay is not None and overlay.rom_entry is not None
+          and overlay.device in _EXTENSION_DEVICES_REQUIRING_ROM):
+        # Only a device that uses its ROM reads one: an SCC-I fragment's
+        # `rom:` block, if any, is ignored as the device has no ROM.
         roms[f"slot{slot}.ext"] = _load_device_rom(overlay, f"{overlay.device} extension")
     return roms
 
