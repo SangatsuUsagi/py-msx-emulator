@@ -53,6 +53,49 @@ MACHINE_CONFIG_FORMAT_VERSION: int = 1
 
 _SHA1_HEX_LEN = 40
 
+# --- closed vocabularies ------------------------------------------------------
+# The values a document field can take: what build_machine knows how to
+# construct. Defined here, the core boundary, and enforced by the parser
+# below; host/machine_config.py checks the authored YAML against the same sets.
+
+# Cartridge mapper names (ROM-database vocabulary); msx/machine_loader.py's
+# _MAPPER_BUILDERS has exactly these keys.
+MAPPER_NAMES: frozenset[str] = frozenset({
+    "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
+    "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
+    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
+})
+
+# FDC controller chips and connection styles. Each controller family has
+# exactly one style today, but the two are independent fields, so the pair is
+# checked explicitly rather than letting a mismatched combination (wd2793 +
+# tc8566af) fall into whichever _build_fdc branch it happens to reach.
+FDC_CONTROLLERS: frozenset[str] = frozenset({"wd2793", "tc8566af"})
+FDC_CONNECTION_STYLES: frozenset[str] = frozenset({"sony", "tc8566af"})
+FDC_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    {("wd2793", "sony"), ("tc8566af", "tc8566af")}
+)
+
+# Flat extension devices; fmpac needs its ROM, scc_i_cart's RAM starts blank.
+EXTENSION_DEVICES: frozenset[str] = frozenset({"fmpac", "scc_i_cart"})
+EXTENSION_DEVICES_REQUIRING_ROM: frozenset[str] = frozenset({"fmpac"})
+
+# Devices an expanded overlay's sub-slot may hold -- a separate namespace from
+# EXTENSION_DEVICES, sharing no member with it. ram_mapper carries no ROM; it
+# is configured by size_kb instead.
+SUBSLOT_DEVICES: frozenset[str] = frozenset(
+    {"halnote", "flat_rom", "ram_mapper", "ascii8", "ascii16"}
+)
+SUBSLOT_DEVICES_REQUIRING_ROM: frozenset[str] = frozenset(
+    {"halnote", "flat_rom", "ascii8", "ascii16"}
+)
+SUBSLOT_DEVICES_REQUIRING_SIZE: frozenset[str] = frozenset({"ram_mapper"})
+
+# I/O devices (no cartridge-slot address decode of their own), for a
+# machine's or an expanded overlay's io_device: the Kanji-ROM font device.
+IO_DEVICES: frozenset[str] = frozenset({"kanji_rom"})
+IO_DEVICES_REQUIRING_ROM: frozenset[str] = frozenset({"kanji_rom"})
+
 
 @dataclass
 class RomRef:
@@ -312,21 +355,33 @@ def _add_rom(roms: dict[str, RomRef], role: str, ref: RomRef | None) -> _RomEntr
 
 
 def _device(
-    value: object, label: str, role: str, roms: dict[str, RomRef]
+    value: object, label: str, role: str, roms: dict[str, RomRef],
+    devices: frozenset[str], requiring_rom: frozenset[str],
+    requiring_size: frozenset[str] = frozenset(),
 ) -> _ExpandedSubslotDevice:
+    """A sub-slot or io_device entry whose `device` is one of `devices`, with
+    the ROM / size_kb the requiring sets demand."""
     obj = check_object(value, label, _DEVICE_KEYS)
+    device = _choice(obj["device"], f"{label}.device", devices)
     rom = _optional_rom(obj["rom"], f"{label}.rom")
+    if rom is None and device in requiring_rom:
+        raise SchemaError(f"{label}.rom is required for device {device!r}")
+    size_kb = check_optional_int(obj["size_kb"], f"{label}.size_kb", 0, _MAX_KB)
+    if size_kb is None and device in requiring_size:
+        raise SchemaError(f"{label}.size_kb is required for device {device!r}")
     return _ExpandedSubslotDevice(
-        device=check_str(obj["device"], f"{label}.device"),
+        device=device,
         rom_entry=_add_rom(roms, role, rom),
-        size_kb=check_optional_int(obj["size_kb"], f"{label}.size_kb", 0, _MAX_KB),
+        size_kb=size_kb,
     )
 
 
-def _optional_device(
+def _optional_io_device(
     value: object, label: str, role: str, roms: dict[str, RomRef]
 ) -> _ExpandedSubslotDevice | None:
-    return None if value is None else _device(value, label, role, roms)
+    if value is None:
+        return None
+    return _device(value, label, role, roms, IO_DEVICES, IO_DEVICES_REQUIRING_ROM)
 
 
 def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
@@ -347,12 +402,19 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
         disk = _add_rom(roms, "disk", _optional_rom(fdc_obj["disk_rom"], f"{label}.fdc.disk_rom"))
         if disk is None:
             raise SchemaError(f"{label}.fdc.disk_rom is required when an FDC is declared")
+        controller = _choice(fdc_obj["controller"], f"{label}.fdc.controller", FDC_CONTROLLERS)
+        style = _choice(
+            fdc_obj["connection_style"], f"{label}.fdc.connection_style", FDC_CONNECTION_STYLES
+        )
+        if (controller, style) not in FDC_PAIRS:
+            raise SchemaError(
+                f"{label}.fdc: controller {controller!r} with connection_style {style!r} "
+                f"is not a supported pair {sorted(FDC_PAIRS)}"
+            )
         fdc = _FdcDef(
             disk_rom_entry=disk,
-            controller=check_str(fdc_obj["controller"], f"{label}.fdc.controller"),
-            connection_style=check_str(
-                fdc_obj["connection_style"], f"{label}.fdc.connection_style"
-            ),
+            controller=controller,
+            connection_style=style,
             drives=check_int(fdc_obj["drives"], f"{label}.fdc.drives", 1, 4),
         )
     io_ports_obj = check_object(obj["device_io_ports"], f"{label}.device_io_ports")
@@ -386,7 +448,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
         ),
         machine_id=check_str(obj["id"], f"{label}.id"),
         device_io_ports=io_ports,
-        io_device=_optional_device(obj["io_device"], f"{label}.io_device", "io_device", roms),
+        io_device=_optional_io_device(obj["io_device"], f"{label}.io_device", "io_device", roms),
         video_standard=_enum(
             obj["video_standard"], f"{label}.video_standard", VideoStandard,
             [standard.value for standard in VideoStandard],
@@ -412,6 +474,7 @@ def _parse_cartridge(value: object, slot: int, roms: dict[str, RomRef]) -> str:
     mapper = check_str(obj["mapper"], f"{label}.mapper")
     if mapper == "auto":
         raise SchemaError(f"{label}.mapper must be resolved, got 'auto'")
+    _choice(mapper, f"{label}.mapper", MAPPER_NAMES)
     rom = _optional_rom(obj["rom"], f"{label}.rom")
     if rom is not None:
         roms[f"cartridge{slot}"] = rom
@@ -428,9 +491,12 @@ def _parse_overlay(
     shape = _choice(shape_obj.get("shape"), f"{label}.shape", frozenset({"flat", "expanded"}))
     if shape == "flat":
         obj = check_object(value, label, _FLAT_KEYS)
+        flat_device = _choice(obj["device"], f"{label}.device", EXTENSION_DEVICES)
         rom = _optional_rom(obj["rom"], f"{label}.rom")
+        if rom is None and flat_device in EXTENSION_DEVICES_REQUIRING_ROM:
+            raise SchemaError(f"{label}.rom is required for device {flat_device!r}")
         return ExtensionOverlay(
-            device=check_str(obj["device"], f"{label}.device"),
+            device=flat_device,
             rom_entry=_add_rom(roms, f"slot{slot}.ext", rom),
         )
     obj = check_object(value, label, _EXPANDED_KEYS)
@@ -441,11 +507,12 @@ def _parse_overlay(
             raise SchemaError(f"{label}.subslots has a key {key!r} that is not a sub-slot 0-3")
         index = int(key)
         subslots[index] = _device(
-            device, f"{label}.subslots.{key}", f"slot{slot}.{index}", roms
+            device, f"{label}.subslots.{key}", f"slot{slot}.{index}", roms,
+            SUBSLOT_DEVICES, SUBSLOT_DEVICES_REQUIRING_ROM, SUBSLOT_DEVICES_REQUIRING_SIZE,
         )
     return ExpandedExtensionOverlay(
         subslots=subslots,
-        io_device=_optional_device(
+        io_device=_optional_io_device(
             obj["io_device"], f"{label}.io_device", f"slot{slot}.io_device", roms
         ),
     )
