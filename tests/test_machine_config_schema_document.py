@@ -123,3 +123,83 @@ def test_the_schema_and_the_parser_name_the_same_keys() -> None:
     assert _properties(defs["ExpandedOverlay"]) == machine_config._EXPANDED_KEYS
     for pair in ("cartridges", "extensions"):
         assert _properties(schema["properties"][pair]) == machine_config._SLOT_PAIR_KEYS
+
+
+# ---------------------------------------------------------------------------
+# "The schema and the parser name the same closed sets"
+# ---------------------------------------------------------------------------
+
+def _device_enum(definition: dict[str, typing.Any]) -> set[str]:
+    return set(definition["allOf"][1]["properties"]["device"]["enum"])
+
+
+def _required_by(definition: dict[str, typing.Any], field: str) -> set[str]:
+    """The device names whose if/then block makes `field` non-null."""
+    names: set[str] = set()
+    for block in definition["allOf"]:
+        if "if" in block and field in block["then"]["properties"]:
+            names |= set(block["if"]["properties"]["device"]["enum"])
+    return names
+
+
+def test_the_schema_and_the_parser_name_the_same_closed_sets() -> None:
+    defs = _schema()["$defs"]
+    fdc = defs["Machine"]["properties"]["fdc"]["anyOf"][0]
+    assert set(defs["Cartridge"]["properties"]["mapper"]["enum"]) == machine_config.MAPPER_NAMES
+    assert set(fdc["properties"]["controller"]["enum"]) == machine_config.FDC_CONTROLLERS
+    assert set(fdc["properties"]["connection_style"]["enum"]) == (
+        machine_config.FDC_CONNECTION_STYLES
+    )
+    pairs = {
+        (p["properties"]["controller"]["const"], p["properties"]["connection_style"]["const"])
+        for p in fdc["anyOf"]
+    }
+    assert pairs == machine_config.FDC_PAIRS
+    flat = defs["FlatOverlay"]
+    assert set(flat["properties"]["device"]["enum"]) == machine_config.EXTENSION_DEVICES
+    assert _required_by(flat, "rom") == machine_config.EXTENSION_DEVICES_REQUIRING_ROM
+    subslot = defs["SubslotDevice"]
+    assert _device_enum(subslot) == machine_config.SUBSLOT_DEVICES
+    assert _required_by(subslot, "rom") == machine_config.SUBSLOT_DEVICES_REQUIRING_ROM
+    assert _required_by(subslot, "size_kb") == machine_config.SUBSLOT_DEVICES_REQUIRING_SIZE
+    io = defs["IoDevice"]
+    assert _device_enum(io) == machine_config.IO_DEVICES
+    assert _required_by(io, "rom") == machine_config.IO_DEVICES_REQUIRING_ROM
+
+
+_FLAT = {"shape": "flat", "device": "fmpac", "rom": None}
+
+
+def _expanded(device: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    return {"shape": "expanded", "subslots": {"0": device}, "io_device": None}
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda d: d["cartridges"]["slot1"].update(mapper="Unknown"),
+        lambda d: d["machine"]["fdc"].update(controller="xyz"),
+        lambda d: d["machine"]["fdc"].update(connection_style="tc8566af"),
+        lambda d: d["extensions"].update(slot2={**_FLAT, "device": "halnote"}),
+        lambda d: d["extensions"].update(slot2=_FLAT),
+        lambda d: d["extensions"].update(
+            slot2=_expanded({"device": "fmpac", "rom": None, "size_kb": None})
+        ),
+        lambda d: d["extensions"].update(
+            slot2=_expanded({"device": "ram_mapper", "rom": None, "size_kb": None})
+        ),
+        lambda d: d["machine"].update(
+            io_device={"device": "kanji_rom", "rom": None, "size_kb": None}
+        ),
+    ],
+    ids=[
+        "mapper", "fdc-controller", "fdc-pair", "flat-device", "flat-rom",
+        "subslot-device", "subslot-size", "io-device-rom",
+    ],
+)
+def test_an_out_of_set_value_does_not_validate(edit: typing.Any) -> None:
+    validator = jsonschema.Draft202012Validator(_schema())
+    document = json.loads(_documents()["hb_f1xd"])
+    assert validator.is_valid(document)
+    edit(document)
+    assert not validator.is_valid(document)

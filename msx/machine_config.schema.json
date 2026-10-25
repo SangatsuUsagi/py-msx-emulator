@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "py-msx-emulator MachineConfig document, format 1",
-  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document.",
+  "description": "The resolved machine the core is built from: produced by the host from the machine/device/extension YAML, cartridges and mappers (msx/machine_config.py encode_machine_config), written as RFC 8785 (JCS) canonical JSON, integers only. Every property is required; null means the machine has no such part. A RomRef names a ROM image passed beside the document, keyed by its SHA1; `name` is the bare file name, a display label, never a path. Run inputs (initial SRAM/CMOS images, disks, the RTC start time) are not part of the document. Closed sets (mapper, FDC controller / connection style and their pairs, device names) are enums, and the devices that need a ROM or a size say so; the parser in msx/machine_config.py is authoritative.",
   "type": "object",
   "properties": {
     "format_version": {
@@ -83,10 +83,25 @@
       "type": "object",
       "properties": {
         "mapper": {
-          "type": "string",
-          "not": {
-            "const": "auto"
-          }
+          "enum": [
+            "0x4000",
+            "0x8000",
+            "ASCII16",
+            "ASCII16SRAM2",
+            "ASCII16SRAM8",
+            "ASCII8",
+            "ASCII8SRAM2",
+            "ASCII8SRAM8",
+            "GameMaster2",
+            "KoeiSRAM32",
+            "Konami",
+            "KonamiSCC",
+            "Majutsushi",
+            "Mirrored",
+            "Normal",
+            "Page2",
+            "R-Type"
+          ]
         },
         "rom": {
           "anyOf": [
@@ -158,13 +173,13 @@
             ]
           },
           "additionalProperties": {
-            "$ref": "#/$defs/Device"
+            "$ref": "#/$defs/SubslotDevice"
           }
         },
         "io_device": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Device"
+              "$ref": "#/$defs/IoDevice"
             },
             {
               "type": "null"
@@ -186,7 +201,10 @@
           "const": "flat"
         },
         "device": {
-          "type": "string"
+          "enum": [
+            "fmpac",
+            "scc_i_cart"
+          ]
         },
         "rom": {
           "anyOf": [
@@ -204,7 +222,61 @@
         "rom",
         "shape"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "device": {
+                "enum": [
+                  "fmpac"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rom": {
+                "$ref": "#/$defs/RomRef"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "IoDevice": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Device"
+        },
+        {
+          "properties": {
+            "device": {
+              "enum": [
+                "kanji_rom"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "device": {
+                "enum": [
+                  "kanji_rom"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rom": {
+                "$ref": "#/$defs/RomRef"
+              }
+            }
+          }
+        }
+      ]
     },
     "Machine": {
       "type": "object",
@@ -342,10 +414,16 @@
               "type": "object",
               "properties": {
                 "controller": {
-                  "type": "string"
+                  "enum": [
+                    "tc8566af",
+                    "wd2793"
+                  ]
                 },
                 "connection_style": {
-                  "type": "string"
+                  "enum": [
+                    "sony",
+                    "tc8566af"
+                  ]
                 },
                 "drives": {
                   "type": "integer",
@@ -362,7 +440,29 @@
                 "disk_rom",
                 "drives"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "properties": {
+                    "controller": {
+                      "const": "tc8566af"
+                    },
+                    "connection_style": {
+                      "const": "tc8566af"
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "controller": {
+                      "const": "wd2793"
+                    },
+                    "connection_style": {
+                      "const": "sony"
+                    }
+                  }
+                }
+              ]
             },
             {
               "type": "null"
@@ -377,7 +477,7 @@
         "io_device": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Device"
+              "$ref": "#/$defs/IoDevice"
             },
             {
               "type": "null"
@@ -457,6 +557,65 @@
         "size"
       ],
       "additionalProperties": false
+    },
+    "SubslotDevice": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Device"
+        },
+        {
+          "properties": {
+            "device": {
+              "enum": [
+                "ascii16",
+                "ascii8",
+                "flat_rom",
+                "halnote",
+                "ram_mapper"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "device": {
+                "enum": [
+                  "ascii16",
+                  "ascii8",
+                  "flat_rom",
+                  "halnote"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rom": {
+                "$ref": "#/$defs/RomRef"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "device": {
+                "enum": [
+                  "ram_mapper"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "size_kb": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }
