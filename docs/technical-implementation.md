@@ -381,7 +381,8 @@ speed-up with less display or sprite VRAM traffic.
 
 A write to R#44 (COL) sets the HMMC/LMMC transfer latch (`_cmd_transfer`). The
 first pixel or byte of a transfer comes from a pending COL write. The engine
-does not load it automatically at dispatch. This matches the openMSX behavior.
+does not load it automatically when the command starts. This matches the
+openMSX behavior.
 
 `_apply_log()` in `v9938.py` applies the logical operations (IMP, AND, OR,
 XOR, NOT) per pixel.
@@ -391,9 +392,9 @@ XOR, NOT) per pixel.
 - Command timing is approximate. The engine uses one measured cost per element
   (see above). It does not use the per-command cycle counts of the V9938 data
   book.
-- The engine writes the VRAM results at dispatch, not incrementally. Software
-  that reads VRAM while a command is nominally in progress can see the
-  completed result before CE clears.
+- The engine writes the VRAM results when the command starts, not
+  incrementally. Software that reads VRAM while a command is nominally in
+  progress can see the completed result before CE clears.
 - The emulator renders each frame after the CPU runs it. The CPU runs a full
   frame, VDP commands write into VRAM instantly, and then a single render pass
   covers the whole frame. Both

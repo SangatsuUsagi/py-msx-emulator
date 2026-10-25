@@ -139,7 +139,7 @@ FH は S#1 を読むまでセットされたまま。読むと FH がクリア�
 
 ## I/O バス
 
-### 登録とディスパッチ
+### 登録と振り分け
 
 `IOBus`（`msx/io.py`）は、`(start, end, handler)` のタプルのリストを 2 つ持つ。読み出し用と書き込み用。デバイスはマシンの構築時に自分を登録する。
 
@@ -853,7 +853,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 
 次のパターンは、静的型付けの言語にそのままの対応がない Python の機能を使う。各パターンについて、Rust/C++ の移植で代わりに使うものをソースのコメントに書いてある。
 
-#### バスフックとしての再代入可能なバインドメソッド
+#### バスフックとしての再代入可能な束縛メソッド
 
 `Z80` は `read_byte` / `write_byte` / `read_port` / `write_port` を `Callable` のフィールドとして持つ。`Machine.__post_init__` が実行時に束縛メソッドを代入してつなぐ。あとでプログラムがウォッチポイントを有効にすると、`Machine.set_watchpoints` が `cpu.read_byte` / `cpu.write_byte` をもう一度差し替える。ふつうのメモリハンドラと、ウォッチポイントを捕まえる版（`Machine._read_with_watch` / `_write_with_watch`）を切り替える。
 
