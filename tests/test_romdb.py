@@ -1,4 +1,6 @@
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +11,7 @@ from host.romdb import RomDbEntry
 def _patch_db(monkeypatch: pytest.MonkeyPatch, raw: dict[str, dict[str, object]]) -> None:
     """Inject fake ROM-database entries by patching the _load() seam directly
     (mirrors _load()'s own field-parsing rules so edge cases, e.g. a missing
-    "mapper" key, behave identically to the real YAML-backed path)."""
+    "mapper" key, behave identically to the real JSON-backed path)."""
     entries = {
         sha1: RomDbEntry(
             mapper=str(v["mapper"]) if v.get("mapper") is not None else None,
@@ -25,7 +27,7 @@ def _patch_db(monkeypatch: pytest.MonkeyPatch, raw: dict[str, dict[str, object]]
 # lookup — known SHA1
 # ---------------------------------------------------------------------------
 
-# SHA1 values taken directly from roms/msx_romdb.yaml (no ROM file required).
+# SHA1 values taken directly from roms/msx_romdb.json (no ROM file required).
 _KNOWN_KONAMISCO_SHA1 = "937464eb371c68add2236bcef91d24a8ce7c4ed1"
 _KNOWN_MIRRORED_SHA1  = "6b8a684ddbadd798a8e599449b823bceca9cdb58"
 
@@ -113,3 +115,42 @@ def test_lookup_entry_without_mapper_returns_none(monkeypatch: pytest.MonkeyPatc
     sha1 = hashlib.sha1(cart).hexdigest()
     _patch_db(monkeypatch, {sha1: {"system": "MSX2"}})
     assert romdb.lookup(cart) is None
+
+
+# ---------------------------------------------------------------------------
+# The database file (cart-romdb "ROM database lookup by SHA1")
+# ---------------------------------------------------------------------------
+
+def test_a_missing_database_file_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(romdb, "_DB_PATH", tmp_path / "absent.json")
+    romdb._load.cache_clear()
+    try:
+        assert romdb.lookup(b"\x01\x02") is None
+        assert romdb.lookup_title(b"\x01\x02") is None
+    finally:
+        romdb._load.cache_clear()
+
+
+def test_an_unreadable_database_file_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(romdb, "_DB_PATH", broken)
+    romdb._load.cache_clear()
+    try:
+        assert romdb.lookup(b"\x01\x02") is None
+    finally:
+        romdb._load.cache_clear()
+
+
+def test_the_shipped_database_is_json_keyed_by_sha1() -> None:
+    data = json.loads(romdb._DB_PATH.read_text(encoding="utf-8"))
+    roms = data["roms"]
+    assert len(roms) > 600
+    for sha1, entry in roms.items():
+        assert len(sha1) == 40 and sha1 == sha1.lower()
+        assert isinstance(entry["mapper"], str)
+        assert entry["title_jp"] is None or isinstance(entry["title_jp"], str)

@@ -54,8 +54,8 @@ class FdcController(Protocol[S]):
 class FdcKind(str, Enum):
     """Closed save-state identity discriminant for a FloppyDisk connection
     style, mirroring MapperKind's own rationale (msx/mapper.py): one member
-    per (controller, connection_style) pair msx/machine_loader.py's own
-    _SUPPORTED_FDC_PAIRS validates -- a class rename must not change
+    per (controller, connection_style) pair in msx/machine_config.py's
+    FDC_PAIRS -- a class rename must not change
     save-state compatibility."""
 
     WD2793_SONY = "wd2793_sony"
@@ -226,7 +226,7 @@ class FloppyDiskState(Generic[S]):
     def restore(self, state: dict[str, object]) -> None:
         """Restore the controller's and every drive's own state produced by
         snapshot(); the whole state is validated before anything is assigned."""
-        self.apply_state(self.parse_state(state, "fdc_state"))
+        self.apply_state(self.parse_state(state, "fdc"))
 
     def apply_state(self, state: FloppyDiskStateParsed[S]) -> None:
         """Assign a state returned by parse_state()."""
@@ -340,7 +340,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
             "connection_style": self._snapshot_connection_style(),
         }
         # Returned as a plain dict: msx/state.py stores it as the snapshot's
-        # dict[str, object] fdc_state field.
+        # dict[str, object] `fdc` object.
         return dict(state)
 
     def parse_state(self, obj: object, label: str) -> FloppyDiskParsedBase[S, C]:
@@ -389,7 +389,7 @@ class FloppyDiskBase(abc.ABC, Generic[S, C]):
         Raises:
             ValueError: See parse_state().
         """
-        self.apply_state(self.parse_state(state, "fdc_state"))
+        self.apply_state(self.parse_state(state, "fdc"))
 
     @abc.abstractmethod
     def read_mem(self, addr: int) -> int:

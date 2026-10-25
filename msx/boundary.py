@@ -8,10 +8,6 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 
 @dataclass(frozen=True)
@@ -53,6 +49,8 @@ class MediaId(str, enum.Enum):
     RTC_CMOS = "rtc.cmos"
     DRIVE_A = "drive_a"
     DRIVE_B = "drive_b"
+    DRIVE_C = "drive_c"
+    DRIVE_D = "drive_d"
 
 
 def slot_sram_id(slot: int) -> MediaId:
@@ -68,9 +66,9 @@ def subslot_sram_id(slot: int, sub: int) -> MediaId:
 
 
 def drive_media_id(index: int) -> MediaId:
-    """Media id of floppy drive `index` (0 -> DRIVE_A). Raises ValueError
-    for a drive other than 0 or 1."""
-    if not 0 <= index <= 1:
+    """Media id of floppy drive `index` (0 -> DRIVE_A ... 3 -> DRIVE_D, the
+    four drives a TC8566AF selects). Raises ValueError for any other index."""
+    if not 0 <= index <= 3:
         raise ValueError(f"no media id for floppy drive {index}")
     return MediaId("drive_" + chr(ord("a") + index))
 
@@ -117,26 +115,19 @@ class MachineConfig:
     """Everything build_machine needs, as values: no path is opened and no
     database is consulted while building.
 
-    `roms` holds ROM images by role: "main", "logo" (optional), "sub"
-    (MSX2 SUB ROM), "disk" (FDC DISK ROM), "io_device" (a machine-declared
-    I/O device's ROM), and per cartridge slot n: "slot<n>.ext" (a flat
-    extension overlay's device ROM), "slot<n>.io_device" (an expanded
-    overlay's I/O device ROM), "slot<n>.<sub>" (an expanded overlay's
-    sub-slot device ROM). `media` holds initial battery-backed images by
-    media id ("slot<n>.sram", "slot<n>.<sub>.sram", "fmpac.sram",
-    "rtc.cmos"); an absent id starts blank. `disks` holds the images to mount
-    by drive id ("drive_a", "drive_b"). `mapper1`/`mapper2` are resolved
-    mapper names, never "auto".
+    `document` is the canonical MachineConfig document (msx/machine_config.py,
+    msx/machine_config.schema.json): the resolved machine, cartridges with
+    their resolved mappers, and extension overlays, every ROM a reference.
+    `roms` holds the referenced ROM images keyed by SHA1 (lowercase hex).
+    The rest are run inputs, outside the document: `media` holds initial
+    battery-backed images by media id ("slot<n>.sram", "slot<n>.<sub>.sram",
+    "fmpac.sram", "rtc.cmos"; an absent id starts blank), `disks` the images
+    to mount by drive id ("drive_a", "drive_b"), and `rtc_initial_time` the
+    RTC's start time.
     """
 
-    spec: MachineSpec
+    document: bytes
     roms: dict[str, bytes] = field(default_factory=dict)
-    cartridge1: bytes | None = None
-    mapper1: str = "Mirrored"
-    cartridge2: bytes | None = None
-    mapper2: str = "Mirrored"
-    extension_overlay1: AnyExtensionOverlay | None = None
-    extension_overlay2: AnyExtensionOverlay | None = None
     media: dict[MediaId, bytes] = field(default_factory=dict)
     disks: dict[MediaId, DiskMedium] = field(default_factory=dict)
     rtc_initial_time: RtcTime | None = None

@@ -383,8 +383,8 @@ def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
     snapshot = dict(psg.snapshot_synth())
     pre = dict(psg.snapshot_synth())
 
-    del snapshot["_clk_frac"]
-    with pytest.raises(ValueError, match="_clk_frac"):
+    del snapshot["clk_frac"]
+    with pytest.raises(ValueError, match="clk_frac"):
         psg.restore_synth(snapshot)
 
     assert dict(psg.snapshot_synth()) == pre

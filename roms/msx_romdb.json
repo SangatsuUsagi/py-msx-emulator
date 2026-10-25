@@ -1,0 +1,5172 @@
+{
+ "roms": {
+  "0039cff292fe740d8c87cc2131a473cbb4f8c4f4": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Koneko no Daibouken - Catboy",
+   "title_jp": "仔猫の大冒険 チビちゃんがいく",
+   "year": 1986
+  },
+  "0071b2eb214ff002dbbb7532653585b35b56f243": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "City Connection",
+   "title_jp": "シティーコネクション",
+   "year": 1986
+  },
+  "00c70cf37c71cb8f99567ae407ff6dd52c4774c2": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Tengoku Yoitoko - Heaven",
+   "title_jp": "天国よいとこ",
+   "year": 1987
+  },
+  "010d5f325fc38c5b590841d15ce4f07d59f2a4cb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Tensidachino Gogo",
+   "title_jp": "天使たちの午後",
+   "year": 1987
+  },
+  "0125bce373c95ee78df074d19ad032158edc74a2": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ninjya Kage",
+   "title_jp": "忍者影",
+   "year": 1984
+  },
+  "01544042b810c0b401fce5d180adb6fea9b5ed20": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mr. Do Vs Unicorns",
+   "title_jp": "ミスタードゥVSユニコーンズ",
+   "year": 1984
+  },
+  "01cf858888f5a0d3aee08f42a66c515ab0d06400": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "BASIC Nyuumon 2 - Basic Lessons 2",
+   "title_jp": "BASIC入門II",
+   "year": 1985
+  },
+  "02a2fafc7b9249db76803ece347ba73be25f71b5": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Little Samurai - Issunhoushi No Donnamondai",
+   "title_jp": "一寸法師のどんなもんだい",
+   "year": 1987
+  },
+  "02c3ec94190c6fce6fa4984d92be48b2697e7706": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Relics",
+   "title_jp": "レリクス",
+   "year": 1986
+  },
+  "031a611ba1f75b7d5fe3ed088a61c24598b4b314": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Golgo 13 Okami no Su",
+   "title_jp": "ゴルゴ13 狼の巣",
+   "year": 1986
+  },
+  "048737f995eecb1dd8dd341d750efd005267796f": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Fantasy Zone 1",
+   "title_jp": "ファンタジーゾーン",
+   "year": 1987
+  },
+  "04bd78730b100dd879e2fbd3fe646d2bc9bbc46b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "I.Q. Soukoban",
+   "title_jp": "倉庫番",
+   "year": 1984
+  },
+  "05182561e05fa8e7c8a8184eda885dc4fd12cc5b": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Scramble Eggs",
+   "title_jp": "スクランブルエッグ",
+   "year": 1983
+  },
+  "05280f0a26ac5c42ab63b80a487bb909683e7461": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Dragon Quest 2",
+   "title_jp": "ドラゴンクエスト2 悪霊の神々",
+   "year": 1987
+  },
+  "05d7016f39e94bf9fc33d0e8482ff3038d6e01bd": {
+   "mapper": "Page2",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Super Billiards",
+   "title_jp": "スーパービリヤード",
+   "year": 1984
+  },
+  "0733cd627467a866846e15caf1770a5594eaf4cc": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "1942",
+   "title_jp": "1942",
+   "year": 1987
+  },
+  "07448ffb20f260df159a19df2cae1ee5545a0aef": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "King's Valley",
+   "title_jp": "王家の谷",
+   "year": 1985
+  },
+  "076abc988d51faef30143750dd41318a8a48c5c4": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "American Truck",
+   "title_jp": "アメリカントラック",
+   "year": 1985
+  },
+  "076d6f5b9f8427f6959f7a255abb4acac0dd9d0c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Konami's Baseball",
+   "title_jp": "コナミのベースボール",
+   "year": 1984
+  },
+  "07db3e3ffb16c138f9da12cacde48bf7522a188c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zoom 909",
+   "title_jp": "ズーム909",
+   "year": 1985
+  },
+  "087afebb16bfd96f465fb0d004326d55452bdd81": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Magical Kid Wiz",
+   "title_jp": "魔法使いウィズ",
+   "year": 1986
+  },
+  "0889ca383bcf24198db1fb2dd23dea1bf8c18be8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Fire Rescue",
+   "title_jp": "ファイアーレスキュー",
+   "year": 1984
+  },
+  "08be92145a99dd6e0539ff79dca62b2f4cc59b0b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Turboat",
+   "title_jp": "ターボート",
+   "year": 1983
+  },
+  "094d11ebf8a20b6bfc07902c7f136bdd18b1e7ca": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Zukkoke Yajikita Onmitsudoutyuu",
+   "title_jp": "ずっこけやじきた隠密道中",
+   "year": 1987
+  },
+  "09af3b68be4eea5f5594d5d2d124d92b127dd390": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Macross",
+   "title_jp": "超時空要塞マクロス カウントダウン",
+   "year": 1985
+  },
+  "09cc29b413dc7b8747420615bf798169ae68ad14": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Con-Dori",
+   "title_jp": "コンドリ",
+   "year": 1983
+  },
+  "09fbbd923e0deb82f5e20fa8ce2d842adbf4a646": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Scion",
+   "title_jp": "サイオン",
+   "year": 1985
+  },
+  "0a2209e0a71684493998f6618af032ba580d4ff9": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Casio World Open",
+   "title_jp": "カシオワールドオープン",
+   "year": 1985
+  },
+  "0ac6c061c3897a3989dcd75b4878c850c71e4bb8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Cosmo Explorer",
+   "title_jp": "コスモエクスプローラ",
+   "year": 1985
+  },
+  "0b3241202f0e2be470e5f2e6139c01983a895bc8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Boogie Woogi Jungle",
+   "title_jp": "ブギウギジャングル",
+   "year": 1983
+  },
+  "0b3a217d3278a43d7460136f955171c762a1f8e5": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Jump Land",
+   "title_jp": "ジャンプランド",
+   "year": 1985
+  },
+  "0b9a870d1e6cc712a3efce2349fb1c1cf6902d22": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Chack'n Pop",
+   "title_jp": "ちゃっくんぽっぷ",
+   "year": 1984
+  },
+  "0c62591033aa4e5e6b9eeb21eb2e5e60dcd8ee8e": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Quarth",
+   "title_jp": "クォース",
+   "year": 1990
+  },
+  "0cb11c766bd357d203879bd6bee041a4690cc3df": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Meikyu no Tobira - Gate of Labyrinth",
+   "title_jp": "迷宮への扉",
+   "year": 1987
+  },
+  "0cc6c30c6918fcf780e57d40f58a4cf2a82225cd": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX",
+   "title_en": "Inindo - Way of the Ninja",
+   "title_jp": "伊忍道 打倒信長",
+   "year": 1991
+  },
+  "0d2f86dbb70f4b4a4e4dc1bc95df232f48856037": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Super Pierrot",
+   "title_jp": "スーパーピエロ",
+   "year": 1987
+  },
+  "0d459788b6c464b50cbc2436e67a2cef248e0c4a": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Salamander",
+   "title_jp": "沙羅曼蛇",
+   "year": 1987
+  },
+  "0e06519e68c78a8f018152511f4f13374c5856aa": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Shougi Sinan 1",
+   "title_jp": "将棋",
+   "year": 1985
+  },
+  "0e5062bb18b4a6fb93a89318772928874dd4d6ea": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Starship Simulator",
+   "title_jp": "スターシップシミュレータ",
+   "year": 1984
+  },
+  "0eb3a48a8ab90826726f0c06daadf4bf13390758": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Jyansei",
+   "title_jp": "雀聖",
+   "year": 1986
+  },
+  "0f10d77d1536993b8455b3b47278ca5782ef9275": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Outrun",
+   "title_jp": "アウトラン",
+   "year": 1988
+  },
+  "108e9164ef6cf1ffe6e3c5303bfbbc3bd807b6df": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Turikichi Sampei Turisennin-Hen",
+   "title_jp": "釣リキチ三平 釣り仙人編",
+   "year": 1989
+  },
+  "10c38f91d8f5db2438414ea58f26dcac78352088": {
+   "mapper": "ASCII16SRAM2",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Daisenryaku - Great Strategy",
+   "title_jp": "大戦略",
+   "year": 1986
+  },
+  "10e63eba7d2b10d946822f21e7fd106f5dfab632": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pippols",
+   "title_jp": "ピポルス",
+   "year": 1985
+  },
+  "11e2f95d1b58e1244efda761603a2ae6d0090d18": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Car Jamboree",
+   "title_jp": "爆走スタントレーシング",
+   "year": 1984
+  },
+  "122f659250a0ae10ce0be0dde626dd3e384affa7": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "King's Knight",
+   "title_jp": "キングスナイト",
+   "year": 1986
+  },
+  "1231984ae24bf35f9f38596b864420d8ccd3f30b": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Beamrider",
+   "title_jp": "ビームライダー",
+   "year": 1984
+  },
+  "12b3c31f0fd10ff5823dcc8bf6dfeb785a8af2f7": {
+   "mapper": "KoeiSRAM32",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Genghis Khan",
+   "title_jp": "蒼き狼と白き牝鹿 ジンギスカン",
+   "year": 1988
+  },
+  "12f6f31f495bfb384c9ca9067bfbf8f98af6adf9": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Aleste",
+   "title_jp": "アレスタ",
+   "year": 1988
+  },
+  "136d838cc1297940d96cd8e27aea9f9e3c7088a6": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Sky Galdo",
+   "title_jp": "スカイギャルド",
+   "year": 1986
+  },
+  "136f2dedd45f4419837eb1e4e623cb1dc317ef39": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Thunder Bolt",
+   "title_jp": "サンダーボルト",
+   "year": 1986
+  },
+  "13fbb273a95481330d33c9edc4263e30ccf1774d": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "High School Kimengumi",
+   "title_jp": "ハイスクール奇面組",
+   "year": 1987
+  },
+  "14f2d64d05e2e53e876e3d6af0a5711e557e3c96": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Tawara",
+   "title_jp": "たわらくん",
+   "year": 1984
+  },
+  "14fae375b81c86f71e872adca792c23aafac66a0": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Boulder Dash",
+   "title_jp": "チャンピオンバルダーダッシュ",
+   "year": 1986
+  },
+  "14ff6fe464362c6b7dbb47b2ecda3a8c5f05ef79": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Sangokushi 1 - Romance Of Three Kingdoms",
+   "title_jp": "三國志",
+   "year": 1986
+  },
+  "15345c8745028c96fc79036b2e3e180ad2f62dab": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Youkai Yashiki - Ghost House",
+   "title_jp": "妖怪屋敷",
+   "year": 1986
+  },
+  "1545566bd7decb1612009daa2daa71758fa6e4a1": {
+   "mapper": "ASCII8",
+   "size": 65536,
+   "system": "MSX2",
+   "title_en": "American Soccer",
+   "title_jp": "アメリカンサッカー",
+   "year": 1987
+  },
+  "15ca962994fd25a56bee2f543a83f133f9d2265f": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ladder Building",
+   "title_jp": "ラダービルディング",
+   "year": 1984
+  },
+  "15cc2f7412373253e908689a778738d52656ad74": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Xyxolog",
+   "title_jp": "ザイゾログ",
+   "year": 1984
+  },
+  "16351e6a7d7fc38c23b54ee15ac6f0275621ba96": {
+   "mapper": "ASCII8SRAM8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Shigun",
+   "title_jp": "将軍",
+   "year": 1987
+  },
+  "1642891b693df616f27431299352e1d7750ac94b": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Arkanoid 2",
+   "title_jp": "アルカノイド2",
+   "year": 1987
+  },
+  "167b226b54cc5b681a69d2c1509116ffaba868e4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ice World",
+   "title_jp": "アイスワールド",
+   "year": 1985
+  },
+  "16c3ced0fb2e360bc7c43d372a0a30eb6bd3963d": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Borfesu",
+   "title_jp": "ボルフェスと5人の悪魔",
+   "year": 1987
+  },
+  "16c692a2c9babfdadd8408d2f0f8fae3a8d96fd5": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Psychic War - Cosmic Soldier 2",
+   "title_jp": "サイキックウォー",
+   "year": 1987
+  },
+  "174437bfb20e2895f0f552602da823ca17b2fe93": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Top Roller",
+   "title_jp": "トップローラー",
+   "year": 1984
+  },
+  "176ec8e65a9fdbf59edc245b9e8388cc94195db9": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Mitsumega Toohru - The Three-Eyed One Comes Here",
+   "title_jp": "三つ目がとおる",
+   "year": 1989
+  },
+  "17ac538dd63bc93ec0b88b6dd92079e807c22908": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Mokarimakka",
+   "title_jp": "もーかりまっか？ ぼちぼちでんなっ!",
+   "year": 1986
+  },
+  "17d6db13d7d76fbd110f53b168ab0001c7e65817": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ski Command",
+   "title_jp": "スキーコマンド",
+   "year": 1984
+  },
+  "17e1111b1d6aa80e8bc525be345c25e3b00ed504": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mah-Jong Crazy",
+   "title_jp": "ジャン狂",
+   "year": 1984
+  },
+  "17f24b9339291dea40d2ed36517f223b9e4f49e1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Coaster Race",
+   "title_jp": "コースターレース",
+   "year": 1986
+  },
+  "18b90aaa2284eb46233e9203af1e8cf1922c417c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Square Dancer",
+   "title_jp": "スクェアダンサー",
+   "year": 1984
+  },
+  "18be429f8b5c7bc4775c99292110aa09341cd644": {
+   "mapper": "ASCII8SRAM8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Ultima III - Exodus",
+   "title_jp": "ウルティマ 恐怖のエクソダス",
+   "year": 1987
+  },
+  "18e87e15b09ec2fddc52fad10edc57918fadec34": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "D-Day",
+   "title_jp": "D-DAY",
+   "year": 1984
+  },
+  "190bcab0325ded99f42f32976bf965f0164ad2a4": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Peetan",
+   "title_jp": "ピータン",
+   "year": 1984
+  },
+  "19c610339c0480c3d2d0d1c21e3ccbf2179bb191": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Dorodon",
+   "title_jp": "ドロドン",
+   "year": 1984
+  },
+  "1ad2178c27874704b395ab250200d9acb7d3de9c": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Pyramid Warp",
+   "title_jp": "ピラミッドワープ",
+   "year": 1983
+  },
+  "1ba6b699b4e34c23ee60db4e58e1265dc03f0b50": {
+   "mapper": "ASCII8SRAM2",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Dires",
+   "title_jp": "DIRES",
+   "year": 1987
+  },
+  "1c17e58f1a602e07f185bce1aa8589fae76e8b44": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Mirai - Future",
+   "title_jp": "未来",
+   "year": 1987
+  },
+  "1c462c3629d43297a006ba9055b39a2dccba9f6c": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "The Karuizawa Kidnapping Guidance",
+   "title_jp": "軽井沢誘拐案内",
+   "year": 1986
+  },
+  "1c4de8d4a1cbf5aa2bcf7816a1e55ee4584f59fb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Shougi Sinan 1",
+   "title_jp": "谷川浩司の将棋指南",
+   "year": 1985
+  },
+  "1cbd5c7849f97dea1e3375a842f784ff9283310c": {
+   "mapper": "NettouYakyuu",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Moero!! Nettou Yakyuu '88",
+   "title_jp": "燃えろ!!熱闘野球'88",
+   "year": 1988
+  },
+  "1ce1ebbb0f62224aa776c4523e2ef708154e7b52": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Gang Master",
+   "title_jp": "ギャングマスター",
+   "year": 1983
+  },
+  "1cf39e12313ff3064353c136262f176a56ab20a6": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Come On! Picot",
+   "title_jp": "カモン!ピコ",
+   "year": 1986
+  },
+  "1d81e6cc165b3330b9b3c8b4f4da0417b1ab901e": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Alpha Squadron",
+   "title_jp": "アルファスクアドロン",
+   "year": 1984
+  },
+  "1edabc3226648b54ae98d524b31f37ca47c8c88b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Rockn' Bolt",
+   "title_jp": "ロックンボルト",
+   "year": 1985
+  },
+  "1f17e46190635a3214057d33ad4a768939d5a071": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Acrojet",
+   "title_jp": "アクロジェット",
+   "year": 1988
+  },
+  "1f26dfa026b116c80c951a995633b4c2f7fa033d": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Garyuuou - Dragon King",
+   "title_jp": "牙龍王",
+   "year": 1987
+  },
+  "1f3f586255dd49b0f912bf41e07e88fe3eb3fb61": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Gambler Jikichushinpa 2",
+   "title_jp": "ぎゅわんぶらぁ自己中心派2 自称!強豪雀士編",
+   "year": 1988
+  },
+  "1f72e0cd58afe22075a129ac854bbdce0704b0c8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Queen's Golf",
+   "title_jp": "クィーンズゴルフ",
+   "year": 1984
+  },
+  "1f8334dc7459cfcf2ad132e94976015c02e51390": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Sky Jaguar",
+   "title_jp": "スカイジャガー",
+   "year": 1984
+  },
+  "1fa7398005fb0bd7075141035e8d888197162030": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Stepper",
+   "title_jp": "ステッパー",
+   "year": 1985
+  },
+  "1fb861152a9f3f9c2b2dace26d5f1d93ab9b4ad8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mouser",
+   "title_jp": "マウザー",
+   "year": 1983
+  },
+  "20191b437958e990d14660f476c340e140236c70": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Heist",
+   "title_jp": "ハイスト",
+   "year": 1985
+  },
+  "208ce6cbff7402bfe52b1062e6b10ae09c0a3179": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "The Brain",
+   "title_jp": "ザ・ブレイン",
+   "year": 1983
+  },
+  "20ce189d670c0fe5f2a945d73107df7d83070ff7": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Junior high school English grammar",
+   "title_jp": "中学必修英文法",
+   "year": 1986
+  },
+  "2183f07fa3ba87360100b2fa21fda0f55c0f8814": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Arkanoid",
+   "title_jp": "アルカノイド",
+   "year": 1986
+  },
+  "219e9acc2c023c25a8bbe9fb7d1764ffcff66034": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Ide Yousuke no Jissen Mahjong",
+   "title_jp": "井出洋介名人の実戦麻雀",
+   "year": 1988
+  },
+  "221c76d6ac483fb1f11c87d37b9617f1e1d7bc6d": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Sweet Acorn",
+   "title_jp": "スイートアーコン",
+   "year": 1984
+  },
+  "2220363ae56ef707ab2471fcdb36f4816ad1d32c": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Parodius - Tako Saves Earth",
+   "title_jp": "パロディウス タコは地球を救う",
+   "year": 1988
+  },
+  "223337db25c942ece732214aba5dd624b574e9c4": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Karamaru",
+   "title_jp": "カラ丸珍道中",
+   "year": 1984
+  },
+  "225894da7e3afabf33abf05e519e1f6bcac77a21": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Star Command",
+   "title_jp": "スターコマンド",
+   "year": 1983
+  },
+  "22c7abe6c8f4b7897ecb583d4913d35b5f62c5e1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Exoide-Z Area 5",
+   "title_jp": "エクゾイドZ エリア5",
+   "year": 1986
+  },
+  "22f5998b4de47bf2ccc077d5881ac448e6b0484d": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "L'Empereur",
+   "title_jp": "ランペルール",
+   "year": 1990
+  },
+  "2391ae8c961b4a38b3beaee9ed3362fb2c71851f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "J.P. Winkle",
+   "title_jp": "J.P.ウインクル",
+   "year": 1986
+  },
+  "23e702084e3031158a50a0560746767bbc1b7bee": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Zanac-Ex",
+   "title_jp": "ザナック",
+   "year": 1986
+  },
+  "2418c0302abbce8b0f8556b63169c60a849f60ee": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Daiva Story 4",
+   "title_jp": "ディーヴァ アスラの血流",
+   "year": 1987
+  },
+  "24384e63bfe450bce6abd327eae3e27969025379": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Scramble Formation",
+   "title_jp": "スクランブルフォーメション",
+   "year": 1987
+  },
+  "249da12e2711c643c5e18cf96184d33dbf7e2305": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Tensai Rabbian Daifunsen",
+   "title_jp": "天才ラビアン大奮戦",
+   "year": 1986
+  },
+  "24c5cbf1ee4caa6d83a5aa7a5f3818692542fda8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Professional Baseball",
+   "title_jp": "プロフェッショナルベースボール",
+   "year": 1986
+  },
+  "25022c4f5cfc805e93026fd5fda781e9a1807474": {
+   "mapper": "Majutsushi",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Hai no Majutsushi - Mahjong 2",
+   "title_jp": "牌の魔術師",
+   "year": 1989
+  },
+  "2588b9ade775b93f03fd4b17fd3f78ba70b556d6": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "The Black Onyx 2",
+   "title_jp": "ザ・ブラックオニキス2 ファイヤークリスタルを求めて",
+   "year": 1986
+  },
+  "25f5adeca8a2ddb754d25eb18cff0d84e5b003bc": {
+   "mapper": "Konami",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Knightmare III - Shalom",
+   "title_jp": "魔城伝説3 シャロム",
+   "year": 1987
+  },
+  "25ffc7e8ca90274566c31e10b5998cca6522673a": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Sangokushi 2",
+   "title_jp": "三國志2",
+   "year": 1991
+  },
+  "26fc48ddaca0fedc90fc151d4ecd5ca6d1ccc77b": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hang-On",
+   "title_jp": "ハングオン",
+   "year": 1985
+  },
+  "2729bb0e68a64af525df4c5d9687bae07245980a": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Manes",
+   "title_jp": "メーニーズ",
+   "year": 1984
+  },
+  "27a487e56721e947c1f46644f2f8a50156dda82d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Daidasso - Great Escape",
+   "title_jp": "大脱走",
+   "year": 1985
+  },
+  "27bc809518fbb6c0d52c949e7cbe81980a801d32": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pairs",
+   "title_jp": "ペアーズ",
+   "year": 1983
+  },
+  "27c2cdee4be0ca166c2ebd2dac61115a56bb9856": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Super Golf",
+   "title_jp": "スーパーゴルフ",
+   "year": 1984
+  },
+  "27c40ec7013c1ad1f9a7e1ac1e0c8be99f1e703f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Anaza - Kaleidoscope Special",
+   "title_jp": "アナザ",
+   "year": 1987
+  },
+  "27ce427eb1c86ba22707a6ee9086db9d39962dc6": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Step Up",
+   "title_jp": "ステップアップ",
+   "year": 1983
+  },
+  "299e52dfbbb94ace4fd1ef59ece45364ce0bb450": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "MSX Shogi Game",
+   "title_jp": "MSX将棋",
+   "year": 1984
+  },
+  "2a3c7ad70e34989fa5170028bad760e65ebe9d57": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Super Rambo Special",
+   "title_jp": "スーパーランボースペシャル",
+   "year": 1986
+  },
+  "2a4aef32db28c059c30f5f972f1c09708ef6ce62": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Daikoukai Jidai",
+   "title_jp": "大航海時代",
+   "year": 1990
+  },
+  "2b10234debd2a6a9a02e0750ba6563768bc4a2f3": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "The Fantasm Soldier Valis",
+   "title_jp": "夢幻戦士 ヴァリス",
+   "year": 1986
+  },
+  "2b255c3e5615b2f5e2365419a35e4115a060e93c": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Wolf of the Battlefield - Commando",
+   "title_jp": "戦場の狼",
+   "year": 1985
+  },
+  "2b36fe2b0d98d65ab31f13fcb858db6858a51d46": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Exerion 2 - Zorni",
+   "title_jp": "エクセリオン2 ゾルニ",
+   "year": 1986
+  },
+  "2b8878609bcc0d1555ae250d621ba6e9df4afc52": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Backgammon",
+   "title_jp": "バックギャモン",
+   "year": 1984
+  },
+  "2c0c71c549738d668518db317dd70aecefd4aa72": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Chess",
+   "title_jp": "コンピュータチェス",
+   "year": 1984
+  },
+  "2c85b993671de612e9338d094565a4eb32a97ea0": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hyper Sports 1",
+   "title_jp": "ハイパースポーツ1",
+   "year": 1984
+  },
+  "2d8e39f210da6d633f773cda03e9970712ea84cf": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Swing",
+   "title_jp": "窓ふき会社のスイングくん",
+   "year": 1985
+  },
+  "2dacf7a08857cbdc706d24b4a46665113d16ff99": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "The Godzilla VS 3 Major Monsters",
+   "title_jp": "ゴジラVS3大怪獣",
+   "year": 1984
+  },
+  "2dfbca8f5cc3a9e9d151382ebe0da410f5393eaf": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Super Laydock - Mission Striker",
+   "title_jp": "スーパーレイドック ミッションストライカー",
+   "year": 1987
+  },
+  "2e2543ac99193f76b4f35463142294c016f0cf3d": {
+   "mapper": "ASCII8SRAM2",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Kisei",
+   "title_jp": "棋聖",
+   "year": 1987
+  },
+  "2f0db48fbcf3444f52b9c7c76ba9c4bd38bc2a15": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Dragon Slayer 3 - Romancia",
+   "title_jp": "ロマンシア",
+   "year": 1986
+  },
+  "2f4404d141acc40e48af0b12c70cd44b066ece10": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zenji",
+   "title_jp": "ゼンジー",
+   "year": 1984
+  },
+  "2f8416d9cce6587aba4b71b1d3e3b626609ce7ed": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hole In One",
+   "title_jp": "ホールインワン",
+   "year": 1984
+  },
+  "2fc050dbc44ba9dfb72299129d48e5e5e1c892c3": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Star Virgin",
+   "title_jp": "スターヴァージン",
+   "year": 1988
+  },
+  "301ef3c728041eb1dfd89227a901c32eb000d348": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hanafuda Koiko",
+   "title_jp": "花札コイコイ",
+   "year": 1984
+  },
+  "3063bc3ac5af6d990d8d002acbc9c3a18bab71f6": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Strange Loop",
+   "title_jp": "ストレンジループ",
+   "year": 1987
+  },
+  "30e3681be376a76cf9e0f89e54555a7631759e15": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Gokiburi Daisakusen - Bug Bomb",
+   "title_jp": "ゴキブリ大作戦",
+   "year": 1983
+  },
+  "3137e676c37195d46fe6acc4395d0dc4d711d919": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Exoide-Z",
+   "title_jp": "エクゾイドZ",
+   "year": 1986
+  },
+  "3194153a9c93aa24b37804a764f112bdef091bf8": {
+   "mapper": "ASCII8SRAM8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Siryousensen - War Of The Dead",
+   "title_jp": "死霊戦線",
+   "year": 1987
+  },
+  "3197d73a5400a72420f91def6d3aa8bdcb392754": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Bee & Flower",
+   "title_jp": "BEE&FLOWER",
+   "year": 1983
+  },
+  "3202af113265e67e130a0b948dc167a9f9e9cc79": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Super Runner",
+   "title_jp": "スーパーランナー",
+   "year": 1987
+  },
+  "32151ddc4303290c09889bf8107493dd34296043": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Hardball",
+   "title_jp": "ハードボール",
+   "year": 1987
+  },
+  "3243a5cc562451de527917e9ca85657286b2852f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Magunam - Kiki Ippatsu - Magnum Prohibition 1931",
+   "title_jp": "マグナム危機一髪",
+   "year": 1988
+  },
+  "32615267e8497db3f5e6f5348ee309e73c80a1a7": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Grog's Revenge",
+   "title_jp": "グロックスリベンジ",
+   "year": 1985
+  },
+  "32dd4df2b39461c0694f6bb84de0709478a69d31": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Gakuen Monogatari - High School Story",
+   "title_jp": "学園物語",
+   "year": 1988
+  },
+  "33536dac686b375ba13faf76a3baf2d6978904e0": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "10 Yard Fight",
+   "title_jp": "10ヤードファイト",
+   "year": 1986
+  },
+  "336a7c451a03c9a55726d171603b54628ad832c8": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Picture Puzzle",
+   "title_jp": "ピクチャーパズル",
+   "year": 1983
+  },
+  "336d714e3bc2dfe3626e55d01ee4ef74a48cf652": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Mobile Planet Suthirus",
+   "title_jp": "機動惑星スティルス",
+   "year": 1986
+  },
+  "3377d2017cc8433fa20b432c9d2328c53bbc10e6": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Flipper Slipper",
+   "title_jp": "フリッパースリッパー",
+   "year": 1983
+  },
+  "338460029d65ebce0d9119d811187a35c866a958": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Turikichi Sampei Burumarine-Hen",
+   "title_jp": "釣リキチ三平 ブルーマリン編",
+   "year": 1988
+  },
+  "33ec3136dfb6fd44014c8bbffc8ac79c3cafe75c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mopiranger",
+   "title_jp": "モピレンジャー",
+   "year": 1985
+  },
+  "34544106fbd29b2a72e1e8c2e0f260b79a0b0883": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Rotors",
+   "title_jp": "ローターズ",
+   "year": 1984
+  },
+  "34635bf3518c7b33164f3d96da769c7a01102d28": {
+   "mapper": "Wizardry",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Wizardry",
+   "title_jp": "ウィザードリィ",
+   "year": 1988
+  },
+  "353e2bd901e5502375dc92a04e1686c1192fcf42": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Dungeon Master",
+   "title_jp": "ダンジョンマスター",
+   "year": 1986
+  },
+  "35abd4a14033710730da72edf278aad42d641621": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX Rugby",
+   "title_jp": "パナソフトのラグビー",
+   "year": 1985
+  },
+  "3626b5dd3188ec2a16e102d05c79f8f242fbd892": {
+   "mapper": "HarryFox",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Harry Fox - Yuki no Maou Hen",
+   "title_jp": "はーりぃふぉっくす 雪の魔王編",
+   "year": 1985
+  },
+  "371de6f12d834da07c8e67b13e75fc22618ba5e9": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Ninja Jajamaru Kun",
+   "title_jp": "忍者じゃじゃ丸くん",
+   "year": 1986
+  },
+  "37bd4680a36c3a1a078e2bc47b631d858d9296b8": {
+   "mapper": "R-Type",
+   "size": 393216,
+   "system": "MSX",
+   "title_en": "R-Type",
+   "title_jp": "R-TYPE",
+   "year": 1988
+  },
+  "37e6fe7d07b3f8b2c585c77b231207ac8baa1ea3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Pegasus",
+   "title_jp": "ペガサス",
+   "year": 1986
+  },
+  "3950f22265139a84cf57f3c0936e7927173f3d7a": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Stone of Wisdom",
+   "title_jp": "賢者の石",
+   "year": 1986
+  },
+  "397716d26a075c6d731f0b04f3fa24aa39521798": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Dragon Slayer 1",
+   "title_jp": "ドラゴンスレイヤー",
+   "year": 1985
+  },
+  "39bc111c953bdf25683db7ff4c0bad79b5c49958": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "F15 Strike Eagle",
+   "title_jp": "F15ストライクイーグル",
+   "year": 1987
+  },
+  "39cb046a9b6b6ef4e769cdc6fdf36b274cd44039": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Champion Boxing",
+   "title_jp": "チャンピオンボクシング",
+   "year": 1985
+  },
+  "39d500fbf22168be2a12ac89ff5a50131bb1c30b": {
+   "mapper": "ASCII8SRAM8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Shougi Sinan 2",
+   "title_jp": "谷川浩司の将棋指南2",
+   "year": 1988
+  },
+  "39ef139d8d66fb18b04dff8b9a5386011f497479": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Jump",
+   "title_jp": "JUMP",
+   "year": 1985
+  },
+  "39ffaacd0c2875018e7673a887a921fe9d31d6dc": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Game Land",
+   "title_jp": "ゲームランド",
+   "year": 1984
+  },
+  "3a46902d265d98b27bff3a34160de1c7ef4f116c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Glider",
+   "title_jp": "グライダー",
+   "year": 1985
+  },
+  "3a8c815f9f97c067828e22f50386a9383f8e1a3d": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Color Midway",
+   "title_jp": "カラーミッドウエイ",
+   "year": 1983
+  },
+  "3abae41cb742b76ff45dd178bd7db346137fe0fa": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Challenge Derby",
+   "title_jp": "チャレンジダービー",
+   "year": 1985
+  },
+  "3c2295fb9fc9f1b6a607a74f4538e24d170522e5": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hisha",
+   "title_jp": "飛車",
+   "year": 1985
+  },
+  "3c29eef381d77f8c1f425a3e29919013c72f875c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Tetsuman",
+   "title_jp": "てつまん",
+   "year": 1985
+  },
+  "3c2db6321ee84e3690757c08ade9dc096bd209b3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Lot Lot",
+   "title_jp": "ロットロット",
+   "year": 1986
+  },
+  "3d065377f11b23410282b6b76f26bd93b9d05184": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Break Out",
+   "title_jp": "ブレイクアウト",
+   "year": 1983
+  },
+  "3df7c19f739d74d6efdfd8151343e5a55d4ac842": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Dragon Quest 2",
+   "title_jp": "ドラゴンクエスト2 悪霊の神々",
+   "year": 1987
+  },
+  "3e57fad130be79223068ab29f1e77ecb7f2ad237": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Yaksa",
+   "title_jp": "ヤシャ",
+   "year": 1987
+  },
+  "3eee7c72362522c27866d4367a8cf1e22932db32": {
+   "mapper": "Mirrored",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Flight Deck 2",
+   "title_jp": "フライトデッキ",
+   "year": 1986
+  },
+  "4025045e93f51afd58545104cc2c897226febaf7": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Lord Over",
+   "title_jp": "ロードオーバー",
+   "year": 1983
+  },
+  "40c626d8c53e2e2d4e7e25d55aa2c11c2645780f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Flappy Limited",
+   "title_jp": "フラッピーリミテッド",
+   "year": 1985
+  },
+  "414fd2a22076f45502c2329b45bda9f8730dcaae": {
+   "mapper": "ASCII8SRAM8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Taiyou no Shinden - Asteka II",
+   "title_jp": "太陽の神殿 ASTEKA2",
+   "year": 1987
+  },
+  "4164dcdfe0613d0f4c53b6f3581548bbbad5eb43": {
+   "mapper": "SuperLodeRunner",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Super Lode Runner",
+   "title_jp": "スーパーロードランナー",
+   "year": 1987
+  },
+  "418f6248221c79039fe6c44fc5a9514842e3ec71": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Project A2",
+   "title_jp": "プロジェクトA2 史上最大の標的",
+   "year": 1987
+  },
+  "41ba54c945104915ccc8d465930445c905d839e4": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Oyoide Tango",
+   "title_jp": "泳いでタンゴ",
+   "year": 1984
+  },
+  "4340a2580c949d498d2c8e71699fff860214e9ea": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Vaxol - Heavy Armed Storm Vehicle",
+   "title_jp": "ヴァクソル",
+   "year": 1987
+  },
+  "445963fddfbd0487addaf4b0ad620520e426a1d2": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Gun Fright",
+   "title_jp": "ガンフライト",
+   "year": 1986
+  },
+  "44b23a175d04ca21236a5fef18600b01b12aaf4d": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Haja no Fuin",
+   "title_jp": "覇邪の封印",
+   "year": 1987
+  },
+  "44baa180f6c9e0f140ac1f0afae75c412cb06b9e": {
+   "mapper": "0x8000",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Roller Ball",
+   "title_jp": "ローラーボール",
+   "year": 1984
+  },
+  "451cbb072011b26a7e0bc9931e67995a71f5fd6f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Bosconian",
+   "title_jp": "ボスコニアン",
+   "year": 1984
+  },
+  "453eac7568d5d04c8cf7da86f2e8dc79777343da": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Flight Simulator",
+   "title_jp": "フライトシミュレーター",
+   "year": 1988
+  },
+  "45b5b0e9dd8d11d034e09803f92ec9720cda1e3c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Jet Set Willy",
+   "title_jp": "ジェットセットウィリー",
+   "year": 1985
+  },
+  "469b07eef08348c9acc14e63ba0cd35aef236983": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Back To The Future",
+   "title_jp": "バック・トゥ・ザ・フューチャー",
+   "year": 1985
+  },
+  "46c98a3143f5a80b2090311a770f9b73000881c0": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Robowres 2001",
+   "title_jp": "ロボレス2001年",
+   "year": 1987
+  },
+  "46e9ed7b7f6dfda8eee266476c9ebc4dd9d8fcc2": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zanac A.I.",
+   "title_jp": "ザナック",
+   "year": 1986
+  },
+  "46f3954d7f92f5d00f45b82fdde543c28a4b53c9": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Flappy Limited 85",
+   "title_jp": "フラッピーリミテッド'85",
+   "year": 1985
+  },
+  "475c3af7495922759a5f424d2e22d7e4073d5992": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Europe War",
+   "title_jp": "ヨーロッパ戦線",
+   "year": 1992
+  },
+  "479608b5a86d7c77bd6c4dd00605b8efb2e5b43e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Panther",
+   "title_jp": "パンサー",
+   "year": 1986
+  },
+  "482cd650220e6931f85ee8532c61dac561365e30": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Bomber King",
+   "title_jp": "ボンバーキング",
+   "year": 1988
+  },
+  "495876c504bdc4de24860ea15b25dda8f3b06c49": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Animal Land",
+   "title_jp": "アニマルランド殺人事件",
+   "year": 1987
+  },
+  "4971bdd3db63d394fbc2186182c901ca4b32535b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Space Invader",
+   "title_jp": "スペースインベーダー",
+   "year": 1985
+  },
+  "4991dc097e248436506ed5c8bc3f367a65267ee7": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mahjong friend",
+   "title_jp": "雀フレンド",
+   "year": 1984
+  },
+  "49e14b0248c649e7b5754357597695abef70c17d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Spelunker",
+   "title_jp": "スペランカー",
+   "year": 1986
+  },
+  "4a1282901221207da79432fb0bcb4f1e722c8278": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Super Tennis",
+   "title_jp": "スーパーテニス",
+   "year": 1984
+  },
+  "4a35065d97d81a94a7649d19b3f9abd34f834eab": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Tritorn",
+   "title_jp": "トリトーン",
+   "year": 1986
+  },
+  "4b04574b3b71958664ac730987c4c8ebedeba890": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Lode Runner 2",
+   "title_jp": "ロードランナー2",
+   "year": 1984
+  },
+  "4b19979e01bab2289abb6034cb3c2d02c2e890d1": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "David II",
+   "title_jp": "ダビデ2",
+   "year": 1984
+  },
+  "4c44939a95a20d701f60830499254e5dabedeeaa": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Mad Rider",
+   "title_jp": "マッドライダー",
+   "year": 1987
+  },
+  "4c8a97669017296c2360ff9d53694a292197991e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "B.C's Quest",
+   "title_jp": "B.C'S QUEST",
+   "year": 1985
+  },
+  "4d51d3c5036311392b173a576bc7d91dc9fed6cb": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "The Maze of Galious - Knightmare II",
+   "title_jp": "魔城伝説2 ガリウスの迷宮",
+   "year": 1987
+  },
+  "4dd934902907db50ba76053f59ae7737d55824f4": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Morita Kazurou no Othello",
+   "title_jp": "森田和郎のオセロ",
+   "year": 1986
+  },
+  "4e17efbe87adc232c055d0dc26eb4476c661aafe": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Telebunnie",
+   "title_jp": "テレバニー",
+   "year": 1983
+  },
+  "4f73ba24163946f6247523fc3f2aa5de00c3d7a6": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Thunder Ball",
+   "title_jp": "サンダーボール",
+   "year": 1985
+  },
+  "4ff2aad8371e382e203c7f29b665612a8c9d937c": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "The Treasure Of Usas",
+   "title_jp": "ウシャス",
+   "year": 1987
+  },
+  "50e27c5b83c8afe00b077406081d063263e98b62": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Night Shade",
+   "title_jp": "ナイトシェード",
+   "year": 1985
+  },
+  "522a53034cf40448d441683f3308fcb4b65e6d7c": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Royal Blood",
+   "title_jp": "ロイヤルブラッド",
+   "year": 1991
+  },
+  "523330d609ca0e527f3e28a078635b3d28489ec9": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Koronis Rift",
+   "title_jp": "コロニスリフト",
+   "year": 1987
+  },
+  "52f95f6f4261be00ae1b9caf88a05c021c229e28": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Warp & Warp",
+   "title_jp": "ワープ&ワープ",
+   "year": 1984
+  },
+  "530ecff542a537c320b17bd5d64c86d5d65619f3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Seiken Acho - Kung-Fu Master Taekwondo",
+   "title_jp": "聖拳アチョー",
+   "year": 1985
+  },
+  "531a7f736d86095d791d6d0f267be66eef07949c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Q-Bert",
+   "title_jp": "Qバート",
+   "year": 1986
+  },
+  "5324e053709ff8da6c18ae4afba6a2e0c3a722ba": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Bomber Man",
+   "title_jp": "ボンバーマン",
+   "year": 1983
+  },
+  "53337b61d7b86e6d18501967fcfc0908a00cc55c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Takeru Densetsu - Fuun Takeshijyou",
+   "title_jp": "タケル伝説",
+   "year": 1987
+  },
+  "5370b7746112621169d503bbec2e7fc526279f53": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hanafuda",
+   "title_jp": "花札",
+   "year": 1984
+  },
+  "5380e913d8dac23470446844cab21f6921101af8": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Aliens 2",
+   "title_jp": "エイリアン2",
+   "year": 1987
+  },
+  "5400c0c929b31a70e76aac676b91d40445f1b427": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Black Onyx 1",
+   "title_jp": "ザ・ブラックオニキス",
+   "year": 1985
+  },
+  "5460aa3be896ad949bea75444bc6e7e072a859b8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Midnight Building",
+   "title_jp": "ミッドナイトビルディング",
+   "year": 1983
+  },
+  "54a49a3c8b42b8b246e62ed45346cf52836ddcac": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Real Tennis",
+   "title_jp": "リアルテニス",
+   "year": 1983
+  },
+  "55183b7b7df66950dbb65ef1065d7d987e0fdf5a": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Andorogynus",
+   "title_jp": "反生命戦機 アンドロギュヌス",
+   "year": 1988
+  },
+  "5558ba634018b22dcc687a01f9422fe60ea57adc": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pai Panic",
+   "title_jp": "パイパニック",
+   "year": 1983
+  },
+  "5577e483caca553cfbfc0cba26f3ab2444569f81": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Dragon Quest 1",
+   "title_jp": "ドラゴンクエスト",
+   "year": 1986
+  },
+  "55fb4e3d3a762b613b635ee9745d92f0f3711272": {
+   "mapper": "ASCII8",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Maison Ikkoku Final",
+   "title_jp": "めぞん一刻 完結編 さよなら、そして...",
+   "year": 1988
+  },
+  "56c4813ac549af8711b2e2e42d7db1b960c4c040": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hyper Olympic 1",
+   "title_jp": "ハイパーオリンピック1",
+   "year": 1984
+  },
+  "57827f8d49369e4dbf20a968e535374d35ff1648": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Yie Ar Kung-Fu II - The Emperor Yie-Gah",
+   "title_jp": "イーアルカンフー2 イーガー皇帝の逆襲",
+   "year": 1985
+  },
+  "58b3b3a678364d0649c1af0c27da144cfee85146": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Super Snake",
+   "title_jp": "スーパースネーク",
+   "year": 1983
+  },
+  "5999cc1407afe5ba8a760f16178c4cac9c3fa192": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Flicky",
+   "title_jp": "フリッキー",
+   "year": 1986
+  },
+  "59bc608b1cb5bde2230bca0eb045cd6c58650774": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Battle Ship Clapton 2",
+   "title_jp": "バトルシップクラプトン2",
+   "year": 1983
+  },
+  "59f679c5ebf75de98b5e909da9182dbd80413364": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Return of Jelda",
+   "title_jp": "リターンオブジェルダ",
+   "year": 1987
+  },
+  "5a12439f74ca5d1c2664f01ff6a8302d3ce907a8": {
+   "mapper": "ASCII8",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Sofia",
+   "title_jp": "ソフィア",
+   "year": 1987
+  },
+  "5aab681334f9e97fe8d7e0eb008b2afd5e0fc3ac": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Penguin-Kun Wars 1",
+   "title_jp": "ぺんぎんくんウォーズ",
+   "year": 1985
+  },
+  "5ad0ba434407a7eeecb597b3d20bcfc6fe05c319": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Captain Cosmo",
+   "title_jp": "キャプテンコスモ",
+   "year": 1984
+  },
+  "5b17cb69697cf55dff1f0b8777e19d5abc1771fc": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Exciting Jockey",
+   "title_jp": "大障害競馬",
+   "year": 1984
+  },
+  "5b53794d3d73df29cbcec411c0f65e9e9898977f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Oil's Well",
+   "title_jp": "オイルズウェル",
+   "year": 1985
+  },
+  "5bbcbd47f05a2742cfb0cad88856eb2df6e469fe": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Tank Battalion",
+   "title_jp": "タンクバタリアン",
+   "year": 1984
+  },
+  "5c00f9e3a48411e08fac89b1dfdd2a6e95853919": {
+   "mapper": "GameMaster2",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Konami's Game Master 2",
+   "title_jp": "コナミの新10倍カートリッジ",
+   "year": 1987
+  },
+  "5c278deb1390eb45c79b7667b1ea1c54183123ac": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Ninja Kun - Ashura no Sho",
+   "title_jp": "忍者くん 阿修羅の章",
+   "year": 1987
+  },
+  "5c7a13b64b48065231f05c35b4c8b209534f3a8b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "F16 Fighting Falcon",
+   "title_jp": "F16ファイティングファルコン",
+   "year": 1984
+  },
+  "5c96169207e197237aa728d8ce4e24c0635d5904": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Boggy'84",
+   "title_jp": "ボギー'84",
+   "year": 1984
+  },
+  "5d5dfe6cec605de421c3aed3a743d6840fec1457": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Crazy Bullet",
+   "title_jp": "クレイジーブレット",
+   "year": 1983
+  },
+  "5dcecc7c790e398a1c652db568c1e66c6f25e5e4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "O'Mac Farmer",
+   "title_jp": "ファーマー",
+   "year": 1984
+  },
+  "5ec8811254dc762c6852289a08acf22954404f0d": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "King's Valley 2 - The Seal Of El Giza",
+   "title_jp": "王家の谷 エルギーザの封印",
+   "year": 1988
+  },
+  "5ef7d03b138a2023f6def241b671c666f97ed83b": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Vampire Killer - Akumajō Dracula",
+   "title_jp": "悪魔城ドラキュラ",
+   "year": 1986
+  },
+  "5f6972e9e374753faf092409f1ee10bba5231b66": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Konami's Tennis",
+   "title_jp": "コナミのテニス",
+   "year": 1984
+  },
+  "5f965bbba026134818759d25119d4114599132a8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Payload",
+   "title_jp": "頑張れトラックボーイ ペイロード",
+   "year": 1985
+  },
+  "5fb90be078e432db92dd39e621d12f612dbea4a8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Alien 8",
+   "title_jp": "エイリアン8",
+   "year": 1986
+  },
+  "5fbc5d6a01e66a1c456b82ac1190ccde61bc7832": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Rise Out From Dungeons",
+   "title_jp": "ライズアウト",
+   "year": 1983
+  },
+  "5fd07ed5b7c0492d42ed91a54a0fe80ce6e4e40d": {
+   "mapper": "ASCII16SRAM8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "A-Train",
+   "title_jp": "A列車で行こう",
+   "year": 1989
+  },
+  "60f685670de6d2d8ed5f1b1ddd40fac851ff1982": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Flash Splash",
+   "title_jp": "フラッシュスプラッシュ",
+   "year": 1984
+  },
+  "613c741535c92dfb01afec4135ef8ebddb49f999": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Buru To Marty Kikiippatsu - Inspecteur Z",
+   "title_jp": "ブルとマイティー危機一髪",
+   "year": 1986
+  },
+  "613cc52fbd5822ade47daa3ec21479641a009c2c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Courageous Perseus",
+   "title_jp": "カレイジアスペルセウス",
+   "year": 1985
+  },
+  "615c08820b926e28b143cd7812852e011d3eeffb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Castle",
+   "title_jp": "ザ・キャッスル",
+   "year": 1986
+  },
+  "61695eb1dc6242d8a70c7ef2172cf86a26e3c2dd": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pac-Man",
+   "title_jp": "パックマン",
+   "year": 1984
+  },
+  "61e26157f0701cce2ddb860a12f187912398b1b4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Red Zone",
+   "title_jp": "レッドゾーン",
+   "year": 1985
+  },
+  "621ea075a534584361c9e9d640e39007a79dfd78": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Bruce Lee",
+   "title_jp": "ブルース・リー",
+   "year": 1985
+  },
+  "6238f9c5f4c0012b3425be203c23092f6b624fe8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Othello",
+   "title_jp": "OTHELLO",
+   "year": 1985
+  },
+  "630aec6f93df8d1ef83c52a0bb6ec571b9c6eed4": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Computer Billiards - VideoHustler",
+   "title_jp": "コンピュータビリヤード",
+   "year": 1983
+  },
+  "633cb458eeab0fea59a70a9a620b7783a44eb0a6": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Aquapolis SOS",
+   "title_jp": "アクアポリスSOS",
+   "year": 1983
+  },
+  "636eb837c5d80fb6b0692a72954ca91291ba831b": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Raid On Bungeling Bay",
+   "title_jp": "バンゲリングベイ",
+   "year": 1984
+  },
+  "639cb280544b060a618af23daf234a44baaf88de": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Alibaba And 40 Thieves",
+   "title_jp": "アリババと40人の盗賊",
+   "year": 1984
+  },
+  "63d4e39c59f24f880809caa534d7a46ae83f4c9f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Knither Special",
+   "title_jp": "ナイザースペシャル",
+   "year": 1987
+  },
+  "6420d61002da325403fcb6f41afb1d348eeba3b4": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Isin no Arashi",
+   "title_jp": "維新の嵐",
+   "year": 1989
+  },
+  "64f1ce4691056047f404460031acb0b82a76968d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Skooter",
+   "title_jp": "スクーター",
+   "year": 1987
+  },
+  "650381b96f36e74a4eaf5ae3f924f6f8deac7100": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Championship Lode Runner",
+   "title_jp": "チャンピオンシップロードランナー",
+   "year": 1985
+  },
+  "65334123c7d00ca623bf5f7a55756cc75958debb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Kick It",
+   "title_jp": "キックイット",
+   "year": 1986
+  },
+  "65af16d35b8d8454ec07718e9f8948335ca73bad": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Blagger",
+   "title_jp": "ブラッガー",
+   "year": 1984
+  },
+  "66508bbdc3b133b9a69ea96789bc134eea46796a": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "A-Class Mahjong",
+   "title_jp": "居眠り流阿佐田哲也のA級麻雀",
+   "year": 1988
+  },
+  "67baaaa870ad4a08f55ec1c67dbeabc97b6f18a0": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Guardic",
+   "title_jp": "ガーディック",
+   "year": 1986
+  },
+  "6844ddf610e1a98b55e77fcc364b38a037751a2b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Heli Tank",
+   "title_jp": "ヘリタンク",
+   "year": 1983
+  },
+  "6856a13b67750d36c4c466d30472dc5465879bbf": {
+   "mapper": "Mirrored",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Dawn Patrol",
+   "title_jp": "ドーンパトロール",
+   "year": 1987
+  },
+  "692a55393e8eef0800a612c01456e9cecd9c1418": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pooyan",
+   "title_jp": "コナミのプーヤン",
+   "year": 1985
+  },
+  "69710f4b9cc3440e58c54bd4c562b3e90ff323e0": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Candoo Ninja",
+   "title_jp": "キャンドゥニンジャ",
+   "year": 1983
+  },
+  "69bc7cb436ea2ea3a6b49c3b050bae24271a2f9c": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Heavy Boxing",
+   "title_jp": "ヘビーボクシング",
+   "year": 1983
+  },
+  "69bda8b4a96187597b95cd5c43e58da0716d0fc8": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Golf Game",
+   "title_jp": "ゴルフゲーム",
+   "year": 1983
+  },
+  "6a3a68836a468cc761a268175c64d53c4c1c48bd": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Konami's Golf",
+   "title_jp": "コナミのゴルフ",
+   "year": 1985
+  },
+  "6a4e8325d2174747d56cbe4c6803cbf40eb40a62": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Danger X4",
+   "title_jp": "デインジャーX4",
+   "year": 1984
+  },
+  "6a56b46b8bf014b25863433d6d96e64641a93eef": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Star Soldier",
+   "title_jp": "スターソルジャー",
+   "year": 1986
+  },
+  "6b12bb291e1a98a43ccff8ceb94d23585848febc": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Doki Doki Penguin Land",
+   "title_jp": "どきどきペンギンランド",
+   "year": 1985
+  },
+  "6b496a50626c3e67dfe49c15a3847448dbeb05a8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Sirius' Turmoil",
+   "title_jp": "ターモイル",
+   "year": 1983
+  },
+  "6b8a684ddbadd798a8e599449b823bceca9cdb58": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "A.E.",
+   "title_jp": "A.E.",
+   "year": 1983
+  },
+  "6bad9af91907c2a97fa2f4b9dd2a699ce0d70fba": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Demon Crystal",
+   "title_jp": "デーモンクリスタル",
+   "year": 1986
+  },
+  "6bde4e6761286a2909858ecef04155e17072996e": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "A Life M36 Planet",
+   "title_jp": "生命惑星M36 生きていたマザーブレイン",
+   "year": 1987
+  },
+  "6c1814c70d69a50ec60e39ef281f0b8cd7bf8598": {
+   "mapper": "ASCII8SRAM8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Dragon Slayer 2 - Xanadu",
+   "title_jp": "ザナドゥ",
+   "year": 1987
+  },
+  "6cbddd118afe63e79cb8a40f8aa879df1c7590e1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Elevator Action",
+   "title_jp": "エレベータアクション",
+   "year": 1985
+  },
+  "6d7a8ea1b283ecc1cc94c359e5f053a6e82ab3f5": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Dragon Slayer 4",
+   "title_jp": "ドラゴンスレイヤー4 ドラスレファミリー",
+   "year": 1987
+  },
+  "6dd28797f9d1fe7cc041077ebe77d08f2ccc0937": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Kikikaikai - Mystery",
+   "title_jp": "奇々怪界",
+   "year": 1987
+  },
+  "6dfc622e350d29859f05fddb3fa1f974cd4c8bf2": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Volguard",
+   "title_jp": "ヴォルガード",
+   "year": 1985
+  },
+  "6e2e5cff4ee4dd935fbe6684f2c54b39eca06092": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Dig Dug",
+   "title_jp": "ディグダグ",
+   "year": 1984
+  },
+  "6f247c8af6fc1881242281f19912068b03ca4126": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Poiny X Senryosakusen",
+   "title_jp": "ポイントX占領作戦",
+   "year": 1986
+  },
+  "6fd90e7573abdb5a7bd6e4e8dc44db80fc163e30": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "AshGuine Story III",
+   "title_jp": "アシュギーネ 復讐の炎",
+   "year": 1987
+  },
+  "6fefbe448674b6ea846d0c6b9c8a0d57a11aa410": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Jagur",
+   "title_jp": "ジャガー5 魔の三角地帯作戦",
+   "year": 1987
+  },
+  "709fb35338f21897e275237cc4c5615d0a5c2753": {
+   "mapper": "ASCII8",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Batman - Rescue The Robin",
+   "title_jp": "バットマン ロビン救出作戦",
+   "year": 1987
+  },
+  "721a2ded692d34d864d0440ac347c60880942d19": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Nekketsu Judo",
+   "title_jp": "熱血柔道",
+   "year": 1989
+  },
+  "7300d44a753dacf582d3079ed09eafc9dd629530": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Snake-It",
+   "title_jp": "スネークイット",
+   "year": 1986
+  },
+  "7393f677e0fae5fc83071c6b74756117b7d75e2d": {
+   "mapper": "KonamiSCC",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Gofer no Yabou Episode 2 - Nemesis 3 The Eve Of Destruction",
+   "title_jp": "ゴーファーの野望 EPISODE2",
+   "year": 1988
+  },
+  "74ae85d44cb8ef1bae428c90200cb74be6d56d3a": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Relics",
+   "title_jp": "レリクス",
+   "year": 1986
+  },
+  "74d1c7f66242335c736da29413037bd23384efaa": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Genchohisi",
+   "title_jp": "蒼き狼と白き牝鹿 元朝秘史",
+   "year": 1992
+  },
+  "74e9ea381e2fed07d989d1056002de5737125aaf": {
+   "mapper": "ASCII8",
+   "size": 524288,
+   "system": "MSX",
+   "title_en": "Hydlide 3 - The Space Memories",
+   "title_jp": "ハイドライド3",
+   "year": 1987
+  },
+  "761ab0aa7f528bf0f51ea9de75c847ea949478d7": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Dragon Attack",
+   "title_jp": "ドラゴンアタック",
+   "year": 1983
+  },
+  "76a79dd0554b8f7e84468fcd3bf73459ce4aeb2b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Color Tochika - Pillbox",
+   "title_jp": "カラートーチカ",
+   "year": 1983
+  },
+  "770805bd0be8b09a3be10030060d6ad8dc07d1c3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Rambo",
+   "title_jp": "ランボー",
+   "year": 1985
+  },
+  "7752b6624fb80d9499aaad28dd5776ec74565576": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "MSX-FAN Fandom Library 2",
+   "title_jp": "MSX-FAN ファンダムライブラリー2",
+   "year": 1988
+  },
+  "77d95640c80bc4868d04a913f9dbf4b5f6d877d2": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Shanghai",
+   "title_jp": "上海",
+   "year": 1987
+  },
+  "78079266711e60420480e4d95a39f0d7d974ad32": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pitfall II - Lost Caverns",
+   "title_jp": "ピットフォール2",
+   "year": 1984
+  },
+  "78507f3f8b8601d99bbedb6517bec6cddf0bd5b4": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Pachipro Densetsu",
+   "title_jp": "パチプロ伝説",
+   "year": 1988
+  },
+  "795d47c6aae378d0d5bedc9f104a597bcc1ee16b": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Super Tritorn",
+   "title_jp": "スーパートリトーン",
+   "year": 1986
+  },
+  "7a40237867f62611d0e976666451648edb80753c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Banana",
+   "title_jp": "バナナ",
+   "year": 1984
+  },
+  "7a4126934f9e68c34bf00dd3d9a9e753c05ee73f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Golvellius",
+   "title_jp": "魔王ゴルベリアス",
+   "year": 1987
+  },
+  "7abf89652396a648a84ae06e6dabc09735a75798": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Mirai - Future",
+   "title_jp": "未来",
+   "year": 1987
+  },
+  "7adb6812f3702b93aa2b2a872722bbd40915670d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Konami's Boxing",
+   "title_jp": "コナミのボクシング",
+   "year": 1985
+  },
+  "7b94a728a5945a53d518c18994e1e09a09ec3c1b": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Dragon Quest 1",
+   "title_jp": "ドラゴンクエスト",
+   "year": 1986
+  },
+  "7bf7bd134ddf9ed5b489f7f2eb0aa26bb2428fc9": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Squish'em",
+   "title_jp": "スクイッシュゼム",
+   "year": 1983
+  },
+  "7c0f720c7601ca6dc86c81ab6a76e0587a052f75": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Space Trouble",
+   "title_jp": "スペーストラブル",
+   "year": 1984
+  },
+  "7d0bb1dac966ceee2e4c53f77e6e057d65f15d4d": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mole",
+   "title_jp": "MOLE",
+   "year": 1983
+  },
+  "7dbeaf25e3a1a66f9c6b331332dc36e73b511d4a": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Traffic",
+   "title_jp": "トラフィック",
+   "year": 1985
+  },
+  "7dc7f7e3966943280f34836656a7d1bd3ace67cd": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Digital Devil Story - Monogatari Megami Tensei",
+   "title_jp": "デジタルデビル物語 女神転生",
+   "year": 1987
+  },
+  "7de755f98b6a68886e61473d524d0aa6ab6577d7": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Erika",
+   "title_jp": "SFアダルトアドベンチャー エリカ",
+   "year": 1987
+  },
+  "7dfe091e02f6c1b21bd65e44eb5052d564d0ef92": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hyper Rally",
+   "title_jp": "ハイパーラリー",
+   "year": 1985
+  },
+  "7ed1308179c41ae62cfb46124ab0ce22d8b0513b": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Victorious Nine 2",
+   "title_jp": "ビクトリアスナイン2 高校野球編",
+   "year": 1987
+  },
+  "7f6906ff7017a558952197198ac7a1c1e222ed9d": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "E.I. - Exa Innova",
+   "title_jp": "E.I.",
+   "year": 1984
+  },
+  "7fef9411858b1ff3ff019646e9e7aa0c61c7e87d": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Tatica",
+   "title_jp": "タティカ",
+   "year": 1984
+  },
+  "807676038cbba043b8099eba9c5840a4811a7e59": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Alcazar - The Forgotten Fortress",
+   "title_jp": "アルカザール",
+   "year": 1985
+  },
+  "81143d2a8ef7cc593a604f3cc890312b42bdff01": {
+   "mapper": "ASCII16SRAM2",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Professional Mahjong Gokuh",
+   "title_jp": "プロフェッショナル麻雀悟空",
+   "year": 1988
+  },
+  "8117ec66c0645a54422841a632cfd6602f35c4f9": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pastfinder",
+   "title_jp": "パストファインダー",
+   "year": 1984
+  },
+  "811dca8fc14a2b00f503fbef74fdeae4f2873d4c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Castle Excellent",
+   "title_jp": "キャッスルエクセレント",
+   "year": 1986
+  },
+  "818a6cedbfdf3a5af0c844f32a18e3930178c798": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Lode Runner",
+   "title_jp": "ロードランナー",
+   "year": 1983
+  },
+  "818d91505ad39bba2eaf7f4857c7d41e95fcb233": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Wing Man 2",
+   "title_jp": "ウイングマン2 ダークキラーの復活",
+   "year": 1987
+  },
+  "821c611b851ddd4cf8cfb4e77cecbc882f12eb72": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Champion Soccer",
+   "title_jp": "チャンピオンサッカー",
+   "year": 1985
+  },
+  "82868a81d805fb391fce588623fc888296cbf62a": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Video Hustler - Konami Billiards",
+   "title_jp": "ビデオハスラー",
+   "year": 1984
+  },
+  "82c68a93d01f103af4fe9f9205184ffd1a36a90f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Super Drinker",
+   "title_jp": "スーパードリンカー",
+   "year": 1983
+  },
+  "83df4081529fe5b8bb0a3601614d36c8384c9202": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Shougi Sinan 1",
+   "title_jp": "将棋",
+   "year": 1985
+  },
+  "846bd4d89bd034ac5346cbc559752635ad2bda6b": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Juno First",
+   "title_jp": "ジュノファースト",
+   "year": 1983
+  },
+  "8547ae0fa25b9f3e26b90d4f3e1a4325b9248549": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Trump Aid",
+   "title_jp": "トランプエイド",
+   "year": 1986
+  },
+  "8557dcdb4cf1e15180d17acc8e6d515bf7bf7e7c": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "MSX-FAN Fandom Library 1",
+   "title_jp": "MSX-FAN ファンダムライブラリー1",
+   "year": 1988
+  },
+  "85a3842eabac50c4e1332666c161541be3508249": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX Baseball 1",
+   "title_jp": "パナソフトのベースボール",
+   "year": 1984
+  },
+  "878554d3b579e72b2d3c22e6330208ee0d1ee8a6": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pine Applin",
+   "title_jp": "パイナップリン",
+   "year": 1984
+  },
+  "87a7fa43602f74c47151e79f1aaf7f641331ba51": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Double Vision",
+   "title_jp": "ダブルビジョン",
+   "year": 1988
+  },
+  "89073c052b0fe29b6de077c8bdf5373474081edf": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Gambler Jikichushinpa",
+   "title_jp": "ぎゅわんぶらぁ自己中心派",
+   "year": 1988
+  },
+  "89943ae938fb308f4b5149ebc0cbea597b9b0223": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Nobunaga no Yabou - Senkokugunyuden",
+   "title_jp": "信長の野望 戦国群雄伝",
+   "year": 1989
+  },
+  "8a4bcf0f38c9f243443a4d4865278f695bd83dc8": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Genghis Khan",
+   "title_jp": "蒼き狼と白き牝鹿 ジンギスカン",
+   "year": 1988
+  },
+  "8aa6d0aadf00de9112696da5b7dc6e3b62f2d9be": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Iligks Episode 1 - Theseus",
+   "title_jp": "テセウス",
+   "year": 1984
+  },
+  "8b2626f8dbbb3e97a5087b340a3f3d56c8ee84d1": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Monkey Academy",
+   "title_jp": "モン太君のいち・に・さんすう",
+   "year": 1984
+  },
+  "8b4853737f7f4006ca4291f481cfdfcf66e2ce34": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "C-So!",
+   "title_jp": "シーソー",
+   "year": 1985
+  },
+  "8b63f36be31d7d021c19103ebe8c68b69aae699c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Battle Cross",
+   "title_jp": "バトルクロス",
+   "year": 1984
+  },
+  "8c6e1e21cc45b2ca72ceea93df48eda9cef1dbad": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Megalopolis SOS",
+   "title_jp": "メガロポリスSOS",
+   "year": 1983
+  },
+  "8cbfd94324f297a418e7eec6920dfead7b9bed08": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Fleet Commander 2",
+   "title_jp": "フリートコマンダー2 黄昏の海域",
+   "year": 1990
+  },
+  "8f35c41a5235dec22c3b99cd6dd63cfda0a7a821": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Harapeko Pakkun",
+   "title_jp": "はらぺこパックン",
+   "year": 1984
+  },
+  "8f71dddd429173df7ce52c5245af1a76b482a901": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "3D Tennis",
+   "title_jp": "3Dテニス",
+   "year": 1983
+  },
+  "90003c78975d00b1e5612fd00dffabb70d616ecd": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Gryzor - Contra",
+   "title_jp": "魂斗羅",
+   "year": 1989
+  },
+  "9002aa0b2d49a9fc323180487ff591781867a99c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hyper Sports 2",
+   "title_jp": "ハイパースポーツ2",
+   "year": 1984
+  },
+  "90bdd12d632d2e909ac5d69235ad0366f430b734": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Athletic Land",
+   "title_jp": "わんぱくアスレッチック",
+   "year": 1984
+  },
+  "917270dd44c63dc883289b4e0902fe6c812f5ea3": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mobile Suit - Gundam",
+   "title_jp": "機動戦士ガンダム",
+   "year": 1984
+  },
+  "91ba5c063d0ed383165b26e4609d7abda02a5242": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Devil's Heaven",
+   "title_jp": "デビルズヘブン",
+   "year": 1984
+  },
+  "91bd6c21530654fab12cd8a797044d494834c223": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pingball Maker",
+   "title_jp": "ピンボールメーカー",
+   "year": 1985
+  },
+  "920f141db0d42952130855ac1dce446c327e7d9c": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Hacker",
+   "title_jp": "ハッカー",
+   "year": 1988
+  },
+  "924fcf87b3747dae06e621975903ee73c42016f2": {
+   "mapper": "ASCII8",
+   "size": 65536,
+   "system": "MSX2",
+   "title_en": "Family Billiards",
+   "title_jp": "ファミリービリヤード",
+   "year": 1987
+  },
+  "92bada2d019fcd6eee6d332a8068a9ddfa30d518": {
+   "mapper": "ASCII8",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Urusei Yatsura",
+   "title_jp": "うる星やつら 恋のサバイバルパーティ",
+   "year": 1987
+  },
+  "93462ac9a322c2e5e0d996fddbe9eba2f3436931": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Aquattack",
+   "title_jp": "アクゥアタック",
+   "year": 1984
+  },
+  "937464eb371c68add2236bcef91d24a8ce7c4ed1": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "A1 Spirit - The Way To Formula 1",
+   "title_jp": "A1スピリット",
+   "year": 1987
+  },
+  "939ed6053363112c34766335b93d0ddf25059468": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Yellow Submarine",
+   "title_jp": "イエローサブマリン",
+   "year": 1987
+  },
+  "93b07e3cd5ae2f00b36824a74f83a3ef0d65d0d5": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Gekitotsu Pennant Race 2",
+   "title_jp": "激突ペナントレース2",
+   "year": 1989
+  },
+  "93bf6725a3c1b7071064a01884e1b6e8c6f8b579": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Space Maze Attack",
+   "title_jp": "スペースメイズアタック",
+   "year": 1983
+  },
+  "95ae5b3e24ad0bea21902cb7dfd3fd9581166a76": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Iriegas - Illegus",
+   "title_jp": "イリーガス エピソード4",
+   "year": 1983
+  },
+  "95f75fae9b3e961149e352cef3d7e478e9887d5a": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Lunar Ball",
+   "title_jp": "ルナーボール",
+   "year": 1985
+  },
+  "9648d43f3c25d67b9e4972f777d7b02470080d1c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Konami's Game Master",
+   "title_jp": "コナミのゲームを10倍楽しむカートリッジ",
+   "year": 1985
+  },
+  "970e26f3c2c085e39267115991add6ccc6e9ff80": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Family Stadium",
+   "title_jp": "プロ野球ファミリースタジアム ペナントレース",
+   "year": 1989
+  },
+  "975fdf521c08030896eb50af4f39a23500eaf7ac": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Exerion 1",
+   "title_jp": "エクセリオン",
+   "year": 1984
+  },
+  "97adcb652bc4baf02d29a9abe5e6547065dec298": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Midnight Brothers",
+   "title_jp": "ミッドナイトブラザーズ",
+   "year": 1986
+  },
+  "97af4f422a283ac8ba387eb0b1b29395c2c966eb": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Car Race",
+   "title_jp": "カーレース",
+   "year": 1983
+  },
+  "97e173dac64dbde7d6a60de7606cba0c860813db": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Young Sherlock - The Legacy Of Doyle",
+   "title_jp": "ヤングシャーロック ドイルの遺産",
+   "year": 1985
+  },
+  "97e7d0ee40c7d6ce1a8edf7b06e5014e6745cfda": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Alpharoid",
+   "title_jp": "アルファロイド",
+   "year": 1986
+  },
+  "98b7a6ac44b82ccfc45eb51595e2905adabac1c7": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Eggerland Mystery 2- Meikyushinwa",
+   "title_jp": "エッガーランドミステリー2 迷宮神話",
+   "year": 1986
+  },
+  "98e33dca445850cdf24f09050756c3b75202ac13": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Nyorols",
+   "title_jp": "NYOROLS",
+   "year": 1983
+  },
+  "991ef9890dc3e0c0d29d6d249675eae182aca30c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Super Pachinko",
+   "title_jp": "スーパーパチンコ",
+   "year": 1985
+  },
+  "996a1c0d92400287c15545116b952f84c7dc03b1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Super Soccer",
+   "title_jp": "スーパーサッカー",
+   "year": 1985
+  },
+  "99a8631cdc37f0dd9d8793ea8eadd3f34e0bba51": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Gyrodine",
+   "title_jp": "ジャイロダイン",
+   "year": 1986
+  },
+  "99f9e9753edbaee820e36a1a58f1cd7ae2b26265": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "ChoroQ",
+   "title_jp": "チョロQ",
+   "year": 1984
+  },
+  "9a63d48c4fc05e76c9de25e5c5f2a0c99b5d1be4": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "3D Golf Simulation - High-speed",
+   "title_jp": "3Dゴルフシミュレーション 高速版",
+   "year": 1984
+  },
+  "9b4da7636809d5690d6bd5d782ffa3cf9f4c63ec": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Warrior",
+   "title_jp": "ウォーリア",
+   "year": 1983
+  },
+  "9b815efaa927c11827acfdb0f9b9197b5ac97572": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Tower of Druaga",
+   "title_jp": "ドルアーガの塔",
+   "year": 1986
+  },
+  "9bca89c71c033bb9a85ee30cf75960ec839c0462": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Final Justice",
+   "title_jp": "ファイナルジャスティス",
+   "year": 1985
+  },
+  "9dcb43b654a08de2c52147f4a2e628b5fe3761c8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hydlide 1",
+   "title_jp": "ハイドライド",
+   "year": 1985
+  },
+  "9dfc71887ffc6d94b8780b5d6f207e24c1f58b54": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Ninja Princess",
+   "title_jp": "忍者プリンセス",
+   "year": 1986
+  },
+  "9e0312e72f30a20f556b64fe37dbbfe0d4471823": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Craze",
+   "title_jp": "クレイズ",
+   "year": 1988
+  },
+  "9f0cbb1191235ecca4985de976a0993744b57930": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "BASIC Nyuumon 1 - Basic Lessons",
+   "title_jp": "BASIC入門",
+   "year": 1984
+  },
+  "a054ddeaf471212764cc596bcbd30e94b10e6c28": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Comet Tail",
+   "title_jp": "コメットテイル",
+   "year": 1983
+  },
+  "a0c486d0f25a3dc586717d5d3e1f5a46d36735fc": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Kenpelen Chess",
+   "title_jp": "ケンペレンチェス",
+   "year": 1988
+  },
+  "a1656f612360a126e09ef2baaa8002d92054125d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Decathlon",
+   "title_jp": "デカスロン",
+   "year": 1984
+  },
+  "a194b845857c8b33ef4fd5e53d7f38150b4fa4cf": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Frogger",
+   "title_jp": "フロッガー",
+   "year": 1983
+  },
+  "a1abfc53a36d387b9f0687e3f5897c1ebdf21517": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Angelo",
+   "title_jp": "アンジェロ",
+   "year": 1984
+  },
+  "a1e14912d45944b9a6baef1d4d3a04c1ae8df923": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "River Raid",
+   "title_jp": "リバーレイド",
+   "year": 1984
+  },
+  "a2109da08b1921c4b3b47c6847598d424581b508": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Thexder",
+   "title_jp": "テクザー",
+   "year": 1986
+  },
+  "a21adba681956ec35816af673a9d4f6c7743253a": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Crimson",
+   "title_jp": "クリムゾン",
+   "year": 1987
+  },
+  "a27eb9cd77837c1e443e275d0e10888e0fd248f4": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Fruit Search",
+   "title_jp": "フルーツサーチ",
+   "year": 1983
+  },
+  "a2a7c93c9c8b55a5cce4c9005f3c194e3b762e9c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Choplifter",
+   "title_jp": "チョップリフター",
+   "year": 1985
+  },
+  "a2e144546a191da8829b9ca9fa019884fe95156c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Pachicom",
+   "title_jp": "パチコン",
+   "year": 1985
+  },
+  "a3090a15c95334da3e0f94030eadee02b5032c0c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Yie Ar Kung-Fu",
+   "title_jp": "イーアルカンフー",
+   "year": 1985
+  },
+  "a322d4e572467be5e1b452214143f88db526b49f": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Zombie Hunter",
+   "title_jp": "ゾンビハンター",
+   "year": 1989
+  },
+  "a36c00f32cad6b603bc5525a741cb09064670f34": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Puzzle Panic",
+   "title_jp": "パズルパニック",
+   "year": 1986
+  },
+  "a3de07612da7986387a4f5c41bbbc7e3b244e077": {
+   "mapper": "ASCII16SRAM2",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Harry Fox - MSX Special",
+   "title_jp": "はーりぃふぉっくす MSXスペシャル",
+   "year": 1986
+  },
+  "a4be5763cdf2dcd647b87e3aecbab28ecc69776e": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Checkers In Tantan Tanuki",
+   "title_jp": "チェッカーズ IN TANTANたぬき",
+   "year": 1985
+  },
+  "a52021f1b257c7c35d626d5d642134091c45e4f4": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Metal Gear",
+   "title_jp": "メタルギア",
+   "year": 1987
+  },
+  "a53d1ea775a6c90a84f1f36349540b16cf8307e4": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Jump Coaster",
+   "title_jp": "ジャンプコースター",
+   "year": 1984
+  },
+  "a553c3f204c105c23b227a1e5aeb290671ccdbeb": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Final Zone Wolf",
+   "title_jp": "ファイナルゾーンウルフ",
+   "year": 1986
+  },
+  "a57f8ec4f89ab84936f46821969de6bca9f46d8e": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Rick & Mick's Adventure",
+   "title_jp": "りっくとみっくの大冒険",
+   "year": 1987
+  },
+  "a58ca651f4c12bf07cf3840d5e37b534f5fc075e": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Fantasy Zone 2 - The Tears Of Opa-Opa",
+   "title_jp": "ファンタジーゾーン2 オパオパの涙",
+   "year": 1987
+  },
+  "a66e19e58ac5b4da7db071ca7ead40c28a332198": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Marine Battle",
+   "title_jp": "マリンバトル",
+   "year": 1983
+  },
+  "a8059dc1820b461418713acf2af14f3a25734bd3": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Arugiisu no Yoku",
+   "title_jp": "アルギースの翼",
+   "year": 1988
+  },
+  "a84608f1c2fe1aea1a8a586f2e335cb64bb951fc": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Super Cobra",
+   "title_jp": "スーパーコブラ",
+   "year": 1983
+  },
+  "a87971b9df0de44644c2188f5f475aef7ae85304": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zexas Limited",
+   "title_jp": "ゼクサスリミテッド",
+   "year": 1985
+  },
+  "a8eff8c532da894c86198b04b0a5d7707feb28c5": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Tear of Nile",
+   "title_jp": "ナイルの涙",
+   "year": 1986
+  },
+  "aa68633ff1afd385535b2abd7c8756b6cf79256a": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Indian No Bouken",
+   "title_jp": "インディアンの冒険",
+   "year": 1983
+  },
+  "aacaf2e694a1c05f2ef20a8ce6892242c0f88919": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Gomok Narabe - Omo Go",
+   "title_jp": "五目ならべ",
+   "year": 1984
+  },
+  "ab087d04eb5c2c8894758c7cee32ccafd80989a7": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Mon Mon Monster",
+   "title_jp": "悶々怪物",
+   "year": 1989
+  },
+  "ac150939558ec4e56446be9502177f28a29881eb": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX Baseball 2",
+   "title_jp": "パナソフトのベースボール2",
+   "year": 1986
+  },
+  "ac391fe51f69e0a55fe3ab66c8ec3f2792dd5d08": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Color Ball",
+   "title_jp": "カラーボール",
+   "year": 1983
+  },
+  "ae0c0b0c9468e137eba5b52f96241acd55d9746a": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Adven'chuta!",
+   "title_jp": "アドベンチュー太",
+   "year": 1983
+  },
+  "ae52922a197a2f47c7fc4adf9dbfde13c136ed14": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Ningyo Densetsu - Fathom",
+   "title_jp": "人魚伝説",
+   "year": 1985
+  },
+  "ae5b8e69732a23aee102bcd996ad06225f1b3eba": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Konami's Ping-Pong",
+   "title_jp": "コナミのピンポン",
+   "year": 1985
+  },
+  "ae6ad52d5ebcad7722ea070109a286fe13b06cb7": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Predator",
+   "title_jp": "プレデター",
+   "year": 1988
+  },
+  "ae6d0efd55def94274f4cec459df8927d132675a": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Circus Charlie",
+   "title_jp": "サーカスチャーリー",
+   "year": 1984
+  },
+  "aeb705ac42f8d9d62ecdb25899535d1f14f1c49c": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pass Ball",
+   "title_jp": "パスボール",
+   "year": 1983
+  },
+  "aeecb99ed7bfe2ff39a5f42637b6b33ecc79c443": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Nyannyan Pro Wrestling",
+   "title_jp": "ミクとしおりのニャンニャンプロレス",
+   "year": 1986
+  },
+  "af1a6f4dd12d726a7a4377753ce3db82bf24eba4": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Champion Pro Wrestling",
+   "title_jp": "チャンピオンプロレス",
+   "year": 1985
+  },
+  "af310ee21b5534f32ea92c0ae34a44d828d157a7": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Tetris",
+   "title_jp": "テトリス",
+   "year": 1988
+  },
+  "af4e0490c178a18a47b34831fb5e3cf8b61d34d9": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hyper Sports 3",
+   "title_jp": "ハイパースポーツ3",
+   "year": 1985
+  },
+  "af567ea6e27912d6d5bf1c8e9bc18e9b393fd1ab": {
+   "mapper": "KonamiSCC",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Metal Gear 2 - Solid Snake",
+   "title_jp": "メタルギア2 ソリッドスネーク",
+   "year": 1990
+  },
+  "afb693fd0a138cfc59a2bf81eabd7ca2abd4e162": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Replicart",
+   "title_jp": "レプリカート",
+   "year": 1987
+  },
+  "b0956b97c9087aabab333c271c7afd9754ae84cd": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Bank Panic",
+   "title_jp": "バンクパニック",
+   "year": 1985
+  },
+  "b11c0ded529af18c29ec46b9e0a795ed0405e7ec": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Druid",
+   "title_jp": "ドルイド",
+   "year": 1988
+  },
+  "b1248f7b9d4e16a894555c51c533d3fd9a90802e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Goonies",
+   "title_jp": "グーニーズ",
+   "year": 1986
+  },
+  "b15e73a5ff1ae17ac67f2cebb5862d5e5bd80bc0": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Bouken Roman - Dota",
+   "title_jp": "冒険浪漫",
+   "year": 1986
+  },
+  "b2bcc1c0d64b6ee9f0e9bbbcf0ef7b64d80d3b90": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Star Trap",
+   "title_jp": "スタートラップ くりいむレモン",
+   "year": 1987
+  },
+  "b2ce0bc86f82f727db956dfbbe2a3fd0cb72f5fc": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Teitoku no Ketsudan",
+   "title_jp": "提督の決断",
+   "year": 1991
+  },
+  "b2d9dcee787ace26f8f4d2d18e24a3d645a6f853": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Moon Landing",
+   "title_jp": "ムーンライディング",
+   "year": 1983
+  },
+  "b36c925005f1e530cab2b5f6e2a5ddfd182c0140": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Cannon Ball",
+   "title_jp": "キャノンボール",
+   "year": 1983
+  },
+  "b5d130a50f6939028702c1645426a29ec8ead6e5": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Mr. Chin",
+   "title_jp": "MR.CHIN",
+   "year": 1984
+  },
+  "b63fc17c1d004ca4d7f3b1ef8962210a779ca665": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Dragon Slayer 3 - Romancia",
+   "title_jp": "ロマンシア",
+   "year": 1986
+  },
+  "b6d39bbaedb89f8c908cc2f44a0ab17e4b80ca4f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Monster's Fair",
+   "title_jp": "インファント島の秘密 モンスターズフェア",
+   "year": 1986
+  },
+  "b7104477c8801fe54d1ba91f3a77ac6e4f399f52": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Penguin-Kun Wars 2",
+   "title_jp": "ぺんぎんくんウォーズ2",
+   "year": 1988
+  },
+  "b74f759ba3837968a04e9b64321b47cf087e76ff": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Gitahei",
+   "title_jp": "棋太平",
+   "year": 1986
+  },
+  "b755d7db109cd0a9392accd1c83e6d995a8a04d6": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Butamaru Pants",
+   "title_jp": "ブタ丸パンツ",
+   "year": 1983
+  },
+  "b7fd07b7825c6beeb19b1f38631d2869f60939fb": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Nessen Koushiyen - Casio Baseball",
+   "title_jp": "熱戦甲子園",
+   "year": 1984
+  },
+  "b82dc590aadc930b43db303bb3e3458e7695e3b5": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Magical Tree",
+   "title_jp": "マジカルツリー",
+   "year": 1984
+  },
+  "b88e9c548873dcfd190e0e38f7b279344eea41ec": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pitfall!",
+   "title_jp": "ピットフォール",
+   "year": 1984
+  },
+  "b9c98b80216983f97e28293b576ca9be3602c1a1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Sparkie",
+   "title_jp": "スパーキー",
+   "year": 1983
+  },
+  "ba30ad98a8488bec6d0c661f7b859beb2fe219d1": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Ghostbusters",
+   "title_jp": "ゴーストバスターズ",
+   "year": 1984
+  },
+  "bb75492c6ebbbf1827b3695f70e481d65487da44": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hole In One Professional",
+   "title_jp": "ホールインワン プロフェッショナル",
+   "year": 1985
+  },
+  "bb902e82a2bdda61101a9b3646462adecdd18c8d": {
+   "mapper": "CrossBlaim",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Cross Blaim",
+   "title_jp": "クロスブレイム",
+   "year": 1986
+  },
+  "bb99fe7702733ab0f9e8856e91f5ddcb55d30b5f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Girly Block",
+   "title_jp": "ガーリーブロック",
+   "year": 1988
+  },
+  "bbca0b00374ba5366ba53b380285d38857450a7d": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Hitsuji Yai - Pretty Sheep",
+   "title_jp": "ひつじやーい",
+   "year": 1983
+  },
+  "bbe8df034869a06cb263255ac04374de469c00ba": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Crazy Train",
+   "title_jp": "クレイジートレイン",
+   "year": 1983
+  },
+  "bc3be8f829211dd8a8eb854f86ff014c47ed9254": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Scarlet 7",
+   "title_jp": "スカーレット7",
+   "year": 1986
+  },
+  "bcfdb43b275c62a76856aab94fb1b53bd92b2db2": {
+   "mapper": "Mirrored",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Break In",
+   "title_jp": "BREAK IN",
+   "year": 1987
+  },
+  "bd4b8c48f1d8107f11ae680a787d7b3825669b7c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Blockade Runner",
+   "title_jp": "ブロッケードランナー",
+   "year": 1984
+  },
+  "bd70b00ccb8fafca883c7160585e9c5920cca58f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Dynamite Bowl",
+   "title_jp": "ダイナマイトボウル",
+   "year": 1987
+  },
+  "bd8f335fc45e9920f0691a525a0fc853b2e4b595": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Othello",
+   "title_jp": "コンピュータオセロ",
+   "year": 1984
+  },
+  "be8bb7f5e812cd31a65aec3782a2d526bef9b3d6": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Pipi",
+   "title_jp": "オウムのピピの大冒険",
+   "year": 1984
+  },
+  "bf4a0bab1e8eaa70a8b12cd9a81d7a90a74c9e26": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Road Fighter",
+   "title_jp": "ロードファイター",
+   "year": 1985
+  },
+  "bf7e27b3456f1a96d94a8dbf06688c8f833bd818": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Kinnikuman - Colosseum Deathmatch",
+   "title_jp": "キン肉マン コロシアムデスマッチ",
+   "year": 1985
+  },
+  "bfe8046f8ccc6d6016d7752c04f0654420ef81e7": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Tumego 120",
+   "title_jp": "詰碁120",
+   "year": 1987
+  },
+  "c06de0eda82e1daa3ea3cbc5eba5d884fd0ce8e8": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Cabbage Patch Kids",
+   "title_jp": "キャベッジパッチキッズ",
+   "year": 1984
+  },
+  "c0d33b513704adc56718b1f56c1062718683c77c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Formation Z",
+   "title_jp": "フォーメーションZ",
+   "year": 1985
+  },
+  "c1746efeb4b44dcc80dfc4f429009feac91d9c48": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Star Force",
+   "title_jp": "スターフォース",
+   "year": 1985
+  },
+  "c1923ab5c5dcaf67af3e23fd1ac42e2d4c61aca7": {
+   "mapper": "ASCII8",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Satujinkurakubu - Murder Club",
+   "title_jp": "殺人倶楽部",
+   "year": 1988
+  },
+  "c1c350c719236af5eef8798c4532351befcfd348": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX Derby",
+   "title_jp": "MSXダービー",
+   "year": 1983
+  },
+  "c1c5ec4042760880216f781ebd5e7174a3b0f9ca": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Time Pilot",
+   "title_jp": "タイムパイロット",
+   "year": 1983
+  },
+  "c1dfc86c441e1128194f3ab490c94e29275b5df9": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Kung-Fu Master",
+   "title_jp": "クンフーマスター",
+   "year": 1983
+  },
+  "c2f4df1bd91f7dee1536774b9d7089086b9bf835": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "MSX-FAN Fandom Library 3",
+   "title_jp": "MSX-FAN ファンダムライブラリー3",
+   "year": 1988
+  },
+  "c4a919f31d20008b5d6540aa5d2be59aa4cef5cf": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Arsene Lupin 3rd - Babiron no Ougon Densetsu",
+   "title_jp": "ルパン三世 バビロンの黄金伝説",
+   "year": 1988
+  },
+  "c4f952258020de9e23a718a78c18d22e2cccfe3c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Laptick 2",
+   "title_jp": "らぷてっく2",
+   "year": 1986
+  },
+  "c5f1897c416f62cd58cd6257282e3428155cd698": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Attack 4 Women Volleyball",
+   "title_jp": "アタックフォー女子バレー",
+   "year": 1986
+  },
+  "c60a28a4048710ad3c63ef5bcf4ce03db54c00bb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Yokai Tantei Chima Chima",
+   "title_jp": "妖怪探偵ちまちま",
+   "year": 1985
+  },
+  "c6227431bfbc3aa921120ec3da7f6429a1a799a0": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Janyu Mah-Jong",
+   "title_jp": "雀友",
+   "year": 1987
+  },
+  "c713ecd0e2ef89b2443e516d5ffa53d3a3422e22": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Poppaq The Fish",
+   "title_jp": "ポパック・ザ・フィッシュ",
+   "year": 1984
+  },
+  "c72af5118835e49ac6d181cc832336ab22ec5dcb": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Renju & Ojama Dogs",
+   "title_jp": "連珠とおじゃま犬たち",
+   "year": 1985
+  },
+  "c73d4c27aa2b0fb946e398323bd67d9e53c4f9ef": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Scope On",
+   "title_jp": "スコープオン",
+   "year": 1983
+  },
+  "c74a5a6164536750d6b3ea90e19798ab6fad79d7": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Seikima 2 Special",
+   "title_jp": "聖飢魔2スペシャル 悪魔の逆襲",
+   "year": 1987
+  },
+  "c82c6e054313f4c8864e64897baea8b63776020d": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Quinpl",
+   "title_jp": "クインプル",
+   "year": 1988
+  },
+  "c8ff858d239c62a859f15c2f1bf44e1d657cec13": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Knightmare - Majyo Densetsu",
+   "title_jp": "魔城伝説",
+   "year": 1986
+  },
+  "c9135b1e451193bd4c06d8143eaca934cc89fe05": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "1942",
+   "title_jp": "1942",
+   "year": 1987
+  },
+  "c9c272ffa69d3e0af5be42e7636b02dc2af6ea8c": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Ogre",
+   "title_jp": "オーガ",
+   "year": 1986
+  },
+  "c9d10b1df3bcadb3d917cf2a6877ae6e71ca3a57": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Ninja Kun - Majyo no Bouken",
+   "title_jp": "忍者くん 魔城の冒険",
+   "year": 1984
+  },
+  "ca05a183f4e7e56102706d1b9b852ad4350264ba": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX-21",
+   "title_jp": "MSX-21",
+   "year": 1983
+  },
+  "ca5f14925a7d33d83dc581bbe2ff5258389bfba7": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Gulkave",
+   "title_jp": "ガルケイブ",
+   "year": 1986
+  },
+  "cad653766b597a4aa130a9a1956ece77ba4d52bc": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Pachinko U.F.O",
+   "title_jp": "パチンコUFO",
+   "year": 1984
+  },
+  "caeca37113c56e696d7053d90f5f9f3e02de8ad1": {
+   "mapper": "ASCII8SRAM2",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Elthlead",
+   "title_jp": "エルスリード",
+   "year": 1988
+  },
+  "cb48969f27eaebf24c61f651399ec2433d85bcbc": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Actman",
+   "title_jp": "アクトマン",
+   "year": 1984
+  },
+  "cb6bd26961387def757c7faeec7563d77d404d01": {
+   "mapper": "KoeiSRAM32",
+   "size": 1048576,
+   "system": "MSX2",
+   "title_en": "Nobunaga no Yabou - Bushouhuunroku",
+   "title_jp": "信長の野望 武将風雲録",
+   "year": 1991
+  },
+  "cc9a82898da39e5cfeb0400006d093d3b869f28c": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hyper Olympic 2",
+   "title_jp": "ハイパーオリンピック2",
+   "year": 1984
+  },
+  "cd452442338366411f6b24739fe59e20f3ac24dc": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Balance",
+   "title_jp": "バラン数",
+   "year": 1984
+  },
+  "cd8ee800822ff0cd295621faafafc73be4bacad0": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Eidolon",
+   "title_jp": "アイドロン",
+   "year": 1986
+  },
+  "cdaf507dba4a48b5c98850a96f61f6d2e8464e00": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Jackie Chan - The Police Story",
+   "title_jp": "ポリスストーリー",
+   "year": 1985
+  },
+  "cdeadd6cf7bf5b53aa7d901446b0ce586542c580": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Fire Ball",
+   "title_jp": "ファイアボール",
+   "year": 1988
+  },
+  "ce1376941359471cae41887fe11f10d3b696a926": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Burger Time",
+   "title_jp": "バーガータイム ハンバーガー",
+   "year": 1986
+  },
+  "cfd872d005b7bd4cdd6e06c4c0162191f0b0415d": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "King's Valley 2 - The Seal Of El Giza",
+   "title_jp": "王家の谷 エルギーザの封印",
+   "year": 1988
+  },
+  "d03fdca57b55bdb7e6b5481615b8ad0c8a71f77d": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "The Protector",
+   "title_jp": "プロテクター",
+   "year": 1985
+  },
+  "d086280dea7fb10fabaae26ed9d404bbe69c70c4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Final Mahjong",
+   "title_jp": "ファイナル麻雀",
+   "year": 1983
+  },
+  "d0e8bc3f5fd93dcd07cbb945b00018a491842242": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Crusader",
+   "title_jp": "クルセーダー",
+   "year": 1985
+  },
+  "d120ca303c3e1dd56adee68f10e9e1ab51f50ab3": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Sinbad",
+   "title_jp": "シンドバッド 7つの冒険",
+   "year": 1986
+  },
+  "d17acc97bf2f853a5fff58da733e4cd53cdaa3ed": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "The Return of Ishtar",
+   "title_jp": "イシターの復活",
+   "year": 1988
+  },
+  "d1cc2a77fb17608d542c50e2a1404cf5b4231521": {
+   "mapper": "ASCII16SRAM2",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Super Daisenryaku",
+   "title_jp": "スーパー大戦略",
+   "year": 1988
+  },
+  "d1cf5410ed71f77670f65eb08ee944436bc0eb10": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Moon Patrol",
+   "title_jp": "ムーンパトロール",
+   "year": 1984
+  },
+  "d1fbdbdf2e830139584d7dc796806aa3327720dd": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Dungeon Hunter",
+   "title_jp": "ダンジョンハンター",
+   "year": 1989
+  },
+  "d2aa1605a6b56c118e18b385ab879536d74cc355": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "MSX Soccer",
+   "title_jp": "パナソフトのサッカー",
+   "year": 1985
+  },
+  "d2bf27695023a3e7daaeab1cb76572f2c412de1e": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mini Golf",
+   "title_jp": "ミニゴルフ",
+   "year": 1985
+  },
+  "d33fe18ede20da4dd3d6991a9c2995e149c8fc3f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Twinbee",
+   "title_jp": "ツインビー",
+   "year": 1986
+  },
+  "d4da7236bd09d735dcb92127c73e43b3ca94dd7f": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Darwin 4078",
+   "title_jp": "ダーウィン4078",
+   "year": 1987
+  },
+  "d526249c1a35cf1174300df75bc28662f579290a": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Zoids",
+   "title_jp": "ZOIDS 中央大陸の戦い",
+   "year": 1988
+  },
+  "d53a8efefe3714269538a91e5256c2938fe13239": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Missisippi Satsujin Jiken",
+   "title_jp": "ミシシッピー殺人事件",
+   "year": 1987
+  },
+  "d53e0c8bcd98820afe820f756af35cc97911bfe4": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Penguin Adventure - Yumetairiku Adventure",
+   "title_jp": "夢大陸アドベンチャー",
+   "year": 1986
+  },
+  "d5902afbd8dfb1ea96fc8cf4d62cf6e4fa40d4f7": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Pac-Mania",
+   "title_jp": "パックマニア",
+   "year": 1989
+  },
+  "d63e20369f98487767810a0c57603bef6a2a07e5": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Gradius 2 - Nemesis 2",
+   "title_jp": "グラディウス2",
+   "year": 1987
+  },
+  "d69d4a6f2834b20df3a2afbd7a927220e96e31e1": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Becky",
+   "title_jp": "おてんばベッキーの大冒険",
+   "year": 1983
+  },
+  "d6b6cb3d85b991f8adf2e07a0e8e74b586741d12": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Godzilla Kun",
+   "title_jp": "ゴジラくん",
+   "year": 1985
+  },
+  "d7109cf20a22558f923c833ff0b4e2311340acb1": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Dynamite Bowl",
+   "title_jp": "ダイナマイトボウル",
+   "year": 1988
+  },
+  "d723f2eb1c887db5448fd56be5e7c57e60d88e63": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Firebird - Hi no Tori Hououhen",
+   "title_jp": "火の鳥 鳳凰編",
+   "year": 1987
+  },
+  "d74c381ea17acb94527ef3abaa280793a824d322": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Takahasi Meijin no Boukenjima - Wonder Boy",
+   "title_jp": "高橋名人の冒険島",
+   "year": 1986
+  },
+  "d78d763e72e23418f31dc3ce91deea1e8ee10490": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Family Boxing",
+   "title_jp": "ファミリーボクシング",
+   "year": 1988
+  },
+  "d82135a5e28b750c44995af116db890a15f6428a": {
+   "mapper": "ASCII8SRAM2",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Deep Dungeon 2",
+   "title_jp": "ディープダンジョン2 勇士の紋章",
+   "year": 1988
+  },
+  "d844c4c5ae9c7ac671c4be71ac1190a1e5db4d36": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Shout Match",
+   "title_jp": "シャウトマッチ",
+   "year": 1987
+  },
+  "d88f33ee40839f87cdce6cc4820e1dd192a01776": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zaxxon",
+   "title_jp": "ザクソン",
+   "year": 1985
+  },
+  "d8c074267e0b2ec225d5acba688ea7304233da13": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Dam Busters",
+   "title_jp": "ダムバスター",
+   "year": 1985
+  },
+  "d916f0e4bd3c829a0472c6ec18d08907a5c991f3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Eagle Fighter",
+   "title_jp": "イーグルファイター",
+   "year": 1985
+  },
+  "da4b44c734029f60388b7cea4ab97c3d5c6a09e9": {
+   "mapper": "ASCII16SRAM2",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Hydlide 2 - Shine Of Darkness",
+   "title_jp": "ハイドライド2",
+   "year": 1986
+  },
+  "da5fd6ce2f92a40b1ccaf6e3c425d720febc3543": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Professional Mahjong",
+   "title_jp": "プロフェッショナル麻雀",
+   "year": 1985
+  },
+  "dab5a9f93a35fcb92c01e4250b01928fe8bd294b": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Sangokushi 1 - Romance Of Three Kingdoms",
+   "title_jp": "三國志",
+   "year": 1988
+  },
+  "db0ed31c779fffd2084946e3ba69512b372d845f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Sewer Sam",
+   "title_jp": "スゥーワーサム",
+   "year": 1984
+  },
+  "dc56cff1211bacd94f59e188e44a58d6f40a0c26": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Strategic Mars",
+   "title_jp": "マース",
+   "year": 1989
+  },
+  "dc69c7a9ea93cbb0093300955935ef156af5c194": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Mr. Do!",
+   "title_jp": "MR.DO!",
+   "year": 1983
+  },
+  "de0eb1c46c47924879e2a49f9eafba0ab344fe5f": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Makaijima - Higemaru",
+   "title_jp": "魔界島 七つの島大冒険",
+   "year": 1987
+  },
+  "de10aa2a2abfdcafe0064e1e76b676f54c7aafc6": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Space Camp",
+   "title_jp": "スペースキャンプ",
+   "year": 1986
+  },
+  "de251a0af1df3be18469578dc00d414e572ee33e": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Suikoden",
+   "title_jp": "水滸伝 天命の誓い",
+   "year": 1989
+  },
+  "de6db54cef2cc4cbcc09c57c8ed0a1ff01347b6e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Warroid",
+   "title_jp": "ウォーロイド",
+   "year": 1985
+  },
+  "de765e699af4d76d8fa80fb10d1e41581bec11bf": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Zaider - Battle of Peguss",
+   "title_jp": "超戦士ザイダー バトルオブペガス",
+   "year": 1986
+  },
+  "ded8d969542b7be02524037fa244e6648c3f4e03": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Exchanger",
+   "title_jp": "エクスチェンジャー",
+   "year": 1983
+  },
+  "df797593395346e94aa1cf13a9524e30d631888d": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Venus Fire",
+   "title_jp": "ヴィーナスファイヤー",
+   "year": 1987
+  },
+  "dfd7ef6fd86efd5c8019b59d8fa5c5a47cf90cd0": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Trial Ski",
+   "title_jp": "トライアルスキー",
+   "year": 1984
+  },
+  "e003d57d2102e8fdf5d9eea7bd78a3cf67d75778": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Labyrinth",
+   "title_jp": "ラビリンス 魔王の迷宮",
+   "year": 1987
+  },
+  "e065238580b9e118b6c9e789d797cdd99e0a1c69": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Ikari",
+   "title_jp": "怒",
+   "year": 1987
+  },
+  "e06ed9b0b3e1fbb9f27be65c37b4d9b548889b4f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Hustle! Chummy",
+   "title_jp": "ハッスルチュミー",
+   "year": 1983
+  },
+  "e11afc03db4e1d03976d02796b29da9c65d4ff3d": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "The Fairy Land Story",
+   "title_jp": "フェアリーランドストーリー",
+   "year": 1987
+  },
+  "e22a6317747903475095008d0d5ad9427ddb34af": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Gekitotsu Pennant Race",
+   "title_jp": "THEプロ野球 激突ペナントレース",
+   "year": 1988
+  },
+  "e2abb08abacce57703fc008881279890328f6277": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Galaxian",
+   "title_jp": "ギャラクシアン",
+   "year": 1984
+  },
+  "e3036a7bc6ed3ece1c85d5e37fb2ff39ba98ba47": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Topple Zip",
+   "title_jp": "トップルジップ",
+   "year": 1987
+  },
+  "e31ac6520e912c27ce96431a1dfb112bf71cb7b9": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Gradius - Nemesis",
+   "title_jp": "グラディウス",
+   "year": 1986
+  },
+  "e34161034364ef03df907d62976c2ac8f551404f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Drainer",
+   "title_jp": "ドレイナー",
+   "year": 1987
+  },
+  "e36e16acfdfa76fa72b218da2bebc668db39d21e": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "The Cockpit",
+   "title_jp": "ザ・コックピット",
+   "year": 1987
+  },
+  "e373e3e9be4f6d30d5db84b699082c00b2021ba3": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Senjyo",
+   "title_jp": "センジョー",
+   "year": 1984
+  },
+  "e49f66e8ba45d0647c93a57bbc1fb7aba4665a6e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Eggerland Mystery",
+   "title_jp": "エッガーランドミステリー",
+   "year": 1985
+  },
+  "e4d61ee74867066b04b0f6aba35d98d72665e6e0": {
+   "mapper": "Mirrored",
+   "size": 65536,
+   "system": "MSX",
+   "title_en": "Mashou no Yakata Gabalin - Goblin",
+   "title_jp": "魔性の館ガバリン",
+   "year": 1987
+  },
+  "e5171c368883de03fc8d75e61bf23d954ec1bba4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Bokosuka Wars",
+   "title_jp": "ボコスカウォーズ",
+   "year": 1984
+  },
+  "e6419519c2d3247ea395e4feaa494a2e23e469ce": {
+   "mapper": "ASCII8SRAM2",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Deep Dungeon 1",
+   "title_jp": "ディープダンジョン 魔洞戦記",
+   "year": 1988
+  },
+  "e6c01bd90cf0b2793282fc53e9a3150a6d7804c5": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Malaya no Hihou",
+   "title_jp": "マラヤの秘宝",
+   "year": 1988
+  },
+  "e6de8bbd60123444de2a90928853985ceb0b4cbf": {
+   "mapper": "KoeiSRAM32",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Nobunaga no Yabou - Zenkokuhan",
+   "title_jp": "信長の野望 全国版",
+   "year": 1987
+  },
+  "e6fbfb4b10dc393953211dda4b114080a08302a1": {
+   "mapper": "playball",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Playball",
+   "title_jp": "プレイボール",
+   "year": 1986
+  },
+  "e700493e1c4c14f711e9c1c262fe3e8d76931ca3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Bomber Man Special",
+   "title_jp": "ボンバーマンスペシャル",
+   "year": 1986
+  },
+  "e73946f1f26589d77926276ca4f9dbee60c53fde": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Bubble Bobble",
+   "title_jp": "バブルボブル",
+   "year": 1987
+  },
+  "e73a449e34652c18af0a72ab5c3637afa57d5842": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ultraman",
+   "title_jp": "ウルトラマン",
+   "year": 1984
+  },
+  "e7657d8070399d8e4d65308b356e110d83d23151": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Funky Mouse",
+   "title_jp": "ファンキーマウス",
+   "year": 1984
+  },
+  "e767c0239b79821463fa42f2c1989d3fd1b4b868": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Sasa",
+   "title_jp": "SASA",
+   "year": 1983
+  },
+  "e7d06c0a5c7f256c061e5b8173fdcc145d2fc4d6": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mappy",
+   "title_jp": "マッピー",
+   "year": 1984
+  },
+  "e817ab7b50674c414b1c1b72530024eb03396a41": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Kung-Fu Taikun",
+   "title_jp": "功夫大君",
+   "year": 1984
+  },
+  "e894a38f3e2ad435cc5d17a66600e6016b5e47fb": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Antarctic Adventure",
+   "title_jp": "けっきょく南極大冒険",
+   "year": 1984
+  },
+  "e89fc7437d8f9aed1640689a32ebbf047699b147": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Arsene Lupin 3rd - Cariostoro no Siro",
+   "title_jp": "ルパン三世 カリオストロの城",
+   "year": 1987
+  },
+  "e8ab46785e75e19dac497c4a82ac2f5b37ac0580": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Gall Force - Defence Of Chaos",
+   "title_jp": "ガルフォース カオスの攻防",
+   "year": 1986
+  },
+  "e8e416977f5dae3635362c513bba004ea89a0bf4": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Arctic",
+   "title_jp": "アークティック",
+   "year": 1989
+  },
+  "e904efabc5a75840c50ea7edb07052683468a64a": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Golf Kyou - Golf Crazy",
+   "title_jp": "ゴルフ狂",
+   "year": 1984
+  },
+  "e93c396649bf6328103e8da0247952ebef2a04e9": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Car Fighter",
+   "title_jp": "カーファイター",
+   "year": 1985
+  },
+  "e98e4351119d78b6402c4499ed16faeb3364f6c3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Knight Lore",
+   "title_jp": "ナイトロアー",
+   "year": 1986
+  },
+  "e9b3652482a5b09ae662203f8758a30aa23af62f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Mr. Do's Wild Ride",
+   "title_jp": "MR.DO ワイルドライド",
+   "year": 1985
+  },
+  "ea8d86ac74dcdca1c72daae517722431767c5ad2": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Topple Zip",
+   "title_jp": "トップルジップ",
+   "year": 1986
+  },
+  "ead699582641d103a94775a08121ecc336b99eae": {
+   "mapper": "ASCII8SRAM8",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Heroes of The Lance",
+   "title_jp": "ヒーローオブランス",
+   "year": 1991
+  },
+  "eadf124b91b996b890b1ae84b75b21ee6568d1f3": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "GP World",
+   "title_jp": "GPワールド",
+   "year": 1985
+  },
+  "ebb46dd4cf36407ad82d9f50d9bef3e938dc144e": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Champion Ice Hockey",
+   "title_jp": "チャンピオンアイスホッケー",
+   "year": 1986
+  },
+  "ebb70722f75279911cce79e6bd78b8f514561b0f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "H.E.R.O.",
+   "title_jp": "ヒーロー",
+   "year": 1984
+  },
+  "ebde4d61184438175db424fdf25cec238d91a15f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Four battle Mah-jong",
+   "title_jp": "実戦四人麻雀",
+   "year": 1984
+  },
+  "ebe20c85c5314957fafc223c26bf393847e3bb03": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Woody Poco",
+   "title_jp": "うっでぃぽこ",
+   "year": 1987
+  },
+  "ebff5d2b4253f62d3a00f1a6d6b4d81053c7b8a6": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Bifamu",
+   "title_jp": "銀河漂流 バイファム",
+   "year": 1984
+  },
+  "ec2f1e747756ba1fdae606658aeeafa07e6e7fd4": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Ninja Kun",
+   "title_jp": "忍者くん",
+   "year": 1983
+  },
+  "ec5111e3b06d64ef51196ff87448e1c62be4cdd8": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Albatros",
+   "title_jp": "アルバトロス",
+   "year": 1986
+  },
+  "ec53d72e41e114574f4c116cab19e1633f3da207": {
+   "mapper": "0x4000",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Aramo",
+   "title_jp": "アラモ",
+   "year": 1986
+  },
+  "ec54e05a6f784f9c616c94ab8d57e5d2647abc66": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Front Line",
+   "title_jp": "フロントライン",
+   "year": 1984
+  },
+  "ecbf33a376a7a108176f8d1009d042e01519241c": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Dragon Buster",
+   "title_jp": "ドラゴンバスター",
+   "year": 1987
+  },
+  "ecc68b4a042794424df771a3336361fdb50d0875": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Janka",
+   "title_jp": "雀華",
+   "year": 1985
+  },
+  "ed15174dec31a29f9d41a06de3008db04af11a25": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "King & Balloon",
+   "title_jp": "キング&バルーン",
+   "year": 1984
+  },
+  "eda9580a1ac75707f621c251a7424df3846e4ec0": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Star Blazer",
+   "title_jp": "スターブレーザー",
+   "year": 1985
+  },
+  "edd61208e11149e226cd2eddf5c9eca8ee1ba33e": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Fairy",
+   "title_jp": "フェアリー",
+   "year": 1985
+  },
+  "ee501fde62b25ddd1c82798ee1b233b8813e717b": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Maison Ikkoku",
+   "title_jp": "めぞん一刻 想いでのフォトグラフ",
+   "year": 1987
+  },
+  "ef476e25fb6b7221ca778a379117885450dd36f0": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Binary Land",
+   "title_jp": "バイナリィランド",
+   "year": 1984
+  },
+  "ef535ab6013d9b6e38227272f2ebe6a0f0b33cb5": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Boomerang",
+   "title_jp": "ブーメラン",
+   "year": 1984
+  },
+  "efdf63f01293251dc593163a42f31556fd042282": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "AshGuine Story II",
+   "title_jp": "アシュギーネ 虚空の牙城",
+   "year": 1987
+  },
+  "efed48854beb2803d9f2b5644edff2aacf7c6af9": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Yuureikun - Mr.Ghost",
+   "title_jp": "幽霊君",
+   "year": 1989
+  },
+  "f025c9c2db97dce608fcc1050426beff0dea43eb": {
+   "mapper": "Mirrored",
+   "size": 8192,
+   "system": "MSX",
+   "title_en": "Captain Chef",
+   "title_jp": "キャプテンシェフ",
+   "year": 1984
+  },
+  "f100a76117e95ab0335e89a901e47d844bbc0ab6": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX",
+   "title_en": "Dragon Slayer 4",
+   "title_jp": "ドラゴンスレイヤー4 ドラスレファミリー",
+   "year": 1987
+  },
+  "f12ad34dc3b4279da0fc7094f3d50d6b8bb517dc": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Famicle Parodic",
+   "title_jp": "ファミクルパロディック",
+   "year": 1988
+  },
+  "f182d4785e3eed00292f7ff4795c9dcc6c990a0a": {
+   "mapper": "ASCII8",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Hydlide 3 - The Space Memories",
+   "title_jp": "ハイドライド3",
+   "year": 1987
+  },
+  "f236345f43828597739f4a326318b6a3876ff73f": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Anty",
+   "title_jp": "アンティ",
+   "year": 1984
+  },
+  "f27721cf9ec316ea3b18233f699febf739b25678": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Yakyukyo - Baseball Craze",
+   "title_jp": "野球狂",
+   "year": 1984
+  },
+  "f2ec3714138175212b6b6e28b5da4361cc4b5471": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Gunjin Shogi Mars",
+   "title_jp": "軍人将棋マース",
+   "year": 1985
+  },
+  "f364a44d0b4ceaaa8706830237c0b824dcf9ce0c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Mole Mole 2",
+   "title_jp": "モールモール2",
+   "year": 1987
+  },
+  "f3c0c1f0ec3e10cd4a5eaae26d593198b1a5ab9a": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "TZR Grand Prix Rider",
+   "title_jp": "TZRグランプリライダー",
+   "year": 1986
+  },
+  "f415e4096ff3f6a9f17bfbf02f146e44f0d5fb66": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Konami's Mahjong Dojo",
+   "title_jp": "コナミの麻雀道場",
+   "year": 1984
+  },
+  "f4da2be2ee712ba2e7cccf56fcd15483fe0023ed": {
+   "mapper": "ASCII16",
+   "size": 65536,
+   "system": "MSX2",
+   "title_en": "Garakuta",
+   "title_jp": "画楽多",
+   "year": 1988
+  },
+  "f52113b45062adc75cf7a0ed0538b3a07696cc24": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "The Ninjas manuscripts Of Iga - The Battle Of Full Moon",
+   "title_jp": "伊賀忍法帖 満月城の戦い",
+   "year": 1986
+  },
+  "f52690157a51c662ffdf4ae3592ada93d7be4032": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Pro Baseball Fan",
+   "title_jp": "プロ野球FAN テレネットスタジアム",
+   "year": 1987
+  },
+  "f57b46154cf0711e3f5218e00f67c375d95d1d5d": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "AshGuine Story I",
+   "title_jp": "伝説の聖戦士 アシュギーネ",
+   "year": 1987
+  },
+  "f6199f48ff994fc9a8e33a8581bb3bb16dd301ab": {
+   "mapper": "KonamiSCC",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Space Manbow",
+   "title_jp": "スペースマンボウ",
+   "year": 1989
+  },
+  "f629b8f7133c3442d0371a4d84275fb2e0974854": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Iga Ninpouten 1",
+   "title_jp": "伊賀忍法帖",
+   "year": 1985
+  },
+  "f63d274a8a7ad8e285dd8800264ab9c14aa9f870": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Dunk Shot",
+   "title_jp": "ダンクショット",
+   "year": 1986
+  },
+  "f72681f09b52d530ec905e8df21c4a15e30201ab": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "High Way Star",
+   "title_jp": "ハイウェイスター",
+   "year": 1983
+  },
+  "f787271597abbcb1297e4e8a4a9561959a195649": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Rastan Saga",
+   "title_jp": "ラスタンサーガ",
+   "year": 1988
+  },
+  "f7dd6841d280cbffa9f0f2da7af3549f23270ddb": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "Marchen Veil",
+   "title_jp": "メルヘンヴェール",
+   "year": 1986
+  },
+  "f8164d3872b5d54eaeafc6de3bb98a472f0c828d": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "3D Golf Simulation - Normal",
+   "title_jp": "3Dゴルフシミュレーション",
+   "year": 1983
+  },
+  "f84d7fc089b31440cac1f4fbee3d45b2f6c90e37": {
+   "mapper": "ASCII16",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Xevious - Fardraut Saga",
+   "title_jp": "ゼビウス ファードラウト伝説",
+   "year": 1989
+  },
+  "f86a7945b34c97cc58d5ee27964968870bfcef93": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Batten Tanuki no Daibouken - Raccoon Dog",
+   "title_jp": "ばってんタヌキの大冒険",
+   "year": 1985
+  },
+  "f8feeac4384bc4f109c70f962e15ce925bf70c13": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Door Door mkII",
+   "title_jp": "ドアドアMK2",
+   "year": 1985
+  },
+  "f924d89a28966a1d08c10d5ddbc9e0e182be4669": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Secret Treasure of Moai",
+   "title_jp": "モアイの秘宝",
+   "year": 1986
+  },
+  "f93e23d958d2075bf476cb05a3c4f48d0c41aabb": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hayabusa - Moonsweeper",
+   "title_jp": "宇宙戦士 隼",
+   "year": 1985
+  },
+  "f9486dd810d6321bad4bc9d7703a67d630167f98": {
+   "mapper": "ASCII8",
+   "size": 262144,
+   "system": "MSX2",
+   "title_en": "Kyotoryu no Tera Satsujin Jiken",
+   "title_jp": "京都龍の寺殺人事件",
+   "year": 1988
+  },
+  "f99919c8f42addb7f65ab4fb21b603ee7e716c90": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Jigsaw Set",
+   "title_jp": "ジグソーセット",
+   "year": 1983
+  },
+  "f9ad0cdb227c588b1a5c75220ed53d0314550d7f": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Shougi Meijin",
+   "title_jp": "将棋名人",
+   "year": 1985
+  },
+  "f9e9a6e517ee0b9b3147abb6144b31ed2ca8dbda": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Championship Kendo",
+   "title_jp": "チャンピオン剣道",
+   "year": 1986
+  },
+  "faa5aef23febc61a875e28eebe3aadf83e1f5ba7": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Galaga",
+   "title_jp": "ギャラガ",
+   "year": 1984
+  },
+  "facb967717c21fed9b375481908aa337b3361c45": {
+   "mapper": "ASCII16",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Hole In One Special",
+   "title_jp": "ホールインワンスペシャル",
+   "year": 1987
+  },
+  "fb4724b8159beae132f89f394f71ce3934a61ae2": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Keystone Kapers",
+   "title_jp": "キーストンケーパーズ",
+   "year": 1984
+  },
+  "fb968a2407eee00c683af3ac19e88015341564ad": {
+   "mapper": "Page2",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Nausicaa",
+   "title_jp": "忘れじのナウシカゲーム",
+   "year": 1984
+  },
+  "fbe43d67a5bc0aedb2e194a4e5f9497b7488362b": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Athletic Ball",
+   "title_jp": "アスレチックボール",
+   "year": 1984
+  },
+  "fbfdd89ec183ceae63d3d66b0ab45faa951b525a": {
+   "mapper": "KoeiSRAM32",
+   "size": 524288,
+   "system": "MSX2",
+   "title_en": "Nobunaga no Yabou - Zenkokuhan",
+   "title_jp": "信長の野望 全国版",
+   "year": 1987
+  },
+  "fc327d3946366ca75de0d0619eb0917a27e1bd61": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Comic Bakery",
+   "title_jp": "ぽんぽこパン",
+   "year": 1984
+  },
+  "fc7212c6813574224114c3bb5bfa99206c0816a5": {
+   "mapper": "Mirrored",
+   "size": 16384,
+   "system": "MSX",
+   "title_en": "Rally-X",
+   "title_jp": "ラリーX",
+   "year": 1984
+  },
+  "fc9adbd816109f7705f342c01f168bb09ca4b2ff": {
+   "mapper": "ASCII8",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Deep Forest",
+   "title_jp": "ディープフォレスト",
+   "year": 1987
+  },
+  "fcc6b6b9f05de409492a1fb988fa671e46d54196": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Hadesu no Monsho - The Seal Of Hades",
+   "title_jp": "闇の竜王 ハデスの紋章",
+   "year": 1986
+  },
+  "fd71df03b0e9f3caf701ecfc6d5232060cab3b13": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "Ganbare Goemon - Samurai",
+   "title_jp": "がんばれゴエモン からくり道中",
+   "year": 1987
+  },
+  "fd7518a6aedb51630364082c27bdfe4411adfd4c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Konami's Soccer",
+   "title_jp": "コナミのサッカー",
+   "year": 1985
+  },
+  "fe4bd35e87dd50fddd255172129b9bec38691188": {
+   "mapper": "Konami",
+   "size": 131072,
+   "system": "MSX2",
+   "title_en": "King Kong 2",
+   "title_jp": "キングコング2",
+   "year": 1986
+  },
+  "ff72a1788d47f9876d9fabd720f6a289fb409090": {
+   "mapper": "KonamiSCC",
+   "size": 131072,
+   "system": "MSX",
+   "title_en": "F1-Spirit - The Way To Formula 1",
+   "title_jp": "F1スピリット",
+   "year": 1987
+  },
+  "ffc8c57b26f2f495bd77efac5b815efe9c25336c": {
+   "mapper": "Mirrored",
+   "size": 32768,
+   "system": "MSX",
+   "title_en": "Kageno Densetsu - The Legend Of Kage",
+   "title_jp": "影の伝説",
+   "year": 1986
+  }
+ }
+}

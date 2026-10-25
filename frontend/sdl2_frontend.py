@@ -621,19 +621,19 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     Unicode YEN SIGN codepoint 165 (U+00A5, host layout correctly resolved).
     Neither matches KEY_MATRIX_JP's key, so `sym` can't identify this key
     reliably; only the scancode can. This substitutes the stable
-    SDLK_JIS_YEN sentinel (see msx/input.py) whenever that scancode is seen,
+    SDLK_JIS_YEN sentinel (see frontend/sdl2_keyboard.py) whenever that scancode is seen,
     regardless of `sym`.
 
     The host's dedicated apostrophe/quote key has the opposite problem: its
     sym (SDLK_QUOTE) is perfectly consistent, but on a JIS input source it is
     reported to collide with the sym SHIFT+"7" produces -- two different
-    physical actions on one sym (see msx/input.py's SDLK_HOST_APOSTROPHE_KEY).
+    physical actions on one sym (see frontend/sdl2_keyboard.py's SDLK_HOST_APOSTROPHE_KEY).
     This substitutes that sentinel whenever SDL_SCANCODE_APOSTROPHE is seen,
     so _JP_SYMBOLS can bind the two separately regardless.
 
     The JIS "\"/"_" key has the same unreliable-sym problem as the ¥ key
     above (probe-confirmed: keysym.sym == 0, constant across SHIFT). This
-    substitutes the SDLK_JIS_RO sentinel (see msx/input.py) whenever
+    substitutes the SDLK_JIS_RO sentinel (see frontend/sdl2_keyboard.py) whenever
     SDL_SCANCODE_INTERNATIONAL1 is seen.
 
     The host's dedicated "="/"+" key and a real JIS "^"/"~" key sit at the
@@ -1160,7 +1160,7 @@ def run(
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
     # keyboards without dedicated Home/Insert/Delete keys). Left Alt (GRAPH)
     # and Right Alt (CODE/KANA) need no entries here: they're plain
-    # physical-key mappings in msx/input.py. Built once (not per-frame): the
+    # physical-key mappings in frontend/sdl2_keyboard.py. Built once (not per-frame): the
     # mapping never changes for the lifetime of this run.
     ctrl_fkey_cells = {
         sdl2.SDLK_F1: KEY_NAME_TO_CELL["HOME"],

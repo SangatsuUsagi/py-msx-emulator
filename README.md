@@ -5,7 +5,7 @@ driven by machine-readable component specifications.
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-3814%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3963%20passing-brightgreen)
 
 [日本語版 README はこちら](README_ja.md)
 
@@ -114,17 +114,14 @@ and the VBlank interrupt.
     state applies to the whole frame. On real hardware, it applies only from
     the changed scanline onward. The emulator also does not emulate
     undocumented sprite-overflow behavior.
-  - During frame skip, the emulator does not update the 5th-sprite and
-    coincidence status on a skipped frame. A ROM that polls for collisions in
-    turbo mode thus sees stale status from the last rendered frame.
 
 ### VDP: Yamaha V9938 (MSX2)
 
 The VDP has 128 KB of VRAM, 28 control registers, and a programmable 16-color
 palette (9-bit GRB333). It implements Screen modes 0-8 (SCREEN 0 through
-SCREEN 8) and the hardware command engine (HMMV, HMMM, HMMC, LMMV, LMMM, LMCM,
-LMMC, YMMM, LINE, PSET, POINT, SRCH). It also implements the horizontal line
-interrupt (R#19/R#23, IE1). A banded renderer handles mid-frame register and
+SCREEN 8) and the horizontal line interrupt (R#19/R#23, IE1). It also
+implements the hardware command engine: HMMV, HMMM, HMMC, LMMV, LMMM, LMCM,
+LMMC, YMMM, LINE, PSET, POINT, SRCH. A banded renderer handles mid-frame register and
 palette changes.
 
 - Implementation: `msx/vdp/v9938.py`, `msx/vdp/v9938_renderer.py`
@@ -147,7 +144,6 @@ palette changes.
     alternation, as on a real V9938. The half-scanline CRT field-fusion shift
     that gives true interlaced output (double vertical resolution) is a
     deliberate non-goal, to keep the renderer simple and fast.
-  - The frame-skip limitation of the TMS9918A (above) applies here too.
 
 ### PSG (Programmable Sound Generator): AY-3-8910
 
@@ -170,9 +166,9 @@ not alias to a full/zero chop.
 PPI Port C bit 7 (I/O port 0xAA) drives a 1-bit DAC. Each change of the bit
 sets the output to 0 or to a fixed level. The emulator records the cycle of
 each change and places the change at its sample position in the frame. The
-Majutsushi cartridge DAC works in the same way. Thus the BIOS key click is audible, and
-software that toggles the bit plays 1-bit PCM. The level relative to the PSG
-follows openMSX's machine configurations.
+Majutsushi cartridge DAC works in the same way. Thus the BIOS key click is
+audible, and software that toggles the bit plays 1-bit PCM. The level
+relative to the PSG follows openMSX's machine configurations.
 
 - Implementation: `msx/ppi.py`, `msx/dac.py` (the write-driven DAC channel
   that the key click and the Majutsushi DAC share)
@@ -248,7 +244,7 @@ mixes the chip output into the audio output with PSG/SCC.
 | Memory map | 64 KB ROM in four 16 KB banks (`0x7FF7` bank register) at `0x4000-0x7FFF`. 8 KB SRAM (openMSX-exact `0x1FFE`-byte usable region, magic-value unlock at `0x5FFE`/`0x5FFF`). Memory-mapped OPLL registers (`0x7FF4`/`0x7FF5`) and enable register (`0x7FF6`) |
 | I/O ports | `0x7C`/`0x7D`, gated by bit 0 of the enable register |
 | SRAM persistence | `saves/sram/fmpac.sram`. The emulator loads it on start and saves it on exit if it changed |
-| OPLL synthesis | Faithful port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
+| OPLL synthesis | Python port of emu2413 v1.5.9: log-domain synthesis (log-sin + exp tables), hardware envelope-rate tables with key-scaling, AM/PM LFO, the YM2413 instrument ROM, and rhythm mode (register `0x0E`: bass drum, snare, tom, top cymbal, hi-hat) with the real short-noise / LFSR taps |
 
 - Known limitations:
   - Output rate conversion uses an accumulate-and-average decimator (chip
@@ -294,7 +290,7 @@ An analog-style output low-pass filter (2-pole Butterworth) models the RC
 filter on the real MSX audio output. It removes residual imaging and aliasing
 from the mixed PSG/SCC/DAC/OPLL/key-click signal.
 
-- Implementation: `frontend/audio_filter.py`. The frontend applies it; the
+- Implementation: `frontend/audio_filter.py`. The frontend applies it. The
   core's audio output is the unfiltered mix
 
 ### PPI (Programmable Peripheral Interface): Intel i8255
@@ -359,10 +355,10 @@ CMOS RAM (blocks 2/3) and the 12/24-hour mode encoding (register 10, bit 0).
   machine. Real hardware has one physical RTC and battery per machine, unlike
   cartridge SRAM. The emulator loads the file on start and saves it on exit
   if it changed.
-- Clock: starts at the host's local time when the machine is created, then
-  advances with emulated time only. The emulation is thus the same on every
-  run with the same input, and the clock runs at the emulated speed (fast
-  under fast-forward, stopped while paused).
+- Clock: starts at the host's local time when the emulator creates the
+  machine, then advances with emulated time only. The emulation is thus the
+  same on every run with the same input. The clock runs at the emulated speed:
+  fast under fast-forward, stopped while paused.
 - Known limitations: setting the clock from the MSX does not change it.
   There is no alarm or timer output.
 
@@ -377,7 +373,7 @@ the same type list.
 
 | Mapper | Description |
 | --- | --- |
-| `FlatMapper` | No bank switching. Mirrors the ROM across the 32 KB cartridge region |
+| `FlatMapper` | No bank switching. Mirrors the ROM across the 32 KB cartridge region. The CLI types `Mirrored` and `Normal` both select it |
 | `Ascii8Mapper` | Four 8 KB windows. Control registers at 0x6000-0x7FFF |
 | `Ascii16Mapper` | Two 16 KB windows. Control registers at 0x6000-0x7FFF |
 | `KonamiMapper` | Three 8 KB windows. A write to the window base address sets the bank register |
@@ -411,15 +407,18 @@ drive, controller, and connection-style interface. On this layer, the emulator
 implements a WD2793 controller with the Sony/Philips connection style, as used
 by the Sony HB-F1XD. The registers are memory-mapped in slot 3 sub-slot 0.
 `--fdd1` mounts a `*.dsk` image. The emulator supports Disk BASIC boot,
-`CALL FORMAT`, and file read/write. Written sectors go back to the `.dsk` file
-on exit, before a save state, and when the disk is swapped out. You can swap disks
-at runtime with F6/Shift+F6 (see [In-emulator key bindings](#in-emulator-key-bindings))
-or from the debugger REPL (`fdd1`/`fdd2`).
+`CALL FORMAT`, and file read/write. The emulator writes changed sectors back
+to the `.dsk` file on exit, before a save state, and when the disk leaves its
+drive. You can swap
+disks at runtime with F6/Shift+F6 (see
+[In-emulator key bindings](#in-emulator-key-bindings)) or from the debugger
+REPL (`fdd1`/`fdd2`).
 
 Loading a save state does not swap disks. Each drive must already hold the disk
-it held when the state was saved: the same `.dsk` file, with the same contents.
-Otherwise the load is refused and nothing changes. For a multi-disk game, swap to
-that disk with F6 first, or, with `--resume`, list it first after `--fdd1`.
+that it held at the save: the same `.dsk` file, with the same contents.
+Otherwise the emulator refuses the load and changes nothing. For a multi-disk
+game, swap to that disk with F6 first, or, with `--resume`, list it first after
+`--fdd1`.
 
 - Implementation: `msx/fdc/wd2793.py`, `msx/fdc/interface.py`
 - Known limitations:
@@ -469,6 +468,7 @@ SHA1 title lookup for automatic game-title detection and mapper selection.
 | Item | Detail |
 | --- | --- |
 | Implementation | `host/romdb.py` |
+| Data | `roms/msx_romdb.json` |
 | Source | [openMSX software database](https://github.com/openMSX/openMSX/blob/master/share/softwaredb.xml) (reference only. This project compiled all entries independently as factual data) |
 | Fallback | If the database has no entry for the ROM, the emulator continues without a title and uses the `--mapper auto` heuristics |
 
@@ -525,8 +525,9 @@ left and right buttons drive the trigger A/B lines of the port.
 
 ### SDL2 frontend
 
-A fixed 768×636 window (256×212 × scale 3) for every machine and mode. The
-rendered frame is always 212 lines. The renderer centers 192-line SCREEN modes
+The window is the 256×212 base resolution times the integer `--scale` factor
+(768×636 at the default scale 3), for every machine and mode. The rendered
+frame is always 212 lines. The renderer centers 192-line SCREEN modes
 with border rows, so the 4:3 CRT aspect stays the same for all values of R#9
 LN. SCREEN 6/7 (512 pixels wide) scale down to the same window width to keep
 the pixel aspect.
@@ -545,14 +546,23 @@ Fast-forward does not play audio. For automatic frame skip, see
 ### State save/load
 
 A complete hardware snapshot in a stdlib JSON container. It includes the CPU,
-RAM, VDP, PSG, SCC, FM-PAC/OPLL, mapper banks, FDC register and phase state,
-and the identity of the mounted disk. Each save also writes a PNG screenshot
-and updates the `saves/states/latest.*` symlinks for quick resume. A save
+RAM, VDP, PSG, the PPI latches, SCC, FM-PAC/OPLL, mapper banks, FDC register
+and phase state, the RTC, the mouse, and the identity of the mounted disk. The
+file is canonical JSON (RFC 8785): the same machine state always gives the same
+bytes, also from another implementation. It holds integers only, and byte
+blobs such as RAM and VRAM as base64 strings.
+[`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines
+its layout. The format version is 19. Save states from earlier versions do
+not load. A save state also records the machine configuration that it comes
+from (see [Machine configuration](#machine-configuration)). It loads only into
+the same machine, extensions and cartridge ROM. Each save also writes a PNG
+screenshot and updates the `saves/states/latest.*` symlinks for quick resume. A save
 records the mounted `.dsk` by path, size, and SHA1. If the current disk does
 not match at load time, the load fails with an error and does not continue
 silently.
 
-- Implementation: `msx/state.py` (snapshot encoding), `host/state_files.py` (files)
+- Implementation: `msx/state.py` (snapshot encoding), `msx/snapshot.schema.json`
+  (layout), `host/state_files.py` (files)
 
 ### Interactive debugger
 
@@ -583,8 +593,9 @@ verifies that the implementation of each component stays aligned with its
 specification.
 
 The `openspec/` and `allium/` specs are not published yet. They are in
-`openspec/specs/<spec-id>/spec.md`, with one directory per component. Each ID has a domain prefix (`cpu-z80`, `vdp-tms9918a`,
-`audio-psg`, `fdc-wd2793`, and so on). Each file interleaves natural-language
+`openspec/specs/<spec-id>/spec.md`, with one directory per component. Each ID
+has a domain prefix (`cpu-z80`, `vdp-tms9918a`, `audio-psg`, `fdc-wd2793`, and
+so on). Each file interleaves natural-language
 requirements with concrete WHEN/THEN scenarios. This is the start of
 `vdp-tms9918a`:
 
@@ -610,14 +621,12 @@ existing component, the spec changes first and the implementation follows.
 ## Performance
 
 The `--benchmark` CLI flag gives these measurements. It does a headless,
-unthrottled run (no `FrameTimer` pacing) from a cold boot through the full
-frame count. The measurement thus includes the BIOS boot time. Every frame
-still runs full CPU emulation, renders the VDP output to an offscreen buffer
-and converts it to RGB, as in interactive play, and mixes the frame's audio.
-But
-`--benchmark` never opens an SDL window, queues audio, or uploads and blits
-textures. Real interactive sessions thus run somewhat slower than the numbers
-below.
+unthrottled run (no `FrameTimer` pacing) from a cold boot through the full frame
+count. The measurement thus includes the BIOS boot time. As in interactive play,
+every frame runs full CPU emulation and mixes the frame's audio. It also renders
+the VDP output to an offscreen buffer and converts it to RGB. But `--benchmark`
+never opens an SDL window, queues audio, or uploads and blits textures. Real
+interactive sessions thus run somewhat slower than the numbers below.
 
 Since v2.8.0 the core and the frontend are separate, and the core synthesizes
 the sound chips every frame, also in headless runs. `--benchmark` also
@@ -625,9 +634,9 @@ converts every frame to RGB, as the frontend does for a shown frame. The
 `--benchmark` numbers thus include the cost of sound synthesis and of the RGB
 conversion, and are closer to the real speed of interactive play. Up to
 v2.7.8, `--benchmark` did neither. Do not compare the numbers below with
-numbers from v2.7.8 or earlier. The RGB conversion reuses each row it already
-converted for an earlier frame, so on most frames it costs little, under PyPy
-as well as under CPython.
+numbers from v2.7.8 or earlier. The RGB conversion reuses each row that it
+already converted for an earlier frame. On most frames it thus costs little,
+under PyPy as well as under CPython.
 
 For each (runtime, game) pair, the author measured 10 runs of 10000 frames
 each. The score is the average of the remaining 8 runs, after the removal of
@@ -635,31 +644,32 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 250.41 | ~4.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 564.56 | ~9.4× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.96 | ~1.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1132.41 | ~18.9× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 1371.70 | ~22.9× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 685.36 | ~11.4× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 64.98 | ~1.1× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 149.91 | ~2.5× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.45 | ~0.44× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 235.19 | ~3.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer 4 (CPU+V9938+PSG) | 291.29 | ~4.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 144.27 | ~2.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 252.95 | ~4.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 566.61 | ~9.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 98.79 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1158.95 | ~19.3× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1391.30 | ~23.2× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 692.39 | ~11.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 65.07 | ~1.1× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 150.28 | ~2.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.54 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 218.16 | ~3.6× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 294.20 | ~4.9× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 147.14 | ~2.5× |
 
 Not every tested combination reaches the raw 60 fps target. The smallest
 margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
 Slayer VI. The FM-PAC (YM2413) synthesis is the heaviest per-frame load of the
-target titles. PyPy increases the same case to ~2.4×. The other Raspberry Pi 5
+target titles. PyPy increases the same case to ~2.5×. The other Raspberry Pi 5
 and CPython combinations reach the target, Salamander only just (~1.1×).
 
-With CPython on a Raspberry Pi 5 and an FM-PAC title, on hardware slower than
-a Raspberry Pi 5, or with a heavier title, a run goes below 60 fps. If this occurs, the game runs in slow motion, at a rate
-proportional to the achieved frame rate. Audio also degrades (clicks or
-silence). The cause is that the emulator generates samples per frame, but the
-audio device always consumes them at 44100 Hz. PyPy3 is a drop-in alternative
-that increases throughput significantly on slower hardware. It is the
+A run goes below 60 fps in these cases: CPython on a Raspberry Pi 5 with an
+FM-PAC title, hardware slower than a Raspberry Pi 5, or a heavier title. The
+game then runs in slow motion, at a rate proportional to the achieved frame
+rate. Audio also degrades (clicks or silence). The cause is that the emulator
+generates samples per frame, but the audio device always consumes them at
+44100 Hz. PyPy3 is a drop-in alternative. On the Raspberry Pi 5 it gives about
+2 to 5.5 times the CPython throughput (see the table above). It is the
 recommended way to keep headroom on constrained hosts such as a Raspberry Pi.
 
 The PyPy numbers vary more from run to run than the CPython numbers, probably
@@ -667,10 +677,12 @@ because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.7.5, per platform and runtime.
-The author measured all versions with the same cold-boot method as above, but
-without sound synthesis (the method up to v2.7.8). These charts thus do not
-continue into the v2.8.0 numbers above.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.8.1, one chart per platform.
+Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author
+measured with the same cold-boot method as above, but without sound synthesis
+(the method up to v2.7.8). From v2.8.1 the author measured with the method
+above. You cannot compare the numbers of the two methods, so the lines break
+where the method changes.
 
 ![Benchmark history on Apple MacBook Pro (M5 Pro)](assets/bench-history-m5pro.png)
 
@@ -678,12 +690,13 @@ continue into the v2.8.0 numbers above.
 
 Automatic frame skip (`--frame-skip auto`, the default) suppresses VDP pixel
 rendering on frames that miss the deadline. The VBlank interrupt still fires
-every frame, and the sprite collision and 5th/9th-sprite flags are still
-computed, so a skipped frame never changes what the game sees. Frame skip
-saves only the drawing: on a title where sound synthesis dominates, such as an
-FM-PAC title, it gains little. This makes the display smoother on hosts that are near but below
-the 60 fps target. Frame skip has no effect on audio quality: underruns stay on
-any platform below 60 fps. To disable frame skip, use `--frame-skip none`.
+every frame, and the emulator still computes the sprite collision and
+5th/9th-sprite flags. A skipped frame thus never changes what the game sees.
+This makes the display smoother on hosts that are near but below the 60 fps
+target. Frame skip saves only the drawing: on a title where sound synthesis
+dominates, such as an FM-PAC title, it gains little. Frame skip has no effect on
+audio quality: underruns stay on any platform below 60 fps. To disable frame
+skip, use `--frame-skip none`.
 
 `--speed` scales the target frame rate. For example, `--speed 2.0` runs the
 game at 2× real time on a sufficiently fast host. It does not compensate for
@@ -790,10 +803,10 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--scale N` | `3` | Integer window scale over the 256×212 base resolution (e.g. `2` for a small display, `4` for a large one) |
 | `--mapper TYPE`, `--mapper1 TYPE` | `auto` | Slot 1 mapper (`--mapper` is an alias for `--mapper1`): `auto`, `Mirrored`, `Normal`, `ASCII8`, `ASCII16`, `Konami`, `KonamiSCC`, `Majutsushi`, `ASCII8SRAM2`, `ASCII8SRAM8`, `ASCII16SRAM2`, `ASCII16SRAM8`, `R-Type`, `Page2`, `0x4000`, `0x8000`, `KoeiSRAM32`, `GameMaster2` |
 | `--slot2 ROM2` | _(none)_ | Path to the slot 2 cartridge ROM. Conflicts with `--extension2` |
-| `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1. The emulator rejects it if slot 1 also resolves to KonamiSCC, or if slot 1 selects `--extension1 scc_plus` |
+| `--mapper2 TYPE` | `auto` | Slot 2 mapper. Same type list as `--mapper1`, including KonamiSCC and every SRAM-backed type. Slot 2 SRAM persists in the same way as slot 1 SRAM. KonamiSCC shares the single SCC chip of the machine with slot 1 (see [Cartridge mappers](#cartridge-mappers)) |
 | `--extension1 ID`, `--extension2 ID`, `--extension ID` | _(none)_ | Overlay a slot 1/slot 2 extension device. See [`docs/README_extension.md`](docs/README_extension.md) for the full list of ids and what each one is. `--extension1` conflicts with the positional `cartridge`, `--slot1`, and `--mapper1`. `--extension2` conflicts with `--slot2`/`--mapper2`. At startup, the emulator rejects the same extension id (or the same ROM, for `--slot1`/`--slot2`) on both slots. `none` forces no extension overlay on that slot, even when `py_emulator.yaml` sets one. This makes `--slotN`/`--mapperN` of that slot available on the CLI. `--extension` is an alias for `--extension2`, with the same meaning it had before `--extension1`/`--extension2` existed |
-| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk is swapped out. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
-| `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B (only on machines with two drives) |
+| `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk leaves its drive. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
+| `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
 | `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
@@ -880,8 +893,8 @@ hotkeys: {}              # frontend hotkey overrides, e.g. { pause: f6, disk_nex
 
 These settings are configurable: `machine`, `speed`, `scale`, `slot1`,
 `slot2`, `extension1`, `extension2`, `fdd1`, `frame_skip`, `mouse`, `hotkeys`,
-and the RPC, gamepad, and keyboard-joystick settings. `extension` also still works, as a
-legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
+and the RPC, gamepad, and keyboard-joystick settings. `extension` also still
+works, as a legacy alias for `extension2`. `mapper1`/`mapper2` are CLI-only (see
 `--mapper`/`--mapper1`/`--mapper2` above). Also note these points:
 
 - The gamepad button map applies to the SDL GameController path. Both ports
@@ -905,7 +918,7 @@ button and key-name labels.
 | Ctrl + Q | Quit |
 | F6 | Mount the next disk image of the `--fdd1` list in drive A (wraps to the first). No effect on machines without an FDC |
 | Shift + F6 | Eject the drive A disk, or insert the current list image again |
-| F7 (hold) | Fast-forward: run without the speed limit while the key is held |
+| F7 (hold) | Fast-forward: run without the speed limit while you hold the key |
 | Shift + F7 | Turn fast-forward on or off (latched) |
 | F8 | Save state to `saves/states/<title>_YYYYMMDD_HHMMSS.state`* |
 | F9 | Load most recent save state. The drives must hold the disks they held at the save (it does not swap disks) |
@@ -998,6 +1011,15 @@ size, slot wiring, and ROM files. The `--machine` flag selects a configuration
 by ID. When you omit it, the ROM database selects the generation automatically
 (MSX1 ROM → `cbios_msx1_jp`, MSX2 ROM or no cartridge → `cbios_msx2_jp`).
 
+You edit the YAML files. They keep the comments that record why each machine
+has its wiring. At startup, the emulator resolves the chosen machine, its
+devices, the cartridges with their mappers and the extensions into one
+MachineConfig document. The document is canonical JSON (RFC 8785), with the
+layout that [`msx/machine_config.schema.json`](msx/machine_config.schema.json)
+defines. The emulator core builds the machine from that document and the ROM
+images that it names by SHA1, never from the YAML. Another implementation of
+the core can take the same document. A save state records the document's SHA-256.
+
 ### Available machine IDs
 
 | ID | Generation | Region | VDP |
@@ -1042,8 +1064,8 @@ size.
 
 > **Note**: no real HB-F1XD variant with a 256 KB RAM mapper ever existed. Real
 > HB-F1XD hardware always has a fixed 64 KB of flat RAM, not a RAM mapper.
-> `hb_f1xd_256k` is an invented configuration, not an unverified claim about
-> real hardware. Its only purpose is to give MSX-DOS2 the memory layout that it
+> `hb_f1xd_256k` is an invented configuration. It makes no claim about real
+> hardware. Its only purpose is to give MSX-DOS2 the memory layout that it
 > needs. It keeps all other real-hardware HB-F1XD declarations unchanged.
 
 `fs_a1f` (Panasonic FS-A1F) uses the real machine ROMs and adds a TC8566AF
@@ -1126,7 +1148,7 @@ Key fields:
 | `slots.primary.N.expanded` | Set `true` to expand into 4 secondary slots |
 | `builtin_devices` | Devices wired directly (not slot-based): VDP, PSG, PPI, RTC, RAM mapper |
 | `overrides` | Per-machine device settings. The loader reads only `keyboard_type` and `control_read`, both for `ppi8255`. It accepts and ignores other keys (e.g. `vram_kb: 128` for V9938) |
-| `sha1` | `null` means load without hash verification |
+| `sha1` | Documentation only: the expected SHA1 of the dump. The loader does not compare it with the file, whether it is `null` or a hash. The core checks the SHA1 that the emulator calculates from the bytes it read |
 
 To use a custom machine definition, add a new YAML file to `config/machines/`
 and pass its `id` to `--machine`. At load time, the emulator skips device
@@ -1136,7 +1158,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 3814 tests and covers all major components. It includes
+The test suite has 3963 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1186,7 +1208,10 @@ py-msx-emulator/
 │   ├── boundary.py        # Values passed across the core boundary (config, frame output)
 │   ├── machine.py         # Component wiring, frame loop (step_frame)
 │   ├── machine_spec.py    # Resolved machine description
-│   ├── machine_loader.py  # Builds a machine from a loaded configuration
+│   ├── machine_config.py  # MachineConfig document (canonical JSON): encode and parse
+│   ├── machine_config.schema.json # JSON Schema of the MachineConfig document
+│   ├── machine_loader.py  # Builds a machine from a MachineConfig
+│   ├── canonical_json.py  # Canonical JSON writer and strict reader (documents, snapshots)
 │   ├── memory.py          # Slot-based memory bus
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
 │   ├── mapper_tracer.py   # Cartridge bank-switch tracer
@@ -1204,13 +1229,13 @@ py-msx-emulator/
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── screenshot.py      # Current-frame RGB24 capture
-│   └── state.py           # Machine state snapshot (versioned JSON)
+│   ├── snapshot.schema.json # JSON Schema of the save-state layout
+│   └── state.py           # Machine state snapshot (canonical JSON)
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── scripts/               # Benchmarks, ROM database build, profiling helpers
 ├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server (see tools/README_tools.md)
-├── docs/                  # Debugger guide, socket RPC / MCP reference
+├── docs/                  # Internals and porting guide, extensions, debugger, socket RPC / MCP
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/
 │   └── cbios/             # C-BIOS ROM files (not in version control)
@@ -1218,7 +1243,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (3814 tests)
+├── tests/                 # Test suite (3963 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

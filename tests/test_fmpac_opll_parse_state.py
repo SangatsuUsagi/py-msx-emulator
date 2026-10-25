@@ -6,15 +6,14 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 from typing import Any, Callable
 
 import pytest
 
+from msx.canonical_json import to_jsonable
 from msx.fmpac import SRAM_SIZE, FmPac
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
-from msx.state import _from_jsonable, _to_jsonable
 
 _BANK_SIZE = 0x4000
 
@@ -78,7 +77,7 @@ def test_opll_own_snapshot_parses_and_equals_itself(fmpac: FmPac) -> None:
 def test_json_round_tripped_snapshot_parses(fmpac: FmPac) -> None:
     """The load path hands parse_state bytearray blobs and JSON numbers."""
     snap = fmpac.snapshot()
-    decoded = _from_jsonable(json.loads(json.dumps(_to_jsonable(snap))))
+    decoded = json.loads(json.dumps(to_jsonable(snap)))
     assert fmpac.parse_state(decoded, "state") == snap
 
 
@@ -190,12 +189,12 @@ def test_opll_user_patch_field_out_of_range_rejected(fmpac: FmPac) -> None:
     _assert_rejected(fmpac, mutate, r"state\.opll\.user_patch\[0\]\.ML")
 
 
-@pytest.mark.parametrize("out_time", [math.nan, -1.0, math.inf, 44100.5])
-def test_opll_out_time_out_of_range_rejected(fmpac: FmPac, out_time: float) -> None:
+@pytest.mark.parametrize("phase", [-1, 72 * 44100, 1.5, True])
+def test_opll_resample_phase_out_of_range_rejected(fmpac: FmPac, phase: object) -> None:
     def mutate(s: dict[str, Any]) -> None:
-        s["opll"]["out_time"] = out_time
+        s["opll"]["resample_phase"] = phase
 
-    _assert_rejected(fmpac, mutate, r"state\.opll\.out_time")
+    _assert_rejected(fmpac, mutate, r"state\.opll\.resample_phase")
 
 
 def test_opll_slot_ws_2_rejected(fmpac: FmPac) -> None:

@@ -272,7 +272,7 @@ class V9938State(TypedDict):
     V9938-only field. VRAM, R#0-R#27, S#0, the VRAM address and read-ahead
     buffer are shared with the TMS9918A and saved by msx/state.py through the
     common VdpDevice fields. The port latch (`first_byte` and both pending
-    flags) is complete here; the common `vdp_latch` is only its port-0x99
+    flags) is complete here; the common `vdp.latch` is only its port-0x99
     view, and msx/state.py checks the two agree."""
 
     palette: list[int]
@@ -320,8 +320,9 @@ def _state_int_list(
     return check_int_list(state[key], f"{label}.{key}", length, lo, hi)
 
 
-def parse_v9938_state(obj: object) -> V9938State:
-    """Validate a JSON-decoded `vdp9938` object into a V9938State.
+def parse_v9938_state(obj: object, label: str = "vdp.v9938") -> V9938State:
+    """Validate a JSON-decoded V9938 state object (the snapshot's
+    `vdp.v9938`) into a V9938State.
 
     Every value's type and range is checked, and a missing or unknown key is
     rejected; every rejection raises SchemaError naming the field path. The
@@ -329,7 +330,6 @@ def parse_v9938_state(obj: object) -> V9938State:
     SX/DX 9 bits, SY/DY 10 bits; clipped counts NX <= 512 dots, NY <= 1024
     lines).
     """
-    label = "vdp9938"
     engine_label = f"{label}.cmd_engine"
     state = check_object(obj, label, _STATE_KEYS)
     engine = check_object(state["cmd_engine"], engine_label, _CMD_ENGINE_KEYS)

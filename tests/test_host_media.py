@@ -109,6 +109,22 @@ def test_eject_flushes_the_outgoing_image(tmp_path: Path) -> None:
     assert a.read_bytes()[:SECTOR_SIZE] == b"\x11" * SECTOR_SIZE
 
 
+def test_a_failed_write_back_keeps_the_current_disk(tmp_path: Path) -> None:
+    # fdc-interface "A failed write-back keeps the current disk".
+    m = _fdc_machine()
+    a = _dsk(tmp_path / "a.dsk")
+    swap_disk(m, 0, a)
+    before = m.fdc.drives[0].image
+    before.write_sector(5, b"\xAB" * SECTOR_SIZE)
+    a.unlink()
+    a.mkdir()                                   # the file can no longer be written
+    with pytest.raises(OSError):
+        swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
+    assert m.fdc.drives[0].image is before
+    assert m.disk_path(0) == a
+    assert "drive_a" in m.dirty_media()
+
+
 def test_nonexistent_file_keeps_the_current_disk(tmp_path: Path) -> None:
     m = _fdc_machine()
     swap_disk(m, 0, _dsk(tmp_path / "a.dsk"))

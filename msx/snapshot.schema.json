@@ -1,0 +1,2361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "py-msx-emulator machine snapshot, format 19",
+  "description": "The save-state layout written by msx/state.py save_state(): RFC 8785 (JCS) canonical JSON, integers only (within +-(2^53 - 1)), byte blobs as padded RFC 4648 base64 strings. Every property is required; null means the machine has no such part. Lengths that depend on the machine (RAM, VRAM, SRAM sizes) and cross-field rules are checked by the loader, not here.",
+  "type": "object",
+  "properties": {
+    "format_version": {
+      "const": 19
+    },
+    "machine_type": {
+      "enum": [
+        "msx1",
+        "msx2"
+      ]
+    },
+    "machine_config_sha256": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$",
+      "description": "SHA-256 (lowercase hex) of the canonical MachineConfig document the machine was built from (msx/machine_config.schema.json); empty only for a machine constructed without one."
+    },
+    "cpu": {
+      "$ref": "#/$defs/Cpu"
+    },
+    "memory": {
+      "$ref": "#/$defs/Memory"
+    },
+    "slots": {
+      "$ref": "#/$defs/Slots"
+    },
+    "vdp": {
+      "$ref": "#/$defs/Vdp"
+    },
+    "psg": {
+      "$ref": "#/$defs/Psg"
+    },
+    "ppi": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Ppi"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "scc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SccState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fdc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FdcState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rtc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RtcState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mouse": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MouseState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "cpu",
+    "fdc",
+    "format_version",
+    "machine_config_sha256",
+    "machine_type",
+    "memory",
+    "mouse",
+    "ppi",
+    "psg",
+    "rtc",
+    "scc",
+    "slots",
+    "vdp"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Ascii16MapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "required": [
+        "banks"
+      ],
+      "additionalProperties": false
+    },
+    "Ascii16Sram2MapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "sram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "banks",
+        "sram"
+      ],
+      "additionalProperties": false
+    },
+    "Ascii8MapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "required": [
+        "banks"
+      ],
+      "additionalProperties": false
+    },
+    "Ascii8Sram2MapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "sram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "banks",
+        "sram"
+      ],
+      "additionalProperties": false
+    },
+    "Cpu": {
+      "type": "object",
+      "properties": {
+        "registers": {
+          "type": "object",
+          "properties": {
+            "A": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "F": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "I": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "R": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "A_": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "F_": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "BC": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "DE": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "HL": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "IX": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "IY": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "SP": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "PC": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "BC_": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "DE_": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "HL_": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "A",
+            "A_",
+            "BC",
+            "BC_",
+            "DE",
+            "DE_",
+            "F",
+            "F_",
+            "HL",
+            "HL_",
+            "I",
+            "IX",
+            "IY",
+            "PC",
+            "R",
+            "SP"
+          ],
+          "additionalProperties": false
+        },
+        "halted": {
+          "type": "boolean"
+        },
+        "iff1": {
+          "type": "boolean"
+        },
+        "iff2": {
+          "type": "boolean"
+        },
+        "int_pending": {
+          "type": "boolean"
+        },
+        "nmi_pending": {
+          "type": "boolean"
+        },
+        "im": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        }
+      },
+      "required": [
+        "halted",
+        "iff1",
+        "iff2",
+        "im",
+        "int_pending",
+        "nmi_pending",
+        "registers"
+      ],
+      "additionalProperties": false
+    },
+    "DiskDriveState": {
+      "type": "object",
+      "properties": {
+        "track": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "side": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "disk_changed": {
+          "type": "boolean"
+        },
+        "disk_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disk_size": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disk_sha1": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "disk_changed",
+        "disk_path",
+        "disk_sha1",
+        "disk_size",
+        "side",
+        "track"
+      ],
+      "additionalProperties": false
+    },
+    "FdcState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "wd2793_sony",
+            "tc8566af"
+          ]
+        },
+        "connection_style": {
+          "type": "object"
+        },
+        "controller": {
+          "type": "object"
+        },
+        "drives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiskDriveState"
+          }
+        }
+      },
+      "required": [
+        "connection_style",
+        "controller",
+        "drives",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "wd2793_sony"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "controller": {
+                "$ref": "#/$defs/WD2793State"
+              },
+              "connection_style": {
+                "$ref": "#/$defs/SonyPhilipsConnectionState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tc8566af"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "controller": {
+                "$ref": "#/$defs/TC8566AFState"
+              },
+              "connection_style": {
+                "$ref": "#/$defs/TC8566AFConnectionState"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "FmPacState": {
+      "type": "object",
+      "properties": {
+        "sram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "bank": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "enable": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "r1ffe": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "r1fff": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "opll": {
+          "$ref": "#/$defs/OpllState"
+        }
+      },
+      "required": [
+        "bank",
+        "enable",
+        "opll",
+        "r1ffe",
+        "r1fff",
+        "sram"
+      ],
+      "additionalProperties": false
+    },
+    "GameMaster2MapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "sram_half": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "window_sram_half": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "sram_enabled": {
+          "type": "boolean"
+        },
+        "sram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "banks",
+        "sram",
+        "sram_enabled",
+        "sram_half",
+        "window_sram_half"
+      ],
+      "additionalProperties": false
+    },
+    "HalnoteMapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "subbanks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "sram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "banks",
+        "sram",
+        "subbanks"
+      ],
+      "additionalProperties": false
+    },
+    "KonamiMapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "required": [
+        "banks"
+      ],
+      "additionalProperties": false
+    },
+    "KonamiSCCMapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "scc_mode": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "banks",
+        "scc_mode"
+      ],
+      "additionalProperties": false
+    },
+    "MajutsushiMapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "last_dac": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "banks",
+        "last_dac"
+      ],
+      "additionalProperties": false
+    },
+    "MappedSlot": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "flat",
+            "fixed_page",
+            "ascii8",
+            "ascii16",
+            "ascii8_sram2",
+            "ascii8_sram8",
+            "koei_sram32",
+            "game_master2",
+            "ascii16_sram2",
+            "ascii16_sram8",
+            "r_type",
+            "konami",
+            "majutsushi",
+            "konami_scc",
+            "scc_i_cart",
+            "halnote",
+            "fmpac",
+            "ram_mapper"
+          ]
+        },
+        "state": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "state"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "flat"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/NoStateMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "fixed_page"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/NoStateMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii8"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii8MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii16"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii16MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii8_sram2"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii8Sram2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii8_sram8"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii8Sram2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "koei_sram32"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii8Sram2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "game_master2"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/GameMaster2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii16_sram2"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii16Sram2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ascii16_sram8"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/Ascii16Sram2MapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "r_type"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/RTypeMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "konami"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/KonamiMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "majutsushi"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/MajutsushiMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "konami_scc"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/KonamiSCCMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "scc_i_cart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/SCCICartState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "halnote"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/HalnoteMapperState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "fmpac"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/FmPacState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ram_mapper"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "$ref": "#/$defs/RamMapperState"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Memory": {
+      "type": "object",
+      "properties": {
+        "ram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "primary_slot_register": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "slot0_ram": {
+          "anyOf": [
+            {
+              "type": "string",
+              "contentEncoding": "base64",
+              "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ram_mapper": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "ram": {
+                  "type": "string",
+                  "contentEncoding": "base64",
+                  "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                },
+                "banks": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                }
+              },
+              "required": [
+                "banks",
+                "ram"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "primary_slot_register",
+        "ram",
+        "ram_mapper",
+        "slot0_ram"
+      ],
+      "additionalProperties": false
+    },
+    "MouseState": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "x_rel": {
+          "type": "integer",
+          "minimum": -127,
+          "maximum": 127
+        },
+        "y_rel": {
+          "type": "integer",
+          "minimum": -127,
+          "maximum": 127
+        },
+        "cur_x_rel": {
+          "type": "integer",
+          "minimum": -32767,
+          "maximum": 32767
+        },
+        "cur_y_rel": {
+          "type": "integer",
+          "minimum": -32767,
+          "maximum": 32767
+        },
+        "status": {
+          "enum": [
+            0,
+            16,
+            32,
+            48
+          ]
+        },
+        "last_pin8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "last_cycle_age": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "cur_x_rel",
+        "cur_y_rel",
+        "last_cycle_age",
+        "last_pin8",
+        "phase",
+        "status",
+        "x_rel",
+        "y_rel"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "phase": {
+            "enum": [
+              4,
+              5,
+              6
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "x_rel": {
+            "const": 0
+          },
+          "y_rel": {
+            "const": 0
+          }
+        }
+      }
+    },
+    "NoStateMapperState": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "OpllPatch": {
+      "type": "object",
+      "properties": {
+        "AM": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "PM": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "EG": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "KR": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ML": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "KL": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "TL": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "FB": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "WS": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "AR": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "DR": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "SL": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "RR": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "AM",
+        "AR",
+        "DR",
+        "EG",
+        "FB",
+        "KL",
+        "KR",
+        "ML",
+        "PM",
+        "RR",
+        "SL",
+        "TL",
+        "WS"
+      ],
+      "additionalProperties": false
+    },
+    "OpllSlot": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "pg_keep": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "pg_phase": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "eg_state": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "eg_shift": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "eg_rate_h": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "eg_rate_l": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "rks": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "tll": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "key_flag": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sus_flag": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "blk_fnum": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "blk": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "fnum": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "volume": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "pg_out": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "eg_out": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "update_requests": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "output": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "ws": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "blk",
+        "blk_fnum",
+        "eg_out",
+        "eg_rate_h",
+        "eg_rate_l",
+        "eg_shift",
+        "eg_state",
+        "fnum",
+        "key_flag",
+        "output",
+        "pg_keep",
+        "pg_out",
+        "pg_phase",
+        "rks",
+        "sus_flag",
+        "tll",
+        "type",
+        "update_requests",
+        "volume",
+        "ws"
+      ],
+      "additionalProperties": false
+    },
+    "OpllState": {
+      "type": "object",
+      "properties": {
+        "reg": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "patch_number": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18
+          },
+          "minItems": 9,
+          "maxItems": 9
+        },
+        "user_patch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpllPatch"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpllSlot"
+          },
+          "minItems": 18,
+          "maxItems": 18
+        },
+        "adr": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "pm_phase": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "am_phase": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "lfo_am": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 13
+        },
+        "noise": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388607
+        },
+        "short_noise": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "test_flag": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "rhythm_mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "slot_key_status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 262143
+        },
+        "eg_counter": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ch_out": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -4086,
+            "maximum": 4084
+          },
+          "minItems": 14,
+          "maxItems": 14
+        },
+        "resample_phase": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3175199
+        }
+      },
+      "required": [
+        "adr",
+        "am_phase",
+        "ch_out",
+        "eg_counter",
+        "lfo_am",
+        "noise",
+        "patch_number",
+        "pm_phase",
+        "reg",
+        "resample_phase",
+        "rhythm_mode",
+        "short_noise",
+        "slot_key_status",
+        "slots",
+        "test_flag",
+        "user_patch"
+      ],
+      "additionalProperties": false
+    },
+    "Ppi": {
+      "type": "object",
+      "properties": {
+        "port_c": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "control": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 255
+        },
+        "bus_latch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "bus_latch",
+        "control",
+        "port_c"
+      ],
+      "additionalProperties": false
+    },
+    "PrimarySlot": {
+      "type": "object",
+      "properties": {
+        "mapper": {
+          "$ref": "#/$defs/MappedSlot"
+        },
+        "secondary_slot_register": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subslots": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MappedSlot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mapper",
+        "secondary_slot_register",
+        "subslots"
+      ],
+      "additionalProperties": false
+    },
+    "Psg": {
+      "type": "object",
+      "properties": {
+        "registers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "latch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "synth": {
+          "$ref": "#/$defs/PsgSynthState"
+        }
+      },
+      "required": [
+        "latch",
+        "registers",
+        "synth"
+      ],
+      "additionalProperties": false
+    },
+    "PsgSynthState": {
+      "type": "object",
+      "properties": {
+        "tone_cnt": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4095
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "tone_out": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "noise_cnt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 62
+        },
+        "lfsr": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 131071
+        },
+        "env_cnt": {
+          "type": "integer",
+          "minimum": -16,
+          "maximum": 65535
+        },
+        "env_step": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "env_attack": {
+          "enum": [
+            0,
+            31
+          ]
+        },
+        "env_alternate": {
+          "type": "boolean"
+        },
+        "env_hold_flag": {
+          "type": "boolean"
+        },
+        "env_holding": {
+          "type": "boolean"
+        },
+        "clk_frac": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 44099
+        }
+      },
+      "required": [
+        "clk_frac",
+        "env_alternate",
+        "env_attack",
+        "env_cnt",
+        "env_hold_flag",
+        "env_holding",
+        "env_step",
+        "lfsr",
+        "noise_cnt",
+        "tone_cnt",
+        "tone_out"
+      ],
+      "additionalProperties": false
+    },
+    "RTypeMapperState": {
+      "type": "object",
+      "properties": {
+        "bank": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "bank"
+      ],
+      "additionalProperties": false
+    },
+    "RamMapperState": {
+      "type": "object",
+      "properties": {
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "ram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "banks",
+        "ram"
+      ],
+      "additionalProperties": false
+    },
+    "RtcState": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9999
+          },
+          "minItems": 6,
+          "maxItems": 6
+        },
+        "elapsed_cycles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "addr": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "test": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "reset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "regs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 15
+          },
+          "minItems": 52,
+          "maxItems": 52
+        }
+      },
+      "required": [
+        "addr",
+        "elapsed_cycles",
+        "mode",
+        "regs",
+        "reset",
+        "start",
+        "test"
+      ],
+      "additionalProperties": false
+    },
+    "SCCICartState": {
+      "type": "object",
+      "properties": {
+        "ram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "banks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "mode_register": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "banks",
+        "mode_register",
+        "ram"
+      ],
+      "additionalProperties": false
+    },
+    "SccState": {
+      "type": "object",
+      "properties": {
+        "waves": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "minItems": 32,
+            "maxItems": 32
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "freq": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4095
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "vol": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 15
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "enable": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "phase_cnt": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4095
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "phase_idx": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "clk_frac": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 44099
+        }
+      },
+      "required": [
+        "clk_frac",
+        "enable",
+        "freq",
+        "phase_cnt",
+        "phase_idx",
+        "vol",
+        "waves"
+      ],
+      "additionalProperties": false
+    },
+    "Slots": {
+      "type": "object",
+      "properties": {
+        "slot1": {
+          "$ref": "#/$defs/PrimarySlot"
+        },
+        "slot2": {
+          "$ref": "#/$defs/PrimarySlot"
+        },
+        "slot3": {
+          "type": "object",
+          "properties": {
+            "secondary_slot_register": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "secondary_slot_register"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slot1",
+        "slot2",
+        "slot3"
+      ],
+      "additionalProperties": false
+    },
+    "SonyPhilipsConnectionState": {
+      "type": "object",
+      "properties": {
+        "side_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "drive_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "drive_reg",
+        "side_reg"
+      ],
+      "additionalProperties": false
+    },
+    "TC8566AFConnectionState": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "TC8566AFState": {
+      "type": "object",
+      "properties": {
+        "control_reg0": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "control_reg1": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "selected_drive_index": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "last_st0": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "last_pcn": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "command": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "cmd_buffer": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "cmd_needed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "result_buffer": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "result_index": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "exec_buffer": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "exec_index": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "exec_is_write": {
+          "type": "boolean"
+        },
+        "exec_needed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "exec_ctr": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "format_fill": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "cmd_buffer",
+        "cmd_needed",
+        "command",
+        "control_reg0",
+        "control_reg1",
+        "exec_buffer",
+        "exec_ctr",
+        "exec_index",
+        "exec_is_write",
+        "exec_needed",
+        "format_fill",
+        "last_pcn",
+        "last_st0",
+        "phase",
+        "result_buffer",
+        "result_index",
+        "selected_drive_index"
+      ],
+      "additionalProperties": false
+    },
+    "V9938CmdEngineState": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "transfer": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "log": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sx": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sy": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "dx": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "dy": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "nx": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ny": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "x": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "xstep": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ystep": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "bpl": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ppb": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "bpp": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "tr_delay": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "active",
+        "bpl",
+        "bpp",
+        "code",
+        "dx",
+        "dy",
+        "log",
+        "nx",
+        "ny",
+        "ppb",
+        "sx",
+        "sy",
+        "tr_delay",
+        "transfer",
+        "x",
+        "xstep",
+        "y",
+        "ystep"
+      ],
+      "additionalProperties": false
+    },
+    "V9938State": {
+      "type": "object",
+      "properties": {
+        "palette": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 511
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "cmd_regs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "status1": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "status2": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "status8": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "status9": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "cmd_remaining": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "cmd_engine": {
+          "$ref": "#/$defs/V9938CmdEngineState"
+        },
+        "collision_x": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "collision_y": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "first_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "control_pending": {
+          "type": "boolean"
+        },
+        "palette_pending": {
+          "type": "boolean"
+        },
+        "blink_state": {
+          "type": "boolean"
+        },
+        "blink_count": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "blink_count",
+        "blink_state",
+        "cmd_engine",
+        "cmd_regs",
+        "cmd_remaining",
+        "collision_x",
+        "collision_y",
+        "control_pending",
+        "first_byte",
+        "palette",
+        "palette_pending",
+        "status1",
+        "status2",
+        "status8",
+        "status9"
+      ],
+      "additionalProperties": false
+    },
+    "Vdp": {
+      "type": "object",
+      "properties": {
+        "vram": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "registers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "minItems": 8,
+          "maxItems": 28
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "latch": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "address": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 131071
+        },
+        "read_buffer": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "frame_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "v9938": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/V9938State"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "address",
+        "frame_count",
+        "latch",
+        "read_buffer",
+        "registers",
+        "status",
+        "v9938",
+        "vram"
+      ],
+      "additionalProperties": false
+    },
+    "WD2793State": {
+      "type": "object",
+      "properties": {
+        "command_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "track_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sector_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "data_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "status_reg": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "intrq": {
+          "type": "boolean"
+        },
+        "drq": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "buffer": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "step_dir": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "buffer",
+        "command_reg",
+        "data_reg",
+        "drq",
+        "index",
+        "intrq",
+        "mode",
+        "sector_reg",
+        "status_reg",
+        "step_dir",
+        "track_reg"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

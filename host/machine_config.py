@@ -23,8 +23,8 @@ PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
 Rust crate candidates: serde + serde_yaml (or saphyr) deserializing directly
   into the equivalent MachineSpec/AppConfig structs, replacing this hand-
   written validation layer with derive-macro-generated checks -- would need
-  custom Deserialize impls to reproduce the exact error messages and
-  _KNOWN_*_KEYS unknown-key warnings this file emits. The TypedDict shapes
+  custom Deserialize impls to reproduce the exact error messages this file
+  emits. The TypedDict shapes
   this file now declares are a reasonable 1:1 map to the equivalent serde
   structs, should a Rust port be undertaken.
 C++ library candidates: no single dominant equivalent -- yaml-cpp + manual
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeGuard, cast
 
@@ -58,6 +58,26 @@ from msx.boundary import (
 )
 from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
+
+# The closed vocabularies are defined once, in the core's document parser,
+# which enforces them too; the YAML loader checks the authored files against
+# the same sets under its historical names.
+from msx.machine_config import EXTENSION_DEVICES as _KNOWN_EXTENSION_DEVICES
+from msx.machine_config import EXTENSION_DEVICES_REQUIRING_ROM as _EXTENSION_DEVICES_REQUIRING_ROM
+from msx.machine_config import FDC_CONNECTION_STYLES as _SUPPORTED_FDC_STYLES
+from msx.machine_config import FDC_CONTROLLERS as _SUPPORTED_FDC_CONTROLLERS
+from msx.machine_config import FDC_PAIRS as _SUPPORTED_FDC_PAIRS
+from msx.machine_config import IO_DEVICES as _KNOWN_IO_DEVICES
+from msx.machine_config import IO_DEVICES_REQUIRING_ROM as _IO_DEVICES_REQUIRING_ROM
+from msx.machine_config import MAPPER_NAMES as _SUPPORTED_MAPPERS
+from msx.machine_config import SUBSLOT_DEVICES as _KNOWN_EXPANDED_SUBSLOT_DEVICES
+from msx.machine_config import (
+    SUBSLOT_DEVICES_REQUIRING_ROM as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM,
+)
+from msx.machine_config import (
+    SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
+)
+from msx.machine_config import encode_machine_config
 from msx.machine_loader import _SRAM_SIZES, build_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
@@ -76,25 +96,6 @@ from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.vdp._geometry import VideoStandard
 from msx.vdp.tracer import Tracer
-
-_SUPPORTED_MAPPERS = frozenset({
-    "Mirrored", "Normal", "ASCII8", "ASCII16", "Konami", "KonamiSCC", "Majutsushi",
-    "ASCII8SRAM2", "ASCII8SRAM8", "ASCII16SRAM2", "ASCII16SRAM8",
-    "R-Type", "Page2", "0x4000", "0x8000", "KoeiSRAM32", "GameMaster2",
-})
-
-# Supported FDC controller chips and connection styles, selected by machine YAML.
-# New entries here (plus a builder branch in _build_fdc) add hardware without
-# touching Memory.
-_SUPPORTED_FDC_CONTROLLERS = frozenset({"wd2793", "tc8566af"})
-_SUPPORTED_FDC_STYLES = frozenset({"sony", "tc8566af"})
-# (controller, connection_style) pairs _build_fdc actually knows how to
-# construct -- each controller family has exactly one style today, but the
-# two are independent axes in the YAML schema, so validate the pair
-# explicitly rather than silently defaulting a mismatched combo (e.g.
-# controller: wd2793 + connection_style: tc8566af) to whichever branch
-# _build_fdc happens to fall into.
-_SUPPORTED_FDC_PAIRS = frozenset({("wd2793", "sony"), ("tc8566af", "tc8566af")})
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -902,35 +903,6 @@ def load_machine_spec(
 # Extension overlay (config/extensions/<id>.yaml)
 # ---------------------------------------------------------------------------
 
-# Device kinds build_machine's extension_overlay dispatch (msx/machine_loader.py)
-# knows how to construct. Kept here, next to the overlay loader, as the single
-# place a new extension's device kind must be added.
-_KNOWN_EXTENSION_DEVICES = frozenset({"fmpac", "scc_i_cart"})
-
-# Device kinds whose overlay YAML MUST declare a 'rom' block (fmpac's device
-# construction requires a ROM; scc_i_cart's RAM starts blank, no file loaded).
-_EXTENSION_DEVICES_REQUIRING_ROM = frozenset({"fmpac"})
-
-# Device kinds an expanded overlay's per-sub-slot declaration may name
-# (build_machine's expanded-overlay dispatch knows how to construct each) --
-# a separate namespace from _KNOWN_EXTENSION_DEVICES above (flat-overlay-only
-# device names), which happens to share no members with it today.
-_KNOWN_EXPANDED_SUBSLOT_DEVICES = frozenset(
-    {"halnote", "flat_rom", "ram_mapper", "ascii8", "ascii16"}
-)
-_EXPANDED_SUBSLOT_DEVICES_REQUIRING_ROM = frozenset(
-    {"halnote", "flat_rom", "ascii8", "ascii16"}
-)
-# ram_mapper carries no ROM -- it's configured by size instead (see
-# _ExpandedSubslotDevice.size_kb).
-_EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE = frozenset({"ram_mapper"})
-
-# Device kinds an expanded overlay's optional top-level io_device may name
-# (a device with no cartridge-slot address decode of its own, e.g. the
-# Kanji-ROM font device at fixed I/O ports).
-_KNOWN_IO_DEVICES = frozenset({"kanji_rom"})
-_IO_DEVICES_REQUIRING_ROM = frozenset({"kanji_rom"})
-
 
 def _parse_expanded_device(
     data: ExpandedDeviceYaml,
@@ -1133,14 +1105,13 @@ def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytea
 
 
 def _load_device_rom(device: _ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
-    """Load a resolved device's required ROM file. `rom_base_dir`/
-    `rom_entry` are asserted non-None: every caller here already resolved
-    `device` from a role (machine io_device, an expanded sub-slot/
-    io_device, or a flat extension overlay) that requires a ROM, and
-    `_parse_expanded_device`/`load_extension_overlay` guarantee both fields
-    are set together whenever a `rom:` block was present at load time."""
-    assert device.rom_base_dir is not None, f"{label}: rom_base_dir not resolved"
-    assert device.rom_entry is not None, f"{label}: rom_entry not resolved"
+    """Load a resolved device's required ROM file. A device resolved from
+    YAML (`_parse_expanded_device`/`load_extension_overlay`) always has both
+    `rom_base_dir` and `rom_entry` when it needs a ROM; one without them --
+    e.g. parsed back from a MachineConfig document, which holds no host path
+    -- is a MachineLoadError naming `label`."""
+    if device.rom_base_dir is None or device.rom_entry is None:
+        raise MachineLoadError(f"{label}: no ROM file to read (rom_base_dir or rom unresolved)")
     rom = _load_rom(device.rom_base_dir, device.rom_entry.file, required=True)
     assert rom is not None
     return rom
@@ -1155,16 +1126,41 @@ def _cartridge_sram_path(cartridge: bytes) -> Path:
     return Path("saves") / "sram" / f"{sha1}.sram"
 
 
-def sram_paths(config: MachineConfig) -> dict[MediaId, Path]:
+@dataclass
+class LoadedMachineConfig(MachineConfig):
+    """The MachineConfig load_machine_config() produces, plus host data that
+    never reaches the core: the file each battery-backed medium is persisted
+    in (see sram_paths). build_machine() reads only the MachineConfig part."""
+
+    sram_files: dict[MediaId, Path] = field(default_factory=dict)
+
+
+def sram_paths(config: LoadedMachineConfig) -> dict[MediaId, Path]:
     """The file each battery-backed medium of `config` is persisted in, by
     media id: an SRAM cartridge's `saves/sram/<sha1>.sram`, an extension's
     own `sram:` file, and an RTC machine's `saves/sram/rtc_<machine_id>.sram`."""
+    return dict(config.sram_files)
+
+
+@dataclass
+class _Cartridges:
+    """The resolved cartridge choices load_machine_config works from."""
+
+    cartridge1: bytes | None
+    mapper1: str
+    cartridge2: bytes | None
+    mapper2: str
+    extension_overlay1: AnyExtensionOverlay | None
+    extension_overlay2: AnyExtensionOverlay | None
+
+
+def _sram_paths(spec: MachineSpec, carts: _Cartridges) -> dict[MediaId, Path]:
     paths: dict[MediaId, Path] = {}
-    carts = ((1, config.cartridge1, config.mapper1), (2, config.cartridge2, config.mapper2))
-    for slot, cartridge, mapper in carts:
+    slots = ((1, carts.cartridge1, carts.mapper1), (2, carts.cartridge2, carts.mapper2))
+    for slot, cartridge, mapper in slots:
         if cartridge is not None and mapper in _SRAM_SIZES:
             paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
-    overlays = ((1, config.extension_overlay1), (2, config.extension_overlay2))
+    overlays = ((1, carts.extension_overlay1), (2, carts.extension_overlay2))
     for slot, overlay in overlays:
         if isinstance(overlay, ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
@@ -1173,17 +1169,17 @@ def sram_paths(config: MachineConfig) -> dict[MediaId, Path]:
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
             paths[MediaId.FMPAC_SRAM] = overlay.sram_save_path
-    if config.spec.generation == "msx2" and config.spec.has_rtc:
-        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{config.spec.machine_id}.sram")
+    if spec.generation == "msx2" and spec.has_rtc:
+        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
     return paths
 
 
-def _sram_size_and_label(config: MachineConfig, media_id: MediaId) -> tuple[int, str]:
-    """Expected image size and warning label of an id sram_paths produced."""
+def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, str]:
+    """Expected image size and warning label of an id _sram_paths produced."""
     if media_id == slot_sram_id(1):
-        return _SRAM_SIZES[config.mapper1], ""
+        return _SRAM_SIZES[carts.mapper1], ""
     if media_id == slot_sram_id(2):
-        return _SRAM_SIZES[config.mapper2], ""
+        return _SRAM_SIZES[carts.mapper2], ""
     if media_id == MediaId.FMPAC_SRAM:
         return FMPAC_SRAM_SIZE, "FM-PAC "
     if media_id == MediaId.RTC_CMOS:
@@ -1209,9 +1205,91 @@ def _overlay_roms(
             roms[f"slot{slot}.io_device"] = _load_device_rom(
                 overlay.io_device, "expanded overlay io_device"
             )
-    elif overlay is not None and overlay.rom_entry is not None:
+    elif (overlay is not None and overlay.rom_entry is not None
+          and overlay.device in _EXTENSION_DEVICES_REQUIRING_ROM):
+        # Only a device that uses its ROM reads one: an SCC-I fragment's
+        # `rom:` block, if any, is ignored as the device has no ROM.
         roms[f"slot{slot}.ext"] = _load_device_rom(overlay, f"{overlay.device} extension")
     return roms
+
+
+def _load_spec_roms(
+    spec: MachineSpec,
+    bios_override: bytes | None,
+    logo_override: bytes | None,
+    extrom_override: bytes | None,
+    disk_rom_override: bytes | None,
+) -> dict[str, bytes]:
+    """The machine's own ROM images by role (main, logo, sub, disk,
+    io_device), each override replacing its file."""
+    def spec_rom(filename: str, required: bool) -> bytes | None:
+        if spec.rom_base_dir is None:
+            raise MachineLoadError(f"machine '{spec.name}' has no rom_base_dir to read {filename}")
+        return _load_rom(spec.rom_base_dir, filename, required=required)
+
+    roms: dict[str, bytes] = {}
+    if bios_override is not None:
+        roms["main"] = bios_override
+    else:
+        main = spec_rom(spec.main_rom_entry.file, True)
+        assert main is not None
+        roms["main"] = main
+    if logo_override is not None:
+        roms["logo"] = logo_override
+    elif spec.logo_rom_entry is not None:
+        logo = spec_rom(spec.logo_rom_entry.file, False)
+        if logo is not None:
+            roms["logo"] = logo
+    if spec.io_device is not None and spec.io_device.device == "kanji_rom":
+        roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
+    if spec.generation != "msx2":
+        return roms
+    if extrom_override is not None:
+        roms["sub"] = extrom_override
+    elif spec.sub_rom_entry is not None:
+        sub = spec_rom(spec.sub_rom_entry.file, True)
+        assert sub is not None
+        roms["sub"] = sub
+    if spec.fdc is not None:
+        if disk_rom_override is not None:
+            roms["disk"] = disk_rom_override
+        else:
+            disk = spec_rom(spec.fdc.disk_rom_entry.file, True)
+            assert disk is not None
+            roms["disk"] = disk
+    return roms
+
+
+def _load_disks(
+    spec: MachineSpec, fdd1: Path | None, fdd2: Path | None
+) -> dict[MediaId, DiskMedium]:
+    """The disk images for the drives an MSX2 machine's FDC has."""
+    disks: dict[MediaId, DiskMedium] = {}
+    if spec.generation != "msx2" or spec.fdc is None:
+        return disks
+    for index, path in enumerate((fdd1, fdd2)):
+        if path is not None and index >= spec.fdc.drives:
+            print(
+                f"warning: --fdd{index + 1} given but machine has only "
+                f"{spec.fdc.drives} drive(s); ignoring",
+                file=sys.stderr,
+            )
+        elif path is not None:
+            disks[drive_media_id(index)] = read_disk_medium(path)
+    return disks
+
+
+def _load_media(
+    sram_files: dict[MediaId, Path], carts: _Cartridges
+) -> dict[MediaId, bytes]:
+    """The saved image of each battery-backed medium that has one."""
+    media: dict[MediaId, bytes] = {}
+    for media_id, path in sram_files.items():
+        size, label = _sram_size_and_label(carts, media_id)
+        sram = _load_sram_or_warn(path, size, label)
+        if sram is not None:
+            media[media_id] = bytes(sram)
+    return media
 
 
 def load_machine_config(
@@ -1229,9 +1307,12 @@ def load_machine_config(
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
-) -> MachineConfig:
-    """Read every file `spec` and the arguments name into a MachineConfig for
-    msx.machine_loader.build_machine.
+) -> LoadedMachineConfig:
+    """Read every file `spec` and the arguments name, and encode the
+    MachineConfig document, for msx.machine_loader.build_machine: the
+    document, the ROM images it references keyed by SHA1, the run inputs
+    (saved SRAM/CMOS images, disks, RTC start time), and the file each
+    battery-backed medium is persisted in (sram_files).
 
     Args:
         spec: Fully-resolved MachineSpec from load_machine_spec().
@@ -1247,67 +1328,31 @@ def load_machine_config(
 
     Raises:
         MachineLoadError: If a required ROM file is missing and no override
-            is given.
+            is given, or `spec` has no rom_base_dir to read a ROM file from.
         OSError: If a disk image cannot be read.
     """
-    roms: dict[str, bytes] = {}
-    if bios_override is not None:
-        roms["main"] = bios_override
-    else:
-        main = _load_rom(spec.rom_base_dir, spec.main_rom_entry.file, required=True)
-        assert main is not None
-        roms["main"] = main
-    if logo_override is not None:
-        roms["logo"] = logo_override
-    elif spec.logo_rom_entry is not None:
-        logo = _load_rom(spec.rom_base_dir, spec.logo_rom_entry.file, required=False)
-        if logo is not None:
-            roms["logo"] = logo
-    mapper1_name = _resolve_mapper_type(mapper1, cartridge1)
-    mapper2_name = _resolve_mapper_type(mapper2, cartridge2)
-    if spec.io_device is not None and spec.io_device.device == "kanji_rom":
-        roms["io_device"] = _load_device_rom(spec.io_device, "machine io_device")
+    roms = _load_spec_roms(spec, bios_override, logo_override, extrom_override, disk_rom_override)
     roms.update(_overlay_roms(1, extension_overlay1))
     roms.update(_overlay_roms(2, extension_overlay2))
-
-    disks: dict[MediaId, DiskMedium] = {}
-    if spec.generation == "msx2":
-        if extrom_override is not None:
-            roms["sub"] = extrom_override
-        elif spec.sub_rom_entry is not None:
-            sub = _load_rom(spec.rom_base_dir, spec.sub_rom_entry.file, required=True)
-            assert sub is not None
-            roms["sub"] = sub
-        if spec.fdc is not None:
-            if disk_rom_override is not None:
-                roms["disk"] = disk_rom_override
-            else:
-                disk = _load_rom(spec.rom_base_dir, spec.fdc.disk_rom_entry.file, required=True)
-                assert disk is not None
-                roms["disk"] = disk
-            for index, path in enumerate((fdd1, fdd2)):
-                if path is not None and index >= spec.fdc.drives:
-                    print(
-                        f"warning: --fdd{index + 1} given but machine has only "
-                        f"{spec.fdc.drives} drive(s); ignoring",
-                        file=sys.stderr,
-                    )
-                elif path is not None:
-                    disks[drive_media_id(index)] = read_disk_medium(path)
-
-    config = MachineConfig(
-        spec=spec, roms=roms,
-        cartridge1=cartridge1, mapper1=mapper1_name,
-        cartridge2=cartridge2, mapper2=mapper2_name,
+    disks = _load_disks(spec, fdd1, fdd2)
+    carts = _Cartridges(
+        cartridge1=cartridge1, mapper1=_resolve_mapper_type(mapper1, cartridge1),
+        cartridge2=cartridge2, mapper2=_resolve_mapper_type(mapper2, cartridge2),
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
-        disks=disks, rtc_initial_time=rtc_initial_time,
     )
-    for media_id, path in sram_paths(config).items():
-        size, label = _sram_size_and_label(config, media_id)
-        data = _load_sram_or_warn(path, size, label)
-        if data is not None:
-            config.media[media_id] = bytes(data)
-    return config
+    document, images = encode_machine_config(
+        spec, roms,
+        cartridge1=carts.cartridge1, mapper1=carts.mapper1,
+        cartridge2=carts.cartridge2, mapper2=carts.mapper2,
+        extension_overlay1=carts.extension_overlay1,
+        extension_overlay2=carts.extension_overlay2,
+    )
+    sram_files = _sram_paths(spec, carts)
+    return LoadedMachineConfig(
+        document=document, roms=images, media=_load_media(sram_files, carts),
+        disks=disks, rtc_initial_time=rtc_initial_time,
+        sram_files=sram_files,
+    )
 
 
 def build_machine_from_spec(

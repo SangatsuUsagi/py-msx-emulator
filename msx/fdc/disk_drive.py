@@ -17,7 +17,7 @@ from msx.fdc.disk_image import (
     DskDiskImage,
 )
 from msx.snapshot_schema import (
-    I64_MAX,
+    SAFE_INT_MAX,
     SchemaError,
     SnapshotMismatchError,
     check_bool,
@@ -162,7 +162,7 @@ class DiskDrive:
         side = check_int(fields["side"], f"{label}.side", 0, 1)
         disk_changed = check_bool(fields["disk_changed"], f"{label}.disk_changed")
         disk_path = check_optional_str(fields["disk_path"], f"{label}.disk_path")
-        disk_size = check_optional_int(fields["disk_size"], f"{label}.disk_size", 1, I64_MAX)
+        disk_size = check_optional_int(fields["disk_size"], f"{label}.disk_size", 1, SAFE_INT_MAX)
         disk_sha1 = check_optional_str(fields["disk_sha1"], f"{label}.disk_sha1")
         has_path = disk_path is not None
         if has_path != (disk_size is not None) or has_path != (disk_sha1 is not None):

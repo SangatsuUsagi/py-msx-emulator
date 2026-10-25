@@ -13,6 +13,7 @@
 - [フロッピーディスク（FDC）](#フロッピーディスクfdc)
 - [マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ)
 - [マシン YAML ローダ](#マシン-yaml-ローダ)
+- [コアの境界と移植ガイド](#コアの境界と移植ガイド)
 - [移植性](#移植性)
 
 ---
@@ -108,31 +109,37 @@ def irq_pending(self) -> bool:
 
 ### 水平ライン割り込み
 
-`Machine.run_frame()` はフレームをスキャンラインに分け、各スキャンラインの T ステート予算の終わりで `vdp9938.begin_scanline(L)` を 1 回呼ぶ。
+`Machine.run_frame()` はフレームをスキャンラインに分け、各スキャンラインの T ステート予算の終わりで `vdp9938.begin_scanline(L)` を 1 回呼ぶ。概略は次のとおり（`Machine._run_lines_fast`）。
 
 ```python
-for L in range(lpf):               # lpf = 262（NTSC ライン数）
-    line_end = (L + 1) * cpf // lpf
+for line in range(first_line, end_line):   # NTSC は 1 フレーム 262 ライン
+    line_end = (line + 1) * cpf // lpf
     while total < line_end:
         cpu.int_pending = vdp9938.irq
-        n = cpu_step()
-        ...
-    vdp9938.begin_scanline(L)
+        n = cpu_step()                     # または step_halted_batch()（後述）
+        total += n
+        if vdp9938._cmd_active:
+            vdp9938.tick(n)                # コマンドエンジンの実行中
+        else:
+            vdp9938._line_cycle += n       # 水平帰線のタイマーだけ
+    vdp9938.begin_scanline(line)
 ```
 
 `begin_scanline` によるレベルの変化は、CPU が次の命令の境界で読み取る。
+
+ループは 2 つの区間に分けて回す。`vblank_start_line` までのラインと、フレームの残り。マシンはその間、VBlank の割り込みハンドラが動く前にフレームを描画する（[VDP](#vdp) を参照）。CPU が HALT 中で割り込みを受け付けられない間、ループは `step()` の代わりに `Z80.step_halted_batch()` を呼ぶ。1 回の呼び出しで、ラインの終わりまでの HALT 中の M1 サイクルをまとめて進め、R の値と T ステートの合計は同じになる。V9938 のコマンドの実行中はまとめない。コマンドエンジンがラインの途中で割り込みを起こすことがあるため。
 
 `begin_scanline(line)` は、割り込みを起こすラインを `(R#19 − R#23) & 0xFF` で計算する。`line == effective_irq_line` で、IE1（R#0 bit 4）がセットされていれば、S#1 bit 0（FH）をセットする。比較の対象は 0〜255 のどのラインでもよく、ボーダーや垂直帰線期間のラインも含む。IE1 がクリアの間は FH をラッチしないので、後から IE1 をセットしても、すでに過ぎたラインの割り込みは起きない。
 
 FH は S#1 を読むまでセットされたまま。読むと FH がクリアされ、`irq` が計算し直される。
 
-`begin_scanline(display_height)`、つまり表示領域のすぐ次のラインでは、VBlank フラグもセットする。MSX2 では、以前あったフレーム単位の終了処理をこれで置き換えている。
+`begin_scanline(vblank_start_line)` は VBlank フラグもセットする。`vblank_start_line` は表示ライン数（192 か 212）なので、これは表示領域のすぐ次のライン。MSX2 では、以前あったフレーム単位の終了処理をこれで置き換えている。
 
 ---
 
 ## I/O バス
 
-### 登録とディスパッチ
+### 登録と振り分け
 
 `IOBus`（`msx/io.py`）は、`(start, end, handler)` のタプルのリストを 2 つ持つ。読み出し用と書き込み用。デバイスはマシンの構築時に自分を登録する。
 
@@ -193,15 +200,15 @@ io.register_write(0x98, 0x9B, vdp.write_port)
 `V9938.write_port()` は、表示に関係するレジスタへの書き込みをすべて `_reg_write_log` に記録する。
 
 ```python
-_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
+_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 18, 19, 23})
 ```
 
-各エントリは次のどちらかの形になる。
+各エントリは次の 2 つの型のどちらか（`msx/vdp/_v9938_defs.py`）で、読む側は型で区別する。
 
-- `(display_line, reg, value)`：レジスタへの書き込み
-- `(display_line, -1, (palette_index, grb_value))`：パレットへの書き込み（ポート 0x9A）。`reg = -1` を目印に使う
+- `_RegChange(line, reg, value)`：レジスタへの書き込み
+- `_PaletteChange(line, idx, rgb)`：パレットへの書き込み（ポート 0x9A）。`rgb` はパレットが持つ 9 ビットの値で、並びは `r << 6 | g << 3 | b`
 
-`begin_scanline(0)`（フレームの先頭）がログをクリアする。`render_frame()` はクリアしないので、SDL2 フロントエンドは RGB への変換でこのログを使い、スキャンラインごとに正しいパレットを当てられる。
+`begin_scanline(0)`（フレームの先頭）がログをクリアする。`render_frame()` はクリアしない。そのため `V9938.to_rgb24()` は、コアの中でフレームを RGB24 に変換するときにこのログを使い、スキャンラインごとに正しいパレットを当てられる。
 
 `render_frame_v9938(vdp)` は `_reg_write_log` を調べて、バンドの境界を見つける。境界は、表示に関係する値が前のバンドのスナップショットと変わるライン。連続するバンド `[y0, y1)` は、その先頭のレジスタ状態で描画する。バンドごとのレンダラには `y_start` と `y_end` を明示的に渡し、どのスキャンラインもちょうど 1 回だけ描画される。
 
@@ -229,7 +236,7 @@ V9938 のハードウェアコマンドは、バイト単位とピクセル単�
 | SRCH     | スキャンライン上で色を検索する（結果は S#8/S#9） |
 | ABRT     | アクティブなコマンドを中断する                   |
 
-エンジンは各コマンドをすぐに実行する。コマンドにかかる時間を表すため、`V9938.tick(n)` がおおよそのサイクル予算（`_cmd_remaining`）を減らす。マシンは命令のたびに、その命令の T ステート数で `tick(n)` を呼ぶ。S#2 bit 0（CE）を待つソフトウェアには、予算が尽きた後に CE がクリアされて見える。
+エンジンは各コマンドをすぐに実行する。コマンドにかかる時間を表すため、`V9938.tick(n)` がおおよそのサイクル予算（`_cmd_remaining`）を減らす。コマンドの実行中、マシンは命令のたびに、その命令の T ステート数で `tick(n)` を呼ぶ。コマンドを実行していない間は、T ステート数を `_line_cycle` に足すだけ。`_line_cycle` は水平帰線のタイマーで、`tick(n)` もこれを進める（[水平ライン割り込み](#水平ライン割り込み) を参照）。S#2 bit 0（CE）を待つソフトウェアには、予算が尽きた後に CE がクリアされて見える。
 
 ブロックコマンドごとに、1 要素あたりのコスト（T ステート）がある。
 
@@ -257,7 +264,7 @@ R#44（COL）への書き込みが、HMMC/LMMC の転送ラッチ（`_cmd_transf
 
 ## オーディオ
 
-音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。`Machine.run_frame()` の最後に、`AudioMixer`（`msx/audio_mixer.py`）がマシンにあるチップの出力を足し、16 ビットに収める。フロントエンドの有無に関係なく行うので、ヘッドレスの実行でもチップの状態は同じように進む。SDL2 フロントエンドは `step_frame` の `FrameOutput` でそのバッファを受け取り（[フレーム API](#フレーム-api) を参照）、出力ローパスフィルタを通して SDL のキューに積む。マシンが持つのは最新の 1 フレーム分だけなので、受け取られない音声がたまることはない。
+音声を作る音源は 5 つある：PSG（`msx/psg.py`）、SCC（`msx/scc.py`）、FM-PAC の OPLL（`msx/opll.py`）、Majutsushi DAC、PPI のキークリック。どれも 44,100 Hz の符号付き 16 ビットモノラル PCM を作る。1 フレームあたり NTSC のマシンでは 735 サンプル、PAL のマシンでは 882 サンプル。`Machine.run_frame()` の最後に、`AudioMixer`（`msx/audio_mixer.py`）がマシンにあるチップの出力を足し、16 ビットに収める。フロントエンドの有無に関係なく行うので、ヘッドレスの実行でもチップの状態は同じように進む。SDL2 フロントエンドは `step_frame` の `FrameOutput` でそのバッファを受け取り（[フレームの実行](#フレームの実行) を参照）、出力ローパスフィルタを通して SDL のキューに積む。マシンが持つのは最新の 1 フレーム分だけなので、受け取られない音声がたまることはない。
 
 Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込みで動く DAC チャンネル 1 つ（`msx/dac.py` の `EventDac`）を共有する。持ち主は書き込みを符号付き 16 ビットのレベルに変え、書き込んだサイクルと一緒に渡す。レベルが変わらない書き込みは記録しない。`generate_samples` は各変化をサンプル位置 `(cycle - frame_start) * n // (frame_end - frame_start)` に置き、次の変化までレベルを保つ。変化がなくレベルが 0 のフレームでは `None` を返し、ミキサーはそのチャンネルを混ぜない。
 
@@ -265,7 +272,7 @@ Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込み
 
 `PSG.generate_samples(n, frame_start, frame_end)` は、音量レジスタへの速い書き込みで鳴らすソフトウェア PCM を再現する。
 
-1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、`machine.cycle_count` を読む `_get_cycle` コールバックから得る。
+1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、`_machine` の参照を通して `machine.cycle_count` から読む。速いフレームループは、各スキャンラインの T ステートをラインの終わりで `cycle_count` に足す。そのため、書き込みの位置の分解能は 1 スキャンライン（228 T ステート、約 2.8 サンプル）。
 2. `generate_samples` は、フレームの最初の書き込みの時点のレジスタとジェネレータの状態に戻る。
 3. バッファを、続いた区間の並びとして描き直す。各書き込みは、サンプル位置 `clamp((cycle - frame_start) * n // (frame_end - frame_start), 0, n)` から新しい区間を始める。
 4. トーン、ノイズ、エンベロープの状態は区間をまたいで引き継ぐ。
@@ -333,7 +340,7 @@ MSX2 のデフォルトの配置：
 
 | 層 | ファイル | 役割 |
 | --- | --- | --- |
-| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | ファイルから読んだバイト列で `*.dsk` のセクタイメージを持つ。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためてイメージを dirty にし、`host/media.py` が終了時、ステートセーブの前、ディスクの入れ替え時にファイルへ書き戻す |
+| ディスクイメージ | `disk_image.py`（`DskDiskImage`） | host がファイルから読んだバイト列で作った `*.dsk` のセクタイメージを持つ。ジオメトリは FAT12 の BPB（BIOS Parameter Block：セクタあたりのバイト数、総セクタ数、トラックあたりのセクタ数、ヘッド数）から求める。書き込みはバッファにためてイメージを dirty にする。`host/media.py` が、終了時、ステートセーブの前、ディスクをドライブから外すときに、dirty のイメージをファイルへ書き戻す |
 | ドライブ | `disk_drive.py`（`DiskDrive`） | 物理ドライブ 1 台。マウント中のイメージを持ち、ヘッドの位置を追い、セクタを読み書きする |
 | コントローラ | `wd2793.py`（`WD2793`）、`tc8566af.py`（`TC8566AF`） | FDC チップ。`WD2793`：Type I–IV コマンドデコード、ステータスレジスタ、データ/トラック/セクタレジスタ、`abort()`。`TC8566AF`（uPD765 系）：コマンド/実行/結果フェーズモデル、Main Status Register、非 DMA 転送、直接アドレス指定できるトラック/セクタレジスタは持たない |
 | インターフェース | `interface.py` | コントローラとメモリバスの接続方式。どちらも DISK ROM を 0x4000〜0x7FFF にマップする。`SonyPhilipsInterface`（openMSX の PhilipsFDC にあたる）は WD2793 のレジスタを 0x7FF8〜0x7FFF に置き、ディスク交換ビットを使う。`TC8566AFInterface` は 2 つの制御レジスタ、Main Status Register、Data Register を 0x7FF8〜0x7FFB に置く。実行中のマウントと取り出しを行う `swap()` は両方で共通 |
@@ -343,17 +350,17 @@ MSX2 のデフォルトの配置：
 - Sony HB-F1XD（`hb_f1xd`）は、WD2793 と DISK ROM をスロット 3 のサブスロット 0 に置き、サブスロット 3 に 64 KB のフラットな RAM を置く。
 - Panasonic FS-A1F（`fs_a1f`）は TC8566AF を使い、4 つのセカンダリスロットに役割を分ける。サブスロット 0 が RAM、1 が SUB ROM、2 が FDC。
 
-`--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントする。`--fdd1` には複数のイメージを指定できる。実行中にディスクを交換する方法は 3 つあり、どれも `FloppyDisk.swap()` を呼ぶ。
+`--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントする。`--fdd1` には複数のイメージを指定できる。実行中にディスクを交換する方法は 3 つあり、どれも `host/media.py` の `swap_disk()` を呼ぶ。`swap_disk()` は、外す側のイメージが dirty ならまずファイルへ書き戻し、それから `Machine.mount_disk()` を呼ぶ。`mount_disk()` はフロッピーインターフェースの `swap()` を呼ぶ。
 
 - SDL2 フロントエンドの F6/Shift+F6 ホットキー。`--fdd1` の一覧を順に切り替えるか、ドライブ A のディスクを取り出し/再挿入する。
 - デバッガの `fdd1`/`fdd2` コマンド。
 - ソケット RPC サーバの `fdd.swap` メソッド。
 
-この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする（書き込んだセクタは終了時、ステートセーブの前、ディスクの入れ替え時に `.dsk` ファイルへ書き戻す）。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
+この実装は Disk BASIC を起動でき、`CALL FORMAT` に対応し、ファイルを読み書きする。変更したセクタは、host が終了時、ステートセーブの前、ディスクをドライブから外すときに `.dsk` ファイルへ書き戻す。フロッピーインターフェースのないマシンでは `machine.fdc` は `None`。
 
 ## マシンと拡張の YAML スキーマ
 
-`host/machine_config.py` は、3 種類の YAML の唯一の基準になる。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。
+`host/machine_config.py` は 3 種類の YAML を読む。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。名前の閉じた集合（マッパー、FDC のコントローラと接続方式、拡張・サブスロット・I/O のデバイス）は `msx/machine_config.py` で定義している。YAML のローダはそれを `_KNOWN_*`/`_SUPPORTED_*` の名前で import し、コアは MachineConfig の文書を解析するときに同じ集合でもう一度調べる。
 
 この節の各フィールドは、ローダの中の明示的な `.get()` 呼び出しに対応する。ローダが読まないキーは、YAML のコメントに何と書いてあっても説明のためだけのもの。各プライマリスロットに何を入れられるかの利用者向けのまとめは、[README_extension_ja.md の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照。この節では、その結果を生む YAML の書き方を説明する。
 
@@ -416,7 +423,7 @@ vram_kb: 128    # 説明のためだけ。上の注記を参照
 - `pages` に `0` か `1` を含むエントリ：メイン BIOS ROM。必須で、なければ `MachineLoadError` になる。
 - `pages` に `2` を含むエントリ：0x8000〜0xBFFF のロゴ ROM（任意）。
 
-`sha1: null` はその ROM のハッシュ検証を止める。ほかの文字列なら、読み込んだファイルと照合する。
+`rom:` ブロックの `sha1` は、想定するダンプを記録するだけ。値が `null` でもハッシュでも、ローダは読み込んだファイルと照合しない。コアが調べるのは別の SHA1。host が読み込んだバイト列から計算し、MachineConfig の文書に書いたもの（[load_machine_config() と build_machine()](#load_machine_config-と-build_machine) を参照）。
 
 `content` には `{ram: {size_kb, pages}}` のエントリを 1 つまで入れられる。ROM と並べてスロット 0 に置く、フラットな RAM を表す。たとえば Sony HB-10 のページ 3 にある 16 KB SRAM がこれにあたる。電池のない、電源を切ると消えるワーク RAM。
 
@@ -424,7 +431,7 @@ vram_kb: 128    # 説明のためだけ。上の注記を参照
     - ram: {size_kb: 16, pages: [3]}
 ```
 
-`pages` はちょうど 1 ページでなければならず、違えば `MachineLoadError` になる。
+`size_kb` は `16`、`pages` はちょうど 1 ページでなければならず、違えば `MachineLoadError` になる。
 2 つ目の `ram` エントリも同じくエラーになる。
 
 #### スロット 1・2：マシン YAML からは読まれない
@@ -433,7 +440,8 @@ vram_kb: 128    # 説明のためだけ。上の注記を参照
 を書いている。しかし `load_machine_spec` は `primary[1]` も `primary[2]` も読まず、
 読むのは `primary[0]` と `primary[3]` だけ。この 2 つのエントリは意図を示すだけ。
 
-`build_machine()` は、スロット 1 と 2 の中身をすべて自分の引数から決める。スロット 1 は、
+スロット 1 と 2 の中身は、すべて `load_machine_config()` の引数から決まり、
+MachineConfig の文書の `cartridges` と `extensions` に書かれる。スロット 1 は、
 カートリッジとマッパー（位置引数か `--slot1`、と `--mapper1`）か、オーバーレイ
 （`--extension1`）。スロット 2 は、カートリッジとマッパー（`--slot2`/`--mapper2`）か、
 オーバーレイ（`--extension2`）。これらの値は CLI が決め、YAML の
@@ -498,7 +506,7 @@ vram_kb: 128    # 説明のためだけ。上の注記を参照
 | `rom` | `rom:` ブロック | （なし） | 必須（DISK ROM） |
 | `controller` | string | `wd2793` | `wd2793` または `tc8566af` |
 | `connection_style` | string | `sony` | `sony` または `tc8566af` |
-| `drives` | int | `1` | 正の値でなければならない |
+| `drives` | int | `1` | `1`〜`4`。YAML のローダが調べるのは正の値かどうかだけで、5 台以上の文書はコアが拒否する |
 
 `(controller, connection_style)` の組は、`(wd2793, sony)` か `(tc8566af, tc8566af)`
 でなければならない。それぞれの値が単独では正しくても、ほかの組み合わせはエラーになる
@@ -629,7 +637,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | `file` | string | はい | `rom_base` を基準に探す |
 | `size_kb` | int | いいえ（デフォルト `0`） | 説明のためだけ。実際のファイルサイズとは照合しない |
 | `pages` | int のリスト | いいえ（デフォルト `[]`） | スロット 0 と SUB ROM でだけ意味があり、どのエントリがメイン/ロゴ/SUB ROM かを決める |
-| `sha1` | string | いいえ | `null` か省略で、ハッシュ検証をしない |
+| `sha1` | string | いいえ | 説明のためだけ。ローダはファイルと照合しない（[スロット 0](#スロット-0固定) を参照） |
 
 | `sram:` のフィールド | 型 | 備考 |
 | --- | --- | --- |
@@ -648,7 +656,9 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### load_machine_config() と build_machine()
 
-マシンの組み立ては host とコアに分かれる。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。中身は、役割ごとの ROM イメージ、カートリッジとそのマッパー（`auto` のマッパーはここで ROM データベースから決める）、保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻である。続いて `msx/machine_loader.py` の `build_machine(config)` が、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`spec.generation` で具体的な型が決まる。
+マシンの組み立ては host とコアで分担する。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。解決済みのマシン、カートリッジとそのマッパー、拡張を、1 つの正規化した JSON の文書（`msx/machine_config.py`、`msx/machine_config.schema.json`）に書く。`auto` のマッパーは、先に ROM データベースから決める。文書の中では、ROM はすべて `{name, size, sha1, pages}` の参照。ROM イメージは SHA1 をキーにして文書と一緒に渡す。実行時の入力（保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻）も文書と一緒に渡す。
+
+`msx/machine_loader.py` の `build_machine(config)` は文書を厳密に解析し、参照された各イメージのサイズと SHA1 を確かめる。そのうえで、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`Machine` は文書の SHA-256 を持ち、スナップショットはそれを記録する（[MachineConfig の文書](#machineconfig-の文書) を参照）。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
 - `"msx2"`：`V9938`、サブ ROM と `RamMapper` を持つ拡張スロット 3、`RTC`
@@ -657,11 +667,172 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ---
 
-## フレーム API
+## コアの境界と移植ガイド
 
-`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し（`allium/core-frontend.allium`）。作ったあとは変更できない `InputFrame`（`msx/input.py`）の値を 1 つ受け取る。中身は、キーボードマトリクスの 11 行、2 つのジョイスティックポート（それぞれキーボードとゲームパッドの入力を合成済み）、そのフレームのマウスの移動量（MSX 側の単位）とボタン。この値をマシンの入力線（PPI と PSG が読む `InputLines`）に反映するので、入力はフレームの間ずっと変わらない。マウスには移動量を 1 回だけ渡す。その後フレームを実行し、`FrameOutput`（`msx/boundary.py`）を返す。中身は、`render_video` が真のときの RGB24 の映像、出力フィルタ前のそのフレームの音声、フレーム番号。`render_video` が決めるのは映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP の状態は同じになる。
+エミュレータのコア（`msx/`）は、コアを組み込む側から切り離してあるので、別のフロントエンドから動かせる。また、コアだけを先に別の言語（Zig、C++、Rust）へ移植し、Python の host とフロントエンドを比較用に残すこともできる。この節では、そうした再利用の側から見た境界を説明する。言語に依存しない契約は `allium/core-frontend.allium`。要件は `openspec/specs/` の `machine-core`、`machine-loader`、`machine-state` の各 spec にある。`allium/` と `openspec/` は、まだ公開していない。
 
-入力はコアの外、`host/input_state.py` の `InputState` で組み立てる。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込み、各ポートのキーボード側とゲームパッド側の入力は、合成するまで別々に持つ。フロントエンドは毎フレーム `take_frame()` を `step_frame` に渡し、そのとき組み立て側のマウスの移動量も 0 に戻る。RPC からの入力は `Machine.apply_input` を呼ぶ。これはフレームを動かさずに入力線とマウスのボタンをすぐ反映するので、一時停止中のマシンも次の命令から入力を見る。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputFrame()` を渡す。`Machine.run_frame()` は、デバッガとブレーク処理が使う内部の処理として残っている。
+### 3 つの役割
+
+| 役割 | コード | 担当 |
+| --- | --- | --- |
+| コア | `msx/` | エミュレートするマシン：CPU、VDP、音源チップ、メモリとスロット、FDC、RTC、PPI と入力線。自分の状態と渡されたデータだけで決まる純粋な関数 |
+| host | `__main__.py`、`host/` | プロセス単位のサービス：YAML と ROM ファイルの読み込み、ROM データベース、SRAM・ディスクイメージ・ステートセーブ・スクリーンショットのファイル、デバッガ、ソケット RPC |
+| フロントエンド | `frontend/` | 表示と入出力機器：SDL2 のウィンドウ、音声出力とそのローパスフィルタ、ホストの入力機器、フレームのペース配分とフレームスキップ、ホットキー |
+
+コアはファイルを開かず、ホストの時計を読まず、`host/`、`frontend/`、`sdl2` のどれも import しない。`tests/test_core_frontend_boundary.py` がこれを強制する。`sdl2` を import できないインタプリタで `msx` のすべてのモジュールを import し、3 つの名前の import があれば失敗にする。つまり、コアが必要とするものはすべて値として入り、コアが作るものはすべて値として出る。
+
+### 境界を通る値
+
+次の値は、どれも `msx/boundary.py` か `msx/input.py` にある。
+
+| 値 | 向き | 中身 |
+| --- | --- | --- |
+| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（小文字 16 進の SHA1 をキーにした ROM イメージ）、`media`（`MediaId` をキーにした保存済みの SRAM と CMOS のイメージ）、`disks`（マウントする `DiskMedium`。キーはドライブ id）、`rtc_initial_time` |
+| `InputFrame` | 入力、毎フレーム | アクティブ Low のキーボードマトリクス 11 行、アクティブ Low の 6 ビットのジョイスティックポート 2 つ（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、そのフレームのマウスの移動量（MSX 側の単位）、マウスの 2 つのボタン。作った後は変更できず、コンストラクタがすべてのフィールドを調べる |
+| `FrameOutput` | 出力、毎フレーム | `video`（`RgbFrame`。描画しなかったフレームでは `None`）、`audio`、`frame_number` |
+| `RgbFrame` | 出力 | 行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める） |
+| 音声 | 出力 | 出力フィルタを通す前の、44,100 Hz・符号付き 16 ビット・リトルエンディアンのモノラル PCM。NTSC は 1 フレーム 735 サンプル、PAL は 882 サンプル |
+| スナップショット | 入出力 | `msx.state.save_state()` の `bytes`（後述） |
+| メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
+| `DiskMedium` | 入力 | `data`、`write_protected`、`path`。`path` は host 側でのファイルの名前。コアは記録するだけで、ファイルは開かない |
+
+`MediaId` は閉じた集合。値は `slot1.sram`、`slot2.sram`、`slot<n>.<sub>.sram`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`fmpac.sram`、`rtc.cmos`、`drive_a`〜`drive_d`（FDC のドライブ 0〜3）。外部とやり取りするときは、この文字列の値を使う。Python のコードでは `MediaId` を `.value` で文字列にする。
+
+### コアの API
+
+`msx/machine_loader.py` の `build_machine(config)` は `Machine` を返す。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガ用。
+
+| 分類 | 操作 | 備考 |
+| --- | --- | --- |
+| 構築 | `build_machine(config)` | 文書に誤りがあるか、ROM イメージが欠けているか合わないときは、構築を始める前に `MachineLoadError`（`msx/machine_spec.py`）を出す。任意の引数 `logger`/`tracer` は診断用 |
+| フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | ちょうど 1 フレーム実行する |
+| | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
+| | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
+| 制御 | `reset()` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま |
+| | `msx.state.save_state(machine) -> bytes` | スナップショット |
+| | `msx.state.load_state(machine, data, source)` | スナップショットが合わなければ `ValueError`（`StateLoadError`、`SnapshotMismatchError`）を出し、何も変えない |
+| メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
+| | `read_media(media_id) -> bytes` | メディアの現在のバイト列 |
+| | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
+| | `mount_disk(drive, medium) -> bytes \| None` | `medium` に `None` を渡すと取り出す。外したイメージに保存していない書き込みがあれば、そのバイト列を返す。マシンにないドライブや、サイズが 512 の正の倍数でないイメージには `ValueError` を出す |
+| | `disk_mounted(drive)`、`disk_path(drive)` | ドライブの状態と、記録した host 側の名前 |
+| デバイス | `attach_mouse(MouseDevice(), JoystickPort(n))` | MSX のマウスをジョイスティックポート 1 か 2 につなぐ |
+
+ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
+
+- `run_frame()` と `step()`：内部のフレームループと 1 命令の実行
+- ブレークポイントとウォッチポイント
+- `set_pause_hook()`：RPC サーバが一時停止に使う接点
+- `attach_debugger()`
+- VDP とマッパーのトレーサ
+
+### MachineConfig の文書
+
+マシンの定義は、2 つの層を経てコアに届く。
+
+1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せる。読むのは host だけ（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作る。RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）。`format_version` は `1`。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持つ。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてある。スキーマを読むのはテストで、コアは読まない。
+
+文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎない。`sha1` は host が読んだバイト列の SHA1。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡す。解析は厳密で、次のものを拒否する。
+
+- 知らないキーや欠けたキー、型や範囲の誤り、浮動小数点数、重複したキー
+- ほかの `format_version`
+- 閉じた集合にない名前（マッパー、FDC のコントローラ、接続方式、その 2 つの組、フラットな拡張のデバイス、サブスロットのデバイス、I/O のデバイス）
+- ROM が必要なのに持たないデバイス、`size_kb` のない `ram_mapper`
+- ない ROM イメージや、サイズか SHA1 が参照と違う ROM イメージ
+
+SRAM と CMOS のイメージ、ディスク、RTC の開始時刻、host 側のすべてのパスは、実行時の入力。文書の外にあるので、文書の同一性には影響しない。この同一性は SHA-256 で表し、対象はコアが文書を解析してからエンコードし直した正規形。したがって、空白やキーの順序だけが違う文書は、同一性も同じになる。`Machine` はこの値を `machine_config_sha256` として持つ。
+
+YAML のローダを持たない移植では、文書を直接書いてもよい。Python の host が作った文書を使うこともできる。`load_machine_config()` でエンコードし、`config.document` と `config.roms` を保存する。
+
+### スナップショット
+
+`save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 19）で返す。形は `msx/snapshot.schema.json` に書いてある。オブジェクトはコンポーネントごとに 1 つ（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`）。キーは常にすべてそろい、マシンにない部分の値は `null`。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入る。
+
+- `load_state()` は、空白もキーの順序も問わない。浮動小数点数、NaN や Infinity、重複したキー、ほかのフォーマットバージョンは拒否する。
+- 最初にマシンの同一性（マシンの種類、マッパーの種類、スロットの配線、FDC、マウント中のディスク）を調べる。続いて `machine_config_sha256` を動作中のマシンのハッシュと比べる。このハッシュは、カートリッジの ROM のバイト列も対象に含む。つまり、スナップショットは同じ MachineConfig の文書から作ったコアにしか読み込めない。
+- どれかの検査に失敗したスナップショットは、何も変えない。
+- `save_state()`、`load_state()`、もう一度 `save_state()` の順に呼ぶと、同じバイト列になる。
+
+スナップショットが持たない状態は 2 種類ある。1 つは漢字フォント ROM のアドレスと読み出しカウンタで、これは意図して保存しない（`machine-state` の spec を参照）。もう 1 つは音声フィルタの状態など、コアの外にあるもの。
+
+### フレームの実行
+
+`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し。`frame_input` を、PPI と PSG が読む入力線（`InputLines`）に反映するので、入力はフレームの間ずっと変わらず、マウスはそのフレームの移動量を 1 回だけ受け取る。その後フレームを実行し、`FrameOutput` を返す。`render_video` が決めるのは、コアが映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP のステータス、音声、次のスナップショットは、どちらでも同じになる。
+
+入力は、コアの外にある `host/input_state.py` の `InputState` が組み立てる。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込む。各ポートのキーボード側とゲームパッド側の入力は、合成するまで別々に持つ。フロントエンドは毎フレーム `take_frame()` を `step_frame` に渡し、そのとき組み立て側のマウスの移動量も 0 に戻る。RPC の入力メソッドは `Machine.apply_input` を呼ぶ。`apply_input` はフレームを動かさずに入力線とマウスのボタンをすぐ反映するので、一時停止中のマシンでも次の命令から入力が見える。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputFrame()` を渡す。
+
+### 保証
+
+- **決定性。** 同じ MachineConfig から 2 つのコアを作り、同じ `InputFrame` の列を与える。すると、映像、音声、スナップショットのバイト列は同じになる。何がコアを動かしても、`render_video` にどんな値を渡しても同じ。RTC はエミュレートしたサイクル数で進み、ホストの時計は使わない。
+- **1 回の呼び出しで 1 フレーム。** ふつうの実行モードでは、`step_frame` の 1 回の呼び出しでちょうど 1 フレーム進み、1 フレーム分の音声を返す。1 フレームは NTSC で 59,736 T ステート、PAL で 71,364 T ステート（1 命令分の誤差の範囲で）。デバッガのブレークでフレームが途中で終わることがある。このモードは契約の外。
+- **RGB 変換はコアの中。** コアは整数の表だけを使って、すべてのピクセルを RGB に変換する。フロントエンドがパレットや VDP のレジスタを知る必要はない。
+- **フィルタ前の音声。** 音声は、マシンにあるすべての音源（PSG、SCC、Majutsushi DAC、キークリック、OPLL）の出力を、フィルタを通す前に足し合わせて範囲に収めたもの。フィルタ、リサンプリング、バッファリングはフロントエンドの担当。
+- **出力の有効期間。** `FrameOutput.video` と `.audio` が有効なのは、次の `step_frame` まで。Python では毎回新しく作る、変更できない `bytes` なので、SDL2 フロントエンドは最後のフレームをコピーせずに持っている。ネイティブのコアはバッファを使い回してよい。その場合、フロントエンドは手元に長く残すフレームをコピーする。
+- **メディア。** メディアは、エミュレートしたマシンが最初に書き込んだ時点から、`mark_persisted` が呼ばれるまで dirty。すでに入っている値と同じ値の書き込みは数えない。書き込み禁止のメディアは dirty にならない。SRAM の id の集合はコアが構築時に決め、その後は変わらない。ディスクを交換するときは、外す側のイメージが dirty なら先に書き戻し、それから `mount_disk` を呼ぶ。`host/media.py` の `swap_disk` はこの順で処理するので、書き戻しに失敗しても、ドライブは元の状態のまま。
+
+### 組み込み例
+
+この例は読み込みに Python の host を使い、コアをヘッドレスで動かす。別のフロントエンドに必要な最小限の形。ループの中身を、自前の表示、音声出力、入力の処理に置き換えて使う。
+
+```python
+from pathlib import Path
+
+from host.machine_config import (
+    load_device_registry, load_machine_config, load_machine_spec, sram_paths,
+)
+from host.media import persist_dirty_media
+from msx.input import InputFrame
+from msx.machine_loader import build_machine
+from msx.state import load_state, save_state
+
+root = Path(".")                                   # リポジトリのルート
+registry = load_device_registry(root / "config")
+spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
+config = load_machine_config(spec)                 # host：YAML とファイル -> MachineConfig
+machine = build_machine(config)                    # コア：値だけを使う
+
+for _ in range(120):
+    out = machine.step_frame(InputFrame(), render_video=True)
+    # out.video.pixels：width * 212 * 3 バイトの RGB24
+    # out.audio：samples_per_frame() 個の符号付き 16 ビット LE モノラルのサンプル
+
+snapshot = save_state(machine)                     # bytes。保存先は自由
+load_state(machine, snapshot)
+assert save_state(machine) == snapshot
+
+persist_dirty_media(machine, sram_paths(config))   # SRAM/CMOS/ディスクの変更を書き戻す
+```
+
+SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く。毎フレーム、入力の組み立て側が作ったフレームを `step_frame` に渡す。コアがフレームを描画したときは `out.video` をアップロードする。`out.audio` は `BiquadLowPass`（`frontend/audio_filter.py`）に通して SDL のキューに積む。終了時には `__main__.py` が `persist_dirty_media` を呼ぶ。自前の host 側を持たないフロントエンドは、一度の実行で得た `config.document` と `config.roms` を取っておき、それをもとに `MachineConfig` を直接作ればよい。
+
+### コアの移植
+
+Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
+
+- 制御の操作は、結果を表すレコードではなく `None` を返す。`save_state` と `load_state` は、マシンを引数に取る `msx/state.py` の関数。
+- `eject_disk` は `mount_disk(drive, None)`。`read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
+- フレームレートはメソッドではなく、`VideoStandard` のデータ。
+- マウスはフロントエンドが実行時につなぐ（`attach_mouse`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
+- `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
+
+次の点は未決定で、移植する側が決める必要がある。
+
+- **OPLL の表。** `msx/opll.py` は、log-sin、指数、キースケールの表を、インポート時に浮動小数点の計算で作る。移植先で計算し直すと最下位ビットが違うことがあり、そうなると FM-PAC の音声がバイト単位で一致しない。Python 側で作った表を整数のデータとして持たせる。
+- **マウスの接続**（上記）。
+- **デバッグの制御。** ブレークポイント、ウォッチポイント、1 命令の実行、RPC の一時停止は契約の外。最初の移植では省いてよい。
+
+静的型付けの言語にそのままの対応がない Python のパターンもある。バスフック、レジスタのプロパティ、PSG エンベロープのアンダーフロー、レンダラの変換表、Callable のフック。[移植性](#移植性) を参照。
+
+移植は、次の順で進めることを提案する。
+
+1. **CPU、メモリとスロット、VDP、PSG**。MSX1 の C-BIOS マシン 1 台（`cbios_msx1`）を対象にする。MachineConfig の文書と ROM イメージは Python の host から取る。両方で、空の入力のまま N フレームをヘッドレスで実行する（`--count-frame` と同じ）。そのあと `save_state()` のバイト列を比べる。違いがあれば、どのコンポーネントのどのフィールドかがわかる。
+2. **スナップショットの形式**。一方の実装で保存したスナップショットを、もう一方で読めるようにする。この段階を終えると、どちらの実装で保存した状態も、もう一方の開始状態に使える。そのため、プログラムのどの時点からでもテストを始められる。
+3. **MSX2**：V9938 とそのコマンドエンジン、RAM マッパー、RTC、拡張スロット（`cbios_msx2`）。
+4. **残りの音源とカートリッジ**：SCC、DAC とキークリック、表を持たせた OPLL、SRAM 付きのマッパー。
+5. **FDC**（WD2793 と TC8566AF）とメディアの API。
+
+どの段階でも、Python のコアとバイト列を比べる。同じ設定と同じ `InputFrame` の列から、同じ `RgbFrame.pixels`、音声、スナップショットのバイト列が得られなければならない。
 
 ## 移植性
 
@@ -675,14 +846,14 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 - **レジスタ**（`msx/cpu/registers.py`）：主レジスタは Python の `int` のフィールドで、書き込むたびに `& 0xFF` / `& 0xFFFF` で明示的にマスクする。多倍長の値には頼らない。裏レジスタは、`A_`、`BC_` などの名前の付いた個別のフィールドで、リフレクションは使わない。
 - **VRAM と RAM**：サイズ固定の `bytearray`（V9938 は `_VRAM_SIZE = 131072`、TMS9918A は 16384、RAM マッパーはセグメントの配列）。アクセスはすべてスライスとインデックスで直接行う。int のリストや辞書を使った記憶域はない。
 - **I/O バスの振り分け**（`msx/io.py`）：`list[tuple[int, int, Callable]]` を先頭から調べる。辞書の検索もリフレクションも使わない。登録するハンドラは少なく、マシン設定ごとに決まっている。
-- **コンポーネントの構造体**：ハードウェアのコンポーネントはすべて `@dataclass` で、フィールドはすべて型付きで明示的に宣言する。`msx/` のどこにも `__getattr__`/`__setattr__` の仕掛けはない。最も頻繁に通る 2 つの構造体、`Z80` と `Registers` は `@dataclass(slots=True)` にして、インスタンスごとの `__dict__` をなくしている。ほかは素の `@dataclass`。頻繁に通らない場所では、フィールド配置の保証はそれほど重要でないため。
+- **コンポーネントの構造体**：ハードウェアのコンポーネントはすべて `@dataclass` で、フィールドはすべて型付きで明示的に宣言する。`msx/` のどこにも `__getattr__`/`__setattr__` の仕掛けはない。最も頻繁に通る 2 つの構造体、`Z80` と `Registers` は `@dataclass(slots=True)` にして、インスタンスごとの `__dict__` をなくしている。`Memory` と、V9938 の小さな値の型いくつか（ログのエントリの `_RegChange`/`_PaletteChange`、`_RenderStatus`、`_SatSegment`）も同じ。ほかは素の `@dataclass`。頻繁に通らない場所では、フィールド配置の保証はそれほど重要でないため。
 - **タイミングの定数**：`CYCLES_PER_LINE`、`NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME`（`msx/vdp/_geometry.py`）、`_HBLANK_START`、`_TR_REASSERT_CYCLES` などは、モジュールレベルの整数定数。1 フレームの予算は `VideoStandard` 列挙型のプロパティから得る。移植では `match` / `const fn` として書く。
 
 ### 移植時に対応が必要な Python 固有パターン
 
 次のパターンは、静的型付けの言語にそのままの対応がない Python の機能を使う。各パターンについて、Rust/C++ の移植で代わりに使うものをソースのコメントに書いてある。
 
-#### バスフックとしての再代入可能なバインドメソッド
+#### バスフックとしての再代入可能な束縛メソッド
 
 `Z80` は `read_byte` / `write_byte` / `read_port` / `write_port` を `Callable` のフィールドとして持つ。`Machine.__post_init__` が実行時に束縛メソッドを代入してつなぐ。あとでプログラムがウォッチポイントを有効にすると、`Machine.set_watchpoints` が `cpu.read_byte` / `cpu.write_byte` をもう一度差し替える。ふつうのメモリハンドラと、ウォッチポイントを捕まえる版（`Machine._read_with_watch` / `_write_with_watch`）を切り替える。
 

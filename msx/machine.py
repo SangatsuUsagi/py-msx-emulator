@@ -114,6 +114,10 @@ class Machine:
     _debugger: DebuggerHook | None = field(default=None, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
+    # SHA-256 (hex) of the MachineConfig document this machine was built from;
+    # a snapshot records it and loads only into a machine with the same one.
+    # Empty for a Machine constructed by hand.
+    machine_config_sha256: str = field(default="", repr=False)
     # Optional programmatic pause sink (e.g. the RPC server). When set, break
     # events call it with (reason, pc) instead of entering the interactive REPL.
     _pause_hook: Callable[[PauseReason, int], None] | None = field(
@@ -216,8 +220,8 @@ class Machine:
         self.memory._mapper2.reset()
         # halnote_cart (when present) is always also one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs a HalnoteMapper (_KNOWN_EXTENSION_DEVICES, the flat
-        # overlay's device allow-list, does not include "halnote") -- so
+        # constructs a HalnoteMapper (EXTENSION_DEVICES, the flat overlay's
+        # device allow-list in msx/machine_config.py, lacks "halnote") -- so
         # resetting it via this loop, not a separate halnote_cart branch,
         # covers it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.

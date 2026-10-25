@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TypedDict
 
-from msx.snapshot_schema import I64_MAX, check_int, check_object
+from msx.snapshot_schema import SAFE_INT_MAX, SchemaError, check_int, check_object
 
 # 8-phase scan cycle: a main cycle reporting the real relative X/Y delta,
 # immediately followed by an alternate cycle forced to zero delta. MSX BIOS
@@ -71,7 +71,7 @@ class MouseState(TypedDict):
 
 
 _MOUSE_STATE_KEYS: frozenset[str] = frozenset(MouseState.__annotations__)
-_I64_MIN = -I64_MAX - 1
+_SAFE_INT_MIN = -SAFE_INT_MAX
 
 
 @dataclass
@@ -188,16 +188,28 @@ class MouseDevice:
         """Validate a snapshot() object without touching the device."""
         state = check_object(obj, label, _MOUSE_STATE_KEYS)
         delta = _MAX_ABS_DELTA
+        pending = _MAX_PENDING_MOTION
+        phase = check_int(state["phase"], f"{label}.phase", 0, 7)
+        x_rel = check_int(state["x_rel"], f"{label}.x_rel", -delta, delta)
+        y_rel = check_int(state["y_rel"], f"{label}.y_rel", -delta, delta)
+        # Leaving PHASE_YLOW1 zeroes the delta, so the alternate cycle's first
+        # three phases always hold 0; PHASE_YLOW2 may not (a timeout resync
+        # lands there without zeroing).
+        if PHASE_XHIGH2 <= phase < PHASE_YLOW2 and (x_rel != 0 or y_rel != 0):
+            raise SchemaError(f"{label}: phase {phase} (alternate cycle) must have a zero delta")
+        status = check_int(state["status"], f"{label}.status", 0, 0xFF)
+        if status & ~_STATUS_DEFAULT:
+            raise SchemaError(f"{label}.status may only set the two button bits, got {status:#x}")
         return {
-            "phase": check_int(state["phase"], f"{label}.phase", 0, 7),
-            "x_rel": check_int(state["x_rel"], f"{label}.x_rel", -delta, delta),
-            "y_rel": check_int(state["y_rel"], f"{label}.y_rel", -delta, delta),
-            "cur_x_rel": check_int(state["cur_x_rel"], f"{label}.cur_x_rel", _I64_MIN, I64_MAX),
-            "cur_y_rel": check_int(state["cur_y_rel"], f"{label}.cur_y_rel", _I64_MIN, I64_MAX),
-            "status": check_int(state["status"], f"{label}.status", 0, 0xFF),
+            "phase": phase,
+            "x_rel": x_rel,
+            "y_rel": y_rel,
+            "cur_x_rel": check_int(state["cur_x_rel"], f"{label}.cur_x_rel", -pending, pending),
+            "cur_y_rel": check_int(state["cur_y_rel"], f"{label}.cur_y_rel", -pending, pending),
+            "status": status,
             "last_pin8": check_int(state["last_pin8"], f"{label}.last_pin8", 0, 1),
             "last_cycle_age": check_int(
-                state["last_cycle_age"], f"{label}.last_cycle_age", _I64_MIN, I64_MAX
+                state["last_cycle_age"], f"{label}.last_cycle_age", _SAFE_INT_MIN, SAFE_INT_MAX
             ),
         }
 

@@ -2,11 +2,14 @@
 
 The core half of machine loading. host/machine_config.py parses the YAML,
 reads every ROM, SRAM and disk file and resolves "auto" mappers into a
-MachineConfig (msx/boundary.py); build_machine() only constructs and wires
-devices from those bytes. It reads no file and looks up no database.
+MachineConfig (msx/boundary.py): a canonical document plus the ROM images it
+references, keyed by SHA1. build_machine() parses the document, checks every
+referenced image, then only constructs and wires devices from those bytes.
+It reads no file and looks up no database.
 """
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
@@ -17,8 +20,10 @@ if TYPE_CHECKING:
 
 from msx.boundary import (
     RTC_DEFAULT_START,
+    DiskMedium,
     MachineConfig,
     MediaId,
+    RtcTime,
     drive_media_id,
     slot_sram_id,
     subslot_sram_id,
@@ -29,7 +34,9 @@ from msx.fmpac import FmPac
 from msx.input import InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
+from msx.machine_config import RomRef, parse_machine_config
 from msx.machine_spec import (
+    AnyExtensionOverlay,
     ExpandedExtensionOverlay,
     ExtensionOverlay,
     MachineLoadError,
@@ -192,8 +199,72 @@ def _register_common_io(
 # ---------------------------------------------------------------------------
 
 
-def _rom(config: MachineConfig, role: str) -> bytes:
-    """A required ROM image from the config (see MachineConfig.roms)."""
+@dataclass
+class _ResolvedConfig:
+    """A MachineConfig with its document parsed and its ROM images checked:
+    the values the wiring below reads. `roms` maps each ROM role ("main",
+    "logo", "sub", "disk", "io_device", "slot<n>.ext", "slot<n>.io_device",
+    "slot<n>.<sub>") to its image; `mapper1`/`mapper2` are resolved names;
+    `config_sha256` is the configuration identity (ParsedMachineConfig)."""
+
+    spec: MachineSpec
+    roms: dict[str, bytes]
+    cartridge1: bytes | None
+    mapper1: str
+    cartridge2: bytes | None
+    mapper2: str
+    extension_overlay1: AnyExtensionOverlay | None
+    extension_overlay2: AnyExtensionOverlay | None
+    media: dict[MediaId, bytes]
+    disks: dict[MediaId, DiskMedium]
+    rtc_initial_time: RtcTime | None
+    config_sha256: str
+
+
+def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:
+    """The image a ROM reference names, after checking its size and SHA1."""
+    data = images.get(ref.sha1)
+    if data is None:
+        raise MachineLoadError(f"MachineConfig has no ROM image for {role} (sha1 {ref.sha1})")
+    sha1 = hashlib.sha1(data, usedforsecurity=False).hexdigest()
+    if len(data) != ref.size or sha1 != ref.sha1:
+        raise MachineLoadError(
+            f"ROM image for {role} does not match its reference: expected {ref.size} bytes, "
+            f"sha1 {ref.sha1}; got {len(data)} bytes, sha1 {sha1}"
+        )
+    return data
+
+
+def _resolve(config: MachineConfig) -> _ResolvedConfig:
+    """Parse the document and pair every ROM reference with its checked
+    image -- everything that can reject the config, before anything is built."""
+    parsed = parse_machine_config(config.document)
+    roms: dict[str, bytes] = {}
+    cartridges: dict[str, bytes] = {}
+    for role, ref in parsed.roms.items():
+        image = _checked_image(config.roms, role, ref)
+        if role.startswith("cartridge"):
+            cartridges[role] = image
+        else:
+            roms[role] = image
+    return _ResolvedConfig(
+        spec=parsed.spec,
+        roms=roms,
+        cartridge1=cartridges.get("cartridge1"),
+        mapper1=parsed.mapper1,
+        cartridge2=cartridges.get("cartridge2"),
+        mapper2=parsed.mapper2,
+        extension_overlay1=parsed.extension_overlay1,
+        extension_overlay2=parsed.extension_overlay2,
+        media=config.media,
+        disks=config.disks,
+        rtc_initial_time=config.rtc_initial_time,
+        config_sha256=parsed.config_sha256,
+    )
+
+
+def _rom(config: _ResolvedConfig, role: str) -> bytes:
+    """A required ROM image by role (see _ResolvedConfig.roms)."""
     rom = config.roms.get(role)
     if rom is None:
         raise MachineLoadError(f"MachineConfig has no {role!r} ROM")
@@ -228,7 +299,7 @@ class _ExtensionWiring:
     kanji_device: KanjiRom | None
 
 
-def _wire_machine_io_device(config: MachineConfig) -> KanjiRom | None:
+def _wire_machine_io_device(config: _ResolvedConfig) -> KanjiRom | None:
     """Resolve a machine-declared global I/O device (currently only a
     built-in Kanji font ROM), independent of any --extension overlay."""
     spec = config.spec
@@ -263,7 +334,7 @@ class _ExpandedSubslotDeviceWiring:
 
 
 def _build_expanded_subslot_device(
-    config: MachineConfig, slot: int, subslot: _ExpandedSubslotDevice, index: int
+    config: _ResolvedConfig, slot: int, subslot: _ExpandedSubslotDevice, index: int
 ) -> _ExpandedSubslotDeviceWiring:
     """Construct one expanded-overlay sub-slot's device.
 
@@ -300,7 +371,7 @@ def _build_expanded_subslot_device(
 
 
 def _wire_expanded_overlay(
-    config: MachineConfig,
+    config: _ResolvedConfig,
     slot: int,
     extension_overlay: ExpandedExtensionOverlay,
     kanji_device: KanjiRom | None,
@@ -404,7 +475,7 @@ class _FlatOverlayWiring:
 
 
 def _wire_flat_overlay(
-    config: MachineConfig,
+    config: _ResolvedConfig,
     slot: int,
     extension_overlay: ExtensionOverlay,
     scc: SCC | None,
@@ -476,7 +547,7 @@ def _wire_flat_overlay(
 
 
 def _wire_extension_overlay(
-    config: MachineConfig,
+    config: _ResolvedConfig,
     mapper1_instance: Mapper,
     mapper2_instance: Mapper,
     scc: SCC | None,
@@ -591,7 +662,7 @@ class _BiosRoms:
     logo_bytes: bytes | None
 
 
-def _bios_roms(config: MachineConfig) -> _BiosRoms:
+def _bios_roms(config: _ResolvedConfig) -> _BiosRoms:
     """Slot 0's main/logo ROMs -- unrelated to which cartridge (if any)
     occupies slot 1 or slot 2. The logo ROM is optional."""
     return _BiosRoms(_rom(config, "main"), config.roms.get("logo"))
@@ -703,7 +774,7 @@ def _wire_post_construction_attrs(
 
 
 def build_machine(
-    config: MachineConfig,
+    machine_config: MachineConfig,
     logger: DebugLogger | None = None,
     tracer: Tracer | None = None,
 ) -> "Machine":
@@ -712,9 +783,9 @@ def build_machine(
     looks up no database.
 
     Args:
-        config: The resolved spec, ROM images, cartridges and their resolved
-            mappers, extension overlays, initial SRAM images, disks to mount
-            and RTC start time.
+        machine_config: The MachineConfig document, the ROM images it
+            references by SHA1, initial SRAM images, disks to mount and RTC
+            start time.
         logger: Optional DebugLogger for diagnostic output.
         tracer: Optional VDP register write tracer (V9938 only).
 
@@ -722,7 +793,8 @@ def build_machine(
         A fully-wired Machine ready for emulation.
 
     Raises:
-        MachineLoadError: If a required ROM is missing from `config.roms`, if
+        MachineLoadError: If the document is malformed, if a referenced ROM
+            image is missing or does not match its size and SHA1, if
             both slots' mappers/extensions resolve to KonamiSCC-family SCC
             chips, if both slots' mappers resolve to Majutsushi, if both
             slots' extensions resolve to fmpac, or if both slots' expanded
@@ -730,6 +802,7 @@ def build_machine(
     """
     from msx.machine import Machine  # local import to avoid circular dependency
 
+    config = _resolve(machine_config)
     spec = config.spec
     bios = _bios_roms(config)
     main_bytes = bios.main_bytes
@@ -827,6 +900,7 @@ def build_machine(
 
     _wire_post_construction_attrs(machine, io, dac, wiring)
     machine._sram_table = _sram_table(machine)
+    machine.machine_config_sha256 = config.config_sha256
     return machine
 
 
@@ -910,7 +984,7 @@ def _build_msx1(
     )
 
 
-def _build_fdc(config: MachineConfig) -> "FloppyDisk":
+def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     """Construct the FloppyDisk device from spec.fdc, mounting each disk in
     `config.disks` into the drive with the matching id ("drive_a" -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
@@ -923,7 +997,7 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
     assert spec.fdc is not None
     disk_rom = _rom(config, "disk")
     drives = [DiskDrive() for _ in range(spec.fdc.drives)]
-    # controller/connection_style were validated by the loader (_SUPPORTED_FDC_*).
+    # controller/connection_style were validated by the document parser (FDC_*).
     device: SonyPhilipsInterface | TC8566AFInterface
     if spec.fdc.controller == "tc8566af":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
@@ -947,7 +1021,7 @@ def _build_fdc(config: MachineConfig) -> "FloppyDisk":
 
 def _build_msx2(
     *,
-    config: MachineConfig,
+    config: _ResolvedConfig,
     main_bytes: bytes,
     logo_bytes: bytes | None,
     mapper1_instance: Mapper,

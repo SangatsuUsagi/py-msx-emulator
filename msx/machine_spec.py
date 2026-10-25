@@ -1,11 +1,12 @@
 """Resolved machine-wiring values the core builds a Machine from.
 
-`MachineSpec` and the extension-overlay dataclasses are the parsed form of
-config/machines/*.yaml and config/extensions/*.yaml; host/machine_config.py
-produces them (and reads the files they name). Their `Path` fields
-(`rom_base_dir`, `sram_save_path`) are host data the core never opens: the
-core receives every ROM and SRAM image as bytes in a MachineConfig
-(msx/boundary.py).
+`MachineSpec` and the extension-overlay dataclasses are the resolved form of
+a machine: host/machine_config.py fills them from config/machines/*.yaml and
+config/extensions/*.yaml, and msx/machine_config.py parses them from a
+MachineConfig document. Their `Path` fields (`rom_base_dir`,
+`sram_save_path`) are host data, optional and keyword-only: the host sets
+them when it resolves the YAML, the core never opens them, and they are None
+in a spec parsed from a document (which carries no host paths).
 """
 from __future__ import annotations
 
@@ -63,7 +64,8 @@ class MachineSpec:
 
     name: str
     generation: str          # 'msx1' | 'msx2'
-    rom_base_dir: Path
+    # Host data (see the module docstring); None when parsed from a document.
+    rom_base_dir: Path | None = field(default=None, kw_only=True)
 
     # Slot 0
     main_rom_entry: _RomEntry
@@ -167,9 +169,9 @@ class ExtensionOverlay:
     """
 
     device: str
-    rom_base_dir: Path | None = None
+    rom_base_dir: Path | None = field(default=None, kw_only=True)
     rom_entry: _RomEntry | None = None
-    sram_save_path: Path | None = None
+    sram_save_path: Path | None = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -183,9 +185,9 @@ class _ExpandedSubslotDevice:
     (e.g. `ram_mapper`, which needs no ROM file)."""
 
     device: str
-    rom_base_dir: Path | None = None
+    rom_base_dir: Path | None = field(default=None, kw_only=True)
     rom_entry: _RomEntry | None = None
-    sram_save_path: Path | None = None
+    sram_save_path: Path | None = field(default=None, kw_only=True)
     size_kb: int | None = None
 
 
