@@ -1105,14 +1105,13 @@ def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytea
 
 
 def _load_device_rom(device: _ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
-    """Load a resolved device's required ROM file. `rom_base_dir`/
-    `rom_entry` are asserted non-None: every caller here already resolved
-    `device` from a role (machine io_device, an expanded sub-slot/
-    io_device, or a flat extension overlay) that requires a ROM, and
-    `_parse_expanded_device`/`load_extension_overlay` guarantee both fields
-    are set together whenever a `rom:` block was present at load time."""
-    assert device.rom_base_dir is not None, f"{label}: rom_base_dir not resolved"
-    assert device.rom_entry is not None, f"{label}: rom_entry not resolved"
+    """Load a resolved device's required ROM file. A device resolved from
+    YAML (`_parse_expanded_device`/`load_extension_overlay`) always has both
+    `rom_base_dir` and `rom_entry` when it needs a ROM; one without them --
+    e.g. parsed back from a MachineConfig document, which holds no host path
+    -- is a MachineLoadError naming `label`."""
+    if device.rom_base_dir is None or device.rom_entry is None:
+        raise MachineLoadError(f"{label}: no ROM file to read (rom_base_dir or rom unresolved)")
     rom = _load_rom(device.rom_base_dir, device.rom_entry.file, required=True)
     assert rom is not None
     return rom
