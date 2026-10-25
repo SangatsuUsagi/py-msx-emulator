@@ -313,6 +313,16 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 2
+        },
+        "q": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "q_next": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
         }
       },
       "required": [
@@ -322,6 +332,8 @@
         "im",
         "int_pending",
         "nmi_pending",
+        "q",
+        "q_next",
         "registers"
       ],
       "additionalProperties": false

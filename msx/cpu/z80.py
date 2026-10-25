@@ -63,6 +63,11 @@ class Z80:
     nmi_pending: bool = False
     ei_pending: bool = False
     instruction_pc: int = 0
+    # Q: the flags the ALU latched in the previous instruction (its new F if it
+    # wrote F, else 0), read by SCF/CCF. Each step() moves q_next into q and
+    # clears q_next; every handler that writes F sets q_next to the new F.
+    q: int = 0
+    q_next: int = 0
     # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
     # the core reusable for non-MSX systems); MSX machines configure 1 (the MSX
     # M1 wait state -- Sony MSX Technical Handbook: "1 WAIT in M1 CYCLE" --
@@ -80,6 +85,8 @@ class Z80:
         self.int_pending = False
         self.nmi_pending = False
         self.ei_pending = False
+        self.q = 0
+        self.q_next = 0
 
     def _fetch(self) -> int:
         """Read an operand/address/displacement byte at PC (not an M1 cycle: R unchanged)."""
@@ -161,6 +168,7 @@ class Z80:
             self.iff2 = self.iff1
             self.iff1 = False
             self._inc_r()
+            self.q_next = 0
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
             self.registers.WZ = 0x0066  # MEMPTR = handler address (openMSX nmi)
@@ -183,6 +191,7 @@ class Z80:
             self.iff2 = False
             # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).
             self._inc_r()
+            self.q_next = 0
             if self.im == 0 or self.im == 1:
                 # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
@@ -216,6 +225,8 @@ class Z80:
         r = self.registers
         pc = r.PC
         self.instruction_pc = pc
+        self.q = self.q_next
+        self.q_next = 0
         opcode = self.read_byte(pc)
         r.PC = (pc + 1) & 0xFFFF
         r.R = (r.R & 0x80) | ((r.R + 1) & 0x7F)
