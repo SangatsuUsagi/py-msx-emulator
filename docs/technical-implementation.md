@@ -957,7 +957,8 @@ core to another language (Zig, C++, Rust) first, and keep the Python host and
 frontend for comparison. This section describes the boundary from the point
 of view of such a reuse. The language-neutral contract is
 `allium/core-frontend.allium`. The requirements are in the `machine-core`,
-`machine-loader` and `machine-state` specs under `openspec/specs/`.
+`machine-loader` and `machine-state` specs under `openspec/specs/`. Neither
+`allium/` nor `openspec/` is published yet.
 
 ### Three parties
 

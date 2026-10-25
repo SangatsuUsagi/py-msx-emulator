@@ -669,7 +669,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ## コアの境界と移植ガイド
 
-エミュレータのコア（`msx/`）は、コアを組み込む側から切り離してあるので、別のフロントエンドから動かせる。また、コアだけを先に別の言語（Zig、C++、Rust）へ移植し、Python の host とフロントエンドを比較用に残すこともできる。この節では、そうした再利用の側から見た境界を説明する。言語に依存しない契約は `allium/core-frontend.allium`。要件は `openspec/specs/` の `machine-core`、`machine-loader`、`machine-state` の各 spec にある。
+エミュレータのコア（`msx/`）は、コアを組み込む側から切り離してあるので、別のフロントエンドから動かせる。また、コアだけを先に別の言語（Zig、C++、Rust）へ移植し、Python の host とフロントエンドを比較用に残すこともできる。この節では、そうした再利用の側から見た境界を説明する。言語に依存しない契約は `allium/core-frontend.allium`。要件は `openspec/specs/` の `machine-core`、`machine-loader`、`machine-state` の各 spec にある。`allium/` と `openspec/` は、まだ公開していない。
 
 ### 3 つの役割
 
