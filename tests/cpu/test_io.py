@@ -88,3 +88,30 @@ def test_in_a_n_drives_a_in_high_byte() -> None:
     cpu.registers.A = 0x77
     cpu.step()
     assert ports == [0x7710]
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_in_a_n_sets_memptr_from_old_a_and_n() -> None:
+    # Spec "IN A,(n) sets MEMPTR from the old A and n".
+    cpu, _, _ = make_cpu([0xDB, 0x34])  # IN A,(0x34)
+    cpu.registers.A = 0x12
+    cpu.step()
+    assert cpu.registers.WZ == 0x1235
+
+
+def test_out_n_a_sets_memptr_from_a_and_low_byte() -> None:
+    cpu, _, _ = make_cpu([0xD3, 0xFF])  # OUT (0xFF),A
+    cpu.registers.A = 0x12
+    cpu.step()
+    assert cpu.registers.WZ == 0x1200
+
+
+def test_in_out_c_set_memptr_to_bc_plus_1() -> None:
+    for code in ([0xED, 0x40], [0xED, 0x79], [0xED, 0x70], [0xED, 0x71]):
+        # IN B,(C) / OUT (C),A / IN F,(C) / OUT (C),0
+        cpu, _, _ = make_cpu(code)
+        cpu.registers.BC = 0x12FF
+        cpu.step()
+        assert cpu.registers.WZ == 0x1300, code

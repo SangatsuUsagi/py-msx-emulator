@@ -367,3 +367,16 @@ def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
     load_state(machine)
 
     assert machine.vdp.latch is None
+
+
+def test_memptr_survives_a_save_state(machine, saves_dir):
+    # Spec "MEMPTR survives a save state": loaded into a new machine.
+    machine.cpu.registers.WZ = 0x2805
+    rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
+    save_state(machine, rgb, "test")
+
+    other = make_machine(rom=_ROM)
+    assert other.cpu.registers.WZ == 0xFFFF
+    load_state(other)
+
+    assert other.cpu.registers.WZ == 0x2805

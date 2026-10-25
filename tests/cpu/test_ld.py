@@ -117,3 +117,36 @@ def test_ld_nn_a() -> None:
     cpu.registers.A = 0x77
     cpu.step()
     assert cpu.read_byte(0xC000) == 0x77
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_ld_a_ind_nn_sets_memptr_to_nn_plus_1() -> None:
+    # Spec "LD A,(nn) sets MEMPTR to nn + 1".
+    cpu = make_cpu([0x3A, 0xFF, 0x27])  # LD A,(0x27FF)
+    cpu.step()
+    assert cpu.registers.WZ == 0x2800
+
+
+def test_ld_ind_nn_a_sets_memptr_from_a_and_low_byte() -> None:
+    # Spec "LD (nn),A sets MEMPTR from A and the low byte of nn + 1".
+    cpu = make_cpu([0x32, 0xFF, 0x34])  # LD (0x34FF),A
+    cpu.registers.A = 0x12
+    cpu.step()
+    assert cpu.registers.WZ == 0x1200
+
+
+def test_ld_a_ind_bc_sets_memptr_to_bc_plus_1() -> None:
+    cpu = make_cpu([0x0A])  # LD A,(BC)
+    cpu.registers.BC = 0x12FF
+    cpu.step()
+    assert cpu.registers.WZ == 0x1300
+
+
+def test_ld_ind_de_a_sets_memptr_from_a_and_low_byte() -> None:
+    cpu = make_cpu([0x12])  # LD (DE),A
+    cpu.registers.A = 0x56
+    cpu.registers.DE = 0x80FF
+    cpu.step()
+    assert cpu.registers.WZ == 0x5600

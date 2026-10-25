@@ -163,6 +163,7 @@ class Z80:
             self._inc_r()
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
+            self.registers.WZ = 0x0066  # MEMPTR = handler address (openMSX nmi)
             return 11
 
         # EI enables interrupts only *after* the instruction following it, so an
@@ -186,6 +187,7 @@ class Z80:
                 # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
                 self.registers.PC = 0x0038
+                self.registers.WZ = 0x0038
                 return 13
             if self.im == 2:
                 vec_addr = (self.registers.I << 8) | 0xFF
@@ -193,6 +195,7 @@ class Z80:
                 hi = self.read_byte((vec_addr + 1) & 0xFFFF)
                 self._push(self.registers.PC)
                 self.registers.PC = (hi << 8) | lo
+                self.registers.WZ = self.registers.PC
                 return 19
 
         # One instruction has now elapsed since EI (this step); allow the next

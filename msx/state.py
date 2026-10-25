@@ -289,7 +289,7 @@ def _cpu_regs_to_dict(machine: "Machine") -> dict[str, int]:
     return {
         "A": r.A, "F": r.F, "BC": r.BC, "DE": r.DE, "HL": r.HL,
         "IX": r.IX, "IY": r.IY, "SP": r.SP, "PC": r.PC,
-        "I": r.I, "R": r.R,
+        "I": r.I, "R": r.R, "WZ": r.WZ,
         "A_": r.A_, "F_": r.F_, "BC_": r.BC_, "DE_": r.DE_, "HL_": r.HL_,
     }
 
@@ -307,6 +307,7 @@ def _restore_cpu_regs(machine: "Machine", regs: dict[str, int]) -> None:
     r.PC = regs["PC"]
     r.I = regs["I"]
     r.R = regs["R"]
+    r.WZ = regs["WZ"]
     r.A_ = regs["A_"]
     r.F_ = regs["F_"]
     r.BC_ = regs["BC_"]
@@ -513,7 +514,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
 
 _CPU_REGS_8: tuple[str, ...] = ("A", "F", "I", "R", "A_", "F_")
 _CPU_REGS_16: tuple[str, ...] = (
-    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "BC_", "DE_", "HL_",
+    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "WZ", "BC_", "DE_", "HL_",
 )
 _CPU_REG_KEYS: frozenset[str] = frozenset(_CPU_REGS_8 + _CPU_REGS_16)
 

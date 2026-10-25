@@ -64,3 +64,27 @@ def test_ld_hl_nn_indirect() -> None:
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.step()
     assert cpu.registers.HL == 0x1234
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_ld_hl_ind_nn_sets_memptr_to_nn_plus_1() -> None:
+    cpu = make_cpu([0x2A, 0x34, 0x12])  # LD HL,(0x1234)
+    cpu.step()
+    assert cpu.registers.WZ == 0x1235
+
+
+def test_ld_ind_nn_hl_sets_memptr_to_nn_plus_1() -> None:
+    cpu = make_cpu([0x22, 0xFF, 0x80])  # LD (0x80FF),HL
+    cpu.step()
+    assert cpu.registers.WZ == 0x8100
+
+
+def test_ed_ld_rr_ind_nn_and_ld_ind_nn_rr_set_memptr() -> None:
+    cpu = make_cpu([0xED, 0x4B, 0x34, 0x12])  # LD BC,(0x1234)
+    cpu.step()
+    assert cpu.registers.WZ == 0x1235
+    cpu = make_cpu([0xED, 0x73, 0xFF, 0x80])  # LD (0x80FF),SP
+    cpu.step()
+    assert cpu.registers.WZ == 0x8100

@@ -200,3 +200,33 @@ def test_cp_n_signed_overflow() -> None:
     cpu = _alu_imm(0xFE, 0x80, 0x01)  # CP 0x01 on 0x80
     assert cpu.registers.A == 0x80  # A unchanged
     assert cpu.registers.F == (F.FLAG_H | F.FLAG_PV | F.FLAG_N)
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_add_hl_rr_sets_memptr_to_old_hl_plus_1() -> None:
+    # Spec "ADD HL,rr sets MEMPTR to the old HL + 1".
+    cpu = make_cpu([0x19])  # ADD HL,DE
+    cpu.registers.HL = 0x1000
+    cpu.registers.DE = 0x0001
+    cpu.step()
+    assert cpu.registers.WZ == 0x1001
+
+
+def test_adc_sbc_hl_rr_set_memptr_to_old_hl_plus_1() -> None:
+    cpu = make_cpu([0xED, 0x4A])  # ADC HL,BC
+    cpu.registers.HL = 0x20FF
+    cpu.step()
+    assert cpu.registers.WZ == 0x2100
+    cpu = make_cpu([0xED, 0x52])  # SBC HL,DE
+    cpu.registers.HL = 0xFFFF
+    cpu.step()
+    assert cpu.registers.WZ == 0x0000
+
+
+def test_add_ix_rr_sets_memptr_to_old_ix_plus_1() -> None:
+    cpu = make_cpu([0xDD, 0x09])  # ADD IX,BC
+    cpu.registers.IX = 0x1234
+    cpu.step()
+    assert cpu.registers.WZ == 0x1235

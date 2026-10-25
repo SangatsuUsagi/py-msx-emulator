@@ -706,3 +706,58 @@ def test_retn_mirror_opcodes_return_and_restore_iff1() -> None:
         cpu.iff1, cpu.iff2 = False, True
         assert cpu.step() == 14
         assert cpu.registers.PC == 0x1234 and cpu.iff1
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_rld_rrd_set_memptr_to_hl_plus_1() -> None:
+    for code in ([0xED, 0x6F], [0xED, 0x67]):  # RLD / RRD
+        cpu = make_cpu(code)
+        cpu.registers.HL = 0x9000
+        cpu.step()
+        assert cpu.registers.WZ == 0x9001, code
+
+
+def test_cpi_cpd_step_memptr() -> None:
+    cpu = make_cpu([0xED, 0xA1])  # CPI
+    cpu.registers.WZ = 0x1000
+    cpu.step()
+    assert cpu.registers.WZ == 0x1001
+    cpu = make_cpu([0xED, 0xA9])  # CPD
+    cpu.registers.WZ = 0x1000
+    cpu.step()
+    assert cpu.registers.WZ == 0x0FFF
+
+
+def test_ini_ind_set_memptr_from_bc_before_the_decrement() -> None:
+    cpu = make_cpu([0xED, 0xA2])  # INI
+    cpu.registers.BC = 0x0210
+    cpu.registers.HL = 0x9000
+    cpu.step()
+    assert cpu.registers.WZ == 0x0211
+    cpu = make_cpu([0xED, 0xAA])  # IND
+    cpu.registers.BC = 0x0210
+    cpu.registers.HL = 0x9000
+    cpu.step()
+    assert cpu.registers.WZ == 0x020F
+
+
+def test_outi_outd_set_memptr_from_bc_after_the_decrement() -> None:
+    cpu = make_cpu([0xED, 0xA3])  # OUTI
+    cpu.registers.BC = 0x0210
+    cpu.step()
+    assert cpu.registers.WZ == 0x0111
+    cpu = make_cpu([0xED, 0xAB])  # OUTD
+    cpu.registers.BC = 0x0210
+    cpu.step()
+    assert cpu.registers.WZ == 0x010F
+
+
+def test_retn_sets_memptr_to_return_address() -> None:
+    cpu = make_cpu([0xED, 0x45])  # RETN
+    cpu.registers.SP = 0xF000
+    cpu.write_byte(0xF000, 0x78)
+    cpu.write_byte(0xF001, 0x56)
+    cpu.step()
+    assert cpu.registers.WZ == 0x5678
