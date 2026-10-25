@@ -15,6 +15,7 @@ subsystem.
 - [Floppy disk (FDC)](#floppy-disk-fdc)
 - [Machine and extension YAML schema](#machine-and-extension-yaml-schema)
 - [Machine YAML loader](#machine-yaml-loader)
+- [Core boundary and porting guide](#core-boundary-and-porting-guide)
 - [Portability](#portability)
 
 ---
@@ -414,7 +415,7 @@ on NTSC machines and 882 on PAL machines. At the end of every
 the chips that the machine has and clamps the result to 16 bits. This happens
 with or without a frontend, so the chips advance the same way in a headless
 run. The SDL2 frontend gets the buffer in `step_frame`'s `FrameOutput` (see
-[Frame API](#frame-api)), passes it through the output low-pass filter, and
+[Frame stepping](#frame-stepping)), passes it through the output low-pass filter, and
 queues it to SDL. The machine holds
 only the latest frame, so audio that nobody takes does not accumulate.
 
@@ -932,8 +933,9 @@ saved SRAM images, the disk images and the RTC start time.
 strictly and checks the size and SHA1 of every referenced image. It then
 constructs the `Machine` from those bytes only. It opens no file and consults
 no database, so the same config always builds the same machine. The `Machine`
-keeps the SHA-256 of the document, which a save state records. The
-`spec.generation` field selects the concrete types:
+keeps the SHA-256 of the document, which a save state records (see
+[MachineConfig document](#machineconfig-document)). The `spec.generation`
+field selects the concrete types:
 
 - `"msx1"`: `VDP` (TMS9918A), flat slot 3 RAM, no RTC or RAM mapper
 - `"msx2"`: `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`
@@ -946,32 +948,289 @@ boots do not fail. Every device in `config/devices/` is currently
 
 ---
 
-## Frame API
+## Core boundary and porting guide
 
-`Machine.step_frame(frame_input, render_video)` is the core's per-frame call
-(`allium/core-frontend.allium`). It takes one `InputFrame` value
-(`msx/input.py`), which cannot be changed once built: the 11 keyboard matrix
-rows, both joystick ports (each already merged from its keyboard and gamepad
-sources), and the frame's mouse motion (in MSX counts) and buttons. It
-applies the value to the machine's input lines (`InputLines`, which the PPI
-and PSG read), so the input stays the same for the whole frame, and feeds the
-mouse its motion once. It then runs the frame and returns a `FrameOutput` (`msx/boundary.py`):
-the RGB24 video when `render_video` is true, the frame's audio before the
-output filter, and the frame number. `render_video` decides only whether
-video is produced: a skipped frame still runs the sprite pass, so the VDP
-status is the same.
+The emulator core (`msx/`) is separate from everything that embeds it. You
+can thus drive the core from a different frontend. You can also port only the
+core to another language (Zig, C++, Rust) first, and keep the Python host and
+frontend for comparison. This section describes the boundary from the point
+of view of such a reuse. The language-neutral contract is
+`allium/core-frontend.allium`. The requirements are in the `machine-core`,
+`machine-loader` and `machine-state` specs under `openspec/specs/`.
 
-The input is built outside the core, in `host/input_state.py`'s `InputState`.
-The keyboard, the gamepads, the mouse and the RPC input methods write to it,
-and it keeps the keyboard-joystick and gamepad sources of each port apart
-until it merges them. Each frame the frontend passes `take_frame()` to
-`step_frame`, which also zeroes the builder's mouse motion. RPC injection
-calls `Machine.apply_input`, which sets the lines and mouse buttons at once
-without running a frame, so a paused machine sees the input on its next
-instruction. Headless runs (`--count-frame`, `--benchmark`) pass an empty
-`InputFrame()`.
-`Machine.run_frame()` remains as the internal step that the debugger and the
-break handling use.
+### Three parties
+
+| Party | Code | Responsibility |
+| --- | --- | --- |
+| Core | `msx/` | The emulated machine: CPU, VDP, sound chips, memory and slots, FDC, RTC, PPI and input lines. A pure function of its state and of the data handed to it |
+| Host | `__main__.py`, `host/` | Process-level services: YAML and ROM file loading, the ROM database, SRAM, disk image, save-state and screenshot files, the debugger, the socket RPC |
+| Frontend | `frontend/` | Presentation and devices: the SDL2 window, audio output and its low-pass filter, host input devices, frame pacing and frame skipping, hotkeys |
+
+The core opens no file, never reads the host clock, and imports neither
+`host/`, `frontend/` nor `sdl2`. `tests/test_core_frontend_boundary.py`
+enforces this. It imports every `msx` module in an interpreter that cannot
+import `sdl2`, and it rejects any import of the three names. Everything
+that the core needs thus enters as a value, and everything it produces leaves
+as a value.
+
+### Values that cross the boundary
+
+All of them are in `msx/boundary.py` and `msx/input.py`:
+
+| Value | Direction | Content |
+| --- | --- | --- |
+| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (the ROM images by lowercase hex SHA1), `media` (saved SRAM and CMOS images by `MediaId`), `disks` (`DiskMedium` images to mount by drive id), `rtc_initial_time` |
+| `InputFrame` | in, per frame | 11 active-low keyboard matrix rows, two active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B), the mouse motion of the frame in MSX counts, and the two mouse buttons. Immutable. Its constructor checks every value |
+| `FrameOutput` | out, per frame | `video` (an `RgbFrame`, or `None` when the frame was not rendered), `audio`, `frame_number` |
+| `RgbFrame` | out | Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color) |
+| audio | out | Signed 16-bit little-endian mono PCM at 44,100 Hz, before the output filter: 735 samples per NTSC frame, 882 per PAL frame |
+| snapshot | in/out | `bytes` from `msx.state.save_state()` (below) |
+| media image | in/out | `bytes`, named by a `MediaId` |
+| `DiskMedium` | in | `data`, `write_protected`, and `path`: the host's name for the file, which the core records but never opens |
+
+`MediaId` is a closed set: `slot1.sram`, `slot2.sram`, `slot<n>.<sub>.sram`
+(an expanded-slot device, slots 1-2, sub-slots 0-3), `fmpac.sram`,
+`rtc.cmos`, and `drive_a` to `drive_d` (FDC drives 0-3). The string values are
+the wire spelling. Python code formats a `MediaId` with `.value`.
+
+### Core API
+
+`build_machine(config)` in `msx/machine_loader.py` returns a `Machine`. The
+methods below are the boundary. Everything else on `Machine` is internal or
+belongs to the debugger.
+
+| Group | Operation | Notes |
+| --- | --- | --- |
+| Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. The optional `logger`/`tracer` arguments are diagnostics |
+| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs exactly one frame |
+| | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
+| | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
+| Control | `reset()` | Power-on reset. RAM, VRAM and mounted media stay as they are |
+| | `msx.state.save_state(machine) -> bytes` | The snapshot |
+| | `msx.state.load_state(machine, data, source)` | Raises `ValueError` (`StateLoadError`, `SnapshotMismatchError`) and changes nothing when the snapshot does not fit |
+| Media | `dirty_media()` | The ids written since they were last persisted |
+| | `read_media(media_id) -> bytes` | The current bytes of a medium |
+| | `mark_persisted(media_id)` | Call it after the host has written the bytes |
+| | `mount_disk(drive, medium) -> bytes \| None` | `None` ejects. Returns the outgoing image when it holds unpersisted writes. Raises `ValueError` for a drive the machine lacks or an image whose size is not a positive multiple of 512 |
+| | `disk_mounted(drive)`, `disk_path(drive)` | Drive state and the recorded host name |
+| Devices | `attach_mouse(MouseDevice(), JoystickPort(n))` | Connects an MSX mouse to joystick port 1 or 2 |
+
+The other members do not cross the boundary, and a port does not need them
+to run software:
+
+- `run_frame()` and `step()`, the internal frame loop and single-step
+- breakpoints and watchpoints
+- `set_pause_hook()`, the seam that the RPC server uses to pause
+- `attach_debugger()`
+- the VDP and mapper tracers
+
+### MachineConfig document
+
+The machine definition reaches the core in two layers:
+
+1. **Authored YAML** (`config/machines`, `config/devices`,
+   `config/extensions`). It keeps its comments about the hardware, and only
+   the host reads it (see
+   [Machine and extension YAML schema](#machine-and-extension-yaml-schema)).
+2. **The MachineConfig document**, which `load_machine_config()` makes from
+   the YAML and the command-line choices. It is RFC 8785 (JCS) canonical JSON:
+   UTF-8, sorted keys, no whitespace, integers only. `format_version` is `1`.
+   It holds the resolved machine, the cartridges per slot with their mapper
+   (never `auto`), and the extension overlays. `msx/machine_config.py`
+   encodes and parses it. `msx/machine_config.schema.json` (JSON Schema
+   draft 2020-12) describes it. The tests read the schema, and the core never
+   does.
+
+Every ROM in the document is a reference `{name, size, sha1, pages}`. `name`
+is a bare file name, used only as a label. `sha1` is the SHA1 of the bytes
+that the host read. The images travel in `MachineConfig.roms` by that SHA1.
+The parser is strict. It rejects:
+
+- an unknown or missing key, a wrong type or range, a float, and a duplicate
+  key
+- another `format_version`
+- a name outside a closed set (mapper, FDC controller, connection style and
+  their pair, flat-extension device, sub-slot device, I/O device)
+- a device that needs a ROM and has none, and a `ram_mapper` without
+  `size_kb`
+- a ROM image that is absent or whose size or SHA1 differs from its
+  reference
+
+The SRAM and CMOS images, the disks, the RTC start time and every host path
+are run inputs. They are outside the document, so they do not change its
+identity. The identity of a config is the SHA-256 of the canonical form that
+the core encodes again after it parses the document. A document that differs
+only in whitespace or key order thus has the same identity. The `Machine`
+keeps this value as `machine_config_sha256`.
+
+A port that has no YAML loader can write the document directly. It can also
+take one from the Python host: encode it with `load_machine_config()` and save
+`config.document` and `config.roms`.
+
+### Snapshots
+
+`save_state()` returns the whole machine state as canonical JSON (format
+version 19). The layout is `msx/snapshot.schema.json`: one object per
+component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`,
+`mouse`), every key always present, and `null` for a part that the machine
+does not have. Byte arrays are padded RFC 4648 base64 strings, and every
+integer is within ±(2^53 − 1).
+
+- `load_state()` accepts any whitespace and key order. It rejects floats,
+  NaN or Infinity, duplicate keys, and another format version.
+- It checks the identity of the machine first: the machine type, the mapper
+  kinds, the slot wiring, the FDC, and the mounted disks. Then it compares
+  `machine_config_sha256` with the hash of the running machine, which also
+  covers the cartridge ROM bytes. A snapshot thus loads only into a core
+  built from the same MachineConfig document.
+- A snapshot that fails any check changes nothing.
+- `save_state()`, then `load_state()`, then `save_state()` again gives the
+  same bytes.
+
+The snapshot does not hold two kinds of state. One is the address and read
+counter of the Kanji font ROM, by design (see the `machine-state` spec). The
+other is anything outside the core, such as the state of the audio filter.
+
+### Frame stepping
+
+`Machine.step_frame(frame_input, render_video)` is the per-frame call of the
+core. It applies `frame_input` to the input lines that the PPI and PSG read
+(`InputLines`). The input thus stays the same for the whole frame, and the
+mouse gets the motion of the frame once. It then runs the frame and returns
+the `FrameOutput`. `render_video` decides only whether the core produces
+video. A skipped frame still runs the sprite pass. The VDP status, the audio
+and the next snapshot are thus the same either way.
+
+`InputState` in `host/input_state.py` builds the input outside the core.
+The keyboard, the gamepads, the mouse and the RPC input methods write to it.
+It keeps the keyboard-joystick and gamepad sources of each port apart until
+it merges them. Each frame, the frontend passes `take_frame()` to
+`step_frame`, which also zeroes the mouse motion of the builder. RPC
+injection calls `Machine.apply_input`, which sets the lines and the mouse
+buttons at once without running a frame. A paused machine thus sees the input
+at its next instruction. Headless runs (`--count-frame`, `--benchmark`) pass
+an empty `InputFrame()`.
+
+### Guarantees
+
+- **Determinism.** Build two cores from the same MachineConfig and give them
+  the same sequence of `InputFrame` values. They then produce the same video,
+  audio and snapshot bytes. This is true whatever drives them and whatever
+  `render_video` values they get. The RTC advances from the emulated cycle
+  count, never from the host clock.
+- **One frame per step.** In normal run mode, one `step_frame` call advances
+  exactly one video frame and returns one frame of audio. A frame is 59,736
+  T-states on NTSC and 71,364 on PAL, to within one instruction. A debugger
+  break can end a frame early. That mode is outside the contract.
+- **RGB inside the core.** The core converts every pixel to RGB with integer
+  tables only. The frontend never needs the palette or the VDP registers.
+- **Pre-filter audio.** The audio is the clamped sum of every present sound
+  source (PSG, SCC, Majutsushi DAC, key click, OPLL) before any filter.
+  Filtering, resampling and buffering are the frontend's.
+- **Output lifetime.** `FrameOutput.video` and `.audio` stay valid only
+  until the next `step_frame`. In Python they are fresh immutable `bytes`, so
+  the SDL2 frontend keeps the last frame without a copy. A native core may
+  reuse its buffers, and a frontend for it copies a frame that it keeps
+  longer.
+- **Media.** A medium is dirty from the first write by the emulated machine
+  until `mark_persisted`. A write of the value already stored does not count,
+  and a write-protected medium is never dirty. The core decides the set of
+  SRAM ids at build time, and the set does not change. To swap a disk, write
+  the dirty outgoing image back first and then call `mount_disk`. `host/media.py`'s `swap_disk` does this, so a failed
+  write-back leaves the drive as it was.
+
+### Embedding example
+
+This example uses the Python host for loading, and runs the core headless. It
+is the minimum for another frontend: replace the loop body with your own
+presentation, audio output and input.
+
+```python
+from pathlib import Path
+
+from host.machine_config import (
+    load_device_registry, load_machine_config, load_machine_spec, sram_paths,
+)
+from host.media import persist_dirty_media
+from msx.input import InputFrame
+from msx.machine_loader import build_machine
+from msx.state import load_state, save_state
+
+root = Path(".")                                   # the repository root
+registry = load_device_registry(root / "config")
+spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
+config = load_machine_config(spec)                 # host: YAML + files -> MachineConfig
+machine = build_machine(config)                    # core: values only
+
+for _ in range(120):
+    out = machine.step_frame(InputFrame(), render_video=True)
+    # out.video.pixels: width * 212 * 3 bytes of RGB24
+    # out.audio: samples_per_frame() signed 16-bit LE mono samples
+
+snapshot = save_state(machine)                     # bytes; store them anywhere
+load_state(machine, snapshot)
+assert save_state(machine) == snapshot
+
+persist_dirty_media(machine, sram_paths(config))   # write SRAM/CMOS/disk changes back
+```
+
+The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern.
+Each frame, it passes the frame of its input builder to `step_frame`. It
+uploads `out.video` when the core rendered the frame. It passes `out.audio`
+through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On
+exit, `__main__.py` calls `persist_dirty_media`. A frontend that has no host
+side of its own can keep `config.document` and `config.roms` from one run,
+and build the `MachineConfig` from them directly.
+
+### Porting the core
+
+These are the differences between the Python code and the language-neutral
+contract in `allium/core-frontend.allium` (its *Status* comment lists them):
+
+- The control operations return `None`, not a status record. `save_state`
+  and `load_state` are functions in `msx/state.py` that take the machine.
+- `eject_disk` is `mount_disk(drive, None)`. `read_media` returns the bytes
+  alone. The write-protect flag stays with the mounted image.
+- The frame rate is `VideoStandard` data, not a method.
+- The frontend attaches the mouse at run time (`attach_mouse`). The contract
+  has it as a config field. Which form to keep is an open question.
+- `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
+  SRAM file paths of the host. The core reads only the `MachineConfig` part.
+
+These questions are open, and a port must decide them:
+
+- **OPLL tables.** `msx/opll.py` builds its log-sin, exponent and key-scale
+  tables at import with floating-point math. A port that calculates them
+  again can differ in the last bit, and its FM-PAC audio then does not match
+  byte for byte. Ship the tables as integer data that the Python build
+  generated.
+- **Mouse attachment**, as above.
+- **Debug control.** Breakpoints, watchpoints, single-step and the RPC pause
+  are outside the contract. A port can leave them out at first.
+
+Some Python patterns have no direct equivalent in a statically typed
+language: bus hooks, register properties, the PSG envelope underflow, the
+renderer lookup tables and callable hooks. See [Portability](#portability).
+
+A suggested order for a port:
+
+1. **The CPU, memory and slots, the VDP and the PSG** for one MSX1 C-BIOS
+   machine (`cbios_msx1`). Take the MachineConfig document and the ROM
+   images from the Python host. Run N frames headless with an empty input on
+   both sides, as `--count-frame` does. Then compare the `save_state()`
+   bytes. A mismatch shows the component and the field.
+2. **The snapshot format**, so that a state saved by one implementation
+   loads in the other. After this step, either side can produce the start
+   state for the other, and a test can start at any point in a program.
+3. **MSX2**: the V9938 and its command engine, the RAM mapper, the RTC and
+   the expanded slots (`cbios_msx2`).
+4. **The other sound sources and the cartridges**: the SCC, the DAC and key
+   click, the OPLL with shipped tables, the SRAM mappers.
+5. **The FDC** (WD2793 and TC8566AF) and the media API.
+
+At each step, compare the bytes with the Python core. The same config and
+the same `InputFrame` sequence must give the same `RgbFrame.pixels`, audio
+and snapshot bytes.
 
 ## Portability
 
