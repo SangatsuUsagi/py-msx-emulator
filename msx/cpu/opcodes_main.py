@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Callable
 from msx.cpu import flags as F
 
 if TYPE_CHECKING:
+    from msx.cpu.registers import Registers
     from msx.cpu.z80 import Z80
 
 # ---------------------------------------------------------------------------
@@ -46,9 +47,9 @@ _DEC_OPS: dict[int, int] = {
 # byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
 # AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
-# internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites.
-# Not modelled: the PC-derived Y/X of a repeating block instruction; SCF/CCF's
-# Q dependence.
+# internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
+# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_block_repeat_yx).
+# Not modelled: SCF/CCF's Q dependence.
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
@@ -1073,6 +1074,17 @@ def _ed_rrd(cpu: Z80, op: int) -> int:
     return 18
 
 
+def _block_repeat_yx(r: Registers) -> None:
+    """LDIR/LDDR/CPIR/CPDR repeating, with PC already back at the ED prefix.
+
+    Y/X come from PC bits 13/11 instead of the A + byte (A - byte - H) value
+    (David Banks, hoglet67/Z80Decoder wiki "Undocumented Flags"); MEMPTR is
+    set to the ED address + 2, as openMSX's BLOCK_LD/BLOCK_CP do.
+    """
+    r.F = (r.F & ~_FLAG_YX) | ((r.PC >> 8) & _FLAG_YX)
+    r.WZ = (r.PC + 2) & 0xFFFF
+
+
 def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
     r = cpu.registers
     val = cpu.read_byte(r.HL)
@@ -1089,6 +1101,7 @@ def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
     r.F = f
     if op in (0xB0, 0xB8) and r.BC != 0:
         r.PC = (r.PC - 2) & 0xFFFF
+        _block_repeat_yx(r)
         return 21
     return 16
 
@@ -1115,6 +1128,7 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
     r.F = f
     if op in (0xB1, 0xB9) and r.BC != 0 and (result & 0xFF) != 0:
         r.PC = (r.PC - 2) & 0xFFFF
+        _block_repeat_yx(r)
         return 21
     return 16
 
