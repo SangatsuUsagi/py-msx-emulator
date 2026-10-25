@@ -699,3 +699,43 @@ def test_dec_ixl_sets_zero_and_n() -> None:
     assert cpu.registers.F & F.FLAG_Z
     assert cpu.registers.F & F.FLAG_N
     assert t == 8
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_indexed_access_sets_memptr_to_effective_address() -> None:
+    # Spec "Indexed access sets MEMPTR to the effective address".
+    cpu = make_cpu([0xDD, 0x7E, 0x05])  # LD A,(IX+5)
+    cpu.registers.IX = 0x2800
+    cpu.step()
+    assert cpu.registers.WZ == 0x2805
+    cpu = make_cpu([0xDD, 0x7E, 0xFB])  # LD A,(IX-5)
+    cpu.registers.IX = 0x2800
+    cpu.step()
+    assert cpu.registers.WZ == 0x27FB
+
+
+def test_ddcb_sets_memptr_to_effective_address() -> None:
+    cpu = make_cpu([0xDD, 0xCB, 0x01, 0x06])  # RLC (IX+1)
+    cpu.registers.IX = 0x9000
+    cpu.step()
+    assert cpu.registers.WZ == 0x9001
+
+
+def test_ld_ix_ind_nn_and_ld_ind_nn_ix_set_memptr() -> None:
+    cpu = make_cpu([0xDD, 0x2A, 0x34, 0x12])  # LD IX,(0x1234)
+    cpu.step()
+    assert cpu.registers.WZ == 0x1235
+    cpu = make_cpu([0xDD, 0x22, 0xFF, 0x80])  # LD (0x80FF),IX
+    cpu.step()
+    assert cpu.registers.WZ == 0x8100
+
+
+def test_ex_sp_ix_sets_memptr_to_new_ix() -> None:
+    cpu = make_cpu([0xDD, 0xE3])  # EX (SP),IX
+    cpu.registers.SP = 0xF000
+    cpu.write_byte(0xF000, 0x78)
+    cpu.write_byte(0xF001, 0x56)
+    cpu.step()
+    assert cpu.registers.WZ == 0x5678

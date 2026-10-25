@@ -252,6 +252,11 @@
               "minimum": 0,
               "maximum": 65535
             },
+            "WZ": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
             "BC_": {
               "type": "integer",
               "minimum": 0,
@@ -284,7 +289,8 @@
             "IY",
             "PC",
             "R",
-            "SP"
+            "SP",
+            "WZ"
           ],
           "additionalProperties": false
         },

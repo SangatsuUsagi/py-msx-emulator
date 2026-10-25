@@ -8,7 +8,7 @@ class Registers:
     PORT-NOTE: every field is a bare Python ``int`` here, but each has a fixed
       hardware width and is expected to be kept already-masked to that width
       by whoever writes it — 8-bit (u8): A, F, I, R, and the shadow A_/F_;
-      16-bit (u16): BC, DE, HL, IX, IY, SP, PC, and the shadow BC_/DE_/HL_.
+      16-bit (u16): BC, DE, HL, IX, IY, SP, PC, WZ, and the shadow BC_/DE_/HL_.
       Callers mask on write (``& 0xFF`` / ``& 0xFFFF``); readers assume the
       value is already in range.
     Rust equivalent: u8/u16 per field, enforced by the type; arithmetic must
@@ -33,6 +33,9 @@ class Registers:
     PC: int = 0x0000
     I: int = 0x00  # noqa: E741 - Z80 interrupt vector register (canonical name)
     R: int = 0x00
+    # Internal MEMPTR: not programmer-visible; BIT n,(HL) shows its high byte
+    # in Y/X. Reset value 0xFFFF as in openMSX's doReset.
+    WZ: int = 0xFFFF
     # Shadow registers
     A_: int = 0xFF
     F_: int = 0xFF
@@ -52,6 +55,7 @@ class Registers:
         self.IY = 0xFFFF
         self.I = 0x00
         self.R = 0x00
+        self.WZ = 0xFFFF
         self.A_ = 0xFF
         self.F_ = 0xFF
         self.BC_ = 0xFFFF

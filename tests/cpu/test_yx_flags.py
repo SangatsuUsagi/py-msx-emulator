@@ -93,10 +93,21 @@ def test_bit_n_ix_d_takes_yx_from_the_address_high_byte() -> None:
     assert cpu.registers.F & _YX == _YX
 
 
-def test_bit_n_hl_clears_yx() -> None:
-    cpu = make_cpu([0xCB, 0x46])  # BIT 0,(HL): MEMPTR not modelled
+def test_bit_n_hl_takes_yx_from_memptr() -> None:
+    cpu = make_cpu([0x3A, 0xFF, 0x27, 0xCB, 0x46])  # LD A,(0x27FF); BIT 0,(HL)
     cpu.registers.HL = 0xC000
     cpu.write_byte(0xC000, 0xFF)
+    _run(cpu, 2)
+    assert cpu.registers.WZ == 0x2800
+    assert cpu.registers.F & _YX == _YX
+
+
+def test_bit_n_hl_clears_yx() -> None:
+    # MEMPTR = 0x0100: its high byte has bits 5 and 3 clear.
+    cpu = make_cpu([0x3A, 0xFF, 0x00, 0xCB, 0x46])  # LD A,(0x00FF); BIT 0,(HL)
+    cpu.registers.HL = 0xC000
+    cpu.write_byte(0xC000, 0xFF)
+    cpu.step()
     cpu.registers.F = _YX
     cpu.step()
     assert cpu.registers.F & _YX == 0

@@ -271,3 +271,36 @@ def test_batch_preserves_r_bit7_across_wraparound() -> None:
     n = cpu.step_halted_batch(4 * 4)  # 4 HALT-NOPs: 0x7E -> 0x02 (mod 128)
     assert n == 16
     assert cpu.registers.R == 0x82
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_interrupt_acceptance_sets_memptr_to_handler_address() -> None:
+    # Spec "Interrupt acceptance sets MEMPTR to the handler address".
+    cpu = make_cpu([0x00])
+    cpu.im = 1
+    cpu.iff1 = True
+    cpu.int_pending = True
+    cpu.step()
+    assert cpu.registers.WZ == 0x0038
+
+
+def test_im2_acceptance_sets_memptr_to_vector_target() -> None:
+    rom = [0x00] * 32768
+    rom[0x00FF] = 0x34
+    rom[0x0100] = 0x12
+    cpu = make_cpu(rom)
+    cpu.im = 2
+    cpu.iff1 = True
+    cpu.int_pending = True
+    cpu.registers.I = 0x00
+    cpu.step()
+    assert cpu.registers.WZ == 0x1234
+
+
+def test_nmi_acceptance_sets_memptr() -> None:
+    cpu = make_cpu([0x00])
+    cpu.nmi_pending = True
+    cpu.step()
+    assert cpu.registers.WZ == 0x0066
