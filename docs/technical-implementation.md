@@ -111,9 +111,10 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page
 boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
-documented per-instruction rules. Three sources of Y and X are not modelled:
-the internal MEMPTR register (`BIT n,(HL)` leaves them clear), the PC of a
-repeating block instruction, and the previous instruction (`SCF`/`CCF`).
+documented per-instruction rules. The emulator does not model three sources
+of Y and X: the internal MEMPTR register (`BIT n,(HL)` leaves them clear), the
+PC of a repeating block instruction, and the previous instruction
+(`SCF`/`CCF`).
 
 ---
 
@@ -168,20 +169,33 @@ flag, as on real hardware. A read of S#0 (R#15 = 0) clears F. A read of S#1
 
 `Machine.run_frame()` divides the frame into scanlines. It calls
 `vdp9938.begin_scanline(L)` once at the end of the T-state budget of each
-scanline:
+scanline. In outline (`Machine._run_lines_fast`):
 
 ```python
-for L in range(lpf):               # lpf = 262 NTSC lines
-    line_end = (L + 1) * cpf // lpf
+for line in range(first_line, end_line):   # 262 NTSC lines per frame
+    line_end = (line + 1) * cpf // lpf
     while total < line_end:
         cpu.int_pending = vdp9938.irq
-        n = cpu_step()
-        ...
-    vdp9938.begin_scanline(L)
+        n = cpu_step()                     # or step_halted_batch(), below
+        total += n
+        if vdp9938._cmd_active:
+            vdp9938.tick(n)                # command engine running
+        else:
+            vdp9938._line_cycle += n       # horizontal-retrace timer only
+    vdp9938.begin_scanline(line)
 ```
 
 The CPU sees a level change from `begin_scanline` at its next instruction
 boundary.
+
+The loop runs in two segments: the lines up to and including
+`vblank_start_line`, then the rest of the frame. The machine renders the
+frame between them, before the VBlank interrupt handler runs (see
+[VDP](#vdp)). While the CPU is halted and cannot take an interrupt, the loop
+calls `Z80.step_halted_batch()` instead of `step()`. One call advances the
+whole run of halted M1 cycles up to the end of the line, with the same R value
+and T-state total. The loop does not batch while a V9938 command runs,
+because the command engine can raise an interrupt partway through the line.
 
 `begin_scanline(line)` calculates the effective IRQ line as
 `(R#19 − R#23) & 0xFF`. It sets S#1 bit 0 (FH) when `line == effective_irq_line`
@@ -193,8 +207,9 @@ has already passed.
 FH stays set until a read of S#1. This read clears FH and evaluates `irq`
 again.
 
-`begin_scanline(display_height)` also sets the VBlank flag. This is the first
-line after the active display. It replaces the old per-frame finalize path for
+`begin_scanline(vblank_start_line)` also sets the VBlank flag.
+`vblank_start_line` is the active line count (192 or 212), so this is the
+first line after the active display. It replaces the old per-frame finalize path for
 MSX2.
 
 ---
@@ -287,18 +302,19 @@ changes at the correct scanline.
 `_reg_write_log`:
 
 ```python
-_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 18, 19, 23})
+_DISPLAY_REGS = frozenset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 18, 19, 23})
 ```
 
-Each entry has one of these forms:
+Each entry is one of two types (`msx/vdp/_v9938_defs.py`), and readers tell
+them apart by type:
 
-- `(display_line, reg, value)` for a register write
-- `(display_line, -1, (palette_index, grb_value))` for a palette write (port
-  0x9A), with the sentinel `reg = -1`
+- `_RegChange(line, reg, value)` for a register write
+- `_PaletteChange(line, idx, rgb)` for a palette write (port 0x9A). `rgb` is
+  the 9-bit entry as the palette stores it, `r << 6 | g << 3 | b`
 
 `begin_scanline(0)` (frame start) clears the log. `render_frame()` does not
-clear it, so the SDL2 frontend can use it during RGB conversion to apply the
-correct palette per scanline.
+clear it. `V9938.to_rgb24()` thus can use the log when it converts the frame
+to RGB24 inside the core, to apply the correct palette per scanline.
 
 `render_frame_v9938(vdp)` examines `_reg_write_log` to find band boundaries.
 A band boundary is a line where a display-relevant value differs from the
@@ -342,9 +358,11 @@ operations:
 
 The engine executes each command immediately. To model the command duration,
 `V9938.tick(n)` decrements an approximate cycle budget (`_cmd_remaining`).
-The machine calls `tick(n)` after each instruction with the T-states that the
-instruction used. Software that busy-waits on S#2 bit 0 (CE) sees CE clear
-after the budget expires.
+While a command runs, the machine calls `tick(n)` after each instruction with
+the T-states that the instruction used. While no command runs, the machine
+only adds the T-states to `_line_cycle`, the horizontal-retrace timer that
+`tick(n)` also advances (see [H-line interrupt](#h-line-interrupt)). Software
+that busy-waits on S#2 bit 0 (CE) sees CE clear after the budget expires.
 
 Each block command has its own cost per element, in T-states:
 
@@ -414,8 +432,11 @@ channel.
 `PSG.generate_samples(n, frame_start, frame_end)` reproduces software PCM that
 a program plays through rapid volume-register writes:
 
-1. `write_port` records each register write as `(cycle, reg, value)`. It gets
-   the cycle from a `_get_cycle` callback that reads `machine.cycle_count`.
+1. `write_port` records each register write as `(cycle, reg, value)`. It
+   reads the cycle from `machine.cycle_count` through its `_machine`
+   reference. The fast frame loop adds the T-states of each scanline to
+   `cycle_count` at the end of the line. The position of a write thus has a
+   resolution of one scanline (228 T-states, about 2.8 samples).
 2. `generate_samples` goes back to the register and generator state at the
    first write of the frame.
 3. It renders the buffer again as consecutive segments. Each write starts a
@@ -522,7 +543,7 @@ with the Sony/Philips style, and the TC8566AF with its own style.
 
 | Layer      | File                             | Responsibility                                                                                                                                                                                                                                                    |
 | ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk image | `disk_image.py` (`DskDiskImage`) | Holds a `*.dsk` sector image built from the file's bytes. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and marks the image dirty; `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk is swapped out |
+| Disk image | `disk_image.py` (`DskDiskImage`) | Holds a `*.dsk` sector image that the host made from the bytes of the file. Gets the geometry from the BPB of the FAT12 filesystem (BIOS Parameter Block: bytes/sector, total sectors, sectors/track, heads). Buffers writes and marks the image dirty. `host/media.py` writes a dirty image back to its file on exit, before a save state, and when the disk leaves its drive |
 | Drive      | `disk_drive.py` (`DiskDrive`)    | One physical drive. Holds the mounted image, tracks the head position, and gives sector read/write                                                                                                                                                                  |
 | Controller | `wd2793.py` (`WD2793`), `tc8566af.py` (`TC8566AF`) | The FDC chip. `WD2793`: Type I-IV command decode, status register, data/track/sector registers, `abort()`. `TC8566AF` (uPD765 family): Command/Execution/Result phase model, Main Status Register, non-DMA transfers, no directly addressable track/sector register |
 | Interface  | `interface.py`                   | Connection style between the controller and the memory bus. Both styles map the DISK ROM at 0x4000-0x7FFF. `SonyPhilipsInterface` (= openMSX PhilipsFDC) puts the WD2793 registers at 0x7FF8-0x7FFF and uses the disk-change bit. `TC8566AFInterface` puts two control registers, the Main Status Register, and the Data Register at 0x7FF8-0x7FFB. Both styles share `swap()`, which mounts and ejects disks at runtime |
@@ -537,8 +558,10 @@ style of a machine. The two shipped floppy machines thus differ only in data:
   FDC in 2.
 
 `--fdd1`/`--fdd2` mount images into drives A/B. `--fdd1` can take a list of
-images. Three paths swap disks at runtime, and all of them call
-`FloppyDisk.swap()`:
+images. Three paths swap disks at runtime. All of them call `swap_disk()` in
+`host/media.py`. It first writes a dirty outgoing image back to its file, and
+then calls `Machine.mount_disk()`, which calls the `swap()` of the floppy
+interface:
 
 - The F6/Shift+F6 hotkeys of the SDL2 frontend step through the `--fdd1`
   list, or eject and insert the drive A disk again.
@@ -546,19 +569,22 @@ images. Three paths swap disks at runtime, and all of them call
 - The `fdd.swap` method of the socket RPC server.
 
 The implementation boots Disk BASIC, supports `CALL FORMAT`, and reads and
-writes files; written sectors go back to the `.dsk` file on exit, before a
-save state, and when the disk is swapped out.
+writes files. The host writes the changed sectors back to the `.dsk` file on
+exit, before a save state, and when the disk leaves its drive.
 `machine.fdc` is `None` on machines with no floppy interface.
 
 ## Machine and extension YAML schema
 
-`host/machine_config.py` is the single source of truth for three YAML surfaces:
-device definitions (`config/devices/*.yaml`), machine specifications
-(`config/machines/*.yaml`), and extension overlays
-(`config/extensions/*.yaml`). All three are `TypedDict` shapes that the loader
-validates by hand (`DeviceEntryYaml`, `MachineEntryYaml`,
-`ExtensionOverlayYaml`, and their nested shapes). No schema library validates
-them.
+`host/machine_config.py` reads three YAML surfaces: device definitions
+(`config/devices/*.yaml`), machine specifications (`config/machines/*.yaml`),
+and extension overlays (`config/extensions/*.yaml`). All three are `TypedDict`
+shapes that the loader validates by hand (`DeviceEntryYaml`,
+`MachineEntryYaml`, `ExtensionOverlayYaml`, and their nested shapes). No
+schema library validates them. The closed sets of names (mappers, FDC
+controllers and connection styles, extension, sub-slot and I/O devices) are
+defined in `msx/machine_config.py`. The YAML loader imports them under its
+`_KNOWN_*`/`_SUPPORTED_*` names, and the core checks the same sets again when
+it parses the MachineConfig document.
 
 Each field in this section matches an explicit `.get()` call in the loader. A
 key that the loader does not read is documentation only, whatever the YAML
@@ -630,8 +656,11 @@ entries:
 - The entry whose `pages` includes `2`: an optional logo ROM at
   0x8000-0xBFFF.
 
-`sha1: null` disables hash verification for that ROM. The loader checks any
-other string value against the loaded file.
+The `sha1` of a `rom:` block only records the expected dump. The loader does
+not compare it with the file that it reads, whether the value is `null` or a
+hash. The core checks a different SHA1. The host calculates it from the
+bytes that it read and writes it into the MachineConfig document (see
+[load_machine_config() and build_machine()](#load_machine_config-and-build_machine)).
 
 `content` can also hold at most one `{ram: {size_kb, pages}}` entry. This is
 flat RAM in slot 0 next to the ROMs. An example is the 16 KB SRAM of the Sony
@@ -641,8 +670,9 @@ HB-10 at page 3, a volatile work RAM with no battery backup:
     - ram: {size_kb: 16, pages: [3]}
 ```
 
-`pages` must name exactly one page, or the loader raises `MachineLoadError`.
-The loader rejects a second `ram` entry in the same way.
+`size_kb` must be `16` and `pages` must name exactly one page, or the loader
+raises `MachineLoadError`. The loader rejects a second `ram` entry in the same
+way.
 
 #### Slots 1 and 2: not read from the machine YAML
 
@@ -651,12 +681,14 @@ under `slots.primary`. But `load_machine_spec` never reads `primary[1]` or
 `primary[2]`. It reads only `primary[0]` and `primary[3]`. These two entries
 thus declare intent only.
 
-`build_machine()` gets the contents of slots 1 and 2 entirely from its own
-parameters. For slot 1, these are the cartridge and mapper (the positional CLI
-argument or `--slot1`, plus `--mapper1`) or the overlay (`--extension1`). For
-slot 2, these are the cartridge and mapper (`--slot2`/`--mapper2`) or the
-overlay (`--extension2`). The CLI sets these values. Nothing under
-`slots.primary.1`/`.2` in the YAML affects them.
+The contents of slots 1 and 2 come entirely from the parameters of
+`load_machine_config()`, which writes them into the `cartridges` and
+`extensions` of the MachineConfig document. For slot 1, these are the
+cartridge and mapper (the positional CLI argument or `--slot1`, plus
+`--mapper1`) or the overlay (`--extension1`). For slot 2, these are the
+cartridge and mapper (`--slot2`/`--mapper2`) or the overlay (`--extension2`).
+The CLI sets these values. Nothing under `slots.primary.1`/`.2` in the YAML
+affects them.
 
 #### Slot 3: MSX1
 
@@ -721,7 +753,7 @@ whatever its role is.
 | `rom` | `rom:` block | (none) | Necessary (the DISK ROM) |
 | `controller` | string | `wd2793` | `wd2793` or `tc8566af` |
 | `connection_style` | string | `sony` | `sony` or `tc8566af` |
-| `drives` | int | `1` | Must be positive |
+| `drives` | int | `1` | `1`-`4`. The YAML loader checks only that the value is positive. The core rejects a document with more than 4 drives |
 
 `(controller, connection_style)` must be `(wd2793, sony)` or
 `(tc8566af, tc8566af)`. The loader raises an error for any other pair, even if
@@ -857,7 +889,7 @@ ROM-bearing field in the loader.
 | `file` | string | yes | Resolved against `rom_base` |
 | `size_kb` | int | no (default `0`) | Documentation only. The loader does not check it against the actual file size |
 | `pages` | list of int | no (default `[]`) | Only meaningful for slot 0 and the SUB ROM, where it selects the main, logo, or SUB ROM entry |
-| `sha1` | string | no | `null` or an absent key disables verification |
+| `sha1` | string | no | Documentation only. The loader does not check it against the file (see [Slot 0](#slot-0-fixed)) |
 
 | `sram:` field | Type | Notes |
 | --- | --- | --- |
@@ -885,20 +917,23 @@ ROM-bearing field in the loader.
 
 ### load_machine_config() and build_machine()
 
-Building is split between the host and the core.
+The host and the core share the work of building a machine.
 `load_machine_config(spec, cartridge1, mapper1, ...)` in `host/machine_config.py`
 reads every file the machine needs into a `MachineConfig` value
-(`msx/boundary.py`). The resolved machine, the cartridges with their mappers (an
-`auto` mapper is resolved here through the ROM database) and the extensions
-become one canonical JSON document (`msx/machine_config.py`,
-`msx/machine_config.schema.json`), in which every ROM is a reference
-`{name, size, sha1, pages}`. The ROM images travel beside it keyed by SHA1, with
-the run inputs: the saved SRAM images, the disk images and the RTC start time.
-`build_machine(config)` in `msx/machine_loader.py` parses the document strictly,
-checks every referenced image's size and SHA1, and then constructs the `Machine`
-from those bytes only. It opens no file and consults no database, so the same
-config always builds the same machine, and the `Machine` keeps the document's
-SHA-256, which a save state records. The `spec.generation` field selects the concrete types:
+(`msx/boundary.py`). It writes the resolved machine, the cartridges with their
+mappers and the extensions into one canonical JSON document
+(`msx/machine_config.py`, `msx/machine_config.schema.json`). For an `auto`
+mapper, it looks up the mapper in the ROM database first. In the document,
+every ROM is a reference `{name, size, sha1, pages}`. The ROM images travel
+beside the document, keyed by SHA1. The run inputs also travel beside it: the
+saved SRAM images, the disk images and the RTC start time.
+
+`build_machine(config)` in `msx/machine_loader.py` parses the document
+strictly and checks the size and SHA1 of every referenced image. It then
+constructs the `Machine` from those bytes only. It opens no file and consults
+no database, so the same config always builds the same machine. The `Machine`
+keeps the SHA-256 of the document, which a save state records. The
+`spec.generation` field selects the concrete types:
 
 - `"msx1"`: `VDP` (TMS9918A), flat slot 3 RAM, no RTC or RAM mapper
 - `"msx2"`: `V9938`, expanded slot 3 with sub-ROM and `RamMapper`, `RTC`
@@ -970,8 +1005,10 @@ These patterns translate directly to any statically typed target:
   fields explicitly declared and typed. There is no `__getattr__`/
   `__setattr__` magic anywhere in `msx/`. The two structs on the hottest path,
   `Z80` and `Registers`, also use `@dataclass(slots=True)` to remove the
-  per-instance `__dict__`. The other components use a plain `@dataclass`,
-  because the field-layout guarantee is less important off the hot path.
+  per-instance `__dict__`. `Memory` and a few small V9938 value types also
+  use it: the `_RegChange`/`_PaletteChange` log entries, `_RenderStatus` and
+  `_SatSegment`. The other components use a plain `@dataclass`, because the
+  field-layout guarantee is less important off the hot path.
 - **Timing constants**: `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
   `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
   `_TR_REASSERT_CYCLES`, etc. are module-level integer constants. The per-frame
