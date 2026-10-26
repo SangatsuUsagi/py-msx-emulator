@@ -118,7 +118,9 @@ documented per-instruction rules, including three less common sources:
 depend on whether the previous instruction changed the flags. `SCF`/`CCF`
 follow the Zilog NMOS rule; NEC and ST CMOS Z80s differ
 ([Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)).
-TODO: confirm on real hardware which rule the HB-F1XD and HB-10 follow. The
+The emulator targets a Zilog-compatible Z80. TODO: record how the NEC and
+Sharp Z80-compatible CPUs used in some MSX machines (for example the HB-10
+and HB-F1XD) differ, once tested on real hardware. The
 repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep the simpler per-iteration flags.
 
 ---
