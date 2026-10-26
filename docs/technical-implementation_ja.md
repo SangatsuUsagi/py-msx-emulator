@@ -68,7 +68,7 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 
 ### 既知の制限
 
-OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確でない。非公開のフラグ Y（bit 5）と X（bit 3）は、資料にある命令ごとの規則に従う。あまり一般的でない次の 3 つの要因も再現している：`BIT n,(HL)` は内部レジスタ MEMPTR から、繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR` は自身のアドレスから Y と X を取り、`SCF`/`CCF` は直前の命令がフラグを変えたかどうかで結果が変わる。`SCF`/`CCF` は Zilog NMOS の規則に従う。NEC 製や ST 製 CMOS の Z80 では規則が異なる（[Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)）。TODO: HB-F1XD と HB-10 がどの規則に従うかを実機で確認する。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、従来どおり 1 回ごとの単純なフラグのままである。
+OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確でない。非公開のフラグ Y（bit 5）と X（bit 3）は、資料にある命令ごとの規則に従う。あまり一般的でない次の 3 つの要因も再現している：`BIT n,(HL)` は内部レジスタ MEMPTR から、繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR` は自身のアドレスから Y と X を取り、`SCF`/`CCF` は直前の命令がフラグを変えたかどうかで結果が変わる。`SCF`/`CCF` は Zilog NMOS の規則に従う。NEC 製や ST 製 CMOS の Z80 では規則が異なる（[Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)）。エミュレータは Zilog 互換の Z80 を対象にしている。TODO: 一部の MSX が使う NEC 製や Sharp 製の Z80 互換 CPU（たとえば HB-10 や HB-F1XD のもの）での違いを、実機で確認したうえで記録する。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、従来どおり 1 回ごとの単純なフラグのままである。
 
 ---
 
