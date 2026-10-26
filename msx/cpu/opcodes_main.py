@@ -47,9 +47,11 @@ _DEC_OPS: dict[int, int] = {
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
 # AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
 # internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
-# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_block_repeat_yx);
+# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp);
 # SCF/CCF take them from (Q ^ F) | A, with Q tracked by Z80.step() and set
-# (cpu.q_next) by every handler that writes F.
+# (cpu.q_next) by every handler whose ALU writes F -- not POP AF or
+# EX AF,AF' (see Z80.q). Not modelled: the repeat-cycle flag changes of
+# INIR/INDR/OTIR/OTDR, which keep the per-iteration flags.
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
@@ -236,6 +238,7 @@ def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
 
 
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = first operand + 1
     result = hl + rr
     f = cpu.registers.F & ~(F.FLAG_H | F.FLAG_N | F.FLAG_C | _FLAG_YX)
     f |= (result >> 8) & _FLAG_YX
@@ -249,6 +252,7 @@ def _add16(cpu: Z80, hl: int, rr: int) -> int:
 
 
 def _adc16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = HL + 1
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl + rr + c
     r16 = result & 0xFFFF
@@ -270,6 +274,7 @@ def _adc16(cpu: Z80, hl: int, rr: int) -> int:
 
 
 def _sbc16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = HL + 1
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl - rr - c
     r16 = result & 0xFFFF
@@ -532,7 +537,6 @@ def _dd_fd_add_ixy_rr(cpu: Z80, use_iy: bool, op: int) -> int:
         rr = xy
     else:
         rr = r.SP
-    r.WZ = (xy + 1) & 0xFFFF
     result = _add16(cpu, xy, rr)
     if use_iy:
         r.IY = result
@@ -986,7 +990,6 @@ def _ed_adc_hl_rr(cpu: Z80, op: int) -> int:
         rr = r.HL
     else:
         rr = r.SP
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _adc16(cpu, r.HL, rr)
     return 15
 
@@ -1001,7 +1004,6 @@ def _ed_sbc_hl_rr(cpu: Z80, op: int) -> int:
         rr = r.HL
     else:
         rr = r.SP
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _sbc16(cpu, r.HL, rr)
     return 15
 
@@ -1103,18 +1105,11 @@ def _ed_rrd(cpu: Z80, op: int) -> int:
     return 18
 
 
-def _block_repeat_yx(cpu: Z80) -> None:
-    """LDIR/LDDR/CPIR/CPDR repeating, with PC already back at the ED prefix.
-
-    Y/X come from PC bits 13/11 instead of the A + byte (A - byte - H) value
-    (David Banks, hoglet67/Z80Decoder wiki "Undocumented Flags"); MEMPTR is
-    set to the ED address + 2, as openMSX's BLOCK_LD/BLOCK_CP do.
-    """
-    r = cpu.registers
-    f = (r.F & ~_FLAG_YX) | ((r.PC >> 8) & _FLAG_YX)
-    r.F = f
-    cpu.q_next = f
-    r.WZ = (r.PC + 2) & 0xFFFF
+# A repeating LDIR/LDDR/CPIR/CPDR, with PC already back at the ED prefix, takes
+# Y/X from PC bits 13/11 instead of the A + byte (A - byte - H) value (David
+# Banks, hoglet67/Z80Decoder wiki "Undocumented Flags") and sets MEMPTR to the
+# ED address + 2, as openMSX's BLOCK_LD/BLOCK_CP do. The repeat case is tested
+# first so each iteration computes Y/X once (the hot path of a block copy).
 
 
 def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
@@ -1124,18 +1119,23 @@ def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
     inc = 1 if op in (0xA0, 0xB0) else -1
     r.HL = (r.HL + inc) & 0xFFFF
     r.DE = (r.DE + inc) & 0xFFFF
-    r.BC = (r.BC - 1) & 0xFFFF
+    bc = (r.BC - 1) & 0xFFFF
+    r.BC = bc
     f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N | _FLAG_YX)
+    if bc != 0:
+        f |= F.FLAG_PV
+        if op >= 0xB0:  # LDIR / LDDR (only A0/A8/B0/B8 are dispatched here)
+            pc = (r.PC - 2) & 0xFFFF
+            r.PC = pc
+            f |= (pc >> 8) & _FLAG_YX
+            r.F = f
+            cpu.q_next = f
+            r.WZ = (pc + 2) & 0xFFFF
+            return 21
     n = (r.A + val) & 0xFF
     f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A + byte
-    if r.BC != 0:
-        f |= F.FLAG_PV
     r.F = f
     cpu.q_next = f
-    if op in (0xB0, 0xB8) and r.BC != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
-        _block_repeat_yx(cpu)
-        return 21
     return 16
 
 
@@ -1146,7 +1146,8 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
     inc = 1 if op in (0xA1, 0xB1) else -1
     r.WZ = (r.WZ + inc) & 0xFFFF
     r.HL = (r.HL + inc) & 0xFFFF
-    r.BC = (r.BC - 1) & 0xFFFF
+    bc = (r.BC - 1) & 0xFFFF
+    r.BC = bc
     f = (r.F & F.FLAG_C) | F.FLAG_N
     if (result & 0xFF) == 0:
         f |= F.FLAG_Z
@@ -1154,16 +1155,21 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
         f |= F.FLAG_S
     if (r.A ^ val ^ result) & 0x10:
         f |= F.FLAG_H
+    if bc != 0:
+        f |= F.FLAG_PV
+        # CPIR / CPDR (only A1/A9/B1/B9 are dispatched here), no match yet
+        if op >= 0xB1 and (result & 0xFF) != 0:
+            pc = (r.PC - 2) & 0xFFFF
+            r.PC = pc
+            f |= (pc >> 8) & _FLAG_YX
+            r.F = f
+            cpu.q_next = f
+            r.WZ = (pc + 2) & 0xFFFF  # replaces the CPI/CPD step above
+            return 21
     n = (result - (1 if f & F.FLAG_H else 0)) & 0xFF
     f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A - byte - H
-    if r.BC != 0:
-        f |= F.FLAG_PV
     r.F = f
     cpu.q_next = f
-    if op in (0xB1, 0xB9) and r.BC != 0 and (result & 0xFF) != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
-        _block_repeat_yx(cpu)
-        return 21
     return 16
 
 
@@ -1555,28 +1561,24 @@ def _op_ld_a_ind_nn(cpu: Z80) -> int:  # LD A, (nn)  0x3A
 
 def _op_add_hl_bc(cpu: Z80) -> int:
     r = cpu.registers
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _add16(cpu, r.HL, r.BC)
     return 11
 
 
 def _op_add_hl_de(cpu: Z80) -> int:
     r = cpu.registers
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _add16(cpu, r.HL, r.DE)
     return 11
 
 
 def _op_add_hl_hl(cpu: Z80) -> int:
     r = cpu.registers
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _add16(cpu, r.HL, r.HL)
     return 11
 
 
 def _op_add_hl_sp(cpu: Z80) -> int:
     r = cpu.registers
-    r.WZ = (r.HL + 1) & 0xFFFF
     r.HL = _add16(cpu, r.HL, r.SP)
     return 11
 
@@ -1859,9 +1861,9 @@ def _op_ex_sp_hl(cpu: Z80) -> int:
 def _op_in_a_n(cpu: Z80) -> int:
     # Port address is (A << 8) | n, using A before it is overwritten.
     n = cpu._fetch()
-    a = cpu.registers.A
-    cpu.registers.WZ = (((a << 8) | n) + 1) & 0xFFFF
-    cpu.registers.A = cpu.read_port((a << 8) | n)
+    port = (cpu.registers.A << 8) | n
+    cpu.registers.WZ = (port + 1) & 0xFFFF
+    cpu.registers.A = cpu.read_port(port)
     return 11
 
 
@@ -1869,8 +1871,9 @@ def _op_out_n_a(cpu: Z80) -> int:
     # Port address is (A << 8) | n on the bus.
     n = cpu._fetch()
     a = cpu.registers.A
-    cpu.registers.WZ = (a << 8) | ((n + 1) & 0xFF)
-    cpu.write_port((a << 8) | n, a)
+    port = (a << 8) | n
+    cpu.registers.WZ = (port & 0xFF00) | ((n + 1) & 0xFF)  # low byte wraps alone
+    cpu.write_port(port, a)
     return 11
 
 

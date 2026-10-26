@@ -63,9 +63,10 @@ class Z80:
     nmi_pending: bool = False
     ei_pending: bool = False
     instruction_pc: int = 0
-    # Q: the flags the ALU latched in the previous instruction (its new F if it
-    # wrote F, else 0), read by SCF/CCF. Each step() moves q_next into q and
-    # clears q_next; every handler that writes F sets q_next to the new F.
+    # Q (u8): the flags the ALU latched in the previous instruction (its new F
+    # if it wrote F, else 0), read by SCF/CCF. Each step() moves q_next (u8)
+    # into q and clears q_next; every handler whose ALU writes F sets q_next
+    # to the new F. POP AF and EX AF,AF' load F without the ALU and leave it.
     q: int = 0
     q_next: int = 0
     # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
@@ -168,7 +169,7 @@ class Z80:
             self.iff2 = self.iff1
             self.iff1 = False
             self._inc_r()
-            self.q_next = 0
+            self.q_next = 0  # returns before the Q shift: next instruction sees Q = 0
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
             self.registers.WZ = 0x0066  # MEMPTR = handler address (openMSX nmi)
@@ -191,7 +192,7 @@ class Z80:
             self.iff2 = False
             # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).
             self._inc_r()
-            self.q_next = 0
+            self.q_next = 0  # returns before the Q shift: next instruction sees Q = 0
             if self.im == 0 or self.im == 1:
                 # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
