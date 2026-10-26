@@ -1666,9 +1666,10 @@ def _op_daa(cpu: Z80) -> int:
     f = r.F
     correction = 0
     new_c = False
-    if (f & F.FLAG_H) or ((not (f & F.FLAG_N)) and (a & 0x0F) > 9):
+    # The correction depends on A, H and C only; N just picks add or subtract.
+    if (f & F.FLAG_H) or (a & 0x0F) > 9:
         correction |= 0x06
-    if (f & F.FLAG_C) or ((not (f & F.FLAG_N)) and a > 0x99):
+    if (f & F.FLAG_C) or a > 0x99:
         correction |= 0x60
         new_c = True
     if f & F.FLAG_N:
