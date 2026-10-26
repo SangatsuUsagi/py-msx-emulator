@@ -105,3 +105,24 @@ def test_daa_clears_half_carry_without_bit4_change() -> None:
     cpu.step()
     assert cpu.registers.A == 0x12
     assert not (cpu.registers.F & F.FLAG_H)
+
+
+def test_daa_after_subtract_corrects_invalid_bcd() -> None:
+    # A=0x9A, N=1: the correction depends on A, H and C only, so it is 0x66
+    # (low nibble > 9, A > 0x99) and is subtracted: 0x9A - 0x66 = 0x34.
+    cpu = make_cpu([0x27])
+    cpu.registers.A = 0x9A
+    cpu.registers.F = F.FLAG_N
+    cpu.step()
+    assert cpu.registers.A == 0x34
+    assert cpu.registers.F == 0x23  # N, C and Y (bit 5 of 0x34)
+
+
+def test_daa_after_subtract_sets_carry_from_a() -> None:
+    # A=0xA0, N=1: A > 0x99 alone selects 0x60 and sets C.
+    cpu = make_cpu([0x27])
+    cpu.registers.A = 0xA0
+    cpu.registers.F = F.FLAG_N
+    cpu.step()
+    assert cpu.registers.A == 0x40
+    assert cpu.registers.F & F.FLAG_C
