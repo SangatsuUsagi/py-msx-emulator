@@ -104,7 +104,7 @@ def test_vblank_sets_int_pending_when_ie_set() -> None:
     assert m.cpu.int_pending
 
 
-# --- _run_lines_fast HALT batching (Z80.step_halted_batch) ------------------
+# --- _run_lines_fast HALT batching (Z80.step_idle_batch -> step_halted_batch)
 # The CPU spins in HALT for the whole pre-VBlank segment; Machine's hot loop
 # batches those HALT-NOP steps instead of calling cpu.step() once per M1
 # cycle (see openspec cpu-z80 "Batched HALT execution is externally
@@ -173,11 +173,11 @@ class _CpuClock:
         self.force_steps = force_steps
         self.t = 0
         self.hits: list[int] = []
-        self.jr_batches = 0
-
-    def __enter__(self) -> "_CpuClock":
+        self.jr_batches = 0  # JR $ batches that did not fall back to step()
         self._step = Z80.step
         self._batch = Z80.step_idle_batch
+
+    def __enter__(self) -> "_CpuClock":
         orig_step, orig_batch = self._step, self._batch
         clock = self
 
@@ -194,11 +194,14 @@ class _CpuClock:
                 while total < budget:
                     total += cpu.step()
                 return total
-            if not cpu.halted:
-                clock.jr_batches += 1
-            t0 = clock.t  # a fallback step() inside the batch counts itself
+            jr_path = not cpu.halted
+            # A fallback step() inside the batch also adds to the clock via
+            # the patched step(); rewind so it is counted once.
+            t0 = clock.t
             n = orig_batch(cpu, budget)
             clock.t = t0 + n
+            if jr_path and cpu.idle_hint:
+                clock.jr_batches += 1
             return n
 
         Z80.step = step  # type: ignore[method-assign]
@@ -223,7 +226,7 @@ def _run_ei_jr(make: Callable[[], Machine], force_steps: bool) -> tuple[_CpuCloc
 def _cpu_state(m: Machine) -> tuple[int, ...]:
     r = m.cpu.registers
     return (r.AF, r.BC, r.DE, r.HL, r.SP, r.PC, r.WZ, r.R, m.cpu.q, m.cpu.q_next,
-            int(m.cpu.iff1), int(m.cpu.idle), m.cycle_count)
+            int(m.cpu.iff1), int(m.cpu.idle_hint), m.cycle_count)
 
 
 @pytest.mark.parametrize("make", [

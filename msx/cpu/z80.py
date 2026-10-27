@@ -57,9 +57,16 @@ class Z80:
     registers: Registers = field(default_factory=Registers)
     halted: bool = False
     # Performance hint for step_idle_batch(), not CPU state: set by HALT and
-    # by JR $ (18 FE), cleared on interrupt/NMI acceptance and reset, not
-    # saved. A stale True only costs one fallback step().
-    idle: bool = False
+    # by JR $ (18 FE); cleared on interrupt/NMI acceptance, reset, and when
+    # step_idle_batch() falls back to step(). A stale True only costs one
+    # fallback step().
+    # PORT-NOTE: never serialized -- MachineSnapshot is built field by field
+    #   without it, and msx/state.py _restore_snapshot sets it from halted.
+    # Rust equivalent: #[serde(skip)] (or keep it out of the serialized CPU
+    #   state struct) and set it from `halted` in the restore path.
+    # C++ equivalent: leave it out of the save-state struct; set it on load.
+    # Kept as-is here because: the hand-built snapshot already excludes it.
+    idle_hint: bool = False
     iff1: bool = False
     iff2: bool = False
     im: int = 0
@@ -84,7 +91,7 @@ class Z80:
     def reset(self) -> None:
         self.registers.reset()
         self.halted = False
-        self.idle = False
+        self.idle_hint = False
         self.iff1 = False
         self.iff2 = False
         self.im = 0
@@ -138,6 +145,8 @@ class Z80:
         the halted branch itself never mutates). The caller must also confirm
         nothing else can flip int_pending mid-span (e.g. a V9938 command
         engine interrupt) before choosing to call this instead of step().
+        budget must be >= 1 (callers pass line_end - total while total <
+        line_end); the result is in [budget, budget + stride - 1].
         """
         stride = 4 + self.m1_wait_states
         steps = (budget + stride - 1) // stride  # ceil division
@@ -146,15 +155,18 @@ class Z80:
         return steps * stride
 
     def step_idle_batch(self, budget: int) -> int:
-        """Advance an idle CPU (self.idle set) toward budget T-states in one call.
+        """Advance an idle CPU (self.idle_hint set) by about budget T-states.
 
         Halted: step_halted_batch(budget). Otherwise the hint says the last
         instruction was JR $ (18 FE); after one JR $ the state is a fixed
-        point except R, so k = ceil(budget / (12 + m1_wait_states)) repeats
-        only advance R by k and leave Q = 0, as k step() calls would. Same
-        caller conditions as step_halted_batch(). If PC is not the start of
-        the last instruction or the code at PC is no longer 18 FE (debugger
-        write, DD/FD-prefixed JR), the hint is dropped and one step() runs.
+        point except R (that JR $ already cleared ei_pending), so
+        k = ceil(budget / (12 + m1_wait_states)) repeats only advance R by k
+        and leave Q = 0, as k step() calls would. The caller must guarantee
+        step_halted_batch()'s NMI / interrupt-accept / int_pending-stability
+        conditions, with self.idle_hint in place of self.halted, and
+        budget >= 1. If PC is not the start of the last instruction or the
+        code at PC is no longer 18 FE (debugger write, DD/FD-prefixed JR),
+        the hint is dropped and one step() runs.
         """
         if self.halted:
             return self.step_halted_batch(budget)
@@ -165,10 +177,16 @@ class Z80:
             or self.read_byte(pc) != 0x18
             or self.read_byte((pc + 1) & 0xFFFF) != 0xFE
         ):
-            self.idle = False
+            self.idle_hint = False
             return self.step()
         stride = 12 + self.m1_wait_states
         steps = (budget + stride - 1) // stride  # ceil division
+        # PORT-NOTE: compute R + steps in u32 (as in step_halted_batch); R is
+        #   u8 and only the low 7 bits of steps matter, so narrowing steps to
+        #   u8 before the add would overflow.
+        # Rust equivalent: ((reg.r as u32 + steps) & 0x7F) as u8.
+        # C++ equivalent: the same with uint32_t; Zig widens u8 + u32 itself.
+        # Kept as-is here because: Python ints do not overflow.
         reg.R = (reg.R & 0x80) | ((reg.R + steps) & 0x7F)
         self.q = 0
         return steps * stride
@@ -197,7 +215,7 @@ class Z80:
         if self.nmi_pending:
             self.nmi_pending = False
             self.halted = False
-            self.idle = False
+            self.idle_hint = False
             # NMI saves the pre-NMI interrupt-enable state so RETN (IFF1<-IFF2)
             # can restore it; only IFF1 is cleared during the handler.
             self.iff2 = self.iff1
@@ -223,7 +241,7 @@ class Z80:
         if self.int_pending and self.iff1 and not self.ei_pending:
             self.int_pending = False
             self.halted = False
-            self.idle = False
+            self.idle_hint = False
             self.iff1 = False
             self.iff2 = False
             # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).

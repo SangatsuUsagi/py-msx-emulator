@@ -79,7 +79,8 @@ class _Acceptances:
         orig_batch = self._orig_batch
 
         def batch(cpu: Z80, budget: int) -> int:
-            # A fallback step() inside the batch already counts itself.
+            # A fallback step() inside the batch also adds to the clock via
+            # the patched step(); rewind so it is counted once.
             t0 = self._t
             n = orig_batch(cpu, budget)
             self._t = t0 + n

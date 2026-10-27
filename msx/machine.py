@@ -759,10 +759,11 @@ class Machine:
                     line_cycles = 0
                     while total < line_end:
                         cpu.int_pending = vdp9938.irq
-                        # HALT-spin (EI; HALT waiting for VBlank/line IRQ) is the
-                        # most common execution pattern in MSX software (measured
-                        # ~74% of all step() calls on a representative title), so
-                        # batch its per-instruction stepping when it's provably
+                        # HALT-spin (EI; HALT waiting for VBlank/line IRQ) and
+                        # JR $ idle loops are the most common execution pattern
+                        # in MSX software (HALT-spin alone measured ~74% of all
+                        # step() calls on a representative title), so batch
+                        # their per-instruction stepping when it's provably
                         # safe: would_accept_interrupt is the exact condition
                         # step() itself checks (KEEP IN SYNC with z80.py's
                         # Z80.step(), the `if self.int_pending and self.iff1 and
@@ -776,17 +777,27 @@ class Machine:
                         # tick() anyway, so batching is skipped and the normal
                         # per-instruction path (below) still ticks it. See
                         # openspec cpu-z80 "Batched HALT execution is externally
-                        # transparent" for the full equivalence proof. cpu.idle
-                        # also covers a JR $ (18 FE) idle loop, which does no
-                        # port or memory access, so the same argument holds;
-                        # step_idle_batch() re-checks the code at PC (openspec
-                        # cpu-z80 "Batched JR-to-self execution is externally
-                        # transparent").
+                        # transparent" for the full equivalence proof.
+                        # cpu.idle_hint also covers a JR $ (18 FE) idle loop:
+                        # executing it does no port I/O or memory write and
+                        # touches none of those flags either, so the same
+                        # argument holds; step_idle_batch() re-checks the code
+                        # at PC and falls back to one step() if it changed
+                        # (openspec cpu-z80 "Batched JR-to-self execution is
+                        # externally transparent").
+                        # PORT-NOTE: this condition is written out here, in the
+                        #   TMS9918A branch below and (negated) in Z80.step().
+                        # Rust equivalent: one #[inline] fn can_batch_idle(&self)
+                        #   on Z80 (idle_hint && !nmi_pending && !(int_pending &&
+                        #   iff1 && !ei_pending)), plus `&& !cmd_active` here.
+                        # C++ equivalent: an inline member function, same body.
+                        # Kept as-is here because: a method call per
+                        #   instruction costs CPython more than the inline test.
                         would_accept_interrupt = (
                             cpu.int_pending and cpu.iff1 and not cpu.ei_pending
                         )
                         if (
-                            cpu.idle
+                            cpu.idle_hint
                             and not cpu.nmi_pending
                             and not would_accept_interrupt
                             and not vdp9938._cmd_active
@@ -828,7 +839,7 @@ class Machine:
                             cpu.int_pending and cpu.iff1 and not cpu.ei_pending
                         )
                         if (
-                            cpu.idle
+                            cpu.idle_hint
                             and not cpu.nmi_pending
                             and not would_accept_interrupt
                         ):

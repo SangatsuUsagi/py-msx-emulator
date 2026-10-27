@@ -936,7 +936,9 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     cpu = snap.cpu
     _restore_cpu_regs(machine, cpu.registers)
     machine.cpu.halted = cpu.halted
-    machine.cpu.idle = cpu.halted  # hint, not saved (Z80.idle)
+    # Not saved (Z80.idle_hint): HALT is the only idle state the saved
+    # fields show; a JR $ loop sets the hint again on its next step.
+    machine.cpu.idle_hint = cpu.halted
     machine.cpu.iff1 = cpu.iff1
     machine.cpu.iff2 = cpu.iff2
     machine.cpu.int_pending = cpu.int_pending
