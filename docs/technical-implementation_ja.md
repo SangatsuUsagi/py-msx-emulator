@@ -44,7 +44,7 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 2. `iff1` と `int_pending` がどちらも true で、`ei_pending` がセットされていなければ、割り込みを受け付ける。モード 1 は PC をプッシュして 0x0038 にジャンプし、13 T ステート。モード 2 は PC をプッシュし、`I<<8 | data_bus` からベクタを読んでハンドラにジャンプし、19 T ステート。
 3. `ei_pending` がセットされていれば、クリアする。EI が割り込みを有効にするのは、その次の命令の後から。手順 2 が `ei_pending` を見て、この手順がクリアするので、手順 2 で受け付けるはずの割り込みはちょうど 1 ステップ待つ。
 4. `halted` がセットされていれば、オペコードを読まずに `4 + m1_wait_states` T ステート進める。純粋な Z80 コアなら 4 で、MSX の M1 ウェイトもここで加わる。
-5. それ以外は、`instruction_pc` に現在の PC を記録し、`_fetch_opcode()` でオペコードを読んで振り分ける。
+5. それ以外は、`instruction_pc` に現在の PC を記録し、`q_next` を `q` に移して `q_next` をクリアし（Q。`SCF`/`CCF` が読む）、`_fetch_opcode()` でオペコードを読んで振り分ける。
 
 `_fetch()` は `read_byte(PC)` で 1 バイト読み、PC を 1 進める。`_fetch_opcode()` は同じことをしたうえで、M1 サイクルごとに 1 回 R を進める。M1 サイクルにあたるのは、主オペコードと、CB/DD/ED/FD プレフィックスの次のオペコードバイト。オペランドとディスプレースメントのバイトは R を変えない。`DDCB`/`FDCB` のディスプレースメントと最後のオペコードも同じ。R が数えるのは bit 0〜6 だけ。bit 7 は保持され、`LD R,A` のようなレジスタ全体への書き込みでしか変わらない。実機の SONY HB-F1XD と HB-10 でも R の進み方は同じ。
 
@@ -65,6 +65,22 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 - `DDCB`/`FDCB` も `+2`。ディスプレースメントと最後のオペコードは、M1 サイクルではなくオペランドの読み出しだから。
 
 この数え方は openMSX（`Z80.hh` の `WAIT_CYCLES = 1`、M1 の基本が 5、データシートでは 4）と同じ。フレームの予算は 59,736 T ステートのままなので、ウェイトの分だけ 1 フレームに実行できる命令が減る。おかげで、CPU のループで時間を計るコード（遅延ループで鳴らすソフトウェア PCM など）が約 13% 速く動いてしまうことはなく、実機と同じ速さになる。ウェイトは割り込みの周期（VBlank）にも PSG の音程にも影響しない。
+
+### 命令テスト
+
+CPU コアは、Frank D. Cringle による命令テスト zexdoc と zexall をすべて通る（どちらも 67 項目すべて）。`scripts/run_z80_exercisers.py` は、MSX のマシンを組まずに `Z80` コアだけでこれらを動かす。
+
+- `.com` ファイルは CP/M のプログラムとして動かす。64 KB の平坦な RAM の 0x0100 に読み込み、BDOS の機能 2 と 9 でコンソールに出力し、0x0000 へのジャンプで終了する。`ERROR` を含む行があれば失敗とみなす。
+- `.tap` ファイルは Patrik Rak の [z80test](https://github.com/raxoft/z80test) として動かし、使われる少数の ZX Spectrum ROM の機能を代わりのコードで置き換える。出力に `tests failed` があれば失敗とみなす。
+
+テストプログラムはこのリポジトリに含めていない（zexdoc と zexall は GPL）。実行時にパスを渡す。
+
+```bash
+venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
+    path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
+```
+
+どれかのプログラムが失敗を報告すると、終了ステータスは 1 になる。期待される結果：zexdoc と zexall はすべて通り、z80test の z80doc もすべて通る。z80full、z80ccf、z80memptr で失敗するのは `INIR->NOP'` と `INDR->NOP'` だけ。`INIR`/`INDR`/`OTIR`/`OTDR` の繰り返し中のフラグを再現していないため（下記を参照）。PyPy では zexdoc と zexall はそれぞれ Apple M5 Pro で約 1.5 分かかり、CPython ではさらに長い。
 
 ### 既知の制限
 
