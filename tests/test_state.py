@@ -398,14 +398,15 @@ def test_q_survives_a_save_state(machine, saves_dir):
 
 @pytest.mark.parametrize("halted", [True, False])
 def test_idle_hint_follows_halted_on_load(machine, saves_dir, halted):
-    # The idle hint is not saved: a load sets it from halted (design D5).
+    # The idle hint is not saved: a load sets it from halted (see the
+    # Z80.idle_hint field comment).
     machine.cpu.halted = halted
-    machine.cpu.idle = not halted
+    machine.cpu.idle_hint = not halted
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
     other = make_machine(rom=_ROM)
-    other.cpu.idle = not halted
+    other.cpu.idle_hint = not halted
     load_state(other)
 
-    assert other.cpu.idle is halted
+    assert other.cpu.idle_hint is halted
