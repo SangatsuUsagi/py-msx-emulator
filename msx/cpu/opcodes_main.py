@@ -1454,6 +1454,7 @@ def _op_nop(cpu: Z80) -> int:
 
 def _op_halt(cpu: Z80) -> int:
     cpu.halted = True
+    cpu.idle = True
     return 4
 
 
@@ -1755,6 +1756,8 @@ def _op_jp_hl(cpu: Z80) -> int:
 
 def _op_jr(cpu: Z80) -> int:
     e = _signed(cpu._fetch())
+    if e == -2:
+        cpu.idle = True  # JR $: an idle loop step_idle_batch() can repeat
     cpu.registers.PC = (cpu.registers.PC + e) & 0xFFFF
     cpu.registers.WZ = cpu.registers.PC
     return 12

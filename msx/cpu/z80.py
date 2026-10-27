@@ -56,6 +56,10 @@ class Z80:
     write_port: Callable[[int, int], None] = field(default=_noop_write)
     registers: Registers = field(default_factory=Registers)
     halted: bool = False
+    # Performance hint for step_idle_batch(), not CPU state: set by HALT and
+    # by JR $ (18 FE), cleared on interrupt/NMI acceptance and reset, not
+    # saved. A stale True only costs one fallback step().
+    idle: bool = False
     iff1: bool = False
     iff2: bool = False
     im: int = 0
@@ -80,6 +84,7 @@ class Z80:
     def reset(self) -> None:
         self.registers.reset()
         self.halted = False
+        self.idle = False
         self.iff1 = False
         self.iff2 = False
         self.im = 0
@@ -140,6 +145,34 @@ class Z80:
         reg.R = (reg.R & 0x80) | ((reg.R + steps) & 0x7F)
         return steps * stride
 
+    def step_idle_batch(self, budget: int) -> int:
+        """Advance an idle CPU (self.idle set) toward budget T-states in one call.
+
+        Halted: step_halted_batch(budget). Otherwise the hint says the last
+        instruction was JR $ (18 FE); after one JR $ the state is a fixed
+        point except R, so k = ceil(budget / (12 + m1_wait_states)) repeats
+        only advance R by k and leave Q = 0, as k step() calls would. Same
+        caller conditions as step_halted_batch(). If PC is not the start of
+        the last instruction or the code at PC is no longer 18 FE (debugger
+        write, DD/FD-prefixed JR), the hint is dropped and one step() runs.
+        """
+        if self.halted:
+            return self.step_halted_batch(budget)
+        reg = self.registers
+        pc = reg.PC
+        if (
+            pc != self.instruction_pc
+            or self.read_byte(pc) != 0x18
+            or self.read_byte((pc + 1) & 0xFFFF) != 0xFE
+        ):
+            self.idle = False
+            return self.step()
+        stride = 12 + self.m1_wait_states
+        steps = (budget + stride - 1) // stride  # ceil division
+        reg.R = (reg.R & 0x80) | ((reg.R + steps) & 0x7F)
+        self.q = 0
+        return steps * stride
+
     def _fetch_word(self) -> int:
         lo = self._fetch()
         hi = self._fetch()
@@ -164,6 +197,7 @@ class Z80:
         if self.nmi_pending:
             self.nmi_pending = False
             self.halted = False
+            self.idle = False
             # NMI saves the pre-NMI interrupt-enable state so RETN (IFF1<-IFF2)
             # can restore it; only IFF1 is cleared during the handler.
             self.iff2 = self.iff1
@@ -188,6 +222,7 @@ class Z80:
         if self.int_pending and self.iff1 and not self.ei_pending:
             self.int_pending = False
             self.halted = False
+            self.idle = False
             self.iff1 = False
             self.iff2 = False
             # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).
