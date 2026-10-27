@@ -88,17 +88,22 @@ register-access opcodes. It supports maskable interrupts (INT mode 1 and mode
 2) and the non-maskable interrupt (NMI). Stepping is T-state accurate, with a
 configurable MSX **M1 wait state**. This wait state adds 1 T-state per opcode
 fetch, as on a real MSX and in openMSX. The default of 0 keeps the core a pure
-Zilog Z80.
+Zilog Z80. The core passes the zexdoc and zexall instruction exercisers in
+full (see
+[Instruction exercisers](docs/technical-implementation.md#instruction-exercisers)).
 
 - Implementation: `msx/cpu/z80.py`, `msx/cpu/opcodes_main.py`, `msx/cpu/registers.py`
 - Known limitations:
   - OTIR/INIR and similar block I/O instructions are not cycle-exact across
     page boundaries.
-  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the documented
-    per-instruction rules, with three exceptions. The emulator does not model
-    the internal MEMPTR register, so `BIT n,(HL)` leaves Y and X clear. It also
-    does not model the PC-derived Y/X of a repeating block instruction or the
-    dependence of `SCF`/`CCF` on the previous instruction.
+  - The undocumented flag bits Y (bit 5) and X (bit 3) follow the Zilog NMOS
+    rules, including `BIT n,(HL)` (from the internal MEMPTR register), a
+    repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` (from its own address) and
+    `SCF`/`CCF` (from whether the previous instruction changed the flags). The
+    repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep simpler per-iteration flags.
+  - The emulator targets a Zilog-compatible Z80. The NEC and Sharp
+    Z80-compatible CPUs in some MSX machines can differ in these flags; that
+    is not modelled.
 
 ### VDP (Video Display Processor): TMS9918A (MSX1)
 

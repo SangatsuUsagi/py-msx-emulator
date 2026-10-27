@@ -79,3 +79,39 @@ def test_ex_sp_hl() -> None:
     assert cpu.registers.HL == 0x1234
     assert mem.read(0xFFFE) == 0xCD
     assert mem.read(0xFFFF) == 0xAB
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_call_nn_sets_memptr() -> None:
+    cpu = make_cpu([0xCD, 0x34, 0x12])  # CALL 0x1234
+    cpu.step()
+    assert cpu.registers.WZ == 0x1234
+
+
+def test_ret_sets_memptr_to_return_address() -> None:
+    cpu = make_cpu([0xC9])  # RET
+    cpu.registers.SP = 0xF000
+    cpu.write_byte(0xF000, 0x78)
+    cpu.write_byte(0xF001, 0x56)
+    cpu.step()
+    assert cpu.registers.PC == 0x5678
+    assert cpu.registers.WZ == 0x5678
+
+
+def test_ret_cc_not_taken_leaves_memptr() -> None:
+    cpu = make_cpu([0xC8])  # RET Z with Z clear
+    cpu.registers.F = 0x00
+    cpu.step()
+    assert cpu.registers.WZ == 0xFFFF
+
+
+def test_ex_sp_hl_sets_memptr_to_new_hl() -> None:
+    cpu = make_cpu([0xE3])  # EX (SP),HL
+    cpu.registers.SP = 0xF000
+    cpu.write_byte(0xF000, 0x78)
+    cpu.write_byte(0xF001, 0x56)
+    cpu.step()
+    assert cpu.registers.HL == 0x5678
+    assert cpu.registers.WZ == 0x5678

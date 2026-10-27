@@ -269,3 +269,14 @@ def test_inc_iyh_sets_half_carry() -> None:
     assert cpu.registers.IYH == 0x10
     assert cpu.registers.F & F.FLAG_H
     assert t == 8
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_iy_indexed_access_sets_memptr_to_effective_address() -> None:
+    # Spec "Indexed access sets MEMPTR to the effective address", IY form.
+    cpu = make_cpu([0xFD, 0x77, 0x02])  # LD (IY+2),A
+    cpu.registers.IY = 0x9000
+    cpu.step()
+    assert cpu.registers.WZ == 0x9002

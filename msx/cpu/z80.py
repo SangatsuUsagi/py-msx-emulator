@@ -63,6 +63,12 @@ class Z80:
     nmi_pending: bool = False
     ei_pending: bool = False
     instruction_pc: int = 0
+    # Q (u8): the flags the ALU latched in the previous instruction (its new F
+    # if it wrote F, else 0), read by SCF/CCF. Each step() moves q_next (u8)
+    # into q and clears q_next; every handler whose ALU writes F sets q_next
+    # to the new F. POP AF and EX AF,AF' load F without the ALU and leave it.
+    q: int = 0
+    q_next: int = 0
     # Extra T-states added per M1 (opcode fetch). 0 = pure datasheet Z80 (keeps
     # the core reusable for non-MSX systems); MSX machines configure 1 (the MSX
     # M1 wait state -- Sony MSX Technical Handbook: "1 WAIT in M1 CYCLE" --
@@ -80,6 +86,8 @@ class Z80:
         self.int_pending = False
         self.nmi_pending = False
         self.ei_pending = False
+        self.q = 0
+        self.q_next = 0
 
     def _fetch(self) -> int:
         """Read an operand/address/displacement byte at PC (not an M1 cycle: R unchanged)."""
@@ -161,8 +169,10 @@ class Z80:
             self.iff2 = self.iff1
             self.iff1 = False
             self._inc_r()
+            self.q_next = 0  # returns before the Q shift: next instruction sees Q = 0
             self._push(self.registers.PC)
             self.registers.PC = 0x0066
+            self.registers.WZ = 0x0066  # MEMPTR = handler address (openMSX nmi)
             return 11
 
         # EI enables interrupts only *after* the instruction following it, so an
@@ -182,10 +192,12 @@ class Z80:
             self.iff2 = False
             # Interrupt acknowledge is an M1 cycle: R refreshes (openMSX irqN).
             self._inc_r()
+            self.q_next = 0  # returns before the Q shift: next instruction sees Q = 0
             if self.im == 0 or self.im == 1:
                 # IM 0: MSX always places 0xFF (RST 38H) on the data bus
                 self._push(self.registers.PC)
                 self.registers.PC = 0x0038
+                self.registers.WZ = 0x0038
                 return 13
             if self.im == 2:
                 vec_addr = (self.registers.I << 8) | 0xFF
@@ -193,6 +205,7 @@ class Z80:
                 hi = self.read_byte((vec_addr + 1) & 0xFFFF)
                 self._push(self.registers.PC)
                 self.registers.PC = (hi << 8) | lo
+                self.registers.WZ = self.registers.PC
                 return 19
 
         # One instruction has now elapsed since EI (this step); allow the next
@@ -213,6 +226,8 @@ class Z80:
         r = self.registers
         pc = r.PC
         self.instruction_pc = pc
+        self.q = self.q_next
+        self.q_next = 0
         opcode = self.read_byte(pc)
         r.PC = (pc + 1) & 0xFFFF
         r.R = (r.R & 0x80) | ((r.R + 1) & 0x7F)

@@ -45,9 +45,13 @@ _DEC_OPS: dict[int, int] = {
 # usually the 8-bit result, but the operand for CP, A for SCF/CCF, the high
 # byte for 16-bit arithmetic. Confirmed on a real SONY HB-F1XD
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
-# AND, SCF, BIT, RLCA). Not modelled: the internal MEMPTR register, which is
-# BIT n,(HL)'s Y/X source on hardware (so this core leaves them clear there);
-# the PC-derived Y/X of a repeating block instruction; SCF/CCF's Q dependence.
+# AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
+# internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
+# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp);
+# SCF/CCF take them from (Q ^ F) | A, with Q tracked by Z80.step() and set
+# (cpu.q_next) by every handler whose ALU writes F -- not POP AF or
+# EX AF,AF' (see Z80.q). Not modelled: the repeat-cycle flag changes of
+# INIR/INDR/OTIR/OTDR, which keep the per-iteration flags.
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
@@ -100,6 +104,7 @@ def _add8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
     if overflow:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return r8
 
 
@@ -119,6 +124,7 @@ def _sub8(cpu: Z80, a: int, b: int, carry: int = 0) -> int:
     if overflow:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return r8
 
 
@@ -127,6 +133,7 @@ def _and8(cpu: Z80, v: int) -> None:
     result = r.A & v
     r.A = result
     r.F = F.FLAG_H | _szp(result)
+    cpu.q_next = r.F
 
 
 def _or8(cpu: Z80, v: int) -> None:
@@ -134,6 +141,7 @@ def _or8(cpu: Z80, v: int) -> None:
     result = r.A | v
     r.A = result
     r.F = _szp(result)
+    cpu.q_next = r.F
 
 
 def _xor8(cpu: Z80, v: int) -> None:
@@ -141,6 +149,7 @@ def _xor8(cpu: Z80, v: int) -> None:
     result = r.A ^ v
     r.A = result
     r.F = _szp(result)
+    cpu.q_next = r.F
 
 
 def _cp8(cpu: Z80, v: int) -> None:
@@ -166,6 +175,7 @@ def _cp8(cpu: Z80, v: int) -> None:
     if overflow:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
 
 
 def _inc8(cpu: Z80, v: int) -> int:
@@ -180,6 +190,7 @@ def _inc8(cpu: Z80, v: int) -> int:
     if v == 0x7F:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return result
 
 
@@ -195,6 +206,7 @@ def _dec8(cpu: Z80, v: int) -> int:
     if v == 0x80:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return result
 
 
@@ -222,9 +234,11 @@ def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
     if F.parity((k & 0x07) ^ b_after):
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
 
 
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = first operand + 1
     result = hl + rr
     f = cpu.registers.F & ~(F.FLAG_H | F.FLAG_N | F.FLAG_C | _FLAG_YX)
     f |= (result >> 8) & _FLAG_YX
@@ -233,10 +247,12 @@ def _add16(cpu: Z80, hl: int, rr: int) -> int:
     if (hl ^ rr ^ result) & 0x1000:
         f |= F.FLAG_H
     cpu.registers.F = f & 0xFF
+    cpu.q_next = cpu.registers.F
     return result & 0xFFFF
 
 
 def _adc16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = HL + 1
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl + rr + c
     r16 = result & 0xFFFF
@@ -253,10 +269,12 @@ def _adc16(cpu: Z80, hl: int, rr: int) -> int:
     if overflow:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return r16
 
 
 def _sbc16(cpu: Z80, hl: int, rr: int) -> int:
+    cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = HL + 1
     c = 1 if (cpu.registers.F & F.FLAG_C) else 0
     result = hl - rr - c
     r16 = result & 0xFFFF
@@ -273,6 +291,7 @@ def _sbc16(cpu: Z80, hl: int, rr: int) -> int:
     if overflow:
         f |= F.FLAG_PV
     cpu.registers.F = f
+    cpu.q_next = f
     return r16
 
 
@@ -334,6 +353,7 @@ def _rlc(cpu: Z80, v: int) -> int:
     c = (v >> 7) & 1
     result = ((v << 1) | c) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -341,6 +361,7 @@ def _rrc(cpu: Z80, v: int) -> int:
     c = v & 1
     result = ((v >> 1) | (c << 7)) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -349,6 +370,7 @@ def _rl(cpu: Z80, v: int) -> int:
     c = (v >> 7) & 1
     result = ((v << 1) | old_c) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -357,6 +379,7 @@ def _rr(cpu: Z80, v: int) -> int:
     c = v & 1
     result = ((v >> 1) | (old_c << 7)) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -364,6 +387,7 @@ def _sla(cpu: Z80, v: int) -> int:
     c = (v >> 7) & 1
     result = (v << 1) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -371,6 +395,7 @@ def _sra(cpu: Z80, v: int) -> int:
     c = v & 1
     result = ((v >> 1) | (v & 0x80)) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -378,6 +403,7 @@ def _sll(cpu: Z80, v: int) -> int:
     c = (v >> 7) & 1
     result = ((v << 1) | 1) & 0xFF  # undocumented: bit 0 forced to 1
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -385,6 +411,7 @@ def _srl(cpu: Z80, v: int) -> int:
     c = v & 1
     result = (v >> 1) & 0xFF
     cpu.registers.F = (F.FLAG_C if c else 0) | _szp(result)
+    cpu.q_next = cpu.registers.F
     return result
 
 
@@ -424,12 +451,15 @@ def _execute_cb(cpu: Z80) -> int:
     elif row == 1:  # BIT
         f = (cpu.registers.F & F.FLAG_C) | F.FLAG_H
         if reg != 6:
-            f |= v & _FLAG_YX  # BIT n,(HL) would need MEMPTR: Y/X left clear
+            f |= v & _FLAG_YX
+        else:
+            f |= (cpu.registers.WZ >> 8) & _FLAG_YX  # BIT n,(HL): MEMPTR high byte
         if not (v & (1 << bit)):
             f |= F.FLAG_Z | F.FLAG_PV
         if (v & (1 << bit)) and bit == 7:
             f |= F.FLAG_S
         cpu.registers.F = f
+        cpu.q_next = f
         cycles = 8 if reg != 6 else 12
     elif row == 2:  # RES
         _set_r(cpu, reg, v & ~(1 << bit))
@@ -460,6 +490,7 @@ def _dd_fd_ld_ind_nn_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
     nn = cpu._fetch_word()
     cpu.write_byte(nn, xy & 0xFF)
     cpu.write_byte((nn + 1) & 0xFFFF, (xy >> 8) & 0xFF)
+    r.WZ = (nn + 1) & 0xFFFF
     return 20
 
 
@@ -473,6 +504,7 @@ def _dd_fd_ld_ixy_ind_nn(cpu: Z80, use_iy: bool, op: int) -> int:
         r.IY = val
     else:
         r.IX = val
+    r.WZ = (nn + 1) & 0xFFFF
     return 20
 
 
@@ -541,6 +573,7 @@ def _dd_fd_ex_sp_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
         r.IY = val
     else:
         r.IX = val
+    r.WZ = val
     return 23
 
 
@@ -560,7 +593,9 @@ def _dd_fd_ea(cpu: Z80, use_iy: bool) -> int:
     r = cpu.registers
     xy = r.IY if use_iy else r.IX
     d = _signed(cpu._fetch())
-    return (xy + d) & 0xFFFF
+    ea = (xy + d) & 0xFFFF
+    r.WZ = ea
+    return ea
 
 
 def _dd_fd_inc_ind_ixy(cpu: Z80, use_iy: bool, op: int) -> int:
@@ -634,6 +669,7 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
     d = _signed(cpu._fetch())
     cb_op = cpu._fetch()  # DDCB/FDCB opcode byte: not an M1 read, so R is unchanged
     ea = (xy + d) & 0xFFFF
+    r.WZ = ea
     v = cpu.read_byte(ea)
     row = cb_op >> 6
     bit = (cb_op >> 3) & 7
@@ -651,6 +687,7 @@ def _dd_fd_cb(cpu: Z80, use_iy: bool, op: int) -> int:
         if (v & (1 << bit)) and bit == 7:
             f |= F.FLAG_S
         cpu.registers.F = f
+        cpu.q_next = f
         return 20
     elif row == 2:
         result = v & ~(1 << bit)
@@ -881,7 +918,9 @@ def _execute_dd_fd(cpu: Z80, use_iy: bool) -> int:
     if handler is not None:
         return handler(cpu, use_iy, op)
     # Prefix absorbed: the byte runs as its unprefixed instruction, and the
-    # prefix was its own 4-T-state M1 cycle (openMSX CC_DD).
+    # prefix was its own 4-T-state M1 cycle (openMSX CC_DD). The prefix wrote
+    # no flags, so that instruction sees Q = 0 (hoglet67/Z80Decoder wiki).
+    cpu.q = 0
     return _DISPATCH[op](cpu) + 4
 
 
@@ -922,6 +961,7 @@ def _ed_ld_a_ir(cpu: Z80, op: int) -> int:
     if r.A & 0x80:
         f |= F.FLAG_S
     r.F = f
+    cpu.q_next = f
     return 9
 
 
@@ -936,6 +976,7 @@ def _ed_retn_reti(cpu: Z80, op: int) -> int:
     # in their effect on the CPU's interrupt flip-flops (Zilog UM0080).
     cpu.iff1 = cpu.iff2
     cpu.registers.PC = cpu._pop()
+    cpu.registers.WZ = cpu.registers.PC
     return 14
 
 
@@ -980,6 +1021,7 @@ def _ed_ld_ind_nn_rr(cpu: Z80, op: int) -> int:
         val = r.SP
     cpu.write_byte(nn, val & 0xFF)
     cpu.write_byte((nn + 1) & 0xFFFF, (val >> 8) & 0xFF)
+    r.WZ = (nn + 1) & 0xFFFF
     return 20
 
 
@@ -997,6 +1039,7 @@ def _ed_ld_rr_ind_nn(cpu: Z80, op: int) -> int:
         r.HL = val
     else:
         r.SP = val
+    r.WZ = (nn + 1) & 0xFFFF
     return 20
 
 
@@ -1004,17 +1047,21 @@ def _ed_in_r_c(cpu: Z80, op: int) -> int:
     # Port address is (B << 8) | C on the bus. Destination register index is
     # (op >> 3) & 7 for these opcodes (0x40,0x48,…,0x78).
     r = cpu.registers
+    r.WZ = (r.BC + 1) & 0xFFFF
     v = cpu.read_port((r.B << 8) | r.C)
     _set_r(cpu, (op >> 3) & 7, v)
     r.F = (r.F & F.FLAG_C) | _szp(v)
+    cpu.q_next = r.F
     return 12
 
 
 def _ed_in_f_c(cpu: Z80, op: int) -> int:
     # IN F, (C) — 0x70: result discarded, flags set.
     r = cpu.registers
+    r.WZ = (r.BC + 1) & 0xFFFF
     v = cpu.read_port((r.B << 8) | r.C)
     r.F = (r.F & F.FLAG_C) | _szp(v)
+    cpu.q_next = r.F
     return 12
 
 
@@ -1022,12 +1069,14 @@ def _ed_out_c_r(cpu: Z80, op: int) -> int:
     # Port address is (B << 8) | C on the bus. Source register index is
     # (op >> 3) & 7 for these opcodes (0x41,0x49,…,0x79).
     r = cpu.registers
+    r.WZ = (r.BC + 1) & 0xFFFF
     cpu.write_port((r.B << 8) | r.C, _get_r(cpu, (op >> 3) & 7))
     return 12
 
 
 def _ed_out_c_0(cpu: Z80, op: int) -> int:
     r = cpu.registers
+    r.WZ = (r.BC + 1) & 0xFFFF
     cpu.write_port((r.B << 8) | r.C, 0)
     return 12
 
@@ -1035,21 +1084,32 @@ def _ed_out_c_0(cpu: Z80, op: int) -> int:
 def _ed_rld(cpu: Z80, op: int) -> int:
     r = cpu.registers
     mem_val = cpu.read_byte(r.HL)
+    r.WZ = (r.HL + 1) & 0xFFFF
     new_mem = ((mem_val << 4) | (r.A & 0x0F)) & 0xFF
     r.A = (r.A & 0xF0) | (mem_val >> 4)
     cpu.write_byte(r.HL, new_mem)
     r.F = (r.F & F.FLAG_C) | _szp(r.A)
+    cpu.q_next = r.F
     return 18
 
 
 def _ed_rrd(cpu: Z80, op: int) -> int:
     r = cpu.registers
     mem_val = cpu.read_byte(r.HL)
+    r.WZ = (r.HL + 1) & 0xFFFF
     new_mem = ((r.A << 4) | (mem_val >> 4)) & 0xFF
     r.A = (r.A & 0xF0) | (mem_val & 0x0F)
     cpu.write_byte(r.HL, new_mem)
     r.F = (r.F & F.FLAG_C) | _szp(r.A)
+    cpu.q_next = r.F
     return 18
+
+
+# A repeating LDIR/LDDR/CPIR/CPDR, with PC already back at the ED prefix, takes
+# Y/X from PC bits 13/11 instead of the A + byte (A - byte - H) value (David
+# Banks, hoglet67/Z80Decoder wiki "Undocumented Flags") and sets MEMPTR to the
+# ED address + 2, as openMSX's BLOCK_LD/BLOCK_CP do. The repeat case is tested
+# first so each iteration computes Y/X once (the hot path of a block copy).
 
 
 def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
@@ -1059,16 +1119,23 @@ def _ed_block_ld(cpu: Z80, op: int) -> int:  # LDI / LDD / LDIR / LDDR
     inc = 1 if op in (0xA0, 0xB0) else -1
     r.HL = (r.HL + inc) & 0xFFFF
     r.DE = (r.DE + inc) & 0xFFFF
-    r.BC = (r.BC - 1) & 0xFFFF
+    bc = (r.BC - 1) & 0xFFFF
+    r.BC = bc
     f = r.F & ~(F.FLAG_H | F.FLAG_PV | F.FLAG_N | _FLAG_YX)
+    if bc != 0:
+        f |= F.FLAG_PV
+        if op >= 0xB0:  # LDIR / LDDR (only A0/A8/B0/B8 are dispatched here)
+            pc = (r.PC - 2) & 0xFFFF
+            r.PC = pc
+            f |= (pc >> 8) & _FLAG_YX
+            r.F = f
+            cpu.q_next = f
+            r.WZ = (pc + 2) & 0xFFFF
+            return 21
     n = (r.A + val) & 0xFF
     f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A + byte
-    if r.BC != 0:
-        f |= F.FLAG_PV
     r.F = f
-    if op in (0xB0, 0xB8) and r.BC != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
-        return 21
+    cpu.q_next = f
     return 16
 
 
@@ -1077,8 +1144,10 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
     val = cpu.read_byte(r.HL)
     result = r.A - val
     inc = 1 if op in (0xA1, 0xB1) else -1
+    r.WZ = (r.WZ + inc) & 0xFFFF
     r.HL = (r.HL + inc) & 0xFFFF
-    r.BC = (r.BC - 1) & 0xFFFF
+    bc = (r.BC - 1) & 0xFFFF
+    r.BC = bc
     f = (r.F & F.FLAG_C) | F.FLAG_N
     if (result & 0xFF) == 0:
         f |= F.FLAG_Z
@@ -1086,20 +1155,28 @@ def _ed_block_cp(cpu: Z80, op: int) -> int:  # CPI / CPD / CPIR / CPDR
         f |= F.FLAG_S
     if (r.A ^ val ^ result) & 0x10:
         f |= F.FLAG_H
+    if bc != 0:
+        f |= F.FLAG_PV
+        # CPIR / CPDR (only A1/A9/B1/B9 are dispatched here), no match yet
+        if op >= 0xB1 and (result & 0xFF) != 0:
+            pc = (r.PC - 2) & 0xFFFF
+            r.PC = pc
+            f |= (pc >> 8) & _FLAG_YX
+            r.F = f
+            cpu.q_next = f
+            r.WZ = (pc + 2) & 0xFFFF  # replaces the CPI/CPD step above
+            return 21
     n = (result - (1 if f & F.FLAG_H else 0)) & 0xFF
     f |= ((n << 4) & 0x20) | (n & 0x08)  # Y = bit 1, X = bit 3 of A - byte - H
-    if r.BC != 0:
-        f |= F.FLAG_PV
     r.F = f
-    if op in (0xB1, 0xB9) and r.BC != 0 and (result & 0xFF) != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
-        return 21
+    cpu.q_next = f
     return 16
 
 
 def _ed_block_in(cpu: Z80, op: int) -> int:  # INI / IND / INIR / INDR
     r = cpu.registers
     inc = 1 if op in (0xA2, 0xB2) else -1
+    r.WZ = (r.BC + inc) & 0xFFFF
     val = cpu.read_port((r.B << 8) | r.C)
     cpu.write_byte(r.HL, val)
     r.HL = (r.HL + inc) & 0xFFFF
@@ -1120,6 +1197,7 @@ def _ed_block_out(cpu: Z80, op: int) -> int:  # OUTI / OUTD / OTIR / OTDR
     r.HL = (r.HL + inc) & 0xFFFF
     cpu.write_port((r.B << 8) | r.C, val)
     r.B = (r.B - 1) & 0xFF
+    r.WZ = (r.BC + inc) & 0xFFFF
     # OUTI/OUTD use L after HL has been incremented/decremented.
     _block_io_flags(cpu, val, r.B, val + r.L)
     if op in (0xB3, 0xBB) and r.B != 0:
@@ -1304,6 +1382,7 @@ def _make_dec_r(idx: int) -> Callable[[Z80], int]:
 def _make_jp_cc(cond: int) -> Callable[[Z80], int]:
     def _h(cpu: Z80) -> int:
         nn = cpu._fetch_word()
+        cpu.registers.WZ = nn  # taken or not
         if _cc(cpu, cond):
             cpu.registers.PC = nn
         return 10
@@ -1316,6 +1395,7 @@ def _make_jr_cc(cond: int) -> Callable[[Z80], int]:
         e = _signed(cpu._fetch())
         if _cc(cpu, cond):
             cpu.registers.PC = (cpu.registers.PC + e) & 0xFFFF
+            cpu.registers.WZ = cpu.registers.PC
             return 12
         return 7
 
@@ -1326,6 +1406,7 @@ def _make_call_cc(cond: int) -> Callable[[Z80], int]:
     def _h(cpu: Z80) -> int:
         r = cpu.registers
         nn = cpu._fetch_word()
+        r.WZ = nn  # taken or not
         if _cc(cpu, cond):
             cpu._push(r.PC)
             r.PC = nn
@@ -1339,6 +1420,7 @@ def _make_ret_cc(cond: int) -> Callable[[Z80], int]:
     def _h(cpu: Z80) -> int:
         if _cc(cpu, cond):
             cpu.registers.PC = cpu._pop()
+            cpu.registers.WZ = cpu.registers.PC
             return 11
         return 5
 
@@ -1349,6 +1431,7 @@ def _make_rst(n: int) -> Callable[[Z80], int]:
     def _h(cpu: Z80) -> int:
         cpu._push(cpu.registers.PC)
         cpu.registers.PC = n
+        cpu.registers.WZ = n
         return 11
 
     return _h
@@ -1416,6 +1499,7 @@ def _op_ld_sp_nn(cpu: Z80) -> int:
 def _op_ld_hl_ind_nn(cpu: Z80) -> int:  # LD HL, (nn)  0x2A
     nn = cpu._fetch_word()
     cpu.registers.HL = cpu.read_byte(nn) | (cpu.read_byte((nn + 1) & 0xFFFF) << 8)
+    cpu.registers.WZ = (nn + 1) & 0xFFFF
     return 16
 
 
@@ -1424,6 +1508,7 @@ def _op_ld_ind_nn_hl(cpu: Z80) -> int:  # LD (nn), HL  0x22
     nn = cpu._fetch_word()
     cpu.write_byte(nn, r.L)
     cpu.write_byte((nn + 1) & 0xFFFF, r.H)
+    r.WZ = (nn + 1) & 0xFFFF
     return 16
 
 
@@ -1433,34 +1518,44 @@ def _op_ld_sp_hl(cpu: Z80) -> int:
 
 
 def _op_ld_ind_bc_a(cpu: Z80) -> int:
-    cpu.write_byte(cpu.registers.BC, cpu.registers.A)
+    r = cpu.registers
+    cpu.write_byte(r.BC, r.A)
+    r.WZ = (r.A << 8) | ((r.BC + 1) & 0xFF)
     return 7
 
 
 def _op_ld_ind_de_a(cpu: Z80) -> int:
-    cpu.write_byte(cpu.registers.DE, cpu.registers.A)
+    r = cpu.registers
+    cpu.write_byte(r.DE, r.A)
+    r.WZ = (r.A << 8) | ((r.DE + 1) & 0xFF)
     return 7
 
 
 def _op_ld_a_ind_bc(cpu: Z80) -> int:
-    cpu.registers.A = cpu.read_byte(cpu.registers.BC)
+    r = cpu.registers
+    r.A = cpu.read_byte(r.BC)
+    r.WZ = (r.BC + 1) & 0xFFFF
     return 7
 
 
 def _op_ld_a_ind_de(cpu: Z80) -> int:
-    cpu.registers.A = cpu.read_byte(cpu.registers.DE)
+    r = cpu.registers
+    r.A = cpu.read_byte(r.DE)
+    r.WZ = (r.DE + 1) & 0xFFFF
     return 7
 
 
 def _op_ld_ind_nn_a(cpu: Z80) -> int:  # LD (nn), A  0x32
     nn = cpu._fetch_word()
     cpu.write_byte(nn, cpu.registers.A)
+    cpu.registers.WZ = (cpu.registers.A << 8) | ((nn + 1) & 0xFF)
     return 13
 
 
 def _op_ld_a_ind_nn(cpu: Z80) -> int:  # LD A, (nn)  0x3A
     nn = cpu._fetch_word()
     cpu.registers.A = cpu.read_byte(nn)
+    cpu.registers.WZ = (nn + 1) & 0xFFFF
     return 13
 
 
@@ -1533,6 +1628,7 @@ def _op_rlca(cpu: Z80) -> int:
     c = (r.A >> 7) & 1
     r.A = ((r.A << 1) | c) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
+    cpu.q_next = r.F
     return 4
 
 
@@ -1541,6 +1637,7 @@ def _op_rrca(cpu: Z80) -> int:
     c = r.A & 1
     r.A = ((r.A >> 1) | (c << 7)) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
+    cpu.q_next = r.F
     return 4
 
 
@@ -1550,6 +1647,7 @@ def _op_rla(cpu: Z80) -> int:
     c = (r.A >> 7) & 1
     r.A = ((r.A << 1) | old_c) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
+    cpu.q_next = r.F
     return 4
 
 
@@ -1559,6 +1657,7 @@ def _op_rra(cpu: Z80) -> int:
     c = r.A & 1
     r.A = ((r.A >> 1) | (old_c << 7)) & 0xFF
     r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | (F.FLAG_C if c else 0) | (r.A & _FLAG_YX)
+    cpu.q_next = r.F
     return 4
 
 
@@ -1569,9 +1668,10 @@ def _op_daa(cpu: Z80) -> int:
     f = r.F
     correction = 0
     new_c = False
-    if (f & F.FLAG_H) or ((not (f & F.FLAG_N)) and (a & 0x0F) > 9):
+    # The correction depends on A, H and C only; N just picks add or subtract.
+    if (f & F.FLAG_H) or (a & 0x0F) > 9:
         correction |= 0x06
-    if (f & F.FLAG_C) or ((not (f & F.FLAG_N)) and a > 0x99):
+    if (f & F.FLAG_C) or a > 0x99:
         correction |= 0x60
         new_c = True
     if f & F.FLAG_N:
@@ -1591,6 +1691,7 @@ def _op_daa(cpu: Z80) -> int:
         new_f |= F.FLAG_PV
     r.A = a
     r.F = new_f
+    cpu.q_next = new_f
     return 4
 
 
@@ -1609,29 +1710,41 @@ def _op_cpl(cpu: Z80) -> int:
     r.A = (~r.A) & 0xFF
     r.F = ((r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV | F.FLAG_C)) | F.FLAG_H | F.FLAG_N
            | (r.A & _FLAG_YX))
+    cpu.q_next = r.F
     return 4
 
 
 def _op_scf(cpu: Z80) -> int:
+    # Y/X from (Q ^ F) | A: A alone right after a flag-writing instruction,
+    # F | A otherwise (Patrik Rak's Zilog NMOS rule, hoglet67/Z80Decoder wiki
+    # "Undocumented Flags").
     r = cpu.registers
-    r.F = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | F.FLAG_C | (r.A & _FLAG_YX)
+    yx = ((cpu.q ^ r.F) | r.A) & _FLAG_YX
+    f = (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV)) | F.FLAG_C | yx
+    r.F = f
+    cpu.q_next = f
     return 4
 
 
 def _op_ccf(cpu: Z80) -> int:
     r = cpu.registers
     old_c = 1 if (r.F & F.FLAG_C) else 0
-    r.F = (
+    yx = ((cpu.q ^ r.F) | r.A) & _FLAG_YX  # as SCF
+    f = (
         (r.F & (F.FLAG_S | F.FLAG_Z | F.FLAG_PV))
         | (F.FLAG_H if old_c else 0)
         | (0 if old_c else F.FLAG_C)
-        | (r.A & _FLAG_YX)
+        | yx
     )
+    r.F = f
+    cpu.q_next = f
     return 4
 
 
 def _op_jp_nn(cpu: Z80) -> int:
-    cpu.registers.PC = cpu._fetch_word()
+    r = cpu.registers
+    r.PC = cpu._fetch_word()
+    r.WZ = r.PC
     return 10
 
 
@@ -1643,6 +1756,7 @@ def _op_jp_hl(cpu: Z80) -> int:
 def _op_jr(cpu: Z80) -> int:
     e = _signed(cpu._fetch())
     cpu.registers.PC = (cpu.registers.PC + e) & 0xFFFF
+    cpu.registers.WZ = cpu.registers.PC
     return 12
 
 
@@ -1652,6 +1766,7 @@ def _op_djnz(cpu: Z80) -> int:
     r.B = (r.B - 1) & 0xFF
     if r.B != 0:
         r.PC = (r.PC + e) & 0xFFFF
+        r.WZ = r.PC
         return 13
     return 8
 
@@ -1661,11 +1776,14 @@ def _op_call_nn(cpu: Z80) -> int:
     nn = cpu._fetch_word()
     cpu._push(r.PC)
     r.PC = nn
+    r.WZ = nn
     return 17
 
 
 def _op_ret(cpu: Z80) -> int:
-    cpu.registers.PC = cpu._pop()
+    r = cpu.registers
+    r.PC = cpu._pop()
+    r.WZ = r.PC
     return 10
 
 
@@ -1736,14 +1854,16 @@ def _op_ex_sp_hl(cpu: Z80) -> int:
     cpu.write_byte(r.SP, r.L)
     cpu.write_byte((r.SP + 1) & 0xFFFF, r.H)
     r.HL = (hi << 8) | lo
+    r.WZ = r.HL
     return 19
 
 
 def _op_in_a_n(cpu: Z80) -> int:
     # Port address is (A << 8) | n, using A before it is overwritten.
     n = cpu._fetch()
-    a = cpu.registers.A
-    cpu.registers.A = cpu.read_port((a << 8) | n)
+    port = (cpu.registers.A << 8) | n
+    cpu.registers.WZ = (port + 1) & 0xFFFF
+    cpu.registers.A = cpu.read_port(port)
     return 11
 
 
@@ -1751,7 +1871,9 @@ def _op_out_n_a(cpu: Z80) -> int:
     # Port address is (A << 8) | n on the bus.
     n = cpu._fetch()
     a = cpu.registers.A
-    cpu.write_port((a << 8) | n, a)
+    port = (a << 8) | n
+    cpu.registers.WZ = (port & 0xFF00) | ((n + 1) & 0xFF)  # low byte wraps alone
+    cpu.write_port(port, a)
     return 11
 
 

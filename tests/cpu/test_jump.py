@@ -186,3 +186,61 @@ def test_ret_cc_not_taken_uses_short_cycles() -> None:
     assert cpu.registers.PC == 0x0001  # fell through
     assert cpu.registers.SP == 0xFFFE  # nothing popped
     assert t == 5
+
+
+# --- MEMPTR (WZ) ---------------------------------------------------------
+
+
+def test_jp_cc_sets_memptr_whether_or_not_taken() -> None:
+    # Spec "JP nn sets MEMPTR whether or not the condition is met".
+    cpu = make_cpu([0xC2, 0x34, 0x12])  # JP NZ,0x1234
+    cpu.registers.F = F.FLAG_Z
+    cpu.step()
+    assert cpu.registers.PC == 0x0003
+    assert cpu.registers.WZ == 0x1234
+
+
+def test_jp_nn_sets_memptr() -> None:
+    cpu = make_cpu([0xC3, 0x34, 0x12])  # JP 0x1234
+    cpu.step()
+    assert cpu.registers.WZ == 0x1234
+
+
+def test_jp_hl_leaves_memptr() -> None:
+    cpu = make_cpu([0xE9])  # JP (HL)
+    cpu.registers.HL = 0x4000
+    cpu.step()
+    assert cpu.registers.WZ == 0xFFFF
+
+
+def test_jr_taken_sets_memptr_to_target_not_taken_leaves_it() -> None:
+    cpu = make_cpu([0x18, 0x05])  # JR +5
+    cpu.step()
+    assert cpu.registers.WZ == 0x0007
+    cpu = make_cpu([0x20, 0x05])  # JR NZ,+5 with Z set: not taken
+    cpu.registers.F = F.FLAG_Z
+    cpu.step()
+    assert cpu.registers.WZ == 0xFFFF
+
+
+def test_djnz_taken_sets_memptr_to_target() -> None:
+    cpu = make_cpu([0x10, 0xFE])  # DJNZ -2
+    cpu.registers.B = 2
+    cpu.step()
+    assert cpu.registers.PC == 0x0000
+    assert cpu.registers.WZ == 0x0000
+
+
+def test_call_cc_not_taken_sets_memptr() -> None:
+    cpu = make_cpu([0xC4, 0x34, 0x12])  # CALL NZ,0x1234 with Z set
+    cpu.registers.F = F.FLAG_Z
+    cpu.step()
+    assert cpu.registers.PC == 0x0003
+    assert cpu.registers.WZ == 0x1234
+
+
+def test_rst_sets_memptr() -> None:
+    cpu = make_cpu([0xEF])  # RST 28H
+    cpu.registers.SP = 0xF000
+    cpu.step()
+    assert cpu.registers.WZ == 0x0028

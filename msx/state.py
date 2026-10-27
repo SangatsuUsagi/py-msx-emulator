@@ -170,6 +170,8 @@ class CpuSnapshot:
     int_pending: bool
     nmi_pending: bool
     im: int
+    q: int  # Z80.q / q_next: the SCF/CCF flag latch (see msx/cpu/z80.py)
+    q_next: int
 
 
 @dataclass
@@ -289,7 +291,7 @@ def _cpu_regs_to_dict(machine: "Machine") -> dict[str, int]:
     return {
         "A": r.A, "F": r.F, "BC": r.BC, "DE": r.DE, "HL": r.HL,
         "IX": r.IX, "IY": r.IY, "SP": r.SP, "PC": r.PC,
-        "I": r.I, "R": r.R,
+        "I": r.I, "R": r.R, "WZ": r.WZ,
         "A_": r.A_, "F_": r.F_, "BC_": r.BC_, "DE_": r.DE_, "HL_": r.HL_,
     }
 
@@ -307,6 +309,7 @@ def _restore_cpu_regs(machine: "Machine", regs: dict[str, int]) -> None:
     r.PC = regs["PC"]
     r.I = regs["I"]
     r.R = regs["R"]
+    r.WZ = regs["WZ"]
     r.A_ = regs["A_"]
     r.F_ = regs["F_"]
     r.BC_ = regs["BC_"]
@@ -467,6 +470,8 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
             int_pending=machine.cpu.int_pending,
             nmi_pending=machine.cpu.nmi_pending,
             im=machine.cpu.im,
+            q=machine.cpu.q,
+            q_next=machine.cpu.q_next,
         ),
         memory=MemorySnapshot(
             ram=bytearray(memory.ram),
@@ -513,7 +518,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
 
 _CPU_REGS_8: tuple[str, ...] = ("A", "F", "I", "R", "A_", "F_")
 _CPU_REGS_16: tuple[str, ...] = (
-    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "BC_", "DE_", "HL_",
+    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "WZ", "BC_", "DE_", "HL_",
 )
 _CPU_REG_KEYS: frozenset[str] = frozenset(_CPU_REGS_8 + _CPU_REGS_16)
 
@@ -576,6 +581,8 @@ def _parse_cpu(value: object) -> CpuSnapshot:
         int_pending=check_bool(obj["int_pending"], "cpu.int_pending"),
         nmi_pending=check_bool(obj["nmi_pending"], "cpu.nmi_pending"),
         im=check_int(obj["im"], "cpu.im", 0, 2),
+        q=_byte(obj["q"], "cpu.q"),
+        q_next=_byte(obj["q_next"], "cpu.q_next"),
     )
 
 
@@ -934,6 +941,8 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.int_pending = cpu.int_pending
     machine.cpu.nmi_pending = cpu.nmi_pending
     machine.cpu.im = cpu.im
+    machine.cpu.q = cpu.q
+    machine.cpu.q_next = cpu.q_next
 
     memory.ram[:] = snap.memory.ram
     memory.set_slot_register(snap.memory.primary_slot_register)
