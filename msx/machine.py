@@ -776,17 +776,22 @@ class Machine:
                         # tick() anyway, so batching is skipped and the normal
                         # per-instruction path (below) still ticks it. See
                         # openspec cpu-z80 "Batched HALT execution is externally
-                        # transparent" for the full equivalence proof.
+                        # transparent" for the full equivalence proof. cpu.idle
+                        # also covers a JR $ (18 FE) idle loop, which does no
+                        # port or memory access, so the same argument holds;
+                        # step_idle_batch() re-checks the code at PC (openspec
+                        # cpu-z80 "Batched JR-to-self execution is externally
+                        # transparent").
                         would_accept_interrupt = (
                             cpu.int_pending and cpu.iff1 and not cpu.ei_pending
                         )
                         if (
-                            cpu.halted
+                            cpu.idle
                             and not cpu.nmi_pending
                             and not would_accept_interrupt
                             and not vdp9938._cmd_active
                         ):
-                            n = cpu.step_halted_batch(line_end - total)
+                            n = cpu.step_idle_batch(line_end - total)
                         else:
                             n = cpu_step()
                         total += n
@@ -813,21 +818,21 @@ class Machine:
                     line_cycles = 0
                     while total < line_end:
                         cpu.int_pending = vdp.irq
-                        # Same HALT-batching optimization as the V9938 branch
+                        # Same HALT / JR $ batching as the V9938 branch
                         # above (no _cmd_active clause: the TMS9918A has no
                         # command engine, so int_pending can't change mid-line
-                        # by any other means while the CPU is halted). KEEP IN
+                        # by any other means while the CPU is idle). KEEP IN
                         # SYNC with z80.py's Z80.step() interrupt-accept check
                         # and this same condition in the V9938 branch above.
                         would_accept_interrupt = (
                             cpu.int_pending and cpu.iff1 and not cpu.ei_pending
                         )
                         if (
-                            cpu.halted
+                            cpu.idle
                             and not cpu.nmi_pending
                             and not would_accept_interrupt
                         ):
-                            n = cpu.step_halted_batch(line_end - total)
+                            n = cpu.step_idle_batch(line_end - total)
                         else:
                             n = cpu_step()
                         total += n

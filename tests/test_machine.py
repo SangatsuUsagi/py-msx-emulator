@@ -1,7 +1,10 @@
 
+from collections.abc import Callable
+
 import pytest
 
 from host.romdb import RomDbEntry
+from msx.cpu.z80 import Z80
 from msx.input import InputLines
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError
@@ -144,6 +147,98 @@ def test_halt_with_interrupts_disabled_runs_full_frame() -> None:
     assert m.cpu.halted is True
     assert m.cpu.registers.PC == 1  # PC stays where HALT left it
     assert m.vdp._frame_count == 1
+
+
+# --- _run_lines_fast JR $ batching (Z80.step_idle_batch) ---------------------
+# Spec "A JR $ idle loop takes the VBlank interrupt at the same T-state": the
+# same program run with batching and with every instruction stepped must
+# accept each interrupt at the same T-state and end in the same state.
+
+# main: EI; JR $ (at 0x0001). Handler at 0x0038: IN A,(99h); EI; JP 0001h --
+# back to the loop without a RET, so the test needs no RAM slot setup (the
+# acceptance push goes to ROM and is dropped).
+_EI_JR_ROM = bytearray(0x8000)
+_EI_JR_ROM[0:3] = bytes([0xFB, 0x18, 0xFE])
+_EI_JR_ROM[0x38:0x3E] = bytes([0xDB, 0x99, 0xFB, 0xC3, 0x01, 0x00])
+
+
+class _CpuClock:
+    """Count every T-state the CPU runs (step() and step_idle_batch()) and
+    record the count at each arrival at the 0x0038 vector. With
+    force_steps=True, step_idle_batch() is replaced by the unrolled
+    `while total < budget: total += step()` loop it must be equivalent to.
+    Z80 is a slots dataclass, so the methods are patched on the class."""
+
+    def __init__(self, force_steps: bool) -> None:
+        self.force_steps = force_steps
+        self.t = 0
+        self.hits: list[int] = []
+        self.jr_batches = 0
+
+    def __enter__(self) -> "_CpuClock":
+        self._step = Z80.step
+        self._batch = Z80.step_idle_batch
+        orig_step, orig_batch = self._step, self._batch
+        clock = self
+
+        def step(cpu: Z80) -> int:
+            n = orig_step(cpu)
+            clock.t += n
+            if cpu.registers.PC == 0x0038:
+                clock.hits.append(clock.t)
+            return n
+
+        def batch(cpu: Z80, budget: int) -> int:
+            if clock.force_steps:
+                total = 0
+                while total < budget:
+                    total += cpu.step()
+                return total
+            if not cpu.halted:
+                clock.jr_batches += 1
+            t0 = clock.t  # a fallback step() inside the batch counts itself
+            n = orig_batch(cpu, budget)
+            clock.t = t0 + n
+            return n
+
+        Z80.step = step  # type: ignore[method-assign]
+        Z80.step_idle_batch = batch  # type: ignore[method-assign]
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        Z80.step = self._step  # type: ignore[method-assign]
+        Z80.step_idle_batch = self._batch  # type: ignore[method-assign]
+
+
+def _run_ei_jr(make: Callable[[], Machine], force_steps: bool) -> tuple[_CpuClock, Machine]:
+    m = make()
+    m.vdp.write_port(0x99, 0x60)  # R#1 = BL + IE0
+    m.vdp.write_port(0x99, 0x81)
+    with _CpuClock(force_steps) as clock:
+        for _ in range(3):
+            m.run_frame(skip_render=True)
+    return clock, m
+
+
+def _cpu_state(m: Machine) -> tuple[int, ...]:
+    r = m.cpu.registers
+    return (r.AF, r.BC, r.DE, r.HL, r.SP, r.PC, r.WZ, r.R, m.cpu.q, m.cpu.q_next,
+            int(m.cpu.iff1), int(m.cpu.idle), m.cycle_count)
+
+
+@pytest.mark.parametrize("make", [
+    lambda: make_machine(bytes(_EI_JR_ROM)),
+    lambda: make_machine_msx2(bytes(_EI_JR_ROM), b"\x00" * 0x4000),
+], ids=["msx1", "msx2"])
+def test_jr_idle_batching_takes_vblank_at_the_same_t_state(make: Callable[[], Machine]) -> None:
+    batched, m_batched = _run_ei_jr(make, force_steps=False)
+    stepped, m_stepped = _run_ei_jr(make, force_steps=True)
+
+    assert batched.jr_batches > 0  # the loop really was batched
+    assert len(batched.hits) == 3
+    assert batched.hits == stepped.hits
+    assert batched.t == stepped.t
+    assert _cpu_state(m_batched) == _cpu_state(m_stepped)
 
 
 def test_reset_clears_cpu_state() -> None:
