@@ -273,6 +273,158 @@ def test_batch_preserves_r_bit7_across_wraparound() -> None:
     assert cpu.registers.R == 0x82
 
 
+# --- step_idle_batch: JR $ repeats equivalent to unrolled step() calls -------
+# (openspec cpu-z80 "Batched JR-to-self execution is externally transparent"
+# and "A JR-to-self batch re-checks the code at PC".)
+
+_JR_AT = 0x4000
+
+
+def _ram_cpu(code: list[int], m1_wait: int = 1) -> tuple[Z80, bytearray]:
+    """CPU over flat 64 KB RAM with `code` at _JR_AT, PC there."""
+    mem = bytearray(0x10000)
+    mem[_JR_AT : _JR_AT + len(code)] = bytes(code)
+    cpu = Z80(read_byte=mem.__getitem__, write_byte=mem.__setitem__)
+    cpu.m1_wait_states = m1_wait
+    cpu.registers.PC = _JR_AT
+    cpu.registers.SP = 0xFF00
+    return cpu, mem
+
+
+def _registers(cpu: Z80) -> tuple[int, ...]:
+    r = cpu.registers
+    return (r.AF, r.BC, r.DE, r.HL, r.IX, r.IY, r.SP, r.PC, r.WZ, r.I, r.R,
+            cpu.instruction_pc, cpu.q, cpu.q_next, int(cpu.ei_pending))
+
+
+def test_jr_self_sets_the_idle_hint() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE])
+    cpu.step()
+    assert cpu.idle is True
+    other, _ = _ram_cpu([0x18, 0x00])  # JR +0: not a jump to itself
+    other.step()
+    assert other.idle is False
+
+
+def test_halt_sets_the_idle_hint() -> None:
+    cpu = make_cpu([0x76])
+    cpu.step()
+    assert cpu.idle is True
+
+
+def test_jr_self_batch_matches_unrolled_steps() -> None:
+    # Spec "A batch of k JR $ repeats matches k unrolled step() calls".
+    k = 7
+    reference, _ = _ram_cpu([0x37, 0x18, 0xFE])  # SCF (sets Q) then JR $
+    batched, _ = _ram_cpu([0x37, 0x18, 0xFE])
+    for cpu in (reference, batched):
+        cpu.step()
+        cpu.step()
+        cpu.registers.R = 0x10
+    expected = _run_unrolled(reference, 13 * k)
+
+    n = batched.step_idle_batch(13 * k)
+
+    assert n == expected == 13 * k
+    assert _registers(batched) == _registers(reference)
+    assert batched.registers.R == 0x10 + k
+
+
+def test_jr_self_batch_non_multiple_budget_overshoots_the_same_way() -> None:
+    # Spec "A budget not a multiple of the repeat cost overshoots the same way".
+    reference, _ = _ram_cpu([0x18, 0xFE])
+    batched, _ = _ram_cpu([0x18, 0xFE])
+    reference.step()
+    batched.step()
+    budget = 13 * 3 + 5
+    expected = _run_unrolled(reference, budget)
+
+    n = batched.step_idle_batch(budget)
+
+    assert n == expected == 13 * 4
+    assert _registers(batched) == _registers(reference)
+
+
+def test_jr_self_batch_respects_m1_wait_states() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE], m1_wait=0)
+    cpu.step()
+    cpu.registers.R = 0x00
+    assert cpu.step_idle_batch(25) == 36  # stride 12: ceil(25/12) = 3
+    assert cpu.registers.R == 0x03
+
+
+def test_jr_self_batch_preserves_r_bit7_across_wraparound() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE])
+    cpu.step()
+    cpu.registers.R = 0x80 | 0x7E
+    cpu.step_idle_batch(13 * 4)
+    assert cpu.registers.R == 0x82
+
+
+def test_jr_self_batch_falls_back_when_code_at_pc_changed() -> None:
+    # Spec "Changed code at PC falls back to one step".
+    cpu, mem = _ram_cpu([0x18, 0xFE])
+    cpu.step()
+    mem[_JR_AT] = 0x00  # NOP
+
+    n = cpu.step_idle_batch(13 * 10)
+
+    assert n == 5  # one NOP: 4 + M1 wait
+    assert cpu.registers.PC == _JR_AT + 1
+    assert cpu.idle is False
+
+
+def test_jr_self_batch_falls_back_when_pc_moved() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE, 0x00])
+    cpu.step()
+    cpu.registers.PC = _JR_AT + 2  # e.g. a debugger register write: NOP there
+
+    n = cpu.step_idle_batch(13 * 10)
+
+    assert n == 5
+    assert cpu.registers.PC == _JR_AT + 3
+    assert cpu.idle is False
+
+
+def test_prefixed_jr_self_is_not_batched() -> None:
+    # Spec "A prefixed JR $ is not batched": DD 18 FE jumps to the 18, so PC
+    # is not the start of the instruction just executed.
+    cpu, _ = _ram_cpu([0xDD, 0x18, 0xFE])
+    cpu.step()
+    assert cpu.registers.PC == _JR_AT + 1
+    reference, _ = _ram_cpu([0xDD, 0x18, 0xFE])
+    reference.step()
+    expected = reference.step()
+
+    n = cpu.step_idle_batch(13 * 10)
+
+    assert n == expected
+    assert _registers(cpu) == _registers(reference)
+
+
+def test_interrupt_acceptance_clears_the_idle_hint() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE])
+    cpu.im = 1
+    cpu.iff1 = True
+    cpu.step()
+    assert cpu.idle is True
+    cpu.int_pending = True
+    cpu.step()
+    assert cpu.registers.PC == 0x0038
+    assert cpu.idle is False
+
+
+def test_nmi_and_reset_clear_the_idle_hint() -> None:
+    cpu, _ = _ram_cpu([0x18, 0xFE])
+    cpu.step()
+    cpu.nmi_pending = True
+    cpu.step()
+    assert cpu.idle is False
+    cpu.idle = True
+    cpu.reset()
+    assert cpu.idle is False
+
+
 # --- MEMPTR (WZ) ---------------------------------------------------------
 
 
