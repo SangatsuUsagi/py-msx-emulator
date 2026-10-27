@@ -2,6 +2,22 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.8.2** (2026-10-27): Z80 undocumented-flag and DAA fixes, and faster `JR $` idle loops.
+  - The Z80 core models the internal MEMPTR (WZ) register. The undocumented flags Y and X now follow the Zilog NMOS
+    rules in three more cases: `BIT n,(HL)` takes them from MEMPTR, a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` takes them
+    from its own address, and `SCF`/`CCF` depend on whether the previous instruction changed the flags. The core
+    targets a Zilog-compatible Z80; the NEC and Sharp Z80-compatible CPUs in some MSX machines can differ, and that is
+    not modelled.
+  - Fix: `DAA` after a subtraction gave wrong results for invalid BCD values. The correction now depends on A, H and C
+    only, as on a real Z80.
+  - The core passes the zexdoc and zexall instruction exercisers in full. The new `scripts/run_z80_exercisers.py` runs
+    them, and Patrik Rak's z80test, on the bare CPU core. The test programs are not included.
+  - Faster: a `JR $` idle loop (a jump to itself, which many games use to wait for the VBlank interrupt) now advances
+    to the end of the scanline in one step, as a HALT already did. The result, including interrupt timing, is the same
+    as stepping each instruction. The MSX1 benchmark title runs about 23% faster on CPython (M5 Pro: 252.95 to 311.65
+    fps; Raspberry Pi 5: 65.07 to 81.03 fps).
+  - Save states also store MEMPTR and Q. Save states from v2.8.1 cannot be loaded.
+  - The README benchmark charts cover v0.1.0 through v2.8.2.
 - **v2.8.1** (2026-10-25): Portable save states and machine configurations, and disk write-back fixes.
   - Save states are canonical JSON (RFC 8785): the same machine state gives the same bytes. `msx/snapshot.schema.json`
     (JSON Schema) defines the layout. Each save state records the SHA-256 of its machine configuration, and a state
