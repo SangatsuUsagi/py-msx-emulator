@@ -132,7 +132,7 @@ for line in range(first_line, end_line):   # NTSC は 1 フレーム 262 ライ�
     line_end = (line + 1) * cpf // lpf
     while total < line_end:
         cpu.int_pending = vdp9938.irq
-        n = cpu_step()                     # または step_halted_batch()（後述）
+        n = cpu_step()                     # または step_idle_batch()（後述）
         total += n
         if vdp9938._cmd_active:
             vdp9938.tick(n)                # コマンドエンジンの実行中
@@ -143,7 +143,7 @@ for line in range(first_line, end_line):   # NTSC は 1 フレーム 262 ライ�
 
 `begin_scanline` によるレベルの変化は、CPU が次の命令の境界で読み取る。
 
-ループは 2 つの区間に分けて回す。`vblank_start_line` までのラインと、フレームの残り。マシンはその間、VBlank の割り込みハンドラが動く前にフレームを描画する（[VDP](#vdp) を参照）。CPU が HALT 中で割り込みを受け付けられない間、ループは `step()` の代わりに `Z80.step_halted_batch()` を呼ぶ。1 回の呼び出しで、ラインの終わりまでの HALT 中の M1 サイクルをまとめて進め、R の値と T ステートの合計は同じになる。V9938 のコマンドの実行中はまとめない。コマンドエンジンがラインの途中で割り込みを起こすことがあるため。
+ループは 2 つの区間に分けて回す。`vblank_start_line` までのラインと、フレームの残り。マシンはその間、VBlank の割り込みハンドラが動く前にフレームを描画する（[VDP](#vdp) を参照）。CPU が待機中で割り込みを受け付けられない間、ループは `step()` の代わりに `Z80.step_idle_batch()` を呼ぶ。待機中とは、HALT 中か、`JR $`（`18 FE`、自分自身へのジャンプ）を実行した直後のこと。`JR $` は多くのゲームが VBlank 割り込みを待つのに使うループである。1 回の呼び出しで、ラインの終わりまでの待機をまとめて進め、R の値と T ステートの合計は 1 命令ずつ実行した場合と同じになる。`JR $` をまとめる前には、PC の 2 バイトがまだ `18 FE` であることを確かめる。V9938 のコマンドの実行中はまとめない。コマンドエンジンがラインの途中で割り込みを起こすことがあるため。
 
 `begin_scanline(line)` は、割り込みを起こすラインを `(R#19 − R#23) & 0xFF` で計算する。`line == effective_irq_line` で、IE1（R#0 bit 4）がセットされていれば、S#1 bit 0（FH）をセットする。比較の対象は 0〜255 のどのラインでもよく、ボーダーや垂直帰線期間のラインも含む。IE1 がクリアの間は FH をラッチしないので、後から IE1 をセットしても、すでに過ぎたラインの割り込みは起きない。
 
