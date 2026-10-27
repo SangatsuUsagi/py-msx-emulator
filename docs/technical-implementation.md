@@ -60,7 +60,8 @@ the basic clock-cycle unit of the Z80:
    step.
 4. If `halted` is set, advance `4 + m1_wait_states` T-states without an opcode
    fetch. The value is 4 on a pure Z80 core, and the MSX M1 wait also applies.
-5. Otherwise, record the current PC in `instruction_pc`, fetch the opcode with
+5. Otherwise, record the current PC in `instruction_pc`, move `q_next` into
+   `q` and clear `q_next` (Q, read by `SCF`/`CCF`), fetch the opcode with
    `_fetch_opcode()`, and dispatch.
 
 `_fetch()` reads one byte from `read_byte(PC)` and increments PC.
@@ -107,6 +108,34 @@ The frame budget stays at 59,736 T-states, so the wait decreases the number of
 instructions per frame. Code with timing from the CPU loop (e.g. software-PCM
 audio from a delay loop) thus runs at the correct hardware rate, not ~13% fast.
 The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
+
+### Instruction exercisers
+
+The CPU core passes Frank D. Cringle's zexdoc and zexall instruction
+exercisers in full (all 67 tests of each). `scripts/run_z80_exercisers.py`
+runs them on the bare `Z80` core, with no MSX machine around it:
+
+- A `.com` file runs as a CP/M program: it loads at 0x0100 into flat 64 KB
+  RAM, BDOS functions 2 and 9 print to the console, and a jump to 0x0000
+  ends the run. A line with `ERROR` counts as a failure.
+- A `.tap` file runs Patrik Rak's
+  [z80test](https://github.com/raxoft/z80test) with the few ZX Spectrum ROM
+  services it uses stubbed. `tests failed` in the output counts as a failure.
+
+The test programs are not in this repository (zexdoc and zexall are GPL);
+pass their paths:
+
+```bash
+venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
+    path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
+```
+
+The exit status is 1 if any program reports a failure. Expected result:
+zexdoc and zexall pass in full, and z80test's z80doc passes in full. z80full,
+z80ccf and z80memptr fail only `INIR->NOP'` and `INDR->NOP'`, because the
+repeat-cycle flags of `INIR`/`INDR`/`OTIR`/`OTDR` are not modelled (see
+below). On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
+Apple M5 Pro; CPython takes much longer.
 
 ### Known limitations
 
