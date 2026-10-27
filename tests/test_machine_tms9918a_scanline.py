@@ -52,14 +52,16 @@ def _rom(main: bytes, handler: bytes) -> bytes:
 class _Acceptances:
     """Record every arrival at the 0038h vector: the frame-relative T-state it
     happened at (exact, per instruction), the stacked return address, and S#0's
-    F bit at that moment. Z80 is a slots dataclass, so `step` is patched at the
-    class level and restored on exit."""
+    F bit at that moment. Z80 is a slots dataclass, so `step` and
+    `step_idle_batch` (which advances a JR $ / HALT idle loop without calling
+    `step`) are patched at the class level and restored on exit."""
 
     def __init__(self, machine: Machine) -> None:
         self.machine = machine
         self.hits: list[tuple[int, int, int]] = []
         self._t = 0
         self._orig = Z80.step
+        self._orig_batch = Z80.step_idle_batch
 
     def __enter__(self) -> "_Acceptances":
         orig = self._orig
@@ -74,11 +76,23 @@ class _Acceptances:
                 self.hits.append((self._t, ret, machine.vdp.status & 0x80))
             return n
 
+        orig_batch = self._orig_batch
+
+        def batch(cpu: Z80, budget: int) -> int:
+            # A fallback step() inside the batch also adds to the clock via
+            # the patched step(); rewind so it is counted once.
+            t0 = self._t
+            n = orig_batch(cpu, budget)
+            self._t = t0 + n
+            return n
+
         Z80.step = step  # type: ignore[method-assign]
+        Z80.step_idle_batch = batch  # type: ignore[method-assign]
         return self
 
     def __exit__(self, *exc: object) -> None:
         Z80.step = self._orig  # type: ignore[method-assign]
+        Z80.step_idle_batch = self._orig_batch  # type: ignore[method-assign]
 
 
 def _set_r1(vdp: VDP, value: int) -> None:

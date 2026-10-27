@@ -212,7 +212,7 @@ for line in range(first_line, end_line):   # 262 NTSC lines per frame
     line_end = (line + 1) * cpf // lpf
     while total < line_end:
         cpu.int_pending = vdp9938.irq
-        n = cpu_step()                     # or step_halted_batch(), below
+        n = cpu_step()                     # or step_idle_batch(), below
         total += n
         if vdp9938._cmd_active:
             vdp9938.tick(n)                # command engine running
@@ -227,11 +227,15 @@ boundary.
 The loop runs in two segments: the lines up to and including
 `vblank_start_line`, then the rest of the frame. The machine renders the
 frame between them, before the VBlank interrupt handler runs (see
-[VDP](#vdp)). While the CPU is halted and cannot take an interrupt, the loop
-calls `Z80.step_halted_batch()` instead of `step()`. One call advances the
-whole run of halted M1 cycles up to the end of the line, with the same R value
-and T-state total. The loop does not batch while a V9938 command runs,
-because the command engine can raise an interrupt partway through the line.
+[VDP](#vdp)). While the CPU idles and cannot take an interrupt, the loop
+calls `Z80.step_idle_batch()` instead of `step()`. The CPU idles when it is
+halted or when it has just run `JR $` (`18 FE`, a jump to itself), the loop
+many games use to wait for the VBlank interrupt. One call advances the whole
+idle run up to the end of the line, with the same R value and T-state total
+as stepping it. Before it batches a `JR $`, the call checks that the two
+bytes at PC are still `18 FE`. The loop does not batch while a V9938 command
+runs, because the command engine can raise an interrupt partway through the
+line.
 
 `begin_scanline(line)` calculates the effective IRQ line as
 `(R#19 − R#23) & 0xFF`. It sets S#1 bit 0 (FH) when `line == effective_irq_line`
