@@ -237,6 +237,39 @@ def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
     cpu.q_next = f
 
 
+def _block_io_repeat_flags(f: int, value: int, b_after: int, pc: int) -> int:
+    """Adjust the INI/IND/OUTI/OUTD flags for a repeating INIR/INDR/OTIR/OTDR.
+
+    Zilog NMOS rule (hoglet67/Z80Decoder wiki "Undocumented Flags"); openMSX
+    does not model it. S, Z, N and C stay as computed.
+
+    Args:
+        f: The flags `_block_io_flags` has just set.
+        value: The byte transferred to/from the port.
+        b_after: The B register after its post-transfer decrement.
+        pc: The address of the instruction's 0xED prefix.
+
+    Returns:
+        The adjusted flags.
+    """
+    f = (f & ~_FLAG_YX) | ((pc >> 8) & _FLAG_YX)  # Y = PC bit 13, X = PC bit 11
+    if f & F.FLAG_C:
+        f &= ~F.FLAG_H
+        if value & 0x80:
+            p = (b_after - 1) & 0x07
+            if (b_after & 0x0F) == 0x00:
+                f |= F.FLAG_H
+        else:
+            p = (b_after + 1) & 0x07
+            if (b_after & 0x0F) == 0x0F:
+                f |= F.FLAG_H
+    else:
+        p = b_after & 0x07
+    if not F.parity(p):  # odd parity toggles P/V
+        f ^= F.FLAG_PV
+    return f
+
+
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
     cpu.registers.WZ = (hl + 1) & 0xFFFF  # MEMPTR = first operand + 1
     result = hl + rr
@@ -1185,7 +1218,12 @@ def _ed_block_in(cpu: Z80, op: int) -> int:  # INI / IND / INIR / INDR
     c_adj = (r.C + inc) & 0xFF
     _block_io_flags(cpu, val, r.B, val + c_adj)
     if op in (0xB2, 0xBA) and r.B != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
+        pc = (r.PC - 2) & 0xFFFF
+        r.PC = pc
+        f = _block_io_repeat_flags(r.F, val, r.B, pc)
+        r.F = f
+        cpu.q_next = f
+        r.WZ = (pc + 1) & 0xFFFF  # replaces the BC-derived MEMPTR above
         return 21
     return 16
 
@@ -1201,7 +1239,12 @@ def _ed_block_out(cpu: Z80, op: int) -> int:  # OUTI / OUTD / OTIR / OTDR
     # OUTI/OUTD use L after HL has been incremented/decremented.
     _block_io_flags(cpu, val, r.B, val + r.L)
     if op in (0xB3, 0xBB) and r.B != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
+        pc = (r.PC - 2) & 0xFFFF
+        r.PC = pc
+        f = _block_io_repeat_flags(r.F, val, r.B, pc)
+        r.F = f
+        cpu.q_next = f
+        r.WZ = (pc + 1) & 0xFFFF  # replaces the BC-derived MEMPTR above
         return 21
     return 16
 
