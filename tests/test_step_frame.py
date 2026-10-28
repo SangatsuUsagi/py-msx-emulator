@@ -3,6 +3,7 @@ core's per-frame API" / "One InputFrame value per frame")."""
 from __future__ import annotations
 
 from host.input_state import InputState
+from msx.boundary import STOP_BREAKPOINT, STOP_NONE
 from msx.input import InputFrame
 from msx.mouse import MouseDevice
 from msx.psg import JoystickPort
@@ -115,3 +116,39 @@ def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
     machine.step_frame(frame, render_video=False)
     assert machine.input.matrix[2] & (1 << 6) == 0
     assert mouse._cur_x_rel == 6                    # 3 per frame, twice
+
+
+def test_a_frame_without_a_break_reports_no_stop() -> None:
+    out = make_machine(_ROM).step_frame(InputFrame(), render_video=False)
+    assert out.stop_reason == STOP_NONE
+    assert out.frame_complete
+
+
+def test_a_stopped_call_returns_no_video_and_no_audio() -> None:
+    machine = make_machine(_ROM)
+    machine.set_breakpoints([0x0001])  # the JR $ loop
+    out = machine.step_frame(InputFrame(), render_video=True)
+    assert out.stop_reason == STOP_BREAKPOINT
+    assert out.video is None
+    assert out.audio == b""
+    assert not out.frame_complete
+
+
+def test_continuing_a_stopped_frame_feeds_no_motion() -> None:
+    machine = make_machine(_ROM)
+    mouse = MouseDevice()
+    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.set_breakpoints([0x0001])
+    frame_input = InputFrame(mouse_dx=5)
+    assert not machine.step_frame(frame_input, render_video=False).frame_complete
+    machine.set_breakpoints([])
+    assert machine.step_frame(frame_input, render_video=False).frame_complete
+    assert mouse._cur_x_rel == 5
+
+
+def test_a_stopped_run_frame_produces_no_audio() -> None:
+    # machine-core "run_frame produces the frame's audio": a stopped call.
+    machine = make_machine(_ROM)
+    machine.set_breakpoints([0x0001])
+    machine.run_frame()
+    assert machine.take_audio() == b""

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
     STOP_BREAKPOINT,
+    STOP_NONE,
     STOP_REQUESTED,
     STOP_WATCHPOINT,
     VDP_KIND_TMS9918A,
@@ -173,6 +174,23 @@ class Machine:
     _stop: StopInfo = field(default_factory=StopInfo, init=False, repr=False)
     # Set by request_break(); the scanline loops honor it (Ctrl-C).
     _break_request: bool = field(default=False, init=False, repr=False)
+    # Position of a frame that stopped at a break (machine-core "A break stops
+    # step_frame and the next call continues the frame"), used when neither a
+    # pause hook nor a debugger is attached: the next scanline to run, the
+    # frame-relative T-state total, the frame's start cycle (audio mix),
+    # whether the frame was rendered and the rendered index buffer.
+    _frame_active: bool = field(default=False, init=False, repr=False)
+    _frame_line: int = field(default=0, init=False, repr=False)
+    _frame_total: int = field(default=0, init=False, repr=False)
+    _frame_start_cycle: int = field(default=0, init=False, repr=False)
+    _frame_rendered: bool = field(default=False, init=False, repr=False)
+    _frame_result: bytearray = field(default_factory=bytearray, init=False, repr=False)
+    # The scanline a loop arm stopped on (the next one to run).
+    _stop_line: int = field(default=0, init=False, repr=False)
+    # Set when step_frame() stopped or step() ran, so the next run skips the
+    # breakpoint test for its first instruction (machine-core "A resume does
+    # not re-break at once").
+    _resume_after_stop: bool = field(default=False, init=False, repr=False)
 
     @property
     def cycles_per_frame(self) -> int:
@@ -251,6 +269,14 @@ class Machine:
         for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
+        self._drop_frame()
+
+    def _drop_frame(self) -> None:
+        """Forget a stopped frame: the next run_frame() starts a new one
+        (machine-core "reset and a state load drop a stopped frame")."""
+        self._frame_active = False
+        self._frame_result = bytearray()
+        self._pause_requested = False
 
     def sram_media(self) -> Mapping[MediaId, SramImage]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
@@ -379,6 +405,15 @@ class Machine:
             self._pause_hook(reason, self.cpu.registers.PC)
         elif self._debugger is not None:
             self._debugger.enter()
+        else:
+            # Stop mode: the loop returns at the break and run_frame() keeps
+            # the frame position (see _run_frame_resumable).
+            self._pause_requested = True
+
+    def _stop_mode(self) -> bool:
+        """True when a break returns from step_frame instead of calling a
+        pause hook or the debugger."""
+        return self._pause_hook is None and self._debugger is None
 
     @property
     def is_paused(self) -> bool:
@@ -642,13 +677,15 @@ class Machine:
         from msx import state
 
         state.load_state(self, data, source)
+        self._drop_frame()
 
     def _read_with_watch(self, addr: int) -> int:
         val = self.memory.read(addr)
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, val, WATCH_READ)
-            print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
+            if not self._stop_mode():
+                print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
             self._enter_break(PauseReason.WATCHPOINT)
         return val
 
@@ -656,7 +693,8 @@ class Machine:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, value, WATCH_WRITE)
-            print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
+            if not self._stop_mode():
+                print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
             self._enter_break(PauseReason.WATCHPOINT)
         self.memory.write(addr, value)
 
@@ -664,6 +702,7 @@ class Machine:
         # Single-step (debugger / RPC) path: sample the VDP IRQ level the same
         # way every run_frame() scanline loop does before each instruction.
         self._stop = StopInfo()
+        self._resume_after_stop = True
         self.cpu.int_pending = self.vdp.irq
         return self.cpu.step()
 
@@ -689,7 +728,13 @@ class Machine:
         begin_scanline(vblank_start_line) at the end of the first segment; the
         TMS9918A, which has no per-scanline hook, in VDP.begin_vblank() called
         right after the render.
+
+        With neither a pause hook nor a debugger attached, a break returns
+        here at the break instead, and the next call continues the frame
+        (_run_frame_resumable).
         """
+        if self._stop_mode():
+            return self._run_frame_resumable(skip_render)
         self._frame_interrupted = False
         frame_start_cycle = self.cycle_count
         lpf = self.lines_per_frame
@@ -722,6 +767,77 @@ class Machine:
             self._enter_break(PauseReason.BREAKPOINT)
         return result
 
+    def _run_frame_resumable(self, skip_render: bool) -> bytearray:
+        """run_frame() in stop mode: run the frame, or the rest of a stopped
+        one, up to its end or the next break.
+
+        Returns the index framebuffer when the frame completes in this call,
+        and an empty buffer when the call stops (or when the render was
+        skipped). The render, the TMS9918A VBlank, the frame count, the audio
+        mix and the frame breakpoint each happen once per frame, in the call
+        that reaches them.
+        """
+        lpf = self.lines_per_frame
+        vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
+        # begin_scanline(line) runs *after* that line's cycles, so the
+        # pre-render segment is the half-open range [0, vblank_split).
+        vblank_split = self.vdp.vblank_start_line + 1
+        if self._pause_requested or self._resume_after_stop:
+            # First instruction after a stop or a step: no breakpoint test.
+            self._resume_skip_pc = self.cpu.registers.PC
+        self._pause_requested = False
+        self._resume_after_stop = False
+        if not self._frame_active:
+            self._frame_active = True
+            self._frame_line = 0
+            self._frame_total = 0
+            self._frame_start_cycle = self.cycle_count
+            self._frame_rendered = False
+            self._frame_result = bytearray()
+
+        line = self._frame_line
+        total = self._frame_total
+        if line < vblank_split:
+            if self._take_break_request(line):
+                return self._keep_stopped_frame(total)
+            total = self._run_lines(vdp9938, line, vblank_split, total)
+            if self._pause_requested:
+                return self._keep_stopped_frame(total)
+            line = vblank_split
+        if not self._frame_rendered:
+            if vdp9938 is not None:
+                self._frame_result = render_frame_v9938(vdp9938, skip_render=skip_render)
+            else:
+                assert isinstance(self.vdp, VDP)
+                self._frame_result = render_frame(self.vdp, skip_render=skip_render)
+                self.vdp.begin_vblank()
+            self._frame_rendered = True
+        if line < lpf:
+            if self._take_break_request(line):
+                return self._keep_stopped_frame(total)
+            total = self._run_lines(vdp9938, line, lpf, total)
+            if self._pause_requested:
+                return self._keep_stopped_frame(total)
+        self._resume_skip_pc = None
+        self._frame_active = False
+        self.vdp.increment_frame()
+        self._mix_frame_audio(self._frame_start_cycle)
+        result = self._frame_result
+        self._frame_result = bytearray()
+        # Frame breakpoint (debugger 'gf'): once per frame, after the frame
+        # is complete, so the stop reports a complete frame.
+        if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
+            self._frame_breakpoint = None
+            self._enter_break(PauseReason.BREAKPOINT)
+        return result
+
+    def _keep_stopped_frame(self, total: int) -> bytearray:
+        """Record where a stopped frame continues; return no video."""
+        self._resume_skip_pc = None
+        self._frame_line = self._stop_line
+        self._frame_total = total
+        return bytearray()
+
     def samples_per_frame(self) -> int:
         """Audio samples per frame: the output rate over the pacing rate (735 at
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
@@ -746,19 +862,31 @@ class Machine:
         attached mouse once, runs the frame, and returns its RGB24 video (when
         `render_video`), its pre-filter audio and the frame number.
         `render_video` never changes emulated state.
+
+        A call that stops at a break returns its stop reason, no video, no
+        audio and `frame_complete` false; the next call continues the frame,
+        applies its input lines and buttons and feeds no mouse motion.
         """
         self._stop = StopInfo()
+        new_frame = not self._frame_active
         self.apply_input(frame_input)
         mouse = self.psg.mouse
-        if mouse is not None:
+        if mouse is not None and new_frame:
             mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
         index_buf = self.run_frame(skip_render=not render_video)
         video: RgbFrame | None = None
-        if render_video:
+        if index_buf:
             video = RgbFrame(
                 len(index_buf) // OUTPUT_H, OUTPUT_H, self.vdp.to_rgb24(index_buf)
             )
-        return FrameOutput(video, self.take_audio(), self.vdp.frame_count)
+        stop_reason = self._stop.reason if self._pause_requested else STOP_NONE
+        return FrameOutput(
+            video,
+            self.take_audio(),
+            self.vdp.frame_count,
+            stop_reason,
+            not self._frame_active,
+        )
 
     def take_audio(self) -> bytes:
         """Return the mixed PCM of the most recent run_frame() and clear it."""
@@ -792,6 +920,21 @@ class Machine:
             self._debugger.enter()
         else:
             raise
+
+    def _take_break_request(self, line: int) -> bool:
+        """Honor request_break() before running the segment that starts at
+        scanline `line` (machine-core "The host requests a break"). Returns
+        True when the frame stops there.
+
+        Checked at segment boundaries, not per scanline: a per-line test in
+        the scanline loops measured up to ~12% slower on PyPy (MSX2 ROM
+        title), whatever its shape."""
+        if not self._break_request:
+            return False
+        self._break_request = False
+        self._stop_line = line
+        self._enter_break(PauseReason.USER_REQUEST)
+        return self._pause_requested
 
     def _run_lines(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -857,6 +1000,7 @@ class Machine:
                         post_checks = self._post_step_checks_armed()
                         if self._pause_requested:
                             self.cycle_count += line_cycles
+                            self._stop_line = line
                             return total
                     cpu.int_pending = vdp.irq
                     n = cpu_step()
@@ -877,6 +1021,7 @@ class Machine:
                         # A watchpoint (or post-step condition) requested a pause
                         # during this instruction; stop at the boundary.
                         self.cycle_count += line_cycles
+                        self._stop_line = line
                         return total
                 self.cycle_count += line_cycles
                 line_cycles = 0
