@@ -85,6 +85,33 @@ class RgbFrame:
     pixels: bytes
 
 
+# Why step_frame or step stopped (StopInfo.reason, FrameOutput.stop_reason).
+# STOP_BREAKPOINT covers the PC breakpoints, the run-to target, step out,
+# HALT with interrupts off, SP out of range and the frame breakpoint.
+STOP_NONE = 0
+STOP_BREAKPOINT = 1
+STOP_WATCHPOINT = 2
+STOP_REQUESTED = 3
+
+# The access kind of a watchpoint hit (StopInfo.watch_access).
+WATCH_READ = 1
+WATCH_WRITE = 2
+
+
+@dataclass(frozen=True)
+class StopInfo:
+    """The most recent stop, as the core API's last-stop query returns it
+    (msx/core_api.py). `pc` is the instruction's address for a watchpoint
+    hit and the current PC otherwise; the watch fields are 0 unless
+    `reason` is STOP_WATCHPOINT."""
+
+    reason: int = STOP_NONE
+    pc: int = 0
+    watch_addr: int = 0
+    watch_value: int = 0
+    watch_access: int = 0
+
+
 @dataclass(frozen=True)
 class FrameOutput:
     """What Machine.step_frame returns for one frame.
@@ -98,6 +125,8 @@ class FrameOutput:
     video: RgbFrame | None   # absent when the frame was not rendered
     audio: bytes             # signed 16-bit LE mono PCM, before any output filter
     frame_number: int
+    stop_reason: int = STOP_NONE  # nonzero when the call stopped at a break
+    frame_complete: bool = True   # false when the frame continues on the next call
 
 
 @dataclass(frozen=True)

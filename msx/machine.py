@@ -8,13 +8,19 @@ from typing import TYPE_CHECKING, Protocol
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    STOP_BREAKPOINT,
+    STOP_REQUESTED,
+    STOP_WATCHPOINT,
     VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
+    WATCH_READ,
+    WATCH_WRITE,
     CpuRegisters,
     DiskMedium,
     FrameOutput,
     MediaId,
     RgbFrame,
+    StopInfo,
     VdpInfo,
     drive_media_id,
 )
@@ -79,6 +85,14 @@ class PauseReason(str, enum.Enum):
     BREAKPOINT = "breakpoint"
     WATCHPOINT = "watchpoint"
     STEP_COMPLETE = "step_complete"
+
+
+# The stop reason (msx/boundary.py) each break reason records.
+_STOP_REASONS: dict[PauseReason, int] = {
+    PauseReason.USER_REQUEST: STOP_REQUESTED,
+    PauseReason.BREAKPOINT: STOP_BREAKPOINT,
+    PauseReason.WATCHPOINT: STOP_WATCHPOINT,
+}
 
 
 @dataclass
@@ -154,6 +168,11 @@ class Machine:
     # One-shot run-to-frame breakpoint (debugger 'gf'); checked once per
     # run_frame() call, not per instruction — see set_frame_breakpoint.
     _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
+    # The most recent stop (last_stop()), cleared at the start of each
+    # step_frame() and step() call.
+    _stop: StopInfo = field(default_factory=StopInfo, init=False, repr=False)
+    # Set by request_break(); the scanline loops honor it (Ctrl-C).
+    _break_request: bool = field(default=False, init=False, repr=False)
 
     @property
     def cycles_per_frame(self) -> int:
@@ -352,6 +371,9 @@ class Machine:
 
         In hook mode this also raises _pause_requested so the debug frame loop
         returns at the break point instead of running on to the frame end."""
+        if reason is not PauseReason.WATCHPOINT:
+            # A watchpoint hit is recorded by the watch wrapper, with its access.
+            self._stop = StopInfo(_STOP_REASONS[reason], self.cpu.registers.PC)
         if self._pause_hook is not None:
             self._pause_requested = True
             self._pause_hook(reason, self.cpu.registers.PC)
@@ -372,6 +394,18 @@ class Machine:
         the same breakpoint. Called by the RPC continue handlers."""
         self._pause_requested = False
         self._resume_skip_pc = self.cpu.registers.PC
+
+    def request_break(self) -> None:
+        """Ask the core to stop at the next scanline boundary (machine-core
+        "The host requests a break"). Safe to call from a signal handler: it
+        only sets a flag."""
+        self._break_request = True
+
+    def last_stop(self) -> StopInfo:
+        """The most recent stop of step_frame() or step(), or a STOP_NONE
+        record when that call did not stop (machine-core "The last stop is
+        reported as a flat record")."""
+        return self._stop
 
     def set_breakpoints(self, addrs: list[int]) -> None:
         """Set breakpoint addresses (max 4). Replaces existing set."""
@@ -613,6 +647,7 @@ class Machine:
         val = self.memory.read(addr)
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
+            self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, val, WATCH_READ)
             print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
             self._enter_break(PauseReason.WATCHPOINT)
         return val
@@ -620,6 +655,7 @@ class Machine:
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
+            self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, value, WATCH_WRITE)
             print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
             self._enter_break(PauseReason.WATCHPOINT)
         self.memory.write(addr, value)
@@ -627,6 +663,7 @@ class Machine:
     def step(self) -> int:
         # Single-step (debugger / RPC) path: sample the VDP IRQ level the same
         # way every run_frame() scanline loop does before each instruction.
+        self._stop = StopInfo()
         self.cpu.int_pending = self.vdp.irq
         return self.cpu.step()
 
@@ -710,6 +747,7 @@ class Machine:
         `render_video`), its pre-filter audio and the frame number.
         `render_video` never changes emulated state.
         """
+        self._stop = StopInfo()
         self.apply_input(frame_input)
         mouse = self.psg.mouse
         if mouse is not None:
@@ -747,6 +785,7 @@ class Machine:
         Flags the frame as cut short so run_frame() skips the segments after
         the one that was interrupted."""
         self._frame_interrupted = True
+        self._stop = StopInfo(STOP_REQUESTED, self.cpu.registers.PC)
         if self._pause_hook is not None:
             self._pause_hook(PauseReason.USER_REQUEST, self.cpu.registers.PC)
         elif self._debugger is not None:

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         FrameOutput,
         MediaId,
         RgbFrame,
+        StopInfo,
         VdpInfo,
     )
     from msx.input import InputFrame
@@ -86,6 +87,11 @@ class CoreApi(Protocol):
     def set_frame_breakpoint(self, frame: int | None) -> None: ...
     def set_break_halt_di(self, enabled: bool) -> None: ...
     def set_sp_range(self, rng: tuple[int, int] | None) -> None: ...
+
+    # -- break control ---------------------------------------------------------------
+
+    def request_break(self) -> None: ...
+    def last_stop(self) -> StopInfo: ...
 
     # -- inspection queries --------------------------------------------------------
 
