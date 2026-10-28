@@ -80,11 +80,11 @@ venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
     path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
 ```
 
-どれかのプログラムが失敗を報告すると、終了ステータスは 1 になる。期待される結果：zexdoc と zexall はすべて通り、z80test の z80doc もすべて通る。z80full、z80ccf、z80memptr で失敗するのは `INIR->NOP'` と `INDR->NOP'` だけ。`INIR`/`INDR`/`OTIR`/`OTDR` の繰り返し中のフラグを再現していないため（下記を参照）。PyPy では zexdoc と zexall はそれぞれ Apple M5 Pro で約 1.5 分かかり、CPython ではさらに長い。
+どれかのプログラムが失敗を報告すると、終了ステータスは 1 になる。期待される結果：zexdoc、zexall、z80test のすべての種類が、すべて通る。z80test が繰り返し中の動作を調べるのは `INIR` と `INDR` だけ（`INIR->NOP'`、`INDR->NOP'`）で、`OTIR`/`OTDR` の同じ規則はユニットテストで確かめている。PyPy では zexdoc と zexall はそれぞれ Apple M5 Pro で約 1.5 分かかり、CPython ではさらに長い。
 
 ### 既知の制限
 
-OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確でない。非公開のフラグ Y（bit 5）と X（bit 3）は、資料にある命令ごとの規則に従う。あまり一般的でない次の 3 つの要因も再現している：`BIT n,(HL)` は内部レジスタ MEMPTR から、繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR` は自身のアドレスから Y と X を取り、`SCF`/`CCF` は直前の命令がフラグを変えたかどうかで結果が変わる。`SCF`/`CCF` は Zilog NMOS の規則に従う。NEC 製や ST 製 CMOS の Z80 では規則が異なる（[Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)）。エミュレータは Zilog 互換の Z80 を対象にしている。TODO: 一部の MSX が使う NEC 製や Sharp 製の Z80 互換 CPU（たとえば HB-10 や HB-F1XD のもの）での違いを、実機で確認したうえで記録する。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、従来どおり 1 回ごとの単純なフラグのままである。
+OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確でない。非公開のフラグ Y（bit 5）と X（bit 3）は、資料にある命令ごとの規則に従う。あまり一般的でない次の 3 つの要因も再現している：`BIT n,(HL)` は内部レジスタ MEMPTR から、繰り返し中のブロック命令（`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`）は自身のアドレスから Y と X を取り、`SCF`/`CCF` は直前の命令がフラグを変えたかどうかで結果が変わる。`SCF`/`CCF` は Zilog NMOS の規則に従う。NEC 製や ST 製 CMOS の Z80 では規則が異なる（[Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)）。エミュレータは Zilog 互換の Z80 を対象にしている。TODO: 一部の MSX が使う NEC 製や Sharp 製の Z80 互換 CPU（たとえば HB-10 や HB-F1XD のもの）での違いを、実機で確認したうえで記録する。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、さらに H と P/V を変え、MEMPTR を自身のアドレス + 1 にする（[redcode/Z80](https://github.com/redcode/Z80)）。
 
 ---
 

@@ -131,10 +131,9 @@ venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
 ```
 
 The exit status is 1 if any program reports a failure. Expected result:
-zexdoc and zexall pass in full, and z80test's z80doc passes in full. z80full,
-z80ccf and z80memptr fail only `INIR->NOP'` and `INDR->NOP'`, because the
-repeat-cycle flags of `INIR`/`INDR`/`OTIR`/`OTDR` are not modelled (see
-below). On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
+zexdoc, zexall and every z80test variant pass in full. z80test checks a
+repeating iteration only for `INIR` and `INDR` (`INIR->NOP'`,
+`INDR->NOP'`); unit tests check the same rule for `OTIR`/`OTDR`. On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
 Apple M5 Pro; CPython takes much longer.
 
 ### Known limitations
@@ -143,14 +142,16 @@ OTIR/INIR and similar block I/O instructions are not cycle-exact across page
 boundaries. The undocumented flag bits Y (bit 5) and X (bit 3) follow the
 documented per-instruction rules, including three less common sources:
 `BIT n,(HL)` takes them from the internal MEMPTR register, a repeating
-`LDIR`/`LDDR`/`CPIR`/`CPDR` takes them from its own address, and `SCF`/`CCF`
+block instruction (`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`)
+takes them from its own address, and `SCF`/`CCF`
 depend on whether the previous instruction changed the flags. `SCF`/`CCF`
 follow the Zilog NMOS rule; NEC and ST CMOS Z80s differ
 ([Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)).
 The emulator targets a Zilog-compatible Z80. TODO: record how the NEC and
 Sharp Z80-compatible CPUs used in some MSX machines (for example the HB-10
-and HB-F1XD) differ, once tested on real hardware. The
-repeating `INIR`/`INDR`/`OTIR`/`OTDR` keep the simpler per-iteration flags.
+and HB-F1XD) differ, once tested on real hardware. A repeating
+`INIR`/`INDR`/`OTIR`/`OTDR` also changes H and P/V, and sets MEMPTR to its
+own address + 1 ([redcode/Z80](https://github.com/redcode/Z80)).
 
 ---
 
