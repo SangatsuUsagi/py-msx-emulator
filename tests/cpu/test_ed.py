@@ -844,7 +844,7 @@ def _block_out_at(addr: int, op: int, b: int, hl: int, value: int) -> Z80:
     cpu = _cpu_at(addr, [0xED, op])
     cpu.write_byte(hl, value)
     cpu.registers.B = b
-    cpu.registers.C = 0x98
+    cpu.registers.C = 0x98  # any port: the OUTI/OUTD flags do not use C
     cpu.registers.HL = hl
     return cpu
 
@@ -883,6 +883,7 @@ def test_last_inir_iteration_keeps_the_single_step_flags() -> None:
 
 
 def test_repeating_otdr_adjusts_the_flags() -> None:
+    # Extra coverage (no spec scenario): the OUT side with value bit 7 set.
     # L after the decrement = 0xF0, k = 0x180, B after = 0x02: as the INDR case.
     cpu = _block_out_at(0x0000, 0xBB, b=0x03, hl=0xC0F1, value=0x90)
     cpu.step()
@@ -891,6 +892,7 @@ def test_repeating_otdr_adjusts_the_flags() -> None:
 
 
 def test_repeating_indr_sets_h_when_b_low_nibble_is_0() -> None:
+    # Extra coverage (no spec scenario): the H-set case of value bit 7 set.
     # Value bit 7 set and (B after & 0x0F) == 0x00: H stays set, P/V toggled.
     cpu = _block_in_at(0x0000, 0xBA, b=0x11, c=0x81, value=0x90)
     cpu.step()
@@ -898,6 +900,7 @@ def test_repeating_indr_sets_h_when_b_low_nibble_is_0() -> None:
 
 
 def test_repeating_otir_sets_h_when_b_low_nibble_is_f() -> None:
+    # Extra coverage (no spec scenario): the H-set case of value bit 7 clear.
     # Value bit 7 clear and (B after & 0x0F) == 0x0F: H set; X from the
     # address (0) replaces X from B after (0x0F).
     cpu = _block_out_at(0x0000, 0xB3, b=0x10, hl=0xC08F, value=0x7F)
@@ -906,6 +909,8 @@ def test_repeating_otir_sets_h_when_b_low_nibble_is_f() -> None:
 
 
 def test_repeating_block_io_sets_q_to_the_adjusted_flags() -> None:
+    # Extra coverage (no spec scenario): Q follows the adjusted F (0x28, as in
+    # the spec "A repeating INIR with C clear").
     cpu = _block_in_at(0x2800, 0xB2, b=0x02, c=0x10, value=0x00)
     cpu.step()
     assert cpu.q_next == cpu.registers.F == 0x28
