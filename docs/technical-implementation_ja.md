@@ -747,6 +747,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 コアはファイルを開かず、ホストの時計を読まず、`host/`、`frontend/`、`sdl2` のどれも import しない。`tests/test_core_frontend_boundary.py` がこれを強制する。`sdl2` を import できないインタプリタで `msx` のすべてのモジュールを import し、3 つの名前の import があれば失敗にする。つまり、コアが必要とするものはすべて値として入り、コアが作るものはすべて値として出る。
 
+同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はデバッガの診断用コマンド（`te`/`td`、`ce`/`cd`、`ds`、`sl`、`st`）で、名前を挙げた許可リストに載せてある。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
+
 ### 境界を通る値
 
 次の値は、どれも `msx/boundary.py` か `msx/input.py` にある。
@@ -758,7 +760,9 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | `FrameOutput` | 出力、毎フレーム | `video`（`RgbFrame`。描画しなかったフレームでは `None`）、`audio`、`frame_number` |
 | `RgbFrame` | 出力 | 行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める） |
 | 音声 | 出力 | 出力フィルタを通す前の、44,100 Hz・符号付き 16 ビット・リトルエンディアンのモノラル PCM。NTSC は 1 フレーム 735 サンプル、PAL は 882 サンプル |
-| スナップショット | 入出力 | `msx.state.save_state()` の `bytes`（後述） |
+| スナップショット | 入出力 | `Machine.save_state()` の `bytes`（後述） |
+| `CpuRegisters` | 出力 | レジスタのクエリの結果：AF、BC、DE、HL、裏レジスタ、IX、IY、SP、PC、I、R、IFF1 と IFF2（0 か 1）、IM |
+| `VdpInfo` | 出力 | VDP のクエリの結果：VDP の種類、コントロールレジスタとコマンドレジスタ、ステータスレジスタ、パレット、コマンドの進み具合 |
 | メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
 | `DiskMedium` | 入力 | `data`、`write_protected`、`path`。`path` は host 側でのファイルの名前。コアは記録するだけで、ファイルは開かない |
 
@@ -766,7 +770,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### コアの API
 
-`msx/machine_loader.py` の `build_machine(config)` は `Machine` を返す。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガ用。
+`msx/machine_loader.py` の `build_machine(config)` は `Machine` を返す。`msx/core_api.py` の `CoreApi` は、`msx/` の外のコードが使う操作をすべて並べた `typing.Protocol`。`Machine` がこれを実装し、mypy がそれを確かめる。host とフロントエンドは、マシンを `CoreApi` として持つ。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガの診断用。
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
@@ -775,14 +779,23 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
 | 制御 | `reset()` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま |
-| | `msx.state.save_state(machine) -> bytes` | スナップショット |
-| | `msx.state.load_state(machine, data, source)` | スナップショットが合わなければ `ValueError`（`StateLoadError`、`SnapshotMismatchError`）を出し、何も変えない |
+| | `save_state() -> bytes` | スナップショット（`msx/state.py`） |
+| | `load_state(data, source)` | スナップショットが合わなければ `ValueError`（`StateLoadError`、`SnapshotMismatchError`）を出し、何も変えない |
+| | `write_memory(addr, data)` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
 | | `read_media(media_id) -> bytes` | メディアの現在のバイト列 |
 | | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
 | | `mount_disk(drive, medium) -> bytes \| None` | `medium` に `None` を渡すと取り出す。外したイメージに保存していない書き込みがあれば、そのバイト列を返す。マシンにないドライブや、サイズが 512 の正の倍数でないイメージには `ValueError` を出す |
 | | `disk_mounted(drive)`、`disk_path(drive)` | ドライブの状態と、記録した host 側の名前 |
 | デバイス | `attach_mouse(MouseDevice(), JoystickPort(n))` | MSX のマウスをジョイスティックポート 1 か 2 につなぐ |
+| 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
+| | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
+| | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
+| | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
+| | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
+| | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
+
+このデバイスのレジスタの場合を除き、状態を読む操作はエミュレートしている状態を変えない。`tests/test_core_api.py` がこれを確かめる。どの操作の前後でも、ステートセーブのバイト列は同じになる。
 
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
@@ -791,6 +804,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 - `set_pause_hook()`：RPC サーバが一時停止に使う接点
 - `attach_debugger()`
 - VDP とマッパーのトレーサ
+
+デバッガと RPC サーバが使うので、ブレークの設定、その読み出し（`breakpoints()`、`watchpoints()`、`break_halt_di()`）、`step()`、pause hook、デバッガの接続は、当面 `CoreApi` に入れてある。形は今のまま。後の DebugControl の契約で置き換える。
 
 ### MachineConfig の文書
 
@@ -850,7 +865,6 @@ from host.machine_config import (
 from host.media import persist_dirty_media
 from msx.input import InputFrame
 from msx.machine_loader import build_machine
-from msx.state import load_state, save_state
 
 root = Path(".")                                   # リポジトリのルート
 registry = load_device_registry(root / "config")
@@ -863,9 +877,9 @@ for _ in range(120):
     # out.video.pixels：width * 212 * 3 バイトの RGB24
     # out.audio：samples_per_frame() 個の符号付き 16 ビット LE モノラルのサンプル
 
-snapshot = save_state(machine)                     # bytes。保存先は自由
-load_state(machine, snapshot)
-assert save_state(machine) == snapshot
+snapshot = machine.save_state()                    # bytes。保存先は自由
+machine.load_state(snapshot)
+assert machine.save_state() == snapshot
 
 persist_dirty_media(machine, sram_paths(config))   # SRAM/CMOS/ディスクの変更を書き戻す
 ```
@@ -876,7 +890,8 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
-- 制御の操作は、結果を表すレコードではなく `None` を返す。`save_state` と `load_state` は、マシンを引数に取る `msx/state.py` の関数。
+- 制御の操作は、結果を表すレコードではなく `None` を返す。`save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
+- 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `eject_disk` は `mount_disk(drive, None)`。`read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ。
 - マウスはフロントエンドが実行時につなぐ（`attach_mouse`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。

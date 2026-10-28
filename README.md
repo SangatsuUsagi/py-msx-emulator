@@ -1217,6 +1217,7 @@ py-msx-emulator/
 │   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
 │   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
 │   ├── boundary.py        # Values passed across the core boundary (config, frame output)
+│   ├── core_api.py        # CoreApi: the operations host code may use on a machine
 │   ├── machine.py         # Component wiring, frame loop (step_frame)
 │   ├── machine_spec.py    # Resolved machine description
 │   ├── machine_config.py  # MachineConfig document (canonical JSON): encode and parse

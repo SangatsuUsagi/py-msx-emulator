@@ -866,6 +866,7 @@ py-msx-emulator/
 │   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インターフェース）
 │   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
 │   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
+│   ├── core_api.py        # CoreApi：host 側のコードがマシンに使える操作
 │   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
 │   ├── machine_spec.py    # 解決済みのマシン記述
 │   ├── machine_config.py  # MachineConfig 文書（正規化した JSON）の作成と解析

@@ -1105,6 +1105,14 @@ import `sdl2`, and it rejects any import of the three names. Everything
 that the core needs thus enters as a value, and everything it produces leaves
 as a value.
 
+The same test also checks the other direction. Code in `host/`, `frontend/`,
+`tools/` and `__main__.py` uses the machine only through the core API
+(below). It must not read a core component (`.cpu`, `.vdp`, `.memory`,
+`.fdc` and the others) or a private field of the machine. The debugger's
+diagnostics commands (`te`/`td`, `ce`/`cd`, `ds`, `sl`, `st`) are the
+exception, on a named allowlist. A port of the core can thus replace the
+`Machine` and keep the debugger, the RPC server and the frontend.
+
 ### Values that cross the boundary
 
 All of them are in `msx/boundary.py` and `msx/input.py`:
@@ -1116,7 +1124,9 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | `FrameOutput` | out, per frame | `video` (an `RgbFrame`, or `None` when the frame was not rendered), `audio`, `frame_number` |
 | `RgbFrame` | out | Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color) |
 | audio | out | Signed 16-bit little-endian mono PCM at 44,100 Hz, before the output filter: 735 samples per NTSC frame, 882 per PAL frame |
-| snapshot | in/out | `bytes` from `msx.state.save_state()` (below) |
+| snapshot | in/out | `bytes` from `Machine.save_state()` (below) |
+| `CpuRegisters` | out | The register query: AF, BC, DE, HL, the alternate set, IX, IY, SP, PC, I, R, IFF1 and IFF2 (0 or 1), IM |
+| `VdpInfo` | out | The VDP query: the VDP kind, the control and command registers, the status registers, the palette and the command progress |
 | media image | in/out | `bytes`, named by a `MediaId` |
 | `DiskMedium` | in | `data`, `write_protected`, and `path`: the host's name for the file, which the core records but never opens |
 
@@ -1127,9 +1137,12 @@ the wire spelling. Python code formats a `MediaId` with `.value`.
 
 ### Core API
 
-`build_machine(config)` in `msx/machine_loader.py` returns a `Machine`. The
+`build_machine(config)` in `msx/machine_loader.py` returns a `Machine`.
+`msx/core_api.py` defines `CoreApi`, a `typing.Protocol` that lists every
+operation that code outside `msx/` uses. `Machine` implements it, and mypy
+checks this. The host and the frontend hold the machine as a `CoreApi`. The
 methods below are the boundary. Everything else on `Machine` is internal or
-belongs to the debugger.
+belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
@@ -1138,14 +1151,25 @@ belongs to the debugger.
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
 | Control | `reset()` | Power-on reset. RAM, VRAM and mounted media stay as they are |
-| | `msx.state.save_state(machine) -> bytes` | The snapshot |
-| | `msx.state.load_state(machine, data, source)` | Raises `ValueError` (`StateLoadError`, `SnapshotMismatchError`) and changes nothing when the snapshot does not fit |
+| | `save_state() -> bytes` | The snapshot (`msx/state.py`) |
+| | `load_state(data, source)` | Raises `ValueError` (`StateLoadError`, `SnapshotMismatchError`) and changes nothing when the snapshot does not fit |
+| | `write_memory(addr, data)` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused |
 | Media | `dirty_media()` | The ids written since they were last persisted |
 | | `read_media(media_id) -> bytes` | The current bytes of a medium |
 | | `mark_persisted(media_id)` | Call it after the host has written the bytes |
 | | `mount_disk(drive, medium) -> bytes \| None` | `None` ejects. Returns the outgoing image when it holds unpersisted writes. Raises `ValueError` for a drive the machine lacks or an image whose size is not a positive multiple of 512 |
 | | `disk_mounted(drive)`, `disk_path(drive)` | Drive state and the recorded host name |
 | Devices | `attach_mouse(MouseDevice(), JoystickPort(n))` | Connects an MSX mouse to joystick port 1 or 2 |
+| Inspection | `cpu_registers() -> CpuRegisters` | The register file |
+| | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects |
+| | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size |
+| | `vdp_info() -> VdpInfo` | It clears no status flag |
+| | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
+| | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
+
+Apart from that device-register case, no inspection query changes emulated
+state. `tests/test_core_api.py` checks this: the save-state bytes are the
+same before and after every query.
 
 The other members do not cross the boundary, and a port does not need them
 to run software:
@@ -1155,6 +1179,12 @@ to run software:
 - `set_pause_hook()`, the seam that the RPC server uses to pause
 - `attach_debugger()`
 - the VDP and mapper tracers
+
+`CoreApi` lists the break settings, their read-back queries
+(`breakpoints()`, `watchpoints()`, `break_halt_di()`), `step()`, the pause
+hook and the debugger attachment for now, because the debugger and the RPC
+server use them. They keep their current shapes. A later DebugControl
+contract will replace them.
 
 ### MachineConfig document
 
@@ -1286,7 +1316,6 @@ from host.machine_config import (
 from host.media import persist_dirty_media
 from msx.input import InputFrame
 from msx.machine_loader import build_machine
-from msx.state import load_state, save_state
 
 root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
@@ -1299,9 +1328,9 @@ for _ in range(120):
     # out.video.pixels: width * 212 * 3 bytes of RGB24
     # out.audio: samples_per_frame() signed 16-bit LE mono samples
 
-snapshot = save_state(machine)                     # bytes; store them anywhere
-load_state(machine, snapshot)
-assert save_state(machine) == snapshot
+snapshot = machine.save_state()                    # bytes; store them anywhere
+machine.load_state(snapshot)
+assert machine.save_state() == snapshot
 
 persist_dirty_media(machine, sram_paths(config))   # write SRAM/CMOS/disk changes back
 ```
@@ -1320,7 +1349,9 @@ These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 
 - The control operations return `None`, not a status record. `save_state`
-  and `load_state` are functions in `msx/state.py` that take the machine.
+  and `load_state` are `Machine` methods over `msx/state.py`.
+- The inspection records use the Python register names (`AF`, `AF_`) and
+  hold the palette as a tuple.
 - `eject_disk` is `mount_disk(drive, None)`. `read_media` returns the bytes
   alone. The write-protect flag stays with the mounted image.
 - The frame rate is `VideoStandard` data, not a method.
