@@ -22,6 +22,7 @@ _2DD = 737280
 _MEDIA_API = (
     "mount_disk", "disk_mounted", "disk_path", "_mounted_image",
     "dirty_media", "read_media", "mark_persisted", "_media", "sram_media",
+    "drive_count",
 )
 
 
@@ -82,7 +83,9 @@ def test_fdd2_on_single_drive_errors(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_fdd_no_fdc_errors(capsys: pytest.CaptureFixture[str]) -> None:
-    dbg = Debugger(types.SimpleNamespace(fdc=None))  # type: ignore[arg-type]
+    machine = types.SimpleNamespace(fdc=None)
+    machine.drive_count = functools.partial(Machine.drive_count, machine)
+    dbg = Debugger(machine)  # type: ignore[arg-type]
     dbg._cmd_fdd(["x.dsk"], 0)
     assert "no floppy" in capsys.readouterr().out.lower()
 
@@ -109,6 +112,9 @@ def _loop_dbg(iface: SonyPhilipsInterface) -> Debugger:
         vdp=types.SimpleNamespace(frame_count=0),
     )
     _bind_media_api(machine)
+    machine.cpu_registers = lambda: types.SimpleNamespace(PC=0x4000)
+    machine.read_memory = lambda addr, length: bytes(length)
+    machine.frame_number = lambda: 0
     return Debugger(machine)  # type: ignore[arg-type]
 
 
