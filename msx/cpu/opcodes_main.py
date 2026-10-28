@@ -47,11 +47,11 @@ _DEC_OPS: dict[int, int] = {
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
 # AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
 # internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
-# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp);
+# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp),
+# and so does a repeating INIR/INDR/OTIR/OTDR (_block_io_repeat_flags);
 # SCF/CCF take them from (Q ^ F) | A, with Q tracked by Z80.step() and set
 # (cpu.q_next) by every handler whose ALU writes F -- not POP AF or
-# EX AF,AF' (see Z80.q). Not modelled: the repeat-cycle flag changes of
-# INIR/INDR/OTIR/OTDR, which keep the per-iteration flags.
+# EX AF,AF' (see Z80.q).
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
