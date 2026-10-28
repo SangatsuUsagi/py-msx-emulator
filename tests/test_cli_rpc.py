@@ -6,19 +6,17 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from msx.machine import Machine
-
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
-def _run_main(argv: list[str], rpc_mock=None):
+def _run_main(argv: list[str], rpc_mock=None, run_mock=None):
     """Run main() with the SDL frontend and (optionally) DebugServer patched."""
     patches = [
         patch.object(sys, "argv", [".", *argv]),
         patch("builtins.print"),
         patch.object(Path, "exists", lambda self: True),
         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768),
-        patch("frontend.sdl2_frontend.run"),
+        patch("frontend.sdl2_frontend.run", run_mock or MagicMock()),
         patch("host.debugger.prompt.Debugger"),
     ]
     if rpc_mock is not None:
@@ -39,10 +37,12 @@ def _run_main(argv: list[str], rpc_mock=None):
             p.stop()
 
 
-def test_rpc_flag_starts_server_with_pause_hook() -> None:
+def test_rpc_flag_starts_server_and_hands_it_to_the_frontend() -> None:
+    # The core has no pause hook: the frontend loop passes core stops to the
+    # server (host/debugger/stop.py handle_stop).
     rpc_mock = MagicMock()
-    with patch.object(Machine, "set_pause_hook") as set_hook:
-        _run_main(["--machine", "cbios_msx1", "--rpc"], rpc_mock=rpc_mock)
+    run_mock = MagicMock()
+    _run_main(["--machine", "cbios_msx1", "--rpc"], rpc_mock=rpc_mock, run_mock=run_mock)
 
     rpc_mock.assert_called_once()
     # Default socket path when --rpc-socket is omitted.
@@ -51,7 +51,8 @@ def test_rpc_flag_starts_server_with_pause_hook() -> None:
     instance = rpc_mock.return_value
     instance.start.assert_called_once()
     instance.stop.assert_called_once()
-    set_hook.assert_called_once_with(instance.on_pause)
+    assert run_mock.call_args.kwargs["rpc_server"] is instance
+    assert run_mock.call_args.kwargs["debugger"] is not None
 
 
 def test_rpc_socket_override() -> None:
