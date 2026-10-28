@@ -82,12 +82,45 @@ venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
 
 どれかのプログラムが失敗を報告すると、終了ステータスは 1 になる。期待される結果：zexdoc、zexall、z80test のすべての種類が、すべて通る。z80test が繰り返し中の動作を調べるのは `INIR` と `INDR` だけ（`INIR->NOP'`、`INDR->NOP'`）で、`OTIR`/`OTDR` の同じ規則はユニットテストで確かめている。PyPy では zexdoc と zexall はそれぞれ Apple M5 Pro で約 1.5 分かかり、CPython ではさらに長い。
 
-`tools/run_singlestep_tests.py` は [SingleStepTests/z80](https://github.com/SingleStepTests/z80) のテストを動かす。オペコードごとに 1000 件、すべての前置命令を含み、各件は 1 命令で、実行前と実行後の CPU の状態（MEMPTR と Q を含む）を持つ。このツールは 1 回の `step()` のあとの状態、ポートへの読み書き、T ステート数を比べ、サイクルごとのバスの状態は比べない。コアは 1,604,000 件のうち 2 つのグループを除いてすべて一致し、その 2 つは `tools/singlestep_known_divergences.json` にわかっている食い違いとして載せている。
+### 1 命令ごとのテスト（SingleStepTests）
 
-- 繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR`：コアは openMSX と同じく MEMPTR を命令のアドレス + 2 にし、テストは + 1 にする。
-- `OUTI`/`OUTD`/`OTIR`/`OTDR`：コアは openMSX と同じく、減らす前の B をポートアドレスの上位バイトに出し、テストは減らした後の B を出す。MSX は下位バイトしか見ない。
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80)（MIT）は、オペコードごとに 1 つ、すべての前置命令を含めて 1604 個の JSON ファイルからなる（`00.json`、`cb 00.json`、`dd cb __ 06.json`、`ed b0.json` など）。各ファイルは 1000 件のテストを持つ。1 件には、1 命令を実行する前（`initial`）と後（`final`）の CPU の状態と RAM、I/O の読み書き（`ports`）、サイクルごとのバスの状態（`cycles`）が入っている。テストは Ares の Z80 コアを移植し、あとから修正を加えて作られたもので、実機から取ったものではない。
 
-テストは実機ではなくエミュレータのコアから作られているので、どちらの値が正しいかの根拠にはならない。PyPy では全件が Apple M5 Pro で約 3 分かかる。
+`tools/run_singlestep_tests.py` は、これを `Z80` コア単体で動かす。テストファイルはこのリポジトリに含めていない（1.3 GB）。実行時にパスを渡す。
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
+    path/to/SingleStepTests/z80/v1/*.json
+```
+
+- `--limit N` は、各ファイルの先頭 N 件だけを動かす。PyPy では全件が Apple M5 Pro で約 3 分かかる。CPython では `--limit` を使う。
+- `--divergences PATH` は、別のわかっている食い違いの一覧を使う（後述）。
+- 環境変数 `PY_MSX_ROOT` で、どの作業ツリーのコアを試すかを選べる（既定はツールがあるリポジトリ）。
+
+このツールは 1 件ごとに、64 KB の平坦な RAM（テストに載っていないバイトは 0）を持ち、M1 ウェイトのない `Z80` を作り、`initial` を読み込んで `step()` を 1 回実行し、結果を `final` と比べる。
+
+| JSON の項目 | コアの状態 |
+| --- | --- |
+| `a f b c d e h l i r` | `A`、`F`、`BC`/`DE`/`HL` の各バイト、`I`、`R` |
+| `pc sp ix iy wz` | `PC`、`SP`、`IX`、`IY`、`WZ`（MEMPTR） |
+| `af_ bc_ de_ hl_` | 裏レジスタ |
+| `iff1 iff2 im` | `iff1`、`iff2`、`im` |
+| `ei` | `ei_pending`（EI の直後で、次の命令の前には割り込みを受け付けない） |
+| `q` | `q_next`（次の命令が見るフラグのラッチ。`step()` が命令の前にこれを `q` に移す） |
+| `ram` | テストに載っている RAM のバイト |
+
+ポートへの読み書き（アドレス、値、読みか書きか）も順に `ports` と比べ、`step()` が返す T ステート数を `cycles` の件数と比べる。ポートを読むと、`ports` にそのアドレスの値があればその値を、なければ 0xFF を返す。サイクルごとのバスの状態は比べない。`p`（直前の命令が `LD A,I`/`LD A,R` だったか）も比べない。これを使う割り込みの癖を、コアが再現していないためである。失敗したときは、テストの名前と、値が違った項目を表示する。
+
+`tools/singlestep_known_divergences.json` には、コアが意図して別の結果を出すテストを載せている。各項目は `id`、対象のオペコードのファイル（`files`）、値が違う項目（`fields`）、コアとテストのそれぞれの動作（`core`、`tests`）、根拠（`reference`）を持つ。載っているファイルのテストが失敗し、違った項目がすべてその項目の `fields` に含まれていれば、わかっている食い違いとして数える。動かしたファイルのどのテストにも当てはまらなくなった項目は、役目を終えた項目（stale）として報告する。こうして、コアを直したときは一覧も直すことになる。終了ステータスは、ほかの失敗も役目を終えた項目もなければ 0、あれば 1、コマンドラインの誤りは 2。
+
+結果：コアは 1,604,000 件のうち、2 つのグループを除いてすべて一致し、その 2 つはどちらもわかっている食い違いである。
+
+- `ldxr-cpxr-repeat-memptr`：繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR`。コアは openMSX と同じく MEMPTR を命令のアドレス + 2 にし、テストは + 1 にする。3997 件（`CPIR` の 3 件はすぐに終わるので一致する）。
+- `block-out-port-high-byte`：`OUTI`/`OUTD`/`OTIR`/`OTDR`。コアは openMSX と同じく、減らす前の B をポートアドレスの上位バイトに出し、テストは減らした後の B を出す。MSX は下位バイトしか見ない。4000 件。
+
+テストはエミュレータのコアから作られているので、どちらの値が正しいかの根拠にはならない。どちらも未解決のままである。
+
+コアを他の言語に移植したときは、同じ JSON ファイルと同じ食い違いの一覧で、MSX のマシンも OS の代わりのコードもなしに、1 命令ずつ確かめられる。サイクル単位まで正確に作る移植なら、このツールが使っていない `cycles` で、バスの動きも確かめられる。
 
 ### 既知の制限
 

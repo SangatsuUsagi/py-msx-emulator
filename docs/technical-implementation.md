@@ -136,23 +136,78 @@ repeating iteration only for `INIR` and `INDR` (`INIR->NOP'`,
 `INDR->NOP'`); unit tests check the same rule for `OTIR`/`OTDR`. On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
 Apple M5 Pro; CPython takes much longer.
 
-`tools/run_singlestep_tests.py` runs the
-[SingleStepTests/z80](https://github.com/SingleStepTests/z80) cases: 1000
-cases per opcode, every prefix included, each one instruction with the full
-CPU state before and after it, including MEMPTR and Q. The tool compares the
-state after one `step()`, the port transactions and the T-state count, not
-the bus state of each cycle. The core matches all 1,604,000 cases except two
-groups, which `tools/singlestep_known_divergences.json` lists as known
+### Single-instruction tests (SingleStepTests)
+
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) (MIT) is a set
+of 1604 JSON files, one per opcode with every prefix included (`00.json`,
+`cb 00.json`, `dd cb __ 06.json`, `ed b0.json`, ...). Each file holds 1000
+cases. A case gives the CPU state and the RAM before one instruction
+(`initial`) and after it (`final`), the I/O transactions (`ports`) and the bus
+state of each cycle (`cycles`). The cases come from a translation of the Ares
+Z80 core with later fixes, not from real hardware.
+
+`tools/run_singlestep_tests.py` runs them on the bare `Z80` core. The test
+files are not in this repository (1.3 GB); pass their paths:
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
+    path/to/SingleStepTests/z80/v1/*.json
+```
+
+- `--limit N` runs only the first N cases of each file. On PyPy all cases
+  take about 3 minutes on an Apple M5 Pro; on CPython, use `--limit`.
+- `--divergences PATH` uses another known-divergence list (see below).
+- The environment variable `PY_MSX_ROOT` selects the checkout whose core is
+  tested (default: the repository that holds the tool).
+
+For each case the tool builds a `Z80` with flat 64 KB RAM (bytes the case
+does not list are 0) and no M1 wait state, loads `initial`, runs one
+`step()`, and compares the result with `final`:
+
+| JSON field | Core state |
+| --- | --- |
+| `a f b c d e h l i r` | `A`, `F`, the bytes of `BC`/`DE`/`HL`, `I`, `R` |
+| `pc sp ix iy wz` | `PC`, `SP`, `IX`, `IY`, `WZ` (MEMPTR) |
+| `af_ bc_ de_ hl_` | the shadow registers |
+| `iff1 iff2 im` | `iff1`, `iff2`, `im` |
+| `ei` | `ei_pending` (EI just ran: no interrupt before the next instruction) |
+| `q` | `q_next` (the flag latch that the next instruction sees; `step()` moves it into `q` first) |
+| `ram` | the listed RAM bytes |
+
+The tool also compares the port transactions in order (address, value,
+read or write) with `ports`, and the T-states that `step()` returns with the
+number of `cycles` entries. A port read returns the value that `ports` lists
+for that address, else 0xFF. It does not compare the bus state of each cycle,
+and it does not compare `p` (whether the previous instruction was
+`LD A,I`/`LD A,R`), because the core does not model the interrupt quirk that
+uses it. A failure names the case and the fields that differ.
+
+`tools/singlestep_known_divergences.json` lists the cases where the core
+deliberately gives another result. Each entry has an `id`, the opcode
+`files`, the `fields` that differ, the `core` and `tests` behaviour, and a
+`reference`. A failing case of a listed file counts as a known divergence
+when all of its differing fields are in the entry's `fields`. An entry that
+matches no case among the files run is reported as stale, so a fix in the
+core also updates the list. The exit status is 0 when there is no other
+failure and no stale entry, 1 otherwise, and 2 for a command-line error.
+
+Result: the core matches all 1,604,000 cases except two groups, both known
 divergences:
 
-- A repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` iteration: the core sets MEMPTR to
-  the instruction address + 2, as openMSX does; the tests use + 1.
-- `OUTI`/`OUTD`/`OTIR`/`OTDR`: the core puts B before its decrement on the
-  high byte of the port address, as openMSX does; the tests use B after it.
-  MSX decodes only the low byte.
+- `ldxr-cpxr-repeat-memptr`: a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR`
+  iteration. The core sets MEMPTR to the instruction address + 2, as openMSX
+  does; the tests use + 1. 3997 cases (3 `CPIR` cases end at once and match).
+- `block-out-port-high-byte`: `OUTI`/`OUTD`/`OTIR`/`OTDR`. The core puts B
+  before its decrement on the high byte of the port address, as openMSX
+  does; the tests use B after it. MSX decodes only the low byte. 4000 cases.
 
-The tests come from an emulator core, not from real hardware, so they do not
-decide either case. On PyPy all cases take about 3 minutes on an Apple M5 Pro.
+The tests come from an emulator core, so they do not decide either case;
+both stay open.
+
+For a port of the core to another language, the same JSON files and the
+same divergence list give an instruction-by-instruction check with no MSX
+machine and no stubbed operating system. A cycle-accurate port can also
+check its bus activity against `cycles`, which this tool does not use.
 
 ### Known limitations
 
