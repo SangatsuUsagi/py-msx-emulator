@@ -16,11 +16,10 @@ from typing import TYPE_CHECKING
 
 from host.media import persist_dirty_media
 from host.screenshot import scale_rgb24, write_rgb24_png
-from msx import state
 from msx.boundary import RgbFrame
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
 
 # The saved PNG thumbnail's size (MSX1 native resolution), whatever the frame's.
 THUMBNAIL_W = 256
@@ -45,7 +44,7 @@ def _sanitise_title(title: str) -> str:
     return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
-def save_state(machine: Machine, frame: RgbFrame, title: str) -> Path:
+def save_state(machine: CoreApi, frame: RgbFrame, title: str) -> Path:
     """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
 
     Args:
@@ -68,7 +67,7 @@ def save_state(machine: Machine, frame: RgbFrame, title: str) -> Path:
     # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
     # the .dsk file's own on-disk bytes.
     persist_dirty_media(machine)
-    state_path.write_bytes(state.save_state(machine))
+    state_path.write_bytes(machine.save_state())
 
     pixels = frame.pixels
     if (frame.width, frame.height) != (THUMBNAIL_W, THUMBNAIL_H):
@@ -82,7 +81,7 @@ def save_state(machine: Machine, frame: RgbFrame, title: str) -> Path:
     return state_path
 
 
-def load_state(machine: Machine, path: Path | None = None) -> None:
+def load_state(machine: CoreApi, path: Path | None = None) -> None:
     """Restore machine state from a save file.
 
     Args:
@@ -92,7 +91,7 @@ def load_state(machine: Machine, path: Path | None = None) -> None:
     Raises:
         FileNotFoundError: If the target file does not exist.
         StateLoadError: If a field or producer object is malformed.
-        ValueError: See msx.state.load_state. Nothing is restored then.
+        ValueError: See CoreApi.load_state (msx.state.load_state). Nothing is restored then.
     """
     if path is None:
         link = Path("saves") / "states" / "latest.state"
@@ -106,11 +105,11 @@ def load_state(machine: Machine, path: Path | None = None) -> None:
             raise FileNotFoundError(f"save state not found: {path}")
         resolved = path
 
-    state.load_state(machine, resolved.read_bytes(), str(resolved))
+    machine.load_state(resolved.read_bytes(), str(resolved))
     print(f"state loaded: {resolved}")
 
 
-def resume_state(machine: Machine, resume: str) -> None:
+def resume_state(machine: CoreApi, resume: str) -> None:
     """Load the `--resume` argument: a .state path, or "" for
     saves/states/latest.state. Raises as load_state does."""
     load_state(machine, path=Path(resume) if resume else None)

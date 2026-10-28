@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
 from msx.boundary import RgbFrame
 from msx.cpu.registers import Registers
+from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
@@ -20,6 +22,27 @@ from msx.vdp.vdp import VDP
 # History-file isolation for Debugger.enter() (autouse) lives in
 # tests/conftest.py so it applies to every test file that exercises the
 # REPL, not just this one.
+
+# The real Machine inspection queries, bound onto the mocks below so the
+# debugger reads the mocks' registers, VDP and break sets through the core API.
+_CORE_QUERIES = (
+    "cpu_registers", "read_memory", "vram_size", "read_vram", "vdp_info",
+    "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
+    "main_ram_range", "drive_count",
+)
+
+
+def _bind_core_queries(m: MagicMock) -> None:
+    m.cpu.iff1 = False
+    m.cpu.iff2 = False
+    m.cpu.im = 0
+    m.memory.read = lambda addr: m.cpu.read_byte(addr)
+    m._watch_read = frozenset()
+    m._watch_write = frozenset()
+    m._break_halt_di = False
+    for name in _CORE_QUERIES:
+        setattr(m, name, functools.partial(getattr(Machine, name), m))
+
 
 def _make_machine(pc: int = 0x4000) -> MagicMock:
     """Build a minimal mock Machine with wired cpu.registers and vdp."""
@@ -49,6 +72,7 @@ def _make_machine(pc: int = 0x4000) -> MagicMock:
     m._breakpoints = frozenset()
     m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
     m.cycle_count = 0
+    _bind_core_queries(m)
     return m
 
 
@@ -70,6 +94,7 @@ def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
     m._breakpoints = frozenset()
     m.set_breakpoints = lambda addrs: setattr(m, "_breakpoints", frozenset(addrs[:4]))
     m.cycle_count = 0
+    _bind_core_queries(m)
     return m
 
 
@@ -1107,3 +1132,23 @@ class TestCompleteCommand:
 
     def test_no_match_returns_none(self):
         assert prompt_module._complete_command("zz", 0) is None
+
+
+# ---------------------------------------------------------------------------
+# dm / da read through the core API (add-core-api-facade design Decision 4)
+# ---------------------------------------------------------------------------
+
+class TestDumpBypassesWatchpoints:
+    def test_dm_over_a_read_watchpoint_requests_no_break(self, capsys) -> None:
+        from tests.factories import make_machine
+
+        m = make_machine(rom=bytes(32 * 1024))
+        pauses: list[object] = []
+        m.set_pause_hook(lambda reason, pc: pauses.append(reason))
+        m.set_watchpoints([(0xC000, "r")])
+        dbg = Debugger(m)
+        dbg._cmd_dump(["BFF8", "10"])
+        dbg._cmd_disasm(["C000"])
+        assert pauses == []
+        assert not m.is_paused
+        assert "[WP]" not in capsys.readouterr().out
