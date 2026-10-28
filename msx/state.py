@@ -117,7 +117,10 @@ _T = TypeVar("_T")
 #   openspec/changes/archive/2026-10-25-portable-machine-config.
 # Version 19: ppi added -- the PPI's Port C latch, last mode-set control word
 #   and port-0xAB bus latch. See openspec/changes/snapshot-ppi-state.
-CURRENT_FORMAT_VERSION: int = 19
+# Version 20: no layout change; the format-19 layout with cpu.registers.WZ,
+#   cpu.q and cpu.q_next, which add-z80-memptr added in v2.8.2 without a
+#   version bump. See openspec/changes/snapshot-format-20.
+CURRENT_FORMAT_VERSION: int = 20
 
 _SHA256_HEX_LEN = 64
 

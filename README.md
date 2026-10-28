@@ -557,7 +557,7 @@ file is canonical JSON (RFC 8785): the same machine state always gives the same
 bytes, also from another implementation. It holds integers only, and byte
 blobs such as RAM and VRAM as base64 strings.
 [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines
-its layout. The format version is 19. Save states from earlier versions do
+its layout. The format version is 20. Save states from earlier versions do
 not load. A save state also records the machine configuration that it comes
 from (see [Machine configuration](#machine-configuration)). It loads only into
 the same machine, extensions and cartridge ROM. Each save also writes a PNG
@@ -649,18 +649,18 @@ the fastest and the slowest run.
 
 | Platform | Runtime | Game | Avg FPS (`--benchmark`) | vs. 60 fps target |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 311.65 | ~5.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 553.07 | ~9.2× |
-| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 97.00 | ~1.6× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1224.83 | ~20.4× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1360.29 | ~22.7× |
-| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 675.34 | ~11.3× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 81.03 | ~1.4× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 148.60 | ~2.5× |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.35 | ~0.44× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 255.53 | ~4.3× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 295.63 | ~4.9× |
-| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 146.88 | ~2.4× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 316.31 | ~5.3× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 554.05 | ~9.2× |
+| Apple MacBook Pro (M5 Pro) | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 96.91 | ~1.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 1236.10 | ~20.6× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 1342.25 | ~22.4× |
+| Apple MacBook Pro (M5 Pro) | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 685.40 | ~11.4× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: Salamander (CPU+TMS9918+SCC) | 81.10 | ~1.4× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 148.56 | ~2.5× |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 26.21 | ~0.44× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX1: Salamander (CPU+TMS9918+SCC) | 255.94 | ~4.3× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer IV (CPU+V9938+PSG) | 284.32 | ~4.7× |
+| Raspberry Pi 5 | PyPy 7.3.19 (Python 3.10.16) | MSX2: Dragon Slayer VI - The Legend of Heroes (CPU+V9938+FDC+FMPAC) | 145.91 | ~2.4× |
 
 Not every tested combination reaches the raw 60 fps target. The smallest
 margin is ~0.44×, below the target, on Raspberry Pi 5 with CPython and Dragon
@@ -683,7 +683,7 @@ because of OS scheduling and thermal throttling. Treat them as approximate.
 
 ### Benchmark history
 
-Avg FPS (`--benchmark`) from v0.1.0 through v2.8.2, one chart per platform.
+Avg FPS (`--benchmark`) from v0.1.0 through v2.8.3, one chart per platform.
 Solid lines are CPython and dashed lines are PyPy. Up to v2.7.5 the author
 measured with the same cold-boot method as above, but without sound synthesis
 (the method up to v2.7.8). From v2.8.1 the author measured with the method
@@ -1164,7 +1164,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 4080 tests and covers all major components. It includes
+The test suite has 4091 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1249,7 +1249,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4080 tests)
+├── tests/                 # Test suite (4091 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

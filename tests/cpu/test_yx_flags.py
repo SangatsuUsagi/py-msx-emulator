@@ -158,6 +158,7 @@ def test_a_non_flag_instruction_clears_q() -> None:
 
 
 def test_interrupt_acceptance_clears_q() -> None:
+    # Spec "Interrupt acceptance clears Q".
     cpu = make_cpu([0xAF, 0xFE, 0x28])  # XOR A; CP 0x28
     cpu.registers.SP = 0xF000
     _run(cpu, 2)

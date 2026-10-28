@@ -1,6 +1,6 @@
 # Tools
 
-エミュレータ本体とは別に動く、ディスクイメージ管理・エージェント向けRPC/MCP層のコマンドラインツール群です。
+エミュレータ本体とは別に動く、ディスクイメージ管理・CPU 命令テストの実行・エージェント向けRPC/MCP層のコマンドラインツール群です。
 いずれもエミュレータのプロセス内では動作せず、`python tools/<script>.py` として個別に実行します。
 
 | スクリプト / セクション | 用途 |
@@ -8,6 +8,7 @@
 | [`dskftp.py`](#dskftppy) | `.dsk` イメージ内のファイルを編集する、ftp風の対話シェル |
 | [`dskblank.py`](#dskblankpy) | 未フォーマットの空 `.dsk` イメージを作成 |
 | [`dskdd.py`](#dskddpy) | `.dsk` イメージと物理USBフロッピードライブ間で生セクタをコピー(Linux専用) |
+| [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Z80 の命令テスト(zexdoc、zexall、z80test)を CPU コア単体で実行 |
 | [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使うソケットRPC + MCP制御層の概要 |
 | [`rpc_client.py`](#rpc_clientpy) | 手動テスト用、エミュレータのソケットRPCサーバーへの薄いCLIクライアント |
 | [`mcp_server.py`](#mcp_serverpy) | ソケットRPC APIをラップするMCPサーバー。Claude Codeから起動中のエミュレータを操作できる |
@@ -108,6 +109,22 @@ LinuxではUSB FDDは(`/dev/fd0` ではなく)ブロックデバイスとして 
 
 終了コード: `0` 成功、`1` エラー、`2` イメージ化はできたが読み取れないセクタ
 が残った場合(イメージ内では0埋めされ、標準出力に一覧表示されます)。
+
+## `run_z80_exercisers.py`
+
+MSX のマシンを組まずに、`Z80` コア単体で Z80 の命令テストを動かします。CP/M の
+`.com` プログラム(zexdoc、zexall)と、[z80test](https://github.com/raxoft/z80test)
+の `.tap` イメージに対応します。テストプログラムはこのリポジトリに含めていないので、
+パスを渡してください。どれかのプログラムが失敗を報告すると終了コードは 1、それ以外は 0 です。
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
+    path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
+```
+
+PyPy で実行してください。zexdoc と zexall はそれぞれ PyPy で約 1.5 分、CPython では
+さらに長くかかります。形式ごとの動かし方と期待される結果は
+[命令テスト](../docs/technical-implementation_ja.md#命令テスト)を参照してください。
 
 ## リモート制御（Socket RPC & MCP）
 

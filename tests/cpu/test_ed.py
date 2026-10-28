@@ -779,6 +779,7 @@ def _cpu_at(addr: int, code: list[int]) -> Z80:
 
 def test_repeating_ldir_takes_yx_from_the_instruction_address() -> None:
     # Spec "A repeating LDIR takes Y and X from the instruction address".
+    # Spec "A repeating LDIR sets MEMPTR to the instruction address + 2".
     cpu = _cpu_at(0x2800, [0xED, 0xB0])  # LDIR at 0x2800
     cpu.registers.HL = 0xC000  # byte 0x00
     cpu.registers.DE = 0xD000
@@ -826,3 +827,115 @@ def test_repeating_lddr_and_cpdr_take_yx_from_the_instruction_address() -> None:
         cpu.step()
         assert cpu.registers.PC == 0x2000, code
         assert cpu.registers.F & _YX == F.FLAG_Y, code
+
+
+# --- Repeating block I/O: repeat-time flag adjustments --------------------
+
+
+def _block_in_at(addr: int, op: int, b: int, c: int, value: int) -> Z80:
+    cpu = _cpu_at(addr, [0xED, op])
+    cpu.read_port = lambda port: value
+    cpu.registers.B = b
+    cpu.registers.C = c
+    cpu.registers.HL = 0xC000
+    return cpu
+
+
+def _block_out_at(addr: int, op: int, b: int, hl: int, value: int) -> Z80:
+    cpu = _cpu_at(addr, [0xED, op])
+    cpu.write_byte(hl, value)
+    cpu.registers.B = b
+    cpu.registers.C = 0x98  # any port: the OUTI/OUTD flags do not use C
+    cpu.registers.HL = hl
+    return cpu
+
+
+def test_repeating_inir_with_c_clear() -> None:
+    # Spec "A repeating INIR with C clear": k = 0x11, B after = 0x01.
+    cpu = _block_in_at(0x2800, 0xB2, b=0x02, c=0x10, value=0x00)
+    cpu.step()
+    assert cpu.registers.PC == 0x2800
+    assert cpu.registers.F == 0x28  # INI alone: 0x04
+
+
+def test_repeating_indr_with_c_set_and_value_bit7_set() -> None:
+    # Spec "A repeating INDR with C set and value bit 7 set": k = 0x180, B after = 0x02.
+    cpu = _block_in_at(0x0000, 0xBA, b=0x03, c=0xF1, value=0x90)
+    cpu.step()
+    assert cpu.registers.PC == 0x0000
+    assert cpu.registers.F == 0x07  # IND alone: 0x13
+
+
+def test_repeating_otir_with_c_set_and_value_bit7_clear() -> None:
+    # Spec "A repeating OTIR with C set and value bit 7 clear": L after = 0xF0,
+    # k = 0x16F, B after = 0x01.
+    cpu = _block_out_at(0x0000, 0xB3, b=0x02, hl=0xC0EF, value=0x7F)
+    cpu.step()
+    assert cpu.registers.PC == 0x0000
+    assert cpu.registers.F == 0x01  # OUTI alone: 0x15
+
+
+def test_last_inir_iteration_keeps_the_single_step_flags() -> None:
+    # Spec "The last iteration keeps the single-step flags".
+    cpu = _block_in_at(0x2800, 0xB2, b=0x01, c=0x10, value=0x00)
+    cpu.step()
+    assert cpu.registers.PC == 0x2802
+    assert cpu.registers.F == 0x40
+
+
+def test_repeating_otdr_adjusts_the_flags() -> None:
+    # Extra coverage (no spec scenario): the OUT side with value bit 7 set.
+    # L after the decrement = 0xF0, k = 0x180, B after = 0x02: as the INDR case.
+    cpu = _block_out_at(0x0000, 0xBB, b=0x03, hl=0xC0F1, value=0x90)
+    cpu.step()
+    assert cpu.registers.PC == 0x0000
+    assert cpu.registers.F == 0x07  # OUTD alone: 0x13
+
+
+def test_repeating_indr_sets_h_when_b_low_nibble_is_0() -> None:
+    # Extra coverage (no spec scenario): the H-set case of value bit 7 set.
+    # Value bit 7 set and (B after & 0x0F) == 0x00: H stays set, P/V toggled.
+    cpu = _block_in_at(0x0000, 0xBA, b=0x11, c=0x81, value=0x90)
+    cpu.step()
+    assert cpu.registers.F == 0x17  # IND alone: 0x13
+
+
+def test_repeating_otir_sets_h_when_b_low_nibble_is_f() -> None:
+    # Extra coverage (no spec scenario): the H-set case of value bit 7 clear.
+    # Value bit 7 clear and (B after & 0x0F) == 0x0F: H set; X from the
+    # address (0) replaces X from B after (0x0F).
+    cpu = _block_out_at(0x0000, 0xB3, b=0x10, hl=0xC08F, value=0x7F)
+    cpu.step()
+    assert cpu.registers.F == 0x11  # OUTI alone: 0x19
+
+
+def test_repeating_block_io_sets_q_to_the_adjusted_flags() -> None:
+    # Extra coverage (no spec scenario): Q follows the adjusted F (0x28, as in
+    # the spec "A repeating INIR with C clear").
+    cpu = _block_in_at(0x2800, 0xB2, b=0x02, c=0x10, value=0x00)
+    cpu.step()
+    assert cpu.q_next == cpu.registers.F == 0x28
+
+
+def test_repeating_inir_sets_memptr_to_the_instruction_address_plus_1() -> None:
+    # Spec "A repeating INIR sets MEMPTR to the instruction address + 1".
+    cpu = _block_in_at(0x2800, 0xB2, b=0x02, c=0x10, value=0x00)
+    cpu.step()
+    assert cpu.registers.PC == 0x2800
+    assert cpu.registers.WZ == 0x2801
+
+
+def test_repeating_otdr_sets_memptr_to_the_instruction_address_plus_1() -> None:
+    # Spec "A repeating OTDR sets MEMPTR to the instruction address + 1".
+    cpu = _block_out_at(0x2800, 0xBB, b=0x02, hl=0xC000, value=0x00)
+    cpu.step()
+    assert cpu.registers.PC == 0x2800
+    assert cpu.registers.WZ == 0x2801
+
+
+def test_last_inir_iteration_keeps_the_bc_derived_memptr() -> None:
+    # Spec "The last INIR iteration keeps the BC-derived MEMPTR".
+    cpu = _block_in_at(0x2800, 0xB2, b=0x01, c=0x10, value=0x00)
+    cpu.step()
+    assert cpu.registers.PC == 0x2802
+    assert cpu.registers.WZ == 0x0111  # BC before the decrement + 1, as INI

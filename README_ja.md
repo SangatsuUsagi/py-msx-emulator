@@ -331,7 +331,7 @@ ROM の SHA1 からゲームタイトルを引き、マッパーを自動で選�
 
 ### ステートセーブ/ロード
 
-ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、PPI のラッチ、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報を含む。ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になる。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持つ。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定める。形式のバージョンは 19 で、それより前のバージョンのステートは読み込めない。ステートには保存したときのマシン構成も記録し（[マシン設定](#マシン設定)を参照）、同じマシン、拡張、カートリッジ ROM のときだけ読み込める。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
+ハードウェアの状態をまるごと標準ライブラリの JSON に保存する。CPU、RAM、VDP、PSG、PPI のラッチ、SCC、FM-PAC/OPLL、マッパーのバンク、FDC のレジスタと処理段階、RTC、マウス、マウント中のディスクの識別情報を含む。ファイルは正規化した JSON（RFC 8785）で、同じマシンの状態からは、ほかの実装が書いても常に同じバイト列になる。数値は整数だけで、RAM や VRAM などのバイト列は base64 の文字列で持つ。構成は [`msx/snapshot.schema.json`](msx/snapshot.schema.json)（JSON Schema）が定める。形式のバージョンは 20 で、それより前のバージョンのステートは読み込めない。ステートには保存したときのマシン構成も記録し（[マシン設定](#マシン設定)を参照）、同じマシン、拡張、カートリッジ ROM のときだけ読み込める。セーブのたびに PNG のスクリーンショットも保存し、すぐ再開できるよう `saves/states/latest.*` のシンボリックリンクを更新する。マウント中の `.dsk` はパス、サイズ、SHA1 で記録する。ロード時にディスクが一致しなければ、そのまま続けずにエラーにする。
 
 - 実装：`msx/state.py`（スナップショットのエンコード）、`msx/snapshot.schema.json`（構成）、`host/state_files.py`（ファイル）
 
@@ -385,18 +385,18 @@ v2.8.0 からコアとフロントエンドを分け、ヘッドレスの実行�
 
 | プラットフォーム | ランタイム | ゲーム | 平均 FPS（`--benchmark`） | 60 fps 目標との比 |
 | --- | --- | --- | --- | --- |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 311.65 | 約 5.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 553.07 | 約 9.2 倍 |
-| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 97.00 | 約 1.6 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1224.83 | 約 20.4 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1360.29 | 約 22.7 倍 |
-| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 675.34 | 約 11.3 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 81.03 | 約 1.4 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 148.60 | 約 2.5 倍 |
-| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 26.35 | 約 0.44 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 255.53 | 約 4.3 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 295.63 | 約 4.9 倍 |
-| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 146.88 | 約 2.4 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 316.31 | 約 5.3 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 554.05 | 約 9.2 倍 |
+| Apple MacBook Pro（M5 Pro） | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 96.91 | 約 1.6 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 1236.10 | 約 20.6 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 1342.25 | 約 22.4 倍 |
+| Apple MacBook Pro（M5 Pro） | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 685.40 | 約 11.4 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 81.10 | 約 1.4 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 148.56 | 約 2.5 倍 |
+| Raspberry Pi 5 | CPython 3.12.13 | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 26.21 | 約 0.44 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX1: 沙羅曼蛇（CPU+TMS9918+SCC） | 255.94 | 約 4.3 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤーIV（CPU+V9938+PSG） | 284.32 | 約 4.7 倍 |
+| Raspberry Pi 5 | PyPy 7.3.19（Python 3.10.16） | MSX2: ドラゴンスレイヤー英雄伝説（CPU+V9938+FDC+FMPAC） | 145.91 | 約 2.4 倍 |
 
 計測した組み合わせのすべてが 60 fps に届くわけではない。余裕が最も小さいのは Raspberry Pi 5 の CPython でドラゴンスレイヤー英雄伝説を動かした場合で、約 0.44 倍と目標を下回る。対象タイトルの中では、FM-PAC（YM2413）の合成が 1 フレームあたりの負荷として最も重い。PyPy にすると、同じ組み合わせで約 2.4 倍になる。Raspberry Pi 5 と CPython のほかの組み合わせは目標に届き、沙羅曼蛇は約 1.4 倍、ドラゴンスレイヤーIV は約 2.5 倍。
 
@@ -406,7 +406,7 @@ PyPy の数値は、OS のスケジューリングや発熱による速度低下
 
 ### ベンチマーク推移
 
-v0.1.0 から v2.8.2 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示す。実線が CPython、破線が PyPy。v2.7.5 までは上と同じコールドブートの方法で、ただし音声合成なし（v2.7.8 までの方法）で計測した。v2.8.1 からは上の方法で計測した。2 つの方法の数値は比べられないので、方法が変わるところで線を切っている。
+v0.1.0 から v2.8.3 までの平均 FPS（`--benchmark`）の推移を、プラットフォームごとに示す。実線が CPython、破線が PyPy。v2.7.5 までは上と同じコールドブートの方法で、ただし音声合成なし（v2.7.8 までの方法）で計測した。v2.8.1 からは上の方法で計測した。2 つの方法の数値は比べられないので、方法が変わるところで線を切っている。
 
 ![Apple MacBook Pro（M5 Pro）でのベンチマーク推移](assets/bench-history-m5pro.png)
 
@@ -818,7 +818,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4080 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 4091 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -900,7 +900,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4080 テスト）
+├── tests/                 # テストスイート（4091 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴

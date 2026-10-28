@@ -1,7 +1,8 @@
 # Tools
 
 Standalone command-line utilities for use with the emulator: disk image
-management, and the agent-facing RPC/MCP layer. None of these tools run in the
+management, a CPU instruction exerciser runner, and the agent-facing RPC/MCP
+layer. None of these tools run in the
 emulator process. Each one is a separate `python tools/<script>.py` command.
 
 | Script / section | Purpose |
@@ -9,6 +10,7 @@ emulator process. Each one is a separate `python tools/<script>.py` command.
 | [`dskftp.py`](#dskftppy) | Interactive ftp-style shell to edit the files in a `.dsk` image |
 | [`dskblank.py`](#dskblankpy) | Create a blank, unformatted `.dsk` image |
 | [`dskdd.py`](#dskddpy) | Copy raw sectors between a `.dsk` image and a physical USB floppy drive (Linux only) |
+| [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Run Z80 instruction exercisers (zexdoc, zexall, z80test) on the bare CPU core |
 | [Remote control (Socket RPC & MCP)](#remote-control-socket-rpc--mcp) | Overview of the socket RPC + MCP control layer that `rpc_client.py` and `mcp_server.py` use |
 | [`rpc_client.py`](#rpc_clientpy) | Thin CLI client for the socket RPC server of the emulator, for manual testing |
 | [`mcp_server.py`](#mcp_serverpy) | MCP server that wraps the socket RPC API, so Claude Code can drive a running emulator |
@@ -113,6 +115,24 @@ image unless you give `--overwrite`.
 
 Exit status: `0` success, `1` error, `2` the script imaged the disk, but some
 sectors stayed unreadable (zero-filled in the image, listed on stdout).
+
+## `run_z80_exercisers.py`
+
+Runs Z80 instruction exercisers on the bare `Z80` core, with no MSX machine
+around it: CP/M `.com` programs (zexdoc, zexall) and the `.tap` images of
+[z80test](https://github.com/raxoft/z80test). The test programs are not in
+this repository; pass their paths. The exit status is 1 if any program
+reports a failure, else 0.
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
+    path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
+```
+
+Use PyPy: zexdoc and zexall take about 1.5 minutes each on PyPy and much
+longer on CPython. See
+[Instruction exercisers](../docs/technical-implementation.md#instruction-exercisers)
+for how each format runs and the expected result.
 
 ## Remote control (Socket RPC & MCP)
 

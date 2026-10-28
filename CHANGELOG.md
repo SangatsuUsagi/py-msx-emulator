@@ -2,6 +2,16 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.8.3** (2026-10-28): Complete Z80 block I/O flags, and save-state format 20.
+  - The Z80 core models the flag and MEMPTR changes of a repeating `INIR`/`INDR`/`OTIR`/`OTDR` iteration (Zilog
+    NMOS): Y and X come from the instruction address, H and P/V are adjusted from C, the transferred value and B, and
+    MEMPTR becomes the instruction address + 1. The core now passes zexdoc, zexall and every z80test variant in full.
+    z80test has no repeating `OTIR`/`OTDR` test; unit tests check that side.
+  - The exerciser runner moved to `tools/run_z80_exercisers.py` (before: `scripts/run_z80_exercisers.py`). It now
+    stops with an error on a program or tape image that does not fit in 64 KB or is truncated.
+  - **Breaking:** the save-state format version is 20. The layout is the one v2.8.2 already writes (with MEMPTR and
+    Q); v2.8.2 had kept version 19 for it. Save states from v2.8.2 and earlier cannot be loaded.
+  - The README benchmark charts cover v0.1.0 through v2.8.3.
 - **v2.8.2** (2026-10-27): Z80 undocumented-flag and DAA fixes, and faster `JR $` idle loops.
   - The Z80 core models the internal MEMPTR (WZ) register. The undocumented flags Y and X now follow the Zilog NMOS
     rules in three more cases: `BIT n,(HL)` takes them from MEMPTR, a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` takes them

@@ -17,6 +17,8 @@ references/msx-msxlib/
 references/openMSX/
 references/x88_1_5_3_src/
 references/z80/
+references/z80exer/
+references/z80test-1.2a/
 roms/**/*.lzh
 roms/**/*.rom
 roms/**/*.zip

@@ -47,11 +47,11 @@ _DEC_OPS: dict[int, int] = {
 # (extras/HB-10/YXFLAG.BAS, 2026-10-07: F = 28 BB 3C 6D 7D 6C after ADD, CP,
 # AND, SCF, BIT, RLCA). BIT n,(HL) takes them from the high byte of the
 # internal MEMPTR register (Registers.WZ), set at the openMSX setMemPtr sites;
-# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp);
+# a repeating LDIR/LDDR/CPIR/CPDR takes them from its PC (_ed_block_ld/_cp),
+# and so does a repeating INIR/INDR/OTIR/OTDR (_block_io_repeat_flags);
 # SCF/CCF take them from (Q ^ F) | A, with Q tracked by Z80.step() and set
 # (cpu.q_next) by every handler whose ALU writes F -- not POP AF or
-# EX AF,AF' (see Z80.q). Not modelled: the repeat-cycle flag changes of
-# INIR/INDR/OTIR/OTDR, which keep the per-iteration flags.
+# EX AF,AF' (see Z80.q).
 _FLAG_YX = F.FLAG_Y | F.FLAG_X
 
 
@@ -235,6 +235,48 @@ def _block_io_flags(cpu: Z80, value: int, b_after: int, k: int) -> None:
         f |= F.FLAG_PV
     cpu.registers.F = f
     cpu.q_next = f
+
+
+def _block_io_repeat_flags(f: int, value: int, b_after: int, pc: int) -> int:
+    """Adjust the INI/IND/OUTI/OUTD flags for a repeating INIR/INDR/OTIR/OTDR.
+
+    Zilog NMOS rule (hoglet67/Z80Decoder wiki "Undocumented Flags"); openMSX
+    does not model it. S, Z, N and C stay as computed.
+
+    Args:
+        f: The flags `_block_io_flags` has just set.
+        value: The byte transferred to/from the port.
+        b_after: The B register after its post-transfer decrement.
+        pc: The address of the instruction's 0xED prefix.
+
+    Returns:
+        The adjusted flags.
+    """
+    f = (f & ~_FLAG_YX) | ((pc >> 8) & _FLAG_YX)  # Y = PC bit 13, X = PC bit 11
+    # With C set the chip steps B once more, by -1 (value bit 7 set) or +1
+    # (clear): H is the nibble borrow/carry of that step, and P/V takes the
+    # parity of the stepped B. With C clear, P/V takes the parity of B.
+    # PORT-NOTE: b_after + 1 reaches 0x100 (B started at 0), and b_after - 1
+    #   relies on the caller's B != 0. Only the low 3 bits are kept, so a
+    #   wrapping op gives the same result.
+    # Rust equivalent: `b_after.wrapping_add(1) & 7` / `wrapping_sub(1)` on a u8.
+    # Zig equivalent: `(b_after +% 1) & 7` / `(b_after -% 1) & 7`; plain `+`
+    #   on a u8 traps on 0xFF + 1.
+    if f & F.FLAG_C:
+        f &= ~F.FLAG_H
+        if value & 0x80:
+            b_step = (b_after - 1) & 0x07
+            if (b_after & 0x0F) == 0x00:
+                f |= F.FLAG_H
+        else:
+            b_step = (b_after + 1) & 0x07
+            if (b_after & 0x0F) == 0x0F:
+                f |= F.FLAG_H
+    else:
+        b_step = b_after & 0x07
+    if not F.parity(b_step):  # odd parity toggles P/V
+        f ^= F.FLAG_PV
+    return f
 
 
 def _add16(cpu: Z80, hl: int, rr: int) -> int:
@@ -1185,7 +1227,13 @@ def _ed_block_in(cpu: Z80, op: int) -> int:  # INI / IND / INIR / INDR
     c_adj = (r.C + inc) & 0xFF
     _block_io_flags(cpu, val, r.B, val + c_adj)
     if op in (0xB2, 0xBA) and r.B != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
+        pc = (r.PC - 2) & 0xFFFF
+        r.PC = pc
+        f = _block_io_repeat_flags(r.F, val, r.B, pc)
+        r.F = f
+        cpu.q_next = f
+        # MEMPTR = PC + 1 (not + 2 as for LDIR/CPIR); replaces the BC-derived value above.
+        r.WZ = (pc + 1) & 0xFFFF
         return 21
     return 16
 
@@ -1201,7 +1249,13 @@ def _ed_block_out(cpu: Z80, op: int) -> int:  # OUTI / OUTD / OTIR / OTDR
     # OUTI/OUTD use L after HL has been incremented/decremented.
     _block_io_flags(cpu, val, r.B, val + r.L)
     if op in (0xB3, 0xBB) and r.B != 0:
-        r.PC = (r.PC - 2) & 0xFFFF
+        pc = (r.PC - 2) & 0xFFFF
+        r.PC = pc
+        f = _block_io_repeat_flags(r.F, val, r.B, pc)
+        r.F = f
+        cpu.q_next = f
+        # MEMPTR = PC + 1 (not + 2 as for LDIR/CPIR); replaces the BC-derived value above.
+        r.WZ = (pc + 1) & 0xFFFF
         return 21
     return 16
 
@@ -1700,7 +1754,9 @@ def _op_cpl(cpu: Z80) -> int:
     r = cpu.registers
     # PORT-NOTE: Python's `~` is infinite-width two's complement
     #   (~x == -(x + 1)), so `(~r.A) & 0xFF` is correct only because of the
-    #   mask. Same pattern in the CB RES handler (`v & ~(1 << bit)`).
+    #   mask. Same pattern in the CB RES handler (`v & ~(1 << bit)`) and in
+    #   the flag-clear idiom `f &= ~F.FLAG_x`: a port must type the flag
+    #   constants as u8 (in Zig, `~` of an untyped comptime_int does not fit u8).
     # Rust equivalent: `!r.a` on a `u8` — bitwise NOT is already width-bound,
     #   no mask needed.
     # C++ equivalent: `~a` on a `uint8_t` — same, no mask needed (beware
