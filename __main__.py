@@ -466,11 +466,6 @@ def _resolve_effective_options(
     )
 
 
-def _spec_has_floppy_interface(spec: "MachineSpec") -> bool:
-    """Whether the machine definition declares a floppy interface."""
-    return spec.fdc is not None
-
-
 def _fail(msg: str) -> NoReturn:
     """Print a startup-validation error to stderr and exit (code 1)."""
     print(f"error: {msg}", file=sys.stderr)
@@ -565,7 +560,7 @@ def main() -> None:
         _fail(str(exc))
 
     # --- Disk image only applies to machines with a floppy interface ---
-    if (fdd1_paths or fdd2_path is not None) and not _spec_has_floppy_interface(spec):
+    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
         print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
               "ignoring", file=sys.stderr)
         fdd1_paths = []
