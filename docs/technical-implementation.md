@@ -136,6 +136,24 @@ repeating iteration only for `INIR` and `INDR` (`INIR->NOP'`,
 `INDR->NOP'`); unit tests check the same rule for `OTIR`/`OTDR`. On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
 Apple M5 Pro; CPython takes much longer.
 
+`tools/run_singlestep_tests.py` runs the
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) cases: 1000
+cases per opcode, every prefix included, each one instruction with the full
+CPU state before and after it, including MEMPTR and Q. The tool compares the
+state after one `step()`, the port transactions and the T-state count, not
+the bus state of each cycle. The core matches all 1,604,000 cases except two
+groups, which `tools/singlestep_known_divergences.json` lists as known
+divergences:
+
+- A repeating `LDIR`/`LDDR`/`CPIR`/`CPDR` iteration: the core sets MEMPTR to
+  the instruction address + 2, as openMSX does; the tests use + 1.
+- `OUTI`/`OUTD`/`OTIR`/`OTDR`: the core puts B before its decrement on the
+  high byte of the port address, as openMSX does; the tests use B after it.
+  MSX decodes only the low byte.
+
+The tests come from an emulator core, not from real hardware, so they do not
+decide either case. On PyPy all cases take about 3 minutes on an Apple M5 Pro.
+
 ### Known limitations
 
 OTIR/INIR and similar block I/O instructions are not cycle-exact across page

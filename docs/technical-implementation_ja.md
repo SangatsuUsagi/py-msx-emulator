@@ -82,6 +82,13 @@ venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
 
 どれかのプログラムが失敗を報告すると、終了ステータスは 1 になる。期待される結果：zexdoc、zexall、z80test のすべての種類が、すべて通る。z80test が繰り返し中の動作を調べるのは `INIR` と `INDR` だけ（`INIR->NOP'`、`INDR->NOP'`）で、`OTIR`/`OTDR` の同じ規則はユニットテストで確かめている。PyPy では zexdoc と zexall はそれぞれ Apple M5 Pro で約 1.5 分かかり、CPython ではさらに長い。
 
+`tools/run_singlestep_tests.py` は [SingleStepTests/z80](https://github.com/SingleStepTests/z80) のテストを動かす。オペコードごとに 1000 件、すべての前置命令を含み、各件は 1 命令で、実行前と実行後の CPU の状態（MEMPTR と Q を含む）を持つ。このツールは 1 回の `step()` のあとの状態、ポートへの読み書き、T ステート数を比べ、サイクルごとのバスの状態は比べない。コアは 1,604,000 件のうち 2 つのグループを除いてすべて一致し、その 2 つは `tools/singlestep_known_divergences.json` にわかっている食い違いとして載せている。
+
+- 繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR`：コアは openMSX と同じく MEMPTR を命令のアドレス + 2 にし、テストは + 1 にする。
+- `OUTI`/`OUTD`/`OTIR`/`OTDR`：コアは openMSX と同じく、減らす前の B をポートアドレスの上位バイトに出し、テストは減らした後の B を出す。MSX は下位バイトしか見ない。
+
+テストは実機ではなくエミュレータのコアから作られているので、どちらの値が正しいかの根拠にはならない。PyPy では全件が Apple M5 Pro で約 3 分かかる。
+
 ### 既知の制限
 
 OTIR/INIR などのブロック I/O 命令は、ページ境界をまたぐとサイクル単位では正確でない。非公開のフラグ Y（bit 5）と X（bit 3）は、資料にある命令ごとの規則に従う。あまり一般的でない次の 3 つの要因も再現している：`BIT n,(HL)` は内部レジスタ MEMPTR から、繰り返し中のブロック命令（`LDIR`/`LDDR`/`CPIR`/`CPDR`/`INIR`/`INDR`/`OTIR`/`OTDR`）は自身のアドレスから Y と X を取り、`SCF`/`CCF` は直前の命令がフラグを変えたかどうかで結果が変わる。`SCF`/`CCF` は Zilog NMOS の規則に従う。NEC 製や ST 製 CMOS の Z80 では規則が異なる（[Undocumented Flags](https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)）。エミュレータは Zilog 互換の Z80 を対象にしている。TODO: 一部の MSX が使う NEC 製や Sharp 製の Z80 互換 CPU（たとえば HB-10 や HB-F1XD のもの）での違いを、実機で確認したうえで記録する。繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` は、さらに H と P/V を変え、MEMPTR を自身のアドレス + 1 にする（[redcode/Z80](https://github.com/redcode/Z80)）。

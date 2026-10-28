@@ -1,7 +1,7 @@
 # Tools
 
 Standalone command-line utilities for use with the emulator: disk image
-management, a CPU instruction exerciser runner, and the agent-facing RPC/MCP
+management, CPU instruction test runners, and the agent-facing RPC/MCP
 layer. None of these tools run in the
 emulator process. Each one is a separate `python tools/<script>.py` command.
 
@@ -11,6 +11,7 @@ emulator process. Each one is a separate `python tools/<script>.py` command.
 | [`dskblank.py`](#dskblankpy) | Create a blank, unformatted `.dsk` image |
 | [`dskdd.py`](#dskddpy) | Copy raw sectors between a `.dsk` image and a physical USB floppy drive (Linux only) |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Run Z80 instruction exercisers (zexdoc, zexall, z80test) on the bare CPU core |
+| [`run_singlestep_tests.py`](#run_singlestep_testspy) | Run the SingleStepTests/z80 single-instruction cases on the bare CPU core |
 | [Remote control (Socket RPC & MCP)](#remote-control-socket-rpc--mcp) | Overview of the socket RPC + MCP control layer that `rpc_client.py` and `mcp_server.py` use |
 | [`rpc_client.py`](#rpc_clientpy) | Thin CLI client for the socket RPC server of the emulator, for manual testing |
 | [`mcp_server.py`](#mcp_serverpy) | MCP server that wraps the socket RPC API, so Claude Code can drive a running emulator |
@@ -133,6 +134,31 @@ Use PyPy: zexdoc and zexall take about 1.5 minutes each on PyPy and much
 longer on CPython. See
 [Instruction exercisers](../docs/technical-implementation.md#instruction-exercisers)
 for how each format runs and the expected result.
+
+## `run_singlestep_tests.py`
+
+Runs the [SingleStepTests/z80](https://github.com/SingleStepTests/z80) cases
+on the bare `Z80` core. Each file holds 1000 cases for one opcode: the CPU
+state before and after one instruction. The tool runs one instruction per
+case and compares every register, MEMPTR (WZ), Q, IFF1/IFF2, IM, the RAM, the
+port transactions and the T-state count. It does not compare the bus state of
+each cycle. The test files are not in this repository; pass their paths.
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
+    path/to/SingleStepTests/z80/v1/*.json
+```
+
+Use PyPy for the full set (all 1604 files take about 3 minutes); on CPython,
+`--limit N` runs only the first N cases of each file. Cases where the core
+deliberately gives another result are listed, with their sources, in
+`tools/singlestep_known_divergences.json`. They are counted separately and do
+not fail the run. An entry that no longer matches any case is reported as
+stale. The exit status is 1 on any other failure or on a stale entry, else 0.
+
+The cases come from an emulator core, not from real hardware. A port of the
+core to another language can run the same files and the same divergence
+list.
 
 ## Remote control (Socket RPC & MCP)
 
