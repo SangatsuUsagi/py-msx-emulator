@@ -557,7 +557,7 @@ file is canonical JSON (RFC 8785): the same machine state always gives the same
 bytes, also from another implementation. It holds integers only, and byte
 blobs such as RAM and VRAM as base64 strings.
 [`msx/snapshot.schema.json`](msx/snapshot.schema.json) (JSON Schema) defines
-its layout. The format version is 19. Save states from earlier versions do
+its layout. The format version is 20. Save states from earlier versions do
 not load. A save state also records the machine configuration that it comes
 from (see [Machine configuration](#machine-configuration)). It loads only into
 the same machine, extensions and cartridge ROM. Each save also writes a PNG
