@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from host.state_files import load_state, save_state
-from msx.boundary import RgbFrame
+from msx.boundary import STOP_BREAKPOINT, STOP_NONE, RgbFrame
 from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
@@ -271,7 +271,6 @@ def _machine_on_arm(rom: bytes, arm: str) -> Machine:
     if arm == "logged":
         return make_machine(rom, logger=DebugLogger())
     machine = make_machine(rom)
-    machine.set_pause_hook(lambda reason, pc: None)
     machine.set_breakpoints([_UNREACHED_PC])
     return machine
 
@@ -286,7 +285,7 @@ def test_vblank_irq_taken_on_debug_and_logged_arms(arm: str) -> None:
     with _Acceptances(machine) as acc:
         machine.run_frame(skip_render=True)
 
-    assert not machine.is_paused
+    assert machine.last_stop().reason == STOP_NONE
     assert len(acc.hits) == 1
     t, _ret, f = acc.hits[0]
     assert f == 0x80
@@ -332,61 +331,18 @@ def test_setting_ie0_while_f_pending_on_debug_and_logged_arms(arm: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pause / Ctrl-C mid-display still stops the frame (TMS9918A now splits too)
+# A break mid-display stops the call there (TMS9918A splits too)
 # ---------------------------------------------------------------------------
 
-def test_pause_during_active_display_skips_the_rest_of_the_frame() -> None:
+def test_a_break_during_active_display_stops_the_call_there() -> None:
     machine = _make_msx1()
     machine.vdp.regs[1] = 0x40  # BL=1
 
-    machine.set_pause_hook(lambda reason, pc: None)
     machine.set_breakpoints([_MID_DISPLAY_PC])
     machine.run_frame(skip_render=True)
 
-    assert machine.is_paused
+    assert machine.last_stop().reason == STOP_BREAKPOINT
     assert machine.cycle_count < machine.cycles_per_frame
-
-
-def test_ctrl_c_during_active_display_skips_the_vblank_segment() -> None:
-    machine = _make_msx1()
-    machine.vdp.regs[1] = 0x40  # BL=1
-
-    calls: list[int] = []
-    # Z80 is a slots dataclass (no per-instance __dict__), so `step` can only
-    # be overridden at the class level -- restored in `finally`, mirroring
-    # how this repo's own investigation tooling patches VDP.write_port.
-    orig_step = Z80.step
-
-    def patched_step(self: Z80) -> int:
-        if self.registers.PC == _MID_DISPLAY_PC:
-            raise KeyboardInterrupt
-        return orig_step(self)
-
-    Z80.step = patched_step
-    try:
-        # A pause hook is what makes _on_frame_interrupt handle Ctrl-C instead
-        # of re-raising; no breakpoints, so this runs on the fast loop.
-        machine.set_pause_hook(lambda reason, pc: calls.append(pc))
-        machine.run_frame(skip_render=True)
-    finally:
-        Z80.step = orig_step
-
-    assert calls
-    assert machine.cycle_count < machine.cycles_per_frame
-def test_break_during_display_does_not_raise_vblank() -> None:
-    # A frame cut short by a breakpoint never reached vertical blanking, so
-    # F and the /INT level stay clear -- the same as on the V9938.
-    machine = make_machine(b"\x00" * 0x8000)
-    machine.vdp.regs[1] = 0x60             # BL + IE0
-    machine.vdp.status = 0x00
-    machine.set_pause_hook(lambda *_: None)
-    machine.set_breakpoints([0x1000])      # reached mid-frame by the NOP sled
-
-    machine.run_frame()
-
-    assert machine.cpu.registers.PC == 0x1000
-    assert not (machine.vdp.status & 0x80)
-    assert machine.vdp.irq is False
 
 
 def test_the_continued_frame_raises_vblank() -> None:
@@ -429,35 +385,10 @@ def test_break_with_skip_render_does_not_raise_vblank() -> None:
     machine = _make_msx1()
     machine.vdp.regs[1] = 0x60             # BL + IE0
     machine.vdp.status = 0x00
-    machine.set_pause_hook(lambda reason, pc: None)
     machine.set_breakpoints([_MID_DISPLAY_PC])
 
     machine.run_frame(skip_render=True)
 
-    assert machine.is_paused
-    assert not (machine.vdp.status & 0x80)
-    assert machine.vdp.irq is False
-
-
-def test_ctrl_c_during_active_display_does_not_raise_vblank() -> None:
-    machine = _make_msx1()
-    machine.vdp.regs[1] = 0x60             # BL + IE0
-    machine.vdp.status = 0x00
-    orig_step = Z80.step
-
-    def patched_step(self: Z80) -> int:
-        if self.registers.PC == _MID_DISPLAY_PC:
-            raise KeyboardInterrupt
-        return orig_step(self)
-
-    Z80.step = patched_step  # type: ignore[method-assign]
-    try:
-        machine.set_pause_hook(lambda reason, pc: None)
-        buf = machine.run_frame()
-    finally:
-        Z80.step = orig_step  # type: ignore[method-assign]
-
-    assert len(buf) == 256 * OUTPUT_H      # the cut-short frame is still rendered
-    assert machine.cycle_count < machine.cycles_per_frame
+    assert machine.last_stop().reason == STOP_BREAKPOINT
     assert not (machine.vdp.status & 0x80)
     assert machine.vdp.irq is False

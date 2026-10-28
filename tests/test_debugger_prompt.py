@@ -1140,15 +1140,14 @@ class TestCompleteCommand:
 
 class TestDumpBypassesWatchpoints:
     def test_dm_over_a_read_watchpoint_requests_no_break(self, capsys) -> None:
+        from msx.boundary import STOP_NONE
         from tests.factories import make_machine
 
         m = make_machine(rom=bytes(32 * 1024))
-        pauses: list[object] = []
-        m.set_pause_hook(lambda reason, pc: pauses.append(reason))
         m.set_watchpoints([(0xC000, "r")])
         dbg = Debugger(m)
         dbg._cmd_dump(["BFF8", "10"])
         dbg._cmd_disasm(["C000"])
-        assert pauses == []
-        assert not m.is_paused
+        assert m.last_stop().reason == STOP_NONE
+        assert not m._stop_pending
         assert "[WP]" not in capsys.readouterr().out

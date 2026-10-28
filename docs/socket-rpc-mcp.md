@@ -49,9 +49,9 @@ and does not queue it (see `DebugServer._continue_sync`).
 
 The core emulator (`machine`, `cpu`, `vdp`, `memory`) has no knowledge of RPC.
 For this feature, `host/rpc_server.py` is the only place that uses `socket`,
-`json`, and `threading`. The core gives only a generic pause seam
-(`Machine.set_pause_hook`), where the RPC server installs itself. The
-portability note at the top of `host/rpc_server.py` describes how this layering
+`json`, and `threading`. The core never calls the RPC server. At a break,
+`step_frame` returns with a stop reason, and the frontend loop passes it to
+`DebugServer.on_core_stop` (`host/debugger/stop.py`). The portability note at the top of `host/rpc_server.py` describes how this layering
 maps to a non-Python port.
 
 ---
@@ -160,7 +160,8 @@ These `reason` values occur in all methods: `"user_request"`, `"breakpoint"`,
 - **`cpu.step`** *(requires paused)* → `{ pc, t_states, mnemonic, registers }`.
   Executes exactly one Z80 instruction.
 - **`cpu.continue`** *(requires paused)* → `{ running: true }`. Resumes and
-  returns immediately (non-blocking).
+  returns immediately (non-blocking). A frame that stopped at a break
+  continues from where it stopped.
 - **`cpu.continue_sync`** *(requires paused)*: params `{ timeout_ms? }`
   (default 5000). Resumes and blocks until the next pause event or the
   timeout. Returns `{ paused: true, reason, pc, registers }` or

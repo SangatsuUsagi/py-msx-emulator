@@ -318,7 +318,9 @@ boundary.
 The loop runs in two segments: the lines up to and including
 `vblank_start_line`, then the rest of the frame. The machine renders the
 frame between them, before the VBlank interrupt handler runs (see
-[VDP](#vdp)). While the CPU idles and cannot take an interrupt, the loop
+[VDP](#vdp)). A break stops the loop at an instruction boundary. The
+machine keeps the line and the T-state count, and the next `run_frame`
+continues there, so each frame is rendered, counted and mixed once. While the CPU idles and cannot take an interrupt, the loop
 calls `Z80.step_idle_batch()` instead of `step()`. The CPU idles when it is
 halted or when it has just run `JR $` (`18 FE`, a jump to itself), the loop
 many games use to wait for the VBlank interrupt. One call advances the whole
@@ -1147,7 +1149,7 @@ belongs to the debugger's diagnostics.
 | Group | Operation | Notes |
 | --- | --- | --- |
 | Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. The optional `logger`/`tracer` arguments are diagnostics |
-| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs exactly one frame |
+| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
 | Control | `reset()` | Power-on reset. RAM, VRAM and mounted media stay as they are |
@@ -1166,25 +1168,29 @@ belongs to the debugger's diagnostics.
 | | `vdp_info() -> VdpInfo` | It clears no status flag |
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back |
+| | `step() -> int` | Runs one instruction and returns its T-states |
+| | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
+| | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
 
 Apart from that device-register case, no inspection query changes emulated
 state. `tests/test_core_api.py` checks this: the save-state bytes are the
 same before and after every query.
 
+No `CoreApi` member takes a callback. A break is reported only through the
+`step_frame` result and `last_stop()`: the core calls no host code, prints
+nothing and catches no `KeyboardInterrupt`. After a stop, the host's
+`handle_stop()` (`host/debugger/stop.py`) prints the watchpoint line, then
+pauses the RPC server or opens the debugger. While the emulator runs, the
+host maps Ctrl-C in the terminal to `request_break()`. The next `step_frame`
+continues the stopped frame. Its first instruction is not tested against
+the breakpoints, so a resume does not stop again at once.
+
 The other members do not cross the boundary, and a port does not need them
 to run software:
 
-- `run_frame()` and `step()`, the internal frame loop and single-step
-- breakpoints and watchpoints
-- `set_pause_hook()`, the seam that the RPC server uses to pause
-- `attach_debugger()`
+- `run_frame()`, the internal frame loop
 - the VDP and mapper tracers
-
-`CoreApi` lists the break settings, their read-back queries
-(`breakpoints()`, `watchpoints()`, `break_halt_di()`), `step()`, the pause
-hook and the debugger attachment for now, because the debugger and the RPC
-server use them. They keep their current shapes. A later DebugControl
-contract will replace them.
 
 ### MachineConfig document
 
@@ -1261,7 +1267,10 @@ core. It applies `frame_input` to the input lines that the PPI and PSG read
 mouse gets the motion of the frame once. It then runs the frame and returns
 the `FrameOutput`. `render_video` decides only whether the core produces
 video. A skipped frame still runs the sprite pass. The VDP status, the audio
-and the next snapshot are thus the same either way.
+and the next snapshot are thus the same either way. A call that stops at a
+break returns `stop_reason` and `frame_complete` false, with no video and no
+audio. The next call continues that frame. It applies its input lines and
+buttons again, but feeds no mouse motion, because the frame already has it.
 
 `InputState` in `host/input_state.py` builds the input outside the core.
 The keyboard, the gamepads, the mouse and the RPC input methods write to it.
@@ -1368,8 +1377,12 @@ These questions are open, and a port must decide them:
   byte for byte. Ship the tables as integer data that the Python build
   generated.
 - **Mouse attachment**, as above.
-- **Debug control.** Breakpoints, watchpoints, single-step and the RPC pause
-  are outside the contract. A port can leave them out at first.
+- **Debug control.** The break settings, `request_break()` and the stop
+  result are in the contract (DebugControl). A port that supports the
+  debugger keeps the position of a stopped frame and continues it on the
+  next `step_frame`, and skips the breakpoint test for the first
+  instruction after a stop. A port can leave the break settings out at
+  first: with none armed, `step_frame` never stops.
 
 Some Python patterns have no direct equivalent in a statically typed
 language: bus hooks, register properties, the PSG envelope underflow, the
