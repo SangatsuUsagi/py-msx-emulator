@@ -8,10 +8,14 @@ from typing import TYPE_CHECKING, Protocol
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    VDP_KIND_TMS9918A,
+    VDP_KIND_V9938,
+    CpuRegisters,
     DiskMedium,
     FrameOutput,
     MediaId,
     RgbFrame,
+    VdpInfo,
     drive_media_id,
 )
 from msx.cpu.z80 import Z80
@@ -482,6 +486,128 @@ class Machine:
         else:
             self.cpu.read_byte = self.memory.read
             self.cpu.write_byte = self.memory.write
+
+    # ------------------------------------------------------------------
+    # Inspection queries (core API, machine-core "Core inspection queries
+    # return integers and bytes"): read-only, no emulated state changes.
+    # ------------------------------------------------------------------
+
+    def cpu_registers(self) -> CpuRegisters:
+        """The Z80 register file."""
+        cpu = self.cpu
+        r = cpu.registers
+        return CpuRegisters(
+            AF=r.AF, BC=r.BC, DE=r.DE, HL=r.HL,
+            AF_=r.AF_, BC_=r.BC_, DE_=r.DE_, HL_=r.HL_,
+            IX=r.IX, IY=r.IY, SP=r.SP, PC=r.PC, I=r.I, R=r.R,
+            IFF1=1 if cpu.iff1 else 0, IFF2=1 if cpu.iff2 else 0, IM=cpu.im,
+        )
+
+    def read_memory(self, addr: int, length: int) -> bytes:
+        """`length` bytes from `addr` as the CPU reads them in the current slot
+        selection, wrapping at 0xFFFF. Bypasses watchpoints. A memory-mapped
+        device register reads as it does for the CPU, side effects included."""
+        read = self.memory.read
+        out = bytearray(length)
+        for i in range(length):
+            out[i] = read((addr + i) & 0xFFFF)
+        return bytes(out)
+
+    def write_memory(self, addr: int, data: bytes) -> None:
+        """Write `data` from `addr` as the CPU would, wrapping at 0xFFFF.
+        Bypasses watchpoints."""
+        write = self.memory.write
+        for i in range(len(data)):
+            write((addr + i) & 0xFFFF, data[i])
+
+    def vram_size(self) -> int:
+        """VRAM size in bytes (0x4000 or 0x20000)."""
+        return len(self.vdp.vram)
+
+    def read_vram(self, addr: int, length: int) -> bytes:
+        """`length` VRAM bytes from `addr`, wrapping at the VRAM size."""
+        vram = self.vdp.vram
+        size = len(vram)
+        out = bytearray(length)
+        for i in range(length):
+            out[i] = vram[(addr + i) % size]
+        return bytes(out)
+
+    def vdp_info(self) -> VdpInfo:
+        """The VDP kind, registers, palette, status and command progress."""
+        vdp = self.vdp
+        if isinstance(vdp, V9938):
+            x, y, nx, ny, remaining = vdp.command_progress()
+            return VdpInfo(
+                kind=VDP_KIND_V9938,
+                regs=bytes(vdp.regs),
+                cmd_regs=bytes(vdp.cmd_regs),
+                status=vdp.peek_status_registers(),
+                palette=tuple(vdp.palette),
+                cmd_x=x, cmd_y=y, cmd_nx=nx, cmd_ny=ny, cmd_remaining=remaining,
+            )
+        return VdpInfo(
+            kind=VDP_KIND_TMS9918A,
+            regs=bytes(vdp.regs),
+            cmd_regs=b"",
+            status=bytes((vdp.status & 0xFF,)),
+            palette=(),
+        )
+
+    def frame_number(self) -> int:
+        """Frames the VDP has completed (the frame-breakpoint counter)."""
+        return self.vdp.frame_count
+
+    def drive_count(self) -> int:
+        """Floppy drives on this machine; 0 without a floppy interface."""
+        if self.fdc is None:
+            return 0
+        return len(self.fdc.drives)
+
+    def main_ram_range(self) -> tuple[int, int]:
+        """The main-RAM address window the SP-range break defaults to."""
+        return self.memory.main_ram_range()
+
+    def breakpoints(self) -> tuple[int, ...]:
+        """The breakpoint addresses, ascending."""
+        return tuple(sorted(self._breakpoints))
+
+    def watchpoints(self) -> tuple[tuple[int, str], ...]:
+        """The watchpoints as (addr, mode) pairs, ascending by address, in the
+        shape set_watchpoints takes (mode "r", "w" or "rw")."""
+        result: list[tuple[int, str]] = []
+        for addr in sorted(self._watch_read | self._watch_write):
+            mode = ("r" if addr in self._watch_read else "") + (
+                "w" if addr in self._watch_write else ""
+            )
+            result.append((addr, mode))
+        return tuple(result)
+
+    def break_halt_di(self) -> bool:
+        """Whether the HALT-with-interrupts-off break is enabled."""
+        return self._break_halt_di
+
+    def render_preview(self) -> RgbFrame:
+        """The current frame as RGB24, without changing emulated state (the
+        debugger's and the RPC's screenshot and state-save capture)."""
+        from msx.screenshot import render_current_rgb24
+
+        rgb, width, height = render_current_rgb24(self.vdp)
+        return RgbFrame(width, height, rgb)
+
+    def save_state(self) -> bytes:
+        """The machine state in the versioned state format (msx/state.py)."""
+        from msx import state
+
+        return state.save_state(self)
+
+    def load_state(self, data: bytes, source: str = "<state>") -> None:
+        """Restore save_state() bytes; `source` names them in error messages.
+        Raises ValueError (StateLoadError included) and restores nothing when
+        the data does not fit this machine (msx/state.py load_state)."""
+        from msx import state
+
+        state.load_state(self, data, source)
 
     def _read_with_watch(self, addr: int) -> int:
         val = self.memory.read(addr)
