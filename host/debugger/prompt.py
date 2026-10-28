@@ -1,6 +1,6 @@
 """Interactive debug REPL for MSX2 / V9938 emulation.
 
-Triggered by breakpoint hit or KeyboardInterrupt in Machine.run_frame().
+Opened by the host after step_frame returns at a stop (host/debugger/stop.py).
 Runs in the main thread; emulation is paused while the REPL is active.
 """
 
@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, cast
 
 from host.debugger.disasm import disassemble
-from msx.boundary import VDP_KIND_V9938, VdpInfo
+from host.debugger.stop import sigint_interrupts, watch_hit_line
+from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, VdpInfo
 from msx.mapper import BankTracingMapper
 
 try:
@@ -132,7 +133,10 @@ class Debugger:
                 pass
 
         try:
-            self._repl_loop()
+            # Ctrl-C at the prompt exits (debug-monitor "Ctrl-C at the prompt
+            # exits"), whatever handler the run loop installed.
+            with sigint_interrupts():
+                self._repl_loop()
         finally:
             if readline is not None:
                 try:
@@ -545,6 +549,9 @@ class Debugger:
             return
         for _ in range(count):
             self._machine.step()
+            stop = self._machine.last_stop()
+            if stop.reason == STOP_WATCHPOINT:
+                print(watch_hit_line(stop))
         r = self._machine.cpu_registers()
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
         line, _ = _format_disasm(self._read, r.PC)

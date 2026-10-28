@@ -16,15 +16,14 @@ This module is a self-contained *adapter*, not part of the emulator core: the
 dependency direction is one-way. No module under ``msx/`` imports this file, and
 ``socket``/``queue``/``threading`` appear nowhere else in the core — this file is
 the only place they live. The core (``machine``, ``cpu``, ``vdp``, ``memory``)
-knows nothing about RPC; it only exposes a generic pause seam
-(``Machine.set_pause_hook(Callable[[str, int], None])``). This adapter depends on
-the core, never the reverse.
+knows nothing about RPC; a break returns from ``step_frame`` with a stop reason
+(an integer), and the host loop hands it to :meth:`DebugServer.on_core_stop`.
+This adapter depends on the core, never the reverse.
 
 A Rust/C++ port keeps the same layering as separate crates/targets:
 
     msx-core     cpu / vdp / memory / machine — no socket/json/thread deps;
-                 the pause seam becomes a `trait PauseSink` (and the reason
-                 strings become an `enum PauseReason`).
+                 a break is a stop reason in the step_frame result.
     msx-rpc      this DebugServer — depends on msx-core + serde_json, behind a
                  `#[cfg(feature = "rpc")]` gate (or a standalone crate) so JSON
                  never reaches the core.
@@ -47,6 +46,7 @@ so they are language-agnostic and stay as-is under any core port.
 from __future__ import annotations
 
 import base64
+import enum
 import json
 import queue
 import socket
@@ -59,16 +59,43 @@ from typing import TYPE_CHECKING, Any
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
 from host.screenshot import encode_rgb24_png, scale_rgb24
-from msx.boundary import VDP_KIND_V9938
+from msx.boundary import (
+    STOP_BREAKPOINT,
+    STOP_REQUESTED,
+    STOP_WATCHPOINT,
+    VDP_KIND_V9938,
+)
 from msx.input import KEY_NAME_TO_CELL
-from msx.machine import PauseReason
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
 
-# Pause reasons come from msx.machine.PauseReason, the single source of truth;
-# aliased here for the handler call sites. The machine emits BREAKPOINT /
-# WATCHPOINT directly through the pause hook.
+
+class PauseReason(str, enum.Enum):
+    """Why the emulator paused, as the RPC wire reports it (remote-socket-rpc
+    "Debugger control methods"). Subclasses `str` so each member serializes to
+    its wire value and compares equal to it.
+
+    PORT-NOTE: a closed string-tagged enum at the JSON boundary.
+    Rust equivalent: `enum PauseReason` with `#[serde(rename_all =
+      "snake_case")]`.
+    C++ equivalent: `enum class PauseReason` plus a to/from-string table.
+    Kept as-is here because: it maps 1:1 to a closed enum.
+    """
+
+    USER_REQUEST = "user_request"
+    BREAKPOINT = "breakpoint"
+    WATCHPOINT = "watchpoint"
+    STEP_COMPLETE = "step_complete"
+
+
+# The wire reason for each core stop reason (msx/boundary.py STOP_*).
+_STOP_TO_REASON: dict[int, PauseReason] = {
+    STOP_BREAKPOINT: PauseReason.BREAKPOINT,
+    STOP_WATCHPOINT: PauseReason.WATCHPOINT,
+    STOP_REQUESTED: PauseReason.USER_REQUEST,
+}
+
 REASON_USER = PauseReason.USER_REQUEST
 REASON_STEP = PauseReason.STEP_COMPLETE
 
@@ -110,13 +137,12 @@ class PauseState:
     """Shared run/pause state for the RPC server and the host (frontend) loop.
 
     The frontend loop reads :attr:`paused` to decide whether to step the machine;
-    RPC handlers and the machine pause hook write it. Kept as a tiny mutable
+    RPC handlers and on_core_stop write it. Kept as a tiny mutable
     object (not a dataclass with slots) so both sides hold the same reference.
 
-    This is the adapter-side pause flag; its core-side counterpart is
-    ``Machine._pause_requested`` / ``_resume_skip_pc`` (which drive the debug
-    frame loop). :meth:`DebugServer.on_pause` is where the two meet: the machine
-    sets ``_pause_requested`` and calls the hook, which sets ``paused`` here.
+    This is the adapter-side pause flag. The core keeps no pause state of its
+    own: a break returns from ``step_frame``, and the host loop calls
+    :meth:`DebugServer.on_core_stop`, which sets ``paused`` here.
 
     PORT-NOTE: these plain fields are written by the emulator thread
       (``on_pause``, handlers via ``drain``) and by the socket thread
@@ -231,14 +257,16 @@ class DebugServer:
                 pass
         self._sock_path.unlink(missing_ok=True)
 
-    # -- pause hook ---------------------------------------------------------
+    # -- core stops ---------------------------------------------------------
+
+    def on_core_stop(self, stop_reason: int) -> None:
+        """Pause for a core stop (a nonzero ``FrameOutput.stop_reason``).
+        Runs on the emulator thread, after ``step_frame`` returned."""
+        self.on_pause(_STOP_TO_REASON[stop_reason], self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
-        """Machine pause-hook target: record the pause and push a notification.
-
-        Installed via ``machine.set_pause_hook(server.on_pause)``. Runs on the
-        emulator thread when a break event fires.
-        """
+        """Record the pause and push a notification. Runs on the emulator
+        thread (on_core_stop)."""
         self._pause_state.set_paused(reason)
         self._pause_event.set()
         self._push_paused(reason, pc)
@@ -408,14 +436,13 @@ class DebugServer:
         """Resume and block (on the socket thread) until the next pause event.
 
         PORT-NOTE: this runs on the socket thread yet calls into the core
-          (``Machine.prepare_resume`` and reading the PC). It is
+          (reading the PC). It is
           safe here only because of the GIL and because the machine is
           quiescent by the time the pause event fires (the debug loop has
           returned).
         Rust equivalent: can't take `&mut Machine` from two threads -- route
-          continue as a command handled on the emulator thread instead,
-          keeping the pause hook as the only callback out of the core (e.g.
-          via a channel/queue the emulator thread polls).
+          continue as a command handled on the emulator thread instead
+          (e.g. via a channel/queue the emulator thread polls).
         C++ equivalent: same -- route continue through a thread-safe
           command queue handled on the emulator thread, rather than calling
           into Machine directly from the socket thread.
@@ -437,7 +464,6 @@ class DebugServer:
         except (TypeError, ValueError):
             return self._err(req_id, ERR_INVALID_PARAMS, "timeout_ms must be a number")
         self._pause_event.clear()
-        self._machine.prepare_resume()
         self._pause_state.set_running()
         if self._pause_event.wait(timeout=timeout_s):
             return self._ok(req_id, {
@@ -582,7 +608,6 @@ def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 
 def _h_cpu_continue(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
-    server.machine.prepare_resume()
     server.pause_state.set_running()
     return {"running": True}
 

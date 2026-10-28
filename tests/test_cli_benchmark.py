@@ -7,10 +7,15 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from msx.boundary import FrameOutput
 from msx.machine import Machine
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
+
+
+# What the mocked step_frame returns: a completed frame with no stop.
+_FRAME_DONE = FrameOutput(None, b"", 0)
 
 def _run_main(argv: list[str]) -> tuple[int, str, str, Mock]:
     """Run __main__.main() in MSX2 mode with patched filesystem.
@@ -46,7 +51,7 @@ class TestBenchmarkCLI:
         # start / end timestamps; the loop runs a fixed frame count, so
         # perf_counter is read exactly twice.
         perf_values = iter([0.0, 10.0])
-        with patch.object(Machine, "step_frame", return_value=None) as rf, \
+        with patch.object(Machine, "step_frame", return_value=_FRAME_DONE) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "5"])
         assert code == 0
@@ -62,7 +67,7 @@ class TestBenchmarkCLI:
 
     def test_bare_flag_defaults_to_ten_thousand_frames(self) -> None:
         perf_values = iter([0.0, 10.0])
-        with patch.object(Machine, "step_frame", return_value=None) as rf, \
+        with patch.object(Machine, "step_frame", return_value=_FRAME_DONE) as rf, \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark"])
         assert code == 0
@@ -77,8 +82,9 @@ class TestBenchmarkResume:
         def fake_load_state(machine: Machine, path: Path | None = None) -> None:
             calls.append(("load_state", path))
 
-        def fake_step_frame(*_args: object, **_kwargs: object) -> None:
+        def fake_step_frame(*_args: object, **_kwargs: object) -> FrameOutput:
             calls.append(("step_frame", None))
+            return _FRAME_DONE
 
         perf_values = iter([0.0, 1.0, 10.0, 10.0])
         with patch(
@@ -96,7 +102,7 @@ class TestBenchmarkResume:
     def test_resume_with_explicit_path_loads_that_state(self) -> None:
         perf_values = iter([0.0, 10.0, 10.0])
         with patch("host.state_files.load_state") as load_state_mock, \
-             patch.object(Machine, "step_frame", return_value=None), \
+             patch.object(Machine, "step_frame", return_value=_FRAME_DONE), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(
                 ["--benchmark", "10", "--resume", "path/to/scene.state"])
@@ -107,7 +113,7 @@ class TestBenchmarkResume:
 
 class TestBenchmarkCountFrameMutualExclusion:
     def test_both_flags_exits_nonzero(self) -> None:
-        with patch.object(Machine, "step_frame", return_value=None) as rf:
+        with patch.object(Machine, "step_frame", return_value=_FRAME_DONE) as rf:
             code, out, err, sdl_run = _run_main(["--benchmark", "5", "--count-frame", "10"])
         assert code != 0
         assert "mutually exclusive" in err.lower()
@@ -118,7 +124,7 @@ class TestBenchmarkCountFrameMutualExclusion:
 class TestBenchmarkNoSDLWindow:
     def test_benchmark_skips_sdl_frontend(self) -> None:
         perf_values = iter([0.0, 10.0, 10.0])
-        with patch.object(Machine, "step_frame", return_value=None), \
+        with patch.object(Machine, "step_frame", return_value=_FRAME_DONE), \
              patch("time.perf_counter", side_effect=lambda: next(perf_values)):
             code, out, err, sdl_run = _run_main(["--benchmark", "10"])
         assert code == 0
