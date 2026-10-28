@@ -7,6 +7,7 @@ openspec/specs/vdp-interrupts/spec.md "VBlank flag" / "IRQ line —
 level-based VBlank IRQ (TMS9918A)").
 """
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -16,6 +17,7 @@ from msx.cpu.z80 import Z80
 from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
 from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
+from msx.vdp.renderer import render_frame as vdp_render_frame
 from msx.vdp.vdp import VDP
 from tests.factories import make_machine
 
@@ -385,6 +387,32 @@ def test_break_during_display_does_not_raise_vblank() -> None:
     assert machine.cpu.registers.PC == 0x1000
     assert not (machine.vdp.status & 0x80)
     assert machine.vdp.irq is False
+
+
+def test_the_continued_frame_raises_vblank() -> None:
+    # vdp-interrupts "No VBlank for a frame cut short (TMS9918A)": with no
+    # pause hook the stopped frame continues on the next call, which raises
+    # F at the start of vertical blanking and renders the frame once.
+    machine = make_machine(b"\x00" * 0x8000)
+    machine.vdp.regs[1] = 0x60             # BL + IE0
+    machine.vdp.status = 0x00
+    machine.set_breakpoints([0x1000])
+    assert machine.run_frame() == bytearray()
+    assert not (machine.vdp.status & 0x80)
+    machine.set_breakpoints([])
+    renders = 0
+    orig_render = vdp_render_frame
+
+    def counting_render(*args, **kwargs):
+        nonlocal renders
+        renders += 1
+        return orig_render(*args, **kwargs)
+
+    with patch("msx.machine.render_frame", counting_render):
+        buf = machine.run_frame()
+    assert machine.vdp.status & 0x80
+    assert renders == 1
+    assert len(buf) > 0
 
 
 def test_complete_frame_still_raises_vblank() -> None:
