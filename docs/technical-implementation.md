@@ -115,15 +115,16 @@ The CPU core passes Frank D. Cringle's zexdoc and zexall instruction
 exercisers in full (all 67 tests of each). `tools/run_z80_exercisers.py`
 runs them on the bare `Z80` core, with no MSX machine around it:
 
-- A `.com` file runs as a CP/M program: it loads at 0x0100 into flat 64 KB
-  RAM, BDOS functions 2 and 9 print to the console, and a jump to 0x0000
+- A `.com` file runs as a CP/M program. It loads at 0x0100 into flat 64 KB
+  RAM, and BDOS functions 2 and 9 print to the console. A jump to 0x0000
   ends the run. A line with `ERROR` counts as a failure.
 - A `.tap` file runs Patrik Rak's
-  [z80test](https://github.com/raxoft/z80test) with the few ZX Spectrum ROM
-  services it uses stubbed. `tests failed` in the output counts as a failure.
+  [z80test](https://github.com/raxoft/z80test). The tool replaces the few
+  ZX Spectrum ROM services that the test uses with stubs. `tests failed` in
+  the output counts as a failure.
 
-The test programs are not in this repository (zexdoc and zexall are GPL);
-pass their paths:
+The test programs are not in this repository, because zexdoc and zexall
+are GPL. Give their paths on the command line:
 
 ```bash
 venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
@@ -133,8 +134,97 @@ venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
 The exit status is 1 if any program reports a failure. Expected result:
 zexdoc, zexall and every z80test variant pass in full. z80test checks a
 repeating iteration only for `INIR` and `INDR` (`INIR->NOP'`,
-`INDR->NOP'`); unit tests check the same rule for `OTIR`/`OTDR`. On PyPy each of zexdoc and zexall takes about 1.5 minutes on an
-Apple M5 Pro; CPython takes much longer.
+`INDR->NOP'`). Unit tests check the same rule for `OTIR`/`OTDR`. On PyPy,
+zexdoc and zexall take about 1.5 minutes each on an Apple M5 Pro. CPython
+takes much longer.
+
+### Single-instruction tests (SingleStepTests)
+
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) (MIT) is a set
+of 1604 JSON files, one for each opcode, with every prefix included
+(`00.json`, `cb 00.json`, `dd cb __ 06.json`, `ed b0.json`, ...). Each file
+holds 1000 cases. A case gives the CPU state and the RAM before one
+instruction (`initial`) and after it (`final`). It also gives the I/O
+transactions (`ports`) and the bus state of each cycle (`cycles`). The
+authors made the cases with a translated copy of the Ares Z80 core and fixed
+some errors later. The cases do not come from real hardware.
+
+`tools/run_singlestep_tests.py` runs the cases on the bare `Z80` core. The
+test files (1.3 GB) are not in this repository. Give their paths on the
+command line:
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
+    path/to/SingleStepTests/z80/v1/*.json
+```
+
+- `--limit N` runs only the first N cases of each file. On PyPy, all cases
+  take about 3 minutes on an Apple M5 Pro. On CPython, use `--limit`.
+- `--divergences PATH` uses another known-divergence list (see below).
+- The environment variable `PY_MSX_ROOT` selects the checkout whose core the
+  tool tests. The default is the repository that holds the tool.
+
+For each case, the tool builds a `Z80` with flat 64 KB RAM and no M1 wait
+state. RAM bytes that the case does not list are 0. The tool loads
+`initial`, runs one `step()`, and compares the result with `final`:
+
+| JSON field | Core state |
+| --- | --- |
+| `a f b c d e h l i r` | `A`, `F`, the bytes of `BC`/`DE`/`HL`, `I`, `R` |
+| `pc sp ix iy wz` | `PC`, `SP`, `IX`, `IY`, `WZ` (MEMPTR) |
+| `af_ bc_ de_ hl_` | the shadow registers |
+| `iff1 iff2 im` | `iff1`, `iff2`, `im` |
+| `ei` | `ei_pending` (EI just ran: no interrupt before the next instruction) |
+| `q` | `q_next` (the flag latch that the next instruction sees. `step()` moves it into `q` first.) |
+| `ram` | the listed RAM bytes |
+
+The tool also compares the port transactions with `ports`, in order:
+address, value, and read or write. It compares the T-states that `step()`
+returns with the number of `cycles` entries. A port read returns the value
+that `ports` gives for that address, else 0xFF. A failure names the case
+and the fields that differ.
+
+The tool does not compare the bus state of each cycle. It also does not
+compare `p`, which tells whether the previous instruction was
+`LD A,I`/`LD A,R`. The core does not model the interrupt quirk that uses
+this state.
+
+`tools/singlestep_known_divergences.json` lists the cases where the core
+gives another result on purpose. Each entry has these keys:
+
+- `id`: the name of the entry
+- `files`: the opcode files
+- `fields`: the fields that differ
+- `core` and `tests`: the behavior of the core and of the tests
+- `reference`: the sources
+
+A failing case of a listed file counts as a known divergence when the
+entry's `fields` include all of its differing fields. The tool reports an
+entry as stale when it matches no case among the files run. A fix in the
+core thus also needs a change to the list. The exit status is 0 when there
+is no other failure and no stale entry. It is 1 otherwise, and 2 for a
+command-line error.
+
+Result: the core matches all 1,604,000 cases except two groups. Both groups
+are known divergences:
+
+- `ldxr-cpxr-repeat-memptr`: a repeating `LDIR`/`LDDR`/`CPIR`/`CPDR`
+  iteration. The core sets MEMPTR to the instruction address + 2, as
+  openMSX does. The tests use + 1. This affects 3997 cases. Three `CPIR`
+  cases end at once and match.
+- `block-out-port-high-byte`: `OUTI`/`OUTD`/`OTIR`/`OTDR`. The core puts B
+  before its decrement on the high byte of the port address, as openMSX
+  does. The tests use B after the decrement. This affects 4000 cases. MSX
+  decodes only the low byte.
+
+The tests come from an emulator core, so they do not decide either case.
+Both questions stay open.
+
+A port of the core to another language can use the same JSON files and the
+same divergence list. They check the port one instruction at a time, with
+no MSX machine and no stubbed operating system. A cycle-accurate port can
+also check its bus activity against `cycles`. This tool does not use
+`cycles`.
 
 ### Known limitations
 

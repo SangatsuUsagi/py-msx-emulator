@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "suite": "SingleStepTests/z80 v1",
+  "divergences": [
+    {
+      "id": "ldxr-cpxr-repeat-memptr",
+      "files": ["ed b0", "ed b1", "ed b8", "ed b9"],
+      "fields": ["wz"],
+      "core": "MEMPTR = the ED prefix address + 2 on a repeating LDIR/LDDR/CPIR/CPDR iteration (openMSX)",
+      "tests": "MEMPTR = the ED prefix address + 1 (as references/z80 and redcode/Z80)",
+      "reference": "allium/cpu_z80_ed.allium open question 'MEMPTR of a taken block repeat'; openspec cpu-z80 'MEMPTR of the block instructions'"
+    },
+    {
+      "id": "block-out-port-high-byte",
+      "files": ["ed a3", "ed ab", "ed b3", "ed bb"],
+      "fields": ["ports"],
+      "core": "OUTI/OUTD/OTIR/OTDR put B before its decrement on A8-A15 (openMSX)",
+      "tests": "B after the decrement (as references/z80); MSX decodes only A0-A7",
+      "reference": "openspec change add-z80-singlestep-tests design; not decided"
+    }
+  ]
+}

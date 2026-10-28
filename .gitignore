@@ -19,6 +19,7 @@ references/x88_1_5_3_src/
 references/z80/
 references/z80exer/
 references/z80test-1.2a/
+references/SingleStepTests_z80/
 roms/**/*.lzh
 roms/**/*.rom
 roms/**/*.zip

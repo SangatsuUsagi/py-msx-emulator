@@ -9,6 +9,7 @@
 | [`dskblank.py`](#dskblankpy) | 未フォーマットの空 `.dsk` イメージを作成 |
 | [`dskdd.py`](#dskddpy) | `.dsk` イメージと物理USBフロッピードライブ間で生セクタをコピー(Linux専用) |
 | [`run_z80_exercisers.py`](#run_z80_exerciserspy) | Z80 の命令テスト(zexdoc、zexall、z80test)を CPU コア単体で実行 |
+| [`run_singlestep_tests.py`](#run_singlestep_testspy) | SingleStepTests/z80 の 1 命令ごとのテストを CPU コア単体で実行 |
 | [リモート制御（Socket RPC & MCP）](#リモート制御socket-rpc--mcp) | `rpc_client.py` と `mcp_server.py` が使うソケットRPC + MCP制御層の概要 |
 | [`rpc_client.py`](#rpc_clientpy) | 手動テスト用、エミュレータのソケットRPCサーバーへの薄いCLIクライアント |
 | [`mcp_server.py`](#mcp_serverpy) | ソケットRPC APIをラップするMCPサーバー。Claude Codeから起動中のエミュレータを操作できる |
@@ -125,6 +126,30 @@ venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
 PyPy で実行してください。zexdoc と zexall はそれぞれ PyPy で約 1.5 分、CPython では
 さらに長くかかります。形式ごとの動かし方と期待される結果は
 [命令テスト](../docs/technical-implementation_ja.md#命令テスト)を参照してください。
+
+## `run_singlestep_tests.py`
+
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) のテストを、`Z80`
+コア単体で動かします。1 つのファイルが 1 つのオペコードの 1000 件のテストで、各件に
+1 命令を実行する前と後の CPU の状態が入っています。このツールは 1 件ごとに 1 命令を
+実行し、全レジスタ、MEMPTR(WZ)、Q、IFF1/IFF2、IM、RAM、ポートへの読み書き、
+T ステート数を比べます。サイクルごとのバスの状態は比べません。テストファイルは
+このリポジトリに含めていないので、パスを渡してください。
+
+```bash
+venvs/pypy-msx-emulator/bin/python tools/run_singlestep_tests.py \
+    path/to/SingleStepTests/z80/v1/*.json
+```
+
+全件は PyPy で実行してください(1604 ファイルで約 3 分)。CPython では `--limit N`
+で各ファイルの先頭 N 件だけを流せます。コアが意図して別の結果を出すテストは、
+根拠とともに `tools/singlestep_known_divergences.json` に載せています。これらは
+別に数え、失敗にはしません。どのテストにも当てはまらなくなった項目は、役目を
+終えた項目(stale)として報告します。それ以外の失敗があるか、役目を終えた項目が
+あると終了コードは 1、それ以外は 0 です。
+
+テストは実機ではなく、エミュレータのコアから作られています。コアを他の言語に
+移植したときも、同じファイルと同じ食い違いの一覧で確かめられます。
 
 ## リモート制御（Socket RPC & MCP）
 

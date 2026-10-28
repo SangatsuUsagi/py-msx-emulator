@@ -686,6 +686,9 @@ International キーボードにキーがない文字は `"_"` だけで、上�
 `tools/` にある単独で動くコマンドラインツール。ディスクイメージ用のツール（ftp 風の
 対話シェル、空イメージの作成、USB フロッピードライブからの生セクタのコピー）と、
 [リモート制御](#リモート制御socket-rpc--mcp)で使う RPC/MCP のクライアントツールがある。
+Z80 コアだけを外部の命令テストで確かめるツールも 2 つある。`run_z80_exercisers.py`
+（zexdoc、zexall、z80test）と `run_singlestep_tests.py`（SingleStepTests/z80）で、
+詳しくは技術資料の[命令テスト](docs/technical-implementation_ja.md#命令テスト)を参照。
 
 各スクリプトの使い方、オプション、実行例は
 [`tools/README_tools.md`](tools/README_tools.md) /
@@ -818,7 +821,7 @@ builtin_devices:
 
 ## テストの実行
 
-テストスイートは 4091 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
+テストスイートは 4098 個のテストで、主なコンポーネントをすべて扱う。個々のオペコードやハードウェアレジスタのユニットテスト、複数のコンポーネントをつないだ統合テスト、仕様のシナリオをそのまま条件にしたテストがある。
 
 ```bash
 # 開発用依存関係（pytest、ruff、mypy）をインストール
@@ -891,7 +894,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # デバイス YAML 定義（VDP、PSG、PPI、RTC...）
 │   └── machines/          # マシン YAML 定義（cbios_msx1_jp、cbios_msx2_jp...）
-├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、RPC クライアント、MCP サーバ（詳細は tools/README_tools_ja.md）
+├── tools/                 # ディスクイメージツール（dskftp、dskblank、dskdd）、RPC クライアント、MCP サーバ、Z80 のテスト実行ツール（詳細は tools/README_tools_ja.md）
 ├── docs/                  # 内部構造と移植ガイド、拡張、デバッガ、ソケット RPC / MCP
 ├── assets/                # この README が参照するベンチマーク履歴グラフ
 ├── roms/
@@ -900,7 +903,7 @@ py-msx-emulator/
 ├── allium/                # Allium の振る舞い仕様。仕様と実装のずれを確かめる（未公開）
 ├── openspec/
 │   └── specs/             # コンポーネントの仕様（未公開）
-├── tests/                 # テストスイート（4091 テスト）
+├── tests/                 # テストスイート（4098 テスト）
 ├── py_emulator.example.yaml # 設定ファイルの記述例（注釈付き）
 ├── QUICK_START_ja.md      # 必要なもの、インストール、BIOS の準備
 ├── CHANGELOG_ja.md        # 更新履歴

@@ -990,7 +990,12 @@ in `py_emulator.yaml` (see [Configuration file](#configuration-file-py_emulatory
 Standalone command-line utilities in `tools/`. They include disk image tools:
 an interactive ftp-style shell, a blank-image creator, and a raw-sector copier
 for a physical USB floppy drive. They also include the RPC/MCP client tools for
-[Remote control](#remote-control-socket-rpc--mcp) below.
+[Remote control](#remote-control-socket-rpc--mcp) below. Two runners check the
+Z80 core alone against external instruction tests: `run_z80_exercisers.py`
+(zexdoc, zexall, z80test) and `run_singlestep_tests.py` (SingleStepTests/z80).
+See
+[Instruction exercisers](docs/technical-implementation.md#instruction-exercisers)
+in the technical docs.
 
 For full usage, options, and examples for every script, see
 [`tools/README_tools.md`](tools/README_tools.md) /
@@ -1164,7 +1169,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 4091 tests and covers all major components. It includes
+The test suite has 4098 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1240,7 +1245,7 @@ py-msx-emulator/
 ├── config/
 │   ├── devices/           # Device YAML definitions (VDP, PSG, PPI, RTC, ...)
 │   └── machines/          # Machine YAML definitions (cbios_msx1_jp, cbios_msx2_jp, ...)
-├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server (see tools/README_tools.md)
+├── tools/                 # Disk image tools (dskftp, dskblank, dskdd), RPC client, MCP server, Z80 test runners (see tools/README_tools.md)
 ├── docs/                  # Internals and porting guide, extensions, debugger, socket RPC / MCP
 ├── assets/                # Benchmark history charts used by this README
 ├── roms/
@@ -1249,7 +1254,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4091 tests)
+├── tests/                 # Test suite (4098 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history
