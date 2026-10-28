@@ -6,6 +6,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from msx.boundary import (
+    STOP_BREAKPOINT,
+    STOP_NONE,
+    STOP_WATCHPOINT,
+    WATCH_WRITE,
+    StopInfo,
+)
+from msx.input import InputFrame
 from tests.factories import make_machine
 
 _NOP_ROM = bytes(32768)
@@ -140,3 +148,55 @@ class TestBreakpointTrigger:
         # _breakpoints is empty — fast path used, enter should not be called
         m.run_frame()
         dbg.enter.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Last stop (machine-core "The last stop is reported as a flat record")
+# ---------------------------------------------------------------------------
+
+def _store_rom() -> bytes:
+    """JP 4000h; at 4000h select slot 3 (RAM) for pages 2-3, store 5Ah at
+    C000h from the instruction at 4006h, then loop at 4009h."""
+    rom = bytearray(32768)
+    rom[0x0000:0x0003] = bytes([0xC3, 0x00, 0x40])  # JP 4000h
+    rom[0x4000:0x400B] = bytes([
+        0x3E, 0xF0,        # 4000: LD A,F0h
+        0xD3, 0xA8,        # 4002: OUT (A8h),A
+        0x3E, 0x5A,        # 4004: LD A,5Ah
+        0x32, 0x00, 0xC0,  # 4006: LD (C000h),A
+        0x18, 0xFE,        # 4009: JR 4009h
+    ])
+    return bytes(rom)
+
+
+class TestLastStop:
+    def test_watchpoint_hit_names_the_access(self):
+        m = make_machine(rom=_store_rom())
+        m.set_watchpoints([(0xC000, "w")])
+        m.step_frame(InputFrame(), render_video=False)
+        assert m.last_stop() == StopInfo(
+            STOP_WATCHPOINT, 0x4006, 0xC000, 0x5A, WATCH_WRITE
+        )
+
+    def test_complete_frame_clears_the_stop(self):
+        m = make_machine(rom=_store_rom())
+        m.set_breakpoints([0x4000])
+        m.step_frame(InputFrame(), render_video=False)
+        assert m.last_stop() == StopInfo(STOP_BREAKPOINT, 0x4000)
+        m.set_breakpoints([])
+        m.step_frame(InputFrame(), render_video=False)
+        assert m.last_stop().reason == STOP_NONE
+
+    def test_single_step_records_a_watchpoint_hit(self):
+        m = make_machine(rom=_store_rom())
+        m.set_watchpoints([(0xC000, "w")])
+        while m.cpu_registers().PC != 0x4006:
+            m.step()
+        m.step()
+        assert m.cpu_registers().PC == 0x4009
+        stop = m.last_stop()
+        assert (stop.reason, stop.watch_addr, stop.watch_access) == (
+            STOP_WATCHPOINT, 0xC000, WATCH_WRITE,
+        )
+        m.step()
+        assert m.last_stop().reason == STOP_NONE
