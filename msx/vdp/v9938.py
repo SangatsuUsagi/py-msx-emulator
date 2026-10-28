@@ -731,6 +731,32 @@ class V9938:
         """S#2 as stored; a status read adds HR, VR and the reserved bits."""
         return self._status2
 
+    def peek_status_registers(self) -> bytes:
+        """S#0-S#9 for inspection (core API VDP query), changing nothing.
+
+        S#0 and S#2 are the stored values: S#0 without the idle 0x1F
+        sprite-number fill and S#2 without the live HR/VR and reserved bits
+        that a port read adds. S#1 and S#3-S#9 are what a port read returns,
+        without its side effects (FH, collision and BD clearing, LMCM
+        handshake)."""
+        return bytes((
+            self.status & 0xFF,
+            self._status1 & 0xFF,
+            self._status2 & 0xFF,
+            self.collision_x & 0xFF,
+            ((self.collision_x >> 8) & 0x01) | 0xFE,
+            self.collision_y & 0xFF,
+            ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC,
+            self.cmd_regs[12] & 0xFF,
+            self._status8 & 0xFF,
+            (self._status9 | 0xFE) & 0xFF,
+        ))
+
+    def command_progress(self) -> tuple[int, int, int, int, int]:
+        """The running command's (x, y, nx, ny, remaining T-states), for
+        inspection (core API VDP query)."""
+        return (self._cmd_x, self._cmd_y, self._cmd_nx, self._cmd_ny, self._cmd_remaining)
+
     def commit_render_status(
         self, status: int, collision_x: int, collision_y: int, status2: int
     ) -> None:

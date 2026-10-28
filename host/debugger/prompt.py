@@ -9,9 +9,10 @@ from __future__ import annotations
 import shlex
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 from host.debugger.disasm import disassemble
+from msx.boundary import VDP_KIND_V9938, VdpInfo
 from msx.mapper import BankTracingMapper
 
 try:
@@ -20,10 +21,9 @@ except ImportError:  # stock Windows CPython has no readline module
     readline = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
+    from msx.core_api import CoreApi
     from msx.machine import Machine
     from msx.memory import Memory
-    from msx.vdp.v9938 import V9938
-    from msx.vdp.vdp import VdpDevice
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -99,8 +99,19 @@ def _complete_command(text: str, state: int) -> str | None:
 class Debugger:
     """Interactive debug prompt attached to a Machine instance."""
 
-    def __init__(self, machine: Machine) -> None:
+    def __init__(self, machine: CoreApi) -> None:
         self._machine = machine
+
+    def _read(self, addr: int) -> int:
+        """One byte of CPU address space, through the core API (no watchpoint)."""
+        return self._machine.read_memory(addr, 1)[0]
+
+    def _diagnostics_machine(self) -> Machine:
+        """The machine as the Python core, for the diagnostics commands only
+        (VDP and mapper trace, sprite toggle, slot views): they reach its
+        components, which a native core does not offer until a diagnostics
+        contract exists (tests/test_core_frontend_boundary.py allowlist)."""
+        return cast("Machine", self._machine)
 
     # ------------------------------------------------------------------
     # Public API
@@ -109,9 +120,8 @@ class Debugger:
     def enter(self) -> None:
         """Suspend emulation and run the debug REPL until 'cont' or 'quit'."""
         print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
-        pc = self._machine.cpu.registers.PC
-        read = self._machine.cpu.read_byte
-        line, _ = _format_disasm(read, pc)
+        pc = self._machine.cpu_registers().PC
+        line, _ = _format_disasm(self._read, pc)
         print(f"  PC={pc:04X}h  {line}")
 
         _setup_readline()
@@ -135,7 +145,7 @@ class Debugger:
         while True:
             try:
                 cyc = self._machine.cycle_count
-                frm = self._machine.vdp.frame_count
+                frm = self._machine.frame_number()
                 line = input(f"(msx-dbg cyc={cyc} frm={frm}) ").strip()
             except EOFError:
                 print()
@@ -191,8 +201,8 @@ class Debugger:
     # ------------------------------------------------------------------
 
     def _cmd_reg_cpu(self) -> None:
-        r = self._machine.cpu.registers
-        f = r.F
+        r = self._machine.cpu_registers()
+        f = r.AF & 0xFF
         print(
             f"AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}"
             f"  IX={r.IX:04X}  IY={r.IY:04X}  SP={r.SP:04X}  PC={r.PC:04X}"
@@ -203,17 +213,16 @@ class Debugger:
         )
 
     def _cmd_reg_vdp(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if isinstance(vdp, V9938):
-            regs = vdp.regs
+        info = self._machine.vdp_info()
+        if info.kind == VDP_KIND_V9938:
+            regs = info.regs
             for row_start in range(0, 28, 8):
                 parts = [
                     f"R#{i}={regs[i]:02X}"
                     for i in range(row_start, min(row_start + 8, 28))
                 ]
                 print("  " + "  ".join(parts))
-            cmd = vdp.cmd_regs
+            cmd = info.cmd_regs
             for row_start in range(0, 15, 8):
                 parts = [
                     f"R#{32 + i}={cmd[i]:02X}"
@@ -221,19 +230,18 @@ class Debugger:
                 ]
                 print("  " + "  ".join(parts))
         else:
-            parts = [f"R#{i}={vdp.regs[i]:02X}" for i in range(8)]
+            parts = [f"R#{i}={info.regs[i]:02X}" for i in range(8)]
             print("  " + "  ".join(parts))
 
     def _cmd_reg_palette(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if not isinstance(vdp, V9938):
+        info = self._machine.vdp_info()
+        if info.kind != VDP_KIND_V9938:
             print("rp: TMS9918A has no programmable palette (MSX2 / V9938 only)")
             return
         for row_start in range(0, 16, 8):
             parts = []
             for i in range(row_start, row_start + 8):
-                p = vdp.palette[i]
+                p = info.palette[i]
                 r = (p >> 6) & 0x7
                 g = (p >> 3) & 0x7
                 b = p & 0x7
@@ -241,12 +249,11 @@ class Debugger:
             print("  " + "  ".join(parts))
 
     def _cmd_vdp_status(self) -> None:
-        from msx.vdp.v9938 import V9938
-        vdp = self._machine.vdp
-        if isinstance(vdp, V9938):
-            _print_vdp_fancy(vdp)
+        info = self._machine.vdp_info()
+        if info.kind == VDP_KIND_V9938:
+            _print_vdp_fancy(info)
         else:
-            _print_vdp_tms(vdp)
+            _print_vdp_tms(info)
 
     def _cmd_dump(self, args: list[str]) -> None:
         if not args:
@@ -259,9 +266,8 @@ class Debugger:
             print("dump: invalid address or size (hex expected)")
             return
 
-        read = self._machine.cpu.read_byte
         for row in range(0, size, 16):
-            row_bytes = [read((addr + row + col) & 0xFFFF) for col in range(16)]
+            row_bytes = self._machine.read_memory((addr + row) & 0xFFFF, 16)
             hex_part = " ".join(f"{b:02X}" for b in row_bytes)
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
             print(f"  {(addr + row) & 0xFFFF:04X}: {hex_part}  {ascii_part}")
@@ -270,8 +276,7 @@ class Debugger:
         if not args:
             print("Usage: dv VADDR [SIZE]")
             return
-        vram = self._machine.vdp.vram
-        vram_mask = len(vram) - 1
+        vram_mask = self._machine.vram_size() - 1
         try:
             addr = int(args[0], 16) & vram_mask
             size = int(args[1], 16) if len(args) > 1 else 128
@@ -281,7 +286,7 @@ class Debugger:
 
         addr_fmt = "05X" if vram_mask > 0xFFFF else "04X"
         for row in range(0, size, 16):
-            row_bytes = [vram[(addr + row + col) & vram_mask] for col in range(16)]
+            row_bytes = self._machine.read_vram((addr + row) & vram_mask, 16)
             hex_part = " ".join(f"{b:02X}" for b in row_bytes)
             ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row_bytes)
             print(f"  {(addr + row) & vram_mask:{addr_fmt}}: {hex_part}  {ascii_part}")
@@ -290,10 +295,10 @@ class Debugger:
         if not args:
             print("Usage: dvf FILE  (write full VRAM as raw binary)")
             return
-        vram = self._machine.vdp.vram
+        vram = self._machine.read_vram(0, self._machine.vram_size())
         try:
             with open(args[0], "wb") as f:
-                f.write(bytes(vram))
+                f.write(vram)
         except OSError as exc:
             print(f"dvf: {exc}")
             return
@@ -321,7 +326,7 @@ class Debugger:
 
     def _break_list(self) -> None:
         """List the active breakpoints (bl)."""
-        current = sorted(self._machine._breakpoints)
+        current = self._machine.breakpoints()
         if not current:
             print("  (no breakpoints)")
             return
@@ -336,7 +341,7 @@ class Debugger:
         addr = self._parse_hex_addr(args[0], "ba")
         if addr is None:
             return
-        current = list(self._machine._breakpoints)
+        current = list(self._machine.breakpoints())
         if len(current) >= MAX_BREAKPOINTS:
             print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
             return
@@ -353,7 +358,7 @@ class Debugger:
         addr = self._parse_hex_addr(args[0], "br")
         if addr is None:
             return
-        current = list(self._machine._breakpoints)
+        current = list(self._machine.breakpoints())
         if addr not in current:
             print(f"br: {addr:04X}h not in breakpoint list")
             return
@@ -385,7 +390,7 @@ class Debugger:
         except ValueError:
             print("gf: invalid frame number (decimal expected)")
             return False
-        current = self._machine.vdp.frame_count
+        current = self._machine.frame_number()
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
             return False
@@ -400,25 +405,25 @@ class Debugger:
         inspect at the pre-reset PC.
         """
         self._machine.reset()
-        pc = self._machine.cpu.registers.PC
+        pc = self._machine.cpu_registers().PC
         print(f"  Machine reset. Resuming at PC={pc:04X}h ...")
 
     def _cmd_step_out(self) -> None:
         """Run until the current routine returns (SP rises above its current value)."""
-        sp = self._machine.cpu.registers.SP
+        sp = self._machine.cpu_registers().SP
         self._machine.set_step_out(sp)
         print(f"  Stepping out (SP={sp:04X}h) ...")
 
     def _cmd_break_halt(self) -> None:
         m = self._machine
-        enabled = not m._break_halt_di
+        enabled = not m.break_halt_di()
         m.set_break_halt_di(enabled)
         print(f"  Break on HALT+DI {'enabled' if enabled else 'disabled'}")
 
     def _cmd_break_sp(self, args: list[str]) -> None:
         m = self._machine
         if not args:
-            low, high = m.memory.main_ram_range()
+            low, high = m.main_ram_range()
             m.set_sp_range((low, high))
             print(f"  Break on SP outside {low:04X}h-{high:04X}h (auto: machine RAM)")
             return
@@ -454,13 +459,7 @@ class Debugger:
 
     def _watch_entries(self) -> list[tuple[int, str]]:
         """Current watchpoints as (addr, mode) pairs, sorted by address."""
-        r_set = self._machine._watch_read
-        w_set = self._machine._watch_write
-        result = []
-        for addr in sorted(r_set | w_set):
-            mode = ("r" if addr in r_set else "") + ("w" if addr in w_set else "")
-            result.append((addr, mode))
-        return result
+        return list(self._machine.watchpoints())
 
     def _parse_watch_mode(self, mode: str) -> str | None:
         """Validate an r/w/rw watch mode, or print an error and return None."""
@@ -525,7 +524,7 @@ class Debugger:
         print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/{MAX_WATCHPOINTS})")
 
     def _cmd_disasm(self, args: list[str]) -> None:
-        r = self._machine.cpu.registers
+        r = self._machine.cpu_registers()
         if args:
             addr = self._parse_hex_addr(args[0], "disasm")
             if addr is None:
@@ -533,9 +532,8 @@ class Debugger:
         else:
             addr = r.PC
 
-        read = self._machine.cpu.read_byte
         for _ in range(_DISASM_WINDOW):
-            line, size = _format_disasm(read, addr)
+            line, size = _format_disasm(self._read, addr)
             print(f"  {addr:04X}: {line}")
             addr = (addr + size) & 0xFFFF
 
@@ -547,17 +545,16 @@ class Debugger:
             return
         for _ in range(count):
             self._machine.step()
-        r = self._machine.cpu.registers
+        r = self._machine.cpu_registers()
         print(f"  PC={r.PC:04X}  AF={r.AF:04X}  BC={r.BC:04X}  DE={r.DE:04X}  HL={r.HL:04X}")
-        read = self._machine.cpu.read_byte
-        line, _ = _format_disasm(read, r.PC)
+        line, _ = _format_disasm(self._read, r.PC)
         print(f"  => {r.PC:04X}: {line}")
 
     def _cmd_trace_enable(self) -> None:
         from msx.vdp.tracer import Tracer
-        vdp = self._machine.vdp
+        m = self._diagnostics_machine()
+        vdp = m.vdp
         if vdp._get_pc is None:
-            m = self._machine
             vdp._get_pc    = lambda: m.cpu.instruction_pc
             vdp._get_cycle = lambda: m.cycle_count
         if vdp.tracer is None:
@@ -567,7 +564,7 @@ class Debugger:
         print("VDP trace enabled (stdout)")
 
     def _cmd_trace_disable(self) -> None:
-        vdp = self._machine.vdp
+        vdp = self._diagnostics_machine().vdp
         if vdp.tracer is None or not vdp.tracer.enabled:
             print("VDP trace already disabled")
             return
@@ -576,7 +573,7 @@ class Debugger:
 
     def _mapper_targets(self) -> list[BankTracingMapper]:
         """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
-        mem = self._machine.memory
+        mem = self._diagnostics_machine().memory
         result: list[BankTracingMapper] = []
         for mp in (mem._mapper, mem._mapper2):
             if isinstance(mp, BankTracingMapper):
@@ -585,7 +582,7 @@ class Debugger:
 
     def _cmd_mapper_trace_enable(self) -> None:
         from msx.mapper_tracer import attach_to_machine
-        if attach_to_machine(self._machine, output=sys.stdout) is None:
+        if attach_to_machine(self._diagnostics_machine(), output=sys.stdout) is None:
             print("ce: no bank-switching ROM mapper present")
             return
         print("Mapper bank-switch trace enabled (stdout)")
@@ -606,8 +603,8 @@ class Debugger:
         paused instant, correlated with the v / dv / db dumps taken at the same
         moment, without advancing vdp._frame_count.
         """
-        from msx.screenshot import render_current_rgb24
-        return render_current_rgb24(self._machine.vdp)
+        frame = self._machine.render_preview()
+        return frame.pixels, frame.width, frame.height
 
     def _cmd_screenshot(self) -> None:
         from host.screenshot import save_screenshot
@@ -657,13 +654,13 @@ class Debugger:
         print(f"  Loaded state from {path}")
 
     def _cmd_disable_sprites(self) -> None:
-        vdp = self._machine.vdp
+        vdp = self._diagnostics_machine().vdp
         vdp.debug_disable_sprites = not vdp.debug_disable_sprites
         state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
         print(f"Sprite rendering: {state}")
 
     def _cmd_slot_active(self) -> None:
-        mem = self._machine.memory
+        mem = self._diagnostics_machine().memory
         print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
         _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
         for page in range(4):
@@ -685,7 +682,7 @@ class Debugger:
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
-        mem = self._machine.memory
+        mem = self._diagnostics_machine().memory
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
             if mem.sub_slot_enabled and prim == 3:
@@ -715,12 +712,12 @@ class Debugger:
         from host.media import swap_disk
 
         label = f"fdd{drive_index + 1}"
-        fdc = self._machine.fdc
-        if fdc is None:
+        drives = self._machine.drive_count()
+        if drives == 0:
             print(f"{label}: this machine has no floppy interface")
             return
-        if drive_index >= len(fdc.drives):
-            print(f"{label}: machine has only {len(fdc.drives)} drive(s)")
+        if drive_index >= drives:
+            print(f"{label}: machine has only {drives} drive(s)")
             return
         if not args:
             if self._machine.disk_mounted(drive_index):
@@ -805,9 +802,7 @@ def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
         print(f"    {prim}-{sec}  {content}{suffix}")
 
 
-def _print_vdp_fancy(vdp: object) -> None:
-    from msx.vdp.v9938 import V9938
-    assert isinstance(vdp, V9938)
+def _print_vdp_fancy(vdp: VdpInfo) -> None:
     print(f"  Screen : {_decode_screen_mode(vdp.regs[0], vdp.regs[1])}")
     _print_vdp_vram_layout(vdp)
     _print_vdp_display_control(vdp)
@@ -815,7 +810,7 @@ def _print_vdp_fancy(vdp: object) -> None:
     _print_vdp_status(vdp)
 
 
-def _print_vdp_vram_layout(vdp: V9938) -> None:
+def _print_vdp_vram_layout(vdp: VdpInfo) -> None:
     r = vdp.regs          # R#0-R#27
     m1 = (r[1] >> 4) & 1  # R#1 bit4
     m3 = (r[0] >> 1) & 1  # R#0 bit1
@@ -840,7 +835,7 @@ def _print_vdp_vram_layout(vdp: V9938) -> None:
     )
 
 
-def _print_vdp_display_control(vdp: V9938) -> None:
+def _print_vdp_display_control(vdp: VdpInfo) -> None:
     r = vdp.regs
     disp    = "ON " if r[1] & 0x40 else "OFF"
     sprites = "OFF" if r[8] & 0x02 else "ON "
@@ -859,9 +854,9 @@ def _print_vdp_display_control(vdp: V9938) -> None:
     )
 
 
-def _print_vdp_command_state(vdp: V9938) -> None:
+def _print_vdp_command_state(vdp: VdpInfo) -> None:
     c = vdp.cmd_regs      # R#32-R#46 (index 0-14)
-    s2 = vdp._status2
+    s2 = vdp.status[2]
     sx  = c[0]  | (c[1]  & 0x01) << 8
     sy  = c[2]  | (c[3]  & 0x03) << 8
     dx  = c[4]  | (c[5]  & 0x01) << 8
@@ -875,12 +870,12 @@ def _print_vdp_command_state(vdp: V9938) -> None:
     dix  = "←" if arg & 0x04 else "→"
     diy  = "↑" if arg & 0x08 else "↓"
     if s2 & 0x01:
-        rem = vdp._cmd_remaining
+        rem = vdp.cmd_remaining
         if rem > 0:
             busy = f"BUSY({rem}cyc)"
         else:
-            total = (vdp._cmd_nx // 2) * vdp._cmd_ny
-            done  = vdp._cmd_y * (vdp._cmd_nx // 2) + vdp._cmd_x // 2
+            total = (vdp.cmd_nx // 2) * vdp.cmd_ny
+            done  = vdp.cmd_y * (vdp.cmd_nx // 2) + vdp.cmd_x // 2
             busy  = f"BUSY(CPU-feed rem={total - done}/{total})"
     else:
         busy = "IDLE"
@@ -891,9 +886,9 @@ def _print_vdp_command_state(vdp: V9938) -> None:
     )
 
 
-def _print_vdp_status(vdp: V9938) -> None:
-    s0 = vdp.status
-    s2 = vdp._status2
+def _print_vdp_status(vdp: VdpInfo) -> None:
+    s0 = vdp.status[0]
+    s2 = vdp.status[2]
     tr  = "TR" if s2 & 0x80 else "  "
     ce  = "CE" if s2 & 0x01 else "  "
     vf  = "F"  if s0 & 0x80 else " "
@@ -902,9 +897,9 @@ def _print_vdp_status(vdp: V9938) -> None:
     print(f"  Status : S#0={s0:02X} ({vf} {sp} {col})  S#2={s2:02X} ({tr} {ce})")
 
 
-def _print_vdp_tms(vdp: "VdpDevice") -> None:
+def _print_vdp_tms(vdp: VdpInfo) -> None:
     r = vdp.regs
-    s0 = vdp.status
+    s0 = vdp.status[0]
 
     print(f"  Screen : {_decode_screen_mode(r[0], r[1])}")
 

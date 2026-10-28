@@ -59,12 +59,12 @@ from typing import TYPE_CHECKING, Any
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
 from host.screenshot import encode_rgb24_png, scale_rgb24
+from msx.boundary import VDP_KIND_V9938
 from msx.input import KEY_NAME_TO_CELL
 from msx.machine import PauseReason
-from msx.screenshot import render_current_rgb24
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
 
 # Pause reasons come from msx.machine.PauseReason, the single source of truth;
 # aliased here for the handler call sites. The machine emits BREAKPOINT /
@@ -150,7 +150,7 @@ class DebugServer:
 
     def __init__(
         self,
-        machine: "Machine",
+        machine: "CoreApi",
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
     ) -> None:
@@ -195,7 +195,7 @@ class DebugServer:
         return self._pause_state
 
     @property
-    def machine(self) -> "Machine":
+    def machine(self) -> "CoreApi":
         return self._machine
 
     def apply_injected_input(self) -> None:
@@ -381,15 +381,15 @@ class DebugServer:
 
     def registers_dict(self) -> dict[str, Any]:
         """Serialise the Z80 register file to the spec's hex-string shape."""
-        r = self._machine.cpu.registers
+        r = self._machine.cpu_registers()
         return {
             "AF": hex16(r.AF), "BC": hex16(r.BC), "DE": hex16(r.DE), "HL": hex16(r.HL),
             "IX": hex16(r.IX), "IY": hex16(r.IY),
             "SP": hex16(r.SP), "PC": hex16(r.PC),
             "AF'": hex16(r.AF_), "BC'": hex16(r.BC_), "DE'": hex16(r.DE_), "HL'": hex16(r.HL_),
             "I": hex8(r.I), "R": hex8(r.R),
-            "IFF1": self._machine.cpu.iff1, "IFF2": self._machine.cpu.iff2,
-            "IM": self._machine.cpu.im,
+            "IFF1": bool(r.IFF1), "IFF2": bool(r.IFF2),
+            "IM": r.IM,
         }
 
     def require_paused(self) -> None:
@@ -408,7 +408,7 @@ class DebugServer:
         """Resume and block (on the socket thread) until the next pause event.
 
         PORT-NOTE: this runs on the socket thread yet calls into the core
-          (``Machine.prepare_resume`` and reading ``cpu.registers.PC``). It is
+          (``Machine.prepare_resume`` and reading the PC). It is
           safe here only because of the GIL and because the machine is
           quiescent by the time the pause event fires (the debug loop has
           returned).
@@ -443,7 +443,7 @@ class DebugServer:
             return self._ok(req_id, {
                 "paused": True,
                 "reason": self._pause_state.reason,
-                "pc": hex16(self._machine.cpu.registers.PC),
+                "pc": hex16(self._machine.cpu_registers().PC),
                 "registers": self.registers_dict(),
             })
         return self._ok(req_id, {"paused": False, "reason": "timeout"})
@@ -470,7 +470,8 @@ class DebugServer:
         Returns:
             (rgb_bytes, width, height) for the current frame.
         """
-        return render_current_rgb24(self._machine.vdp)
+        frame = self._machine.render_preview()
+        return frame.pixels, frame.width, frame.height
 
     def alloc_breakpoint(self, address: int) -> int:
         bp_id = self._next_bp_id
@@ -548,7 +549,7 @@ def _h_debugger_status(server: DebugServer, params: dict[str, Any]) -> dict[str,
     ps = server.pause_state
     return {
         "paused": ps.paused,
-        "pc": hex16(server.machine.cpu.registers.PC),
+        "pc": hex16(server.machine.cpu_registers().PC),
         "reason": ps.reason,
     }
 
@@ -557,7 +558,7 @@ def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     server.pause_state.set_paused(REASON_USER)
     return {
         "paused": True,
-        "pc": hex16(server.machine.cpu.registers.PC),
+        "pc": hex16(server.machine.cpu_registers().PC),
         "reason": REASON_USER,
     }
 
@@ -567,12 +568,12 @@ def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
     m = server.machine
-    pc_before = m.cpu.registers.PC
-    mnemonic, _size = disassemble(m.memory.read, pc_before)
+    pc_before = m.cpu_registers().PC
+    mnemonic, _size = disassemble(_byte_reader(m), pc_before)
     t_states = m.step()
     server.pause_state.set_paused(REASON_STEP)
     return {
-        "pc": hex16(m.cpu.registers.PC),
+        "pc": hex16(m.cpu_registers().PC),
         "t_states": t_states,
         "mnemonic": mnemonic,
         "registers": server.registers_dict(),
@@ -629,8 +630,7 @@ def _h_remove_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 def _h_memory_read(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     length = _require_int(params, "length", default=16)
-    read = server.machine.memory.read
-    data = _fmt_bytes(read((addr + i) & 0xFFFF) for i in range(length))
+    data = _fmt_bytes(server.machine.read_memory(addr, max(0, length)))
     return {"address": hex16(addr), "data": data}
 
 
@@ -638,25 +638,21 @@ def _h_memory_write(server: DebugServer, params: dict[str, Any]) -> dict[str, An
     server.require_paused()
     addr = _parse_addr(params.get("address"))
     values = _parse_hex_bytes(params.get("data"))
-    write = server.machine.memory.write
-    for i, value in enumerate(values):
-        write((addr + i) & 0xFFFF, value)
+    server.machine.write_memory(addr, bytes(values))
     return {"written": len(values)}
 
 
 def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     length = _require_int(params, "length", default=32)
-    vram = server.machine.vdp.vram
-    size = len(vram)
-    data = _fmt_bytes(vram[(addr + i) % size] for i in range(length))
+    data = _fmt_bytes(server.machine.read_vram(addr, max(0, length)))
     return {"address": hex16(addr), "data": data}
 
 
 def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     count = _require_int(params, "count", default=10)
-    read = server.machine.memory.read
+    read = _byte_reader(server.machine)
     instructions: list[dict[str, Any]] = []
     cur = addr
     for _ in range(count):
@@ -670,16 +666,14 @@ def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[s
 # ── VDP ─────────────────────────────────────────────────────────────────────
 
 def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    from msx.vdp.v9938 import V9938
-
-    vdp = server.machine.vdp
-    vtype = "V9938" if isinstance(vdp, V9938) else "TMS9918A"
-    registers = {f"R{i}": hex8(v) for i, v in enumerate(vdp.regs)}
+    info = server.machine.vdp_info()
+    vtype = "V9938" if info.kind == VDP_KIND_V9938 else "TMS9918A"
+    registers = {f"R{i}": hex8(v) for i, v in enumerate(info.regs)}
     return {"type": vtype, "registers": registers}
 
 
 def _h_vdp_get_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    return {"status": hex8(server.machine.vdp.status)}
+    return {"status": hex8(server.machine.vdp_info().status[0])}
 
 
 # ── Input injection ──────────────────────────────────────────────────────────
@@ -793,8 +787,7 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     drive = _require_int(params, "drive")
     if drive not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "drive must be 1 or 2")
-    fdc = server.machine.fdc
-    if fdc is None:
+    if server.machine.drive_count() == 0:
         raise RpcError(ERR_INTERNAL, "machine has no floppy interface")
     path = params.get("path")
     drive_idx = drive - 1
@@ -813,6 +806,15 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 _JOY_BITS: dict[str, int] = {
     "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
 }
+
+
+def _byte_reader(core: "CoreApi") -> Callable[[int], int]:
+    """A one-byte memory reader over the core API, for the disassembler."""
+
+    def read(addr: int) -> int:
+        return core.read_memory(addr, 1)[0]
+
+    return read
 
 
 class _Missing:

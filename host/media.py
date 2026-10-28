@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from msx.boundary import DiskMedium, MediaId, drive_media_id
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
 
 
 def read_disk_medium(path: Path) -> DiskMedium:
@@ -25,22 +25,21 @@ def read_disk_medium(path: Path) -> DiskMedium:
 
 
 def media_paths(
-    machine: Machine, sram_paths: Mapping[MediaId, Path]
+    machine: CoreApi, sram_paths: Mapping[MediaId, Path]
 ) -> dict[MediaId, Path]:
     """The file each persisted medium is written to, by media id: the SRAM
     files `sram_paths` names (host.machine_config.sram_paths of the
     machine's config) plus each mounted disk's own file."""
     paths = dict(sram_paths)
-    if machine.fdc is not None:
-        for index in range(len(machine.fdc.drives)):
-            path = machine.disk_path(index)
-            if path is not None:
-                paths[drive_media_id(index)] = path
+    for index in range(machine.drive_count()):
+        path = machine.disk_path(index)
+        if path is not None:
+            paths[drive_media_id(index)] = path
     return paths
 
 
 def persist_dirty_media(
-    machine: Machine, sram_paths: Mapping[MediaId, Path] | None = None
+    machine: CoreApi, sram_paths: Mapping[MediaId, Path] | None = None
 ) -> None:
     """Write every dirty medium that has a file back to it. Without
     `sram_paths` only disk images are written."""
@@ -54,7 +53,7 @@ def persist_dirty_media(
         machine.mark_persisted(media_id)
 
 
-def swap_disk(machine: Machine, drive: int, path: Path | None) -> None:
+def swap_disk(machine: CoreApi, drive: int, path: Path | None) -> None:
     """Mount the .dsk at `path` (None ejects) in `drive` (0 = A), writing the
     outgoing image back to its file first when it is dirty. `path` is taken
     relative to the working directory, with `~` expanded. Raises OSError or

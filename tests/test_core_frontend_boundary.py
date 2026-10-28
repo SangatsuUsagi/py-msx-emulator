@@ -115,3 +115,93 @@ def test_no_file_io_or_host_clock_in_the_core() -> None:
             if root in _CLOCK_ROOTS:
                 offenders.append(f"{rel}: import {root}")
     assert offenders == []
+
+
+# machine-core "Host and frontend reach the core only through the core API":
+# code outside msx/ uses the machine only through msx/core_api.py's CoreApi.
+_REPO = _MSX_DIR.parent
+_HOST_SIDE_DIRS = ("host", "frontend", "tools")
+# Bare-Z80 conformance runners: they drive msx.cpu.z80.Z80, not a machine.
+_HOST_SIDE_SKIP = ("tools/run_z80_exercisers.py", "tools/run_singlestep_tests.py")
+_CORE_COMPONENTS = frozenset({
+    "cpu", "vdp", "memory", "fdc", "psg", "scc", "ppi", "rtc", "fmpac", "dac",
+    "io", "input", "audio", "kanji",
+})
+# Names a machine handle goes by on the host side.
+_MACHINE_RECEIVERS = frozenset({"machine", "_machine", "m", "core"})
+
+# "path:function" -> the debug-monitor diagnostics command it serves. These
+# reach Machine components until a diagnostics contract exists
+# (allium/core-frontend.allium, DebugControl open question).
+_DIAGNOSTICS_ALLOWLIST: dict[str, str] = {
+    "host/debugger/prompt.py:_cmd_trace_enable": "te (VDP trace on)",
+    "host/debugger/prompt.py:_cmd_trace_disable": "td (VDP trace off)",
+    "host/debugger/prompt.py:_mapper_targets": "ce / cd (mapper trace)",
+    "host/debugger/prompt.py:_cmd_disable_sprites": "ds (sprite toggle)",
+    "host/debugger/prompt.py:_cmd_slot_active": "sl (active slot view)",
+    "host/debugger/prompt.py:_cmd_slot_tree": "st (slot tree view)",
+}
+
+
+def _host_side_files() -> list[Path]:
+    files = [_REPO / "__main__.py"]
+    for name in _HOST_SIDE_DIRS:
+        files.extend(sorted((_REPO / name).rglob("*.py")))
+    return [f for f in files if f.relative_to(_REPO).as_posix() not in _HOST_SIDE_SKIP]
+
+
+def _is_machine_receiver(node: ast.expr) -> bool:
+    """A name or attribute called like a machine handle (machine, self._machine,
+    server.machine, m, core), or a call to a function named for the machine
+    (self._diagnostics_machine())."""
+    if isinstance(node, ast.Name):
+        return node.id in _MACHINE_RECEIVERS
+    if isinstance(node, ast.Attribute):
+        return node.attr in _MACHINE_RECEIVERS
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return "machine" in name
+    return False
+
+
+def _machine_internal_accesses(path: Path) -> list[tuple[str, int, str]]:
+    """(enclosing function, line, attribute) for each read of a core component
+    or a private field on a machine handle in `path`."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[tuple[str, int, str]] = []
+
+    def visit(node: ast.AST, function: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if isinstance(node, ast.Attribute) and _is_machine_receiver(node.value):
+            if node.attr in _CORE_COMPONENTS or node.attr.startswith("_"):
+                found.append((function, node.lineno, node.attr))
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(tree, "<module>")
+    return found
+
+
+def test_no_host_code_reads_a_core_component() -> None:
+    offenders = []
+    for path in _host_side_files():
+        rel = path.relative_to(_REPO).as_posix()
+        for function, lineno, attr in _machine_internal_accesses(path):
+            if f"{rel}:{function}" not in _DIAGNOSTICS_ALLOWLIST:
+                offenders.append(f"{rel}:{lineno}: {function}: .{attr}")
+    assert offenders == []
+
+
+def test_the_allowlist_names_only_diagnostics() -> None:
+    # Every entry names a function that exists, still needs the exception and
+    # gives the diagnostics command it serves, so the allowlist cannot go stale.
+    needed: set[str] = set()
+    for path in _host_side_files():
+        rel = path.relative_to(_REPO).as_posix()
+        for function, _lineno, _attr in _machine_internal_accesses(path):
+            needed.add(f"{rel}:{function}")
+    for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
+        assert entry in needed, f"stale allowlist entry: {entry}"
+        assert reason.strip(), f"allowlist entry without a reason: {entry}"

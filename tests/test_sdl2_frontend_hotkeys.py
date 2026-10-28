@@ -138,6 +138,7 @@ class _FakeMachine:
     mark_persisted = Machine.mark_persisted
     _media = Machine._media
     sram_media = Machine.sram_media
+    drive_count = Machine.drive_count
 
 
 def _asserted(matrix: list[int], cell: tuple[int, int]) -> bool:

@@ -30,8 +30,8 @@ from host.media import swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
 from msx.boundary import RgbFrame
+from msx.core_api import CoreApi
 from msx.input import KEY_NAME_TO_CELL
-from msx.machine import Machine
 from msx.mouse import MouseDevice
 from msx.psg import SAMPLE_RATE, JoystickPort
 from msx.vdp._geometry import OUTPUT_H
@@ -56,7 +56,7 @@ _AUDIO_BUFFER_SAMPLES: int = 1024
 # more than this ratio (5% slack).
 _FRAME_OVERRUN_RATIO: float = 1.05
 
-def _target_fps_for(machine: Machine) -> float:
+def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
     (VideoStandard.target_fps)."""
     return machine.video_standard.target_fps
@@ -414,11 +414,11 @@ def _handle_ctrl_combo_keyup(
     return False
 
 
-def _mount_disk(machine: Machine, path: Path) -> bool:
+def _mount_disk(machine: CoreApi, path: Path) -> bool:
     """Swap `path` into drive A via `host.media.swap_disk` (outgoing image
     written back, disk change, transfer abort). Returns False, leaving the
     drive as it was, if the image cannot be opened."""
-    assert machine.fdc is not None
+    assert machine.drive_count() > 0
     try:
         swap_disk(machine, 0, path)
     except (ValueError, OSError) as exc:
@@ -427,19 +427,19 @@ def _mount_disk(machine: Machine, path: Path) -> bool:
     return True
 
 
-def _disk_next(machine: Machine, disks: _DiskList) -> None:
+def _disk_next(machine: CoreApi, disks: _DiskList) -> None:
     """F6: mount the next drive A image, wrapping to the first."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return
     next_index = (disks.index + 1) % len(disks.paths)
     if _mount_disk(machine, disks.paths[next_index]):
         disks.index = next_index
 
 
-def _disk_toggle_eject(machine: Machine, disks: _DiskList) -> None:
+def _disk_toggle_eject(machine: CoreApi, disks: _DiskList) -> None:
     """Shift+F6: eject drive A, or re-insert the current list image when the
     drive is empty (whoever emptied it -- this, the RPC or the debugger)."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return
     if not machine.disk_mounted(0):
         _mount_disk(machine, disks.paths[disks.index])
@@ -455,7 +455,7 @@ def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -
 
 
 def _run_hotkey_action(
-    sdl2: _EventApi, action: str, sym: int, machine: Machine, window: object,
+    sdl2: _EventApi, action: str, sym: int, machine: CoreApi, window: object,
     hotkeys: _HotkeyState,
 ) -> None:
     if action == "disk_next":
@@ -478,7 +478,7 @@ def _run_hotkey_action(
 
 
 def _handle_bound_hotkey_keydown(
-    sdl2: _EventApi, sym: int, repeat: int, machine: Machine, keyboard: SdlKeyboard,
+    sdl2: _EventApi, sym: int, repeat: int, machine: CoreApi, keyboard: SdlKeyboard,
     window: object, ctrl_combo: _CtrlComboState, hotkeys: _HotkeyState,
 ) -> bool:
     """Shift tracking and bound-hotkey KEYDOWN handling. Returns True if `sym`
@@ -541,7 +541,7 @@ def _handle_bound_hotkey_keyup(
 
 
 def _handle_hotkey_keydown(
-    sdl2: _EventApi, sym: int, mod: int, machine: Machine,
+    sdl2: _EventApi, sym: int, mod: int, machine: CoreApi,
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
 ) -> tuple[bool, bool]:
     """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
@@ -655,7 +655,7 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
 
 
 def _handle_events(
-    sdl2: _EventApi, event: _EventLike, machine: Machine, keyboard: SdlKeyboard,
+    sdl2: _EventApi, event: _EventLike, machine: CoreApi, keyboard: SdlKeyboard,
     window: object, joy_manager: JoystickManager,
     ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
@@ -876,9 +876,9 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     def SDL_CloseAudioDevice(self, dev: int) -> None: ...
 
 
-def _disk_status(machine: Machine, disks: _DiskList) -> str:
+def _disk_status(machine: CoreApi, disks: _DiskList) -> str:
     """The drive A part of the window title ("" with no FDC or no list)."""
-    if machine.fdc is None or not disks.paths:
+    if machine.drive_count() == 0 or not disks.paths:
         return ""
     count = len(disks.paths)
     if not machine.disk_mounted(0):
@@ -891,7 +891,7 @@ def _disk_status(machine: Machine, disks: _DiskList) -> str:
 
 
 def _window_title(
-    game_title: str, fps: float, machine: Machine, hotkeys: _HotkeyState, paused: bool
+    game_title: str, fps: float, machine: CoreApi, hotkeys: _HotkeyState, paused: bool
 ) -> str:
     """Window title: app/game name, measured fps, status flags, drive A status.
     `paused` covers both the frontend and the RPC pause."""
@@ -950,7 +950,7 @@ def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
 
 
 def _run_frame(
-    sdl2: SDL2Api, machine: Machine, keyboard: SdlKeyboard, window: object, renderer: object,
+    sdl2: SDL2Api, machine: CoreApi, keyboard: SdlKeyboard, window: object, renderer: object,
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
     mouse: _HostMouse | None, event: _EventLike,
@@ -1053,7 +1053,7 @@ def _run_frame(
 
 
 def run(
-    machine: Machine,
+    machine: CoreApi,
     scale: int = 3,
     speed: float = 1.0,
     game_title: str = "py-msx-emulator",

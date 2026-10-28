@@ -101,6 +101,57 @@ class FrameOutput:
 
 
 @dataclass(frozen=True)
+class CpuRegisters:
+    """The Z80 register file as the core API's register query returns it
+    (msx/core_api.py). IFF1 and IFF2 are 0 or 1, IM is 0-2."""
+
+    AF: int
+    BC: int
+    DE: int
+    HL: int
+    AF_: int
+    BC_: int
+    DE_: int
+    HL_: int
+    IX: int
+    IY: int
+    SP: int
+    PC: int
+    I: int  # noqa: E741 - Z80 interrupt vector register (canonical name)
+    R: int
+    IFF1: int
+    IFF2: int
+    IM: int
+
+
+VDP_KIND_TMS9918A = 0
+VDP_KIND_V9938 = 1
+
+
+@dataclass(frozen=True)
+class VdpInfo:
+    """The VDP state the core API's VDP query returns (msx/core_api.py).
+
+    `regs` holds the control registers (8 on the TMS9918A, R#0-R#27 on the
+    V9938). On the TMS9918A `cmd_regs` and `palette` are empty, `status` is
+    S#0 and the command fields are 0. On the V9938 `cmd_regs` is R#32-R#46,
+    `status` is S#0-S#9 (V9938.peek_status_registers) and `palette` holds 16
+    9-bit entries.
+    """
+
+    kind: int
+    regs: bytes
+    cmd_regs: bytes
+    status: bytes
+    palette: tuple[int, ...]
+    cmd_x: int = 0
+    cmd_y: int = 0
+    cmd_nx: int = 0
+    cmd_ny: int = 0
+    cmd_remaining: int = 0
+
+
+@dataclass(frozen=True)
 class DiskMedium:
     """A disk image the host read, to mount at build time."""
 
