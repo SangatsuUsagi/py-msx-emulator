@@ -1,8 +1,8 @@
-"""Tests for Machine debugger integration (breakpoints, KeyboardInterrupt)."""
+"""Tests for Machine break settings and stops (breakpoints, KeyboardInterrupt)."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -63,52 +63,19 @@ class TestSetBreakpoints:
 # ---------------------------------------------------------------------------
 
 class TestDefaultState:
-    def test_no_debugger_by_default(self):
-        m = make_machine(rom=_NOP_ROM)
-        assert m._debugger is None
-
-    def test_attach_debugger_is_what_a_break_enters(self):
-        m = make_machine(rom=_NOP_ROM)
-        dbg = MagicMock()
-        m.attach_debugger(dbg)
-        assert m.enter_debugger_if_attached() is True
-        dbg.enter.assert_called_once_with()
-        m.attach_debugger(None)
-        assert m.enter_debugger_if_attached() is False
-
     def test_empty_breakpoints_by_default(self):
         m = make_machine(rom=_NOP_ROM)
         assert m._breakpoints == frozenset()
 
 
 # ---------------------------------------------------------------------------
-# KeyboardInterrupt handling
+# KeyboardInterrupt: the core does not catch it (machine-core "The core API
+# has no callback into the host"); the host maps Ctrl-C to request_break.
 # ---------------------------------------------------------------------------
 
 class TestKeyboardInterrupt:
-    def test_ctrl_c_calls_debugger_enter(self):
+    def test_keyboard_interrupt_propagates_out_of_the_core(self):
         m = make_machine(rom=_NOP_ROM)
-        dbg = MagicMock()
-        m._debugger = dbg
-
-        # Patch Z80.step via the class to raise KeyboardInterrupt once
-        call_count = [0]
-        original_step = m.cpu.__class__.step
-
-        def step_raising(self_cpu):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise KeyboardInterrupt
-            return original_step(self_cpu)
-
-        with patch.object(m.cpu.__class__, "step", step_raising):
-            m.run_frame()
-        dbg.enter.assert_called_once()
-
-    def test_ctrl_c_propagates_without_debugger(self):
-        m = make_machine(rom=_NOP_ROM)
-        assert m._debugger is None
-
         call_count = [0]
         original_step = m.cpu.__class__.step
 
@@ -124,30 +91,22 @@ class TestKeyboardInterrupt:
 
 
 # ---------------------------------------------------------------------------
-# Breakpoint triggers debugger
+# Breakpoint check in run_frame (debug-monitor)
 # ---------------------------------------------------------------------------
 
 class TestBreakpointTrigger:
-    def test_breakpoint_at_pc_calls_enter(self):
+    def test_breakpoint_stops_before_the_instruction(self):
         # ROM at 0x0000 is all NOPs, so PC starts at 0x0000
         m = make_machine(rom=_NOP_ROM)
-        dbg = MagicMock()
-        m._debugger = dbg
         m.set_breakpoints([0x0000])
-
-        # After enter() returns, PC advances; subsequent steps won't hit 0x0000 again
-        # unless we loop. Just run one frame and verify enter was called.
-        m.run_frame()
-        assert dbg.enter.call_count >= 1
+        assert m.run_frame() == bytearray()
+        assert m.last_stop() == StopInfo(STOP_BREAKPOINT, 0x0000)
 
     def test_no_overhead_without_breakpoints(self):
-        """Empty _breakpoints takes the fast path: debugger.enter never called."""
+        """Empty _breakpoints takes the fast path: no stop."""
         m = make_machine(rom=_NOP_ROM)
-        dbg = MagicMock()
-        m._debugger = dbg
-        # _breakpoints is empty — fast path used, enter should not be called
         m.run_frame()
-        dbg.enter.assert_not_called()
+        assert m.last_stop().reason == STOP_NONE
 
 
 # ---------------------------------------------------------------------------

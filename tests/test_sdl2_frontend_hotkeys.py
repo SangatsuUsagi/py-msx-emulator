@@ -118,7 +118,6 @@ class _FakeMachine:
     def __init__(self) -> None:
         self.input = InputState()
         self.keyboard_layout = KeyboardLayout.INTERNATIONAL
-        self._debugger = None
         self.fdc: SonyPhilipsInterface | None = None
         self.reset_calls = 0
         self.shift_at_reset: bool | None = None

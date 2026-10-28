@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import enum
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
@@ -53,49 +52,6 @@ if TYPE_CHECKING:
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
-class DebuggerHook(Protocol):
-    """The interactive debugger the host may attach (host/debugger/prompt.py's
-    Debugger); the core only asks it to take over at a break."""
-
-    def enter(self) -> None: ...
-
-
-class PauseReason(str, enum.Enum):
-    """Why the emulator paused — passed to the pause hook, and the single source
-    of truth shared with the RPC adapter (host/rpc_server.py imports it).
-
-    Subclasses `str` so each member serializes to its wire value (e.g.
-    ``"breakpoint"``) and compares equal to that string, keeping the JSON-RPC
-    contract unchanged.
-
-    PORT-NOTE: this is a closed string-tagged enum, used both as a Python enum
-      and as its wire string.
-    Rust equivalent: `enum PauseReason { UserRequest, Breakpoint, Watchpoint,
-      StepComplete }` with `#[serde(rename_all = "snake_case")]` (or explicit
-      `#[serde(rename = "...")]` per variant) so serde produces the same wire
-      strings.
-    C++ equivalent: `enum class PauseReason` plus an explicit to/from-string
-      table at the JSON-RPC boundary, since C++ enums don't serialize to
-      strings on their own.
-    Kept as-is here because: this maps 1:1 to a closed target-language enum
-      with no translation ambiguity -- noted for completeness, not a spot
-      needing a Python-side change.
-    """
-
-    USER_REQUEST = "user_request"
-    BREAKPOINT = "breakpoint"
-    WATCHPOINT = "watchpoint"
-    STEP_COMPLETE = "step_complete"
-
-
-# The stop reason (msx/boundary.py) each break reason records.
-_STOP_REASONS: dict[PauseReason, int] = {
-    PauseReason.USER_REQUEST: STOP_REQUESTED,
-    PauseReason.BREAKPOINT: STOP_BREAKPOINT,
-    PauseReason.WATCHPOINT: STOP_WATCHPOINT,
-}
-
-
 @dataclass
 class Machine:
     cpu: Z80
@@ -130,29 +86,17 @@ class Machine:
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
-    _debugger: DebuggerHook | None = field(default=None, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
     # SHA-256 (hex) of the MachineConfig document this machine was built from;
     # a snapshot records it and loads only into a machine with the same one.
     # Empty for a Machine constructed by hand.
     machine_config_sha256: str = field(default="", repr=False)
-    # Optional programmatic pause sink (e.g. the RPC server). When set, break
-    # events call it with (reason, pc) instead of entering the interactive REPL.
-    _pause_hook: Callable[[PauseReason, int], None] | None = field(
-        default=None, init=False, repr=False
-    )
-    # Async pause plumbing used when a pause hook is installed: a break sets
-    # _pause_requested so the debug frame loop returns at the break point, and
-    # resume records _resume_skip_pc so continue does not immediately re-break
-    # the instruction we are paused on.
-    _pause_requested: bool = field(default=False, init=False, repr=False)
+    # Set by a break during a run: the loop arm returns at the break and
+    # run_frame() keeps the frame position. _resume_skip_pc is the PC whose
+    # breakpoint test the first instruction of the next run skips.
+    _stop_pending: bool = field(default=False, init=False, repr=False)
     _resume_skip_pc: int | None = field(default=None, init=False, repr=False)
-    # Set for the rest of the current run_frame() when a scanline loop was cut
-    # short by Ctrl-C. Ctrl-C arrives as an exception rather than through
-    # _enter_break, so it does not raise _pause_requested; this frame-scoped
-    # flag is what stops run_frame() from running the remaining segments.
-    _frame_interrupted: bool = field(default=False, init=False, repr=False)
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -172,13 +116,13 @@ class Machine:
     # The most recent stop (last_stop()), cleared at the start of each
     # step_frame() and step() call.
     _stop: StopInfo = field(default_factory=StopInfo, init=False, repr=False)
-    # Set by request_break(); the scanline loops honor it (Ctrl-C).
+    # Set by request_break() (Ctrl-C); run_frame() honors it before the next
+    # frame segment.
     _break_request: bool = field(default=False, init=False, repr=False)
     # Position of a frame that stopped at a break (machine-core "A break stops
-    # step_frame and the next call continues the frame"), used when neither a
-    # pause hook nor a debugger is attached: the next scanline to run, the
-    # frame-relative T-state total, the frame's start cycle (audio mix),
-    # whether the frame was rendered and the rendered index buffer.
+    # step_frame and the next call continues the frame"): the next scanline
+    # to run, the frame-relative T-state total, the frame's start cycle (audio
+    # mix), whether the frame was rendered and the rendered index buffer.
     _frame_active: bool = field(default=False, init=False, repr=False)
     _frame_line: int = field(default=0, init=False, repr=False)
     _frame_total: int = field(default=0, init=False, repr=False)
@@ -276,7 +220,7 @@ class Machine:
         (machine-core "reset and a state load drop a stopped frame")."""
         self._frame_active = False
         self._frame_result = bytearray()
-        self._pause_requested = False
+        self._stop_pending = False
 
     def sram_media(self) -> Mapping[MediaId, SramImage]:
         """Every SRAM medium by id: `slot1.sram`/`slot2.sram` (cartridge
@@ -341,28 +285,6 @@ class Machine:
             return None
         return self.fdc.drives[drive].image
 
-    def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None:
-        """Install (or clear) a programmatic pause sink.
-
-        When set, break events (breakpoints, watchpoints, Ctrl-C, and the
-        crash-signature conditions) invoke `hook(reason, pc)` instead of
-        entering the blocking interactive debugger REPL. `reason` is a
-        `PauseReason` member.
-
-        PORT-NOTE: this is the *only* seam the core exposes to the RPC adapter
-          (host/rpc_server.py). The core has no knowledge of sockets, JSON, or
-          threads -- it just calls this generic callback.
-        Rust equivalent: a `trait PauseSink` (with `reason: PauseReason`), so
-          the RPC layer can live in a separate, feature-gated crate.
-        C++ equivalent: a `PauseSink` abstract interface, injected the same
-          way, so the core stays free of socket/JSON/threading dependencies.
-        Kept as-is here because: this is already the target shape (a generic
-          callback seam), not a Python-specific pattern needing translation
-          -- noted for completeness, and see the crate-split note in
-          host/rpc_server.py for how the RPC layer sits behind it.
-        """
-        self._pause_hook = hook
-
     def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None:
         """Attach an MSX mouse to the given joystick port for this machine's PSG.
 
@@ -372,66 +294,14 @@ class Machine:
         """
         self.psg.attach_mouse(device, port)
 
-    def attach_debugger(self, debugger: DebuggerHook | None) -> None:
-        """Attach (or detach) the interactive debugger a break enters when no
-        pause hook is set."""
-        self._debugger = debugger
-
-    def enter_debugger_if_attached(self) -> bool:
-        """Break into the attached interactive debugger REPL, if one is attached.
-
-        Public accessor for `_debugger`, for callers outside this module (e.g.
-        the SDL2 frontend's own Ctrl-C/debugger hotkey) that need to enter the
-        debugger directly rather than going through `_enter_break`'s pause-hook
-        routing. Returns True if a debugger was attached and entered, False
-        otherwise.
-        """
-        if self._debugger is not None:
-            self._debugger.enter()
-            return True
-        return False
-
-    def _enter_break(self, reason: PauseReason) -> None:
-        """Dispatch a break event: notify the pause hook if one is installed,
-        otherwise fall back to the interactive debugger REPL when attached.
-
-        In hook mode this also raises _pause_requested so the debug frame loop
-        returns at the break point instead of running on to the frame end."""
-        if reason is not PauseReason.WATCHPOINT:
-            # A watchpoint hit is recorded by the watch wrapper, with its access.
-            self._stop = StopInfo(_STOP_REASONS[reason], self.cpu.registers.PC)
-        if self._pause_hook is not None:
-            self._pause_requested = True
-            self._pause_hook(reason, self.cpu.registers.PC)
-        elif self._debugger is not None:
-            self._debugger.enter()
-        else:
-            # Stop mode: the loop returns at the break and run_frame() keeps
-            # the frame position (see _run_frame_resumable).
-            self._pause_requested = True
-
-    def _stop_mode(self) -> bool:
-        """True when a break returns from step_frame instead of calling a
-        pause hook or the debugger."""
-        return self._pause_hook is None and self._debugger is None
-
-    @property
-    def is_paused(self) -> bool:
-        """True while a break has requested a pause and no resume has been armed.
-
-        Public read-only view of the pause flag, so callers (RPC, tests) do not
-        reach into private state — a port would not expose the field itself."""
-        return self._pause_requested
-
-    def prepare_resume(self) -> None:
-        """Arm a resume: clear the pause request and skip re-breaking on the
-        instruction we are paused at, so continue does not immediately retrigger
-        the same breakpoint. Called by the RPC continue handlers."""
-        self._pause_requested = False
-        self._resume_skip_pc = self.cpu.registers.PC
+    def _enter_break(self, reason: int) -> None:
+        """Record a stop (`reason` is a STOP_* value) at the current PC and
+        make the running loop arm return at it."""
+        self._stop = StopInfo(reason, self.cpu.registers.PC)
+        self._stop_pending = True
 
     def request_break(self) -> None:
-        """Ask the core to stop at the next scanline boundary (machine-core
+        """Ask the core to stop before the next frame segment (machine-core
         "The host requests a break"). Safe to call from a signal handler: it
         only sets a flag."""
         self._break_request = True
@@ -477,7 +347,7 @@ class Machine:
             or self._temp_breakpoint is not None
             or self._stepout_sp is not None
             # Watchpoints need the per-instruction loop so a hit can return at the
-            # break boundary (via the pause hook) instead of running to frame end.
+            # instruction boundary instead of running to frame end.
             # NOTE: mere RPC attachment does NOT force the debug loop — a bare
             # attached "continue" runs at fast-loop speed; only real break
             # conditions (breakpoints/watchpoints) route here. An async
@@ -518,9 +388,8 @@ class Machine:
 
         Lifted out of the per-instruction debug loop: with only breakpoints or
         watchpoints set (the common case) none of these are armed, so the call
-        to _post_step_break() can be skipped entirely. Must be re-evaluated
-        after every _enter_break(), which can hand control to the REPL where
-        bh/bs/so arm them mid-loop."""
+        to _post_step_break() can be skipped entirely. A break returns from
+        the loop, so the value holds for the whole call."""
         return (
             self._break_halt_di
             or self._sp_range is not None
@@ -684,18 +553,14 @@ class Machine:
         if addr in self._watch_read:
             pc = self.cpu.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, val, WATCH_READ)
-            if not self._stop_mode():
-                print(f"\n[WP] READ  {addr:04X}h = {val:02X}h  PC={pc:04X}h")
-            self._enter_break(PauseReason.WATCHPOINT)
+            self._stop_pending = True
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
             pc = self.cpu.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, value, WATCH_WRITE)
-            if not self._stop_mode():
-                print(f"\n[WP] WRITE {addr:04X}h = {value:02X}h  PC={pc:04X}h")
-            self._enter_break(PauseReason.WATCHPOINT)
+            self._stop_pending = True
         self.memory.write(addr, value)
 
     def step(self) -> int:
@@ -707,15 +572,18 @@ class Machine:
         return self.cpu.step()
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
-        """Run one frame and return the rendered index framebuffer.
+        """Run one frame, or the rest of a stopped one, up to its end or the
+        next break, and return the rendered index framebuffer.
 
         Returns a `width * OUTPUT_H` buffer (the frame's width, see
-        v9938_renderer.render_frame), or an empty bytearray when
-        `skip_render` is set. Advances the VDP frame counter and mixes the
-        frame's audio (read it with take_audio()) either way. A break
-        (breakpoint, watchpoint, Ctrl-C) drops the rest of the frame: the frame
-        is still rendered, counted and mixed, and the next call restarts at
-        line 0.
+        v9938_renderer.render_frame) when the frame completes in this call,
+        and an empty bytearray when the call stops at a break or the render
+        was skipped (`skip_render` in the call that reached the render). A
+        stopped frame continues on the next call (machine-core "A break stops
+        step_frame and the next call continues the frame"): the render, the
+        TMS9918A VBlank, the frame count, the audio mix (read it with
+        take_audio()) and the frame breakpoint each happen once per frame, in
+        the call that reaches them.
 
         Both VDP variants render at the start of vertical blanking, not at the
         end of the scanline loop, and both raise their VBlank flag/interrupt at
@@ -728,64 +596,16 @@ class Machine:
         begin_scanline(vblank_start_line) at the end of the first segment; the
         TMS9918A, which has no per-scanline hook, in VDP.begin_vblank() called
         right after the render.
-
-        With neither a pause hook nor a debugger attached, a break returns
-        here at the break instead, and the next call continues the frame
-        (_run_frame_resumable).
-        """
-        if self._stop_mode():
-            return self._run_frame_resumable(skip_render)
-        self._frame_interrupted = False
-        frame_start_cycle = self.cycle_count
-        lpf = self.lines_per_frame
-        vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
-        # begin_scanline(line) runs *after* that line's cycles, so the
-        # pre-render segment is the half-open range [0, vblank_start_line + 1).
-        vblank_split = self.vdp.vblank_start_line + 1
-
-        total = self._run_lines(vdp9938, first_line=0, end_line=vblank_split, total=0)
-        cut_short = self._pause_requested or self._frame_interrupted
-        if vdp9938 is not None:
-            result = render_frame_v9938(vdp9938, skip_render=skip_render)
-        else:
-            assert isinstance(self.vdp, VDP)
-            result = render_frame(self.vdp, skip_render=skip_render)
-            if not cut_short:  # a cut-short frame never reached VBlank
-                self.vdp.begin_vblank()
-        # The VBlank ISR window; skipped when the first segment was cut short
-        # (pause hook or handled Ctrl-C), so a paused frame stops at the break.
-        if not cut_short:
-            self._run_lines(vdp9938, first_line=vblank_split, end_line=lpf, total=total)
-        # Frame counting is owned here (orchestration), for both VDP variants.
-        self.vdp.increment_frame()
-        self._mix_frame_audio(frame_start_cycle)
-        # Frame breakpoint (debugger 'gf'): checked once per frame, after the
-        # frame is fully rendered and counted, so it never forces the slower
-        # per-instruction debug loop the way a PC breakpoint does.
-        if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
-            self._frame_breakpoint = None
-            self._enter_break(PauseReason.BREAKPOINT)
-        return result
-
-    def _run_frame_resumable(self, skip_render: bool) -> bytearray:
-        """run_frame() in stop mode: run the frame, or the rest of a stopped
-        one, up to its end or the next break.
-
-        Returns the index framebuffer when the frame completes in this call,
-        and an empty buffer when the call stops (or when the render was
-        skipped). The render, the TMS9918A VBlank, the frame count, the audio
-        mix and the frame breakpoint each happen once per frame, in the call
-        that reaches them.
         """
         lpf = self.lines_per_frame
         vdp9938 = self.vdp if isinstance(self.vdp, V9938) else None
         # begin_scanline(line) runs *after* that line's cycles, so the
         # pre-render segment is the half-open range [0, vblank_split).
         vblank_split = self.vdp.vblank_start_line + 1
-        if self._pause_requested or self._resume_after_stop:
+        if self._stop_pending or self._resume_after_stop:
             # First instruction after a stop or a step: no breakpoint test.
             self._resume_skip_pc = self.cpu.registers.PC
-        self._pause_requested = False
+        self._stop_pending = False
         self._resume_after_stop = False
         if not self._frame_active:
             self._frame_active = True
@@ -801,7 +621,7 @@ class Machine:
             if self._take_break_request(line):
                 return self._keep_stopped_frame(total)
             total = self._run_lines(vdp9938, line, vblank_split, total)
-            if self._pause_requested:
+            if self._stop_pending:
                 return self._keep_stopped_frame(total)
             line = vblank_split
         if not self._frame_rendered:
@@ -816,7 +636,7 @@ class Machine:
             if self._take_break_request(line):
                 return self._keep_stopped_frame(total)
             total = self._run_lines(vdp9938, line, lpf, total)
-            if self._pause_requested:
+            if self._stop_pending:
                 return self._keep_stopped_frame(total)
         self._resume_skip_pc = None
         self._frame_active = False
@@ -828,7 +648,7 @@ class Machine:
         # is complete, so the stop reports a complete frame.
         if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
             self._frame_breakpoint = None
-            self._enter_break(PauseReason.BREAKPOINT)
+            self._enter_break(STOP_BREAKPOINT)
         return result
 
     def _keep_stopped_frame(self, total: int) -> bytearray:
@@ -879,7 +699,7 @@ class Machine:
             video = RgbFrame(
                 len(index_buf) // OUTPUT_H, OUTPUT_H, self.vdp.to_rgb24(index_buf)
             )
-        stop_reason = self._stop.reason if self._pause_requested else STOP_NONE
+        stop_reason = self._stop.reason if self._stop_pending else STOP_NONE
         return FrameOutput(
             video,
             self.take_audio(),
@@ -905,36 +725,20 @@ class Machine:
             self.fmpac.opll if self.fmpac is not None else None,
         )
 
-    def _on_frame_interrupt(self) -> None:
-        """Ctrl-C handling shared by the frame loops: notify the pause hook or
-        drop into the debugger if either is present, otherwise re-raise to
-        abort the run.
-
-        Flags the frame as cut short so run_frame() skips the segments after
-        the one that was interrupted."""
-        self._frame_interrupted = True
-        self._stop = StopInfo(STOP_REQUESTED, self.cpu.registers.PC)
-        if self._pause_hook is not None:
-            self._pause_hook(PauseReason.USER_REQUEST, self.cpu.registers.PC)
-        elif self._debugger is not None:
-            self._debugger.enter()
-        else:
-            raise
-
     def _take_break_request(self, line: int) -> bool:
         """Honor request_break() before running the segment that starts at
         scanline `line` (machine-core "The host requests a break"). Returns
         True when the frame stops there.
 
-        Checked at segment boundaries, not per scanline: a per-line test in
-        the scanline loops measured up to ~12% slower on PyPy (MSX2 ROM
-        title), whatever its shape."""
+        Checked at segment boundaries, not in the scanline loops: Ctrl-C needs
+        no finer stop (openspec/changes/add-core-debug-control design
+        Decision 3)."""
         if not self._break_request:
             return False
         self._break_request = False
         self._stop_line = line
-        self._enter_break(PauseReason.USER_REQUEST)
-        return self._pause_requested
+        self._enter_break(STOP_REQUESTED)
+        return self._stop_pending
 
     def _run_lines(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -969,7 +773,7 @@ class Machine:
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Scanline loop with active break conditions: checks breakpoints and
-        post-step break conditions each instruction (debugger attached)."""
+        post-step break conditions each instruction."""
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
@@ -983,53 +787,45 @@ class Machine:
         # V9938 per-scanline hooks.
         vdp = self.vdp
         line_cycles = 0
-        try:
-            for line in range(first_line, end_line):
-                line_end = (line + 1) * cpf // lpf
-                while total < line_end:
-                    pc = cpu.registers.PC
-                    if pc == self._resume_skip_pc:
-                        # First check after a resume: step past the breakpoint
-                        # we are paused on without re-breaking.
-                        self._resume_skip_pc = None
-                    elif pc in self._breakpoints or pc == self._temp_breakpoint:
-                        if pc == self._temp_breakpoint:
-                            self._temp_breakpoint = None
-                        self._enter_break(PauseReason.BREAKPOINT)
-                        # The REPL may have armed bh/bs/so while it had control.
-                        post_checks = self._post_step_checks_armed()
-                        if self._pause_requested:
-                            self.cycle_count += line_cycles
-                            self._stop_line = line
-                            return total
-                    cpu.int_pending = vdp.irq
-                    n = cpu_step()
-                    total += n
-                    line_cycles += n
-                    if vdp9938 is not None:
-                        # Full tick() (command-timer decrement + _line_cycle) only
-                        # while a command is actually running -- see _run_lines_fast's
-                        # own comment on this same optimization for the rationale.
-                        if vdp9938._cmd_active:
-                            vdp9938.tick(n)
-                        else:
-                            vdp9938._line_cycle += n
-                    if post_checks and self._post_step_break():
-                        self._enter_break(PauseReason.BREAKPOINT)
-                        post_checks = self._post_step_checks_armed()
-                    if self._pause_requested:
-                        # A watchpoint (or post-step condition) requested a pause
-                        # during this instruction; stop at the boundary.
-                        self.cycle_count += line_cycles
-                        self._stop_line = line
-                        return total
-                self.cycle_count += line_cycles
-                line_cycles = 0
+        for line in range(first_line, end_line):
+            line_end = (line + 1) * cpf // lpf
+            while total < line_end:
+                pc = cpu.registers.PC
+                if pc == self._resume_skip_pc:
+                    # First instruction after a stop or a step: run it
+                    # without the breakpoint test.
+                    self._resume_skip_pc = None
+                elif pc in self._breakpoints or pc == self._temp_breakpoint:
+                    if pc == self._temp_breakpoint:
+                        self._temp_breakpoint = None
+                    self._enter_break(STOP_BREAKPOINT)
+                    self.cycle_count += line_cycles
+                    self._stop_line = line
+                    return total
+                cpu.int_pending = vdp.irq
+                n = cpu_step()
+                total += n
+                line_cycles += n
                 if vdp9938 is not None:
-                    vdp9938.begin_scanline(line)
-        except KeyboardInterrupt:
+                    # Full tick() (command-timer decrement + _line_cycle) only
+                    # while a command is actually running -- see _run_lines_fast's
+                    # own comment on this same optimization for the rationale.
+                    if vdp9938._cmd_active:
+                        vdp9938.tick(n)
+                    else:
+                        vdp9938._line_cycle += n
+                if post_checks and self._post_step_break():
+                    self._enter_break(STOP_BREAKPOINT)
+                if self._stop_pending:
+                    # A watchpoint (or post-step condition) stopped this
+                    # instruction; return at the boundary.
+                    self.cycle_count += line_cycles
+                    self._stop_line = line
+                    return total
             self.cycle_count += line_cycles
-            self._on_frame_interrupt()
+            line_cycles = 0
+            if vdp9938 is not None:
+                vdp9938.begin_scanline(line)
         return total
 
     def _run_lines_fast(
@@ -1050,117 +846,102 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
-        # PORT-NOTE: Ctrl-C here is delivered as a Python KeyboardInterrupt
-        #   exception, caught around the whole scanline loop with zero
-        #   steady-state cost (no exception raised = no cost in CPython).
-        #   Same shape in _run_lines_debug and _run_lines_logged.
-        # Rust equivalent: install a SIGINT handler that sets an AtomicBool;
-        #   check it once per scanline (not per instruction) alongside the
-        #   existing per-line break-condition checks.
-        # C++ equivalent: std::signal(SIGINT, ...) setting a
-        #   std::atomic<bool>, polled the same way.
-        # Kept as-is here because: the try/except costs nothing per
-        #   instruction in CPython, and rewriting to a polled flag now would
-        #   add a branch to this fast-path loop for no Python-side benefit.
-        try:
-            if vdp9938 is not None:
-                for line in range(first_line, end_line):
-                    line_end = (line + 1) * cpf // lpf
-                    line_cycles = 0
-                    while total < line_end:
-                        cpu.int_pending = vdp9938.irq
-                        # HALT-spin (EI; HALT waiting for VBlank/line IRQ) and
-                        # JR $ idle loops are the most common execution pattern
-                        # in MSX software (HALT-spin alone measured ~74% of all
-                        # step() calls on a representative title), so batch
-                        # their per-instruction stepping when it's provably
-                        # safe: would_accept_interrupt is the exact condition
-                        # step() itself checks (KEEP IN SYNC with z80.py's
-                        # Z80.step(), the `if self.int_pending and self.iff1 and
-                        # not self.ei_pending:` line) before its halted branch,
-                        # which never mutates any of nmi_pending/int_pending/
-                        # iff1/ei_pending/halted -- so none of them can flip
-                        # partway through a batch. The remaining clause is "no
-                        # VDP command is running": with a command active,
-                        # tick() can raise the command-engine interrupt at a
-                        # T-state offset this loop can't predict without calling
-                        # tick() anyway, so batching is skipped and the normal
-                        # per-instruction path (below) still ticks it. See
-                        # openspec cpu-z80 "Batched HALT execution is externally
-                        # transparent" for the full equivalence proof.
-                        # cpu.idle_hint also covers a JR $ (18 FE) idle loop:
-                        # executing it does no port I/O or memory write and
-                        # touches none of those flags either, so the same
-                        # argument holds; step_idle_batch() re-checks the code
-                        # at PC and falls back to one step() if it changed
-                        # (openspec cpu-z80 "Batched JR-to-self execution is
-                        # externally transparent").
-                        # PORT-NOTE: this condition is written out here, in the
-                        #   TMS9918A branch below and (negated) in Z80.step().
-                        # Rust equivalent: one #[inline] fn can_batch_idle(&self)
-                        #   on Z80 (idle_hint && !nmi_pending && !(int_pending &&
-                        #   iff1 && !ei_pending)), plus `&& !cmd_active` here.
-                        # C++ equivalent: an inline member function, same body.
-                        # Kept as-is here because: a method call per
-                        #   instruction costs CPython more than the inline test.
-                        would_accept_interrupt = (
-                            cpu.int_pending and cpu.iff1 and not cpu.ei_pending
-                        )
-                        if (
-                            cpu.idle_hint
-                            and not cpu.nmi_pending
-                            and not would_accept_interrupt
-                            and not vdp9938._cmd_active
-                        ):
-                            n = cpu.step_idle_batch(line_end - total)
-                        else:
-                            n = cpu_step()
-                        total += n
-                        line_cycles += n
-                        # Full tick() (command-timer decrement + _line_cycle) only
-                        # while a command is actually running: _cmd_active is False
-                        # for most of a game's runtime, and tick()'s per-instruction
-                        # call overhead (profiled at roughly Z80.step()'s own
-                        # self-time) is otherwise paid for two branches that would
-                        # both be no-ops anyway. _line_cycle (the S#2 horizontal-
-                        # retrace input) still needs updating every instruction
-                        # regardless, via the direct increment below -- see
-                        # openspec vdp-command-engine for the full rationale.
-                        if vdp9938._cmd_active:
-                            vdp9938.tick(n)
-                        else:
-                            vdp9938._line_cycle += n
-                    self.cycle_count += line_cycles
-                    vdp9938.begin_scanline(line)
-            else:
-                vdp = self.vdp  # hot-loop local for the per-instruction .irq read
-                for line in range(first_line, end_line):
-                    line_end = (line + 1) * cpf // lpf
-                    line_cycles = 0
-                    while total < line_end:
-                        cpu.int_pending = vdp.irq
-                        # Same HALT / JR $ batching as the V9938 branch
-                        # above (no _cmd_active clause: the TMS9918A has no
-                        # command engine, so int_pending can't change mid-line
-                        # by any other means while the CPU is idle). KEEP IN
-                        # SYNC with z80.py's Z80.step() interrupt-accept check
-                        # and this same condition in the V9938 branch above.
-                        would_accept_interrupt = (
-                            cpu.int_pending and cpu.iff1 and not cpu.ei_pending
-                        )
-                        if (
-                            cpu.idle_hint
-                            and not cpu.nmi_pending
-                            and not would_accept_interrupt
-                        ):
-                            n = cpu.step_idle_batch(line_end - total)
-                        else:
-                            n = cpu_step()
-                        total += n
-                        line_cycles += n
-                    self.cycle_count += line_cycles
-        except KeyboardInterrupt:
-            self._on_frame_interrupt()
+        if vdp9938 is not None:
+            for line in range(first_line, end_line):
+                line_end = (line + 1) * cpf // lpf
+                line_cycles = 0
+                while total < line_end:
+                    cpu.int_pending = vdp9938.irq
+                    # HALT-spin (EI; HALT waiting for VBlank/line IRQ) and
+                    # JR $ idle loops are the most common execution pattern
+                    # in MSX software (HALT-spin alone measured ~74% of all
+                    # step() calls on a representative title), so batch
+                    # their per-instruction stepping when it's provably
+                    # safe: would_accept_interrupt is the exact condition
+                    # step() itself checks (KEEP IN SYNC with z80.py's
+                    # Z80.step(), the `if self.int_pending and self.iff1 and
+                    # not self.ei_pending:` line) before its halted branch,
+                    # which never mutates any of nmi_pending/int_pending/
+                    # iff1/ei_pending/halted -- so none of them can flip
+                    # partway through a batch. The remaining clause is "no
+                    # VDP command is running": with a command active,
+                    # tick() can raise the command-engine interrupt at a
+                    # T-state offset this loop can't predict without calling
+                    # tick() anyway, so batching is skipped and the normal
+                    # per-instruction path (below) still ticks it. See
+                    # openspec cpu-z80 "Batched HALT execution is externally
+                    # transparent" for the full equivalence proof.
+                    # cpu.idle_hint also covers a JR $ (18 FE) idle loop:
+                    # executing it does no port I/O or memory write and
+                    # touches none of those flags either, so the same
+                    # argument holds; step_idle_batch() re-checks the code
+                    # at PC and falls back to one step() if it changed
+                    # (openspec cpu-z80 "Batched JR-to-self execution is
+                    # externally transparent").
+                    # PORT-NOTE: this condition is written out here, in the
+                    #   TMS9918A branch below and (negated) in Z80.step().
+                    # Rust equivalent: one #[inline] fn can_batch_idle(&self)
+                    #   on Z80 (idle_hint && !nmi_pending && !(int_pending &&
+                    #   iff1 && !ei_pending)), plus `&& !cmd_active` here.
+                    # C++ equivalent: an inline member function, same body.
+                    # Kept as-is here because: a method call per
+                    #   instruction costs CPython more than the inline test.
+                    would_accept_interrupt = (
+                        cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                    )
+                    if (
+                        cpu.idle_hint
+                        and not cpu.nmi_pending
+                        and not would_accept_interrupt
+                        and not vdp9938._cmd_active
+                    ):
+                        n = cpu.step_idle_batch(line_end - total)
+                    else:
+                        n = cpu_step()
+                    total += n
+                    line_cycles += n
+                    # Full tick() (command-timer decrement + _line_cycle) only
+                    # while a command is actually running: _cmd_active is False
+                    # for most of a game's runtime, and tick()'s per-instruction
+                    # call overhead (profiled at roughly Z80.step()'s own
+                    # self-time) is otherwise paid for two branches that would
+                    # both be no-ops anyway. _line_cycle (the S#2 horizontal-
+                    # retrace input) still needs updating every instruction
+                    # regardless, via the direct increment below -- see
+                    # openspec vdp-command-engine for the full rationale.
+                    if vdp9938._cmd_active:
+                        vdp9938.tick(n)
+                    else:
+                        vdp9938._line_cycle += n
+                self.cycle_count += line_cycles
+                vdp9938.begin_scanline(line)
+        else:
+            vdp = self.vdp  # hot-loop local for the per-instruction .irq read
+            for line in range(first_line, end_line):
+                line_end = (line + 1) * cpf // lpf
+                line_cycles = 0
+                while total < line_end:
+                    cpu.int_pending = vdp.irq
+                    # Same HALT / JR $ batching as the V9938 branch
+                    # above (no _cmd_active clause: the TMS9918A has no
+                    # command engine, so int_pending can't change mid-line
+                    # by any other means while the CPU is idle). KEEP IN
+                    # SYNC with z80.py's Z80.step() interrupt-accept check
+                    # and this same condition in the V9938 branch above.
+                    would_accept_interrupt = (
+                        cpu.int_pending and cpu.iff1 and not cpu.ei_pending
+                    )
+                    if (
+                        cpu.idle_hint
+                        and not cpu.nmi_pending
+                        and not would_accept_interrupt
+                    ):
+                        n = cpu.step_idle_batch(line_end - total)
+                    else:
+                        n = cpu_step()
+                    total += n
+                    line_cycles += n
+                self.cycle_count += line_cycles
         return total
 
     def _run_lines_logged(
@@ -1176,33 +957,30 @@ class Machine:
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
         vdp = self.vdp
-        try:
-            for line in range(first_line, end_line):
-                line_end = (line + 1) * cpf // lpf
-                while total < line_end:
-                    pc = cpu.registers.PC
-                    cpu.int_pending = vdp.irq
-                    n = cpu_step()
-                    total += n
-                    self.cycle_count += n
-                    if vdp9938 is not None:
-                        # Same optimization as _run_lines_fast's own comment.
-                        if vdp9938._cmd_active:
-                            vdp9938.tick(n)
-                        else:
-                            vdp9938._line_cycle += n
-                    if not (cpu.halted and cpu.iff1):
-                        if pc == self._last_pc:
-                            self._pc_repeat += 1
-                            if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                                self._logger.on_hang_pc_loop(pc)
-                        else:
-                            self._pc_repeat = 0
-                        self._last_pc = pc
+        for line in range(first_line, end_line):
+            line_end = (line + 1) * cpf // lpf
+            while total < line_end:
+                pc = cpu.registers.PC
+                cpu.int_pending = vdp.irq
+                n = cpu_step()
+                total += n
+                self.cycle_count += n
                 if vdp9938 is not None:
-                    vdp9938.begin_scanline(line)
-        except KeyboardInterrupt:
-            self._on_frame_interrupt()
+                    # Same optimization as _run_lines_fast's own comment.
+                    if vdp9938._cmd_active:
+                        vdp9938.tick(n)
+                    else:
+                        vdp9938._line_cycle += n
+                if not (cpu.halted and cpu.iff1):
+                    if pc == self._last_pc:
+                        self._pc_repeat += 1
+                        if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
+                            self._logger.on_hang_pc_loop(pc)
+                    else:
+                        self._pc_repeat = 0
+                    self._last_pc = pc
+            if vdp9938 is not None:
+                vdp9938.begin_scanline(line)
 
         # Once per frame, not once per segment: only the segment that ends the
         # frame reports a HALT-with-interrupts-off hang.

@@ -3,12 +3,19 @@
 "Inspection queries do not change emulated state"."""
 from __future__ import annotations
 
+import inspect
 from dataclasses import fields
 
-from msx.boundary import VDP_KIND_TMS9918A, VDP_KIND_V9938, CpuRegisters
+from msx.boundary import (
+    STOP_NONE,
+    STOP_WATCHPOINT,
+    VDP_KIND_TMS9918A,
+    VDP_KIND_V9938,
+    CpuRegisters,
+)
 from msx.core_api import CoreApi
 from msx.input import InputFrame
-from msx.machine import Machine, PauseReason
+from msx.machine import Machine
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = bytes(32 * 1024)  # NOPs
@@ -121,12 +128,10 @@ def test_status_flags_survive_the_vdp_query() -> None:
 
 def test_memory_read_does_not_hit_a_watchpoint() -> None:
     m = _msx1()
-    pauses: list[tuple[PauseReason, int]] = []
-    m.set_pause_hook(lambda reason, pc: pauses.append((reason, pc)))
     m.set_watchpoints([(0xC000, "r")])
     m.read_memory(0xC000, 1)
-    assert pauses == []
-    assert not m.is_paused
+    assert m.last_stop().reason == STOP_NONE
+    assert not m._stop_pending
 
 
 def _run_every_query(m: Machine) -> None:
@@ -152,3 +157,27 @@ def test_queries_leave_the_snapshot_unchanged() -> None:
         _run_every_query(m)
         assert m.save_state() == before
         assert (m.cycle_count, m.frame_number()) == (cycles, frame)
+
+
+# -- machine-core "The core API has no callback into the host" ---------------
+
+def test_no_core_api_member_takes_a_callback() -> None:
+    # Annotations are strings here (from __future__ import annotations), so
+    # the check reads them as text: no callable, hook or debugger parameter.
+    for name, member in vars(CoreApi).items():
+        if name.startswith("_") or not callable(member):
+            continue
+        assert "hook" not in name and "debugger" not in name, name
+        for param in inspect.signature(member).parameters.values():
+            note = str(param.annotation)
+            for banned in ("Callable", "Hook", "Debugger"):
+                assert banned not in note, f"{name}({param.name}: {note})"
+
+
+def test_a_watchpoint_hit_prints_nothing(capsys) -> None:
+    m = _msx1_ram_high()
+    m.set_watchpoints([(0x0001, "r")])  # the NOP sled reads it as an opcode
+    out = m.step_frame(InputFrame(), render_video=False)
+    assert out.stop_reason == STOP_WATCHPOINT
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
