@@ -68,7 +68,7 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 
 ### 命令テスト
 
-CPU コアは、Frank D. Cringle による命令テスト zexdoc と zexall をすべて通る（どちらも 67 項目すべて）。`scripts/run_z80_exercisers.py` は、MSX のマシンを組まずに `Z80` コアだけでこれらを動かす。
+CPU コアは、Frank D. Cringle による命令テスト zexdoc と zexall をすべて通る（どちらも 67 項目すべて）。`tools/run_z80_exercisers.py` は、MSX のマシンを組まずに `Z80` コアだけでこれらを動かす。
 
 - `.com` ファイルは CP/M のプログラムとして動かす。64 KB の平坦な RAM の 0x0100 に読み込み、BDOS の機能 2 と 9 でコンソールに出力し、0x0000 へのジャンプで終了する。`ERROR` を含む行があれば失敗とみなす。
 - `.tap` ファイルは Patrik Rak の [z80test](https://github.com/raxoft/z80test) として動かし、使われる少数の ZX Spectrum ROM の機能を代わりのコードで置き換える。出力に `tests failed` があれば失敗とみなす。
@@ -76,7 +76,7 @@ CPU コアは、Frank D. Cringle による命令テスト zexdoc と zexall を�
 テストプログラムはこのリポジトリに含めていない（zexdoc と zexall は GPL）。実行時にパスを渡す。
 
 ```bash
-venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
+venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
     path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
 ```
 

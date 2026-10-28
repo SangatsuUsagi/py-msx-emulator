@@ -112,7 +112,7 @@ The wait has no effect on the interrupt cadence (VBlank) or the PSG pitch.
 ### Instruction exercisers
 
 The CPU core passes Frank D. Cringle's zexdoc and zexall instruction
-exercisers in full (all 67 tests of each). `scripts/run_z80_exercisers.py`
+exercisers in full (all 67 tests of each). `tools/run_z80_exercisers.py`
 runs them on the bare `Z80` core, with no MSX machine around it:
 
 - A `.com` file runs as a CP/M program: it loads at 0x0100 into flat 64 KB
@@ -126,7 +126,7 @@ The test programs are not in this repository (zexdoc and zexall are GPL);
 pass their paths:
 
 ```bash
-venvs/pypy-msx-emulator/bin/python scripts/run_z80_exercisers.py \
+venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \
     path/to/zexdoc.com path/to/zexall.com path/to/z80full.tap
 ```
 
