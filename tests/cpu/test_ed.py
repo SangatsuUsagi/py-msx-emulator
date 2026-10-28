@@ -779,6 +779,7 @@ def _cpu_at(addr: int, code: list[int]) -> Z80:
 
 def test_repeating_ldir_takes_yx_from_the_instruction_address() -> None:
     # Spec "A repeating LDIR takes Y and X from the instruction address".
+    # Spec "A repeating LDIR sets MEMPTR to the instruction address + 2".
     cpu = _cpu_at(0x2800, [0xED, 0xB0])  # LDIR at 0x2800
     cpu.registers.HL = 0xC000  # byte 0x00
     cpu.registers.DE = 0xD000
