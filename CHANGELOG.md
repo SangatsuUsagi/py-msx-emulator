@@ -2,6 +2,14 @@
 
 [日本語版はこちら](CHANGELOG_ja.md)
 
+- **v2.8.4** (2026-10-28): A SingleStepTests runner for the Z80 core.
+  - The new `tools/run_singlestep_tests.py` runs the [SingleStepTests/z80](https://github.com/SingleStepTests/z80)
+    cases (1000 single-instruction cases for each of 1604 opcodes) on the bare CPU core. It compares the registers,
+    MEMPTR, Q, the RAM, the port transactions and the T-states. The core matches all 1,604,000 cases except two known
+    divergences, which `tools/singlestep_known_divergences.json` lists with their sources: the MEMPTR of a repeating
+    `LDIR`/`LDDR`/`CPIR`/`CPDR` and the high byte of the `OUTI`/`OTIR` port address. A port of the core to another
+    language can use the same files and list. The test files are not included.
+  - `docs/technical-implementation.md` describes the runner, the comparison and the known divergences.
 - **v2.8.3** (2026-10-28): Complete Z80 block I/O flags, and save-state format 20.
   - The Z80 core models the flag and MEMPTR changes of a repeating `INIR`/`INDR`/`OTIR`/`OTDR` iteration (Zilog
     NMOS): Y and X come from the instruction address, H and P/V are adjusted from C, the transferred value and B, and

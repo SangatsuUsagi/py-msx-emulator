@@ -1164,7 +1164,7 @@ entries with `implemented: false` in their device YAML and shows a warning.
 
 ## Running tests
 
-The test suite has 4091 tests and covers all major components. It includes
+The test suite has 4098 tests and covers all major components. It includes
 unit tests for individual opcodes and hardware registers, and integration tests
 that connect multiple components. It also includes scenario-level tests, with
 conditions that come directly from the component specs.
@@ -1249,7 +1249,7 @@ py-msx-emulator/
 ├── allium/                # Allium behaviour specs, verifying spec/implementation alignment (not published yet)
 ├── openspec/
 │   └── specs/             # Component specifications (not published yet)
-├── tests/                 # Test suite (4091 tests)
+├── tests/                 # Test suite (4098 tests)
 ├── py_emulator.example.yaml # Annotated example of the optional config file
 ├── QUICK_START.md         # Requirements, installation, BIOS setup
 ├── CHANGELOG.md           # Version history

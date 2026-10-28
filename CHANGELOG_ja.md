@@ -2,6 +2,14 @@
 
 [English version here](CHANGELOG.md)
 
+- **v2.8.4** (2026-10-28): Z80 コア用の SingleStepTests の実行ツールを追加。
+  - 新しい `tools/run_singlestep_tests.py` で、[SingleStepTests/z80](https://github.com/SingleStepTests/z80) の
+    テスト（1604 のオペコードそれぞれに 1 命令ずつのテストが 1000 件）を CPU コアだけで動かせる。レジスタ、MEMPTR、
+    Q、RAM、ポートへの読み書き、T ステート数を比べる。コアは 1,604,000 件のうち、わかっている 2 つの食い違いを除いて
+    すべて一致する。2 つの食い違いは、繰り返し中の `LDIR`/`LDDR`/`CPIR`/`CPDR` の MEMPTR と、`OUTI`/`OTIR` の
+    ポートアドレスの上位バイトで、根拠とともに `tools/singlestep_known_divergences.json` に載せている。コアを他の言語に
+    移植したときも、同じファイルと一覧を使える。テストファイルは同梱していない。
+  - `docs/technical-implementation.md` に、このツール、比べる内容、わかっている食い違いの説明を足した。
 - **v2.8.3** (2026-10-28): Z80 のブロック I/O のフラグを完全にし、ステートセーブの形式を 20 にした。
   - Z80 コアが、繰り返し中の `INIR`/`INDR`/`OTIR`/`OTDR` で起きるフラグと MEMPTR の変化（Zilog NMOS）を再現する。Y と
     X は命令のアドレスから取り、H と P/V は C、転送した値、B から補正し、MEMPTR は命令のアドレス + 1 になる。CPU コア
