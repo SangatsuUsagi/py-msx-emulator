@@ -26,6 +26,9 @@ zexall in about 90 seconds; CPython takes much longer.
 Usage:
     ./venvs/pypy-msx-emulator/bin/python tools/run_z80_exercisers.py \\
         path/to/zexall.com path/to/z80full.tap
+
+The core is imported from the repository that holds this file; set
+PY_MSX_ROOT to test the core of another checkout.
 """
 
 from __future__ import annotations
@@ -54,15 +57,21 @@ _SPECTRUM_ERR_NR = 0x5C3A
 _TAP_STACK = 0x7F00
 _ULA_PORT_VALUE = 0xBF  # what z80test's IN tests expect from the Spectrum ULA
 _RET = 0xC9
+_ZX_TAB = 23  # Spectrum control codes printed through RST 10h
+_ZX_ENTER = 13
+_ZX_COPYRIGHT = 127
 
 
 def _ula_read_port(_port: int) -> int:
     return _ULA_PORT_VALUE
 
 
-def _run_cpm(data: bytes) -> tuple[str, int]:
+def _run_cpm(program: bytes) -> tuple[str, int]:
+    """Run a CP/M .com program; return its console text and instruction count."""
+    if len(program) > 0x10000 - _CPM_ENTRY:
+        raise ValueError(f"CP/M program too large: {len(program)} bytes")
     mem = bytearray(0x10000)
-    mem[_CPM_ENTRY : _CPM_ENTRY + len(data)] = data
+    mem[_CPM_ENTRY : _CPM_ENTRY + len(program)] = program
     mem[_CPM_BDOS] = _RET
     # Top of the TPA, read by programs that size their stack from it.
     mem[_CPM_TPA_TOP_PTR] = _CPM_STACK & 0xFF
@@ -91,28 +100,35 @@ def _run_cpm(data: bytes) -> tuple[str, int]:
     return "".join(out), instructions
 
 
-def _load_tap_code(data: bytes, mem: bytearray) -> int:
+def _load_tap_code(image: bytes, mem: bytearray) -> int:
     """Copy the first CODE block of a TAP image into mem; return its address."""
     blocks: list[bytes] = []
     pos = 0
-    while pos + 2 <= len(data):
-        length = data[pos] | (data[pos + 1] << 8)
-        blocks.append(data[pos + 2 : pos + 2 + length])
+    while pos + 2 <= len(image):
+        length = image[pos] | (image[pos + 1] << 8)
+        if pos + 2 + length > len(image):
+            raise ValueError("truncated block in the TAP image")
+        blocks.append(image[pos + 2 : pos + 2 + length])
         pos += 2 + length
     for i in range(len(blocks) - 1):
         header = blocks[i]
         # Header block: flag 0x00, type 3 (CODE), param 1 = load address.
         if len(header) >= 16 and header[0] == 0x00 and header[1] == 3:
             address = header[14] | (header[15] << 8)
+            if len(blocks[i + 1]) < 2:
+                raise ValueError("CODE data block without flag and checksum bytes")
             code = blocks[i + 1][1:-1]  # drop the flag and checksum bytes
+            if address + len(code) > 0x10000:
+                raise ValueError("CODE block does not fit in 64 KB")
             mem[address : address + len(code)] = code
             return address
     raise ValueError("no CODE block in the TAP image")
 
 
-def _run_tap(data: bytes) -> tuple[str, int]:
+def _run_tap(image: bytes) -> tuple[str, int]:
+    """Run a z80test TAP image; return its printed text and instruction count."""
     mem = bytearray(0x10000)
-    entry = _load_tap_code(data, mem)
+    entry = _load_tap_code(image, mem)
     mem[_SPECTRUM_CHAN_OPEN] = _RET
     mem[_SPECTRUM_RST10] = _RET
     cpu = Z80(read_byte=mem.__getitem__, write_byte=mem.__setitem__, read_port=_ula_read_port)
@@ -130,12 +146,12 @@ def _run_tap(data: bytes) -> tuple[str, int]:
             ch = r.A
             if skip > 0:
                 skip -= 1
-            elif ch == 23:  # TAB n, m: the column goes as two more characters
+            elif ch == _ZX_TAB:  # TAB n, m: the column goes as two more characters
                 skip = 2
                 _emit(out, " ")
-            elif ch == 13:
+            elif ch == _ZX_ENTER:
                 _emit(out, "\n")
-            elif ch == 127:
+            elif ch == _ZX_COPYRIGHT:
                 _emit(out, "(c)")
             elif 32 <= ch < 127:
                 _emit(out, chr(ch))
@@ -154,15 +170,15 @@ def _emit(out: list[str], text: str) -> None:
 
 def _run(path: Path) -> bool:
     """Run one program; return True if it reports no failure."""
-    data = path.read_bytes()
+    program = path.read_bytes()
     print(f"== {path.name}")
     start = time.perf_counter()
     # main() has already checked the suffix is .com or .tap.
     if path.suffix.lower() == ".com":
-        text, instructions = _run_cpm(data)
+        text, instructions = _run_cpm(program)
         passed = "ERROR" not in text
     else:
-        text, instructions = _run_tap(data)
+        text, instructions = _run_tap(program)
         passed = "tests failed" not in text
     elapsed = time.perf_counter() - start
     print(f"\n[{instructions} instructions in {elapsed:.1f} s]\n")
