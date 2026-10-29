@@ -787,7 +787,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `read_media(media_id) -> bytes \| None` | メディアの現在のバイト列。マシンにない id には `None` |
 | | `mark_persisted(media_id) -> int` | host がバイト列を書いた後に呼ぶ。`STATUS_OK`（0）を返す。マシンにない id には `STATUS_NO_MEDIUM`（5）を返す |
 | | `mount_disk(drive, data, write_protected) -> int` | `data` に `None` を渡すと取り出す。`STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
-| | `last_error_text() -> bytes` | 状態を返すメンバー（と `None` を返した `read_media`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
+| | `last_error_text() -> bytes` | 状態を返すメンバー（と `None` を返した `read_media`、`slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
@@ -795,6 +795,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
+| | `slot_layout() -> SlotLayout` | ポート 0xA8 の値、拡張された基本スロットのビットマスク、4 つの拡張スロットレジスタ（拡張されていないスロットは 0）。デバッガの `sl` と `st` が使う |
+| | `slot_info(primary, secondary, page) -> SlotInfo \| None` | 1 つのスロットの内容の文字列、バンクの文字列、KB 単位のサイズ。`sl` と `st` が使う。`secondary` と `page` は `None` にできる。0-3 の外の値には `None` を返す |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。`set_watchpoints()` は `STATUS_OK` を返し、不正な kind には `STATUS_BAD_ARGUMENT`（6）を返す |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |

@@ -204,6 +204,30 @@ class VdpInfo:
 
 
 @dataclass(frozen=True)
+class SlotLayout:
+    """The slot selection the core API's slot layout query returns
+    (msx/core_api.py). `primary` is the port 0xA8 value. Bit n of `expanded`
+    is set when primary slot n is expanded. `secondary` holds 4 bytes, the
+    secondary slot register of each primary slot (0 when not expanded)."""
+
+    primary: int
+    expanded: int
+    secondary: bytes
+
+
+@dataclass(frozen=True)
+class SlotInfo:
+    """One slot as the core API's slot description query returns it
+    (msx/core_api.py): the content and the bank as UTF-8 text (bank b"-"
+    when the page has no bank), and the size in KB (0 when no size
+    applies)."""
+
+    content: bytes
+    bank: bytes
+    size_kb: int
+
+
+@dataclass(frozen=True)
 class RomImage:
     """A ROM image the MachineConfig document refers to by `sha1` (40
     lowercase hex digits of the SHA1 of `data`)."""

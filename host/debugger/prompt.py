@@ -15,7 +15,7 @@ from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.media import DiskFiles
 from host.watch import watch_kind, watch_text
-from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, VdpInfo
+from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, SlotInfo, VdpInfo
 from msx.mapper import BankTracingMapper
 
 try:
@@ -26,7 +26,6 @@ except ImportError:  # stock Windows CPython has no readline module
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
     from msx.machine import Machine
-    from msx.memory import Memory
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -675,44 +674,32 @@ class Debugger:
         print(f"Sprite rendering: {state}")
 
     def _cmd_slot_active(self) -> None:
-        mem = self._diagnostics_machine().memory
+        layout = self._machine.slot_layout()
         print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
         _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
         for page in range(4):
-            prim = (mem.slot_register >> (page * 2)) & 0x03
-            if mem.sub_slot_enabled and prim == 3:
-                sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
+            prim = (layout.primary >> (page * 2)) & 0x03
+            sec: int | None = None
+            sec_str = "-"
+            if layout.expanded & (1 << prim):
+                sec = (layout.secondary[prim] >> (page * 2)) & 0x03
                 sec_str = str(sec)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                sec = (mem.slot2_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                sec = (mem.slot1_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            else:
-                sec = None
-                sec_str = "-"
-            content = mem.debug_slot_content(prim, sec, page)
-            bank = mem.debug_slot_bank(prim, sec, page)
+            info = _slot_info(self._machine, prim, sec, page)
+            content = info.content.decode("utf-8")
+            bank = info.bank.decode("utf-8")
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
-        mem = self._diagnostics_machine().memory
+        layout = self._machine.slot_layout()
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
-            if mem.sub_slot_enabled and prim == 3:
-                _print_expanded_slot(mem, prim, mem.sub_slot_reg)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                _print_expanded_slot(mem, prim, mem.slot2_sub_slot_reg)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                _print_expanded_slot(mem, prim, mem.slot1_sub_slot_reg)
+            if layout.expanded & (1 << prim):
+                _print_expanded_slot(self._machine, prim, layout.secondary[prim])
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
-                content = mem.debug_slot_content(prim, None, None)
-                size = mem.debug_slot_size_kb(prim, None)
-                suffix = f"  {size}" if size else ""
-                print(f"  Primary {prim}{role_str}  {content}{suffix}")
+                info = _slot_info(self._machine, prim, None, None)
+                print(f"  Primary {prim}{role_str}  {_slot_text(info)}")
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
         """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
@@ -803,7 +790,7 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
     return cmd, log
 
 
-def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
+def _print_expanded_slot(machine: CoreApi, prim: int, raw: int) -> None:
     print(f"  Primary {prim} [EXPANDED]  secondary-select(raw)={raw:02X}h")
     parts = []
     for pg in range(4):
@@ -811,10 +798,24 @@ def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
         parts.append(f"P{pg}->{prim}-{s}")
     print(f"    page-map: {'  '.join(parts)}")
     for sec in range(4):
-        content = mem.debug_slot_content(prim, sec, None)
-        size = mem.debug_slot_size_kb(prim, sec)
-        suffix = f"  {size}" if size else ""
-        print(f"    {prim}-{sec}  {content}{suffix}")
+        info = _slot_info(machine, prim, sec, None)
+        print(f"    {prim}-{sec}  {_slot_text(info)}")
+
+
+def _slot_info(machine: CoreApi, prim: int, sec: int | None, page: int | None) -> SlotInfo:
+    """The core's description of a slot. The slot views pass only values
+    0-3, which the query never rejects."""
+    info = machine.slot_info(prim, sec, page)
+    assert info is not None
+    return info
+
+
+def _slot_text(info: SlotInfo) -> str:
+    """The `st` line text of a slot: its content, then its size if any."""
+    content = info.content.decode("utf-8")
+    if info.size_kb:
+        return f"{content}  {info.size_kb}KB"
+    return content
 
 
 def _print_vdp_fancy(vdp: VdpInfo) -> None:

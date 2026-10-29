@@ -1166,7 +1166,7 @@ belongs to the debugger's diagnostics.
 | | `read_media(media_id) -> bytes \| None` | The current bytes of a medium. `None` for an id the machine does not have |
 | | `mark_persisted(media_id) -> int` | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have |
 | | `mount_disk(drive, data, write_protected) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
-| | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or `None` from `read_media`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
+| | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or `None` from `read_media` or `slot_info`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 | | `disk_mounted(drive)` | Whether the drive exists and holds an image |
 | Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6) |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
@@ -1174,6 +1174,8 @@ belongs to the debugger's diagnostics.
 | | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size |
 | | `vdp_info() -> VdpInfo` | It clears no status flag |
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
+| | `slot_layout() -> SlotLayout` | The port 0xA8 value, the expanded primary slots as a bit mask, and the 4 secondary slot registers (0 for a slot that is not expanded). The debugger's `sl` and `st` use it |
+| | `slot_info(primary, secondary, page) -> SlotInfo \| None` | The content text, bank text and size in KB of one slot, for `sl` and `st`. `secondary` and `page` can be `None`. A value outside 0-3 returns `None` |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
 | Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. `set_watchpoints()` returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) for an invalid kind |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
