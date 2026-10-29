@@ -183,3 +183,23 @@ def test_s_over_a_watched_access_stays_in_the_repl(capsys) -> None:
     assert out.index("PC=4009", wp) > wp       # the step's register summary follows
     assert out.count("Debugger entered.") == 1  # no second REPL
     assert prompts.call_count == 2              # the same prompt again, then c
+
+
+def test_s_advances_the_cycle_count_at_the_prompt() -> None:
+    # debug-monitor "s [N]": the prompt's cyc rises by the step's T-states.
+    m, twin = _machine(), _machine()
+    m.set_breakpoints([0x4006])
+    twin.set_breakpoints([0x4006])
+    assert _step(m) == STOP_BREAKPOINT and _step(twin) == STOP_BREAKPOINT
+    n = twin.step()
+    prompts: list[str] = []
+
+    def answer(prompt: str = "") -> str:
+        prompts.append(prompt)
+        return "s" if len(prompts) == 1 else "c"
+
+    before = m.cycle_count
+    with patch("builtins.input", side_effect=answer):
+        Debugger(m).enter()
+    assert prompts[0].startswith(f"(msx-dbg cyc={before} ")
+    assert prompts[1].startswith(f"(msx-dbg cyc={before + n} ")
