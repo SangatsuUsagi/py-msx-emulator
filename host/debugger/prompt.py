@@ -14,9 +14,16 @@ from typing import TYPE_CHECKING, Callable
 from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.media import DiskFiles
+from host.trace import TraceOutput
 from host.watch import watch_kind, watch_text
-from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, SlotInfo, VdpInfo
-from msx.mapper import BankTracingMapper
+from msx.boundary import (
+    STOP_WATCHPOINT,
+    TRACE_MAPPER,
+    TRACE_VDP,
+    VDP_KIND_V9938,
+    SlotInfo,
+    VdpInfo,
+)
 
 try:
     import readline
@@ -25,7 +32,6 @@ except ImportError:  # stock Windows CPython has no readline module
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
-    from msx.machine import Machine
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -101,26 +107,26 @@ def _complete_command(text: str, state: int) -> str | None:
 class Debugger:
     """Interactive debug prompt attached to a Machine instance."""
 
-    def __init__(self, machine: CoreApi, disk_files: DiskFiles | None = None) -> None:
+    def __init__(
+        self, machine: CoreApi, disk_files: DiskFiles | None = None,
+        trace: TraceOutput | None = None,
+    ) -> None:
         self._machine = machine
         # The file of each drive's disk, shared with the frontend and the RPC
         # server of the same run (host/media.py DiskFiles).
         self._disk_files = disk_files if disk_files is not None else DiskFiles()
+        # Where the run's VDP and mapper trace lines go (host/trace.py); the
+        # CLI flags set it up, te/ce turn the traces on.
+        self.trace = trace if trace is not None else TraceOutput()
+
+    def drain_trace(self) -> None:
+        """Write the core's recorded trace events as text. The run loops call
+        it after each step_frame, the step command after each step."""
+        self.trace.drain(self._machine)
 
     def _read(self, addr: int) -> int:
         """One byte of CPU address space, through the core API (no watchpoint)."""
         return self._machine.read_memory(addr, 1)[0]
-
-    def _diagnostics_machine(self) -> Machine | None:
-        """The machine as the Python core, for the trace commands only (te,
-        td, ce, cd): they attach Python tracer objects to its components
-        (tests/test_core_frontend_boundary.py allowlist). None on another
-        core, where each of them prints that it needs the Python core."""
-        from msx.machine import Machine
-
-        if isinstance(self._machine, Machine):
-            return self._machine
-        return None
 
     # ------------------------------------------------------------------
     # Public API
@@ -560,6 +566,7 @@ class Debugger:
             return
         for _ in range(count):
             self._machine.step()
+            self.drain_trace()
             stop = self._machine.last_stop()
             if stop.reason == STOP_WATCHPOINT:
                 print(watch_hit_line(stop))
@@ -569,67 +576,37 @@ class Debugger:
         print(f"  => {r.PC:04X}: {line}")
 
     def _cmd_trace_enable(self) -> None:
-        from msx.vdp.tracer import Tracer
-        m = self._diagnostics_machine()
-        if m is None:
-            print("te: needs the Python core")
-            return
-        vdp = m.vdp
-        if vdp._get_pc is None:
-            vdp._get_pc    = lambda: m.cpu.instruction_pc
-            vdp._get_cycle = lambda: m.cycle_count
-        if vdp.tracer is None:
-            vdp.tracer = Tracer(enabled=True, output=sys.stdout)
-        else:
-            vdp.tracer.enabled = True
-        print("VDP trace enabled (stdout)")
+        trace = self.trace
+        if trace.vdp_out is None:
+            trace.set_vdp_output(sys.stdout, "stdout")
+        self._machine.set_trace_kinds(self._machine.trace_kinds() | TRACE_VDP)
+        print(f"VDP trace enabled ({trace.vdp_name})")
 
     def _cmd_trace_disable(self) -> None:
-        m = self._diagnostics_machine()
-        if m is None:
-            print("td: needs the Python core")
-            return
-        vdp = m.vdp
-        if vdp.tracer is None or not vdp.tracer.enabled:
+        kinds = self._machine.trace_kinds()
+        if not kinds & TRACE_VDP:
             print("VDP trace already disabled")
             return
-        vdp.tracer.enabled = False
+        self._machine.set_trace_kinds(kinds & ~TRACE_VDP)
         print("VDP trace disabled")
 
-    def _mapper_targets(self) -> list[BankTracingMapper]:
-        """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
-        m = self._diagnostics_machine()
-        if m is None:
-            return []
-        mem = m.memory
-        result: list[BankTracingMapper] = []
-        for mp in (mem._mapper, mem._mapper2):
-            if isinstance(mp, BankTracingMapper):
-                result.append(mp)
-        return result
-
     def _cmd_mapper_trace_enable(self) -> None:
-        from msx.mapper_tracer import attach_to_machine
-        m = self._diagnostics_machine()
-        if m is None:
-            print("ce: needs the Python core")
-            return
-        if attach_to_machine(m, output=sys.stdout) is None:
+        if not self._machine.trace_sources() & TRACE_MAPPER:
             print("ce: no bank-switching ROM mapper present")
             return
-        print("Mapper bank-switch trace enabled (stdout)")
+        trace = self.trace
+        if trace.map_out is None:
+            trace.set_map_output(sys.stdout, "stdout")
+        self._machine.set_trace_kinds(self._machine.trace_kinds() | TRACE_MAPPER)
+        print(f"Mapper bank-switch trace enabled ({trace.map_name})")
 
     def _cmd_mapper_trace_disable(self) -> None:
-        if self._diagnostics_machine() is None:
-            print("cd: needs the Python core")
+        kinds = self._machine.trace_kinds()
+        if not kinds & TRACE_MAPPER:
+            print("Mapper trace already disabled")
             return
-        disabled = False
-        for mp in self._mapper_targets():
-            tracer = mp._tracer
-            if tracer is not None and tracer.enabled:
-                tracer.enabled = False
-                disabled = True
-        print("Mapper trace disabled" if disabled else "Mapper trace already disabled")
+        self._machine.set_trace_kinds(kinds & ~TRACE_MAPPER)
+        print("Mapper trace disabled")
 
     def _render_rgb24(self) -> tuple[bytes, int, int]:
         """Render the current VDP state to RGB24 without perturbing frame state.

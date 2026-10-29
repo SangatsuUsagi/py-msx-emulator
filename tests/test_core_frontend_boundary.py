@@ -130,16 +130,6 @@ _CORE_COMPONENTS = frozenset({
 # Names a machine handle goes by on the host side.
 _MACHINE_RECEIVERS = frozenset({"machine", "_machine", "m", "core"})
 
-# "path:function" -> the debug-monitor diagnostics command it serves. These
-# reach Machine components until a diagnostics contract exists
-# (allium/core-frontend.allium, DebugControl open question).
-_DIAGNOSTICS_ALLOWLIST: dict[str, str] = {
-    "host/debugger/prompt.py:_cmd_trace_enable": "te (VDP trace on)",
-    "host/debugger/prompt.py:_cmd_trace_disable": "td (VDP trace off)",
-    "host/debugger/prompt.py:_mapper_targets": "ce / cd (mapper trace)",
-}
-
-
 def _host_side_files() -> list[Path]:
     files = [_REPO / "__main__.py"]
     for name in _HOST_SIDE_DIRS:
@@ -150,7 +140,7 @@ def _host_side_files() -> list[Path]:
 def _is_machine_receiver(node: ast.expr) -> bool:
     """A name or attribute called like a machine handle (machine, self._machine,
     server.machine, m, core), or a call to a function named for the machine
-    (self._diagnostics_machine())."""
+    (e.g. self._get_machine())."""
     if isinstance(node, ast.Name):
         return node.id in _MACHINE_RECEIVERS
     if isinstance(node, ast.Attribute):
@@ -182,36 +172,29 @@ def _machine_internal_accesses(path: Path) -> list[tuple[str, int, str]]:
 
 
 def test_no_host_code_reads_a_core_component() -> None:
+    # machine-core "No host code reads a core component" and "The allowlist
+    # names only diagnostics": no host function is excepted from the scan.
     offenders = []
     for path in _host_side_files():
         rel = path.relative_to(_REPO).as_posix()
         for function, lineno, attr in _machine_internal_accesses(path):
-            if f"{rel}:{function}" not in _DIAGNOSTICS_ALLOWLIST:
-                offenders.append(f"{rel}:{lineno}: {function}: .{attr}")
+            offenders.append(f"{rel}:{lineno}: {function}: .{attr}")
     assert offenders == []
 
 
-def test_the_allowlist_names_only_diagnostics() -> None:
-    # Every entry names a function that exists, still needs the exception and
-    # gives the diagnostics command it serves, so the allowlist cannot go stale.
-    needed: set[str] = set()
-    for path in _host_side_files():
-        rel = path.relative_to(_REPO).as_posix()
-        for function, _lineno, _attr in _machine_internal_accesses(path):
-            needed.add(f"{rel}:{function}")
-    for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
-        assert entry in needed, f"stale allowlist entry: {entry}"
-        assert reason.strip(), f"allowlist entry without a reason: {entry}"
-
-
-def test_the_allowlist_names_only_the_trace_commands() -> None:
-    # machine-core "The allowlist names only the trace commands": each reason
-    # starts with the commands it serves ("ce / cd (mapper trace)").
-    for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
-        commands = reason.split("(")[0].replace("/", " ").split()
-        assert commands, f"allowlist entry names no command: {entry}"
-        for command in commands:
-            assert command in ("te", "td", "ce", "cd"), f"{entry}: {command}"
+def test_the_trace_commands_read_no_core_component() -> None:
+    # machine-core "The allowlist names only the trace commands": te, td, ce
+    # and cd use only the core API.
+    prompt = _REPO / "host" / "debugger" / "prompt.py"
+    trace_commands = {
+        "_cmd_trace_enable", "_cmd_trace_disable",
+        "_cmd_mapper_trace_enable", "_cmd_mapper_trace_disable",
+    }
+    tree = ast.parse(prompt.read_text(encoding="utf-8"))
+    defined = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert trace_commands <= defined
+    accesses = [a for a in _machine_internal_accesses(prompt) if a[0] in trace_commands]
+    assert accesses == []
 
 
 def _calls_named(path: Path, name: str) -> list[int]:

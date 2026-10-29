@@ -366,6 +366,7 @@ def _run_headless_frames(
     with sigint_requests_break(machine):
         while done < count_frame:
             out = machine.step_frame(no_input, render_video=False)
+            debugger.drain_trace()
             if out.stop_reason:
                 handle_stop(machine, out.stop_reason, debugger, None)
             if out.frame_complete:
@@ -403,6 +404,7 @@ def _run_benchmark(
     with sigint_requests_break(machine):
         while done < frames:
             out = machine.step_frame(no_input, render_video=True)
+            debugger.drain_trace()
             if out.stop_reason:
                 handle_stop(machine, out.stop_reason, debugger, None)
             if out.frame_complete:
@@ -619,17 +621,19 @@ def main() -> None:
         opts.mouse_port, args,
     )
 
+    from host.trace import TraceOutput
     from msx.diagnostics.logger import DebugLogger
-    from msx.vdp.tracer import Tracer
 
-    # --- Build tracer ---
-    tracer: Tracer | None = None
+    # --- Trace outputs (the kinds are turned on after the build) ---
+    trace_output = TraceOutput()
     _trace_file = None
     _mapper_trace_file = None
     if args.vdp_trace:
         if args.vdp_trace_out:
             _trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
-        tracer = Tracer(enabled=True, output=_trace_file if _trace_file else sys.stdout)
+            trace_output.set_vdp_output(_trace_file, args.vdp_trace_out)
+        else:
+            trace_output.set_vdp_output(sys.stdout, "stdout")
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     logger = DebugLogger(log_path=args.log) if args.debug else None
@@ -665,15 +669,15 @@ def main() -> None:
         if logger is not None:
             from msx.diagnostics.logger import attach_logger
             attach_logger(machine, logger)
-        if tracer is not None:
-            from msx.vdp.tracer import attach_vdp_tracer
-            attach_vdp_tracer(machine, tracer)
+        if args.vdp_trace:
+            from msx.boundary import TRACE_VDP
+            machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP)
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
         # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        debugger = Debugger(machine, disk_files)
+        debugger = Debugger(machine, disk_files, trace_output)
 
         if breakpoint_addrs:
             machine.set_breakpoints(breakpoint_addrs)
@@ -683,10 +687,15 @@ def main() -> None:
             print(f"watch   : {_watch_summary(watchpoint_entries)}")
 
         if args.mapper_trace:
-            from msx.mapper_tracer import attach_to_machine
+            from msx.boundary import TRACE_MAPPER
             if args.mapper_trace_out:
                 _mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
-            if attach_to_machine(machine, output=_mapper_trace_file or sys.stdout) is None:
+                trace_output.set_map_output(_mapper_trace_file, args.mapper_trace_out)
+            else:
+                trace_output.set_map_output(sys.stdout, "stdout")
+            if machine.trace_sources() & TRACE_MAPPER:
+                machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER)
+            else:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
         if args.count_frame is not None:
