@@ -152,3 +152,15 @@ def make_machine_msx2(
         cartridge2=cartridge2, mapper2=mapper2,
     )
     return build_machine(config, logger=logger, tracer=tracer)
+
+
+def load_state_file(machine: Machine, path: Path | None = None) -> None:
+    """Load a state file (saves/states/latest.state when `path` is None)
+    through msx/state.py's loader, which raises the typed errors
+    (StateLoadError, SnapshotMismatchError) the machine-state scenarios name.
+    host.state_files.load_state reports them as a plain ValueError."""
+    from msx import state
+
+    if path is None:
+        path = (Path("saves") / "states" / "latest.state").resolve()
+    state.load_state(machine, path.read_bytes())

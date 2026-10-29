@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    STATUS_BAD_IMAGE,
+    STATUS_NO_DRIVE,
+    STATUS_OK,
+    STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
     STOP_NONE,
     STOP_REQUESTED,
@@ -119,6 +123,9 @@ class Machine:
     # Set by request_break() (Ctrl-C); run_frame() honors it before the next
     # frame segment.
     _break_request: bool = field(default=False, init=False, repr=False)
+    # The message of the last failed load_state or mount_disk (UTF-8), b""
+    # after a successful one (last_error_text()).
+    _error_text: bytes = field(default=b"", init=False, repr=False)
     # Position of a frame that stopped at a break (machine-core "A break stops
     # step_frame and the next call continues the frame"): the next scanline
     # to run, the frame-relative T-state total, the frame's start cycle (audio
@@ -258,22 +265,39 @@ class Machine:
         """Clear a medium's dirty flag after the host has written it."""
         self._media()[media_id].mark_persisted()
 
-    def mount_disk(self, drive: int, medium: DiskMedium | None) -> bytes | None:
-        """Swap `medium` (None ejects) into `drive` (0 = A). Returns the
-        outgoing image's bytes when it held unpersisted writes, for the host to
-        write back. Raises ValueError, changing nothing, for a machine without
-        that drive or an image whose size is not a positive multiple of 512."""
-        from msx.fdc.disk_image import DskDiskImage
+    def mount_disk(self, drive: int, medium: DiskMedium | None) -> int:
+        """Swap `medium` (None ejects) into `drive` (0 = A) and return
+        STATUS_OK. The host writes a dirty outgoing image back before the
+        swap. Returns STATUS_NO_DRIVE for a machine without that drive and
+        STATUS_BAD_IMAGE for an image whose size is not a positive multiple
+        of 512, changing nothing (last_error_text() gives the message)."""
+        from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
-            raise ValueError(f"no floppy drive {drive} on this machine")
+            return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         new_image = None
         if medium is not None:
+            size = len(medium.data)
+            if size == 0 or size % SECTOR_SIZE != 0:
+                return self._fail(
+                    STATUS_BAD_IMAGE,
+                    f"size {size} is not a positive multiple of {SECTOR_SIZE}",
+                )
             new_image = DskDiskImage(
                 medium.data, write_protected=medium.write_protected, path=medium.path
             )
-        outgoing = self.fdc.swap(drive, new_image)
-        return outgoing.data() if outgoing is not None else None
+        self.fdc.swap(drive, new_image)
+        self._error_text = b""
+        return STATUS_OK
+
+    def last_error_text(self) -> bytes:
+        """The UTF-8 message of the last failed load_state or mount_disk
+        call, or b"" when the last such call succeeded."""
+        return self._error_text
+
+    def _fail(self, status: int, message: str) -> int:
+        self._error_text = message.encode("utf-8")
+        return status
 
     def disk_mounted(self, drive: int) -> bool:
         """Whether `drive` (0 = A) exists and holds an image."""
@@ -555,14 +579,19 @@ class Machine:
 
         return state.save_state(self)
 
-    def load_state(self, data: bytes, source: str = "<state>") -> None:
-        """Restore save_state() bytes; `source` names them in error messages.
-        Raises ValueError (StateLoadError included) and restores nothing when
-        the data does not fit this machine (msx/state.py load_state)."""
+    def load_state(self, data: bytes) -> int:
+        """Restore save_state() bytes and return STATUS_OK. Returns
+        STATUS_STATE_REJECTED and restores nothing when msx/state.py's
+        load_state rejects the data (last_error_text() gives its message)."""
         from msx import state
 
-        state.load_state(self, data, source)
+        try:
+            state.load_state(self, data)
+        except ValueError as exc:
+            return self._fail(STATUS_STATE_REJECTED, str(exc))
         self._drop_frame()
+        self._error_text = b""
+        return STATUS_OK
 
     def _read_with_watch(self, addr: int) -> int:
         val = self.memory.read(addr)

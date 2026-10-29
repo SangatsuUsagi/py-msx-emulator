@@ -1160,12 +1160,13 @@ belongs to the debugger's diagnostics.
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
 | Control | `reset()` | Power-on reset. RAM, VRAM and mounted media stay as they are |
 | | `save_state() -> bytes` | The snapshot (`msx/state.py`) |
-| | `load_state(data, source)` | Raises `ValueError` (`StateLoadError`, `SnapshotMismatchError`) and changes nothing when the snapshot does not fit |
+| | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
 | | `write_memory(addr, data)` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused |
 | Media | `dirty_media()` | The ids written since they were last persisted |
 | | `read_media(media_id) -> bytes` | The current bytes of a medium |
 | | `mark_persisted(media_id)` | Call it after the host has written the bytes |
-| | `mount_disk(drive, medium) -> bytes \| None` | `None` ejects. Returns the outgoing image when it holds unpersisted writes. Raises `ValueError` for a drive the machine lacks or an image whose size is not a positive multiple of 512 |
+| | `mount_disk(drive, medium) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
+| | `last_error_text() -> bytes` | The UTF-8 message of the last failed `load_state` or `mount_disk`, `b""` after a successful one. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 | | `disk_mounted(drive)`, `disk_path(drive)` | Drive state and the recorded host name |
 | Devices | `attach_mouse(port)` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
@@ -1344,7 +1345,8 @@ for _ in range(120):
     # out.audio: samples_per_frame() signed 16-bit LE mono samples
 
 snapshot = machine.save_state()                    # bytes; store them anywhere
-machine.load_state(snapshot)
+if machine.load_state(snapshot) != 0:             # 0 is STATUS_OK
+    print(machine.last_error_text().decode("utf-8"))
 assert machine.save_state() == snapshot
 
 persist_dirty_media(machine, sram_paths(config))   # write SRAM/CMOS/disk changes back
@@ -1363,8 +1365,9 @@ and build the `MachineConfig` from them directly.
 These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 
-- The control operations return `None`, not a status record. `save_state`
-  and `load_state` are `Machine` methods over `msx/state.py`.
+- The control operations return `None`, not a status record. `load_state`
+  and `mount_disk` return an integer status instead. `save_state` and
+  `load_state` are `Machine` methods over `msx/state.py`.
 - The inspection records use the Python register names (`AF`, `AF_`) and
   hold the palette as a tuple.
 - `eject_disk` is `mount_disk(drive, None)`. `read_media` returns the bytes

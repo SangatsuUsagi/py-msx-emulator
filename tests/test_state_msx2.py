@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from host.state_files import load_state, save_state
+from host.state_files import save_state
 from msx.boundary import RgbFrame
 from msx.state import StateLoadError
-from tests.factories import make_machine, make_machine_msx2
+from tests.factories import load_state_file, make_machine, make_machine_msx2
 
 
 def _load_state_json(path: Path) -> dict:
@@ -47,7 +47,7 @@ def test_msx2_roundtrip_vram(saves_dir):
 
     machine.vdp.vram[0x100] = 0x00
     machine.vdp.vram[0x1FFFF] = 0x00
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.vram[0x100] == 0xAB
     assert machine.vdp.vram[0x1FFFF] == 0xCD
@@ -59,7 +59,7 @@ def test_msx2_roundtrip_palette(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.vdp.palette[3] = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.palette[3] == 0b101_011_110
 
@@ -72,7 +72,7 @@ def test_msx2_roundtrip_ram_mapper_banks(saves_dir):
 
     machine.memory.ram_mapper.banks[0] = 0
     machine.memory.ram_mapper.banks[2] = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.ram_mapper.banks[0] == 5
     assert machine.memory.ram_mapper.banks[2] == 7
@@ -84,7 +84,7 @@ def test_msx2_roundtrip_ram_mapper_ram(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.memory.ram_mapper.ram[0x8000] = 0x00
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.ram_mapper.ram[0x8000] == 0x77
 
@@ -99,7 +99,7 @@ def test_msx1_load_into_msx2_raises(saves_dir):
 
     msx2 = make_machine_msx2(_ROM, _EXTROM)
     with pytest.raises(ValueError, match="machine type"):
-        load_state(msx2)
+        load_state_file(msx2)
 
 
 def test_msx2_load_into_msx1_raises(saves_dir):
@@ -108,7 +108,7 @@ def test_msx2_load_into_msx1_raises(saves_dir):
 
     msx1 = make_machine(_ROM)
     with pytest.raises(ValueError, match="machine type"):
-        load_state(msx1)
+        load_state_file(msx1)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def test_old_format_version_rejected(saves_dir):
     _rewrite_state_version(state_path, 1)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_msx2_roundtrip_sub_slot_reg(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.memory.set_sub_slot_reg(0x00)
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.sub_slot_reg == 0xA5
 
@@ -163,7 +163,7 @@ def test_msx2_roundtrip_slot2_sub_slot_reg(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.memory.set_slot2_sub_slot_reg(0x00)
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.slot2_sub_slot_reg == 0x5A
 
@@ -195,7 +195,7 @@ def test_msx2_roundtrip_slot1_sub_slot_reg(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.memory.set_slot1_sub_slot_reg(0x00)
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.memory.slot1_sub_slot_reg == 0x5A
 
@@ -225,7 +225,7 @@ def test_msx2_roundtrip_mapper1_subslot_content(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16 * 8192))
-    load_state(machine)
+    load_state_file(machine)
 
     restored = machine.memory._mapper1_subslots[0]
     assert isinstance(restored, Ascii8Mapper)
@@ -242,7 +242,7 @@ def test_loading_state_with_mismatched_slot1_subslot_kind_raises(saves_dir):
 
     machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16384))
     with pytest.raises(ValueError, match="slot 1 sub-slot 0"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ def test_format_version_2_rejected(saves_dir):
     _rewrite_state_version(state_path, 2)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ def test_format_version_3_rejected(saves_dir):
     _rewrite_state_version(state_path, 3)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ def test_msx2_roundtrip_cmd_regs(saves_dir):
     machine.vdp.cmd_regs[0] = 0
     machine.vdp.cmd_regs[4] = 0
     machine.vdp.cmd_regs[14] = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.cmd_regs[0] == 0x12
     assert machine.vdp.cmd_regs[4] == 0xAB
@@ -300,7 +300,7 @@ def test_msx2_roundtrip_status2(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     machine.vdp._status2 = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp._status2 == 0x81
 
@@ -320,7 +320,7 @@ def test_msx2_roundtrip_cmd_remaining(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
     machine.vdp._cmd_remaining = 0
     machine.vdp._status2 = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp._cmd_remaining == 1000
     assert machine.vdp._status2 & 0x01
@@ -338,7 +338,7 @@ def test_msx1_roundtrip_unaffected(saves_dir):
 
     machine.cpu.registers.A = 0x00
     machine.memory.ram[10] = 0x00
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.cpu.registers.A == 0x55
     assert machine.memory.ram[10] == 0x99
@@ -354,7 +354,7 @@ def test_msx2_roundtrip_vdp_port_state(saves_dir):
     machine.vdp.read_port(0x99)         # drops the pending pair
     machine.vdp.addr = 0
     machine.vdp.read_buf = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.latch == 0x56
     assert machine.vdp.addr == 0x1A256
@@ -368,7 +368,7 @@ def test_msx2_roundtrip_pending_palette_byte(saves_dir):
 
     machine.vdp._first_byte = 0x11
     machine.vdp._pal_pending = False
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp._pal_pending and machine.vdp._first_byte == 0x75
     machine.vdp.write_port(0x9A, 0x03)
@@ -381,7 +381,7 @@ def test_msx2_load_clears_stale_pending_palette_byte(saves_dir):
     save_state(machine, _RGB_MSX2, "test")  # no palette pair pending
 
     machine.vdp.write_port(0x9A, 0x75)
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp._pal_pending is False
 
@@ -412,7 +412,7 @@ def test_format_version_19_rejected(saves_dir):
     _rewrite_state_version(state_path, 19)
 
     with pytest.raises(ValueError, match="19"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 def test_format_version_13_rejected(saves_dir):
@@ -422,7 +422,7 @@ def test_format_version_13_rejected(saves_dir):
     _rewrite_state_version(state_path, 13)
 
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 def test_msx2_roundtrip_collision_coordinates(saves_dir):
@@ -433,7 +433,7 @@ def test_msx2_roundtrip_collision_coordinates(saves_dir):
 
     machine.vdp.collision_x = 0
     machine.vdp.collision_y = 0
-    load_state(machine)
+    load_state_file(machine)
 
     assert (machine.vdp.collision_x, machine.vdp.collision_y) == (0x123, 0x2AB)
     machine.vdp.regs[15] = 3
@@ -465,7 +465,7 @@ def test_msx2_hmmc_transfer_resumes_after_save_load(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     vdp.reset()                                        # disturb the live engine
-    load_state(machine)
+    load_state_file(machine)
     assert vdp._status2 & 0x81 == 0x81                 # CE and TR still set
     _hmmc_byte(vdp, 0x33)
     assert vdp._status2 & 0x80, "TR must come back between bytes"
@@ -488,7 +488,7 @@ def test_msx2_roundtrip_status1_and_srch_result(saves_dir):
     vdp._status8 = 0
     vdp._status9 = 0
     vdp.irq = False
-    load_state(machine)
+    load_state_file(machine)
 
     assert vdp.irq is True
     vdp.regs[15] = 8
@@ -518,7 +518,7 @@ def test_msx2_lmmc_transfer_resumes_with_saved_logop_and_bpp(saves_dir):
     vdp._cmd_log = 0                                   # IMP
     vdp._cmd_bpl, vdp._cmd_ppb, vdp._cmd_bpp = 256, 1, 8  # GRAPHIC7 geometry
     vdp._cmd_nx = 1
-    load_state(machine)
+    load_state_file(machine)
     assert vdp._status2 & 0x81 == 0x81
     _hmmc_byte(vdp, 0xFE)
     _hmmc_byte(vdp, 0xFE)
@@ -550,7 +550,7 @@ def test_msx2_lmcm_transfer_resumes_from_saved_source_cursor(saves_dir):
     vdp._cmd_sy = 0
     vdp._cmd_nx = 1
     vdp._cmd_ny = 1
-    load_state(machine)
+    load_state_file(machine)
     assert vdp.regs[15] == 7
     assert vdp._status2 & 0x01
 
@@ -580,7 +580,7 @@ def test_msx2_timed_command_mid_countdown_keeps_ce_until_expiry(saves_dir):
     save_state(machine, _RGB_MSX2, "test")
 
     vdp.reset()
-    load_state(machine)
+    load_state_file(machine)
 
     assert vdp._cmd_remaining == remaining
     assert vdp._cmd_active is True
@@ -622,7 +622,7 @@ def test_malformed_vdp9938_state_raises_state_load_error(saves_dir, corrupt):
     _corrupt_vdp9938(state_path, corrupt)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert "vdp.v9938" in str(exc_info.value)
 
 
@@ -633,7 +633,7 @@ def test_malformed_vdp9938_state_leaves_vdp_untouched(saves_dir):
     machine.vdp._status1 = 0x01
 
     with pytest.raises(StateLoadError):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert machine.vdp._status1 == 0x01            # validated before any write
 
 
@@ -647,7 +647,7 @@ def test_other_layout_of_the_same_version_is_rejected_cleanly(saves_dir):
         json.dump(data, f)
 
     with pytest.raises(ValueError, match="layout"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
@@ -660,7 +660,7 @@ def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
 
     for i in range(len(machine.vdp.vram)):
         machine.vdp.vram[i] = 0
-    load_state(machine)
+    load_state_file(machine)
     assert bytes(machine.vdp.vram) == expected
 
 
@@ -693,7 +693,7 @@ def test_msx2_roundtrip_without_ram_mapper(saves_dir):
 
     machine.vdp.vram[0x100] = 0x00
     machine.memory.ram[10] = 0x00
-    load_state(machine)
+    load_state_file(machine)
 
     assert machine.vdp.vram[0x100] == 0xAB
     assert machine.memory.ram[10] == 0x99
@@ -706,7 +706,7 @@ def test_load_wrong_format_version_raises_before_expand(saves_dir):
     state_path = save_state(machine, _RGB_MSX2, "test")
     _rewrite_state_version(state_path, 999)
     with pytest.raises(ValueError, match="version"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 def test_msx2_snapshot_without_vdp9938_is_rejected_before_restoring(saves_dir):
@@ -721,5 +721,5 @@ def test_msx2_snapshot_without_vdp9938_is_rejected_before_restoring(saves_dir):
     machine.memory.ram[0] = 0x5A           # must survive the rejected load
 
     with pytest.raises(StateLoadError, match="vdp.v9938"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert machine.memory.ram[0] == 0x5A

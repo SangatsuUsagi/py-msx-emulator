@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import DiskMedium, MediaId, drive_media_id
+from msx.boundary import STATUS_OK, DiskMedium, MediaId, drive_media_id
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -67,7 +67,7 @@ def swap_disk(machine: CoreApi, drive: int, path: Path | None) -> None:
         if media_id in machine.dirty_media():
             outgoing_path.write_bytes(machine.read_media(media_id))
             machine.mark_persisted(media_id)
-    outgoing = machine.mount_disk(drive, medium)
-    # Normally None: the image was persisted just above.
-    if outgoing is not None and outgoing_path is not None:
-        outgoing_path.write_bytes(outgoing)
+    if machine.mount_disk(drive, medium) != STATUS_OK:
+        message = machine.last_error_text().decode("utf-8")
+        name = path if path is not None else f"drive {drive}"
+        raise ValueError(f"{name}: {message}")
