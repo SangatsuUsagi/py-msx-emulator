@@ -346,9 +346,9 @@ def test_a_break_during_active_display_stops_the_call_there() -> None:
 
 
 def test_the_continued_frame_raises_vblank() -> None:
-    # vdp-interrupts "No VBlank for a frame cut short (TMS9918A)": with no
-    # pause hook the stopped frame continues on the next call, which raises
-    # F at the start of vertical blanking and renders the frame once.
+    # vdp-interrupts "A continued TMS9918A frame raises VBlank once": the
+    # stopped frame continues on the next call, which raises F at the start
+    # of vertical blanking and renders the frame once.
     machine = make_machine(b"\x00" * 0x8000)
     machine.vdp.regs[1] = 0x60             # BL + IE0
     machine.vdp.status = 0x00
