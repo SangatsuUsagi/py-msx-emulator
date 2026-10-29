@@ -5,6 +5,7 @@ from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
+from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
 from msx.dac import EventDac
 from msx.snapshot_schema import (
     check_bool,
@@ -20,6 +21,7 @@ from msx.sram import SramImage
 if TYPE_CHECKING:
     from msx.mapper_tracer import MapperTracer
     from msx.scc import SCC
+    from msx.trace import TraceLog
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -208,6 +210,10 @@ class BankTracingMapper:
     _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
     _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    # The machine's trace buffer (msx/trace.py), set at build time for the
+    # slot 1 and slot 2 mappers; bank changes are recorded while
+    # TRACE_MAPPER is on.
+    _trace: "TraceLog | None" = field(default=None, init=False, repr=False)
 
     def debug_bank_info(self, page: int) -> str | None:
         """Default for BankTracingMapper subclasses with no _banks list (e.g.
@@ -263,9 +269,15 @@ def _parse_banks(obj: dict[str, object], label: str, count: int) -> list[int]:
 
 
 def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
-    """Notify an injected MapperTracer of a bank change. No-op without a tracer."""
+    """Record a bank change in the trace buffer while TRACE_MAPPER is on,
+    and notify an injected MapperTracer. No-op when the bank is kept."""
+    if old == new:
+        return
+    trace = mapper._trace
+    if trace is not None and trace.kinds & TRACE_MAPPER:
+        trace.record(TRACE_EVENT_MAP_BANK, window, old, new, addr)
     tracer = mapper._tracer
-    if tracer is None or old == new:
+    if tracer is None:
         return
     get_pc = mapper._get_pc
     get_cycle = mapper._get_cycle

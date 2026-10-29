@@ -114,11 +114,41 @@ STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
 STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
 STATUS_BAD_CONFIG = 4       # create_machine: a configuration the build rejects
 STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: None): no such medium
-STATUS_BAD_ARGUMENT = 6     # set_watchpoints: a watch kind; attach_mouse: a port
+STATUS_BAD_ARGUMENT = 6     # set_watchpoints: a watch kind; attach_mouse: a port;
+                            # set_trace_kinds: a trace kind
 
 # The access kind of a watchpoint hit (StopInfo.watch_access).
 WATCH_READ = 1
 WATCH_WRITE = 2
+
+# The trace kinds (set_trace_kinds, trace_kinds, trace_sources), bit flags.
+TRACE_VDP = 0x01
+TRACE_MAPPER = 0x02
+
+# TraceEvent.kind, and what the fields a-d hold for each kind.
+TRACE_EVENT_VDP_PORT99 = 1  # a = the byte written to port 0x99
+TRACE_EVENT_VDP_PORT9B = 2  # a = the byte written to port 0x9B, b = R#17 before the write
+TRACE_EVENT_MAP_BANK = 3    # a = window, b = old bank, c = new bank, d = written address
+TRACE_EVENT_LOST = 4        # a = events lost to a full buffer; the other fields 0
+
+# Events the trace buffer holds between two drain_trace() calls.
+TRACE_CAPACITY = 65536
+
+
+@dataclass(frozen=True)
+class TraceEvent:
+    """One recorded trace event (drain_trace): the cycle count, the VDP
+    frame number and the CPU's instruction PC at the event, and the fields
+    a-d whose meaning the kind gives (TRACE_EVENT_*)."""
+
+    kind: int
+    cycle: int
+    frame: int
+    pc: int
+    a: int = 0
+    b: int = 0
+    c: int = 0
+    d: int = 0
 
 
 @dataclass(frozen=True)

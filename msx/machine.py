@@ -16,6 +16,8 @@ from msx.boundary import (
     STOP_NONE,
     STOP_REQUESTED,
     STOP_WATCHPOINT,
+    TRACE_MAPPER,
+    TRACE_VDP,
     VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
     WATCH_READ,
@@ -27,6 +29,7 @@ from msx.boundary import (
     SlotInfo,
     SlotLayout,
     StopInfo,
+    TraceEvent,
     VdpInfo,
     drive_media_id,
 )
@@ -43,6 +46,7 @@ from msx.ppi import PPI
 from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
 from msx.sram import Medium, SramImage
+from msx.trace import TraceLog
 from msx.vdp._geometry import OUTPUT_H, VideoStandard
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
@@ -92,6 +96,9 @@ class Machine:
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
     _logger: DebugLogger | None = field(default=None, repr=False)
+    # The trace buffer the VDP and the slot 1/2 mappers record into
+    # (set_trace_kinds, drain_trace); wired by msx/machine_loader.py.
+    _trace: TraceLog = field(default_factory=TraceLog, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
     # SHA-256 (hex) of the MachineConfig document this machine was built from;
@@ -629,6 +636,31 @@ class Machine:
     def sprites_hidden(self) -> bool:
         """Whether sprites are hidden (set_sprites_hidden)."""
         return self.vdp.debug_disable_sprites
+
+    def set_trace_kinds(self, kinds: int) -> int:
+        """Turn on exactly the trace kinds `kinds` (TRACE_VDP, TRACE_MAPPER)
+        and return STATUS_OK. Returns STATUS_BAD_ARGUMENT, changing nothing,
+        for another bit. A debug setting: no reset clears it and the saved
+        state omits it."""
+        if kinds & ~(TRACE_VDP | TRACE_MAPPER):
+            return self._fail(STATUS_BAD_ARGUMENT, f"invalid trace kinds {kinds}")
+        self._trace.kinds = kinds
+        self._error_text = b""
+        return STATUS_OK
+
+    def trace_kinds(self) -> int:
+        """The trace kinds that are on."""
+        return self._trace.kinds
+
+    def trace_sources(self) -> int:
+        """The trace kinds this machine can produce: TRACE_VDP, plus
+        TRACE_MAPPER with a bank-switching ROM mapper in slot 1 or 2."""
+        return self._trace.sources
+
+    def drain_trace(self) -> tuple[TraceEvent, ...]:
+        """The recorded trace events in order, ending with one
+        TRACE_EVENT_LOST record when the buffer was full; empties it."""
+        return self._trace.drain()
 
     def render_preview(self) -> RgbFrame:
         """The current frame as RGB24, without changing emulated state (the

@@ -11,13 +11,19 @@ None, or a flat record or tuple of these (machine-core "Core API values are
 integers, bytes or flat records"): the ids and machine properties are
 integer enums, watch kinds are bit flags, and no member takes or returns a
 file path. No member raises for an invalid argument: load_state,
-mount_disk, mark_persisted, set_watchpoints and attach_mouse return an
+mount_disk, mark_persisted, set_watchpoints, attach_mouse and
+set_trace_kinds return an
 integer status (msx/boundary.py STATUS_*), read_media returns None for an
 id the machine lacks, slot_info returns None for a slot, sub-slot or page
 outside 0-3, and last_error_text() gives the message of the last failure.
 The slot queries (slot_layout, slot_info) and the sprite display flag
 (set_sprites_hidden, sprites_hidden) serve the debugger's sl, st and ds;
-the flag is a debug setting outside the saved state. The machine is built
+the flag is a debug setting outside the saved state. The trace members
+(set_trace_kinds, trace_kinds, trace_sources, drain_trace) carry the VDP
+and mapper trace as flat integer events (msx/boundary.py TraceEvent) that
+the host formats; set_trace_kinds returns STATUS_BAD_ARGUMENT for an
+unknown kind, and the kinds are a debug setting outside the saved state
+too. The machine is built
 by msx.machine_loader.create_machine, which reports a rejected
 configuration the same way (allium/core-frontend.allium).
 """
@@ -34,6 +40,7 @@ if TYPE_CHECKING:
         SlotInfo,
         SlotLayout,
         StopInfo,
+        TraceEvent,
         VdpInfo,
     )
     from msx.input import InputFrame
@@ -90,6 +97,7 @@ class CoreApi(Protocol):
     def set_frame_breakpoint(self, frame: int | None) -> None: ...
     def set_break_halt_di(self, enabled: bool) -> None: ...
     def set_sprites_hidden(self, hidden: bool) -> None: ...
+    def set_trace_kinds(self, kinds: int) -> int: ...
     def set_sp_range(self, rng: tuple[int, int] | None) -> None: ...
 
     # -- break control ---------------------------------------------------------------
@@ -116,6 +124,9 @@ class CoreApi(Protocol):
     def watchpoints(self) -> tuple[tuple[int, int], ...]: ...
     def break_halt_di(self) -> bool: ...
     def sprites_hidden(self) -> bool: ...
+    def trace_kinds(self) -> int: ...
+    def trace_sources(self) -> int: ...
+    def drain_trace(self) -> tuple[TraceEvent, ...]: ...
     def render_preview(self) -> RgbFrame: ...
 
 
