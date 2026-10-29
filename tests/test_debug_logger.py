@@ -136,3 +136,40 @@ def test_io_read_format(capsys: pytest.CaptureFixture[str]) -> None:
     logger.on_io_read(port=0xA8, value=0xE0, pc=0x003F)
     captured = capsys.readouterr()
     assert "[IO]  IN   port=A8  val=E0  PC=003F" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# diag-debug-logger "An attached logger reaches every logging component"
+# ---------------------------------------------------------------------------
+
+def _program_rom(program: bytes) -> bytes:
+    """A 32 KB main ROM that starts with `program` and then spins (JR $)."""
+    return (program + bytes([0x18, 0xFE])).ljust(0x8000, b"\x00")
+
+
+def test_an_attached_logger_logs_an_undefined_opcode(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from msx.diagnostics.logger import attach_logger
+    from tests.factories import make_machine
+
+    machine = make_machine(_program_rom(bytes([0xED, 0x00])))
+    attach_logger(machine, DebugLogger())
+    for _ in range(3):
+        machine.step()
+    assert "[CPU]  undefined opcode 00  PC=0000" in capsys.readouterr().err
+
+
+def test_an_attached_logger_logs_a_vdp_register_write(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from msx.diagnostics.logger import attach_logger
+    from tests.factories import make_machine_msx2
+
+    # LD A,40h / OUT (99h),A / LD A,81h / OUT (99h),A: R#1 = 40h (display on).
+    program = bytes([0x3E, 0x40, 0xD3, 0x99, 0x3E, 0x81, 0xD3, 0x99])
+    machine = make_machine_msx2(_program_rom(program), bytes(0x4000))
+    attach_logger(machine, DebugLogger())
+    for _ in range(5):
+        machine.step()
+    assert "[BOOT]  VDP display enabled  R1=0x40" in capsys.readouterr().err

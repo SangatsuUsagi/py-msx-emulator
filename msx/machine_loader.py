@@ -20,16 +20,16 @@ if TYPE_CHECKING:
 
 from msx.boundary import (
     RTC_DEFAULT_START,
-    DiskMedium,
+    STATUS_BAD_CONFIG,
+    STATUS_OK,
+    DiskMount,
     MachineConfig,
     MediaId,
     RtcTime,
-    drive_media_id,
     slot_sram_id,
     subslot_sram_id,
 )
 from msx.cpu.z80 import Z80
-from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import FmPac
 from msx.input import InputLines
 from msx.io import IOBus
@@ -71,13 +71,15 @@ from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
 from msx.scc import SCC
 from msx.sram import SramImage
-from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP, VdpDevice
 
 # ---------------------------------------------------------------------------
 # Mapper helpers
 # ---------------------------------------------------------------------------
+
+# The ids that name floppy drives, never a battery-backed medium.
+_DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -216,7 +218,7 @@ class _ResolvedConfig:
     extension_overlay1: AnyExtensionOverlay | None
     extension_overlay2: AnyExtensionOverlay | None
     media: dict[MediaId, bytes]
-    disks: dict[MediaId, DiskMedium]
+    disks: dict[int, DiskMount]       # by drive index
     rtc_initial_time: RtcTime | None
     config_sha256: str
 
@@ -235,14 +237,56 @@ def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:
     return data
 
 
+def _media_by_id(config: MachineConfig) -> dict[MediaId, bytes]:
+    """The medium images by id, rejecting a second record for one id and a
+    drive id (disks travel in MachineConfig.disks)."""
+    media: dict[MediaId, bytes] = {}
+    for image in config.media:
+        if image.media_id in _DRIVE_MEDIA_IDS:
+            raise MachineLoadError(
+                f"MachineConfig has a medium image for {image.media_id.name}, a drive id"
+            )
+        if image.media_id in media:
+            raise MachineLoadError(
+                f"MachineConfig has two medium images for {image.media_id.name}"
+            )
+        media[image.media_id] = image.data
+    return media
+
+
+def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMount]:
+    """The disks by drive index, rejecting a second disk for one drive and a
+    disk for a drive the machine does not have."""
+    disks: dict[int, DiskMount] = {}
+    for disk in config.disks:
+        if not 0 <= disk.drive < drive_count:
+            raise MachineLoadError(
+                f"MachineConfig has a disk for drive {disk.drive} but the machine has "
+                f"{drive_count} drive(s)"
+            )
+        if disk.drive in disks:
+            raise MachineLoadError(f"MachineConfig has two disks for drive {disk.drive}")
+        disks[disk.drive] = disk
+    return disks
+
+
 def _resolve(config: MachineConfig) -> _ResolvedConfig:
     """Parse the document and pair every ROM reference with its checked
     image -- everything that can reject the config, before anything is built."""
     parsed = parse_machine_config(config.document)
+    images: dict[str, bytes] = {}
+    for rom in config.roms:
+        images[rom.sha1] = rom.data
+    spec = parsed.spec
+    drive_count = 0
+    if spec.generation == "msx2" and spec.fdc is not None:
+        drive_count = spec.fdc.drives
+    media = _media_by_id(config)
+    disks = _disks_by_drive(config, drive_count)
     roms: dict[str, bytes] = {}
     cartridges: dict[str, bytes] = {}
     for role, ref in parsed.roms.items():
-        image = _checked_image(config.roms, role, ref)
+        image = _checked_image(images, role, ref)
         if role.startswith("cartridge"):
             cartridges[role] = image
         else:
@@ -256,8 +300,8 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
         mapper2=parsed.mapper2,
         extension_overlay1=parsed.extension_overlay1,
         extension_overlay2=parsed.extension_overlay2,
-        media=config.media,
-        disks=config.disks,
+        media=media,
+        disks=disks,
         rtc_initial_time=config.rtc_initial_time,
         config_sha256=parsed.config_sha256,
     )
@@ -773,21 +817,48 @@ def _wire_post_construction_attrs(
     machine.kanji = wiring.kanji_device
 
 
-def build_machine(
-    machine_config: MachineConfig,
-    logger: DebugLogger | None = None,
-    tracer: Tracer | None = None,
-) -> "Machine":
+@dataclass(frozen=True)
+class BuildResult:
+    """What create_machine returns: `status` is STATUS_OK with the machine
+    and an empty `error_text`, or STATUS_BAD_CONFIG with no machine and the
+    UTF-8 message."""
+
+    status: int
+    machine: "Machine | None"
+    error_text: bytes
+
+
+def create_machine(machine_config: MachineConfig) -> BuildResult:
     """Build a Machine from a MachineConfig (host/machine_config.py's
-    load_machine_config produces one). Reads no file, resolves no path and
-    looks up no database.
+    load_machine_config produces one), reporting a rejected configuration
+    as STATUS_BAD_CONFIG instead of raising (machine-core "The core builds
+    a machine and reports a failure as a status"). Reads no file, resolves
+    no path and looks up no database. This is the build entry point of the
+    core; host code builds through it."""
+    try:
+        machine = _build(machine_config)
+    except MachineLoadError as exc:
+        return BuildResult(STATUS_BAD_CONFIG, None, str(exc).encode("utf-8"))
+    return BuildResult(STATUS_OK, machine, b"")
+
+
+def build_machine(machine_config: MachineConfig) -> "Machine":
+    """create_machine for tests and Python embedding: returns the machine,
+    or raises MachineLoadError with the build's message. Host code calls
+    create_machine instead (tests/test_core_frontend_boundary.py)."""
+    result = create_machine(machine_config)
+    if result.machine is None:
+        raise MachineLoadError(result.error_text.decode("utf-8"))
+    return result.machine
+
+
+def _build(machine_config: MachineConfig) -> "Machine":
+    """The build itself, raising on a rejected configuration.
 
     Args:
         machine_config: The MachineConfig document, the ROM images it
             references by SHA1, initial SRAM images, disks to mount and RTC
             start time.
-        logger: Optional DebugLogger for diagnostic output.
-        tracer: Optional VDP register write tracer (V9938 only).
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -839,7 +910,7 @@ def build_machine(
 
     input_state = InputLines()
     psg = PSG(_input=input_state)
-    io = IOBus(_logger=logger)
+    io = IOBus()
     if wiring.fmpac_device is not None:
         io.register_read(0x7C, 0x7D, wiring.fmpac_device.read_port)
         io.register_write(0x7C, 0x7D, wiring.fmpac_device.write_port)
@@ -870,8 +941,6 @@ def build_machine(
             input_state=input_state,
             psg=psg,
             io=io,
-            logger=logger,
-            tracer=tracer,
             machine_cls=Machine,
             slot1_sub_slot_enabled=slot1_sub_slot_enabled,
             mapper1_subslots=mapper1_subslots,
@@ -890,7 +959,6 @@ def build_machine(
             input_state=input_state,
             psg=psg,
             io=io,
-            logger=logger,
             machine_cls=Machine,
             slot1_sub_slot_enabled=slot1_sub_slot_enabled,
             mapper1_subslots=mapper1_subslots,
@@ -942,7 +1010,6 @@ def _build_msx1(
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    logger: DebugLogger | None,
     machine_cls: "type[Machine]",
     slot1_sub_slot_enabled: bool = False,
     mapper1_subslots: list[Mapper | None] | None = None,
@@ -956,7 +1023,6 @@ def _build_msx1(
         _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
-        _logger=logger,
         extrom=logo_bytes,
         rom_name=spec.main_rom_entry.file,
         slot0_ram=slot0_ram,
@@ -968,16 +1034,16 @@ def _build_msx1(
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else _empty_subslots(),
     )
-    vdp = VDP(_logger=logger)
+    vdp = VDP()
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
     _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
-              m1_wait_states=spec.m1_wait_states, _logger=logger)
+              m1_wait_states=spec.m1_wait_states)
     return machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
+        input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
         ppi=ppi,
@@ -986,7 +1052,7 @@ def _build_msx1(
 
 def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     """Construct the FloppyDisk device from spec.fdc, mounting each disk in
-    `config.disks` into the drive with the matching id (DRIVE_A -> drive A)."""
+    `config.disks` into the drive with its index (0 -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
@@ -1003,15 +1069,9 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
     else:
         device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
-    drive_ids = [drive_media_id(idx) for idx in range(len(drives))]
-    for media_id in config.disks:
-        if media_id not in drive_ids:
-            raise MachineLoadError(
-                f"MachineConfig has a disk for {media_id.name} but the machine has "
-                f"{len(drives)} drive(s)"
-            )
-    for idx, media_id in enumerate(drive_ids):
-        disk = config.disks.get(media_id)
+    # _resolve already rejected a disk for a drive the machine lacks.
+    for idx in range(len(drives)):
+        disk = config.disks.get(idx)
         if disk is None:
             continue
         image = DskDiskImage(disk.data, write_protected=disk.write_protected)
@@ -1031,8 +1091,6 @@ def _build_msx2(
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    logger: DebugLogger | None,
-    tracer: Tracer | None,
     machine_cls: "type[Machine]",
     slot1_sub_slot_enabled: bool = False,
     mapper1_subslots: list[Mapper | None] | None = None,
@@ -1062,7 +1120,6 @@ def _build_msx2(
         _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
-        _logger=logger,
         extrom=logo_bytes,
         sub0_rom=sub_bytes,
         sub_slot_enabled=True,
@@ -1082,7 +1139,7 @@ def _build_msx2(
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else _empty_subslots(),
     )
-    vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
+    vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP()
     rtc: RTC | None = None
     if spec.has_rtc:
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
@@ -1110,10 +1167,10 @@ def _build_msx2(
         io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
-              m1_wait_states=spec.m1_wait_states, _logger=logger)
+              m1_wait_states=spec.m1_wait_states)
     machine = machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
+        input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
         fdc=fdc_device,
@@ -1125,10 +1182,4 @@ def _build_msx2(
         #   closures; a port shares a narrow cycle counter with the RTC.
         rtc._get_cycle = lambda: machine.cycle_count
         rtc._start_cycle = machine.cycle_count
-    if tracer is not None and isinstance(vdp, V9938):
-        vdp.tracer = tracer
-        vdp._get_pc = lambda: machine.cpu.instruction_pc
-        vdp._get_cycle = lambda: machine.cycle_count
-        # The tracer reads the VDP frame count directly (V9938.write_port passes
-        # self._frame_count), so no _get_frame getter is needed.
     return machine

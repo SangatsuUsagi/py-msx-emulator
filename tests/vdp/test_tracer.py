@@ -272,3 +272,39 @@ def test_v9938_with_tracer_port9b_pre_increment_r17() -> None:
     assert ";port 9Bh" in lines[0]
     # After hook, auto-increment should have occurred
     assert vdp.regs[17] == 0x23  # ptr incremented to 35
+
+
+# ---------------------------------------------------------------------------
+# diag-vdp-tracer "A tracer is attached to a built machine"
+# ---------------------------------------------------------------------------
+
+def _program_rom(program: bytes) -> bytes:
+    return (program + bytes([0x18, 0xFE])).ljust(0x8000, b"\x00")
+
+
+def test_a_tracer_attached_to_an_msx2_machine_traces_register_writes() -> None:
+    from msx.vdp.tracer import attach_vdp_tracer
+    from tests.factories import make_machine_msx2
+
+    # LD A,ABh / OUT (99h),A / LD A,80h / OUT (99h),A: R#0 = ABh.
+    program = bytes([0x3E, 0xAB, 0xD3, 0x99, 0x3E, 0x80, 0xD3, 0x99])
+    machine = make_machine_msx2(_program_rom(program), bytes(0x4000))
+    out = io.StringIO()
+    assert attach_vdp_tracer(machine, Tracer(enabled=True, output=out)) is True
+    for _ in range(5):
+        machine.step()
+    line = out.getvalue()
+    assert "VDP_REG R#00=ABh" in line
+    assert "PC=0006" in line and "CY=" in line
+
+
+def test_a_tracer_is_not_attached_to_an_msx1_machine() -> None:
+    from msx.input import InputFrame
+    from msx.vdp.tracer import attach_vdp_tracer
+    from tests.factories import make_machine
+
+    machine = make_machine(_program_rom(b""))
+    before = machine.save_state()
+    assert attach_vdp_tracer(machine, Tracer(enabled=True, output=io.StringIO())) is False
+    assert machine.save_state() == before
+    machine.step_frame(InputFrame(), render_video=False)

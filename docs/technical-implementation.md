@@ -1122,7 +1122,7 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 
 | Value | Direction | Content |
 | --- | --- | --- |
-| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (the ROM images by lowercase hex SHA1), `media` (saved SRAM and CMOS images by `MediaId`), `disks` (`DiskMedium` images to mount by drive id), `rtc_initial_time` |
+| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (`RomImage` records: an image and its lowercase hex SHA1), `media` (`MediaImage` records: a saved SRAM or CMOS image and its `MediaId`), `disks` (`DiskMount` records: an image to mount, its drive index and its write-protect flag), `rtc_initial_time`. The three image fields are tuples, with at most one record per id or drive |
 | `InputFrame` | in, per frame | 11 active-low keyboard matrix rows, two active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B), the mouse motion of the frame in MSX counts, and the two mouse buttons. Immutable. Its constructor checks every value |
 | `FrameOutput` | out, per frame | `video` (an `RgbFrame`, or `None` when the frame was not rendered), `audio`, `frame_number` |
 | `RgbFrame` | out | Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color) |
@@ -1131,7 +1131,6 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | `CpuRegisters` | out | The register query: AF, BC, DE, HL, the alternate set, IX, IY, SP, PC, I, R, IFF1 and IFF2 (0 or 1), IM |
 | `VdpInfo` | out | The VDP query: the VDP kind, the control and command registers, the status registers, the palette and the command progress |
 | media image | in/out | `bytes`, named by a `MediaId` |
-| `DiskMedium` | in | `data` and `write_protected`. The core keeps no file name for a disk. The host keeps the file of each drive in `host/media.py`'s `DiskFiles` |
 
 `MediaId` is a closed set of integer ids, 0 to 15 in this order:
 `SLOT1_SRAM`, `SLOT2_SRAM`, `SLOT<n>_SUB<sub>_SRAM` (an expanded-slot device,
@@ -1146,7 +1145,7 @@ class method.
 
 ### Core API
 
-`build_machine(config)` in `msx/machine_loader.py` returns a `Machine`.
+`create_machine(config)` in `msx/machine_loader.py` builds a `Machine`.
 `msx/core_api.py` defines `CoreApi`, a `typing.Protocol` that lists every
 operation that code outside `msx/` uses. `Machine` implements it, and mypy
 checks this. The host and the frontend hold the machine as a `CoreApi`. The
@@ -1155,7 +1154,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. The optional `logger`/`tracer` arguments are diagnostics |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) and `attach_vdp_tracer()` (`msx/vdp/tracer.py`) attach them to a built machine |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1164,19 +1163,19 @@ belongs to the debugger's diagnostics.
 | | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
 | | `write_memory(addr, data)` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused |
 | Media | `dirty_media()` | The ids written since they were last persisted |
-| | `read_media(media_id) -> bytes` | The current bytes of a medium |
-| | `mark_persisted(media_id)` | Call it after the host has written the bytes |
+| | `read_media(media_id) -> bytes \| None` | The current bytes of a medium. `None` for an id the machine does not have |
+| | `mark_persisted(media_id) -> int` | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have |
 | | `mount_disk(drive, data, write_protected) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
-| | `last_error_text() -> bytes` | The UTF-8 message of the last failed `load_state` or `mount_disk`, `b""` after a successful one. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
+| | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or `None` from `read_media`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 | | `disk_mounted(drive)` | Whether the drive exists and holds an image |
-| Devices | `attach_mouse(port)` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device |
+| Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6) |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
 | | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects |
 | | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size |
 | | `vdp_info() -> VdpInfo` | It clears no status flag |
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
-| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. `set_watchpoints()` returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) for an invalid kind |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
 | | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
@@ -1198,7 +1197,9 @@ The other members do not cross the boundary, and a port does not need them
 to run software:
 
 - `run_frame()`, the internal frame loop
-- the VDP and mapper tracers
+- the diagnostic logger and the VDP and mapper tracers, which
+  `attach_logger()`, `attach_vdp_tracer()` and
+  `msx.mapper_tracer.attach_to_machine()` attach to a built machine
 
 ### MachineConfig document
 
@@ -1333,13 +1334,16 @@ from host.machine_config import (
 )
 from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
-from msx.machine_loader import build_machine
+from msx.machine_loader import create_machine
 
 root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host: YAML + files -> MachineConfig
-machine = build_machine(config)                    # core: values only
+result = create_machine(config)                    # core: values only
+if result.machine is None:                         # STATUS_BAD_CONFIG
+    raise SystemExit(result.error_text.decode("utf-8"))
+machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
@@ -1523,7 +1527,8 @@ at init, and indexes them directly. Only 32 combinations exist across all
 #### Callable tracer hooks
 
 `VDP` (TMS9918A) and `V9938` both store `tracer`, `_get_pc`, and `_get_cycle`
-as nullable `Callable` fields. The machine assigns them at wiring time, and the
+as nullable `Callable` fields. `attach_vdp_tracer()` assigns them to a built
+machine (the debugger's `te` command does the same), and the
 VDP calls them on each related event. Python types these fields as
 `Callable[[], None] | None`, but they have no direct static equivalent.
 

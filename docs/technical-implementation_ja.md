@@ -755,7 +755,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 値 | 向き | 中身 |
 | --- | --- | --- |
-| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（小文字 16 進の SHA1 をキーにした ROM イメージ）、`media`（`MediaId` をキーにした保存済みの SRAM と CMOS のイメージ）、`disks`（マウントする `DiskMedium`。キーはドライブ id）、`rtc_initial_time` |
+| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（`RomImage` のレコード。イメージと、その小文字 16 進の SHA1）、`media`（`MediaImage` のレコード。保存済みの SRAM か CMOS のイメージと、その `MediaId`）、`disks`（`DiskMount` のレコード。マウントするイメージ、ドライブ番号、書き込み禁止のフラグ）、`rtc_initial_time`。3 つのイメージのフィールドはタプルで、1 つの id やドライブにレコードは 1 つまで |
 | `InputFrame` | 入力、毎フレーム | アクティブ Low のキーボードマトリクス 11 行、アクティブ Low の 6 ビットのジョイスティックポート 2 つ（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、そのフレームのマウスの移動量（MSX 側の単位）、マウスの 2 つのボタン。作った後は変更できず、コンストラクタがすべてのフィールドを調べる |
 | `FrameOutput` | 出力、毎フレーム | `video`（`RgbFrame`。描画しなかったフレームでは `None`）、`audio`、`frame_number` |
 | `RgbFrame` | 出力 | 行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める） |
@@ -764,7 +764,6 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | `CpuRegisters` | 出力 | レジスタのクエリの結果：AF、BC、DE、HL、裏レジスタ、IX、IY、SP、PC、I、R、IFF1 と IFF2（0 か 1）、IM |
 | `VdpInfo` | 出力 | VDP のクエリの結果：VDP の種類、コントロールレジスタとコマンドレジスタ、ステータスレジスタ、パレット、コマンドの進み具合 |
 | メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
-| `DiskMedium` | 入力 | `data` と `write_protected`。コアはディスクのファイル名を持たない。各ドライブのファイルは、host が `host/media.py` の `DiskFiles` で持つ |
 
 `MediaId` は整数の id の閉じた集合。値は 0〜15 で、順に `SLOT1_SRAM`、`SLOT2_SRAM`、`SLOT<n>_SUB<sub>_SRAM`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`FMPAC_SRAM`、`RTC_CMOS`、`DRIVE_A`〜`DRIVE_D`（FDC のドライブ 0〜3）。id は整数として境界を越える。Python のコードでは `MediaId` を `.name` で文字列にする。
 
@@ -772,11 +771,11 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### コアの API
 
-`msx/machine_loader.py` の `build_machine(config)` は `Machine` を返す。`msx/core_api.py` の `CoreApi` は、`msx/` の外のコードが使う操作をすべて並べた `typing.Protocol`。`Machine` がこれを実装し、mypy がそれを確かめる。host とフロントエンドは、マシンを `CoreApi` として持つ。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガの診断用。
+`msx/machine_loader.py` の `create_machine(config)` が `Machine` を作る。`msx/core_api.py` の `CoreApi` は、`msx/` の外のコードが使う操作をすべて並べた `typing.Protocol`。`Machine` がこれを実装し、mypy がそれを確かめる。host とフロントエンドは、マシンを `CoreApi` として持つ。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガの診断用。
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `build_machine(config)` | 文書に誤りがあるか、ROM イメージが欠けているか合わないときは、構築を始める前に `MachineLoadError`（`msx/machine_spec.py`）を出す。任意の引数 `logger`/`tracer` は診断用 |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）と `attach_vdp_tracer()`（`msx/vdp/tracer.py`）でつなぐ |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -785,19 +784,19 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `load_state(data) -> int` | `STATUS_OK`（0）を返す。スナップショットが合わなければ `STATUS_STATE_REJECTED`（1）を返し、何も変えない |
 | | `write_memory(addr, data)` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
-| | `read_media(media_id) -> bytes` | メディアの現在のバイト列 |
-| | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
+| | `read_media(media_id) -> bytes \| None` | メディアの現在のバイト列。マシンにない id には `None` |
+| | `mark_persisted(media_id) -> int` | host がバイト列を書いた後に呼ぶ。`STATUS_OK`（0）を返す。マシンにない id には `STATUS_NO_MEDIUM`（5）を返す |
 | | `mount_disk(drive, data, write_protected) -> int` | `data` に `None` を渡すと取り出す。`STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
-| | `last_error_text() -> bytes` | 最後に失敗した `load_state` か `mount_disk` のメッセージ（UTF-8）。成功した後は `b""`。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
+| | `last_error_text() -> bytes` | 状態を返すメンバー（と `None` を返した `read_media`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
-| デバイス | `attach_mouse(port)` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る |
+| デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 | | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
 | | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
-| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う |
+| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。`set_watchpoints()` は `STATUS_OK` を返し、不正な kind には `STATUS_BAD_ARGUMENT`（6）を返す |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
@@ -809,7 +808,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
 - `run_frame()`：内部のフレームループ
-- VDP とマッパーのトレーサ
+- 診断用のロガーと、VDP とマッパーのトレーサ。構築したマシンに `attach_logger()`、`attach_vdp_tracer()`、`msx.mapper_tracer.attach_to_machine()` でつなぐ
 
 ### MachineConfig の文書
 
@@ -868,13 +867,16 @@ from host.machine_config import (
 )
 from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
-from msx.machine_loader import build_machine
+from msx.machine_loader import create_machine
 
 root = Path(".")                                   # リポジトリのルート
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host：YAML とファイル -> MachineConfig
-machine = build_machine(config)                    # コア：値だけを使う
+result = create_machine(config)                    # コア：値だけを使う
+if result.machine is None:                         # STATUS_BAD_CONFIG
+    raise SystemExit(result.error_text.decode("utf-8"))
+machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
@@ -966,7 +968,7 @@ V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は
 
 #### トレーサのフックの Callable フィールド
 
-`VDP`（TMS9918A）と `V9938` は、どちらも `tracer`、`_get_pc`、`_get_cycle` を None にできる `Callable` のフィールドとして持つ。マシンが配線のときに代入し、VDP は対応するイベントのたびに呼ぶ。Python ではこれを `Callable[[], None] | None` と型付けするが、静的型付けの言語にそのままの対応はない。
+`VDP`（TMS9918A）と `V9938` は、どちらも `tracer`、`_get_pc`、`_get_cycle` を None にできる `Callable` のフィールドとして持つ。構築したマシンに `attach_vdp_tracer()` が代入し（デバッガの `te` コマンドも同じ）、VDP は対応するイベントのたびに呼ぶ。Python ではこれを `Callable[[], None] | None` と型付けするが、静的型付けの言語にそのままの対応はない。
 
 Rust/C++ の移植では、`Option<Box<dyn Fn()>>` のトレイトオブジェクト（または同等のもの）で表す。別の方法として、機能フラグ付きのコンパイル時ジェネリクスにすれば、リリースビルドで呼び出しごとの振り分けがなくなる。
 

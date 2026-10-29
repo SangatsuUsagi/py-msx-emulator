@@ -9,13 +9,22 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import STATUS_OK, DiskMedium, MediaId, drive_media_id
+from msx.boundary import STATUS_OK, MediaId, drive_media_id
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
+
+
+@dataclass(frozen=True)
+class DiskMedium:
+    """A disk image the host read from a .dsk file."""
+
+    data: bytes
+    write_protected: bool = False
 
 
 def read_disk_medium(path: Path) -> DiskMedium:
@@ -81,8 +90,11 @@ def persist_dirty_media(
         path = paths.get(media_id)
         if path is None:
             continue
+        data = machine.read_media(media_id)
+        if data is None:   # never: the id came from dirty_media()
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(machine.read_media(media_id))
+        path.write_bytes(data)
         machine.mark_persisted(media_id)
 
 
@@ -102,8 +114,10 @@ def swap_disk(
     if outgoing_path is not None:
         media_id = drive_media_id(drive)
         if media_id in machine.dirty_media():
-            outgoing_path.write_bytes(machine.read_media(media_id))
-            machine.mark_persisted(media_id)
+            data = machine.read_media(media_id)
+            if data is not None:   # always: the id came from dirty_media()
+                outgoing_path.write_bytes(data)
+                machine.mark_persisted(media_id)
     if medium is None:
         status = machine.mount_disk(drive, None, False)
     else:

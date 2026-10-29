@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from typing import IO
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 # Command code (upper 4 bits of R#46) → mnemonic
 _CMD_NAMES: dict[int, str] = {
@@ -150,3 +153,19 @@ class Tracer:
     def _emit(self, line: str) -> None:
         print(line, file=self.output)
         self.output.flush()
+
+
+def attach_vdp_tracer(machine: Machine, tracer: Tracer) -> bool:
+    """Attach `tracer` to a built machine's V9938, wiring its PC and cycle
+    getters (V9938.write_port passes its own frame count). Returns False,
+    changing nothing, when the VDP is not a V9938. A diagnostics function
+    of the Python core, outside the core API."""
+    from msx.vdp.v9938 import V9938
+
+    vdp = machine.vdp
+    if not isinstance(vdp, V9938):
+        return False
+    vdp.tracer = tracer
+    vdp._get_pc = lambda: machine.cpu.instruction_pc
+    vdp._get_cycle = lambda: machine.cycle_count
+    return True

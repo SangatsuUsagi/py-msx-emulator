@@ -48,15 +48,16 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
-    DiskMedium,
+    DiskMount,
     MachineConfig,
     MediaId,
+    MediaImage,
+    RomImage,
     RtcTime,
-    drive_media_id,
     slot_sram_id,
     subslot_sram_id,
 )
-from msx.diagnostics.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger, attach_logger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 
 # The closed vocabularies are defined once, in the core's document parser,
@@ -78,7 +79,7 @@ from msx.machine_config import (
     SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
 )
 from msx.machine_config import encode_machine_config
-from msx.machine_loader import _SRAM_SIZES, build_machine
+from msx.machine_loader import _SRAM_SIZES, create_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
@@ -95,7 +96,7 @@ from msx.mapper import HALNOTE_SRAM_SIZE
 from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.vdp._geometry import VideoStandard
-from msx.vdp.tracer import Tracer
+from msx.vdp.tracer import Tracer, attach_vdp_tracer
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -1131,7 +1132,7 @@ class LoadedMachineConfig(MachineConfig):
     """The MachineConfig load_machine_config() produces, plus host data that
     never reaches the core: the file each battery-backed medium is persisted
     in (see sram_paths) and the file of each disk in `disks`, by drive index
-    (the start of host.media.DiskFiles). build_machine() reads only the
+    (the start of host.media.DiskFiles). create_machine() reads only the
     MachineConfig part."""
 
     sram_files: dict[MediaId, Path] = field(default_factory=dict)
@@ -1265,13 +1266,13 @@ def _load_spec_roms(
 
 def _load_disks(
     spec: MachineSpec, fdd1: Path | None, fdd2: Path | None
-) -> tuple[dict[MediaId, DiskMedium], dict[int, Path]]:
+) -> tuple[tuple[DiskMount, ...], dict[int, Path]]:
     """The disk images for the drives an MSX2 machine's FDC has, and the
     file of each, by drive index."""
-    disks: dict[MediaId, DiskMedium] = {}
+    disks: list[DiskMount] = []
     files: dict[int, Path] = {}
     if spec.generation != "msx2" or spec.fdc is None:
-        return disks, files
+        return (), files
     for index, path in enumerate((fdd1, fdd2)):
         if path is not None and index >= spec.fdc.drives:
             print(
@@ -1280,22 +1281,31 @@ def _load_disks(
                 file=sys.stderr,
             )
         elif path is not None:
-            disks[drive_media_id(index)] = read_disk_medium(path)
+            medium = read_disk_medium(path)
+            disks.append(DiskMount(index, medium.data, medium.write_protected))
             files[index] = path
-    return disks, files
+    return tuple(disks), files
+
+
+def _rom_images(images: dict[str, bytes]) -> tuple[RomImage, ...]:
+    """The images the document references, as MachineConfig.roms records."""
+    records: list[RomImage] = []
+    for sha1, data in images.items():
+        records.append(RomImage(sha1, data))
+    return tuple(records)
 
 
 def _load_media(
     sram_files: dict[MediaId, Path], carts: _Cartridges
-) -> dict[MediaId, bytes]:
+) -> tuple[MediaImage, ...]:
     """The saved image of each battery-backed medium that has one."""
-    media: dict[MediaId, bytes] = {}
+    media: list[MediaImage] = []
     for media_id, path in sram_files.items():
         size, label = _sram_size_and_label(carts, media_id)
         sram = _load_sram_or_warn(path, size, label)
         if sram is not None:
-            media[media_id] = bytes(sram)
-    return media
+            media.append(MediaImage(media_id, bytes(sram)))
+    return tuple(media)
 
 
 def load_machine_config(
@@ -1315,7 +1325,7 @@ def load_machine_config(
     rtc_initial_time: RtcTime | None = None,
 ) -> LoadedMachineConfig:
     """Read every file `spec` and the arguments name, and encode the
-    MachineConfig document, for msx.machine_loader.build_machine: the
+    MachineConfig document, for msx.machine_loader.create_machine: the
     document, the ROM images it references keyed by SHA1, the run inputs
     (saved SRAM/CMOS images, disks, RTC start time), and the file each
     battery-backed medium is persisted in (sram_files).
@@ -1355,7 +1365,7 @@ def load_machine_config(
     )
     sram_files = _sram_paths(spec, carts)
     return LoadedMachineConfig(
-        document=document, roms=images, media=_load_media(sram_files, carts),
+        document=document, roms=_rom_images(images), media=_load_media(sram_files, carts),
         disks=disks, rtc_initial_time=rtc_initial_time,
         sram_files=sram_files, disk_files=disk_files,
     )
@@ -1379,7 +1389,8 @@ def build_machine_from_spec(
     extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> Machine:
-    """load_machine_config() then build_machine(), for callers that need no
+    """load_machine_config() then create_machine(), raising MachineLoadError
+    with the build's message, for callers that need no
     access to the MachineConfig (see load_machine_config for the arguments)."""
     config = load_machine_config(
         spec, cartridge1, mapper1, cartridge2, mapper2,
@@ -1389,4 +1400,12 @@ def build_machine_from_spec(
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
-    return build_machine(config, logger=logger, tracer=tracer)
+    result = create_machine(config)
+    if result.machine is None:
+        raise MachineLoadError(result.error_text.decode("utf-8"))
+    machine = result.machine
+    if logger is not None:
+        attach_logger(machine, logger)
+    if tracer is not None:
+        attach_vdp_tracer(machine, tracer)
+    return machine

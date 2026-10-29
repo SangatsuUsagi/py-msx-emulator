@@ -13,7 +13,7 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import DiskMedium, MediaId
+from msx.boundary import DiskMount, MediaId, MediaImage, RomImage
 from msx.fdc.disk_image import DskDiskImage
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
@@ -238,17 +238,52 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
     dsk = tmp_path / "b.dsk"
     dsk.write_bytes(bytes(_2DD))
     config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
-    assert MediaId.DRIVE_B not in config.disks
+    assert [disk.drive for disk in config.disks] == []
     assert "only 1 drive" in capsys.readouterr().err
 
 
 def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
+    # machine-loader "A disk for a missing drive is rejected".
     _make_roms(tmp_path)
     config = load_machine_config(_fdc_spec(tmp_path))
-    config.disks[MediaId.DRIVE_B] = DiskMedium(bytes(_2DD))
-    # The message names the id by its name (not "MediaId.DRIVE_B").
-    with pytest.raises(MachineLoadError, match="disk for DRIVE_B but"):
+    config.disks = (DiskMount(1, bytes(_2DD)),)
+    with pytest.raises(MachineLoadError, match=r"disk for drive 1 but the machine has 1 drive"):
         build_machine(config)
+
+
+def test_two_disks_for_one_drive_are_rejected(tmp_path: Path) -> None:
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path))
+    config.disks = (DiskMount(0, bytes(_2DD)), DiskMount(0, bytes(_2DD)))
+    with pytest.raises(MachineLoadError, match="two disks for drive 0"):
+        build_machine(config)
+
+
+def test_the_images_are_flat_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # machine-loader "The images are flat records".
+    import hashlib
+
+    monkeypatch.chdir(tmp_path)
+    _make_roms(tmp_path)
+    cartridge = bytes(range(256)) * 128
+    sram_dir = tmp_path / "saves" / "sram"
+    sram_dir.mkdir(parents=True)
+    sha1 = hashlib.sha1(cartridge).hexdigest()
+    (sram_dir / f"{sha1}.sram").write_bytes(bytes([0x5A]) * 2048)
+    dsk = tmp_path / "a.dsk"
+    dsk.write_bytes(bytes(_2DD))
+    config = load_machine_config(
+        _fdc_spec(tmp_path), cartridge1=cartridge, mapper1="ASCII8SRAM2", fdd1=dsk
+    )
+    for images in (config.roms, config.media, config.disks):
+        assert isinstance(images, tuple) and images
+    assert all(isinstance(rom, RomImage) for rom in config.roms)
+    assert config.media == (MediaImage(MediaId.SLOT1_SRAM, bytes([0x5A]) * 2048),)
+    assert config.disks == (DiskMount(0, bytes(_2DD), False),)
+    for rom in config.roms:
+        assert len(rom.sha1) == 40 and rom.sha1 == hashlib.sha1(rom.data).hexdigest()
 
 
 def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:

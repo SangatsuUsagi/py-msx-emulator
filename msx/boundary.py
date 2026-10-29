@@ -6,7 +6,7 @@ core, or receive them from it. No module here reads files or the host clock.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -112,6 +112,9 @@ STATUS_OK = 0
 STATUS_STATE_REJECTED = 1   # load_state: not a state this machine can load
 STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
 STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
+STATUS_BAD_CONFIG = 4       # create_machine: a configuration the build rejects
+STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: None): no such medium
+STATUS_BAD_ARGUMENT = 6     # set_watchpoints: a watch kind; attach_mouse: a port
 
 # The access kind of a watchpoint hit (StopInfo.watch_access).
 WATCH_READ = 1
@@ -201,9 +204,27 @@ class VdpInfo:
 
 
 @dataclass(frozen=True)
-class DiskMedium:
-    """A disk image the host read, to mount at build time."""
+class RomImage:
+    """A ROM image the MachineConfig document refers to by `sha1` (40
+    lowercase hex digits of the SHA1 of `data`)."""
 
+    sha1: str
+    data: bytes
+
+
+@dataclass(frozen=True)
+class MediaImage:
+    """The saved image of a battery-backed medium (an SRAM id or RTC_CMOS)."""
+
+    media_id: MediaId
+    data: bytes
+
+
+@dataclass(frozen=True)
+class DiskMount:
+    """A disk image to mount in floppy drive `drive` (0 = A) at build time."""
+
+    drive: int
     data: bytes
     write_protected: bool = False
 
@@ -216,16 +237,16 @@ class MachineConfig:
     `document` is the canonical MachineConfig document (msx/machine_config.py,
     msx/machine_config.schema.json): the resolved machine, cartridges with
     their resolved mappers, and extension overlays, every ROM a reference.
-    `roms` holds the referenced ROM images keyed by SHA1 (lowercase hex).
-    The rest are run inputs, outside the document: `media` holds initial
-    battery-backed images by media id (the SRAM ids and RTC_CMOS of MediaId;
-    an absent id starts blank), `disks` the images to mount by drive id
-    (DRIVE_A to DRIVE_D), and `rtc_initial_time` the
-    RTC's start time.
+    `roms` holds the referenced ROM images, each with its SHA1. The rest are
+    run inputs, outside the document: `media` holds initial battery-backed
+    images (the SRAM ids and RTC_CMOS of MediaId; an absent id starts
+    blank), `disks` the images to mount by drive index, and
+    `rtc_initial_time` the RTC's start time. All three are tuples of flat
+    records, at most one record per id or drive.
     """
 
     document: bytes
-    roms: dict[str, bytes] = field(default_factory=dict)
-    media: dict[MediaId, bytes] = field(default_factory=dict)
-    disks: dict[MediaId, DiskMedium] = field(default_factory=dict)
+    roms: tuple[RomImage, ...] = ()
+    media: tuple[MediaImage, ...] = ()
+    disks: tuple[DiskMount, ...] = ()
     rtc_initial_time: RtcTime | None = None

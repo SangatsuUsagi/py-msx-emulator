@@ -18,7 +18,7 @@ from host.machine_config import (
     load_machine_config,
     load_machine_spec,
 )
-from msx.boundary import RtcTime
+from msx.boundary import MediaId, MediaImage, RomImage, RtcTime
 from msx.input import InputFrame
 from msx.machine_config import encode_machine_config, parse_machine_config
 from msx.machine_loader import build_machine
@@ -237,7 +237,7 @@ def test_an_override_rom_is_referenced_by_its_own_sha1(
     main = json.loads(config.document)["machine"]["main_rom"]
     assert main["sha1"] == hashlib.sha1(bios).hexdigest()
     assert main["size"] == len(bios)
-    assert config.roms[main["sha1"]] == bios
+    assert RomImage(main["sha1"], bios) in config.roms
 
 
 def test_a_cbios_rom_with_no_sha1_in_its_yaml_gets_one(
@@ -271,7 +271,8 @@ def test_every_machine_round_trips_through_its_document(
     config = load_machine_config(_spec(machine_id), **_overrides(_spec(machine_id)))
     document = config.document
     parsed = parse_machine_config(document)
-    roms_by_role = {role: config.roms[ref.sha1] for role, ref in parsed.roms.items()}
+    images_by_sha1 = {rom.sha1: rom.data for rom in config.roms}
+    roms_by_role = {role: images_by_sha1[ref.sha1] for role, ref in parsed.roms.items()}
     again, images = encode_machine_config(
         parsed.spec, roms_by_role,
         mapper1=parsed.mapper1, mapper2=parsed.mapper2,
@@ -279,7 +280,7 @@ def test_every_machine_round_trips_through_its_document(
         extension_overlay2=parsed.extension_overlay2,
     )
     assert again == document
-    assert images == config.roms
+    assert images == images_by_sha1
 
 
 # ---------------------------------------------------------------------------
@@ -291,11 +292,75 @@ def _hb_f1xd_config(tmp_path: Path):
     return load_machine_config(spec, **_overrides(spec))
 
 
+# ---------------------------------------------------------------------------
+# machine-core "The core builds a machine and reports a failure as a status"
+# ---------------------------------------------------------------------------
+
+def test_a_valid_configuration_builds_a_machine() -> None:
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    result = create_machine(make_config(_ROM))
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.error_text == b""
+
+
+def _without_main_rom(config):
+    main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
+    config.roms = tuple(rom for rom in config.roms if rom.sha1 != main)
+    return config, main
+
+
+def test_a_rejected_configuration_returns_a_status_and_a_message() -> None:
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config, main = _without_main_rom(make_config(_ROM))
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert main.encode() in result.error_text
+
+
+def test_the_wrapper_raises_the_same_message() -> None:
+    from msx.machine_loader import create_machine
+
+    config, _main = _without_main_rom(make_config(_ROM))
+    message = create_machine(config).error_text.decode()
+    with pytest.raises(MachineLoadError) as exc_info:
+        build_machine(config)
+    assert str(exc_info.value) == message
+
+
+def test_two_records_for_one_medium_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "Two records for one medium are rejected".
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (
+        MediaImage(MediaId.SLOT1_SRAM, bytes(8192)), MediaImage(MediaId.SLOT1_SRAM, bytes(8192)),
+    )
+    with pytest.raises(MachineLoadError, match="two medium images for SLOT1_SRAM"):
+        build_machine(config)
+
+
+def test_a_drive_id_is_not_a_medium_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(MediaId.DRIVE_A, bytes(737280)),)
+    with pytest.raises(MachineLoadError, match="DRIVE_A, a drive id"):
+        build_machine(config)
+
+
 def test_a_missing_rom_image_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     config = _hb_f1xd_config(tmp_path)
     sub = json.loads(config.document)["machine"]["sub_rom"]["sha1"]
-    del config.roms[sub]
+    config.roms = tuple(rom for rom in config.roms if rom.sha1 != sub)
     with pytest.raises(MachineLoadError, match=sub):
         build_machine(config)
 
@@ -306,7 +371,10 @@ def test_a_rom_image_of_the_wrong_content_is_rejected(
     monkeypatch.chdir(tmp_path)
     config = _hb_f1xd_config(tmp_path)
     main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
-    config.roms[main] = bytes([0xFF]) * len(config.roms[main])
+    config.roms = tuple(
+        RomImage(rom.sha1, bytes([0xFF]) * len(rom.data)) if rom.sha1 == main else rom
+        for rom in config.roms
+    )
     with pytest.raises(MachineLoadError, match="does not match its reference"):
         build_machine(config)
 
