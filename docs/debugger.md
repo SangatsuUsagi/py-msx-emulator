@@ -35,6 +35,11 @@ still run. If you press Ctrl+C again at the REPL prompt, the
 emulator exits immediately (`sys.exit(0)`). It does not cancel the input or
 return to the prompt.
 
+With `--rpc`, Ctrl+C in the terminal also opens the REPL, and the RPC pause
+state does not change. While the REPL is open, the emulator serves no RPC
+request, so RPC calls time out until you type `c`. Breakpoints and
+watchpoints still pause the RPC server instead of opening the REPL.
+
 ### Line editing and history
 
 The `readline` module is available in stock CPython and PyPy on macOS and
