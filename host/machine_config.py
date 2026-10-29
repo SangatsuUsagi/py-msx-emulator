@@ -713,7 +713,7 @@ def _parse_builtin_devices(
                 raise MachineLoadError(
                     f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
                 )
-            keyboard_type = KeyboardLayout(kt)
+            keyboard_type = KeyboardLayout.from_spelling(kt)
             if "control_readback" in dev.raw or (
                 isinstance(overrides, dict) and "control_readback" in overrides
             ):
@@ -797,11 +797,11 @@ def load_machine_spec(
 
     video_standard_name = str(raw.get("video_standard", "ntsc")).lower()
     try:
-        video_standard = VideoStandard(video_standard_name)
+        video_standard = VideoStandard.from_spelling(video_standard_name)
     except ValueError:
         expected: list[str] = []
         for member in VideoStandard:
-            expected.append(repr(member.value))
+            expected.append(repr(member.spelling))
         raise MachineLoadError(
             f"{machine_path}: unsupported video_standard {video_standard_name!r} "
             f"(expected one of {', '.join(expected)})"
@@ -1188,7 +1188,7 @@ def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, st
         for sub in range(_MAX_SUB_SLOT_INDEX + 1):
             if media_id == subslot_sram_id(slot, sub):
                 return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
-    raise ValueError(f"unknown SRAM media id {media_id.value!r}")
+    raise ValueError(f"unknown SRAM media id {media_id.name}")
 
 
 def _overlay_roms(

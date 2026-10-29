@@ -208,7 +208,7 @@ def test_resolved_spec_matches_golden_baseline(golden: dict[str, object]) -> Non
     assert spec.has_ram_mapper == golden["has_ram_mapper"]
     assert spec.has_v9938 == golden["has_v9938"]
     assert spec.has_rtc == golden["has_rtc"]
-    assert spec.keyboard_type == golden["keyboard_type"]
+    assert spec.keyboard_type.spelling == golden["keyboard_type"]
     assert spec.cycles_per_frame == golden["cycles_per_frame"]
     assert spec.lines_per_frame == golden["lines_per_frame"]
     assert spec.m1_wait_states == 1

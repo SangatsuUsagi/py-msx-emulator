@@ -28,41 +28,55 @@ class RtcTime:
 # Start time when the host supplies none (a Saturday).
 RTC_DEFAULT_START = RtcTime(2000, 1, 1, 0, 0, 0)
 
-class MediaId(str, enum.Enum):
+class MediaId(enum.IntEnum):
     """How the host and the core name each battery-backed image and each
     floppy drive (MachineConfig.media/disks, Machine.read_media, ...): a
-    closed set whose values are the ids' strings. Format one with `.value`,
-    never str() or an f-string, whose output differs between Python
-    versions."""
+    closed set of fixed integers, so an id crosses the core boundary as an
+    int. Format one with `.name`, never str() or an f-string, whose output
+    differs between Python versions."""
 
-    SLOT1_SRAM = "slot1.sram"
-    SLOT2_SRAM = "slot2.sram"
-    SLOT1_SUB0_SRAM = "slot1.0.sram"
-    SLOT1_SUB1_SRAM = "slot1.1.sram"
-    SLOT1_SUB2_SRAM = "slot1.2.sram"
-    SLOT1_SUB3_SRAM = "slot1.3.sram"
-    SLOT2_SUB0_SRAM = "slot2.0.sram"
-    SLOT2_SUB1_SRAM = "slot2.1.sram"
-    SLOT2_SUB2_SRAM = "slot2.2.sram"
-    SLOT2_SUB3_SRAM = "slot2.3.sram"
-    FMPAC_SRAM = "fmpac.sram"
-    RTC_CMOS = "rtc.cmos"
-    DRIVE_A = "drive_a"
-    DRIVE_B = "drive_b"
-    DRIVE_C = "drive_c"
-    DRIVE_D = "drive_d"
+    SLOT1_SRAM = 0
+    SLOT2_SRAM = 1
+    SLOT1_SUB0_SRAM = 2
+    SLOT1_SUB1_SRAM = 3
+    SLOT1_SUB2_SRAM = 4
+    SLOT1_SUB3_SRAM = 5
+    SLOT2_SUB0_SRAM = 6
+    SLOT2_SUB1_SRAM = 7
+    SLOT2_SUB2_SRAM = 8
+    SLOT2_SUB3_SRAM = 9
+    FMPAC_SRAM = 10
+    RTC_CMOS = 11
+    DRIVE_A = 12
+    DRIVE_B = 13
+    DRIVE_C = 14
+    DRIVE_D = 15
+
+
+_SLOT_SRAM_IDS = (MediaId.SLOT1_SRAM, MediaId.SLOT2_SRAM)
+_SUBSLOT_SRAM_IDS = (
+    (MediaId.SLOT1_SUB0_SRAM, MediaId.SLOT1_SUB1_SRAM,
+     MediaId.SLOT1_SUB2_SRAM, MediaId.SLOT1_SUB3_SRAM),
+    (MediaId.SLOT2_SUB0_SRAM, MediaId.SLOT2_SUB1_SRAM,
+     MediaId.SLOT2_SUB2_SRAM, MediaId.SLOT2_SUB3_SRAM),
+)
+_DRIVE_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
 
 def slot_sram_id(slot: int) -> MediaId:
     """Media id of cartridge slot `slot`'s mapper SRAM (1 -> SLOT1_SRAM).
     Raises ValueError for a slot other than 1 or 2."""
-    return MediaId(f"slot{slot}.sram")
+    if not 1 <= slot <= 2:
+        raise ValueError(f"no SRAM media id for slot {slot}")
+    return _SLOT_SRAM_IDS[slot - 1]
 
 
 def subslot_sram_id(slot: int, sub: int) -> MediaId:
     """Media id of an expanded-slot device's SRAM (2, 1 -> SLOT2_SUB1_SRAM).
     Raises ValueError outside slots 1-2 / sub-slots 0-3."""
-    return MediaId(f"slot{slot}.{sub}.sram")
+    if not 1 <= slot <= 2 or not 0 <= sub <= 3:
+        raise ValueError(f"no SRAM media id for slot {slot}-{sub}")
+    return _SUBSLOT_SRAM_IDS[slot - 1][sub]
 
 
 def drive_media_id(index: int) -> MediaId:
@@ -70,7 +84,7 @@ def drive_media_id(index: int) -> MediaId:
     four drives a TC8566AF selects). Raises ValueError for any other index."""
     if not 0 <= index <= 3:
         raise ValueError(f"no media id for floppy drive {index}")
-    return MediaId("drive_" + chr(ord("a") + index))
+    return _DRIVE_IDS[index]
 
 
 @dataclass(frozen=True)
@@ -200,9 +214,9 @@ class MachineConfig:
     their resolved mappers, and extension overlays, every ROM a reference.
     `roms` holds the referenced ROM images keyed by SHA1 (lowercase hex).
     The rest are run inputs, outside the document: `media` holds initial
-    battery-backed images by media id ("slot<n>.sram", "slot<n>.<sub>.sram",
-    "fmpac.sram", "rtc.cmos"; an absent id starts blank), `disks` the images
-    to mount by drive id ("drive_a", "drive_b"), and `rtc_initial_time` the
+    battery-backed images by media id (the SRAM ids and RTC_CMOS of MediaId;
+    an absent id starts blank), `disks` the images to mount by drive id
+    (DRIVE_A to DRIVE_D), and `rtc_initial_time` the
     RTC's start time.
     """
 

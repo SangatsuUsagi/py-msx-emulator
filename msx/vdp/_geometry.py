@@ -29,12 +29,27 @@ PAL_LINES_PER_FRAME = 313
 ZERO_BYTE = bytearray(1)
 
 
-class VideoStandard(enum.Enum):
-    """Video standard of a machine; values are the machine-YAML spellings.
-    The frame timing is derived from it, so the two cannot disagree."""
+class VideoStandard(enum.IntEnum):
+    """Video standard of a machine, an integer at the core boundary. The
+    machine YAML and the canonical MachineConfig document spell it with
+    `spelling` and `from_spelling`. The frame timing is derived from it, so
+    the two cannot disagree."""
 
-    NTSC = "ntsc"
-    PAL = "pal"
+    NTSC = 0
+    PAL = 1
+
+    @property
+    def spelling(self) -> str:
+        """The text form of the machine YAML and the canonical document."""
+        return _VIDEO_STANDARD_SPELLINGS[self]
+
+    @classmethod
+    def from_spelling(cls, text: str) -> VideoStandard:
+        """The member spelled `text`. Raises ValueError for another text."""
+        for member in cls:
+            if _VIDEO_STANDARD_SPELLINGS[member] == text:
+                return member
+        raise ValueError(f"unknown video standard {text!r}")
 
     # Each property names every member (a port's exhaustive `match`), so a
     # new standard fails loudly instead of silently taking NTSC values.
@@ -63,6 +78,12 @@ class VideoStandard(enum.Enum):
         if self is VideoStandard.PAL:
             return 50.0
         raise AssertionError(f"unhandled video standard {self!r}")
+
+
+_VIDEO_STANDARD_SPELLINGS: dict[VideoStandard, str] = {
+    VideoStandard.NTSC: "ntsc",
+    VideoStandard.PAL: "pal",
+}
 
 
 def pad_rows(native_h: int) -> int:

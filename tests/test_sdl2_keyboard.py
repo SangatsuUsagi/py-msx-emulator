@@ -59,7 +59,7 @@ class _Kb:
         self.input = InputState()
         self.kb = SdlKeyboard(
             self.input, JOY_MAP if joy_map is None else joy_map,
-            keyboard_layout=KeyboardLayout(keyboard_type),
+            keyboard_layout=KeyboardLayout.from_spelling(keyboard_type),
         )
 
     def key_down(self, key: int) -> None:
@@ -88,7 +88,7 @@ class _Kb:
 
     @property
     def keyboard_type(self) -> str:
-        return self.kb.keyboard_layout.value
+        return self.kb.keyboard_layout.spelling
 
     @property
     def joy_map(self) -> Mapping[int, tuple[int, int]]:

@@ -47,10 +47,10 @@ def test_guest_write_marks_the_medium_dirty(
     assert m.dirty_media() == []
     mapper.write(0x7000, mapper._sram_enable_bit())  # window 2 = SRAM
     mapper.write(0x8000, 0x42)
-    assert m.dirty_media() == ["slot1.sram"]
-    assert m.read_media("slot1.sram")[0] == 0x42
-    assert m.dirty_media() == ["slot1.sram"]  # reading does not clear it
-    m.mark_persisted("slot1.sram")
+    assert m.dirty_media() == [MediaId.SLOT1_SRAM]
+    assert m.read_media(MediaId.SLOT1_SRAM)[0] == 0x42
+    assert m.dirty_media() == [MediaId.SLOT1_SRAM]  # reading does not clear it
+    m.mark_persisted(MediaId.SLOT1_SRAM)
     assert m.dirty_media() == []
 
 
@@ -68,8 +68,8 @@ def test_disk_write_is_listed_by_drive_id() -> None:
     m = _fdc_machine()
     m.mount_disk(1, DiskMedium(_2DD))
     m.fdc.drives[1].image.write_sector(3, b"\x77" * SECTOR_SIZE)
-    assert m.dirty_media() == ["drive_b"]
-    assert m.read_media("drive_b")[3 * SECTOR_SIZE] == 0x77
+    assert m.dirty_media() == [MediaId.DRIVE_B]
+    assert m.read_media(MediaId.DRIVE_B)[3 * SECTOR_SIZE] == 0x77
 
 
 def test_mount_disk_returns_the_dirty_outgoing_image() -> None:
@@ -105,22 +105,30 @@ def test_disk_queries_report_the_mounted_image() -> None:
     assert (m.disk_mounted(1), m.disk_path(1)) == (False, None)
 
 
-def test_media_ids_keep_their_string_values() -> None:
-    # machine-core "Media ids keep their string values".
+def test_media_ids_are_integers() -> None:
+    # machine-core "Media ids are integers".
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     m.memory._mapper.sram_image.write(0, 0x42)
-    assert m.dirty_media() == ["slot1.sram"]
-    assert MediaId.FMPAC_SRAM == "fmpac.sram"
-    assert MediaId.RTC_CMOS == "rtc.cmos"
-    assert drive_media_id(0) == "drive_a" and drive_media_id(0) is MediaId.DRIVE_A
+    ids = m.dirty_media()
+    assert ids == [MediaId.SLOT1_SRAM]
+    for media_id in ids:
+        assert type(int(media_id)) is int and isinstance(media_id, int)
+        assert MediaId(int(media_id)) is media_id
+    assert drive_media_id(0) is MediaId.DRIVE_A
     assert drive_media_id(3) is MediaId.DRIVE_D
+    assert slot_sram_id(1) is MediaId.SLOT1_SRAM
     assert slot_sram_id(2) is MediaId.SLOT2_SRAM
+    assert subslot_sram_id(1, 0) is MediaId.SLOT1_SUB0_SRAM
     assert subslot_sram_id(2, 3) is MediaId.SLOT2_SUB3_SRAM
-    assert {"slot1.sram": 1}[MediaId.SLOT1_SRAM] == 1  # a str-keyed lookup matches
+    # The values are fixed, in declaration order.
+    assert [int(member) for member in MediaId] == list(range(16))
 
 
 @pytest.mark.parametrize("make_id", [
-    lambda: slot_sram_id(3), lambda: subslot_sram_id(1, 4), lambda: drive_media_id(4),
+    lambda: slot_sram_id(0), lambda: slot_sram_id(3),
+    lambda: subslot_sram_id(0, 0), lambda: subslot_sram_id(3, 0),
+    lambda: subslot_sram_id(1, -1), lambda: subslot_sram_id(1, 4),
+    lambda: drive_media_id(-1), lambda: drive_media_id(4),
 ])
 def test_an_id_outside_the_closed_set_raises(make_id) -> None:
     with pytest.raises(ValueError):

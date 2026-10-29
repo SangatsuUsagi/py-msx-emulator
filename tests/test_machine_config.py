@@ -78,13 +78,47 @@ def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert build_machine(config).rtc is not None
 
 
-def test_sram_size_of_a_non_sram_id_names_it_by_value() -> None:
+def test_sram_size_of_a_non_sram_id_names_it_by_name() -> None:
     from host.machine_config import _sram_size_and_label
     from msx.boundary import MediaId
 
     config = make_config(_ROM)
-    with pytest.raises(ValueError, match="unknown SRAM media id 'drive_a'"):
+    with pytest.raises(ValueError, match="unknown SRAM media id DRIVE_A$"):
         _sram_size_and_label(config, MediaId.DRIVE_A)
+
+
+def test_machine_properties_are_integers() -> None:
+    # machine-core "Machine properties are integers".
+    from msx.machine_spec import KeyboardLayout
+    from msx.vdp._geometry import VideoStandard
+
+    spec = _spec("cbios_msx1_jp")
+    machine = build_machine(load_machine_config(spec, **_overrides(spec)))
+    assert isinstance(machine.video_standard, int)
+    assert isinstance(machine.keyboard_layout, int)
+    assert VideoStandard(int(machine.video_standard)) is VideoStandard.NTSC
+    assert KeyboardLayout(int(machine.keyboard_layout)) is KeyboardLayout.JAPANESE
+
+
+# The canonical documents' SHA-256, recorded before the video standard and
+# the keyboard layout became integer enums: their text spellings did not change.
+_DOCUMENT_SHA256 = {
+    "cbios_msx1_eu": "5a331a17c716dc351ff29a63bb4bd9cca6d0f377a02fcf79fa1b3b944a4eb6ce",
+    "cbios_msx1_jp": "cf2862c23ba6c8e1f021ce233a60d36940dbafbcd2c9f50a7201fdd128649091",
+    "hb_f1xd": "ce921d1109ca7a20f43015f19e7cb63427e4e8842840a1449309c1bd7bd45cde",
+}
+
+
+@pytest.mark.parametrize("machine_id", sorted(_DOCUMENT_SHA256))
+def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> None:
+    document = _document(machine_id)
+    machine = json.loads(document)["machine"]
+    assert machine["video_standard"] in ("ntsc", "pal")
+    assert machine["keyboard_layout"] in ("int", "jp")
+    assert hashlib.sha256(document).hexdigest() == _DOCUMENT_SHA256[machine_id]
+    parsed = parse_machine_config(document).spec
+    assert parsed.video_standard.spelling == machine["video_standard"]
+    assert parsed.keyboard_type.spelling == machine["keyboard_layout"]
 
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
@@ -93,7 +127,6 @@ def test_machine_keyboard_layout_defaults_to_international() -> None:
 
     machine = build_machine(make_config(_ROM))
     assert machine.keyboard_layout is KeyboardLayout.INTERNATIONAL
-    assert machine.keyboard_layout == "int"
 
 
 def test_a_jis_machine_definition_gives_the_japanese_layout() -> None:

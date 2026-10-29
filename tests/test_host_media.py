@@ -8,6 +8,7 @@ import pytest
 
 from host.machine_config import sram_paths
 from host.media import persist_dirty_media, read_disk_medium, swap_disk
+from msx.boundary import MediaId
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE
 from msx.fdc.interface import SonyPhilipsInterface
@@ -46,7 +47,7 @@ def test_dirty_cartridge_sram_is_written_to_its_sha1_path(
     mapper.write(0x7000, mapper._sram_enable_bit())
     mapper.write(0x8000, 0x5A)
     persist_dirty_media(m, sram_paths(config))
-    assert sram_paths(config)["slot1.sram"].read_bytes()[0] == 0x5A
+    assert sram_paths(config)[MediaId.SLOT1_SRAM].read_bytes()[0] == 0x5A
     assert m.dirty_media() == []
 
 
@@ -84,7 +85,7 @@ def test_rtc_file_is_created_on_first_shutdown(
     m.rtc.write_port(0xB4, 0x00)
     m.rtc.write_port(0xB5, 0x0A)  # CMOS write
     persist_dirty_media(m, sram_paths(config))
-    data = (tmp_path / sram_paths(config)["rtc.cmos"]).read_bytes()
+    data = (tmp_path / sram_paths(config)[MediaId.RTC_CMOS]).read_bytes()
     assert len(data) == 26 and data[0] == 0x0A
 
 
@@ -122,7 +123,7 @@ def test_a_failed_write_back_keeps_the_current_disk(tmp_path: Path) -> None:
         swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
     assert m.fdc.drives[0].image is before
     assert m.disk_path(0) == a
-    assert "drive_a" in m.dirty_media()
+    assert MediaId.DRIVE_A in m.dirty_media()
 
 
 def test_nonexistent_file_keeps_the_current_disk(tmp_path: Path) -> None:

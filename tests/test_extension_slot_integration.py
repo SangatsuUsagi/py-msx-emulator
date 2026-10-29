@@ -16,7 +16,7 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_machine_config, sram_paths
 from host.media import persist_dirty_media
 from host.state_files import load_state, save_state
-from msx.boundary import RgbFrame
+from msx.boundary import MediaId, RgbFrame
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
@@ -209,8 +209,8 @@ def test_fmpac_on_slot1_survives_scc_plus_on_slot2(tmp_path: Path) -> None:
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
-    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
-    assert machine.sram_media()["fmpac.sram"] is machine.fmpac.sram_image
+    assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
+    assert machine.sram_media()[MediaId.FMPAC_SRAM] is machine.fmpac.sram_image
 
 
 def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
@@ -227,7 +227,7 @@ def test_fmpac_on_slot2_survives_scc_plus_on_slot1(tmp_path: Path) -> None:
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
-    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
+    assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
 
 
 def test_fmpac_on_both_slots_rejected(tmp_path: Path) -> None:
@@ -282,7 +282,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     )
     machine = build_machine(config)
     assert machine.fmpac is not None
-    assert sram_paths(config)["fmpac.sram"] == fmpac_overlay.sram_save_path
+    assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
     halnote = machine.halnote_cart
     assert halnote is not None
 
