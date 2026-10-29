@@ -107,6 +107,13 @@ STOP_BREAKPOINT = 1
 STOP_WATCHPOINT = 2
 STOP_REQUESTED = 3
 
+# The result of load_state and mount_disk. A failed call changes nothing,
+# and last_error_text() gives its message.
+STATUS_OK = 0
+STATUS_STATE_REJECTED = 1   # load_state: not a state this machine can load
+STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
+STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
+
 # The access kind of a watchpoint hit (StopInfo.watch_access).
 WATCH_READ = 1
 WATCH_WRITE = 2

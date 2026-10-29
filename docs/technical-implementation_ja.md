@@ -782,12 +782,13 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
 | 制御 | `reset()` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま |
 | | `save_state() -> bytes` | スナップショット（`msx/state.py`） |
-| | `load_state(data, source)` | スナップショットが合わなければ `ValueError`（`StateLoadError`、`SnapshotMismatchError`）を出し、何も変えない |
+| | `load_state(data) -> int` | `STATUS_OK`（0）を返す。スナップショットが合わなければ `STATUS_STATE_REJECTED`（1）を返し、何も変えない |
 | | `write_memory(addr, data)` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
 | | `read_media(media_id) -> bytes` | メディアの現在のバイト列 |
 | | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
-| | `mount_disk(drive, medium) -> bytes \| None` | `medium` に `None` を渡すと取り出す。外したイメージに保存していない書き込みがあれば、そのバイト列を返す。マシンにないドライブや、サイズが 512 の正の倍数でないイメージには `ValueError` を出す |
+| | `mount_disk(drive, medium) -> int` | `medium` に `None` を渡すと取り出す。`STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
+| | `last_error_text() -> bytes` | 最後に失敗した `load_state` か `mount_disk` のメッセージ（UTF-8）。成功した後は `b""`。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)`、`disk_path(drive)` | ドライブの状態と、記録した host 側の名前 |
 | デバイス | `attach_mouse(port)` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
@@ -881,7 +882,8 @@ for _ in range(120):
     # out.audio：samples_per_frame() 個の符号付き 16 ビット LE モノラルのサンプル
 
 snapshot = machine.save_state()                    # bytes。保存先は自由
-machine.load_state(snapshot)
+if machine.load_state(snapshot) != 0:             # 0 は STATUS_OK
+    print(machine.last_error_text().decode("utf-8"))
 assert machine.save_state() == snapshot
 
 persist_dirty_media(machine, sram_paths(config))   # SRAM/CMOS/ディスクの変更を書き戻す
@@ -893,7 +895,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
-- 制御の操作は、結果を表すレコードではなく `None` を返す。`save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
+- 制御の操作は、結果を表すレコードではなく `None` を返す。ただし `load_state` と `mount_disk` は整数の状態を返す。`save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `eject_disk` は `mount_disk(drive, None)`。`read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ。

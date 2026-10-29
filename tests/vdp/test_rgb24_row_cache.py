@@ -102,7 +102,7 @@ def test_the_memo_is_not_part_of_the_snapshot(msx2: bool) -> None:
     assert saved == state.save_state(plain)
 
     loaded = build()
-    state.load_state(loaded, saved, "test")
+    state.load_state(loaded, saved)
     expected = converted.step_frame(InputFrame(), render_video=True).video
     assert loaded.step_frame(InputFrame(), render_video=True).video == expected
 

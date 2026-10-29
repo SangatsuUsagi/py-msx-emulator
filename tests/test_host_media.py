@@ -141,14 +141,15 @@ def test_invalid_image_size_keeps_the_current_disk(tmp_path: Path) -> None:
     before = m.fdc.drives[0].image
     bad = tmp_path / "bad.dsk"
     bad.write_bytes(bytes(100))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as exc_info:
         swap_disk(m, 0, bad)
+    assert str(exc_info.value) == f"{bad}: size 100 is not a positive multiple of 512"
     assert m.fdc.drives[0].image is before
 
 
 def test_swap_of_a_missing_drive_keeps_everything(tmp_path: Path) -> None:
     m = _fdc_machine()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no floppy drive 1 on this machine$"):
         swap_disk(m, 1, _dsk(tmp_path / "a.dsk"))
     assert m.fdc.drives[0].image is None
 

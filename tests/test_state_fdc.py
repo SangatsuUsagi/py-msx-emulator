@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from host.machine_config import build_machine_from_spec
-from host.state_files import load_state, save_state
+from host.state_files import save_state
 from msx.boundary import RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import DskDiskImage
@@ -16,6 +16,7 @@ from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
 from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
 from tests.disk_factories import dsk_image
+from tests.factories import load_state_file
 
 _2DD = 737280
 _RGB_MSX2 = RgbFrame(256, 192, bytes(256 * 192 * 3))
@@ -96,7 +97,7 @@ def test_wd2793_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     ctrl.sector_reg = 1
     ctrl.status_reg = 0
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert drive.track == 5
     assert drive.side == 1
@@ -124,7 +125,7 @@ def test_wd2793_restore_reselects_no_drive(tmp_path: Path, saves_dir: Path) -> N
 
     ctrl.drive = machine.fdc.drives[0]
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert ctrl.drive is None
 
@@ -147,7 +148,7 @@ def test_tc8566af_roundtrip(tmp_path: Path, saves_dir: Path) -> None:
     drive.side = 0
     ctrl.control_reg0 = 0
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert drive.track == 7
     assert drive.side == 1
@@ -171,7 +172,7 @@ def test_different_mounted_disk_is_rejected(tmp_path: Path, saves_dir: Path) -> 
     machine.fdc.mount(dsk_image(dsk_b), drive=0)
 
     with pytest.raises(ValueError, match="(?i)disk"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
@@ -185,7 +186,7 @@ def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> No
     machine.fdc.mount(None, drive=0)
 
     with pytest.raises(ValueError, match="(?i)disk"):
-        load_state(machine)
+        load_state_file(machine)
 
 
 def test_fdc_kind_mismatch_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
@@ -200,7 +201,7 @@ def test_fdc_kind_mismatch_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
 
     tc_machine = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
     with pytest.raises(ValueError, match="(?i)kind"):
-        load_state(tc_machine)
+        load_state_file(tc_machine)
 
 
 def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) -> None:
@@ -216,7 +217,7 @@ def test_fdc_unwired_machine_rejects_fdc_state(tmp_path: Path, saves_dir: Path) 
     assert no_fdc_machine.fdc is None
 
     with pytest.raises(ValueError, match="(?i)fdc"):
-        load_state(no_fdc_machine)
+        load_state_file(no_fdc_machine)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +285,7 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     monkeypatch.setattr(PSG, "parse_synth_state", psg_parse)
     monkeypatch.setattr(mapper_cls, "parse_state", mapper_parse)
 
-    load_state(machine)
+    load_state_file(machine)
 
     assert counts["fdc"] == 1
     assert counts["psg"] == 1
@@ -319,6 +320,6 @@ def test_fdc_identity_mismatch_is_reported_as_an_fdc_state_load_error(
         target = build_machine_from_spec(_tc8566af_spec(tmp_path), fdd1=dsk)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(target)
+        load_state_file(target)
     assert exc_info.value.producer == "fdc"
     assert isinstance(exc_info.value.__cause__, SnapshotMismatchError)

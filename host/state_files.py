@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from host.media import persist_dirty_media
 from host.screenshot import scale_rgb24, write_rgb24_png
-from msx.boundary import RgbFrame
+from msx.boundary import STATUS_OK, RgbFrame
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -90,8 +90,8 @@ def load_state(machine: CoreApi, path: Path | None = None) -> None:
 
     Raises:
         FileNotFoundError: If the target file does not exist.
-        StateLoadError: If a field or producer object is malformed.
-        ValueError: See CoreApi.load_state (msx.state.load_state). Nothing is restored then.
+        ValueError: "<file>: <message>" when the core rejects the state
+            (CoreApi.load_state, msx.state.load_state). Nothing is restored then.
     """
     if path is None:
         link = Path("saves") / "states" / "latest.state"
@@ -105,7 +105,9 @@ def load_state(machine: CoreApi, path: Path | None = None) -> None:
             raise FileNotFoundError(f"save state not found: {path}")
         resolved = path
 
-    machine.load_state(resolved.read_bytes(), str(resolved))
+    if machine.load_state(resolved.read_bytes()) != STATUS_OK:
+        message = machine.last_error_text().decode("utf-8")
+        raise ValueError(f"{resolved}: {message}")
     print(f"state loaded: {resolved}")
 
 

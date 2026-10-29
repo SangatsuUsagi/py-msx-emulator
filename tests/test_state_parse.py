@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from host.state_files import load_state, save_state
+from host.state_files import save_state
 from msx.boundary import RgbFrame
 from msx.state import StateLoadError
-from tests.factories import make_machine, make_machine_msx2
+from tests.factories import load_state_file, make_machine, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -114,7 +114,7 @@ def test_malformed_msx1_value_is_rejected_before_restoring(
     before = _fingerprint(machine)
 
     with pytest.raises(StateLoadError, match=path) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert exc_info.value.producer == component
     assert _fingerprint(machine) == before
@@ -124,7 +124,7 @@ def test_cpu_register_error_names_the_register_path(tmp_path, monkeypatch) -> No
     machine = make_machine(_ROM)
     state_path = _edited(tmp_path, monkeypatch, machine, _set("cpu.registers.PC", 0x12345))
     with pytest.raises(StateLoadError, match=r"cpu\.registers\.PC"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 _MSX2_CASES = [
@@ -150,7 +150,7 @@ def test_malformed_msx2_value_is_rejected_before_restoring(
     before = _fingerprint(machine)
 
     with pytest.raises(StateLoadError, match=path) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert exc_info.value.producer == component
     assert _fingerprint(machine) == before
@@ -168,7 +168,7 @@ def test_ram_of_the_wrong_size_for_the_machine_is_rejected(tmp_path, monkeypatch
     before = _fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert exc_info.value.producer == "memory.ram"
     assert len(machine.memory.ram) == ram_len
@@ -187,7 +187,7 @@ def test_ram_mapper_blob_of_the_wrong_size_is_rejected(tmp_path, monkeypatch) ->
     before = _fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert exc_info.value.producer == "memory.ram_mapper.ram"
     assert len(rm.ram) == size
@@ -215,7 +215,7 @@ def test_wiring_mismatch_leaves_the_machine_unchanged(
     before = _fingerprint(machine)
 
     with pytest.raises(ValueError, match=message):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert _fingerprint(machine) == before
 
@@ -226,7 +226,7 @@ def test_secondary_register_and_subslots_come_in_pairs(tmp_path, monkeypatch) ->
         tmp_path, monkeypatch, machine, _set("slots.slot2.subslots", [None] * 4)
     )
     with pytest.raises(StateLoadError, match="slots.slot2.secondary_slot_register") as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert exc_info.value.producer == "slots"
 
 
@@ -242,7 +242,7 @@ def test_unmodified_file_round_trips(tmp_path, monkeypatch, factory) -> None:
     saved = _fingerprint(machine)
     _disturb(machine)
 
-    load_state(machine, state_path)
+    load_state_file(machine, state_path)
 
     assert _fingerprint(machine) == saved
 
@@ -278,7 +278,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
     before = _producer_fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
     assert exc_info.value.producer == producer
     assert _producer_fingerprint(machine) == before
@@ -291,7 +291,7 @@ def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:
     _disturb(machine)
     before = _fingerprint(machine)
     with pytest.raises(ValueError, match="SCC wiring mismatch"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert _fingerprint(machine) == before
 
 
@@ -299,7 +299,7 @@ def test_scc_state_missing_for_an_scc_machine_is_rejected(tmp_path, monkeypatch)
     machine = make_machine(_ROM, cartridge=bytes(65536), mapper="KonamiSCC")
     state_path = _edited(tmp_path, monkeypatch, machine, _set("scc", None))
     with pytest.raises(ValueError, match="SCC wiring mismatch"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 @pytest.mark.parametrize(
@@ -312,7 +312,7 @@ def test_machine_mismatches_raise_snapshot_mismatch_error(tmp_path, monkeypatch,
     machine = make_machine(_ROM)
     state_path = _edited(tmp_path, monkeypatch, machine, edit)
     with pytest.raises(SnapshotMismatchError):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 # ---------------------------------------------------------------------------
