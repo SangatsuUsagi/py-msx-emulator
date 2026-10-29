@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -207,8 +206,6 @@ class DiskMedium:
 
     data: bytes
     write_protected: bool = False
-    # The host's name for the image's file; only recorded (see DskDiskImage).
-    path: Path | None = None
 
 
 @dataclass

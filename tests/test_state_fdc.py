@@ -175,6 +175,41 @@ def test_different_mounted_disk_is_rejected(tmp_path: Path, saves_dir: Path) -> 
         load_state_file(machine)
 
 
+def test_the_snapshot_holds_no_disk_file_name(tmp_path: Path, saves_dir: Path) -> None:
+    # machine-state "The snapshot holds no disk file name".
+    import hashlib
+    import json
+
+    _make_roms(tmp_path)
+    dsk = tmp_path / "named_game.dsk"
+    _make_disk(dsk, 0x3C)
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=dsk)
+    data = machine.save_state()
+    drive = json.loads(data)["fdc"]["drives"][0]
+    assert drive["disk_size"] == _2DD
+    assert drive["disk_sha1"] == hashlib.sha1(dsk.read_bytes()).hexdigest()
+    assert "disk_path" not in drive
+    assert b"named_game" not in data
+
+
+def test_the_same_content_from_another_file_is_accepted(
+    tmp_path: Path, saves_dir: Path
+) -> None:
+    # machine-state "The same content from another file is accepted".
+    _make_roms(tmp_path)
+    original, copy = tmp_path / "a.dsk", tmp_path / "copy_of_a.dsk"
+    _make_disk(original, 0x11)
+    _make_disk(copy, 0x11)
+    saved = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=original)
+    assert saved.fdc is not None
+    saved.fdc.drives[0].track = 7
+    state_path = save_state(saved, _RGB_MSX2, "test")
+
+    machine = build_machine_from_spec(_wd2793_spec(tmp_path), fdd1=copy)
+    load_state_file(machine, state_path)
+    assert machine.fdc is not None and machine.fdc.drives[0].track == 7
+
+
 def test_unmounted_vs_mounted_is_rejected(tmp_path: Path, saves_dir: Path) -> None:
     _make_roms(tmp_path)
     dsk = tmp_path / "game.dsk"

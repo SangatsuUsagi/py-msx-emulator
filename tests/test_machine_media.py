@@ -9,7 +9,6 @@ from msx.boundary import (
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
     STATUS_OK,
-    DiskMedium,
     MediaId,
     drive_media_id,
     slot_sram_id,
@@ -59,7 +58,7 @@ def test_guest_write_marks_the_medium_dirty(
 
 def test_write_protected_disk_is_never_dirty() -> None:
     m = _fdc_machine()
-    m.mount_disk(0, DiskMedium(_2DD, write_protected=True))
+    m.mount_disk(0, _2DD, True)
     image = m.fdc.drives[0].image
     assert image is not None
     with pytest.raises(PermissionError):
@@ -69,7 +68,7 @@ def test_write_protected_disk_is_never_dirty() -> None:
 
 def test_disk_write_is_listed_by_drive_id() -> None:
     m = _fdc_machine()
-    m.mount_disk(1, DiskMedium(_2DD))
+    m.mount_disk(1, _2DD, False)
     m.fdc.drives[1].image.write_sector(3, b"\x77" * SECTOR_SIZE)
     assert m.dirty_media() == [MediaId.DRIVE_B]
     assert m.read_media(MediaId.DRIVE_B)[3 * SECTOR_SIZE] == 0x77
@@ -78,10 +77,10 @@ def test_disk_write_is_listed_by_drive_id() -> None:
 def test_a_missing_drive_returns_a_status() -> None:
     # machine-core "A missing drive returns a status".
     m = _fdc_machine(drives=1)
-    m.mount_disk(0, DiskMedium(_2DD))
+    m.mount_disk(0, _2DD, False)
     m.fdc.drives[0].disk_changed = False  # as if the guest saw the change
     before = m.fdc.drives[0].image
-    assert m.mount_disk(1, DiskMedium(_2DD)) == STATUS_NO_DRIVE
+    assert m.mount_disk(1, _2DD, False) == STATUS_NO_DRIVE
     assert m.last_error_text() == b"no floppy drive 1 on this machine"
     assert m.fdc.drives[0].image is before
     assert m.fdc.drives[0].disk_changed is False
@@ -90,11 +89,11 @@ def test_a_missing_drive_returns_a_status() -> None:
 def test_a_bad_image_size_returns_a_status() -> None:
     # machine-core "A bad image size returns a status".
     m = _fdc_machine(drives=1)
-    m.mount_disk(0, DiskMedium(_2DD))
+    m.mount_disk(0, _2DD, False)
     m.fdc.drives[0].disk_changed = False
     before = m.fdc.drives[0].image
     for size in (1000, 0):
-        assert m.mount_disk(0, DiskMedium(bytes(size))) == STATUS_BAD_IMAGE
+        assert m.mount_disk(0, bytes(size), False) == STATUS_BAD_IMAGE
         assert m.last_error_text() == (
             f"size {size} is not a positive multiple of 512".encode()
         )
@@ -105,30 +104,28 @@ def test_a_bad_image_size_returns_a_status() -> None:
 def test_a_success_clears_the_message() -> None:
     # machine-core "A success clears the message".
     m = _fdc_machine(drives=1)
-    assert m.mount_disk(0, DiskMedium(bytes(1000))) == STATUS_BAD_IMAGE
+    assert m.mount_disk(0, bytes(1000), False) == STATUS_BAD_IMAGE
     assert m.last_error_text() != b""
-    assert m.mount_disk(0, DiskMedium(_2DD)) == STATUS_OK
+    assert m.mount_disk(0, _2DD, False) == STATUS_OK
     assert m.last_error_text() == b""
 
 
 def test_none_ejects() -> None:
     # machine-core "None ejects".
     m = _fdc_machine()
-    m.mount_disk(0, DiskMedium(_2DD))
+    m.mount_disk(0, _2DD, False)
     m.fdc.drives[0].image.write_sector(0, b"\xAB" * SECTOR_SIZE)
-    assert m.mount_disk(0, None) == STATUS_OK
+    assert m.mount_disk(0, None, False) == STATUS_OK
     assert m.fdc.drives[0].image is None
     assert not m.disk_mounted(0)
 
 
 def test_disk_queries_report_the_mounted_image() -> None:
     m = _fdc_machine(drives=1)
-    assert (m.disk_mounted(0), m.disk_path(0)) == (False, None)
-    m.mount_disk(0, DiskMedium(_2DD, path=Path("game.dsk")))
-    assert (m.disk_mounted(0), m.disk_path(0)) == (True, Path("game.dsk"))
-    m.mount_disk(0, DiskMedium(_2DD))
-    assert (m.disk_mounted(0), m.disk_path(0)) == (True, None)
-    assert (m.disk_mounted(1), m.disk_path(1)) == (False, None)
+    assert m.disk_mounted(0) is False
+    m.mount_disk(0, _2DD, False)
+    assert m.disk_mounted(0) is True
+    assert m.disk_mounted(1) is False
 
 
 def test_media_ids_are_integers() -> None:

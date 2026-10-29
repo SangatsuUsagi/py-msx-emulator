@@ -35,17 +35,17 @@ FORMAT_FILL: int = 0xE5
 class DiskDriveState(TypedDict):
     """Save-state schema for DiskDrive.snapshot()/restore().
 
-    disk_path/disk_size/disk_sha1 are the mounted image's identity (None
-    when no disk is mounted), not its content -- parse_state() rejects a
-    mismatch against the currently-mounted image rather than re-mounting
-    from the saved path, since the disk file itself is treated like
-    ROM/SRAM: an external file save-state doesn't own or embed.
+    disk_size/disk_sha1 are the mounted image's identity (None when no
+    disk is mounted), not its content and not its file -- parse_state()
+    rejects a mismatch against the currently-mounted image rather than
+    re-mounting it, since the disk image is treated like ROM/SRAM: external
+    data a save state doesn't own or embed. The same content mounted from
+    another file is the same disk.
     """
 
     track: int
     side: int
     disk_changed: bool
-    disk_path: str | None
     disk_size: int | None
     disk_sha1: str | None
 
@@ -130,18 +130,15 @@ class DiskDrive:
         """Capture head position and the mounted image's identity (not its
         content -- see DiskDriveState)."""
         if self.image is None:
-            disk_path: str | None = None
             disk_size: int | None = None
             disk_sha1: str | None = None
         else:
-            disk_path = str(self.image.path)
             disk_size = self.image.num_sectors * SECTOR_SIZE
             disk_sha1 = self.image.content_sha1()
         return {
             "track": self.track,
             "side": self.side,
             "disk_changed": self.disk_changed,
-            "disk_path": disk_path,
             "disk_size": disk_size,
             "disk_sha1": disk_sha1,
         }
@@ -155,44 +152,35 @@ class DiskDrive:
                 or range, or an identity that is only partly None.
             SnapshotMismatchError: If exactly one of {a disk is mounted now, a disk was
                 mounted at snapshot time} is true, or both are mounted but
-                their (path, size, sha1) identity differs.
+                their (size, sha1) identity differs.
         """
         fields = check_object(obj, label, _STATE_KEYS)
         track = check_int(fields["track"], f"{label}.track", 0, 0xFF)
         side = check_int(fields["side"], f"{label}.side", 0, 1)
         disk_changed = check_bool(fields["disk_changed"], f"{label}.disk_changed")
-        disk_path = check_optional_str(fields["disk_path"], f"{label}.disk_path")
         disk_size = check_optional_int(fields["disk_size"], f"{label}.disk_size", 1, SAFE_INT_MAX)
         disk_sha1 = check_optional_str(fields["disk_sha1"], f"{label}.disk_sha1")
-        has_path = disk_path is not None
-        if has_path != (disk_size is not None) or has_path != (disk_sha1 is not None):
-            raise SchemaError(
-                f"{label}: disk_path, disk_size and disk_sha1 must be all None or all set"
-            )
-        if has_path != (self.image is not None):
+        has_disk = disk_size is not None
+        if has_disk != (disk_sha1 is not None):
+            raise SchemaError(f"{label}: disk_size and disk_sha1 must be both None or both set")
+        if has_disk != (self.image is not None):
             raise SnapshotMismatchError(
                 f"{label}: disk mount mismatch: "
                 f"running has {'a disk' if self.image is not None else 'no disk'} mounted, "
-                f"saved state has {'a disk' if disk_path is not None else 'no disk'} mounted"
+                f"saved state has {'a disk' if has_disk else 'no disk'} mounted"
             )
         if self.image is not None:
-            current = (
-                str(self.image.path),
-                self.image.num_sectors * SECTOR_SIZE,
-                self.image.content_sha1(),
-            )
-            saved = (disk_path, disk_size, disk_sha1)
+            current = (self.image.num_sectors * SECTOR_SIZE, self.image.content_sha1())
+            saved = (disk_size, disk_sha1)
             if current != saved:
                 raise SnapshotMismatchError(
-                    f"{label}: disk mismatch: running {current[0]!r} "
-                    f"({current[1]} bytes, sha1 {current[2]}), "
-                    f"saved {saved[0]!r} ({saved[1]} bytes, sha1 {saved[2]})"
+                    f"{label}: disk mismatch: running ({current[0]} bytes, sha1 {current[1]}), "
+                    f"saved ({saved[0]} bytes, sha1 {saved[1]})"
                 )
         return {
             "track": track,
             "side": side,
             "disk_changed": disk_changed,
-            "disk_path": disk_path,
             "disk_size": disk_size,
             "disk_sha1": disk_sha1,
         }

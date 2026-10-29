@@ -114,31 +114,6 @@ def test_saved_bytes_are_already_canonical() -> None:
     assert b" " not in data and b"\n" not in data
 
 
-def test_a_non_ascii_disk_path_is_written_as_utf8(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    for name, size in (("main.rom", 32768), ("sub.rom", 16384), ("disk.rom", 16384)):
-        (tmp_path / name).write_bytes(bytes(size))
-    disk = tmp_path / "ゲーム.dsk"
-    disk.write_bytes(bytes(737280))
-    spec = MachineSpec(
-        name="non_ascii_disk", generation="msx2", rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
-        logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
-        has_ram_mapper=False, ram_size_kb=32, has_v9938=True, has_rtc=False,
-        flat_ram_subslot=3, flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
-            controller="wd2793", connection_style="sony", drives=1,
-        ),
-    )
-    data = state.save_state(build_machine_from_spec(spec, fdd1=disk))
-    assert "ゲーム.dsk".encode("utf-8") in data
-    assert b"\\u" not in data
-
-
 def test_the_same_state_gives_the_same_bytes() -> None:
     assert state.save_state(_ran(5)) == state.save_state(_ran(5))
 
@@ -325,7 +300,7 @@ def test_an_earlier_version_with_a_float_is_rejected_as_a_version_mismatch() -> 
     decoded["out_time"] = 22458.33333141287   # an older format with a float
     target = _ran(1)
     before = state.save_state(target)
-    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 20"):
+    with pytest.raises(ValueError, match="incompatible state file: version 16, expected 21"):
         state.load_state(target, json.dumps(decoded).encode("utf-8"))
     assert state.save_state(target) == before
 

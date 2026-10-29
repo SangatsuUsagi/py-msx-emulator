@@ -1014,7 +1014,7 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
         disk = config.disks.get(media_id)
         if disk is None:
             continue
-        image = DskDiskImage(disk.data, write_protected=disk.write_protected, path=disk.path)
+        image = DskDiskImage(disk.data, write_protected=disk.write_protected)
         device.mount(image, drive=idx)
     return device
 
