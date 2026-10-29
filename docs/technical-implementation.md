@@ -1178,6 +1178,7 @@ belongs to the debugger's diagnostics.
 | | `slot_info(primary, secondary, page) -> SlotInfo \| None` | The content text, bank text and size in KB of one slot, for `sl` and `st`. `secondary` and `page` can be `None`. A value outside 0-3 returns `None` |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
 | Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. `set_watchpoints()` returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) for an invalid kind |
+| | `set_sprites_hidden(hidden)`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
 | | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |

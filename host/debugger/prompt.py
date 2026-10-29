@@ -668,9 +668,9 @@ class Debugger:
         print(f"  Loaded state from {path}")
 
     def _cmd_disable_sprites(self) -> None:
-        vdp = self._diagnostics_machine().vdp
-        vdp.debug_disable_sprites = not vdp.debug_disable_sprites
-        state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
+        hidden = not self._machine.sprites_hidden()
+        self._machine.set_sprites_hidden(hidden)
+        state = "OFF (background only)" if hidden else "ON"
         print(f"Sprite rendering: {state}")
 
     def _cmd_slot_active(self) -> None:
