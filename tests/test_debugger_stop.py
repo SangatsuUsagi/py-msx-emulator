@@ -81,7 +81,7 @@ def test_prompt_appears_on_breakpoint_hit() -> None:
 
 def test_a_watchpoint_stop_prints_the_line_then_opens_the_repl(capsys) -> None:
     m = _machine()
-    m.set_watchpoints([(0xC000, "w")])
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
     debugger = MagicMock()
     reason = _step(m)
     handle_stop(m, reason, debugger, None)
@@ -190,7 +190,7 @@ def test_s_over_a_watched_access_stays_in_the_repl(capsys) -> None:
     m = _machine()
     while m.cpu_registers().PC != 0x4006:
         m.step()
-    m.set_watchpoints([(0xC000, "w")])
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
     with patch("builtins.input", side_effect=["s", "c"]) as prompts:
         Debugger(m).enter()
     out = capsys.readouterr().out

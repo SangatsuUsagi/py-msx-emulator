@@ -34,8 +34,7 @@ from host.state_files import load_state, resume_state, save_state
 from msx.boundary import STOP_NONE, RgbFrame
 from msx.core_api import CoreApi
 from msx.input import KEY_NAME_TO_CELL
-from msx.mouse import MouseDevice
-from msx.psg import SAMPLE_RATE, JoystickPort
+from msx.psg import SAMPLE_RATE
 from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
@@ -1170,7 +1169,7 @@ def run(
     mouse: _HostMouse | None = None
     if mouse_port is not None:
         mouse = _HostMouse(keyboard.input_state, scale)
-        machine.attach_mouse(MouseDevice(), JoystickPort(mouse_port))
+        machine.attach_mouse(mouse_port)
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host

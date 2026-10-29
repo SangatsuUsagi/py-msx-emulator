@@ -57,10 +57,23 @@ def _parse_breakpoints(spec: str | None) -> list[int]:
     return addrs
 
 
-def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
+def _watch_summary(entries: list[tuple[int, int]]) -> str:
+    """The startup line's list of watchpoints: "C000h[rw], ..."."""
+    from host.watch import watch_text
+
+    parts: list[str] = []
+    for addr, kind in entries:
+        parts.append(f"{addr:04X}h[{watch_text(kind)}]")
+    return ", ".join(parts)
+
+
+def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
     """Parse a comma-separated `addr[,mode]` watchpoint list (mode in r/w/rw,
-    default rw) into up to 4 (addr, mode) entries."""
-    entries: list[tuple[int, str]] = []
+    default rw) into up to 4 (addr, kind) entries (host/watch.py)."""
+    from host.watch import watch_kind
+    from msx.boundary import WATCH_READ, WATCH_WRITE
+
+    entries: list[tuple[int, int]] = []
     if spec is None:
         return entries
     pending_addr: int | None = None
@@ -68,16 +81,17 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
         tok = tok.strip().lower()
         if not tok:
             continue
-        if tok in ("r", "w", "rw"):
+        kind = watch_kind(tok) if tok in ("r", "w", "rw") else None
+        if kind is not None:
             if pending_addr is not None:
-                entries.append((pending_addr, tok))
+                entries.append((pending_addr, kind))
                 pending_addr = None
             else:
                 print(f"error: mode {tok!r} without preceding address", file=sys.stderr)
                 sys.exit(1)
         else:
             if pending_addr is not None:
-                entries.append((pending_addr, "rw"))
+                entries.append((pending_addr, WATCH_READ | WATCH_WRITE))
             try:
                 pending_addr = int(tok, 16) & 0xFFFF
             except ValueError:
@@ -88,7 +102,7 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, str]]:
                 )
                 sys.exit(1)
     if pending_addr is not None:
-        entries.append((pending_addr, "rw"))
+        entries.append((pending_addr, WATCH_READ | WATCH_WRITE))
     if len(entries) > _MAX_BREAKPOINTS:
         print(f"warning: more than {_MAX_BREAKPOINTS} watchpoints given; "
               f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
@@ -651,7 +665,7 @@ def main() -> None:
             print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
         if watchpoint_entries:
             machine.set_watchpoints(watchpoint_entries)
-            print(f"watch   : {', '.join(f'{a:04X}h[{m}]' for a, m in watchpoint_entries)}")
+            print(f"watch   : {_watch_summary(watchpoint_entries)}")
 
         if args.mapper_trace:
             from msx.mapper_tracer import attach_to_machine

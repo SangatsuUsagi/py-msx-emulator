@@ -251,7 +251,6 @@ def _loaded_machine(tmp_path: Path) -> Machine:
     a Konami SCC cartridge in slot 1, an FM-PAC in slot 2 and a mouse."""
     from msx.boundary import RtcTime
     from msx.machine_spec import ExtensionOverlay
-    from msx.mouse import MouseDevice
     from msx.psg import JoystickPort
 
     for name, size in (("main.rom", 32768), ("sub.rom", 16384), ("disk.rom", 16384),
@@ -282,7 +281,7 @@ def _loaded_machine(tmp_path: Path) -> Machine:
         spec, cartridge1=bytes(0x20000), mapper1="KonamiSCC", fdd1=disk,
         extension_overlay2=fmpac, rtc_initial_time=RtcTime(2026, 10, 24, 12, 0, 0),
     )
-    machine.attach_mouse(MouseDevice(), JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
     return machine
 
 

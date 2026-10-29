@@ -57,8 +57,9 @@ def test_rtc_time_and_cmos_ram_round_trip() -> None:
 
 
 def _with_mouse(machine: Machine) -> MouseDevice:
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     return mouse
 
 

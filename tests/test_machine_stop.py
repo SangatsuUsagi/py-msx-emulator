@@ -179,7 +179,7 @@ def test_break_request_is_honored_once():
 
 def test_watched_write_is_stored_before_the_stop():
     m = _msx1(_STORE_ROM)
-    m.set_watchpoints([(0xC000, "w")])
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
     out = _step(m)
     assert out.stop_reason == STOP_WATCHPOINT
     assert m.cpu_registers().PC == 0x4009
@@ -188,7 +188,7 @@ def test_watched_write_is_stored_before_the_stop():
 
 def test_single_step_records_a_watchpoint_hit():
     m = _msx1(_STORE_ROM)
-    m.set_watchpoints([(0xC000, "w")])
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
     while m.cpu_registers().PC != 0x4006:
         m.step()
     m.step()

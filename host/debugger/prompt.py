@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
+from host.watch import watch_kind, watch_text
 from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, VdpInfo
 from msx.mapper import BankTracingMapper
 
@@ -461,17 +462,17 @@ class Debugger:
         else:
             print("Usage: wa ADDR[,r|w|rw] | wd ADDR | wl")
 
-    def _watch_entries(self) -> list[tuple[int, str]]:
-        """Current watchpoints as (addr, mode) pairs, sorted by address."""
+    def _watch_entries(self) -> list[tuple[int, int]]:
+        """Current watchpoints as (addr, kind) pairs, sorted by address."""
         return list(self._machine.watchpoints())
 
-    def _parse_watch_mode(self, mode: str) -> str | None:
-        """Validate an r/w/rw watch mode, or print an error and return None."""
-        mode = mode.lower().strip()
-        if not mode or not all(c in "rw" for c in mode):
-            print(f"wa: invalid mode {mode!r} (use r, w, or rw)")
-            return None
-        return mode
+    def _parse_watch_mode(self, mode: str) -> int | None:
+        """The kind an r/w/rw watch mode spells, or print an error and
+        return None."""
+        kind = watch_kind(mode)
+        if kind is None:
+            print(f"wa: invalid mode {mode.lower().strip()!r} (use r, w, or rw)")
+        return kind
 
     def _watch_list(self) -> None:
         """List the active watchpoints (wl)."""
@@ -479,8 +480,8 @@ class Debugger:
         if not entries:
             print("  (no watchpoints)")
             return
-        for addr, mode in entries:
-            print(f"  {addr:04X}h [{mode}]")
+        for addr, kind in entries:
+            print(f"  {addr:04X}h [{watch_text(kind)}]")
 
     def _watch_add(self, args: list[str]) -> None:
         """Add/update a watchpoint at ADDR with an r/w/rw mode (wa)."""
@@ -494,22 +495,25 @@ class Debugger:
             addr_str, mode_str = tok, args[1]
         else:
             addr_str, mode_str = tok, "rw"
-        mode = self._parse_watch_mode(mode_str)
-        if mode is None:
+        kind = self._parse_watch_mode(mode_str)
+        if kind is None:
             return
         addr = self._parse_hex_addr(addr_str, "wa")
         if addr is None:
             return
         entries = self._watch_entries()
         if addr in [e[0] for e in entries]:
-            entries = [(a, mode if a == addr else m) for a, m in entries]
+            entries = [(a, kind if a == addr else k) for a, k in entries]
         else:
             if len(entries) >= MAX_WATCHPOINTS:
                 print(f"wa: maximum {MAX_WATCHPOINTS} watchpoints reached")
                 return
-            entries.append((addr, mode))
+            entries.append((addr, kind))
         self._machine.set_watchpoints(entries)
-        print(f"  Watchpoint set at {addr:04X}h [{mode}] ({len(entries)}/{MAX_WATCHPOINTS})")
+        print(
+            f"  Watchpoint set at {addr:04X}h [{watch_text(kind)}] "
+            f"({len(entries)}/{MAX_WATCHPOINTS})"
+        )
 
     def _watch_remove(self, args: list[str]) -> None:
         """Remove the watchpoint at ADDR (wd)."""
@@ -523,7 +527,7 @@ class Debugger:
         if addr not in [e[0] for e in entries]:
             print(f"wd: {addr:04X}h not in watchpoint list")
             return
-        entries = [(a, m) for a, m in entries if a != addr]
+        entries = [(a, k) for a, k in entries if a != addr]
         self._machine.set_watchpoints(entries)
         print(f"  Watchpoint {addr:04X}h removed ({len(entries)}/{MAX_WATCHPOINTS})")
 

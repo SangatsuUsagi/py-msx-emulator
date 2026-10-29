@@ -290,14 +290,17 @@ class Machine:
             return None
         return self.fdc.drives[drive].image
 
-    def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None:
-        """Attach an MSX mouse to the given joystick port for this machine's PSG.
+    def attach_mouse(self, port: int) -> None:
+        """Attach a new MSX mouse to joystick port `port` (0 = Joy1, 1 =
+        Joy2). Its motion and buttons come from each InputFrame. Raises
+        ValueError for another port.
 
         Delegates to `PSG.attach_mouse` rather than setting `self.psg._mouse`
-        directly, so callers outside this package (e.g. the SDL2 frontend)
-        never reach into `PSG`'s internals.
+        directly, so the PSG stays the sole writer of its mouse slot.
         """
-        self.psg.attach_mouse(device, port)
+        if port != JoystickPort.JOY1 and port != JoystickPort.JOY2:
+            raise ValueError(f"no joystick port {port}")
+        self.psg.attach_mouse(MouseDevice(), JoystickPort(port))
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and
@@ -402,8 +405,13 @@ class Machine:
             or self._stepout_sp is not None
         )
 
-    def set_watchpoints(self, entries: list[tuple[int, str]]) -> None:
-        """Set watchpoints. entries: [(addr, mode), ...] where mode in {r, w, rw}. Max 4."""
+    def set_watchpoints(self, entries: list[tuple[int, int]]) -> None:
+        """Set watchpoints: [(addr, kind), ...], where kind is WATCH_READ,
+        WATCH_WRITE or both ORed. Max 4. Raises ValueError, keeping the
+        current watchpoints, for a kind of 0 or with another bit."""
+        for _addr, kind in entries[:4]:
+            if kind == 0 or kind & ~(WATCH_READ | WATCH_WRITE):
+                raise ValueError(f"invalid watch kind {kind}")
         # PORT-NOTE: enabling watchpoints re-swaps cpu.read_byte/write_byte
         #   between the plain memory bus and the watch variant at runtime --
         #   same shape as __post_init__'s initial wiring above.
@@ -417,10 +425,10 @@ class Machine:
         #   single bound-method call with no added branch.
         r: set[int] = set()
         w: set[int] = set()
-        for addr, mode in entries[:4]:
-            if "r" in mode:
+        for addr, kind in entries[:4]:
+            if kind & WATCH_READ:
                 r.add(addr)
-            if "w" in mode:
+            if kind & WATCH_WRITE:
                 w.add(addr)
         self._watch_read = frozenset(r)
         self._watch_write = frozenset(w)
@@ -516,15 +524,17 @@ class Machine:
         """The breakpoint addresses, ascending."""
         return tuple(sorted(self._breakpoints))
 
-    def watchpoints(self) -> tuple[tuple[int, str], ...]:
-        """The watchpoints as (addr, mode) pairs, ascending by address, in the
-        shape set_watchpoints takes (mode "r", "w" or "rw")."""
-        result: list[tuple[int, str]] = []
+    def watchpoints(self) -> tuple[tuple[int, int], ...]:
+        """The watchpoints as (addr, kind) pairs, ascending by address, in the
+        shape set_watchpoints takes (kind WATCH_READ, WATCH_WRITE or both)."""
+        result: list[tuple[int, int]] = []
         for addr in sorted(self._watch_read | self._watch_write):
-            mode = ("r" if addr in self._watch_read else "") + (
-                "w" if addr in self._watch_write else ""
-            )
-            result.append((addr, mode))
+            kind = 0
+            if addr in self._watch_read:
+                kind |= WATCH_READ
+            if addr in self._watch_write:
+                kind |= WATCH_WRITE
+            result.append((addr, kind))
         return tuple(result)
 
     def break_halt_di(self) -> bool:

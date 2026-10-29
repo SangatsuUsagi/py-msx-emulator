@@ -789,14 +789,14 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
 | | `mount_disk(drive, medium) -> bytes \| None` | `medium` に `None` を渡すと取り出す。外したイメージに保存していない書き込みがあれば、そのバイト列を返す。マシンにないドライブや、サイズが 512 の正の倍数でないイメージには `ValueError` を出す |
 | | `disk_mounted(drive)`、`disk_path(drive)` | ドライブの状態と、記録した host 側の名前 |
-| デバイス | `attach_mouse(MouseDevice(), JoystickPort(n))` | MSX のマウスをジョイスティックポート 1 か 2 につなぐ |
+| デバイス | `attach_mouse(port)` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 | | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
 | | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
-| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し |
+| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
@@ -897,7 +897,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `eject_disk` は `mount_disk(drive, None)`。`read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ。
-- マウスはフロントエンドが実行時につなぐ（`attach_mouse`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
+- マウスはフロントエンドが実行時につなぐ（`attach_mouse(port)`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
 - `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
 
 次の点は未決定で、移植する側が決める必要がある。

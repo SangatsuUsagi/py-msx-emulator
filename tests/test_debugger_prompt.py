@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
-from msx.boundary import RgbFrame
+from msx.boundary import WATCH_READ, RgbFrame
 from msx.cpu.registers import Registers
 from msx.machine import Machine
 from msx.mapper import FlatMapper
@@ -1144,7 +1144,7 @@ class TestDumpBypassesWatchpoints:
         from tests.factories import make_machine
 
         m = make_machine(rom=bytes(32 * 1024))
-        m.set_watchpoints([(0xC000, "r")])
+        m.set_watchpoints([(0xC000, WATCH_READ)])
         dbg = Debugger(m)
         dbg._cmd_dump(["BFF8", "10"])
         dbg._cmd_disasm(["C000"])
