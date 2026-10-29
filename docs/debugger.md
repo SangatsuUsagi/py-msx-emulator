@@ -8,7 +8,7 @@ Commands with the **⚙V9938** mark need an MSX2 / V9938 machine. On MSX1 /
 TMS9918A, they print a clear error message and do not raise an exception.
 
 Source: `host/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
-`msx/vdp/v9938_renderer.py` (VDP), `msx/mapper_tracer.py` (mapper trace).
+`msx/vdp/v9938_renderer.py` (VDP), `host/trace.py` (VDP and mapper trace text).
 
 ---
 
@@ -286,18 +286,21 @@ emulator exits.
 
 ### Tracing
 
-**`te`**: enable the VDP register-write tracer, on both VDP types. During emulation, it
-writes one line to stdout for each register write:
+**`te`**: enable the VDP register-write trace, on both VDP types. During emulation, it
+writes one line to stdout for each register write. If `--vdp-trace-out FILE`
+was given at launch, the lines go to that file instead:
 
 ```
 CY=0000012450 FR=000003 PC=C018 VDP_REG R#02=1Fh
 CY=0000012460 FR=000003 PC=C01C VDP_REG R#05=7Fh
 ```
 
-On first use, `te` connects the `_get_pc` and `_get_cycle` callbacks
-automatically. If a `Tracer` is already attached, `te` enables it again.
+The core records the writes, and the debugger prints the lines at the end of
+each frame and after each `s` step. The lines of a frame therefore appear
+together, after the frame runs.
 
-**`td`**: disable VDP register tracing.
+**`td`**: disable VDP register tracing. If the trace is already off, `td`
+prints a message.
 
 **`ce`**: enable the cartridge mapper bank-switch tracer. It writes one line
 for each bank-register write that changes the bank of a window:
@@ -307,7 +310,9 @@ CY=0000025000 FR=000005 PC=5B2A MAP_BANK win=1 03h->05h addr=6001h
 ```
 
 `win` is the mapper window index. `addr` is the address of the register write.
-If no bank-switching mapper is present, `ce` prints a message.
+The lines go to stdout, or to the `--mapper-trace-out` file, and appear at the
+end of each frame and after each `s` step, like the VDP trace. If no
+bank-switching mapper is present in slot 1 or 2, `ce` prints a message.
 
 **`cd`**: disable mapper bank-switch tracing.
 
@@ -447,6 +452,8 @@ python . path/to/game.rom --machine cbios_msx2_jp --vdp-trace --vdp-trace-out tr
 ```
 
 Output format: `CY=.. FR=.. PC=.. VDP_REG R#NN=XXh`
+
+`--vdp-trace` traces both VDP types, the TMS9918A of an MSX1 machine too.
 
 ### Mapper bank-switch trace
 

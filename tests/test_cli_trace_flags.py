@@ -1,7 +1,6 @@
-"""Phase 8: --mapper-trace / --mapper-trace-out and --count-frame.
-
-Unit tests for the attach_to_machine helper plus CLI integration tests that
-exercise the argparse wiring through __main__.main().
+"""--vdp-trace, --mapper-trace, their -out files and --count-frame: CLI
+integration tests that exercise the argparse wiring through
+__main__.main().
 """
 from __future__ import annotations
 
@@ -13,8 +12,6 @@ from unittest.mock import patch
 
 from msx.boundary import FrameOutput
 from msx.machine import Machine
-from msx.mapper_tracer import attach_to_machine
-from tests.factories import make_machine
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
@@ -23,55 +20,41 @@ _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 # What the mocked step_frame returns: a completed frame with no stop.
 _FRAME_DONE = FrameOutput(None, b"", 0)
 
-def _rom16(pages: int) -> bytes:
-    """ROM where byte 0 of each 16 KB page holds the page index."""
-    return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
-
-
-# ---------------------------------------------------------------------------
-# attach_to_machine helper (shared by `ce` and --mapper-trace)
-# ---------------------------------------------------------------------------
-
-class TestAttachToMachine:
-    def test_attaches_and_emits_on_bank_change(self) -> None:
-        m = make_machine(rom=bytes(32768), cartridge=_rom16(8), mapper="ASCII16")
-        buf = StringIO()
-        tracer = attach_to_machine(m, output=buf)
-        assert tracer is not None
-        m.memory._mapper.write(0x7000, 1)  # window 1: bank 0 -> 1
-        assert "MAP_BANK win=1 00h->01h addr=7000h" in buf.getvalue()
-
-    def test_returns_none_without_bank_switching_mapper(self) -> None:
-        # No cartridge -> flat mapper in slot 1, no _tracer hook.
-        m = make_machine(rom=bytes(32768))
-        assert attach_to_machine(m, output=StringIO()) is None
-
-    def test_output_target_is_honored(self) -> None:
-        m = make_machine(rom=bytes(32768), cartridge=_rom16(8), mapper="ASCII16")
-        buf = StringIO()
-        attach_to_machine(m, output=buf)
-        m.memory._mapper.write(0x6000, 2)
-        assert buf.getvalue().startswith("CY=")
-
-
 # ---------------------------------------------------------------------------
 # CLI integration (mirror of tests/test_cli_breakpoint.py harness)
 # ---------------------------------------------------------------------------
 
-def _run_main(argv: list[str]) -> tuple[int, str, str]:
+def _run_main(
+    argv: list[str], *, machine: str = "cbios_msx2", image: bytes = b"\x00" * 32768,
+    real_debugger: bool = False,
+) -> tuple[int, str, str]:
+    """Run main() with every ROM and cartridge file reading as `image`. The
+    trace lines (printed to sys.stdout) count as stdout."""
+    import contextlib
+
     stdout_buf = StringIO()
     stderr_buf = StringIO()
+    real_stdout = sys.stdout
 
-    with patch.object(sys, "argv", [".", "--machine", "cbios_msx2", *argv]), \
-         patch("builtins.print", side_effect=lambda *a, **kw: (
-             stdout_buf.write(" ".join(str(x) for x in a) + "\n")
-             if kw.get("file") is None else
-             stderr_buf.write(" ".join(str(x) for x in a) + "\n")
-         )), \
+    def fake_print(*a: object, **kw: object) -> None:
+        line = " ".join(str(x) for x in a) + "\n"
+        target = kw.get("file")
+        if target is None or target is real_stdout:
+            stdout_buf.write(line)
+        elif target is sys.stderr:
+            stderr_buf.write(line)
+        else:
+            target.write(line)  # type: ignore[attr-defined]
+
+    debugger_patch = (
+        contextlib.nullcontext() if real_debugger else patch("host.debugger.prompt.Debugger")
+    )
+    with patch.object(sys, "argv", [".", "--machine", machine, *argv]), \
+         patch("builtins.print", side_effect=fake_print), \
          patch.object(Path, "exists", lambda self: True), \
-         patch.object(Path, "read_bytes", lambda self: b"\x00" * 32768), \
+         patch.object(Path, "read_bytes", lambda self: image), \
          patch("frontend.sdl2_frontend.run"), \
-         patch("host.debugger.prompt.Debugger"):
+         debugger_patch:
         try:
             spec = importlib.util.spec_from_file_location("_emulator_main", _MAIN_PATH)
             assert spec is not None and spec.loader is not None
@@ -150,3 +133,63 @@ class TestMapperTraceCLI:
             code, _out, err = _run_main(["--mapper-trace", "--count-frame", "1"])
         assert code == 0
         assert "no bank-switching ROM mapper" in err
+
+
+# ---------------------------------------------------------------------------
+# --vdp-trace / --mapper-trace output through the core's trace buffer
+# ---------------------------------------------------------------------------
+
+def _trace_image() -> bytes:
+    """A 32 KB image whose code at 0x0000 selects slot 1 in pages 1-2,
+    switches ASCII16 window 1 to bank 1, writes VDP R#1 = 0x40 and spins."""
+    code = bytes((
+        0x3E, 0x14, 0xD3, 0xA8,  # LD A,14h / OUT (A8h),A
+        0x3E, 0x01, 0x32, 0x00, 0x70,  # LD A,01h / LD (7000h),A
+        0x3E, 0x40, 0xD3, 0x99,  # LD A,40h / OUT (99h),A
+        0x3E, 0x81, 0xD3, 0x99,  # LD A,81h / OUT (99h),A
+        0x18, 0xFE,  # JR $
+    ))
+    return code + bytes(32768 - len(code))
+
+
+class TestVdpTraceCLI:
+    def test_vdp_trace_without_out_writes_to_stdout(self) -> None:
+        code, out, _err = _run_main(
+            ["--vdp-trace", "--count-frame", "1"], image=_trace_image(), real_debugger=True)
+        assert code == 0
+        assert "VDP_REG R#01=40h" in out
+
+    def test_vdp_trace_out_redirects_trace_to_file(self, tmp_path: Path) -> None:
+        log = tmp_path / "trace.log"
+        code, out, _err = _run_main(
+            ["--vdp-trace", "--vdp-trace-out", str(log), "--count-frame", "1"],
+            image=_trace_image(), real_debugger=True)
+        assert code == 0
+        assert "VDP_REG R#01=40h" in log.read_text(encoding="utf-8")
+        assert "VDP_REG" not in out
+
+    def test_vdp_trace_traces_an_msx1_machine(self) -> None:
+        code, out, _err = _run_main(
+            ["--vdp-trace", "--count-frame", "1"], machine="cbios_msx1",
+            image=_trace_image(), real_debugger=True)
+        assert code == 0
+        assert "VDP_REG R#01=40h" in out
+
+
+class TestMapperTraceOutputCLI:
+    def test_mapper_trace_emits_map_bank_headlessly(self) -> None:
+        code, out, _err = _run_main(
+            ["game.rom", "--mapper", "ASCII16", "--mapper-trace", "--count-frame", "1"],
+            image=_trace_image(), real_debugger=True)
+        assert code == 0
+        assert "MAP_BANK win=1 00h->01h addr=7000h" in out
+
+    def test_mapper_trace_out_writes_to_a_file(self, tmp_path: Path) -> None:
+        log = tmp_path / "trace.log"
+        code, out, _err = _run_main(
+            ["game.rom", "--mapper", "ASCII16", "--mapper-trace",
+             "--mapper-trace-out", str(log), "--count-frame", "1"],
+            image=_trace_image(), real_debugger=True)
+        assert code == 0
+        assert "MAP_BANK win=1" in log.read_text(encoding="utf-8")
+        assert "MAP_BANK" not in out

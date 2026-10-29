@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, TypedDict
 
+from msx.boundary import TRACE_EVENT_VDP_PORT9B, TRACE_EVENT_VDP_PORT99, TRACE_VDP
 from msx.snapshot_schema import check_bool, check_int, check_int_list, check_object
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
@@ -26,7 +27,7 @@ from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
-    from msx.vdp.tracer import Tracer
+    from msx.trace import TraceLog
 
 _VRAM_SIZE = 131072  # 128 KB
 _NUM_REGS = 28
@@ -54,7 +55,7 @@ def _power_on_regs() -> list[int]:
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
     """Apply V9938 logical operation (LOG[2:0]) at pixel level.
 
-    LOG codes (see tracer._LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
+    LOG codes (see host/trace.py _LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
     Codes 5-7 are undefined and perform no write at all; callers filter them
     out before reaching here (see _vram_pixel_write).
     """
@@ -408,22 +409,21 @@ class V9938:
     # raster line at the end of begin_scanline(). A field, not a monkey-patched
     # method, so the same observation is expressible in a Rust/C++ port.
     on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: these Callable hooks (on_scanline, tracer,
-    #   _get_pc, _get_cycle) are stored as Python closures assigned at wiring
-    #   time. Same shape as msx/vdp/vdp.py's equivalent VDP hooks.
+    # PORT-NOTE: on_scanline is stored as a Python closure assigned at
+    #   wiring time.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
     #   resolved once at construction, not per-call function pointers.
     # C++ equivalent: std::function members or a virtual interface pointer,
     #   assigned once at construction.
     # Kept as-is here because: resolved once at wiring time and called at
-    #   most once per interrupt/scanline, not per VRAM/command-engine access;
-    #   the closure indirection costs nothing measurable here.
-    tracer: Tracer | None = field(default=None, repr=False)
+    #   most once per scanline, not per VRAM/command-engine access; the
+    #   closure indirection costs nothing measurable here.
     # --debug milestone logging (display enable / mode change), as on the
     # TMS9918A; fed from both the port-0x99 and port-0x9B register paths.
     _logger: DebugLogger | None = field(default=None, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # 0x99 and 0x9B bytes are recorded while TRACE_VDP is on.
+    _trace: TraceLog | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
@@ -927,10 +927,9 @@ class V9938:
 
     def _write_control_port(self, value: int) -> None:
         """Port 1: two-byte latch, register write or VRAM address setup."""
-        if self.tracer is not None:
-            pc = self._get_pc() if self._get_pc is not None else 0
-            cy = self._get_cycle() if self._get_cycle is not None else 0
-            self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_VDP:
+            trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
         if not self._ctrl_pending:
             self._first_byte = value  # shared with port 0x9A (see _first_byte)
             self._ctrl_pending = True
@@ -985,10 +984,9 @@ class V9938:
         ptr = self.regs[17] & 0x3F
         r17_before = self.regs[17]
         self._write_register(ptr, value)
-        if self.tracer is not None:
-            pc = self._get_pc() if self._get_pc is not None else 0
-            cy = self._get_cycle() if self._get_cycle is not None else 0
-            self.tracer.port9b_write(pc, cy, value, r17=r17_before, frame=self._frame_count)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_VDP:
+            trace.record(TRACE_EVENT_VDP_PORT9B, value & 0xFF, r17_before)
         # Auto-increment the R#17 pointer from its value BEFORE this write.
         # The MSX2 BIOS writes a full R#0-R#23 table via auto-increment; when
         # the pointer reaches R#17 the table stores a value into R#17 itself,

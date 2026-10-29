@@ -1210,10 +1210,11 @@ py-msx-emulator/
 │   ├── state_files.py     # Save-state files (names, PNG, latest.* links)
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
+│   ├── trace.py           # VDP and mapper trace text from the core's trace events
 │   └── debugger/          # Interactive REPL (prompt, disassembler)
 ├── msx/                   # Core emulator package (no file I/O, no host clock)
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
-│   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers, tracer)
+│   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers)
 │   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
 │   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
 │   ├── boundary.py        # Values passed across the core boundary (config, frame output)
@@ -1226,7 +1227,6 @@ py-msx-emulator/
 │   ├── canonical_json.py  # Canonical JSON writer and strict reader (documents, snapshots)
 │   ├── memory.py          # Slot-based memory bus
 │   ├── mapper.py          # Cartridge mappers (Flat, ASCII8/16, Konami, SCC, Halnote, ...)
-│   ├── mapper_tracer.py   # Cartridge bank-switch tracer
 │   ├── kanji.py           # JIS Kanji font ROM I/O device
 │   ├── ram_mapper.py      # MSX2 RAM mapper (16 KB segments)
 │   ├── rtc.py             # RP5C01 real-time clock
@@ -1241,6 +1241,7 @@ py-msx-emulator/
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── screenshot.py      # Current-frame RGB24 capture
+│   ├── trace.py           # Trace buffer (VDP port writes, mapper bank changes)
 │   ├── snapshot.schema.json # JSON Schema of the save-state layout
 │   └── state.py           # Machine state snapshot (canonical JSON)
 ├── config/

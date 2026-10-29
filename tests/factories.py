@@ -20,7 +20,6 @@ from msx.machine_spec import (
     MachineSpec,
     _RomEntry,
 )
-from msx.vdp.tracer import Tracer, attach_vdp_tracer
 
 
 def _reversed_keys(node: object) -> object:
@@ -116,13 +115,9 @@ def make_config_msx2(
     )
 
 
-def _attach_diagnostics(
-    machine: Machine, logger: DebugLogger | None, tracer: Tracer | None
-) -> Machine:
+def _attach_diagnostics(machine: Machine, logger: DebugLogger | None) -> Machine:
     if logger is not None:
         attach_logger(machine, logger)
-    if tracer is not None:
-        attach_vdp_tracer(machine, tracer)
     return machine
 
 
@@ -134,7 +129,6 @@ def make_machine(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logrom: bytes | None = None,
-    tracer: Tracer | None = None,
     extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
     extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
 ) -> Machine:
@@ -142,7 +136,7 @@ def make_machine(
         rom, cartridge, mapper, cartridge2, mapper2, logrom,
         extension_overlay, extension_overlay1,
     )
-    return _attach_diagnostics(build_machine(config), logger, tracer)
+    return _attach_diagnostics(build_machine(config), logger)
 
 
 def make_machine_msx2(
@@ -155,13 +149,12 @@ def make_machine_msx2(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
-    tracer: Tracer | None = None,
 ) -> Machine:
     config = make_config_msx2(
         rom, extrom, logrom=logrom, cartridge=cartridge, mapper=mapper,
         cartridge2=cartridge2, mapper2=mapper2,
     )
-    return _attach_diagnostics(build_machine(config), logger, tracer)
+    return _attach_diagnostics(build_machine(config), logger)
 
 
 def load_state_file(machine: Machine, path: Path | None = None) -> None:

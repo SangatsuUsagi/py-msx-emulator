@@ -13,6 +13,11 @@ from msx.boundary import (
     STATUS_OK,
     STOP_NONE,
     STOP_WATCHPOINT,
+    TRACE_CAPACITY,
+    TRACE_EVENT_LOST,
+    TRACE_EVENT_VDP_PORT99,
+    TRACE_MAPPER,
+    TRACE_VDP,
     VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
     WATCH_READ,
@@ -262,6 +267,81 @@ def test_a_saved_state_does_not_carry_the_flag() -> None:
         shown = m.save_state()
         m.set_sprites_hidden(True)
         assert m.save_state() == shown
+
+
+# -- machine-core "The core API records trace events" ------------------------
+
+def _ascii16_machine() -> Machine:
+    return make_machine(_ROM, cartridge=bytes(128 * 1024), mapper="ASCII16")
+
+
+def test_the_enabled_trace_kinds_round_trip() -> None:
+    m = _ascii16_machine()
+    assert m.trace_kinds() == 0
+    assert m.set_trace_kinds(TRACE_VDP | TRACE_MAPPER) == STATUS_OK
+    assert m.trace_kinds() == TRACE_VDP | TRACE_MAPPER
+
+
+def test_an_unknown_trace_kind_is_rejected() -> None:
+    m = _msx1()
+    m.set_trace_kinds(TRACE_VDP)
+    assert m.set_trace_kinds(0x04) == STATUS_BAD_ARGUMENT
+    assert m.trace_kinds() == TRACE_VDP
+    assert m.last_error_text() == b"invalid trace kinds 4"
+
+
+def test_the_mapper_trace_kind_needs_a_bank_switching_mapper() -> None:
+    assert _msx1().trace_sources() == TRACE_VDP
+    assert _ascii16_machine().trace_sources() == TRACE_VDP | TRACE_MAPPER
+
+
+def test_a_trace_kind_that_is_off_records_nothing() -> None:
+    m = _ascii16_machine()
+    m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+    m.io.write_port(0x99, 0x01)
+    m.io.write_port(0x99, 0x80)
+    m.memory.write(0x7000, 3)  # window 1 -> bank 3
+    assert m.memory._mapper.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
+    assert m.drain_trace() == ()
+
+
+def test_the_saved_state_does_not_carry_the_trace_kinds() -> None:
+    for m in (_msx1(), _msx2()):
+        off = m.save_state()
+        m.set_trace_kinds(TRACE_VDP)
+        assert m.save_state() == off
+
+
+def test_a_drain_empties_the_trace_buffer() -> None:
+    m = _msx1_ram_high()
+    # LD A,01h / OUT (99h),A / LD A,80h / OUT (99h),A at 0xC000 (RAM).
+    m.write_memory(0xC000, bytes((0x3E, 0x01, 0xD3, 0x99, 0x3E, 0x80, 0xD3, 0x99)))
+    m.cpu.registers.PC = 0xC000
+    m.set_trace_kinds(TRACE_VDP)
+    for _ in range(4):
+        m.step()
+    events = m.drain_trace()
+    assert [(e.kind, e.a, e.pc) for e in events] == [
+        (TRACE_EVENT_VDP_PORT99, 0x01, 0xC002),
+        (TRACE_EVENT_VDP_PORT99, 0x80, 0xC006),
+    ]
+    assert events[0].cycle < events[1].cycle
+    assert m.drain_trace() == ()
+
+
+def test_a_full_trace_buffer_reports_the_lost_events() -> None:
+    m = _msx1()
+    m.set_trace_kinds(TRACE_VDP)
+    for i in range(TRACE_CAPACITY + 3):
+        m.io.write_port(0x99, i & 0xFF)
+    events = m.drain_trace()
+    assert len(events) == TRACE_CAPACITY + 1
+    assert all(e.kind == TRACE_EVENT_VDP_PORT99 for e in events[:-1])
+    assert (events[-1].kind, events[-1].a) == (TRACE_EVENT_LOST, 3)
+    assert m.drain_trace() == ()
+
+
+# -- machine-core "The core API has no callback into the host" ---------------
 
 def test_no_core_api_member_takes_a_callback() -> None:
     # Annotations are strings here (from __future__ import annotations), so

@@ -5,6 +5,7 @@ from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
+from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
 from msx.dac import EventDac
 from msx.snapshot_schema import (
     check_bool,
@@ -18,8 +19,8 @@ from msx.snapshot_schema import (
 from msx.sram import SramImage
 
 if TYPE_CHECKING:
-    from msx.mapper_tracer import MapperTracer
     from msx.scc import SCC
+    from msx.trace import TraceLog
 
 _PAGE_8K = 8192
 _PAGE_16K = 16384
@@ -198,16 +199,16 @@ def _format_bank_info(banks: list[int], page: int) -> str | None:
 class BankTracingMapper:
     """Shared bank-change tracing state for the bank-switching mappers.
 
-    Consolidated into one base so every mapper carries the same four hook
-    fields instead of redeclaring them, and so _trace_bank can access them
-    with static typing rather than getattr. The loader injects the callbacks
-    after construction (all init=False).
+    Consolidated into one base so every mapper carries the same trace field
+    instead of redeclaring it, and so _trace_bank can reach it with static
+    typing rather than getattr. The loader sets it after construction
+    (init=False).
     """
 
-    _tracer: "MapperTracer | None" = field(default=None, init=False, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    # The machine's trace buffer (msx/trace.py), set at build time for the
+    # slot 1 and slot 2 mappers; bank changes are recorded while
+    # TRACE_MAPPER is on.
+    _trace: "TraceLog | None" = field(default=None, init=False, repr=False)
 
     def debug_bank_info(self, page: int) -> str | None:
         """Default for BankTracingMapper subclasses with no _banks list (e.g.
@@ -263,19 +264,13 @@ def _parse_banks(obj: dict[str, object], label: str, count: int) -> list[int]:
 
 
 def _trace_bank(mapper: BankTracingMapper, window: int, old: int, new: int, addr: int) -> None:
-    """Notify an injected MapperTracer of a bank change. No-op without a tracer."""
-    tracer = mapper._tracer
-    if tracer is None or old == new:
+    """Record a bank change in the trace buffer while TRACE_MAPPER is on.
+    No-op when the bank is kept."""
+    if old == new:
         return
-    get_pc = mapper._get_pc
-    get_cycle = mapper._get_cycle
-    get_frame = mapper._get_frame
-    tracer.bank_change(
-        window, old, new, addr,
-        get_pc() if get_pc else 0,
-        get_cycle() if get_cycle else 0,
-        get_frame() if get_frame else 0,
-    )
+    trace = mapper._trace
+    if trace is not None and trace.kinds & TRACE_MAPPER:
+        trace.record(TRACE_EVENT_MAP_BANK, window, old, new, addr)
 
 
 class NoStateMapperState(TypedDict):
@@ -1450,6 +1445,9 @@ class MajutsushiMapper(KonamiMapper):
     # Last byte written to the DAC: the save-state value.
     _last_dac: int = field(default=_DAC_SILENCE, init=False, repr=False)
     pcm: EventDac = field(default_factory=EventDac, init=False, repr=False)
+    # The cycle count, wired by msx/machine_loader.py, that timestamps DAC
+    # writes.
+    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def reset(self) -> None:
         """super().reset() restores the bank registers (see

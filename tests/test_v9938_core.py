@@ -887,18 +887,14 @@ def test_colour_burst_registers_power_on_and_reset_values() -> None:
     assert vdp.regs == expected
 
 
-def test_port_9b_tracer_records_the_byte_written_not_the_stored_value() -> None:
-    from msx.vdp.tracer import Tracer
-
-    seen: list[int] = []
-
-    class _Rec(Tracer):
-        def port9b_write(self, pc, cycle, value, r17, frame):  # type: ignore[override]
-            seen.append(value)
+def test_port_9b_trace_records_the_byte_written_not_the_stored_value() -> None:
+    from msx.boundary import TRACE_VDP
+    from msx.trace import TraceLog
 
     vdp = V9938()
-    vdp.tracer = _Rec.__new__(_Rec)
+    trace = TraceLog(kinds=TRACE_VDP)
+    vdp._trace = trace
     vdp.regs[17] = 0x80 | 10           # R#10 (mask 0x07), no auto-increment
     vdp.write_port(0x9B, 0xFF)
     assert vdp.regs[10] == 0x07
-    assert seen == [0xFF]
+    assert [e.a for e in trace.drain()] == [0xFF]

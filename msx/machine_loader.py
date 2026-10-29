@@ -22,6 +22,8 @@ from msx.boundary import (
     RTC_DEFAULT_START,
     STATUS_BAD_CONFIG,
     STATUS_OK,
+    TRACE_MAPPER,
+    TRACE_VDP,
     DiskMount,
     MachineConfig,
     MediaId,
@@ -50,6 +52,7 @@ from msx.mapper import (
     Ascii16Mapper,
     Ascii16Sram2Mapper,
     Ascii16Sram8Mapper,
+    BankTracingMapper,
     FixedPageMapper,
     FlatMapper,
     GameMaster2Mapper,
@@ -802,6 +805,7 @@ def _wire_post_construction_attrs(
     Majutsushi DAC and the PPI key click need, and the FM-PAC/Halnote/Kanji
     attributes `build_machine`'s extension-overlay resolution produced."""
     io._get_pc = lambda: machine.cpu.registers.PC
+    _wire_trace(machine)
     # PORT-NOTE: these cycle closures capture `machine`, which owns the
     #   devices -- a cycle in Rust/C++. A port should pass the cycle into the
     #   write call (or share a narrow cycle counter) instead.
@@ -815,6 +819,23 @@ def _wire_post_construction_attrs(
     machine.fmpac = wiring.fmpac_device
     machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
+
+
+def _wire_trace(machine: "Machine") -> None:
+    """Wire the machine's trace buffer (msx/trace.py) into the VDP and the
+    slot 1/2 bank-switching ROM mappers, with the getters it stamps each
+    event with, and record which trace kinds this machine can produce."""
+    trace = machine._trace
+    trace._get_pc = lambda: machine.cpu.instruction_pc
+    trace._get_cycle = lambda: machine.cycle_count
+    trace._get_frame = lambda: machine.vdp.frame_count
+    machine.vdp._trace = trace
+    trace.sources = TRACE_VDP
+    mem = machine.memory
+    for mp in (mem._mapper, mem._mapper2):
+        if isinstance(mp, BankTracingMapper):
+            mp._trace = trace
+            trace.sources |= TRACE_MAPPER
 
 
 @dataclass(frozen=True)

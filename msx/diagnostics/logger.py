@@ -119,8 +119,8 @@ class DebugLogger:
 def attach_logger(machine: Machine, logger: DebugLogger) -> None:
     """Attach `logger` to a built machine: the machine, the CPU, the memory,
     the I/O bus and the VDP emit through it from the next instruction on.
-    A diagnostics function of the Python core, outside the core API (like
-    msx.mapper_tracer.attach_to_machine); a native core need not offer it."""
+    A diagnostics function of the Python core, outside the core API; a
+    native core need not offer it."""
     from msx.vdp.v9938 import V9938
     from msx.vdp.vdp import VDP
 
