@@ -795,7 +795,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し |
-| | `step() -> int` | 1 命令を実行し、その T ステート数を返す |
+| | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
 
