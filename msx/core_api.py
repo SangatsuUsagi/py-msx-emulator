@@ -13,9 +13,13 @@ integer enums, watch kinds are bit flags, and no member takes or returns a
 file path. No member raises for an invalid argument: load_state,
 mount_disk, mark_persisted, set_watchpoints and attach_mouse return an
 integer status (msx/boundary.py STATUS_*), read_media returns None for an
-id the machine lacks, and last_error_text() gives the message of the last
-failure. The machine is built by msx.machine_loader.create_machine, which
-reports a rejected configuration the same way (allium/core-frontend.allium).
+id the machine lacks, slot_info returns None for a slot, sub-slot or page
+outside 0-3, and last_error_text() gives the message of the last failure.
+The slot queries (slot_layout, slot_info) and the sprite display flag
+(set_sprites_hidden, sprites_hidden) serve the debugger's sl, st and ds;
+the flag is a debug setting outside the saved state. The machine is built
+by msx.machine_loader.create_machine, which reports a rejected
+configuration the same way (allium/core-frontend.allium).
 """
 from __future__ import annotations
 
