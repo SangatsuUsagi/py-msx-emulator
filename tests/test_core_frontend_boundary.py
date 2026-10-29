@@ -137,9 +137,6 @@ _DIAGNOSTICS_ALLOWLIST: dict[str, str] = {
     "host/debugger/prompt.py:_cmd_trace_enable": "te (VDP trace on)",
     "host/debugger/prompt.py:_cmd_trace_disable": "td (VDP trace off)",
     "host/debugger/prompt.py:_mapper_targets": "ce / cd (mapper trace)",
-    "host/debugger/prompt.py:_cmd_disable_sprites": "ds (sprite toggle)",
-    "host/debugger/prompt.py:_cmd_slot_active": "sl (active slot view)",
-    "host/debugger/prompt.py:_cmd_slot_tree": "st (slot tree view)",
 }
 
 
@@ -205,6 +202,16 @@ def test_the_allowlist_names_only_diagnostics() -> None:
     for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
         assert entry in needed, f"stale allowlist entry: {entry}"
         assert reason.strip(), f"allowlist entry without a reason: {entry}"
+
+
+def test_the_allowlist_names_only_the_trace_commands() -> None:
+    # machine-core "The allowlist names only the trace commands": each reason
+    # starts with the commands it serves ("ce / cd (mapper trace)").
+    for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
+        commands = reason.split("(")[0].replace("/", " ").split()
+        assert commands, f"allowlist entry names no command: {entry}"
+        for command in commands:
+            assert command in ("te", "td", "ce", "cd"), f"{entry}: {command}"
 
 
 def _calls_named(path: Path, name: str) -> list[int]:

@@ -18,6 +18,7 @@ from msx.boundary import (
     WATCH_READ,
     WATCH_WRITE,
     CpuRegisters,
+    SlotLayout,
 )
 from msx.core_api import CoreApi
 from msx.input import InputFrame
@@ -184,6 +185,11 @@ def _run_every_query(m: Machine) -> None:
     m.watchpoints()
     m.break_halt_di()
     m.render_preview()
+    m.slot_layout()
+    for prim in range(4):
+        for page in range(4):
+            m.slot_info(prim, None, page)
+            m.slot_info(prim, page, page)
 
 
 def test_queries_leave_the_snapshot_unchanged() -> None:
@@ -197,7 +203,65 @@ def test_queries_leave_the_snapshot_unchanged() -> None:
         assert (m.cycle_count, m.frame_number()) == (cycles, frame)
 
 
-# -- machine-core "The core API has no callback into the host" ---------------
+# -- machine-core "The core API reports the slot layout" ---------------------
+
+def test_an_msx1_machine_has_no_expanded_slot() -> None:
+    m = _msx1()
+    m.io.write_port(0xA8, 0xF0)
+    assert m.slot_layout() == SlotLayout(primary=0xF0, expanded=0, secondary=bytes(4))
+
+
+def test_an_msx2_machine_reports_its_expanded_slot_3() -> None:
+    m = _msx2()
+    m.io.write_port(0xA8, 0xC0)  # page 3 in slot 3, so 0xFFFF reaches it
+    m.write_memory(0xFFFF, b"\xa0")
+    layout = m.slot_layout()
+    assert layout.expanded & 0x08
+    assert layout.secondary[3] == 0xA0
+
+
+# -- machine-core "The core API describes one slot" --------------------------
+
+def test_a_bank_switching_cartridge_page_shows_its_bank() -> None:
+    m = make_machine(_ROM, cartridge=bytes(128 * 1024), mapper="ASCII16")
+    m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+    m.write_memory(0x7000, b"\x00")  # window 1 (0x8000) -> bank 0
+    info = m.slot_info(1, None, 2)
+    assert info is not None
+    assert b"Ascii16" in info.content
+    assert info.bank == b"bank 0 @00000-03FFF"
+
+
+def test_the_main_rom_reports_its_size() -> None:
+    info = _msx1().slot_info(0, None, None)
+    assert info is not None
+    assert info.size_kb == 32
+
+
+def test_an_invalid_slot_is_rejected() -> None:
+    m = _msx1()
+    assert m.slot_info(4, None, None) is None
+    assert b"4" in m.last_error_text()
+    assert m.slot_info(0, None, None) is not None
+    assert m.last_error_text() == b""
+
+
+# -- machine-core "The core API sets and reports the sprite display flag" ----
+
+def test_hidden_sprites_are_reported() -> None:
+    for m in (_msx1(), _msx2()):
+        assert m.sprites_hidden() is False
+        m.set_sprites_hidden(True)
+        assert m.sprites_hidden() is True
+        m.set_sprites_hidden(False)
+        assert m.sprites_hidden() is False
+
+
+def test_a_saved_state_does_not_carry_the_flag() -> None:
+    for m in (_msx1(), _msx2()):
+        shown = m.save_state()
+        m.set_sprites_hidden(True)
+        assert m.save_state() == shown
 
 def test_no_core_api_member_takes_a_callback() -> None:
     # Annotations are strings here (from __future__ import annotations), so

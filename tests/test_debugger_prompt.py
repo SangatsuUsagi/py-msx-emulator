@@ -28,7 +28,8 @@ from msx.vdp.vdp import VDP
 _CORE_QUERIES = (
     "cpu_registers", "read_memory", "vram_size", "read_vram", "vdp_info",
     "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
-    "main_ram_range", "drive_count",
+    "main_ram_range", "drive_count", "slot_layout", "slot_info",
+    "sprites_hidden", "set_sprites_hidden",
 )
 
 
@@ -40,6 +41,7 @@ def _bind_core_queries(m: MagicMock) -> None:
     m._watch_read = frozenset()
     m._watch_write = frozenset()
     m._break_halt_di = False
+    m.__class__ = Machine  # the trace commands need the Python core
     for name in _CORE_QUERIES:
         setattr(m, name, functools.partial(getattr(Machine, name), m))
 
@@ -644,6 +646,86 @@ class TestSlotActive:
                 assert "Flat" in line
 
 
+class _SlotQueriesOnly:
+    """A core API stand-in that is not a Machine and offers only the slot
+    layout and slot description queries (any other member raises)."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def slot_layout(self):
+        return self._real.slot_layout()
+
+    def slot_info(self, primary, secondary, page):
+        return self._real.slot_info(primary, secondary, page)
+
+
+def test_the_slot_views_use_only_the_core_api(capsys):
+    # debug-monitor "The slot views use only the core API".
+    from tests.factories import make_machine_msx2
+
+    m = make_machine_msx2(bytes(32 * 1024), bytes(0x4000))
+    m.io.write_port(0xA8, 0xC0)
+    m.write_memory(0xFFFF, b"\xa0")
+    for command in ("_cmd_slot_active", "_cmd_slot_tree"):
+        getattr(Debugger(m), command)()
+        expected = capsys.readouterr().out
+        getattr(Debugger(_SlotQueriesOnly(m)), command)()
+        assert capsys.readouterr().out == expected
+        assert "Primary" in expected or "P3" in expected
+
+
+class _OtherCore:
+    """A core API object that is not the Python core: it forwards every
+    member to a real Machine but is not a Machine instance."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_te_on_another_core_prints_a_message(capsys):
+    # debug-monitor "te on another core prints a message".
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024))
+    with patch("builtins.input", side_effect=iter(["te", "c"])):
+        Debugger(_OtherCore(m)).enter()  # keeps running until `c`
+    assert "te: needs the Python core" in capsys.readouterr().out
+    assert m.vdp.tracer is None
+
+
+def test_ce_on_another_core_prints_a_message(capsys):
+    # debug-monitor "ce on another core prints a message".
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=bytes(128 * 1024), mapper="ASCII16")
+    dbg = Debugger(_OtherCore(m))
+    dbg._cmd_mapper_trace_enable()
+    assert capsys.readouterr().out == "ce: needs the Python core\n"
+    assert m.memory._mapper._tracer is None
+    dbg._cmd_mapper_trace_disable()
+    assert capsys.readouterr().out == "cd: needs the Python core\n"
+    dbg._cmd_trace_disable()
+    assert capsys.readouterr().out == "td: needs the Python core\n"
+
+
+def test_ds_hides_and_shows_sprites(capsys):
+    # debug-monitor "ds hides and shows sprites", on both VDP types.
+    from tests.factories import make_machine, make_machine_msx2
+
+    for m in (make_machine(bytes(32 * 1024)), make_machine_msx2(bytes(32 * 1024), bytes(0x4000))):
+        dbg = Debugger(m)
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: OFF (background only)\n"
+        assert m.sprites_hidden() is True
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: ON\n"
+        assert m.sprites_hidden() is False
+
+
 class TestSlotTree:
     def test_st_msx2_shows_expanded_slot3(self, capsys):
         m = _make_slot_machine(
@@ -754,7 +836,7 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_size_kb(3, 2) == "256KB"
+        assert mem.debug_slot_size_kb(3, 2) == 256
 
 
 # ---------------------------------------------------------------------------

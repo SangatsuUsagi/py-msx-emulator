@@ -9,13 +9,13 @@ from __future__ import annotations
 import shlex
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Callable
 
 from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.media import DiskFiles
 from host.watch import watch_kind, watch_text
-from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, VdpInfo
+from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, SlotInfo, VdpInfo
 from msx.mapper import BankTracingMapper
 
 try:
@@ -26,7 +26,6 @@ except ImportError:  # stock Windows CPython has no readline module
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
     from msx.machine import Machine
-    from msx.memory import Memory
 
 
 def _format_disasm(read: Callable[[int], int], addr: int) -> tuple[str, int]:
@@ -112,12 +111,16 @@ class Debugger:
         """One byte of CPU address space, through the core API (no watchpoint)."""
         return self._machine.read_memory(addr, 1)[0]
 
-    def _diagnostics_machine(self) -> Machine:
-        """The machine as the Python core, for the diagnostics commands only
-        (VDP and mapper trace, sprite toggle, slot views): they reach its
-        components, which a native core does not offer until a diagnostics
-        contract exists (tests/test_core_frontend_boundary.py allowlist)."""
-        return cast("Machine", self._machine)
+    def _diagnostics_machine(self) -> Machine | None:
+        """The machine as the Python core, for the trace commands only (te,
+        td, ce, cd): they attach Python tracer objects to its components
+        (tests/test_core_frontend_boundary.py allowlist). None on another
+        core, where each of them prints that it needs the Python core."""
+        from msx.machine import Machine
+
+        if isinstance(self._machine, Machine):
+            return self._machine
+        return None
 
     # ------------------------------------------------------------------
     # Public API
@@ -568,6 +571,9 @@ class Debugger:
     def _cmd_trace_enable(self) -> None:
         from msx.vdp.tracer import Tracer
         m = self._diagnostics_machine()
+        if m is None:
+            print("te: needs the Python core")
+            return
         vdp = m.vdp
         if vdp._get_pc is None:
             vdp._get_pc    = lambda: m.cpu.instruction_pc
@@ -579,7 +585,11 @@ class Debugger:
         print("VDP trace enabled (stdout)")
 
     def _cmd_trace_disable(self) -> None:
-        vdp = self._diagnostics_machine().vdp
+        m = self._diagnostics_machine()
+        if m is None:
+            print("td: needs the Python core")
+            return
+        vdp = m.vdp
         if vdp.tracer is None or not vdp.tracer.enabled:
             print("VDP trace already disabled")
             return
@@ -588,7 +598,10 @@ class Debugger:
 
     def _mapper_targets(self) -> list[BankTracingMapper]:
         """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
-        mem = self._diagnostics_machine().memory
+        m = self._diagnostics_machine()
+        if m is None:
+            return []
+        mem = m.memory
         result: list[BankTracingMapper] = []
         for mp in (mem._mapper, mem._mapper2):
             if isinstance(mp, BankTracingMapper):
@@ -597,12 +610,19 @@ class Debugger:
 
     def _cmd_mapper_trace_enable(self) -> None:
         from msx.mapper_tracer import attach_to_machine
-        if attach_to_machine(self._diagnostics_machine(), output=sys.stdout) is None:
+        m = self._diagnostics_machine()
+        if m is None:
+            print("ce: needs the Python core")
+            return
+        if attach_to_machine(m, output=sys.stdout) is None:
             print("ce: no bank-switching ROM mapper present")
             return
         print("Mapper bank-switch trace enabled (stdout)")
 
     def _cmd_mapper_trace_disable(self) -> None:
+        if self._diagnostics_machine() is None:
+            print("cd: needs the Python core")
+            return
         disabled = False
         for mp in self._mapper_targets():
             tracer = mp._tracer
@@ -669,50 +689,38 @@ class Debugger:
         print(f"  Loaded state from {path}")
 
     def _cmd_disable_sprites(self) -> None:
-        vdp = self._diagnostics_machine().vdp
-        vdp.debug_disable_sprites = not vdp.debug_disable_sprites
-        state = "OFF (background only)" if vdp.debug_disable_sprites else "ON"
+        hidden = not self._machine.sprites_hidden()
+        self._machine.set_sprites_hidden(hidden)
+        state = "OFF (background only)" if hidden else "ON"
         print(f"Sprite rendering: {state}")
 
     def _cmd_slot_active(self) -> None:
-        mem = self._diagnostics_machine().memory
+        layout = self._machine.slot_layout()
         print(f"  {'Page':<6}{'Addr':<12}{'Prim':<6}{'Sec':<5}{'Content':<33}Bank")
         _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
         for page in range(4):
-            prim = (mem.slot_register >> (page * 2)) & 0x03
-            if mem.sub_slot_enabled and prim == 3:
-                sec = (mem.sub_slot_reg >> (page * 2)) & 0x03
+            prim = (layout.primary >> (page * 2)) & 0x03
+            sec: int | None = None
+            sec_str = "-"
+            if layout.expanded & (1 << prim):
+                sec = (layout.secondary[prim] >> (page * 2)) & 0x03
                 sec_str = str(sec)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                sec = (mem.slot2_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                sec = (mem.slot1_sub_slot_reg >> (page * 2)) & 0x03
-                sec_str = str(sec)
-            else:
-                sec = None
-                sec_str = "-"
-            content = mem.debug_slot_content(prim, sec, page)
-            bank = mem.debug_slot_bank(prim, sec, page)
+            info = _slot_info(self._machine, prim, sec, page)
+            content = info.content.decode("utf-8")
+            bank = info.bank.decode("utf-8")
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
-        mem = self._diagnostics_machine().memory
+        layout = self._machine.slot_layout()
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
-            if mem.sub_slot_enabled and prim == 3:
-                _print_expanded_slot(mem, prim, mem.sub_slot_reg)
-            elif mem.slot2_sub_slot_enabled and prim == 2:
-                _print_expanded_slot(mem, prim, mem.slot2_sub_slot_reg)
-            elif mem.slot1_sub_slot_enabled and prim == 1:
-                _print_expanded_slot(mem, prim, mem.slot1_sub_slot_reg)
+            if layout.expanded & (1 << prim):
+                _print_expanded_slot(self._machine, prim, layout.secondary[prim])
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
-                content = mem.debug_slot_content(prim, None, None)
-                size = mem.debug_slot_size_kb(prim, None)
-                suffix = f"  {size}" if size else ""
-                print(f"  Primary {prim}{role_str}  {content}{suffix}")
+                info = _slot_info(self._machine, prim, None, None)
+                print(f"  Primary {prim}{role_str}  {_slot_text(info)}")
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
         """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
@@ -803,7 +811,7 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
     return cmd, log
 
 
-def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
+def _print_expanded_slot(machine: CoreApi, prim: int, raw: int) -> None:
     print(f"  Primary {prim} [EXPANDED]  secondary-select(raw)={raw:02X}h")
     parts = []
     for pg in range(4):
@@ -811,10 +819,24 @@ def _print_expanded_slot(mem: "Memory", prim: int, raw: int) -> None:
         parts.append(f"P{pg}->{prim}-{s}")
     print(f"    page-map: {'  '.join(parts)}")
     for sec in range(4):
-        content = mem.debug_slot_content(prim, sec, None)
-        size = mem.debug_slot_size_kb(prim, sec)
-        suffix = f"  {size}" if size else ""
-        print(f"    {prim}-{sec}  {content}{suffix}")
+        info = _slot_info(machine, prim, sec, None)
+        print(f"    {prim}-{sec}  {_slot_text(info)}")
+
+
+def _slot_info(machine: CoreApi, prim: int, sec: int | None, page: int | None) -> SlotInfo:
+    """The core's description of a slot. The slot views pass only values
+    0-3, which the query never rejects."""
+    info = machine.slot_info(prim, sec, page)
+    assert info is not None
+    return info
+
+
+def _slot_text(info: SlotInfo) -> str:
+    """The `st` line text of a slot: its content, then its size if any."""
+    content = info.content.decode("utf-8")
+    if info.size_kb:
+        return f"{content}  {info.size_kb}KB"
+    return content
 
 
 def _print_vdp_fancy(vdp: VdpInfo) -> None:

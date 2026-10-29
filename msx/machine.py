@@ -24,6 +24,8 @@ from msx.boundary import (
     FrameOutput,
     MediaId,
     RgbFrame,
+    SlotInfo,
+    SlotLayout,
     StopInfo,
     VdpInfo,
     drive_media_id,
@@ -362,6 +364,12 @@ class Machine:
         self._break_halt_di = enabled
         self._halt_di_seen = False
 
+    def set_sprites_hidden(self, hidden: bool) -> None:
+        """Hide or show sprites: while hidden, the renderer skips its sprite
+        pass (on the TMS9918A also the S#0 sprite flags of that frame). A
+        debug setting: no reset clears it and the saved state omits it."""
+        self.vdp.debug_disable_sprites = hidden
+
     def set_sp_range(self, rng: tuple[int, int] | None) -> None:
         """Set the valid-RAM range for SP; break when SP leaves it. None disables."""
         self._sp_range = rng
@@ -556,6 +564,47 @@ class Machine:
         """The main-RAM address window the SP-range break defaults to."""
         return self.memory.main_ram_range()
 
+    def slot_layout(self) -> SlotLayout:
+        """The primary slot register, the expanded primary slots (bit n for
+        slot n) and each slot's secondary slot register (0 when not
+        expanded). Slot 0 is never expanded."""
+        mem = self.memory
+        expanded = 0
+        secondary = bytearray(4)
+        if mem.slot1_sub_slot_enabled:
+            expanded |= 0x02
+            secondary[1] = mem.slot1_sub_slot_reg & 0xFF
+        if mem.slot2_sub_slot_enabled:
+            expanded |= 0x04
+            secondary[2] = mem.slot2_sub_slot_reg & 0xFF
+        if mem.sub_slot_enabled:
+            expanded |= 0x08
+            secondary[3] = mem.sub_slot_reg & 0xFF
+        return SlotLayout(mem.slot_register & 0xFF, expanded, bytes(secondary))
+
+    def slot_info(
+        self, primary: int, secondary: int | None, page: int | None
+    ) -> SlotInfo | None:
+        """The content text, bank text and size in KB of a primary slot, an
+        optional sub-slot and an optional page. Returns None for a value
+        outside 0-3 (last_error_text() gives the message)."""
+        if not 0 <= primary <= 3:
+            self._fail(STATUS_BAD_ARGUMENT, f"no primary slot {primary}")
+            return None
+        if secondary is not None and not 0 <= secondary <= 3:
+            self._fail(STATUS_BAD_ARGUMENT, f"no sub-slot {secondary}")
+            return None
+        if page is not None and not 0 <= page <= 3:
+            self._fail(STATUS_BAD_ARGUMENT, f"no page {page}")
+            return None
+        mem = self.memory
+        self._error_text = b""
+        return SlotInfo(
+            content=mem.debug_slot_content(primary, secondary, page).encode("utf-8"),
+            bank=mem.debug_slot_bank(primary, secondary, page).encode("utf-8"),
+            size_kb=mem.debug_slot_size_kb(primary, secondary),
+        )
+
     def breakpoints(self) -> tuple[int, ...]:
         """The breakpoint addresses, ascending."""
         return tuple(sorted(self._breakpoints))
@@ -576,6 +625,10 @@ class Machine:
     def break_halt_di(self) -> bool:
         """Whether the HALT-with-interrupts-off break is enabled."""
         return self._break_halt_di
+
+    def sprites_hidden(self) -> bool:
+        """Whether sprites are hidden (set_sprites_hidden)."""
+        return self.vdp.debug_disable_sprites
 
     def render_preview(self) -> RgbFrame:
         """The current frame as RGB24, without changing emulated state (the

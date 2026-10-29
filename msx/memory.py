@@ -666,21 +666,18 @@ class Memory:
             return mapper.debug_bank_info(page) or "-"
         return "-"
 
-    def debug_slot_size_kb(self, primary: int, secondary: int | None) -> str:
-        """Size string (e.g. "32KB") for the `st` tree view, or "" for none."""
+    def debug_slot_size_kb(self, primary: int, secondary: int | None) -> int:
+        """Size in KB (e.g. 32) for the `st` tree view, or 0 for none."""
         if primary == 0:
-            n = len(self.rom)
-            return f"{n // 1024}KB" if n else ""
+            return len(self.rom) // 1024
         if primary == 3 and secondary == self.sub_rom_subslot:
             sub = self.sub0_rom
-            n = len(sub) if sub is not None else 0
-            return f"{n // 1024}KB" if n else ""
+            return len(sub) // 1024 if sub is not None else 0
         flat_sub = self.flat_ram_subslot
         is_ram_subslot = secondary == flat_sub if flat_sub is not None else secondary in (2, 3)
         if primary == 3 and is_ram_subslot:
             rm = self.ram_mapper
             if rm is not None:
-                return f"{rm.size_kb}KB"
-            n = len(self.ram)
-            return f"{n // 1024}KB" if n else ""
-        return ""
+                return rm.size_kb
+            return len(self.ram) // 1024
+        return 0
