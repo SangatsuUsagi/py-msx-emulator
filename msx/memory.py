@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
     from msx.fdc.interface import FloppyDisk
     from msx.mapper import Mapper
     from msx.ram_mapper import RamMapper
@@ -37,7 +36,6 @@ class Memory:
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
-    _logger: DebugLogger | None = field(default=None, repr=False)
     extrom: bytes | None = field(default=None, repr=False)
     ram_mapper: RamMapper | None = field(default=None, repr=False)
     # MSX slot 3 secondary slot register: bits 7:6=page3, 5:4=page2, 3:2=page1, 1:0=page0

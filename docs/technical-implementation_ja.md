@@ -775,7 +775,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。ロガーは構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）でつなぐ。VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -813,7 +813,6 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
 - `run_frame()`：内部のフレームループ
-- 診断用のロガー。構築したマシンに `attach_logger()` でつなぐ
 
 ### MachineConfig の文書
 

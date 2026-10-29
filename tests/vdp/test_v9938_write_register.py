@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from msx.diagnostics.logger import DebugLogger
+from msx.boundary import TRACE_DEBUG, TRACE_EVENT_VDP_MODE_REG
+from msx.trace import TraceLog
 from msx.vdp.v9938 import V9938
 
 
@@ -21,14 +22,6 @@ def _via_99(vdp: V9938, reg: int, value: int) -> None:
 def _via_9b(vdp: V9938, reg: int, value: int) -> None:
     vdp.regs[17] = 0x80 | reg           # AII set: no auto-increment
     vdp.write_port(0x9B, value)
-
-
-def _recording_logger(seen: list[tuple[int, int]]) -> DebugLogger:
-    class _Rec(DebugLogger):
-        def on_vdp_reg_write(self, reg: int, value: int, frame: int) -> None:
-            seen.append((reg, value))
-
-    return _Rec()
 
 
 # R#14 relocates the pointer and R#17 is the 0x9B pointer itself; both are
@@ -75,11 +68,13 @@ def test_command_registers_reach_the_engine_from_both_ports(write) -> None:
 
 
 @pytest.mark.parametrize("write", [_via_99, _via_9b])
-def test_logger_sees_the_masked_value_on_both_ports(write) -> None:
-    seen: list[tuple[int, int]] = []
-    vdp = V9938(_logger=_recording_logger(seen))
-    write(vdp, 10, 0xFF)                # R#10 mask 0x07
-    assert (10, 0x07) in seen
+def test_the_debug_log_sees_the_masked_value_on_both_ports(write) -> None:
+    vdp = V9938()
+    trace = TraceLog(kinds=TRACE_DEBUG)
+    vdp._trace = trace
+    write(vdp, 1, 0xFF)                 # R#1 mask 0x7F
+    events = [(e.a, e.b) for e in trace.drain() if e.kind == TRACE_EVENT_VDP_MODE_REG]
+    assert events == [(1, 0x7F)]
 
 
 @pytest.mark.parametrize("write", [_via_99, _via_9b])

@@ -37,7 +37,6 @@ from msx.boundary import (
     drive_media_id,
 )
 from msx.cpu.z80 import Z80
-from msx.diagnostics.logger import DebugLogger
 from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
@@ -98,7 +97,6 @@ class Machine:
     #   arbitrary-precision int never wraps, so this width requirement is
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
-    _logger: DebugLogger | None = field(default=None, repr=False)
     # The trace buffer the VDP and the slot 1/2 mappers record into
     # (set_trace_kinds, drain_trace); wired by msx/machine_loader.py.
     _trace: TraceLog = field(default_factory=TraceLog, repr=False)
@@ -942,7 +940,7 @@ class Machine:
         """
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
-        if self._logger is None and not self._trace.kinds & TRACE_DEBUG:
+        if not self._trace.kinds & TRACE_DEBUG:
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
         return self._run_lines_logged(vdp9938, first_line, end_line, total)
 
@@ -1132,9 +1130,7 @@ class Machine:
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Scanline loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
-        logger = self._logger
         trace = self._trace
-        debug = trace.kinds & TRACE_DEBUG
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
@@ -1161,11 +1157,9 @@ class Machine:
                     if pc == self._last_pc:
                         self._pc_repeat += 1
                         if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                            if logger is not None:
-                                logger.on_hang_pc_loop(pc)
                             # Once per run of repeats: the host reports each
                             # PC once per run.
-                            if debug and self._pc_repeat == HANG_PC_REPEAT_THRESHOLD:
+                            if self._pc_repeat == HANG_PC_REPEAT_THRESHOLD:
                                 trace.record_hang(TRACE_EVENT_HANG_PC_LOOP, pc)
                     else:
                         self._pc_repeat = 0
@@ -1177,10 +1171,7 @@ class Machine:
         # frame reports a HALT-with-interrupts-off hang.
         is_final_segment = end_line >= lpf
         if is_final_segment and cpu.halted and not cpu.iff1:
-            if logger is not None:
-                logger.on_hang_halt_di(cpu.registers.PC)
-            if debug:
-                trace.record_hang(TRACE_EVENT_HANG_HALT_DI, cpu.registers.PC)
+            trace.record_hang(TRACE_EVENT_HANG_HALT_DI, cpu.registers.PC)
         return total
 
 

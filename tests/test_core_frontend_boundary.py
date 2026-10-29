@@ -81,9 +81,6 @@ def test_no_wall_clock_pacing_in_the_core() -> None:
     assert list(_MSX_DIR.rglob("frame_timer.py")) == []
 
 
-# Debug logging writes its own log file; it stays out of scope until a
-# DebugControl contract exists (allium/core-frontend.allium open question).
-_IO_EXEMPT_DIR = _MSX_DIR / "diagnostics"
 _FILE_CALLS = ("open", "read_bytes", "write_bytes", "read_text", "write_text")
 _CLOCK_ROOTS = ("datetime", "time", "PIL")
 
@@ -102,11 +99,10 @@ def _file_calls(tree: ast.AST) -> list[tuple[int, str]]:
 
 
 def test_no_file_io_or_host_clock_in_the_core() -> None:
-    # machine-core "No file I/O or host clock in the core".
+    # machine-core "No file I/O or host clock in the core": every module
+    # under msx/, with no directory excepted.
     offenders = []
     for path in sorted(_MSX_DIR.rglob("*.py")):
-        if _IO_EXEMPT_DIR in path.parents:
-            continue
         rel = path.relative_to(_MSX_DIR.parent)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for lineno, name in _file_calls(tree):
