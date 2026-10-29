@@ -9,13 +9,22 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import STATUS_OK, DiskMedium, MediaId, drive_media_id
+from msx.boundary import STATUS_OK, MediaId, drive_media_id
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
+
+
+@dataclass(frozen=True)
+class DiskMedium:
+    """A disk image the host read from a .dsk file."""
+
+    data: bytes
+    write_protected: bool = False
 
 
 def read_disk_medium(path: Path) -> DiskMedium:

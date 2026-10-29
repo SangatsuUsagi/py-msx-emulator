@@ -1122,7 +1122,7 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 
 | Value | Direction | Content |
 | --- | --- | --- |
-| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (the ROM images by lowercase hex SHA1), `media` (saved SRAM and CMOS images by `MediaId`), `disks` (`DiskMedium` images to mount by drive id), `rtc_initial_time` |
+| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (`RomImage` records: an image and its lowercase hex SHA1), `media` (`MediaImage` records: a saved SRAM or CMOS image and its `MediaId`), `disks` (`DiskMount` records: an image to mount, its drive index and its write-protect flag), `rtc_initial_time`. The three image fields are tuples, with at most one record per id or drive |
 | `InputFrame` | in, per frame | 11 active-low keyboard matrix rows, two active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B), the mouse motion of the frame in MSX counts, and the two mouse buttons. Immutable. Its constructor checks every value |
 | `FrameOutput` | out, per frame | `video` (an `RgbFrame`, or `None` when the frame was not rendered), `audio`, `frame_number` |
 | `RgbFrame` | out | Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color) |
@@ -1131,7 +1131,6 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | `CpuRegisters` | out | The register query: AF, BC, DE, HL, the alternate set, IX, IY, SP, PC, I, R, IFF1 and IFF2 (0 or 1), IM |
 | `VdpInfo` | out | The VDP query: the VDP kind, the control and command registers, the status registers, the palette and the command progress |
 | media image | in/out | `bytes`, named by a `MediaId` |
-| `DiskMedium` | in | `data` and `write_protected`. The core keeps no file name for a disk. The host keeps the file of each drive in `host/media.py`'s `DiskFiles` |
 
 `MediaId` is a closed set of integer ids, 0 to 15 in this order:
 `SLOT1_SRAM`, `SLOT2_SRAM`, `SLOT<n>_SUB<sub>_SRAM` (an expanded-slot device,
