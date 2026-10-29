@@ -14,7 +14,6 @@ from msx.vdp import renderer
 from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
     from msx.trace import TraceLog
 
 
@@ -291,7 +290,6 @@ class VDP:
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
     # instruction; kept current by update_irq() -- mirrors V9938.irq.
     irq: bool = False
-    _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 bytes are recorded while TRACE_VDP is on.
@@ -407,8 +405,6 @@ class VDP:
                     self.regs[reg] = stored
                     if reg == 1:
                         self.update_irq()
-                    if self._logger is not None:
-                        self._logger.on_vdp_reg_write(reg, stored, self._frame_count)
                     if reg <= 1 and trace is not None and trace.kinds & TRACE_DEBUG:
                         trace.record(TRACE_EVENT_VDP_MODE_REG, reg, stored)
                     self.addr = ((value << 8) | (self.addr & 0xFF)) & 0x3FFF

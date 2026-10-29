@@ -11,7 +11,6 @@ from pathlib import Path
 
 from host.machine_config import load_machine_config
 from msx.boundary import MachineConfig
-from msx.diagnostics.logger import DebugLogger, attach_logger
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
@@ -115,16 +114,9 @@ def make_config_msx2(
     )
 
 
-def _attach_diagnostics(machine: Machine, logger: DebugLogger | None) -> Machine:
-    if logger is not None:
-        attach_logger(machine, logger)
-    return machine
-
-
 def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
-    logger: DebugLogger | None = None,
     mapper: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
@@ -136,7 +128,7 @@ def make_machine(
         rom, cartridge, mapper, cartridge2, mapper2, logrom,
         extension_overlay, extension_overlay1,
     )
-    return _attach_diagnostics(build_machine(config), logger)
+    return build_machine(config)
 
 
 def make_machine_msx2(
@@ -148,13 +140,12 @@ def make_machine_msx2(
     mapper: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
-    logger: DebugLogger | None = None,
 ) -> Machine:
     config = make_config_msx2(
         rom, extrom, logrom=logrom, cartridge=cartridge, mapper=mapper,
         cartridge2=cartridge2, mapper2=mapper2,
     )
-    return _attach_diagnostics(build_machine(config), logger)
+    return build_machine(config)
 
 
 def load_state_file(machine: Machine, path: Path | None = None) -> None:

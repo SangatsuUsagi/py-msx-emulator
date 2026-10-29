@@ -1156,7 +1156,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) attaches the logger to a built machine, and the VDP and mapper trace go through the trace members below |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1204,8 +1204,6 @@ The other members do not cross the boundary, and a port does not need them
 to run software:
 
 - `run_frame()`, the internal frame loop
-- the diagnostic logger, which `attach_logger()` attaches to a built
-  machine
 
 ### MachineConfig document
 

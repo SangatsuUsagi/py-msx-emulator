@@ -127,59 +127,14 @@ def test_a_pc_loop_and_a_halt_at_one_pc_are_both_reported() -> None:
     assert len(lines) == 2
 
 
-# -- the same text as the DebugLogger --------------------------------------------
-
-def _old_and_new(make, frames: int, capsys) -> tuple[str, str]:
-    """Run the same program with the old DebugLogger attached and with
-    TRACE_DEBUG on; return (old stderr text, new text)."""
-    from msx.diagnostics.logger import DebugLogger, attach_logger
-
-    old_machine = make()
-    attach_logger(old_machine, DebugLogger())
-    capsys.readouterr()
-    for _ in range(frames):
-        old_machine.step_frame(InputFrame(), render_video=False)
-    old = capsys.readouterr().err
-    new = "".join(line + "\n" for line in _machine_lines(make(), frames))
-    return old, new
+def test_vdp_display_line_not_repeated_while_bl_stays_set() -> None:
+    lines = _lines([
+        _ev(TRACE_EVENT_VDP_MODE_REG, 1, 0x40, frame=1),
+        _ev(TRACE_EVENT_VDP_MODE_REG, 1, 0x60, frame=2),  # BL still 1
+    ])
+    assert sum("VDP display" in ln for ln in lines) == 1
 
 
-_PROGRAM = bytes((
-    0x3E, 0xF0, 0xD3, 0xA8,  # LD A,F0h / OUT (A8h),A
-    0xDB, 0xA8,              # IN A,(A8h)
-    0x3E, 0x50, 0xD3, 0x99,  # LD A,50h / OUT (99h),A
-    0x3E, 0x81, 0xD3, 0x99,  # LD A,81h / OUT (99h),A   (R#1 = 50h: BL + Text)
-    0x3E, 0x02, 0xD3, 0x99,  # LD A,02h / OUT (99h),A
-    0x3E, 0x80, 0xD3, 0x99,  # LD A,80h / OUT (99h),A   (R#0 = 02h: M3)
-    0xED, 0x00,              # undefined ED 00
-    0x18, 0xFE,              # JR $
-))
-
-
-def test_the_log_has_the_debug_logger_text_on_msx1(capsys) -> None:
-    def make():
-        return make_machine(_PROGRAM + bytes(32 * 1024 - len(_PROGRAM)))
-
-    old, new = _old_and_new(make, 3, capsys)
-    for marker in ("[IO]", "[BOOT]", "undefined opcode", "[CPU]  trace", "[HANG]"):
-        assert marker in old
-    assert new == old
-
-
-def test_the_log_has_the_debug_logger_text_on_msx2(capsys) -> None:
-    def make():
-        return make_machine_msx2(_PROGRAM + bytes(32 * 1024 - len(_PROGRAM)), bytes(0x4000))
-
-    old, new = _old_and_new(make, 3, capsys)
-    assert "[BOOT]" in old and "[HANG]" in old
-    assert new == old
-
-
-def test_a_halt_hang_has_the_debug_logger_text(capsys) -> None:
-    def make():
-        code = bytes((0x00, 0x00, 0xF3, 0x76))  # NOP / NOP / DI / HALT
-        return make_machine(code + bytes(32 * 1024 - len(code)))
-
-    old, new = _old_and_new(make, 3, capsys)
-    assert "HALT with interrupts disabled" in old
-    assert new == old
+def test_hangs_at_different_pcs_are_both_reported() -> None:
+    lines = _lines([_ev(TRACE_EVENT_HANG_PC_LOOP, 0x1000), _ev(TRACE_EVENT_HANG_PC_LOOP, 0x2000)])
+    assert sum("PC-loop" in ln for ln in lines) == 2
