@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from host.media import DiskFiles
     from host.rpc_server import DebugServer
     from msx.boundary import MediaId, RtcTime
-    from msx.diagnostics.logger import DebugLogger
     from msx.machine import Machine
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
@@ -417,15 +416,15 @@ def _run_benchmark(
 
 
 def _cleanup(
-    machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
+    machine: "Machine | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
     sram_files: "dict[MediaId, Path]", disk_files: "DiskFiles",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
         rpc_server.stop()
-    if logger is not None:
-        logger.close()
+    if log_file is not None:
+        log_file.close()
     if trace_file is not None:
         trace_file.close()
     if mapper_trace_file is not None:
@@ -622,7 +621,6 @@ def main() -> None:
     )
 
     from host.trace import TraceOutput
-    from msx.diagnostics.logger import DebugLogger
 
     # --- Trace outputs (the kinds are turned on after the build) ---
     trace_output = TraceOutput()
@@ -636,7 +634,12 @@ def main() -> None:
             trace_output.set_vdp_output(sys.stdout, "stdout")
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
-    logger = DebugLogger(log_path=args.log) if args.debug else None
+    # --debug: the debug log goes to stderr, and with --log appended to FILE.
+    _log_file = None
+    if args.debug:
+        if args.log:
+            _log_file = open(args.log, "a", encoding="utf-8")
+        trace_output.set_debug_output(_log_file)
     machine = None
     rpc_server = None
     sram_files: "dict[MediaId, Path]" = {}
@@ -666,9 +669,9 @@ def main() -> None:
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
-        if logger is not None:
-            from msx.diagnostics.logger import attach_logger
-            attach_logger(machine, logger)
+        if args.debug:
+            from msx.boundary import TRACE_DEBUG
+            machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG)
         if args.vdp_trace:
             from msx.boundary import TRACE_VDP
             machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP)
@@ -722,7 +725,7 @@ def main() -> None:
                 debugger=debugger, disk_files=disk_files)
     finally:
         _cleanup(
-            machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files, disk_files
+            machine, rpc_server, _log_file, _trace_file, _mapper_trace_file, sram_files, disk_files
         )
 
 
