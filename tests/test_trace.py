@@ -98,46 +98,41 @@ def test_map_bank_record_emitted_on_bank_change() -> None:
     )
 
 
-# -- the same text as the tracer objects -----------------------------------------
+# -- format details (ported from the tests of the old Tracer) -------------------
 
-def _old_and_new(writes: list[tuple[int, int]], regs17: int | None = None) -> tuple[str, str]:
-    """Run port writes on an MSX2 machine with the old Tracer attached and
-    TRACE_VDP on; return (old text, new text)."""
-    from msx.vdp.tracer import Tracer, attach_vdp_tracer
-    from tests.factories import make_machine_msx2
-
-    m = make_machine_msx2(bytes(32 * 1024), bytes(0x4000))
-    old = io.StringIO()
-    assert attach_vdp_tracer(m, Tracer(enabled=True, output=old))
-    m.set_trace_kinds(TRACE_VDP)
-    if regs17 is not None:
-        m.vdp.regs[17] = regs17
-    for port, value in writes:
-        m.cycle_count += 7
-        m.io.write_port(port, value)
-    out = TraceOutput()
-    new = io.StringIO()
-    out.set_vdp_output(new, "buffer")
-    out.drain(m)
-    return old.getvalue(), new.getvalue()
+def test_cycle_pc_and_value_are_padded_uppercase_hex() -> None:
+    line = _lines([_p99(0xAB), _p99(0x80, pc=0xABCF, cycle=9)])[0]
+    assert line == "CY=0000000009 FR=000000 PC=ABCF VDP_REG R#00=ABh"
 
 
-def test_a_register_write_has_the_tracer_text() -> None:
-    old, new = _old_and_new([(0x99, 0x02), (0x99, 0x80), (0x99, 0x00), (0x99, 0x40)])
-    assert old and new == old
+def test_two_consecutive_register_writes() -> None:
+    lines = _lines([_p99(0x10), _p99(0x80), _p99(0x1E), _p99(0x82)])
+    assert [ln[-8:] for ln in lines] == ["R#00=10h", "R#02=1Eh"]
 
 
-def test_a_command_has_the_tracer_text() -> None:
-    writes = []
-    for reg, value in ((36, 0x10), (38, 0x20), (40, 0x08), (42, 0x04), (44, 0x55), (46, 0xC0)):
-        writes += [(0x99, value), (0x99, 0x80 | reg)]
-    old, new = _old_and_new(writes)
-    assert "VDP_CMD" in old and new == old
+def test_a_command_parameter_register_is_a_vdp_reg_line() -> None:
+    assert _lines([_p99(0x00), _p99(0xA4, pc=0x4084, cycle=45291)]) == [
+        "CY=0000045291 FR=000000 PC=4084 VDP_REG R#36=00h",
+    ]
 
 
-def test_a_port_9b_stream_has_the_tracer_text() -> None:
-    old, new = _old_and_new([(0x9B, v) for v in (0x01, 0x02, 0x03, 0x04)], regs17=36)
-    assert old.count(";port 9Bh") == 4 and new == old
+def test_unwritten_command_parameters_show_dashes() -> None:
+    assert _lines([_p99(0xC0), _p99(0xAE)])[-1].count("'--'") == 14
+
+
+def test_port_9b_line_carries_the_frame() -> None:
+    assert "FR=000005" in _lines([_p9b(0x7F, 0x02, frame=5)])[0]
+
+
+def test_port_9b_command_parameter_is_buffered() -> None:
+    lines = _lines([_p9b(0x7F, 0x24), _p9b(0xC0, 0x2E)])
+    assert lines[0].endswith("VDP_REG R#36=7Fh  ;port 9Bh")
+    assert "VDP_CMD HMMV/IMP  (C0h)" in lines[1] and "'7F'" in lines[1]
+    assert lines[1].endswith(";port 9Bh")
+
+
+def test_port_9b_uses_the_low_6_bits_of_r17() -> None:
+    assert "R#02=ABh" in _lines([_p9b(0xAB, 0x42)])[0]
 
 
 # -- TraceOutput.drain ------------------------------------------------------------

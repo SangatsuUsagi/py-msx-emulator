@@ -1,7 +1,6 @@
-"""Phase 8: --mapper-trace / --mapper-trace-out and --count-frame.
-
-Unit tests for the attach_to_machine helper plus CLI integration tests that
-exercise the argparse wiring through __main__.main().
+"""--vdp-trace, --mapper-trace, their -out files and --count-frame: CLI
+integration tests that exercise the argparse wiring through
+__main__.main().
 """
 from __future__ import annotations
 
@@ -13,8 +12,6 @@ from unittest.mock import patch
 
 from msx.boundary import FrameOutput
 from msx.machine import Machine
-from msx.mapper_tracer import attach_to_machine
-from tests.factories import make_machine
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
@@ -22,37 +19,6 @@ _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 # What the mocked step_frame returns: a completed frame with no stop.
 _FRAME_DONE = FrameOutput(None, b"", 0)
-
-def _rom16(pages: int) -> bytes:
-    """ROM where byte 0 of each 16 KB page holds the page index."""
-    return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
-
-
-# ---------------------------------------------------------------------------
-# attach_to_machine helper (shared by `ce` and --mapper-trace)
-# ---------------------------------------------------------------------------
-
-class TestAttachToMachine:
-    def test_attaches_and_emits_on_bank_change(self) -> None:
-        m = make_machine(rom=bytes(32768), cartridge=_rom16(8), mapper="ASCII16")
-        buf = StringIO()
-        tracer = attach_to_machine(m, output=buf)
-        assert tracer is not None
-        m.memory._mapper.write(0x7000, 1)  # window 1: bank 0 -> 1
-        assert "MAP_BANK win=1 00h->01h addr=7000h" in buf.getvalue()
-
-    def test_returns_none_without_bank_switching_mapper(self) -> None:
-        # No cartridge -> flat mapper in slot 1, no _tracer hook.
-        m = make_machine(rom=bytes(32768))
-        assert attach_to_machine(m, output=StringIO()) is None
-
-    def test_output_target_is_honored(self) -> None:
-        m = make_machine(rom=bytes(32768), cartridge=_rom16(8), mapper="ASCII16")
-        buf = StringIO()
-        attach_to_machine(m, output=buf)
-        m.memory._mapper.write(0x6000, 2)
-        assert buf.getvalue().startswith("CY=")
-
 
 # ---------------------------------------------------------------------------
 # CLI integration (mirror of tests/test_cli_breakpoint.py harness)
