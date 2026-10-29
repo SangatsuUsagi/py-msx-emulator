@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from msx.boundary import TRACE_EVENT_VDP_PORT99, TRACE_VDP
 from msx.vdp import renderer
@@ -11,7 +11,6 @@ from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
     from msx.trace import TraceLog
-    from msx.vdp.tracer import Tracer
 
 
 class FramebufferFormat(Enum):
@@ -40,10 +39,10 @@ class VdpDevice(Protocol):
     `latch` is read-only here: the V9938's latch is one byte plus two
     pending flags, so it is restored through `V9938.restore_state()`.
 
-    Includes the debug/diagnostic hooks (`tracer`/`_get_pc`/`_get_cycle`/
-    `debug_disable_sprites`) too -- both classes declare these identically
-    (wired at machine-construction time by msx/machine_loader.py, consumed
-    by host/debugger/prompt.py and msx/mapper_tracer.py), so `Machine.vdp`
+    Includes the debug/diagnostic fields (`_trace`/`debug_disable_sprites`)
+    too -- both classes declare these identically (the trace buffer is wired
+    at machine-construction time by msx/machine_loader.py, and Machine's
+    core API members set both), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
@@ -70,9 +69,6 @@ class VdpDevice(Protocol):
     addr: int
     read_buf: int
     irq: bool
-    tracer: Tracer | None
-    _get_pc: Callable[[], int] | None
-    _get_cycle: Callable[[], int] | None
     _trace: TraceLog | None
     debug_disable_sprites: bool
 
@@ -292,18 +288,6 @@ class VDP:
     irq: bool = False
     _logger: DebugLogger | None = field(default=None, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    # PORT-NOTE: these diagnostic hooks (the tracer object and the
-    #   _get_pc / _get_cycle closures below) are assigned at wiring time.
-    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
-    #   resolved once at construction, not per-call function pointers.
-    # C++ equivalent: std::function members or a virtual interface pointer,
-    #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called only
-    #   while tracing is enabled (once per control-port write), never on the
-    #   data-port path; the indirection costs nothing when tracing is off.
-    tracer: Tracer | None = field(default=None, repr=False)
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 bytes are recorded while TRACE_VDP is on.
     _trace: TraceLog | None = field(default=None, repr=False)
@@ -405,10 +389,6 @@ class VDP:
             trace = self._trace
             if trace is not None and trace.kinds & TRACE_VDP:
                 trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
-            if self.tracer is not None:
-                pc = self._get_pc() if self._get_pc is not None else 0
-                cy = self._get_cycle() if self._get_cycle is not None else 0
-                self.tracer.port99_write(pc, cy, value, frame=self._frame_count)
             if self.latch is None:
                 self.latch = value
                 self.addr = (self.addr & 0x3F00) | value

@@ -859,10 +859,11 @@ py-msx-emulator/
 │   ├── state_files.py     # ステートセーブのファイル（ファイル名、PNG、latest.* リンク）
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
+│   ├── trace.py           # コアのトレースイベントから VDP とマッパーのトレースの文字列を作る
 │   └── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
 ├── msx/                   # コアエミュレータパッケージ（ファイル入出力・ホスト時計なし）
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
-│   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ、トレーサ）
+│   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ）
 │   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インターフェース）
 │   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
 │   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
@@ -875,7 +876,6 @@ py-msx-emulator/
 │   ├── canonical_json.py  # 正規化 JSON の書き出しと厳密な読み込み（文書、ステート）
 │   ├── memory.py          # スロットベースのメモリバス
 │   ├── mapper.py          # カートリッジマッパー（Flat、ASCII8/16、Konami、SCC、Halnote...）
-│   ├── mapper_tracer.py   # カートリッジバンク切り替えトレーサ
 │   ├── kanji.py           # JIS漢字フォントROM I/Oデバイス
 │   ├── ram_mapper.py      # MSX2 RAM マッパー（16 KB セグメント）
 │   ├── rtc.py             # RP5C01 リアルタイムクロック
@@ -890,6 +890,7 @@ py-msx-emulator/
 │   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
+│   ├── trace.py           # トレースバッファ（VDP のポート書き込み、マッパーのバンク切り替え）
 │   ├── snapshot.schema.json # ステートの構成を定める JSON Schema
 │   └── state.py           # マシン状態のスナップショット（正規化した JSON）
 ├── config/

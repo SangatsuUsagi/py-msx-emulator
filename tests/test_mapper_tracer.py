@@ -1,48 +1,52 @@
+"""diag-mapper-tracer: the ROM mappers' bank-change trace events and their
+MAP_BANK text (host/trace.py)."""
 from __future__ import annotations
 
-from io import StringIO
-
+from host.trace import map_bank_line
+from msx.boundary import TRACE_MAPPER
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, KonamiMapper
-from msx.mapper_tracer import MapperTracer
+from msx.trace import TraceLog
 
 
 def _rom16(pages: int) -> bytes:
     return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
 
 
-def _attach(mapper, enabled: bool = True) -> StringIO:
-    buf = StringIO()
-    mapper._tracer = MapperTracer(enabled=enabled, output=buf)
-    mapper._get_pc = lambda: 0x402E
-    mapper._get_cycle = lambda: 45231
-    mapper._get_frame = lambda: 3
-    return buf
+def _attach(mapper, kinds: int = TRACE_MAPPER) -> TraceLog:
+    trace = TraceLog(kinds=kinds, _get_pc=lambda: 0x402E, _get_cycle=lambda: 45231,
+                     _get_frame=lambda: 3)
+    mapper._trace = trace
+    return trace
 
 
-def test_disabled_tracer_is_silent() -> None:
+def _text(trace: TraceLog) -> list[str]:
+    return [map_bank_line(e) for e in trace.drain()]
+
+
+def test_mapper_kind_off_records_nothing() -> None:
     m = Ascii16Mapper(_rom16(8))
-    buf = _attach(m, enabled=False)
+    trace = _attach(m, kinds=0)
     m.write(0x7000, 1)
-    assert buf.getvalue() == ""
+    assert trace.drain() == ()
 
 
-def test_bank_change_emits_one_record() -> None:
+def test_bank_change_records_one_event() -> None:
     m = Ascii16Mapper(_rom16(8))
-    buf = _attach(m)
+    trace = _attach(m)
     m.write(0x7000, 1)  # window 1: bank 0 -> 1
-    assert buf.getvalue() == (
-        "CY=0000045231 FR=000003 PC=402E MAP_BANK win=1 00h->01h addr=7000h\n"
-    )
+    assert _text(trace) == [
+        "CY=0000045231 FR=000003 PC=402E MAP_BANK win=1 00h->01h addr=7000h",
+    ]
 
 
-def test_noop_write_same_bank_emits_nothing() -> None:
+def test_noop_write_same_bank_records_nothing() -> None:
     m = Ascii16Mapper(_rom16(8))
-    buf = _attach(m)
+    trace = _attach(m)
     m.write(0x7000, 0)  # window 1 already bank 0
-    assert buf.getvalue() == ""
+    assert trace.drain() == ()
 
 
-def test_behavior_identical_without_tracer() -> None:
+def test_behavior_identical_with_the_trace_on() -> None:
     a = Ascii16Mapper(_rom16(8))
     b = Ascii16Mapper(_rom16(8))
     _attach(b)
@@ -56,17 +60,17 @@ def test_behavior_identical_without_tracer() -> None:
 
 def test_ascii8_window_index_reported() -> None:
     m = Ascii8Mapper(bytes([(p if i == 0 else 0) for p in range(8) for i in range(8192)]))
-    buf = _attach(m)
-    m.write(0x6800, 2)  # window 1 (0x6000 zone): bank 1 default? no, default 0 -> 2
-    assert "MAP_BANK win=1 00h->02h addr=6800h" in buf.getvalue()
+    trace = _attach(m)
+    m.write(0x6800, 2)  # window 1 (0x6000 zone): bank 0 -> 2
+    assert "MAP_BANK win=1 00h->02h addr=6800h" in _text(trace)[0]
 
 
 def test_konami_window_and_address() -> None:
     rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(8192)])
     m = KonamiMapper(rom)
-    buf = _attach(m)
+    trace = _attach(m)
     m.write(0x8000, 5)  # window 2: bank 2 default -> 5
-    assert "MAP_BANK win=2 02h->05h addr=8000h" in buf.getvalue()
+    assert "MAP_BANK win=2 02h->05h addr=8000h" in _text(trace)[0]
 
 
 # diag-mapper-tracer "ROM mappers record bank changes as trace events".

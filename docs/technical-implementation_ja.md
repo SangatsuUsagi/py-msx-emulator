@@ -747,7 +747,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 コアはファイルを開かず、ホストの時計を読まず、`host/`、`frontend/`、`sdl2` のどれも import しない。`tests/test_core_frontend_boundary.py` がこれを強制する。`sdl2` を import できないインタプリタで `msx` のすべてのモジュールを import し、3 つの名前の import があれば失敗にする。つまり、コアが必要とするものはすべて値として入り、コアが作るものはすべて値として出る。
 
-同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はデバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）で、名前を挙げた許可リストに載せてある。これらはコアの部品に Python のトレーサのオブジェクトを付ける。Python の `Machine` でないコアでは、Python のコアが必要だと表示し、ほかには何もしない。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
+同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はない。デバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）と `--vdp-trace`/`--mapper-trace` のフラグは、コアの API でトレースの種類を設定する。`drain_trace()` が返すイベントは `host/trace.py` が文字列にする。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
 
 ### 境界を通る値
 
@@ -775,7 +775,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）と `attach_vdp_tracer()`（`msx/vdp/tracer.py`）でつなぐ |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。ロガーは構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）でつなぐ。VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -813,7 +813,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
 - `run_frame()`：内部のフレームループ
-- 診断用のロガーと、VDP とマッパーのトレーサ。構築したマシンに `attach_logger()`、`attach_vdp_tracer()`、`msx.mapper_tracer.attach_to_machine()` でつなぐ
+- 診断用のロガー。構築したマシンに `attach_logger()` でつなぐ
 
 ### MachineConfig の文書
 
@@ -971,11 +971,11 @@ V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は
 
 `bytes.translate()` も呼び出しごとの辞書のハッシュも、システム言語では自然な書き方ではない。Rust/C++ の移植では、固定の `[u8; 256]` の配列を初期化時に計算しておき、直接インデックスで引く。`(tp, border)` の組み合わせは全部で 32 通りしかない。
 
-#### トレーサのフックの Callable フィールド
+#### トレースバッファの値の取得
 
-`VDP`（TMS9918A）と `V9938` は、どちらも `tracer`、`_get_pc`、`_get_cycle` を None にできる `Callable` のフィールドとして持つ。構築したマシンに `attach_vdp_tracer()` が代入し（デバッガの `te` コマンドも同じ）、VDP は対応するイベントのたびに呼ぶ。Python ではこれを `Callable[[], None] | None` と型付けするが、静的型付けの言語にそのままの対応はない。
+トレースバッファ（`msx/trace.py` の `TraceLog`）は、各イベントに CPU の命令の PC、サイクル数、VDP のフレーム番号を付ける。これらは `_get_pc`、`_get_cycle`、`_get_frame` の 3 つのクロージャで読む。クロージャは `msx/machine_loader.py` が構築時につなぐ。イベントを記録する VDP とマッパーは、これらの値を手元に持っていないためである。クロージャはコアの中にとどまり、コアの API を通らない。
 
-Rust/C++ の移植では、`Option<Box<dyn Fn()>>` のトレイトオブジェクト（または同等のもの）で表す。別の方法として、機能フラグ付きのコンパイル時ジェネリクスにすれば、リリースビルドで呼び出しごとの振り分けがなくなる。
+Rust/C++ の移植では、クロージャを持たずに、3 つの値を記録の呼び出しに渡すか、共有の時計の構造体への参照をバッファに持たせる。
 
 #### フレームタイマーのスピンループ
 

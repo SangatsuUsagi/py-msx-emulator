@@ -96,7 +96,6 @@ from msx.mapper import HALNOTE_SRAM_SIZE
 from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.vdp._geometry import VideoStandard
-from msx.vdp.tracer import Tracer, attach_vdp_tracer
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -1378,7 +1377,6 @@ def build_machine_from_spec(
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
     logger: DebugLogger | None = None,
-    tracer: Tracer | None = None,
     bios_override: bytes | None = None,
     logo_override: bytes | None = None,
     extrom_override: bytes | None = None,
@@ -1406,6 +1404,4 @@ def build_machine_from_spec(
     machine = result.machine
     if logger is not None:
         attach_logger(machine, logger)
-    if tracer is not None:
-        attach_vdp_tracer(machine, tracer)
     return machine

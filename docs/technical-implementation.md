@@ -1111,11 +1111,11 @@ as a value.
 The same test also checks the other direction. Code in `host/`, `frontend/`,
 `tools/` and `__main__.py` uses the machine only through the core API
 (below). It must not read a core component (`.cpu`, `.vdp`, `.memory`,
-`.fdc` and the others) or a private field of the machine. The debugger's
-trace commands (`te`/`td`, `ce`/`cd`) are the exception, on a named
-allowlist. They attach Python tracer objects to the core's components. On a
-core that is not the Python `Machine`, each prints that it needs the Python
-core and does nothing else. A port of the core can thus replace the
+`.fdc` and the others) or a private field of the machine. No command is
+excepted. The debugger's trace commands (`te`/`td`, `ce`/`cd`) and the
+`--vdp-trace`/`--mapper-trace` flags set the trace kinds through the core
+API, and `host/trace.py` formats the events that `drain_trace()` returns. A
+port of the core can thus replace the
 `Machine` and keep the debugger, the RPC server and the frontend.
 
 ### Values that cross the boundary
@@ -1156,7 +1156,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) and `attach_vdp_tracer()` (`msx/vdp/tracer.py`) attach them to a built machine |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) attaches the logger to a built machine, and the VDP and mapper trace go through the trace members below |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1204,9 +1204,8 @@ The other members do not cross the boundary, and a port does not need them
 to run software:
 
 - `run_frame()`, the internal frame loop
-- the diagnostic logger and the VDP and mapper tracers, which
-  `attach_logger()`, `attach_vdp_tracer()` and
-  `msx.mapper_tracer.attach_to_machine()` attach to a built machine
+- the diagnostic logger, which `attach_logger()` attaches to a built
+  machine
 
 ### MachineConfig document
 
@@ -1531,17 +1530,17 @@ systems language. A Rust/C++ port keeps fixed `[u8; 256]` arrays, precomputed
 at init, and indexes them directly. Only 32 combinations exist across all
 `(tp, border)` pairs.
 
-#### Callable tracer hooks
+#### Trace buffer getters
 
-`VDP` (TMS9918A) and `V9938` both store `tracer`, `_get_pc`, and `_get_cycle`
-as nullable `Callable` fields. `attach_vdp_tracer()` assigns them to a built
-machine (the debugger's `te` command does the same), and the
-VDP calls them on each related event. Python types these fields as
-`Callable[[], None] | None`, but they have no direct static equivalent.
+The trace buffer (`TraceLog` in `msx/trace.py`) stamps each event with the
+CPU's instruction PC, the cycle count and the VDP's frame number. It reads
+them through three closures, `_get_pc`, `_get_cycle` and `_get_frame`, that
+`msx/machine_loader.py` wires at build time. The VDP and the mappers that
+record events do not have these values at hand. The closures stay inside
+the core and never cross the core API.
 
-A Rust/C++ port models them as `Option<Box<dyn Fn()>>` trait objects (or an
-equivalent). Another option is feature-flagged compile-time generics, which
-remove the per-call dispatch in release builds.
+A Rust/C++ port passes the three values into the record call, or gives the
+buffer a reference to a shared clock struct, instead of storing closures.
 
 #### Spin loop in the frame timer
 
