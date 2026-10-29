@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
@@ -20,7 +19,6 @@ from msx.boundary import (
     WATCH_READ,
     WATCH_WRITE,
     CpuRegisters,
-    DiskMedium,
     FrameOutput,
     MediaId,
     RgbFrame,
@@ -265,27 +263,26 @@ class Machine:
         """Clear a medium's dirty flag after the host has written it."""
         self._media()[media_id].mark_persisted()
 
-    def mount_disk(self, drive: int, medium: DiskMedium | None) -> int:
-        """Swap `medium` (None ejects) into `drive` (0 = A) and return
-        STATUS_OK. The host writes a dirty outgoing image back before the
-        swap. Returns STATUS_NO_DRIVE for a machine without that drive and
-        STATUS_BAD_IMAGE for an image whose size is not a positive multiple
-        of 512, changing nothing (last_error_text() gives the message)."""
+    def mount_disk(self, drive: int, data: bytes | None, write_protected: bool) -> int:
+        """Swap the image `data` (None ejects) into `drive` (0 = A),
+        rejecting sector writes when `write_protected`, and return STATUS_OK.
+        The host writes a dirty outgoing image back before the swap. Returns
+        STATUS_NO_DRIVE for a machine without that drive and STATUS_BAD_IMAGE
+        for an image whose size is not a positive multiple of 512, changing
+        nothing (last_error_text() gives the message)."""
         from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         new_image = None
-        if medium is not None:
-            size = len(medium.data)
+        if data is not None:
+            size = len(data)
             if size == 0 or size % SECTOR_SIZE != 0:
                 return self._fail(
                     STATUS_BAD_IMAGE,
                     f"size {size} is not a positive multiple of {SECTOR_SIZE}",
                 )
-            new_image = DskDiskImage(
-                medium.data, write_protected=medium.write_protected, path=medium.path
-            )
+            new_image = DskDiskImage(data, write_protected=write_protected)
         self.fdc.swap(drive, new_image)
         self._error_text = b""
         return STATUS_OK
@@ -302,12 +299,6 @@ class Machine:
     def disk_mounted(self, drive: int) -> bool:
         """Whether `drive` (0 = A) exists and holds an image."""
         return self._mounted_image(drive) is not None
-
-    def disk_path(self, drive: int) -> Path | None:
-        """The host's name for the image in `drive` (DiskMedium.path), or None
-        when the drive is empty, absent, or its image was mounted unnamed."""
-        image = self._mounted_image(drive)
-        return image.path if image is not None else None
 
     def _mounted_image(self, drive: int) -> DskDiskImage | None:
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):

@@ -171,16 +171,16 @@ def test_parse_then_apply_hashes_each_mounted_disk_once(
     identity once: apply_state re-checks nothing."""
     fdc = _fdc(tmp_path, kind)
     saved = _roundtrip(fdc.snapshot())
-    hashed: list[Path] = []
+    hashed: list[int] = []
     original = DskDiskImage.content_sha1
 
     def spy(image: DskDiskImage) -> str:
-        hashed.append(image.path)
+        hashed.append(id(image))
         return original(image)
 
     monkeypatch.setattr(DskDiskImage, "content_sha1", spy)
     fdc.apply_state(fdc.parse_state(saved, "fdc"))
-    assert sorted(hashed) == sorted(drive.image.path for drive in fdc.drives if drive.image)
+    assert sorted(hashed) == sorted(id(drive.image) for drive in fdc.drives if drive.image)
     assert len(hashed) == 2
 
 
@@ -219,12 +219,8 @@ def _other_disk_sha1(snap: dict[str, Any]) -> None:
     snap["drives"][1]["disk_sha1"] = "0" * 40
 
 
-def _other_disk_path(snap: dict[str, Any]) -> None:
-    snap["drives"][0]["disk_path"] = "/nonexistent/other.dsk"
-
-
 def _no_disk(snap: dict[str, Any]) -> None:
-    snap["drives"][1].update(disk_path=None, disk_size=None, disk_sha1=None)
+    snap["drives"][1].update(disk_size=None, disk_sha1=None)
 
 
 def _partial_identity(snap: dict[str, Any]) -> None:
@@ -266,7 +262,7 @@ _COMMON_CASES: list[tuple[str, Mutation, str]] = [
     ("more_drives", _extra_drive, "drive count"),
     ("connection_key", _unknown_connection_key, r"connection_style has unknown keys"),
     ("sha1_mismatch", _other_disk_sha1, "(?i)disk mismatch"),
-    ("path_mismatch", _other_disk_path, "(?i)disk mismatch"),
+    ("saved_path", _set_drive(0, "disk_path", "a.dsk"), r"drives\[0\] has unknown keys"),
     ("mount_mismatch", _no_disk, "(?i)disk mount mismatch"),
     ("partial_identity", _partial_identity, r"drives\[1\]"),
 ]

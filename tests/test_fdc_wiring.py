@@ -265,5 +265,5 @@ def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     assert machine.fdc is not None
     assert len(machine.fdc.drives) == 4
     image = bytes([0x5A]) * _2DD
-    machine.mount_disk(2, DiskMedium(image, False, None))
+    machine.mount_disk(2, image, False)
     assert machine.read_media(MediaId.DRIVE_C) == image

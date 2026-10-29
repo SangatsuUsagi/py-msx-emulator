@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from host.machine_config import sram_paths
-from host.media import persist_dirty_media, read_disk_medium, swap_disk
+from host.media import DiskFiles, persist_dirty_media, read_disk_medium, swap_disk
 from msx.boundary import MediaId
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.disk_image import SECTOR_SIZE
@@ -93,19 +93,21 @@ def test_rtc_file_is_created_on_first_shutdown(
 
 def test_outgoing_image_is_flushed_before_unmount(tmp_path: Path) -> None:
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     m.fdc.drives[0].image.write_sector(5, b"\xAB" * SECTOR_SIZE)
-    swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
+    swap_disk(m, files, 0, _dsk(tmp_path / "b.dsk"))
     assert a.read_bytes()[5 * SECTOR_SIZE:6 * SECTOR_SIZE] == b"\xAB" * SECTOR_SIZE
 
 
 def test_eject_flushes_the_outgoing_image(tmp_path: Path) -> None:
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     m.fdc.drives[0].image.write_sector(0, b"\x11" * SECTOR_SIZE)
-    swap_disk(m, 0, None)
+    swap_disk(m, files, 0, None)
     assert m.fdc.drives[0].image is None
     assert a.read_bytes()[:SECTOR_SIZE] == b"\x11" * SECTOR_SIZE
 
@@ -113,44 +115,48 @@ def test_eject_flushes_the_outgoing_image(tmp_path: Path) -> None:
 def test_a_failed_write_back_keeps_the_current_disk(tmp_path: Path) -> None:
     # fdc-interface "A failed write-back keeps the current disk".
     m = _fdc_machine()
+    files = DiskFiles()
     a = _dsk(tmp_path / "a.dsk")
-    swap_disk(m, 0, a)
+    swap_disk(m, files, 0, a)
     before = m.fdc.drives[0].image
     before.write_sector(5, b"\xAB" * SECTOR_SIZE)
     a.unlink()
     a.mkdir()                                   # the file can no longer be written
     with pytest.raises(OSError):
-        swap_disk(m, 0, _dsk(tmp_path / "b.dsk"))
+        swap_disk(m, files, 0, _dsk(tmp_path / "b.dsk"))
     assert m.fdc.drives[0].image is before
-    assert m.disk_path(0) == a
+    assert files.path(0) == a
     assert MediaId.DRIVE_A in m.dirty_media()
 
 
 def test_nonexistent_file_keeps_the_current_disk(tmp_path: Path) -> None:
     m = _fdc_machine()
-    swap_disk(m, 0, _dsk(tmp_path / "a.dsk"))
+    files = DiskFiles()
+    swap_disk(m, files, 0, _dsk(tmp_path / "a.dsk"))
     before = m.fdc.drives[0].image
     with pytest.raises(OSError):
-        swap_disk(m, 0, tmp_path / "missing.dsk")
+        swap_disk(m, files, 0, tmp_path / "missing.dsk")
     assert m.fdc.drives[0].image is before
 
 
 def test_invalid_image_size_keeps_the_current_disk(tmp_path: Path) -> None:
     m = _fdc_machine()
-    swap_disk(m, 0, _dsk(tmp_path / "a.dsk"))
+    files = DiskFiles()
+    swap_disk(m, files, 0, _dsk(tmp_path / "a.dsk"))
     before = m.fdc.drives[0].image
     bad = tmp_path / "bad.dsk"
     bad.write_bytes(bytes(100))
     with pytest.raises(ValueError) as exc_info:
-        swap_disk(m, 0, bad)
+        swap_disk(m, files, 0, bad)
     assert str(exc_info.value) == f"{bad}: size 100 is not a positive multiple of 512"
     assert m.fdc.drives[0].image is before
 
 
 def test_swap_of_a_missing_drive_keeps_everything(tmp_path: Path) -> None:
     m = _fdc_machine()
+    files = DiskFiles()
     with pytest.raises(ValueError, match="no floppy drive 1 on this machine$"):
-        swap_disk(m, 1, _dsk(tmp_path / "a.dsk"))
+        swap_disk(m, files, 1, _dsk(tmp_path / "a.dsk"))
     assert m.fdc.drives[0].image is None
 
 
@@ -163,7 +169,48 @@ def test_readonly_file_is_read_write_protected(tmp_path: Path) -> None:
         os.chmod(p, 0o644)
 
 
-def test_writable_file_is_read_writable_and_named(tmp_path: Path) -> None:
+def test_writable_file_is_read_writable(tmp_path: Path) -> None:
     p = _dsk(tmp_path / "rw.dsk")
     medium = read_disk_medium(p)
-    assert (medium.write_protected, medium.path, medium.data) == (False, p, p.read_bytes())
+    assert (medium.write_protected, medium.data) == (False, p.read_bytes())
+
+
+# --- machine-core "The host keeps the file of each disk" ----------------------
+
+def test_a_swap_records_the_new_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a, b = _dsk(tmp_path / "a.dsk"), _dsk(tmp_path / "b.dsk", fill=1)
+    files = DiskFiles()
+    swap_disk(m, files, 0, a)
+    swap_disk(m, files, 0, b)
+    assert files.path(0) == b
+    swap_disk(m, files, 0, None)
+    assert files.path(0) is None
+
+
+def test_a_failed_swap_keeps_the_old_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a = _dsk(tmp_path / "a.dsk")
+    bad = tmp_path / "bad.dsk"
+    bad.write_bytes(bytes(1000))
+    files = DiskFiles()
+    swap_disk(m, files, 0, a)
+    with pytest.raises(ValueError):
+        swap_disk(m, files, 0, bad)
+    assert files.path(0) == a
+    with pytest.raises(ValueError):
+        swap_disk(m, files, 1, bad)              # no drive B
+    assert files.path(1) is None
+
+
+def test_a_dirty_disk_is_written_to_its_own_file(tmp_path: Path) -> None:
+    m = _fdc_machine()
+    a = _dsk(tmp_path / "a.dsk")
+    copy = _dsk(tmp_path / "copy.dsk")          # same content, another file
+    files = DiskFiles({0: a})
+    assert m.mount_disk(0, a.read_bytes(), False) == 0
+    m.fdc.drives[0].image.write_sector(3, b"\x5A" * SECTOR_SIZE)
+    persist_dirty_media(m, None, files)
+    assert a.read_bytes()[3 * SECTOR_SIZE:4 * SECTOR_SIZE] == b"\x5A" * SECTOR_SIZE
+    assert copy.read_bytes() == bytes(len(_2DD))
+    assert MediaId.DRIVE_A not in m.dirty_media()

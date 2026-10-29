@@ -20,7 +20,7 @@ _2DD = 737280
 
 # The real media/swap methods, so host.media.swap_disk drives the FloppyDisk.
 _MEDIA_API = (
-    "mount_disk", "disk_mounted", "disk_path", "_mounted_image",
+    "mount_disk", "disk_mounted", "last_error_text", "_fail", "_mounted_image",
     "dirty_media", "read_media", "mark_persisted", "_media", "sram_media",
     "drive_count",
 )
@@ -28,6 +28,7 @@ _MEDIA_API = (
 
 def _bind_media_api(machine: types.SimpleNamespace) -> None:
     machine._sram_table = {}
+    machine._error_text = b""
     for name in _MEDIA_API:
         setattr(machine, name, functools.partial(getattr(Machine, name), machine))
 
@@ -61,11 +62,12 @@ def test_fdd1_status_empty(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_fdd1_status_shows_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    dbg, iface = _dbg()
+    dbg, _iface = _dbg()
     p = _dsk(tmp_path / "g.dsk")
-    iface.mount(dsk_image(p), 0)
+    dbg._cmd_fdd([str(p)], 0)
+    capsys.readouterr()
     dbg._cmd_fdd([], 0)
-    assert str(p) in capsys.readouterr().out
+    assert capsys.readouterr().out == f"fdd1: {p}\n"
 
 
 def test_fdd1_eject(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

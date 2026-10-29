@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
+from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
 from host.watch import watch_kind
 from msx.boundary import (
@@ -180,8 +181,12 @@ class DebugServer:
         machine: "CoreApi",
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
+        disk_files: DiskFiles | None = None,
     ) -> None:
         self._machine = machine
+        # The file of each drive's disk, shared with the frontend and the
+        # debugger of the same run (host/media.py DiskFiles).
+        self._disk_files = disk_files if disk_files is not None else DiskFiles()
         self._sock_path = Path(sock_path)
         self._pause_state = pause_state if pause_state is not None else PauseState()
         self._queue: queue.Queue[tuple[dict[str, Any], list[dict[str, Any]], threading.Event]] = (
@@ -224,6 +229,10 @@ class DebugServer:
     @property
     def machine(self) -> "CoreApi":
         return self._machine
+
+    @property
+    def disk_files(self) -> DiskFiles:
+        return self._disk_files
 
     def apply_injected_input(self) -> None:
         """Hand the builder's current input to the machine at once, so the
@@ -792,7 +801,7 @@ def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
     rgb, width, height = server.capture_rgb()
-    saved = save_state(server.machine, RgbFrame(width, height, rgb), title)
+    saved = save_state(server.machine, RgbFrame(width, height, rgb), title, server.disk_files)
     return {"path": str(saved)}
 
 
@@ -819,9 +828,9 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     drive_idx = drive - 1
     if path:
-        swap_disk(server.machine, drive_idx, Path(str(path)))
+        swap_disk(server.machine, server.disk_files, drive_idx, Path(str(path)))
         return {"drive": drive, "path": str(path), "mounted": True}
-    swap_disk(server.machine, drive_idx, None)
+    swap_disk(server.machine, server.disk_files, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
 
 

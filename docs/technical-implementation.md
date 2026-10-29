@@ -695,7 +695,8 @@ style of a machine. The two shipped floppy machines thus differ only in data:
 images. Three paths swap disks at runtime. All of them call `swap_disk()` in
 `host/media.py`. It first writes a dirty outgoing image back to its file, and
 then calls `Machine.mount_disk()`, which calls the `swap()` of the floppy
-interface:
+interface. On success, it records the new file in the `DiskFiles` table that
+the three paths share:
 
 - The F6/Shift+F6 hotkeys of the SDL2 frontend step through the `--fdd1`
   list, or eject and insert the drive A disk again.
@@ -1130,7 +1131,7 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | `CpuRegisters` | out | The register query: AF, BC, DE, HL, the alternate set, IX, IY, SP, PC, I, R, IFF1 and IFF2 (0 or 1), IM |
 | `VdpInfo` | out | The VDP query: the VDP kind, the control and command registers, the status registers, the palette and the command progress |
 | media image | in/out | `bytes`, named by a `MediaId` |
-| `DiskMedium` | in | `data`, `write_protected`, and `path`: the host's name for the file, which the core records but never opens |
+| `DiskMedium` | in | `data` and `write_protected`. The core keeps no file name for a disk. The host keeps the file of each drive in `host/media.py`'s `DiskFiles` |
 
 `MediaId` is a closed set of integer ids, 0 to 15 in this order:
 `SLOT1_SRAM`, `SLOT2_SRAM`, `SLOT<n>_SUB<sub>_SRAM` (an expanded-slot device,
@@ -1165,9 +1166,9 @@ belongs to the debugger's diagnostics.
 | Media | `dirty_media()` | The ids written since they were last persisted |
 | | `read_media(media_id) -> bytes` | The current bytes of a medium |
 | | `mark_persisted(media_id)` | Call it after the host has written the bytes |
-| | `mount_disk(drive, medium) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
+| | `mount_disk(drive, data, write_protected) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
 | | `last_error_text() -> bytes` | The UTF-8 message of the last failed `load_state` or `mount_disk`, `b""` after a successful one. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
-| | `disk_mounted(drive)`, `disk_path(drive)` | Drive state and the recorded host name |
+| | `disk_mounted(drive)` | Whether the drive exists and holds an image |
 | Devices | `attach_mouse(port)` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
 | | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects |
@@ -1254,7 +1255,8 @@ integer is within ±(2^53 − 1).
 - `load_state()` accepts any whitespace and key order. It rejects floats,
   NaN or Infinity, duplicate keys, and another format version.
 - It checks the identity of the machine first: the machine type, the mapper
-  kinds, the slot wiring, the FDC, and the mounted disks. Then it compares
+  kinds, the slot wiring, the FDC, and the mounted disks (by size and SHA1,
+  so the same content from another file is the same disk). Then it compares
   `machine_config_sha256` with the hash of the running machine, which also
   covers the cartridge ROM bytes. A snapshot thus loads only into a core
   built from the same MachineConfig document.
@@ -1329,7 +1331,7 @@ from pathlib import Path
 from host.machine_config import (
     load_device_registry, load_machine_config, load_machine_spec, sram_paths,
 )
-from host.media import persist_dirty_media
+from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
 from msx.machine_loader import build_machine
 
@@ -1349,7 +1351,8 @@ if machine.load_state(snapshot) != 0:             # 0 is STATUS_OK
     print(machine.last_error_text().decode("utf-8"))
 assert machine.save_state() == snapshot
 
-persist_dirty_media(machine, sram_paths(config))   # write SRAM/CMOS/disk changes back
+disk_files = DiskFiles(config.disk_files)          # host: the file of each drive's disk
+persist_dirty_media(machine, sram_paths(config), disk_files)  # write SRAM/CMOS/disk changes back
 ```
 
 The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern.

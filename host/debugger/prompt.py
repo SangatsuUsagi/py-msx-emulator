@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
+from host.media import DiskFiles
 from host.watch import watch_kind, watch_text
 from msx.boundary import STOP_WATCHPOINT, VDP_KIND_V9938, VdpInfo
 from msx.mapper import BankTracingMapper
@@ -101,8 +102,11 @@ def _complete_command(text: str, state: int) -> str | None:
 class Debugger:
     """Interactive debug prompt attached to a Machine instance."""
 
-    def __init__(self, machine: CoreApi) -> None:
+    def __init__(self, machine: CoreApi, disk_files: DiskFiles | None = None) -> None:
         self._machine = machine
+        # The file of each drive's disk, shared with the frontend and the RPC
+        # server of the same run (host/media.py DiskFiles).
+        self._disk_files = disk_files if disk_files is not None else DiskFiles()
 
     def _read(self, addr: int) -> int:
         """One byte of CPU address space, through the core API (no watchpoint)."""
@@ -641,7 +645,7 @@ class Debugger:
         except Exception as exc:  # rendering is best-effort for a debug command
             print(f"sv: render failed: {exc}")
             return
-        save_state(self._machine, RgbFrame(w, h, rgb), title)
+        save_state(self._machine, RgbFrame(w, h, rgb), title, self._disk_files)
 
     def _cmd_state_load(self, args: list[str]) -> None:
         """`ld FILE`: restore machine state from a previously saved .state file.
@@ -732,13 +736,13 @@ class Debugger:
             return
         if not args:
             if self._machine.disk_mounted(drive_index):
-                print(f"{label}: {self._machine.disk_path(drive_index)}")
+                print(f"{label}: {self._disk_files.path(drive_index)}")
             else:
                 print(f"{label}: empty")
             return
         arg = args[0]
         if arg == "-":
-            swap_disk(self._machine, drive_index, None)
+            swap_disk(self._machine, self._disk_files, drive_index, None)
             print(f"{label}: ejected")
             return
         path = Path(arg).expanduser()
@@ -746,7 +750,7 @@ class Debugger:
             print(f"{label}: file not found: {path}")
             return
         try:
-            swap_disk(self._machine, drive_index, path)
+            swap_disk(self._machine, self._disk_files, drive_index, path)
         except (ValueError, OSError) as exc:
             print(f"{label}: cannot mount {path}: {exc}")
             return

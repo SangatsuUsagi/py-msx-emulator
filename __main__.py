@@ -11,6 +11,7 @@ from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 if TYPE_CHECKING:
     from host.app_config import AppConfig
     from host.debugger.prompt import Debugger
+    from host.media import DiskFiles
     from host.rpc_server import DebugServer
     from msx.boundary import MediaId, RtcTime
     from msx.diagnostics.logger import DebugLogger
@@ -416,7 +417,7 @@ def _run_benchmark(
 def _cleanup(
     machine: "Machine | None", rpc_server: "DebugServer | None", logger: "DebugLogger | None",
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_files: "dict[MediaId, Path]",
+    sram_files: "dict[MediaId, Path]", disk_files: "DiskFiles",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -431,7 +432,7 @@ def _cleanup(
         # Write every dirty medium (SRAM, RTC CMOS RAM, disk writes from
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
-        persist_dirty_media(machine, sram_files)
+        persist_dirty_media(machine, sram_files, disk_files)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -635,6 +636,10 @@ def main() -> None:
     machine = None
     rpc_server = None
     sram_files: "dict[MediaId, Path]" = {}
+    from host.media import DiskFiles
+    # The file of each drive's disk: one table for the debugger, the RPC
+    # server, the frontend and the write-back on exit.
+    disk_files = DiskFiles()
     try:
         try:
             config = load_machine_config(
@@ -650,6 +655,7 @@ def main() -> None:
                 rtc_initial_time=_host_rtc_time(),
             )
             sram_files = sram_paths(config)
+            disk_files = DiskFiles(config.disk_files)
             machine = build_machine(config, logger=logger, tracer=tracer)
         except MachineLoadError as exc:
             _fail(str(exc))
@@ -658,7 +664,7 @@ def main() -> None:
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
         # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        debugger = Debugger(machine)
+        debugger = Debugger(machine, disk_files)
 
         if breakpoint_addrs:
             machine.set_breakpoints(breakpoint_addrs)
@@ -682,7 +688,7 @@ def main() -> None:
             if opts.rpc_enabled:
                 from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
-                rpc_server = DebugServer(machine, sock_path=sock_path)
+                rpc_server = DebugServer(machine, sock_path=sock_path, disk_files=disk_files)
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
@@ -695,9 +701,11 @@ def main() -> None:
                 mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
                 keyboard_joystick=app_cfg.keyboard_joystick_buttons,
-                debugger=debugger)
+                debugger=debugger, disk_files=disk_files)
     finally:
-        _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files)
+        _cleanup(
+            machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files, disk_files
+        )
 
 
 if __name__ == "__main__":

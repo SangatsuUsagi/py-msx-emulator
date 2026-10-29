@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 20
+      "const": 21
     },
     "machine_type": {
       "enum": [
@@ -354,16 +354,6 @@
         "disk_changed": {
           "type": "boolean"
         },
-        "disk_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "disk_size": {
           "anyOf": [
             {
@@ -390,7 +380,6 @@
       },
       "required": [
         "disk_changed",
-        "disk_path",
         "disk_sha1",
         "disk_size",
         "side",

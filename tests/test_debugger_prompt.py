@@ -1007,7 +1007,9 @@ class TestStateSave:
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 192, rgb), "msx_dbg_checkpoint", dbg._disk_files
+        )
 
     def test_sv_with_title_argument(self, capsys):
         m = _make_machine()
@@ -1016,7 +1018,9 @@ class TestStateSave:
         with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save(["my-checkpoint"])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 192, rgb), "my-checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 192, rgb), "my-checkpoint", dbg._disk_files
+        )
 
     def test_sv_passes_a_taller_frame_with_its_size(self, capsys):
         m = _make_machine()
@@ -1025,7 +1029,9 @@ class TestStateSave:
         with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
-        mock_save.assert_called_once_with(m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint")
+        mock_save.assert_called_once_with(
+            m, RgbFrame(256, 212, tall_rgb), "msx_dbg_checkpoint", dbg._disk_files
+        )
 
 
 # ---------------------------------------------------------------------------

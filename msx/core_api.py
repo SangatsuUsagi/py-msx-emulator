@@ -12,13 +12,11 @@ disk path changes in a later step (allium/core-frontend.allium).
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from msx.boundary import (
         CpuRegisters,
-        DiskMedium,
         FrameOutput,
         MediaId,
         RgbFrame,
@@ -57,9 +55,8 @@ class CoreApi(Protocol):
     def dirty_media(self) -> list[MediaId]: ...
     def read_media(self, media_id: MediaId) -> bytes: ...
     def mark_persisted(self, media_id: MediaId) -> None: ...
-    def mount_disk(self, drive: int, medium: DiskMedium | None) -> int: ...
+    def mount_disk(self, drive: int, data: bytes | None, write_protected: bool) -> int: ...
     def disk_mounted(self, drive: int) -> bool: ...
-    def disk_path(self, drive: int) -> Path | None: ...
 
     # -- save states -------------------------------------------------------------
 

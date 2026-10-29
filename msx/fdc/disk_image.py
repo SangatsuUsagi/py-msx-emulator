@@ -8,7 +8,6 @@ to the file (see host/media.py). This module opens no files.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 SECTOR_SIZE: int = 512
 
@@ -24,22 +23,17 @@ class DskDiskImage:
     Args:
         data: The image bytes.
         write_protected: Reject sector writes (the host passes True when the
-            file is not writable).
-        path: The host's name for the image's file. Only recorded (save-state
-            disk identity, debugger/title display); never opened here.
+            file is not writable). The image holds no file name: the host
+            keeps that (host/media.py DiskFiles).
 
     Raises:
         ValueError: If the size is not a positive multiple of 512.
     """
 
-    def __init__(
-        self, data: bytes, *, write_protected: bool = False, path: Path | None = None
-    ) -> None:
-        self.path = path
+    def __init__(self, data: bytes, *, write_protected: bool = False) -> None:
         if len(data) == 0 or (len(data) % SECTOR_SIZE) != 0:
             raise ValueError(
-                f"{path or 'disk image'}: size {len(data)} is not a positive multiple "
-                f"of {SECTOR_SIZE}"
+                f"size {len(data)} is not a positive multiple of {SECTOR_SIZE}"
             )
         self._data = bytearray(data)
         self._dirty = False
@@ -98,7 +92,7 @@ class DskDiskImage:
             ValueError: If ``data`` is not exactly 512 bytes.
         """
         if self._write_protected:
-            raise PermissionError(f"{self.path or 'disk image'} is write-protected")
+            raise PermissionError("disk image is write-protected")
         if lsn < 0 or lsn >= self.num_sectors:
             raise IndexError(f"sector {lsn} out of range (0..{self.num_sectors - 1})")
         if len(data) != SECTOR_SIZE:
