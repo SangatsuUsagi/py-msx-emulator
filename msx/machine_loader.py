@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 from msx.boundary import (
     RTC_DEFAULT_START,
+    STATUS_BAD_CONFIG,
+    STATUS_OK,
     DiskMount,
     MachineConfig,
     MediaId,
@@ -815,12 +817,43 @@ def _wire_post_construction_attrs(
     machine.kanji = wiring.kanji_device
 
 
-def build_machine(
-    machine_config: MachineConfig,
-) -> "Machine":
+@dataclass(frozen=True)
+class BuildResult:
+    """What create_machine returns: `status` is STATUS_OK with the machine
+    and an empty `error_text`, or STATUS_BAD_CONFIG with no machine and the
+    UTF-8 message."""
+
+    status: int
+    machine: "Machine | None"
+    error_text: bytes
+
+
+def create_machine(machine_config: MachineConfig) -> BuildResult:
     """Build a Machine from a MachineConfig (host/machine_config.py's
-    load_machine_config produces one). Reads no file, resolves no path and
-    looks up no database.
+    load_machine_config produces one), reporting a rejected configuration
+    as STATUS_BAD_CONFIG instead of raising (machine-core "The core builds
+    a machine and reports a failure as a status"). Reads no file, resolves
+    no path and looks up no database. This is the build entry point of the
+    core; host code builds through it."""
+    try:
+        machine = _build(machine_config)
+    except MachineLoadError as exc:
+        return BuildResult(STATUS_BAD_CONFIG, None, str(exc).encode("utf-8"))
+    return BuildResult(STATUS_OK, machine, b"")
+
+
+def build_machine(machine_config: MachineConfig) -> "Machine":
+    """create_machine for tests and Python embedding: returns the machine,
+    or raises MachineLoadError with the build's message. Host code calls
+    create_machine instead (tests/test_core_frontend_boundary.py)."""
+    result = create_machine(machine_config)
+    if result.machine is None:
+        raise MachineLoadError(result.error_text.decode("utf-8"))
+    return result.machine
+
+
+def _build(machine_config: MachineConfig) -> "Machine":
+    """The build itself, raising on a rejected configuration.
 
     Args:
         machine_config: The MachineConfig document, the ROM images it

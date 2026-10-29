@@ -23,7 +23,7 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
     stderr_buf = io.StringIO()
     run_mock = MagicMock(name="run")
     # load_machine_config receives the cartridge/mapper arguments main()
-    # resolved; build_machine only the resulting config.
+    # resolved; create_machine only the resulting config.
     build_mock = MagicMock(name="load_machine_config")
     extension_mock = MagicMock(name="load_extension_overlay", return_value=None)
     spec_spy = MagicMock(name="load_machine_spec",
@@ -41,7 +41,7 @@ def _run_main(argv: list[str], app_cfg: AppConfig | None = None):
         patch("frontend.sdl2_frontend.run", run_mock),
         patch("host.debugger.prompt.Debugger"),
         patch("host.machine_config.load_machine_config", build_mock),
-        patch("msx.machine_loader.build_machine", MagicMock(name="build_machine")),
+        patch("msx.machine_loader.create_machine", MagicMock(name="create_machine")),
         patch("host.machine_config.load_extension_overlay", extension_mock),
         patch("host.machine_config.load_machine_spec", spec_spy),
     ]

@@ -79,7 +79,7 @@ from msx.machine_config import (
     SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
 )
 from msx.machine_config import encode_machine_config
-from msx.machine_loader import _SRAM_SIZES, build_machine
+from msx.machine_loader import _SRAM_SIZES, create_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
@@ -1132,7 +1132,7 @@ class LoadedMachineConfig(MachineConfig):
     """The MachineConfig load_machine_config() produces, plus host data that
     never reaches the core: the file each battery-backed medium is persisted
     in (see sram_paths) and the file of each disk in `disks`, by drive index
-    (the start of host.media.DiskFiles). build_machine() reads only the
+    (the start of host.media.DiskFiles). create_machine() reads only the
     MachineConfig part."""
 
     sram_files: dict[MediaId, Path] = field(default_factory=dict)
@@ -1325,7 +1325,7 @@ def load_machine_config(
     rtc_initial_time: RtcTime | None = None,
 ) -> LoadedMachineConfig:
     """Read every file `spec` and the arguments name, and encode the
-    MachineConfig document, for msx.machine_loader.build_machine: the
+    MachineConfig document, for msx.machine_loader.create_machine: the
     document, the ROM images it references keyed by SHA1, the run inputs
     (saved SRAM/CMOS images, disks, RTC start time), and the file each
     battery-backed medium is persisted in (sram_files).
@@ -1389,7 +1389,8 @@ def build_machine_from_spec(
     extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime | None = None,
 ) -> Machine:
-    """load_machine_config() then build_machine(), for callers that need no
+    """load_machine_config() then create_machine(), raising MachineLoadError
+    with the build's message, for callers that need no
     access to the MachineConfig (see load_machine_config for the arguments)."""
     config = load_machine_config(
         spec, cartridge1, mapper1, cartridge2, mapper2,
@@ -1399,7 +1400,10 @@ def build_machine_from_spec(
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
-    machine = build_machine(config)
+    result = create_machine(config)
+    if result.machine is None:
+        raise MachineLoadError(result.error_text.decode("utf-8"))
+    machine = result.machine
     if logger is not None:
         attach_logger(machine, logger)
     if tracer is not None:

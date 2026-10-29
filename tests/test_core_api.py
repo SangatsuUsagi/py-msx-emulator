@@ -210,6 +210,7 @@ def test_a_watchpoint_hit_prints_nothing(capsys) -> None:
 
 def test_the_build_takes_no_logger_or_tracer() -> None:
     # machine-core "The build takes no logger or tracer".
-    from msx.machine_loader import build_machine
+    from msx.machine_loader import build_machine, create_machine
 
-    assert list(inspect.signature(build_machine).parameters) == ["machine_config"]
+    for build in (create_machine, build_machine):
+        assert list(inspect.signature(build).parameters) == ["machine_config"]

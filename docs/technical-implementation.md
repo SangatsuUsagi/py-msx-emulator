@@ -1145,7 +1145,7 @@ class method.
 
 ### Core API
 
-`build_machine(config)` in `msx/machine_loader.py` returns a `Machine`.
+`create_machine(config)` in `msx/machine_loader.py` builds a `Machine`.
 `msx/core_api.py` defines `CoreApi`, a `typing.Protocol` that lists every
 operation that code outside `msx/` uses. `Machine` implements it, and mypy
 checks this. The host and the frontend hold the machine as a `CoreApi`. The
@@ -1154,7 +1154,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. It takes no logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) and `attach_vdp_tracer()` (`msx/vdp/tracer.py`) attach them to a built machine |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) and `attach_vdp_tracer()` (`msx/vdp/tracer.py`) attach them to a built machine |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1334,13 +1334,16 @@ from host.machine_config import (
 )
 from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
-from msx.machine_loader import build_machine
+from msx.machine_loader import create_machine
 
 root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host: YAML + files -> MachineConfig
-machine = build_machine(config)                    # core: values only
+result = create_machine(config)                    # core: values only
+if result.machine is None:                         # STATUS_BAD_CONFIG
+    raise SystemExit(result.error_text.decode("utf-8"))
+machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
