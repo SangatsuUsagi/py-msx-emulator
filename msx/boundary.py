@@ -124,12 +124,23 @@ WATCH_WRITE = 2
 # The trace kinds (set_trace_kinds, trace_kinds, trace_sources), bit flags.
 TRACE_VDP = 0x01
 TRACE_MAPPER = 0x02
+TRACE_DEBUG = 0x04  # the --debug log: I/O, VDP mode registers, undefined opcodes, hangs
 
 # TraceEvent.kind, and what the fields a-d hold for each kind.
 TRACE_EVENT_VDP_PORT99 = 1  # a = the byte written to port 0x99
 TRACE_EVENT_VDP_PORT9B = 2  # a = the byte written to port 0x9B, b = R#17 before the write
 TRACE_EVENT_MAP_BANK = 3    # a = window, b = old bank, c = new bank, d = written address
 TRACE_EVENT_LOST = 4        # a = events lost to a full buffer; the other fields 0
+TRACE_EVENT_IO_READ = 5     # a = port, b = value read, c = the CPU's PC register
+TRACE_EVENT_IO_WRITE = 6    # a = port, b = value written, c = the CPU's PC register
+TRACE_EVENT_VDP_MODE_REG = 7  # a = register (0 or 1), b = stored value
+TRACE_EVENT_UNDEFINED_OP = 8  # a = PC, b = opcode byte
+TRACE_EVENT_CPU_HISTORY = 9   # a = PC, b = opcode: one entry of the last 64 instructions
+TRACE_EVENT_HANG_PC_LOOP = 10  # a = PC repeated HANG_PC_REPEAT_THRESHOLD times
+TRACE_EVENT_HANG_HALT_DI = 11  # a = PC of a HALT with interrupts off
+
+# Instructions the TRACE_DEBUG history keeps (TRACE_EVENT_CPU_HISTORY).
+TRACE_HISTORY_SIZE = 64
 
 # Events the trace buffer holds between two drain_trace() calls.
 TRACE_CAPACITY = 65536

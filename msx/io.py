@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.boundary import TRACE_DEBUG, TRACE_EVENT_IO_READ, TRACE_EVENT_IO_WRITE
+
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
 
 
 @dataclass
@@ -47,6 +50,9 @@ class IOBus:
         default_factory=list
     )
     _logger: DebugLogger | None = field(default=None, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # reads and writes are recorded while TRACE_DEBUG is on.
+    _trace: TraceLog | None = field(default=None, repr=False)
     # PORT-NOTE: _get_pc is a closure assigned at wiring time, capturing the
     #   owning Z80/Machine.
     # Rust equivalent: a trait object or feature-flagged field resolved once
@@ -70,6 +76,13 @@ class IOBus:
     ) -> None:
         self._write_handlers.append((start, end, handler))
 
+    def _record_io(self, trace: TraceLog, kind: int, port: int, value: int) -> None:
+        """Record a port access, with the CPU's PC register (the PC the
+        debug log prints). Callers check TRACE_DEBUG first, so a port access
+        with the kind off costs no call."""
+        pc = self._get_pc() if self._get_pc is not None else 0
+        trace.record(kind, port, value, pc)
+
     def read_port(self, port: int) -> int:
         # The Z80 drives a 16-bit port address (high byte = B or A), but MSX
         # devices decode only the low 8 bits. Mask here so handlers and range
@@ -81,10 +94,16 @@ class IOBus:
                 if self._logger is not None:
                     pc = self._get_pc() if self._get_pc is not None else 0
                     self._logger.on_io_read(port, value, pc)
+                trace = self._trace
+                if trace is not None and trace.kinds & TRACE_DEBUG:
+                    self._record_io(trace, TRACE_EVENT_IO_READ, port, value)
                 return value
         if self._logger is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             self._logger.on_io_read(port, 0xFF, pc)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_DEBUG:
+            self._record_io(trace, TRACE_EVENT_IO_READ, port, 0xFF)
         return 0xFF
 
     def write_port(self, port: int, value: int) -> None:
@@ -92,6 +111,9 @@ class IOBus:
         if self._logger is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             self._logger.on_io_write(port, value, pc)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_DEBUG:
+            self._record_io(trace, TRACE_EVENT_IO_WRITE, port, value)
         for start, end, handler in self._write_handlers:
             if start <= port <= end:
                 handler(port, value)

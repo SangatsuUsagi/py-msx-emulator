@@ -4,7 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
-from msx.boundary import TRACE_EVENT_VDP_PORT99, TRACE_VDP
+from msx.boundary import (
+    TRACE_DEBUG,
+    TRACE_EVENT_VDP_MODE_REG,
+    TRACE_EVENT_VDP_PORT99,
+    TRACE_VDP,
+)
 from msx.vdp import renderer
 from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 
@@ -404,6 +409,8 @@ class VDP:
                         self.update_irq()
                     if self._logger is not None:
                         self._logger.on_vdp_reg_write(reg, stored, self._frame_count)
+                    if reg <= 1 and trace is not None and trace.kinds & TRACE_DEBUG:
+                        trace.record(TRACE_EVENT_VDP_MODE_REG, reg, stored)
                     self.addr = ((value << 8) | (self.addr & 0xFF)) & 0x3FFF
                 else:
                     # VRAM address setup

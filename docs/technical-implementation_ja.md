@@ -800,8 +800,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。`set_watchpoints()` は `STATUS_OK` を返し、不正な kind には `STATUS_BAD_ARGUMENT`（6）を返す |
 | | `set_sprites_hidden(hidden)`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない |
-| | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP` と `TRACE_MAPPER`）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
-| | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
+| | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP`、`TRACE_MAPPER`、`TRACE_DEBUG`。`TRACE_DEBUG` は `--debug` のログ）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
+| | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、`TRACE_DEBUG` が有効な間は I/O ポートへの各アクセス、VDP の R#0 と R#1 に保持された各書き込み、各未定義命令、各ハング（PC が 1000 回続くループか、フレームの終わりの割り込み禁止の HALT。直前の 64 命令の後に記録する）を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
