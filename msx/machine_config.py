@@ -271,7 +271,8 @@ def encode_machine_config(
     extension_overlay2: AnyExtensionOverlay | None = None,
 ) -> tuple[bytes, dict[str, bytes]]:
     """The canonical document of a resolved machine, and the images it
-    references keyed by SHA1 (MachineConfig.roms). `roms` holds the images
+    references keyed by SHA1 (the host makes MachineConfig.roms records
+    from them). `roms` holds the images
     the host loaded, by role; `mapper1`/`mapper2` are resolved names, never
     "auto"."""
     images: dict[str, bytes] = {}

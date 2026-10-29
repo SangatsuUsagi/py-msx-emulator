@@ -20,11 +20,10 @@ if TYPE_CHECKING:
 
 from msx.boundary import (
     RTC_DEFAULT_START,
-    DiskMedium,
+    DiskMount,
     MachineConfig,
     MediaId,
     RtcTime,
-    drive_media_id,
     slot_sram_id,
     subslot_sram_id,
 )
@@ -78,6 +77,9 @@ from msx.vdp.vdp import VDP, VdpDevice
 # ---------------------------------------------------------------------------
 # Mapper helpers
 # ---------------------------------------------------------------------------
+
+# The ids that name floppy drives, never a battery-backed medium.
+_DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
 _SRAM_SIZES: dict[str, int] = {
     "ASCII8SRAM2": 2048,
@@ -216,7 +218,7 @@ class _ResolvedConfig:
     extension_overlay1: AnyExtensionOverlay | None
     extension_overlay2: AnyExtensionOverlay | None
     media: dict[MediaId, bytes]
-    disks: dict[MediaId, DiskMedium]
+    disks: dict[int, DiskMount]       # by drive index
     rtc_initial_time: RtcTime | None
     config_sha256: str
 
@@ -235,14 +237,56 @@ def _checked_image(images: dict[str, bytes], role: str, ref: RomRef) -> bytes:
     return data
 
 
+def _media_by_id(config: MachineConfig) -> dict[MediaId, bytes]:
+    """The medium images by id, rejecting a second record for one id and a
+    drive id (disks travel in MachineConfig.disks)."""
+    media: dict[MediaId, bytes] = {}
+    for image in config.media:
+        if image.media_id in _DRIVE_MEDIA_IDS:
+            raise MachineLoadError(
+                f"MachineConfig has a medium image for {image.media_id.name}, a drive id"
+            )
+        if image.media_id in media:
+            raise MachineLoadError(
+                f"MachineConfig has two medium images for {image.media_id.name}"
+            )
+        media[image.media_id] = image.data
+    return media
+
+
+def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMount]:
+    """The disks by drive index, rejecting a second disk for one drive and a
+    disk for a drive the machine does not have."""
+    disks: dict[int, DiskMount] = {}
+    for disk in config.disks:
+        if not 0 <= disk.drive < drive_count:
+            raise MachineLoadError(
+                f"MachineConfig has a disk for drive {disk.drive} but the machine has "
+                f"{drive_count} drive(s)"
+            )
+        if disk.drive in disks:
+            raise MachineLoadError(f"MachineConfig has two disks for drive {disk.drive}")
+        disks[disk.drive] = disk
+    return disks
+
+
 def _resolve(config: MachineConfig) -> _ResolvedConfig:
     """Parse the document and pair every ROM reference with its checked
     image -- everything that can reject the config, before anything is built."""
     parsed = parse_machine_config(config.document)
+    images: dict[str, bytes] = {}
+    for rom in config.roms:
+        images[rom.sha1] = rom.data
+    spec = parsed.spec
+    drive_count = 0
+    if spec.generation == "msx2" and spec.fdc is not None:
+        drive_count = spec.fdc.drives
+    media = _media_by_id(config)
+    disks = _disks_by_drive(config, drive_count)
     roms: dict[str, bytes] = {}
     cartridges: dict[str, bytes] = {}
     for role, ref in parsed.roms.items():
-        image = _checked_image(config.roms, role, ref)
+        image = _checked_image(images, role, ref)
         if role.startswith("cartridge"):
             cartridges[role] = image
         else:
@@ -256,8 +300,8 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
         mapper2=parsed.mapper2,
         extension_overlay1=parsed.extension_overlay1,
         extension_overlay2=parsed.extension_overlay2,
-        media=config.media,
-        disks=config.disks,
+        media=media,
+        disks=disks,
         rtc_initial_time=config.rtc_initial_time,
         config_sha256=parsed.config_sha256,
     )
@@ -986,7 +1030,7 @@ def _build_msx1(
 
 def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     """Construct the FloppyDisk device from spec.fdc, mounting each disk in
-    `config.disks` into the drive with the matching id (DRIVE_A -> drive A)."""
+    `config.disks` into the drive with its index (0 -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
@@ -1003,15 +1047,9 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
         device = TC8566AFInterface(TC8566AF(drives=drives), drives, disk_rom=disk_rom)
     else:
         device = SonyPhilipsInterface(WD2793(), drives, disk_rom=disk_rom)
-    drive_ids = [drive_media_id(idx) for idx in range(len(drives))]
-    for media_id in config.disks:
-        if media_id not in drive_ids:
-            raise MachineLoadError(
-                f"MachineConfig has a disk for {media_id.name} but the machine has "
-                f"{len(drives)} drive(s)"
-            )
-    for idx, media_id in enumerate(drive_ids):
-        disk = config.disks.get(media_id)
+    # _resolve already rejected a disk for a drive the machine lacks.
+    for idx in range(len(drives)):
+        disk = config.disks.get(idx)
         if disk is None:
             continue
         image = DskDiskImage(disk.data, write_protected=disk.write_protected)

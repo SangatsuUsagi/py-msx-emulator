@@ -48,11 +48,12 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
-    DiskMedium,
+    DiskMount,
     MachineConfig,
     MediaId,
+    MediaImage,
+    RomImage,
     RtcTime,
-    drive_media_id,
     slot_sram_id,
     subslot_sram_id,
 )
@@ -1265,13 +1266,13 @@ def _load_spec_roms(
 
 def _load_disks(
     spec: MachineSpec, fdd1: Path | None, fdd2: Path | None
-) -> tuple[dict[MediaId, DiskMedium], dict[int, Path]]:
+) -> tuple[tuple[DiskMount, ...], dict[int, Path]]:
     """The disk images for the drives an MSX2 machine's FDC has, and the
     file of each, by drive index."""
-    disks: dict[MediaId, DiskMedium] = {}
+    disks: list[DiskMount] = []
     files: dict[int, Path] = {}
     if spec.generation != "msx2" or spec.fdc is None:
-        return disks, files
+        return (), files
     for index, path in enumerate((fdd1, fdd2)):
         if path is not None and index >= spec.fdc.drives:
             print(
@@ -1280,22 +1281,31 @@ def _load_disks(
                 file=sys.stderr,
             )
         elif path is not None:
-            disks[drive_media_id(index)] = read_disk_medium(path)
+            medium = read_disk_medium(path)
+            disks.append(DiskMount(index, medium.data, medium.write_protected))
             files[index] = path
-    return disks, files
+    return tuple(disks), files
+
+
+def _rom_images(images: dict[str, bytes]) -> tuple[RomImage, ...]:
+    """The images the document references, as MachineConfig.roms records."""
+    records: list[RomImage] = []
+    for sha1, data in images.items():
+        records.append(RomImage(sha1, data))
+    return tuple(records)
 
 
 def _load_media(
     sram_files: dict[MediaId, Path], carts: _Cartridges
-) -> dict[MediaId, bytes]:
+) -> tuple[MediaImage, ...]:
     """The saved image of each battery-backed medium that has one."""
-    media: dict[MediaId, bytes] = {}
+    media: list[MediaImage] = []
     for media_id, path in sram_files.items():
         size, label = _sram_size_and_label(carts, media_id)
         sram = _load_sram_or_warn(path, size, label)
         if sram is not None:
-            media[media_id] = bytes(sram)
-    return media
+            media.append(MediaImage(media_id, bytes(sram)))
+    return tuple(media)
 
 
 def load_machine_config(
@@ -1355,7 +1365,7 @@ def load_machine_config(
     )
     sram_files = _sram_paths(spec, carts)
     return LoadedMachineConfig(
-        document=document, roms=images, media=_load_media(sram_files, carts),
+        document=document, roms=_rom_images(images), media=_load_media(sram_files, carts),
         disks=disks, rtc_initial_time=rtc_initial_time,
         sram_files=sram_files, disk_files=disk_files,
     )

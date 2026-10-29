@@ -755,7 +755,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 値 | 向き | 中身 |
 | --- | --- | --- |
-| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（小文字 16 進の SHA1 をキーにした ROM イメージ）、`media`（`MediaId` をキーにした保存済みの SRAM と CMOS のイメージ）、`disks`（マウントする `DiskMedium`。キーはドライブ id）、`rtc_initial_time` |
+| `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（`RomImage` のレコード。イメージと、その小文字 16 進の SHA1）、`media`（`MediaImage` のレコード。保存済みの SRAM か CMOS のイメージと、その `MediaId`）、`disks`（`DiskMount` のレコード。マウントするイメージ、ドライブ番号、書き込み禁止のフラグ）、`rtc_initial_time`。3 つのイメージのフィールドはタプルで、1 つの id やドライブにレコードは 1 つまで |
 | `InputFrame` | 入力、毎フレーム | アクティブ Low のキーボードマトリクス 11 行、アクティブ Low の 6 ビットのジョイスティックポート 2 つ（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、そのフレームのマウスの移動量（MSX 側の単位）、マウスの 2 つのボタン。作った後は変更できず、コンストラクタがすべてのフィールドを調べる |
 | `FrameOutput` | 出力、毎フレーム | `video`（`RgbFrame`。描画しなかったフレームでは `None`）、`audio`、`frame_number` |
 | `RgbFrame` | 出力 | 行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める） |
@@ -764,7 +764,6 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | `CpuRegisters` | 出力 | レジスタのクエリの結果：AF、BC、DE、HL、裏レジスタ、IX、IY、SP、PC、I、R、IFF1 と IFF2（0 か 1）、IM |
 | `VdpInfo` | 出力 | VDP のクエリの結果：VDP の種類、コントロールレジスタとコマンドレジスタ、ステータスレジスタ、パレット、コマンドの進み具合 |
 | メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
-| `DiskMedium` | 入力 | `data` と `write_protected`。コアはディスクのファイル名を持たない。各ドライブのファイルは、host が `host/media.py` の `DiskFiles` で持つ |
 
 `MediaId` は整数の id の閉じた集合。値は 0〜15 で、順に `SLOT1_SRAM`、`SLOT2_SRAM`、`SLOT<n>_SUB<sub>_SRAM`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`FMPAC_SRAM`、`RTC_CMOS`、`DRIVE_A`〜`DRIVE_D`（FDC のドライブ 0〜3）。id は整数として境界を越える。Python のコードでは `MediaId` を `.name` で文字列にする。
 
