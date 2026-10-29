@@ -138,8 +138,6 @@ _DIAGNOSTICS_ALLOWLIST: dict[str, str] = {
     "host/debugger/prompt.py:_cmd_trace_disable": "td (VDP trace off)",
     "host/debugger/prompt.py:_mapper_targets": "ce / cd (mapper trace)",
     "host/debugger/prompt.py:_cmd_disable_sprites": "ds (sprite toggle)",
-    "host/debugger/prompt.py:_cmd_slot_active": "sl (active slot view)",
-    "host/debugger/prompt.py:_cmd_slot_tree": "st (slot tree view)",
 }
 
 

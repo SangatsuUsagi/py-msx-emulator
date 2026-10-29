@@ -28,7 +28,7 @@ from msx.vdp.vdp import VDP
 _CORE_QUERIES = (
     "cpu_registers", "read_memory", "vram_size", "read_vram", "vdp_info",
     "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
-    "main_ram_range", "drive_count",
+    "main_ram_range", "drive_count", "slot_layout", "slot_info",
 )
 
 
@@ -644,6 +644,35 @@ class TestSlotActive:
                 assert "Flat" in line
 
 
+class _SlotQueriesOnly:
+    """A core API stand-in that is not a Machine and offers only the slot
+    layout and slot description queries (any other member raises)."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def slot_layout(self):
+        return self._real.slot_layout()
+
+    def slot_info(self, primary, secondary, page):
+        return self._real.slot_info(primary, secondary, page)
+
+
+def test_the_slot_views_use_only_the_core_api(capsys):
+    # debug-monitor "The slot views use only the core API".
+    from tests.factories import make_machine_msx2
+
+    m = make_machine_msx2(bytes(32 * 1024), bytes(0x4000))
+    m.io.write_port(0xA8, 0xC0)
+    m.write_memory(0xFFFF, b"\xa0")
+    for command in ("_cmd_slot_active", "_cmd_slot_tree"):
+        getattr(Debugger(m), command)()
+        expected = capsys.readouterr().out
+        getattr(Debugger(_SlotQueriesOnly(m)), command)()
+        assert capsys.readouterr().out == expected
+        assert "Primary" in expected or "P3" in expected
+
+
 class TestSlotTree:
     def test_st_msx2_shows_expanded_slot3(self, capsys):
         m = _make_slot_machine(
@@ -754,7 +783,7 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_size_kb(3, 2) == "256KB"
+        assert mem.debug_slot_size_kb(3, 2) == 256
 
 
 # ---------------------------------------------------------------------------
