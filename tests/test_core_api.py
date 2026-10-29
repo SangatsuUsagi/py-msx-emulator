@@ -6,11 +6,15 @@ from __future__ import annotations
 import inspect
 from dataclasses import fields
 
+import pytest
+
 from msx.boundary import (
     STOP_NONE,
     STOP_WATCHPOINT,
     VDP_KIND_TMS9918A,
     VDP_KIND_V9938,
+    WATCH_READ,
+    WATCH_WRITE,
     CpuRegisters,
 )
 from msx.core_api import CoreApi
@@ -111,11 +115,32 @@ def test_machine_without_a_floppy_interface_has_no_drives() -> None:
 def test_break_setting_queries_reflect_the_setters() -> None:
     m = _msx1()
     m.set_breakpoints([0x4000, 0x0100])
-    m.set_watchpoints([(0xC000, "rw"), (0x8000, "r"), (0x9000, "w")])
+    m.set_watchpoints(
+        [(0xC000, WATCH_READ | WATCH_WRITE), (0x8000, WATCH_READ), (0x9000, WATCH_WRITE)]
+    )
     m.set_break_halt_di(True)
     assert m.breakpoints() == (0x0100, 0x4000)
-    assert m.watchpoints() == ((0x8000, "r"), (0x9000, "w"), (0xC000, "rw"))
+    assert m.watchpoints() == (
+        (0x8000, WATCH_READ), (0x9000, WATCH_WRITE), (0xC000, WATCH_READ | WATCH_WRITE)
+    )
     assert m.break_halt_di() is True
+
+
+def test_watchpoints_round_trip_as_bit_flags() -> None:
+    # machine-core "Watchpoints round-trip as bit flags".
+    m = _msx1()
+    m.set_watchpoints([(0xC000, WATCH_READ), (0xD000, WATCH_READ | WATCH_WRITE)])
+    assert m.watchpoints() == ((0xC000, WATCH_READ), (0xD000, WATCH_READ | WATCH_WRITE))
+
+
+@pytest.mark.parametrize("kind", [0, 4, WATCH_READ | 8, -1])
+def test_an_invalid_watch_kind_is_rejected(kind: int) -> None:
+    # machine-core "An invalid watch kind is rejected".
+    m = _msx1()
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
+    with pytest.raises(ValueError):
+        m.set_watchpoints([(0x8000, WATCH_READ), (0x9000, kind)])
+    assert m.watchpoints() == ((0xC000, WATCH_WRITE),)
 
 
 def test_status_flags_survive_the_vdp_query() -> None:
@@ -128,7 +153,7 @@ def test_status_flags_survive_the_vdp_query() -> None:
 
 def test_memory_read_does_not_hit_a_watchpoint() -> None:
     m = _msx1()
-    m.set_watchpoints([(0xC000, "r")])
+    m.set_watchpoints([(0xC000, WATCH_READ)])
     m.read_memory(0xC000, 1)
     assert m.last_stop().reason == STOP_NONE
     assert not m._stop_pending
@@ -176,7 +201,7 @@ def test_no_core_api_member_takes_a_callback() -> None:
 
 def test_a_watchpoint_hit_prints_nothing(capsys) -> None:
     m = _msx1_ram_high()
-    m.set_watchpoints([(0x0001, "r")])  # the NOP sled reads it as an opcode
+    m.set_watchpoints([(0x0001, WATCH_READ)])  # the NOP sled reads it as an opcode
     out = m.step_frame(InputFrame(), render_video=False)
     assert out.stop_reason == STOP_WATCHPOINT
     captured = capsys.readouterr()

@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
 from host.screenshot import encode_rgb24_png, scale_rgb24
+from host.watch import watch_kind
 from msx.boundary import (
     STOP_BREAKPOINT,
     STOP_REQUESTED,
@@ -196,7 +197,7 @@ class DebugServer:
         # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
         # surface is decoupled from the interactive debugger's REPL state.
         self._breakpoints: dict[int, int] = {}
-        self._watchpoints: dict[int, tuple[int, str]] = {}
+        self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
         self._next_wp_id = 0
         # Desired joystick state per port (1, 2): direction/trigger booleans.
@@ -513,10 +514,10 @@ class DebugServer:
         self._machine.set_breakpoints(list(self._breakpoints.values()))
         return True
 
-    def alloc_watchpoint(self, address: int, mode: str) -> int:
+    def alloc_watchpoint(self, address: int, kind: int) -> int:
         wp_id = self._next_wp_id
         self._next_wp_id += 1
-        self._watchpoints[wp_id] = (address, mode)
+        self._watchpoints[wp_id] = (address, kind)
         self._machine.set_watchpoints(list(self._watchpoints.values()))
         return wp_id
 
@@ -640,9 +641,10 @@ def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     mode = params.get("mode", "rw")
-    if mode not in ("r", "w", "rw"):
+    kind = watch_kind(mode) if mode in ("r", "w", "rw") else None
+    if kind is None:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
-    wp_id = server.alloc_watchpoint(addr, mode)
+    wp_id = server.alloc_watchpoint(addr, kind)
     return {"id": wp_id, "address": hex16(addr), "mode": mode, "active": True}
 
 

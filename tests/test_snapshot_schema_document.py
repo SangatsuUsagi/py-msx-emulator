@@ -16,7 +16,6 @@ from msx.fdc import disk_drive, interface, tc8566af, wd2793
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.machine_spec import ExtensionOverlay
-from msx.mouse import MouseDevice
 from msx.psg import JoystickPort
 from msx.vdp import v9938
 from tests.factories import make_machine, make_machine_msx2
@@ -56,7 +55,7 @@ def _ran(machine: Machine) -> Machine:
 
 
 def _with_mouse(machine: Machine) -> Machine:
-    machine.attach_mouse(MouseDevice(), JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
     return machine
 
 

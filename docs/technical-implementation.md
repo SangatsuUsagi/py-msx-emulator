@@ -1167,14 +1167,14 @@ belongs to the debugger's diagnostics.
 | | `mark_persisted(media_id)` | Call it after the host has written the bytes |
 | | `mount_disk(drive, medium) -> bytes \| None` | `None` ejects. Returns the outgoing image when it holds unpersisted writes. Raises `ValueError` for a drive the machine lacks or an image whose size is not a positive multiple of 512 |
 | | `disk_mounted(drive)`, `disk_path(drive)` | Drive state and the recorded host name |
-| Devices | `attach_mouse(MouseDevice(), JoystickPort(n))` | Connects an MSX mouse to joystick port 1 or 2 |
+| Devices | `attach_mouse(port)` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
 | | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects |
 | | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size |
 | | `vdp_info() -> VdpInfo` | It clears no status flag |
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
-| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
 | | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
@@ -1370,7 +1370,7 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 - `eject_disk` is `mount_disk(drive, None)`. `read_media` returns the bytes
   alone. The write-protect flag stays with the mounted image.
 - The frame rate is `VideoStandard` data, not a method.
-- The frontend attaches the mouse at run time (`attach_mouse`). The contract
+- The frontend attaches the mouse at run time (`attach_mouse(port)`). The contract
   has it as a config field. Which form to keep is an open question.
 - `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
   SRAM file paths of the host. The core reads only the `MachineConfig` part.
