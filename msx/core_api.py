@@ -9,10 +9,13 @@ API has no callback into the host"): a break is the step_frame stop reason
 and the last-stop query. Every parameter and result is an integer, bytes,
 None, or a flat record or tuple of these (machine-core "Core API values are
 integers, bytes or flat records"): the ids and machine properties are
-integer enums, watch kinds are bit flags, load_state and mount_disk return
-an integer status (msx/boundary.py STATUS_*) with last_error_text() for the
-message, and no member takes or returns a file path
-(allium/core-frontend.allium).
+integer enums, watch kinds are bit flags, and no member takes or returns a
+file path. No member raises for an invalid argument: load_state,
+mount_disk, mark_persisted, set_watchpoints and attach_mouse return an
+integer status (msx/boundary.py STATUS_*), read_media returns None for an
+id the machine lacks, and last_error_text() gives the message of the last
+failure. The machine is built by msx.machine_loader.create_machine, which
+reports a rejected configuration the same way (allium/core-frontend.allium).
 """
 from __future__ import annotations
 
