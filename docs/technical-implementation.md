@@ -1132,10 +1132,16 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | media image | in/out | `bytes`, named by a `MediaId` |
 | `DiskMedium` | in | `data`, `write_protected`, and `path`: the host's name for the file, which the core records but never opens |
 
-`MediaId` is a closed set: `slot1.sram`, `slot2.sram`, `slot<n>.<sub>.sram`
-(an expanded-slot device, slots 1-2, sub-slots 0-3), `fmpac.sram`,
-`rtc.cmos`, and `drive_a` to `drive_d` (FDC drives 0-3). The string values are
-the wire spelling. Python code formats a `MediaId` with `.value`.
+`MediaId` is a closed set of integer ids, 0 to 15 in this order:
+`SLOT1_SRAM`, `SLOT2_SRAM`, `SLOT<n>_SUB<sub>_SRAM` (an expanded-slot device,
+slots 1-2, sub-slots 0-3), `FMPAC_SRAM`, `RTC_CMOS`, and `DRIVE_A` to
+`DRIVE_D` (FDC drives 0-3). An id crosses the boundary as an integer. Python
+code formats a `MediaId` with `.name`.
+
+`VideoStandard` and `KeyboardLayout` are integer enums too. The machine YAML
+and the canonical MachineConfig document spell them as text (`ntsc` and
+`pal`, `int` and `jp`) through their `spelling` property and `from_spelling`
+class method.
 
 ### Core API
 

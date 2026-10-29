@@ -5,7 +5,7 @@ import pytest
 
 from host.machine_config import load_machine_config, sram_paths
 from host.media import persist_dirty_media
-from msx.boundary import MachineConfig, RtcTime
+from msx.boundary import MachineConfig, MediaId, RtcTime
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineSpec, _RomEntry
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
@@ -254,11 +254,11 @@ def test_machine_loads_previously_saved_rtc_sram(
     machine1 = build_machine(config1)
     assert machine1.rtc is not None
     paths1 = sram_paths(config1)
-    assert paths1["rtc.cmos"] == Path("saves/sram/rtc_test_msx2.sram")
+    assert paths1[MediaId.RTC_CMOS] == Path("saves/sram/rtc_test_msx2.sram")
     _set_block(machine1.rtc, 2)
     _select(machine1.rtc, 0)
     machine1.rtc.write_port(0xB5, 0xA)
-    assert "rtc.cmos" in machine1.dirty_media()
+    assert MediaId.RTC_CMOS in machine1.dirty_media()
     persist_dirty_media(machine1, paths1)
     assert machine1.dirty_media() == []
 
@@ -306,8 +306,8 @@ def test_two_rtc_machines_do_not_share_cmos_ram(
     assert machine_a.rtc is not None and machine_b.rtc is not None
     paths_a = sram_paths(config_a)
     paths_b = sram_paths(config_b)
-    assert paths_a["rtc.cmos"] == Path("saves/sram/rtc_machine_a.sram")
-    assert paths_b["rtc.cmos"] == Path("saves/sram/rtc_machine_b.sram")
+    assert paths_a[MediaId.RTC_CMOS] == Path("saves/sram/rtc_machine_a.sram")
+    assert paths_b[MediaId.RTC_CMOS] == Path("saves/sram/rtc_machine_b.sram")
 
     _set_block(machine_a.rtc, 2)
     _select(machine_a.rtc, 0)

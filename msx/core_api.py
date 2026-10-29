@@ -7,8 +7,8 @@ records of integers and bytes (msx/boundary.py), and change no emulated
 state. No member takes a callback the core calls (machine-core "The core
 API has no callback into the host"): a break is the step_frame stop reason
 and the last-stop query. The other members keep their current shapes for
-now: the media ids, the disk path, the string watch modes and the mouse
-attachment change in later steps (allium/core-frontend.allium).
+now: the disk path, the string watch modes and the mouse attachment
+change in later steps (allium/core-frontend.allium).
 """
 from __future__ import annotations
 

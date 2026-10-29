@@ -225,9 +225,9 @@ def _machine_object(
         "id": spec.machine_id,
         "name": spec.name,
         "generation": spec.generation,
-        "video_standard": spec.video_standard.value,
+        "video_standard": spec.video_standard.spelling,
         "m1_wait_states": spec.m1_wait_states,
-        "keyboard_layout": spec.keyboard_type.value,
+        "keyboard_layout": spec.keyboard_type.spelling,
         "ppi_control_read": spec.ppi_control_read.value,
         "has_v9938": spec.has_v9938,
         "has_rtc": spec.has_rtc,
@@ -436,8 +436,8 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
         has_rtc=check_bool(obj["has_rtc"], f"{label}.has_rtc"),
         slot0_ram_entry=slot0_ram,
         keyboard_type=_enum(
-            obj["keyboard_layout"], f"{label}.keyboard_layout", KeyboardLayout,
-            [layout.value for layout in KeyboardLayout],
+            obj["keyboard_layout"], f"{label}.keyboard_layout",
+            KeyboardLayout.from_spelling, [layout.spelling for layout in KeyboardLayout],
         ),
         ppi_control_read=_enum(
             obj["ppi_control_read"], f"{label}.ppi_control_read", PpiControlRead,
@@ -450,8 +450,8 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
         device_io_ports=io_ports,
         io_device=_optional_io_device(obj["io_device"], f"{label}.io_device", "io_device", roms),
         video_standard=_enum(
-            obj["video_standard"], f"{label}.video_standard", VideoStandard,
-            [standard.value for standard in VideoStandard],
+            obj["video_standard"], f"{label}.video_standard",
+            VideoStandard.from_spelling, [standard.spelling for standard in VideoStandard],
         ),
         m1_wait_states=check_int(obj["m1_wait_states"], f"{label}.m1_wait_states", 0, 15),
         flat_ram_subslot=check_optional_int(

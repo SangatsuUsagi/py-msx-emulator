@@ -766,7 +766,9 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
 | `DiskMedium` | 入力 | `data`、`write_protected`、`path`。`path` は host 側でのファイルの名前。コアは記録するだけで、ファイルは開かない |
 
-`MediaId` は閉じた集合。値は `slot1.sram`、`slot2.sram`、`slot<n>.<sub>.sram`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`fmpac.sram`、`rtc.cmos`、`drive_a`〜`drive_d`（FDC のドライブ 0〜3）。外部とやり取りするときは、この文字列の値を使う。Python のコードでは `MediaId` を `.value` で文字列にする。
+`MediaId` は整数の id の閉じた集合。値は 0〜15 で、順に `SLOT1_SRAM`、`SLOT2_SRAM`、`SLOT<n>_SUB<sub>_SRAM`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`FMPAC_SRAM`、`RTC_CMOS`、`DRIVE_A`〜`DRIVE_D`（FDC のドライブ 0〜3）。id は整数として境界を越える。Python のコードでは `MediaId` を `.name` で文字列にする。
+
+`VideoStandard` と `KeyboardLayout` も整数の列挙型。マシンの YAML と正規化した MachineConfig のドキュメントでは、`spelling` プロパティと `from_spelling` クラスメソッドを通して、テキスト（`ntsc` と `pal`、`int` と `jp`）で書く。
 
 ### コアの API
 
