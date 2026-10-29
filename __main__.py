@@ -656,9 +656,15 @@ def main() -> None:
             )
             sram_files = sram_paths(config)
             disk_files = DiskFiles(config.disk_files)
-            machine = build_machine(config, logger=logger, tracer=tracer)
+            machine = build_machine(config)
         except MachineLoadError as exc:
             _fail(str(exc))
+        if logger is not None:
+            from msx.diagnostics.logger import attach_logger
+            attach_logger(machine, logger)
+        if tracer is not None:
+            from msx.vdp.tracer import attach_vdp_tracer
+            attach_vdp_tracer(machine, tracer)
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The

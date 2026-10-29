@@ -1154,7 +1154,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. The optional `logger`/`tracer` arguments are diagnostics |
+| Construction | `build_machine(config)` | Raises `MachineLoadError` (`msx/machine_spec.py`) for a malformed document or a missing or mismatched ROM image, before it builds anything. It takes no logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) and `attach_vdp_tracer()` (`msx/vdp/tracer.py`) attach them to a built machine |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1197,7 +1197,9 @@ The other members do not cross the boundary, and a port does not need them
 to run software:
 
 - `run_frame()`, the internal frame loop
-- the VDP and mapper tracers
+- the diagnostic logger and the VDP and mapper tracers, which
+  `attach_logger()`, `attach_vdp_tracer()` and
+  `msx.mapper_tracer.attach_to_machine()` attach to a built machine
 
 ### MachineConfig document
 
@@ -1522,7 +1524,8 @@ at init, and indexes them directly. Only 32 combinations exist across all
 #### Callable tracer hooks
 
 `VDP` (TMS9918A) and `V9938` both store `tracer`, `_get_pc`, and `_get_cycle`
-as nullable `Callable` fields. The machine assigns them at wiring time, and the
+as nullable `Callable` fields. `attach_vdp_tracer()` assigns them to a built
+machine (the debugger's `te` command does the same), and the
 VDP calls them on each related event. Python types these fields as
 `Callable[[], None] | None`, but they have no direct static equivalent.
 

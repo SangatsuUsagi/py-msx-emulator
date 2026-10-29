@@ -3,7 +3,10 @@ from __future__ import annotations
 import sys
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
+
+if TYPE_CHECKING:
+    from msx.machine import Machine
 
 # Keys are the (M1, M2, M3) mode-bit tuple (TMS9918A R0/R1 screen-mode bits).
 _VDP_MODE_NAMES = {
@@ -111,3 +114,20 @@ class DebugLogger:
 
     def on_io_write(self, port: int, value: int, pc: int) -> None:
         self._emit("IO", f"OUT  port={port:02X}  val={value:02X}  PC={pc:04X}")
+
+
+def attach_logger(machine: Machine, logger: DebugLogger) -> None:
+    """Attach `logger` to a built machine: the machine, the CPU, the memory,
+    the I/O bus and the VDP emit through it from the next instruction on.
+    A diagnostics function of the Python core, outside the core API (like
+    msx.mapper_tracer.attach_to_machine); a native core need not offer it."""
+    from msx.vdp.v9938 import V9938
+    from msx.vdp.vdp import VDP
+
+    machine._logger = logger
+    machine.cpu._logger = logger
+    machine.memory._logger = logger
+    machine.io._logger = logger
+    vdp = machine.vdp
+    if isinstance(vdp, (VDP, V9938)):
+        vdp._logger = logger

@@ -28,7 +28,6 @@ from msx.boundary import (
     subslot_sram_id,
 )
 from msx.cpu.z80 import Z80
-from msx.diagnostics.logger import DebugLogger
 from msx.fmpac import FmPac
 from msx.input import InputLines
 from msx.io import IOBus
@@ -70,7 +69,6 @@ from msx.ram_mapper import RamMapper
 from msx.rtc import RTC
 from msx.scc import SCC
 from msx.sram import SramImage
-from msx.vdp.tracer import Tracer
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP, VdpDevice
 
@@ -819,8 +817,6 @@ def _wire_post_construction_attrs(
 
 def build_machine(
     machine_config: MachineConfig,
-    logger: DebugLogger | None = None,
-    tracer: Tracer | None = None,
 ) -> "Machine":
     """Build a Machine from a MachineConfig (host/machine_config.py's
     load_machine_config produces one). Reads no file, resolves no path and
@@ -830,8 +826,6 @@ def build_machine(
         machine_config: The MachineConfig document, the ROM images it
             references by SHA1, initial SRAM images, disks to mount and RTC
             start time.
-        logger: Optional DebugLogger for diagnostic output.
-        tracer: Optional VDP register write tracer (V9938 only).
 
     Returns:
         A fully-wired Machine ready for emulation.
@@ -883,7 +877,7 @@ def build_machine(
 
     input_state = InputLines()
     psg = PSG(_input=input_state)
-    io = IOBus(_logger=logger)
+    io = IOBus()
     if wiring.fmpac_device is not None:
         io.register_read(0x7C, 0x7D, wiring.fmpac_device.read_port)
         io.register_write(0x7C, 0x7D, wiring.fmpac_device.write_port)
@@ -914,8 +908,6 @@ def build_machine(
             input_state=input_state,
             psg=psg,
             io=io,
-            logger=logger,
-            tracer=tracer,
             machine_cls=Machine,
             slot1_sub_slot_enabled=slot1_sub_slot_enabled,
             mapper1_subslots=mapper1_subslots,
@@ -934,7 +926,6 @@ def build_machine(
             input_state=input_state,
             psg=psg,
             io=io,
-            logger=logger,
             machine_cls=Machine,
             slot1_sub_slot_enabled=slot1_sub_slot_enabled,
             mapper1_subslots=mapper1_subslots,
@@ -986,7 +977,6 @@ def _build_msx1(
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    logger: DebugLogger | None,
     machine_cls: "type[Machine]",
     slot1_sub_slot_enabled: bool = False,
     mapper1_subslots: list[Mapper | None] | None = None,
@@ -1000,7 +990,6 @@ def _build_msx1(
         _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
-        _logger=logger,
         extrom=logo_bytes,
         rom_name=spec.main_rom_entry.file,
         slot0_ram=slot0_ram,
@@ -1012,16 +1001,16 @@ def _build_msx1(
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else _empty_subslots(),
     )
-    vdp = VDP(_logger=logger)
+    vdp = VDP()
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )
     _register_common_io(io, spec, vdp, psg, ppi, _DEFAULT_IO_PORTS["vdp_tms9918a"])
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
-              m1_wait_states=spec.m1_wait_states, _logger=logger)
+              m1_wait_states=spec.m1_wait_states)
     return machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
+        input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
         ppi=ppi,
@@ -1069,8 +1058,6 @@ def _build_msx2(
     input_state: InputLines,
     psg: PSG,
     io: IOBus,
-    logger: DebugLogger | None,
-    tracer: Tracer | None,
     machine_cls: "type[Machine]",
     slot1_sub_slot_enabled: bool = False,
     mapper1_subslots: list[Mapper | None] | None = None,
@@ -1100,7 +1087,6 @@ def _build_msx2(
         _mapper=mapper1_instance,
         _mapper2=mapper2_instance,
         slot_register=0x00,
-        _logger=logger,
         extrom=logo_bytes,
         sub0_rom=sub_bytes,
         sub_slot_enabled=True,
@@ -1120,7 +1106,7 @@ def _build_msx2(
         _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else _empty_subslots(),
     )
-    vdp: V9938 | VDP = V9938(_logger=logger) if spec.has_v9938 else VDP(_logger=logger)
+    vdp: V9938 | VDP = V9938() if spec.has_v9938 else VDP()
     rtc: RTC | None = None
     if spec.has_rtc:
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
@@ -1148,10 +1134,10 @@ def _build_msx2(
         io.register_write(ram_s, ram_e, ram_mapper.write_port)
 
     cpu = Z80(read_byte=memory.read, write_byte=memory.write,
-              m1_wait_states=spec.m1_wait_states, _logger=logger)
+              m1_wait_states=spec.m1_wait_states)
     machine = machine_cls(
         cpu=cpu, vdp=vdp, memory=memory, io=io, psg=psg, scc=scc, dac=dac,
-        input=input_state, _logger=logger,
+        input=input_state,
         video_standard=spec.video_standard,
         keyboard_layout=spec.keyboard_type,
         fdc=fdc_device,
@@ -1163,10 +1149,4 @@ def _build_msx2(
         #   closures; a port shares a narrow cycle counter with the RTC.
         rtc._get_cycle = lambda: machine.cycle_count
         rtc._start_cycle = machine.cycle_count
-    if tracer is not None and isinstance(vdp, V9938):
-        vdp.tracer = tracer
-        vdp._get_pc = lambda: machine.cpu.instruction_pc
-        vdp._get_cycle = lambda: machine.cycle_count
-        # The tracer reads the VDP frame count directly (V9938.write_port passes
-        # self._frame_count), so no _get_frame getter is needed.
     return machine

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from host.machine_config import load_machine_config
 from msx.boundary import MachineConfig
-from msx.diagnostics.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger, attach_logger
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
@@ -20,7 +20,7 @@ from msx.machine_spec import (
     MachineSpec,
     _RomEntry,
 )
-from msx.vdp.tracer import Tracer
+from msx.vdp.tracer import Tracer, attach_vdp_tracer
 
 
 def _reversed_keys(node: object) -> object:
@@ -116,6 +116,16 @@ def make_config_msx2(
     )
 
 
+def _attach_diagnostics(
+    machine: Machine, logger: DebugLogger | None, tracer: Tracer | None
+) -> Machine:
+    if logger is not None:
+        attach_logger(machine, logger)
+    if tracer is not None:
+        attach_vdp_tracer(machine, tracer)
+    return machine
+
+
 def make_machine(
     rom: bytes,
     cartridge: bytes | None = None,
@@ -132,7 +142,7 @@ def make_machine(
         rom, cartridge, mapper, cartridge2, mapper2, logrom,
         extension_overlay, extension_overlay1,
     )
-    return build_machine(config, logger=logger, tracer=tracer)
+    return _attach_diagnostics(build_machine(config), logger, tracer)
 
 
 def make_machine_msx2(
@@ -151,7 +161,7 @@ def make_machine_msx2(
         rom, extrom, logrom=logrom, cartridge=cartridge, mapper=mapper,
         cartridge2=cartridge2, mapper2=mapper2,
     )
-    return build_machine(config, logger=logger, tracer=tracer)
+    return _attach_diagnostics(build_machine(config), logger, tracer)
 
 
 def load_state_file(machine: Machine, path: Path | None = None) -> None:
