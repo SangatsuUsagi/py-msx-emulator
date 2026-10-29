@@ -110,7 +110,7 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 ### デバッガ制御
 
 - **`debugger.status`** → `{ paused, pc, reason }`。状態を変更せずに報告します。
-- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`。Ctrl+C を押すのと同等です。
+- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`。ターミナルでの Ctrl+C はこれと同じではありません。Ctrl+C はデバッガの REPL を開き、REPL から再開するまでサーバーは要求を処理しません。
 
 ### CPU / 実行
 
