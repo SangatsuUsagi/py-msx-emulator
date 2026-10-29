@@ -41,6 +41,7 @@ def _bind_core_queries(m: MagicMock) -> None:
     m._watch_read = frozenset()
     m._watch_write = frozenset()
     m._break_halt_di = False
+    m.__class__ = Machine  # the trace commands need the Python core
     for name in _CORE_QUERIES:
         setattr(m, name, functools.partial(getattr(Machine, name), m))
 
@@ -672,6 +673,43 @@ def test_the_slot_views_use_only_the_core_api(capsys):
         getattr(Debugger(_SlotQueriesOnly(m)), command)()
         assert capsys.readouterr().out == expected
         assert "Primary" in expected or "P3" in expected
+
+
+class _OtherCore:
+    """A core API object that is not the Python core: it forwards every
+    member to a real Machine but is not a Machine instance."""
+
+    def __init__(self, machine: Machine) -> None:
+        self._real = machine
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_te_on_another_core_prints_a_message(capsys):
+    # debug-monitor "te on another core prints a message".
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024))
+    with patch("builtins.input", side_effect=iter(["te", "c"])):
+        Debugger(_OtherCore(m)).enter()  # keeps running until `c`
+    assert "te: needs the Python core" in capsys.readouterr().out
+    assert m.vdp.tracer is None
+
+
+def test_ce_on_another_core_prints_a_message(capsys):
+    # debug-monitor "ce on another core prints a message".
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=bytes(128 * 1024), mapper="ASCII16")
+    dbg = Debugger(_OtherCore(m))
+    dbg._cmd_mapper_trace_enable()
+    assert capsys.readouterr().out == "ce: needs the Python core\n"
+    assert m.memory._mapper._tracer is None
+    dbg._cmd_mapper_trace_disable()
+    assert capsys.readouterr().out == "cd: needs the Python core\n"
+    dbg._cmd_trace_disable()
+    assert capsys.readouterr().out == "td: needs the Python core\n"
 
 
 def test_ds_hides_and_shows_sprites(capsys):
