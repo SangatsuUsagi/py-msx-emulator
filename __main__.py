@@ -580,7 +580,7 @@ def main() -> None:
         load_machine_spec,
         sram_paths,
     )
-    from msx.machine_loader import build_machine
+    from msx.machine_loader import create_machine
     from msx.machine_spec import MachineLoadError
     try:
         device_registry = load_device_registry(_CONFIG_DIR)
@@ -656,9 +656,12 @@ def main() -> None:
             )
             sram_files = sram_paths(config)
             disk_files = DiskFiles(config.disk_files)
-            machine = build_machine(config)
         except MachineLoadError as exc:
             _fail(str(exc))
+        result = create_machine(config)
+        if result.machine is None:
+            _fail(result.error_text.decode("utf-8"))
+        machine = result.machine
         if logger is not None:
             from msx.diagnostics.logger import attach_logger
             attach_logger(machine, logger)

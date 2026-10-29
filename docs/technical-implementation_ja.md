@@ -771,11 +771,11 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 ### コアの API
 
-`msx/machine_loader.py` の `build_machine(config)` は `Machine` を返す。`msx/core_api.py` の `CoreApi` は、`msx/` の外のコードが使う操作をすべて並べた `typing.Protocol`。`Machine` がこれを実装し、mypy がそれを確かめる。host とフロントエンドは、マシンを `CoreApi` として持つ。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガの診断用。
+`msx/machine_loader.py` の `create_machine(config)` が `Machine` を作る。`msx/core_api.py` の `CoreApi` は、`msx/` の外のコードが使う操作をすべて並べた `typing.Protocol`。`Machine` がこれを実装し、mypy がそれを確かめる。host とフロントエンドは、マシンを `CoreApi` として持つ。下の操作が境界にあたる。`Machine` のそれ以外は、内部用かデバッガの診断用。
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `build_machine(config)` | 文書に誤りがあるか、ROM イメージが欠けているか合わないときは、構築を始める前に `MachineLoadError`（`msx/machine_spec.py`）を出す。ロガーとトレーサは引数に取らない。構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）と `attach_vdp_tracer()`（`msx/vdp/tracer.py`）でつなぐ |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）と `attach_vdp_tracer()`（`msx/vdp/tracer.py`）でつなぐ |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -867,13 +867,16 @@ from host.machine_config import (
 )
 from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
-from msx.machine_loader import build_machine
+from msx.machine_loader import create_machine
 
 root = Path(".")                                   # リポジトリのルート
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host：YAML とファイル -> MachineConfig
-machine = build_machine(config)                    # コア：値だけを使う
+result = create_machine(config)                    # コア：値だけを使う
+if result.machine is None:                         # STATUS_BAD_CONFIG
+    raise SystemExit(result.error_text.decode("utf-8"))
+machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)

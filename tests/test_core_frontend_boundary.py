@@ -205,3 +205,28 @@ def test_the_allowlist_names_only_diagnostics() -> None:
     for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
         assert entry in needed, f"stale allowlist entry: {entry}"
         assert reason.strip(), f"allowlist entry without a reason: {entry}"
+
+
+def _calls_named(path: Path, name: str) -> list[int]:
+    """Line numbers of calls to `name`, as a bare name or an attribute."""
+    lines: list[int] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == name:
+            lines.append(node.lineno)
+        elif isinstance(func, ast.Attribute) and func.attr == name:
+            lines.append(node.lineno)
+    return lines
+
+
+def test_no_host_code_builds_through_the_raising_wrapper() -> None:
+    # machine-core "No host code builds through the raising wrapper": the
+    # host builds through create_machine, which a native core also offers.
+    offenders = []
+    for path in _host_side_files():
+        rel = path.relative_to(_REPO).as_posix()
+        for lineno in _calls_named(path, "build_machine"):
+            offenders.append(f"{rel}:{lineno}")
+    assert offenders == []

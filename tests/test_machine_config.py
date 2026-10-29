@@ -292,6 +292,47 @@ def _hb_f1xd_config(tmp_path: Path):
     return load_machine_config(spec, **_overrides(spec))
 
 
+# ---------------------------------------------------------------------------
+# machine-core "The core builds a machine and reports a failure as a status"
+# ---------------------------------------------------------------------------
+
+def test_a_valid_configuration_builds_a_machine() -> None:
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    result = create_machine(make_config(_ROM))
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.error_text == b""
+
+
+def _without_main_rom(config):
+    main = json.loads(config.document)["machine"]["main_rom"]["sha1"]
+    config.roms = tuple(rom for rom in config.roms if rom.sha1 != main)
+    return config, main
+
+
+def test_a_rejected_configuration_returns_a_status_and_a_message() -> None:
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config, main = _without_main_rom(make_config(_ROM))
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert main.encode() in result.error_text
+
+
+def test_the_wrapper_raises_the_same_message() -> None:
+    from msx.machine_loader import create_machine
+
+    config, _main = _without_main_rom(make_config(_ROM))
+    message = create_machine(config).error_text.decode()
+    with pytest.raises(MachineLoadError) as exc_info:
+        build_machine(config)
+    assert str(exc_info.value) == message
+
+
 def test_two_records_for_one_medium_are_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
