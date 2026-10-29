@@ -23,7 +23,7 @@ MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  host/
 
 1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。
 
-コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが公開するのは汎用の一時停止フック（`Machine.set_pause_hook`）だけであり、RPC サーバーはそこにインストールされます。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
+コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが RPC サーバーを呼ぶことはありません。ブレークすると `step_frame` が停止理由を返し、フロントエンドのループがそれを `DebugServer.on_core_stop` に渡します（`host/debugger/stop.py`）。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
 
 ---
 
@@ -115,7 +115,7 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 ### CPU / 実行
 
 - **`cpu.step`** *（一時停止が必要）* → `{ pc, t_states, mnemonic, registers }`。Z80 命令を1つだけ実行します。
-- **`cpu.continue`** *（一時停止が必要）* → `{ running: true }`。再開して即座に返ります（非ブロッキング）。
+- **`cpu.continue`** *（一時停止が必要）* → `{ running: true }`。再開して即座に返ります（非ブロッキング）。ブレークで止まったフレームは、止まった位置から続きを実行します。
 - **`cpu.continue_sync`** *（一時停止が必要）* — params: `{ timeout_ms? }`（デフォルト 5000）。再開し、次の一時停止イベントまたはタイムアウトまでブロックします。`{ paused: true, reason, pc, registers }` または `{ paused: false, reason: "timeout" }` を返します。エミュレータループを止めずにブロックできるよう、ソケットスレッド上で処理されます。
 - **`cpu.get_registers`** → `{ registers }`。どの状態でも動作します。
 

@@ -17,8 +17,9 @@ Source: `host/debugger/prompt.py` (REPL), `msx/vdp/v9938.py` /
 ### Ctrl+C
 
 Press **Ctrl+C** in the terminal that runs the emulator (or in the SDL window).
-The emulation pauses immediately. The debugger disassembles the current PC and
-shows the REPL prompt:
+In the terminal, the emulation stops before the next part of the frame, at
+most about one frame later. In the SDL window, it stops between frames. The
+debugger disassembles the current PC and shows the REPL prompt:
 
 ```
 Debugger entered. Type 'c' to resume, 'q' to exit.
@@ -28,7 +29,9 @@ Debugger entered. Type 'c' to resume, 'q' to exit.
 
 `cyc` is the cumulative Z80 T-state count. `frm` is the number of completed
 frames. The window shows the last rendered frame. Type `c` to resume the
-emulation, or `q` to exit. If you press Ctrl+C again at the REPL prompt, the
+emulation, or `q` to exit. A frame that stopped at a break or at Ctrl+C
+continues from where it stopped, so its VBlank and its remaining scanlines
+still run. If you press Ctrl+C again at the REPL prompt, the
 emulator exits immediately (`sys.exit(0)`). It does not cancel the input or
 return to the prompt.
 
@@ -91,6 +94,10 @@ the debugger prints a compact register summary and the next instruction:
   PC=C012  AF=0100  BC=0010  DE=0000  HL=C100
   => C012: CD 40 C0     CALL C040h
 ```
+
+Each step is one instruction of the stopped frame, so the prompt's `cyc`
+rises by its T-states, and a step can cross a scanline, the VBlank or the
+end of the frame. A step does not stop at a breakpoint.
 
 **`g ADDR`**: resume emulation and run until PC reaches `ADDR` (hex). This is
 a one-shot temporary breakpoint. The debugger clears it after the hit. It does
@@ -159,7 +166,12 @@ or
 [WP] WRITE CA4Ah = 05h  PC=C030h
 ```
 
-Then it opens the REPL.
+Then it opens the REPL. The emulation stops after the accessing instruction
+completes, so a watched write is already in memory. `PC=` is the address of
+that instruction, and the REPL shows the next one.
+
+When `s` runs an instruction that hits a watchpoint, the debugger prints the
+same line before the step summary and stays at the prompt.
 
 **`wd ADDR`**: remove the watchpoint at `ADDR`.
 

@@ -4,6 +4,7 @@ import ctypes
 import sys
 import time
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
@@ -25,11 +26,12 @@ from frontend.sdl2_keyboard import (
     resolve_keyboard_joy_map,
 )
 from host.app_config import AppConfig
+from host.debugger.stop import handle_stop, sigint_requests_break
 from host.input_state import InputState
 from host.media import swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
-from msx.boundary import RgbFrame
+from msx.boundary import STOP_NONE, RgbFrame
 from msx.core_api import CoreApi
 from msx.input import KEY_NAME_TO_CELL
 from msx.mouse import MouseDevice
@@ -37,6 +39,7 @@ from msx.psg import SAMPLE_RATE, JoystickPort
 from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
+    from host.debugger.prompt import Debugger
     from host.rpc_server import DebugServer
 
 _APP_NAME = "py-msx-emulator"
@@ -291,6 +294,8 @@ class _HotkeyState:
     # Output low-pass applied to the machine's PCM; one instance so its state
     # carries across frames. The reset action clears it with the machine.
     audio_filter: BiquadLowPass = field(default_factory=BiquadLowPass)
+    # The debug REPL a stop or the Ctrl-C hotkey opens, when one is given.
+    debugger: Debugger | None = None
 
     @property
     def fast_forward(self) -> bool:
@@ -543,6 +548,7 @@ def _handle_bound_hotkey_keyup(
 def _handle_hotkey_keydown(
     sdl2: _EventApi, sym: int, mod: int, machine: CoreApi,
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
+    debugger: Debugger | None = None,
 ) -> tuple[bool, bool]:
     """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
     state, F9 load state, F10 screenshot, Ctrl-C debugger break (the
@@ -582,7 +588,8 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_F10:
         save_screenshot(rgb_buf, tex_w, tex_h)
         return True, running
-    if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and machine.enter_debugger_if_attached():
+    if sym == sdl2.SDLK_c and (mod & sdl2.KMOD_CTRL) and debugger is not None:
+        debugger.enter()
         return True, running
     return False, running
 
@@ -686,6 +693,7 @@ def _handle_events(
             consumed, running = _handle_hotkey_keydown(
                 sdl2, sym, event.key.keysym.mod, machine,
                 game_title, rgb_buf, tex_w, tex_h, running,
+                hotkeys.debugger if hotkeys is not None else None,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
@@ -1008,6 +1016,11 @@ def _run_frame(
     out = machine.step_frame(
         keyboard.input_state.take_frame(), render_video=not skip_this_frame
     )
+    if out.stop_reason != STOP_NONE:
+        # A break: the frame continues on the next step_frame, after the REPL
+        # returns or the RPC client resumes. Keep the last picture on screen.
+        handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
+        return
     if out.video is not None:
         state.rgb_buf = out.video.pixels
         # The output height is constant (192-line frames are padded to
@@ -1066,6 +1079,7 @@ def run(
     fdd1_images: list[Path] | None = None,
     hotkey_bindings: dict[tuple[int, bool], str] | None = None,
     keyboard_joystick: Mapping[str, str] | None = None,
+    debugger: Debugger | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1080,7 +1094,7 @@ def run(
             value disables frame skipping.
         rpc_server: optional debug/automation RPC server; when given, its
             pause state gates the emulation loop (see the per-frame RPC
-            servicing in `_run_frame`).
+            servicing in `_run_frame`) and a core stop pauses it.
         gamepad_map: optional (direct, turbo) GameController button→bit maps from
             py_emulator.yaml; None uses the built-in defaults.
         turbo_period: optional turbo-fire per-frame period; None uses the default.
@@ -1093,6 +1107,8 @@ def run(
             built-in table.
         keyboard_joystick: keyboard_joystick.buttons (function -> key name)
             from py_emulator.yaml; None or empty uses the built-in key map.
+        debugger: the debug REPL a core stop (without an RPC server) or the
+            Ctrl-C hotkey opens; None disables both.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1176,6 +1192,7 @@ def run(
             else resolve_hotkeys(AppConfig().hotkey_bindings())
         ),
         disks=_DiskList(list(fdd1_images) if fdd1_images else []),
+        debugger=debugger,
     )
 
     if resume is not None:
@@ -1191,27 +1208,37 @@ def run(
         rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
     )
     last_title: str | None = None
+    # With a debugger or an RPC server, Ctrl-C in the terminal is a break
+    # request (debug-monitor "The REPL opens after the core stops").
+    breaks = (
+        sigint_requests_break(machine)
+        if debugger is not None or rpc_server is not None
+        else nullcontext()
+    )
 
     try:
-        while state.running:
-            try:
-                _run_frame(
-                    sdl2, machine, keyboard, window, renderer, state, joy_manager, ctrl_combo,
-                    ctrl_fkey_cells, game_title, mouse, event, rpc_server,
-                    frame_timer, frame_skip, audio_dev, scale, hotkeys,
-                )
-                last_title = _update_window_title(
-                    sdl2, window,
-                    _window_title(
-                        game_title, frame_timer.fps_measured, machine, hotkeys,
-                        _is_paused(hotkeys, rpc_server),
-                    ),
-                    last_title,
-                )
+        with breaks:
+            while state.running:
+                try:
+                    _run_frame(
+                        sdl2, machine, keyboard, window, renderer, state, joy_manager,
+                        ctrl_combo, ctrl_fkey_cells, game_title, mouse, event, rpc_server,
+                        frame_timer, frame_skip, audio_dev, scale, hotkeys,
+                    )
+                    last_title = _update_window_title(
+                        sdl2, window,
+                        _window_title(
+                            game_title, frame_timer.fps_measured, machine, hotkeys,
+                            _is_paused(hotkeys, rpc_server),
+                        ),
+                        last_title,
+                    )
 
-            except KeyboardInterrupt:
-                if not machine.enter_debugger_if_attached():
-                    state.running = False
+                except KeyboardInterrupt:
+                    if debugger is None:
+                        state.running = False
+                    else:
+                        debugger.enter()
 
     finally:
         joy_manager.close_all()

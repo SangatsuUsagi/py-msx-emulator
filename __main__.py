@@ -10,6 +10,7 @@ from host.app_config import VALID_EXTENSIONS, VALID_MAPPERS
 
 if TYPE_CHECKING:
     from host.app_config import AppConfig
+    from host.debugger.prompt import Debugger
     from host.rpc_server import DebugServer
     from msx.boundary import MediaId, RtcTime
     from msx.diagnostics.logger import DebugLogger
@@ -330,19 +331,30 @@ def _print_startup_summary(
         print(f"benchmark: {args.benchmark} frames (headless)")
 
 
-def _run_headless_frames(machine: "Machine", count_frame: int, resume: str | None) -> None:
+def _run_headless_frames(
+    machine: "Machine", count_frame: int, resume: str | None, debugger: "Debugger"
+) -> None:
     """Run exactly `count_frame` frames headlessly (no SDL window).
 
     No host input and no video: emulated state does not depend on rendering.
+    A break opens the debugger; the stopped frame then continues and counts
+    once.
     """
+    from host.debugger.stop import handle_stop, sigint_requests_break
     from msx.input import InputFrame
 
     if resume is not None:
         from host.state_files import resume_state
         resume_state(machine, resume)
     no_input = InputFrame()
-    for _ in range(count_frame):
-        machine.step_frame(no_input, render_video=False)
+    done = 0
+    with sigint_requests_break(machine):
+        while done < count_frame:
+            out = machine.step_frame(no_input, render_video=False)
+            if out.stop_reason:
+                handle_stop(machine, out.stop_reason, debugger, None)
+            if out.frame_complete:
+                done += 1
 
 
 def _host_rtc_time() -> "RtcTime":
@@ -355,21 +367,31 @@ def _host_rtc_time() -> "RtcTime":
     return RtcTime(now.year, now.month, now.day, now.hour, now.minute, now.second)
 
 
-def _run_benchmark(machine: "Machine", frames: int, resume: str | None) -> None:
-    """Run `frames` frames unthrottled and report average FPS (no SDL window)."""
+def _run_benchmark(
+    machine: "Machine", frames: int, resume: str | None, debugger: "Debugger"
+) -> None:
+    """Run `frames` frames unthrottled and report average FPS (no SDL window).
+    A break opens the debugger, and the time spent there counts."""
     import time
 
     from host.state_files import resume_state
     if resume is not None:
         resume_state(machine, resume)
 
+    from host.debugger.stop import handle_stop, sigint_requests_break
     from msx.input import InputFrame
 
     # Every frame renders RGB video, as interactive play does.
     no_input = InputFrame()
+    done = 0
     start = time.perf_counter()
-    for _ in range(frames):
-        machine.step_frame(no_input, render_video=True)
+    with sigint_requests_break(machine):
+        while done < frames:
+            out = machine.step_frame(no_input, render_video=True)
+            if out.stop_reason:
+                handle_stop(machine, out.stop_reason, debugger, None)
+            if out.frame_complete:
+                done += 1
     elapsed = time.perf_counter() - start
 
     print(f"frames  : {frames}")
@@ -618,10 +640,11 @@ def main() -> None:
         except MachineLoadError as exc:
             _fail(str(exc))
 
-        # Attach the interactive debugger for all machines so Ctrl-C drops into
-        # the REPL on MSX1 too (the slot/mapper tools are most useful there).
+        # The interactive debugger for all machines, so Ctrl-C drops into the
+        # REPL on MSX1 too (the slot/mapper tools are most useful there). The
+        # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        machine.attach_debugger(Debugger(machine))
+        debugger = Debugger(machine)
 
         if breakpoint_addrs:
             machine.set_breakpoints(breakpoint_addrs)
@@ -638,15 +661,14 @@ def main() -> None:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
         if args.count_frame is not None:
-            _run_headless_frames(machine, args.count_frame, args.resume)
+            _run_headless_frames(machine, args.count_frame, args.resume, debugger)
         elif args.benchmark is not None:
-            _run_benchmark(machine, args.benchmark, args.resume)
+            _run_benchmark(machine, args.benchmark, args.resume, debugger)
         else:
             if opts.rpc_enabled:
                 from host.rpc_server import DEFAULT_SOCKET_PATH, DebugServer
                 sock_path = args.rpc_socket or app_cfg.rpc_socket or DEFAULT_SOCKET_PATH
                 rpc_server = DebugServer(machine, sock_path=sock_path)
-                machine.set_pause_hook(rpc_server.on_pause)
                 rpc_server.start()
                 print(f"rpc     : {sock_path}")
             from frontend.sdl2_frontend import run
@@ -658,7 +680,8 @@ def main() -> None:
                 turbo_period=app_cfg.turbo_period(),
                 mouse_port=opts.mouse_port, fdd1_images=fdd1_paths,
                 hotkey_bindings=resolve_hotkeys(app_cfg.hotkey_bindings()),
-                keyboard_joystick=app_cfg.keyboard_joystick_buttons)
+                keyboard_joystick=app_cfg.keyboard_joystick_buttons,
+                debugger=debugger)
     finally:
         _cleanup(machine, rpc_server, logger, _trace_file, _mapper_trace_file, sram_files)
 

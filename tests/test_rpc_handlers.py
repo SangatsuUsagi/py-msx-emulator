@@ -1,7 +1,7 @@
 """End-to-end tests for the RPC method handlers (phase 3).
 
-A background thread runs a realistic host loop (drain + run_frame when not
-paused) with the pause hook wired to the server, so breakpoints, stepping, and
+A background thread runs a realistic host loop (drain + step_frame when not
+paused, a stop handed to the server), so breakpoints, stepping, and
 continue_sync behave as they will under the real frontend.
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from host.debugger.stop import handle_stop
 from host.rpc_server import DebugServer
 from tests.factories import make_machine
 
@@ -62,7 +63,6 @@ def rig(sock_dir) -> Iterator[tuple]:
     machine = make_machine(rom=bytes(32768))  # all NOP
     machine.memory.set_slot_register(0xD4)  # RAM at page 3 (0xC000+)
     srv = DebugServer(machine, sock_path=str(sock_dir / "h.sock"))
-    machine.set_pause_hook(srv.on_pause)
     srv.start()
 
     stop = threading.Event()
@@ -72,7 +72,8 @@ def rig(sock_dir) -> Iterator[tuple]:
             srv.drain()
             if not srv.pause_state.paused:
                 try:
-                    machine.run_frame(skip_render=True)
+                    out = machine.step_frame(srv.input_target.take_frame(), render_video=False)
+                    handle_stop(machine, out.stop_reason, None, srv)
                 except BaseException:  # noqa: BLE001 — keep the test loop alive
                     pass
             else:

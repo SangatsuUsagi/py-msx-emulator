@@ -4,14 +4,14 @@
 `Machine` implements it structurally; a wrapper of a native core can
 implement it later. The inspection queries return integers, bytes or flat
 records of integers and bytes (msx/boundary.py), and change no emulated
-state. The other members keep their current shapes for now: the media ids,
-the disk path, the string watch modes and the callbacks (pause hook,
-debugger, mouse) change in later steps (allium/core-frontend.allium,
-DebugControl open question).
+state. No member takes a callback the core calls (machine-core "The core
+API has no callback into the host"): a break is the step_frame stop reason
+and the last-stop query. The other members keep their current shapes for
+now: the media ids, the disk path, the string watch modes and the mouse
+attachment change in later steps (allium/core-frontend.allium).
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -22,10 +22,11 @@ if TYPE_CHECKING:
         FrameOutput,
         MediaId,
         RgbFrame,
+        StopInfo,
         VdpInfo,
     )
     from msx.input import InputFrame
-    from msx.machine import DebuggerHook, Machine, PauseReason
+    from msx.machine import Machine
     from msx.machine_spec import KeyboardLayout
     from msx.mouse import MouseDevice
     from msx.psg import JoystickPort
@@ -67,15 +68,9 @@ class CoreApi(Protocol):
     def save_state(self) -> bytes: ...
     def load_state(self, data: bytes, source: str = "<state>") -> None: ...
 
-    # -- attachments and pause control (callbacks; DebugControl replaces them) --
+    # -- attachments -----------------------------------------------------------
 
-    def set_pause_hook(self, hook: Callable[[PauseReason, int], None] | None) -> None: ...
-    def attach_debugger(self, debugger: DebuggerHook | None) -> None: ...
     def attach_mouse(self, device: MouseDevice, port: JoystickPort) -> None: ...
-    def enter_debugger_if_attached(self) -> bool: ...
-    @property
-    def is_paused(self) -> bool: ...
-    def prepare_resume(self) -> None: ...
 
     # -- break settings ------------------------------------------------------------
 
@@ -86,6 +81,11 @@ class CoreApi(Protocol):
     def set_frame_breakpoint(self, frame: int | None) -> None: ...
     def set_break_halt_di(self, enabled: bool) -> None: ...
     def set_sp_range(self, rng: tuple[int, int] | None) -> None: ...
+
+    # -- break control ---------------------------------------------------------------
+
+    def request_break(self) -> None: ...
+    def last_stop(self) -> StopInfo: ...
 
     # -- inspection queries --------------------------------------------------------
 

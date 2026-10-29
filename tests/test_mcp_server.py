@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from mcp.types import ImageContent
 
+from host.debugger.stop import handle_stop
 from host.rpc_server import DebugServer
 from tests.factories import make_machine
 
@@ -35,7 +36,6 @@ def live(sock_dir) -> Iterator[tuple]:
     machine.memory.set_slot_register(0xD4)
     sock = str(sock_dir / "mcp.sock")
     srv = DebugServer(machine, sock_path=sock)
-    machine.set_pause_hook(srv.on_pause)
     srv.start()
     stop = threading.Event()
 
@@ -44,7 +44,8 @@ def live(sock_dir) -> Iterator[tuple]:
             srv.drain()
             if not srv.pause_state.paused:
                 try:
-                    machine.run_frame(skip_render=True)
+                    out = machine.step_frame(srv.input_target.take_frame(), render_video=False)
+                    handle_stop(machine, out.stop_reason, None, srv)
                 except BaseException:  # noqa: BLE001
                     pass
             else:
