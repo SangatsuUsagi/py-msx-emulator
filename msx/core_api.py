@@ -6,9 +6,13 @@ implement it later. The inspection queries return integers, bytes or flat
 records of integers and bytes (msx/boundary.py), and change no emulated
 state. No member takes a callback the core calls (machine-core "The core
 API has no callback into the host"): a break is the step_frame stop reason
-and the last-stop query. load_state and mount_disk return an integer status
-(msx/boundary.py STATUS_*) and last_error_text() gives the message. The
-disk path changes in a later step (allium/core-frontend.allium).
+and the last-stop query. Every parameter and result is an integer, bytes,
+None, or a flat record or tuple of these (machine-core "Core API values are
+integers, bytes or flat records"): the ids and machine properties are
+integer enums, watch kinds are bit flags, load_state and mount_disk return
+an integer status (msx/boundary.py STATUS_*) with last_error_text() for the
+message, and no member takes or returns a file path
+(allium/core-frontend.allium).
 """
 from __future__ import annotations
 
