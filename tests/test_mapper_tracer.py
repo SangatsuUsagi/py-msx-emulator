@@ -67,3 +67,29 @@ def test_konami_window_and_address() -> None:
     buf = _attach(m)
     m.write(0x8000, 5)  # window 2: bank 2 default -> 5
     assert "MAP_BANK win=2 02h->05h addr=8000h" in buf.getvalue()
+
+
+# diag-mapper-tracer "ROM mappers record bank changes as trace events".
+
+def test_a_bank_changing_write_records_an_event() -> None:
+    from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=_rom16(8), mapper="ASCII16")
+    m.set_trace_kinds(TRACE_MAPPER)
+    m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+    m.memory.write(0x7000, 2)  # page 1 is slot 1: window 1, bank 0 -> 2
+    events = m.drain_trace()
+    assert [(e.kind, e.a, e.b, e.c, e.d) for e in events] == [
+        (TRACE_EVENT_MAP_BANK, 1, 0, 2, 0x7000),
+    ]
+
+
+def test_a_mapper_with_the_kind_off_behaves_identically() -> None:
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=_rom16(8), mapper="ASCII16")
+    m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+    m.memory.write(0x7000, 2)
+    assert m.memory._mapper.debug_bank_info(2) == "bank 2 @08000-0BFFF"
+    assert m.drain_trace() == ()

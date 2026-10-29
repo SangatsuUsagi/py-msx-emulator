@@ -4,11 +4,13 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, ClassVar, Protocol
 
+from msx.boundary import TRACE_EVENT_VDP_PORT99, TRACE_VDP
 from msx.vdp import renderer
 from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
     from msx.vdp.tracer import Tracer
 
 
@@ -71,6 +73,7 @@ class VdpDevice(Protocol):
     tracer: Tracer | None
     _get_pc: Callable[[], int] | None
     _get_cycle: Callable[[], int] | None
+    _trace: TraceLog | None
     debug_disable_sprites: bool
 
     @property
@@ -301,6 +304,9 @@ class VDP:
     tracer: Tracer | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # 0x99 bytes are recorded while TRACE_VDP is on.
+    _trace: TraceLog | None = field(default=None, repr=False)
     debug_disable_sprites: bool = field(default=False, repr=False)
     # Memoised RGB24 rows (see Rgb24RowCache): derived data, not emulated state.
     _rgb_rows: Rgb24RowCache = field(
@@ -396,6 +402,9 @@ class VDP:
             # (openMSX VDP.cc clears registerDataStored here too).
             self.latch = None
         elif port == 0x99:
+            trace = self._trace
+            if trace is not None and trace.kinds & TRACE_VDP:
+                trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
             if self.tracer is not None:
                 pc = self._get_pc() if self._get_pc is not None else 0
                 cy = self._get_cycle() if self._get_cycle is not None else 0

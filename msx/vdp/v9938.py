@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, TypedDict
 
+from msx.boundary import TRACE_EVENT_VDP_PORT9B, TRACE_EVENT_VDP_PORT99, TRACE_VDP
 from msx.snapshot_schema import check_bool, check_int, check_int_list, check_object
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
@@ -26,6 +27,7 @@ from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
 if TYPE_CHECKING:
     from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
     from msx.vdp.tracer import Tracer
 
 _VRAM_SIZE = 131072  # 128 KB
@@ -424,6 +426,9 @@ class V9938:
     _logger: DebugLogger | None = field(default=None, repr=False)
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)
     _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The machine's trace buffer (msx/trace.py), wired at build time; port
+    # 0x99 and 0x9B bytes are recorded while TRACE_VDP is on.
+    _trace: TraceLog | None = field(default=None, repr=False)
     # Command engine
     cmd_regs: list[int] = field(default_factory=lambda: [0] * 15)  # R32–R46
     _status2: int = field(default=0, init=False, repr=False)
@@ -927,6 +932,9 @@ class V9938:
 
     def _write_control_port(self, value: int) -> None:
         """Port 1: two-byte latch, register write or VRAM address setup."""
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_VDP:
+            trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
         if self.tracer is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             cy = self._get_cycle() if self._get_cycle is not None else 0
@@ -985,6 +993,9 @@ class V9938:
         ptr = self.regs[17] & 0x3F
         r17_before = self.regs[17]
         self._write_register(ptr, value)
+        trace = self._trace
+        if trace is not None and trace.kinds & TRACE_VDP:
+            trace.record(TRACE_EVENT_VDP_PORT9B, value & 0xFF, r17_before)
         if self.tracer is not None:
             pc = self._get_pc() if self._get_pc is not None else 0
             cy = self._get_cycle() if self._get_cycle is not None else 0
