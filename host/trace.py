@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from typing import IO, TYPE_CHECKING
 
+from host.debug_log import DEBUG_EVENT_KINDS, DebugLogFormatter
 from msx.boundary import (
     TRACE_EVENT_LOST,
     TRACE_EVENT_MAP_BANK,
@@ -97,7 +98,8 @@ def map_bank_line(event: TraceEvent) -> str:
 
 class TraceOutput:
     """Where one run's trace lines go: a stream and a name (for the debugger
-    messages) per trace, None until the trace is first turned on."""
+    messages) per trace, None until the trace is first turned on. The debug
+    log (--debug) goes to stderr and, with --log, to a file too."""
 
     def __init__(self) -> None:
         self.vdp_out: IO[str] | None = None
@@ -105,6 +107,14 @@ class TraceOutput:
         self.map_out: IO[str] | None = None
         self.map_name = ""
         self._vdp = VdpTraceFormatter()
+        self._debug: DebugLogFormatter | None = None
+        self._debug_file: IO[str] | None = None
+
+    def set_debug_output(self, file: IO[str] | None) -> None:
+        """Write the debug log from now on: to stderr, and to `file` when
+        given (the --log file, which the caller opens and closes)."""
+        self._debug = DebugLogFormatter()
+        self._debug_file = file
 
     def set_vdp_output(self, stream: IO[str], name: str) -> None:
         self.vdp_out = stream
@@ -126,10 +136,19 @@ class TraceOutput:
                     print(map_bank_line(event), file=self.map_out)
             elif event.kind == TRACE_EVENT_LOST:
                 print(f"trace: {event.a} events lost", file=sys.stderr)
+            elif event.kind in DEBUG_EVENT_KINDS:
+                if self._debug is not None:
+                    self._write_debug(self._debug.feed(event))
             else:
                 line = self._vdp.feed(event)
                 if line is not None and self.vdp_out is not None:
                     print(line, file=self.vdp_out)
-        for stream in (self.vdp_out, self.map_out):
+        for stream in (self.vdp_out, self.map_out, self._debug_file):
             if stream is not None:
                 stream.flush()
+
+    def _write_debug(self, lines: list[str]) -> None:
+        for line in lines:
+            sys.stderr.write(line + "\n")
+            if self._debug_file is not None:
+                self._debug_file.write(line + "\n")
