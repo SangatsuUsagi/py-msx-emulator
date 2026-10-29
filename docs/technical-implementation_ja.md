@@ -775,7 +775,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `build_machine(config)` | 文書に誤りがあるか、ROM イメージが欠けているか合わないときは、構築を始める前に `MachineLoadError`（`msx/machine_spec.py`）を出す。任意の引数 `logger`/`tracer` は診断用 |
+| 構築 | `build_machine(config)` | 文書に誤りがあるか、ROM イメージが欠けているか合わないときは、構築を始める前に `MachineLoadError`（`msx/machine_spec.py`）を出す。ロガーとトレーサは引数に取らない。構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）と `attach_vdp_tracer()`（`msx/vdp/tracer.py`）でつなぐ |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -808,7 +808,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
 - `run_frame()`：内部のフレームループ
-- VDP とマッパーのトレーサ
+- 診断用のロガーと、VDP とマッパーのトレーサ。構築したマシンに `attach_logger()`、`attach_vdp_tracer()`、`msx.mapper_tracer.attach_to_machine()` でつなぐ
 
 ### MachineConfig の文書
 
@@ -965,7 +965,7 @@ V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は
 
 #### トレーサのフックの Callable フィールド
 
-`VDP`（TMS9918A）と `V9938` は、どちらも `tracer`、`_get_pc`、`_get_cycle` を None にできる `Callable` のフィールドとして持つ。マシンが配線のときに代入し、VDP は対応するイベントのたびに呼ぶ。Python ではこれを `Callable[[], None] | None` と型付けするが、静的型付けの言語にそのままの対応はない。
+`VDP`（TMS9918A）と `V9938` は、どちらも `tracer`、`_get_pc`、`_get_cycle` を None にできる `Callable` のフィールドとして持つ。構築したマシンに `attach_vdp_tracer()` が代入し（デバッガの `te` コマンドも同じ）、VDP は対応するイベントのたびに呼ぶ。Python ではこれを `Callable[[], None] | None` と型付けするが、静的型付けの言語にそのままの対応はない。
 
 Rust/C++ の移植では、`Option<Box<dyn Fn()>>` のトレイトオブジェクト（または同等のもの）で表す。別の方法として、機能フラグ付きのコンパイル時ジェネリクスにすれば、リリースビルドで呼び出しごとの振り分けがなくなる。
 

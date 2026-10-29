@@ -57,7 +57,7 @@ from msx.boundary import (
     slot_sram_id,
     subslot_sram_id,
 )
-from msx.diagnostics.logger import DebugLogger
+from msx.diagnostics.logger import DebugLogger, attach_logger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 
 # The closed vocabularies are defined once, in the core's document parser,
@@ -96,7 +96,7 @@ from msx.mapper import HALNOTE_SRAM_SIZE
 from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 from msx.vdp._geometry import VideoStandard
-from msx.vdp.tracer import Tracer
+from msx.vdp.tracer import Tracer, attach_vdp_tracer
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -1399,4 +1399,9 @@ def build_machine_from_spec(
         extension_overlay1=extension_overlay1, extension_overlay2=extension_overlay2,
         rtc_initial_time=rtc_initial_time,
     )
-    return build_machine(config, logger=logger, tracer=tracer)
+    machine = build_machine(config)
+    if logger is not None:
+        attach_logger(machine, logger)
+    if tracer is not None:
+        attach_vdp_tracer(machine, tracer)
+    return machine

@@ -206,3 +206,10 @@ def test_a_watchpoint_hit_prints_nothing(capsys) -> None:
     assert out.stop_reason == STOP_WATCHPOINT
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err == ""
+
+
+def test_the_build_takes_no_logger_or_tracer() -> None:
+    # machine-core "The build takes no logger or tracer".
+    from msx.machine_loader import build_machine
+
+    assert list(inspect.signature(build_machine).parameters) == ["machine_config"]
