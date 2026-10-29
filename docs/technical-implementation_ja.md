@@ -416,7 +416,7 @@ MSX2 のデフォルトの配置：
 - Sony HB-F1XD（`hb_f1xd`）は、WD2793 と DISK ROM をスロット 3 のサブスロット 0 に置き、サブスロット 3 に 64 KB のフラットな RAM を置く。
 - Panasonic FS-A1F（`fs_a1f`）は TC8566AF を使い、4 つのセカンダリスロットに役割を分ける。サブスロット 0 が RAM、1 が SUB ROM、2 が FDC。
 
-`--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントする。`--fdd1` には複数のイメージを指定できる。実行中にディスクを交換する方法は 3 つあり、どれも `host/media.py` の `swap_disk()` を呼ぶ。`swap_disk()` は、外す側のイメージが dirty ならまずファイルへ書き戻し、それから `Machine.mount_disk()` を呼ぶ。`mount_disk()` はフロッピーインターフェースの `swap()` を呼ぶ。
+`--fdd1`/`--fdd2` でドライブ A/B にイメージをマウントする。`--fdd1` には複数のイメージを指定できる。実行中にディスクを交換する方法は 3 つあり、どれも `host/media.py` の `swap_disk()` を呼ぶ。`swap_disk()` は、外す側のイメージが dirty ならまずファイルへ書き戻し、それから `Machine.mount_disk()` を呼ぶ。`mount_disk()` はフロッピーインターフェースの `swap()` を呼ぶ。成功すると、3 つの方法が共有する `DiskFiles` の表に新しいファイルを記録する。
 
 - SDL2 フロントエンドの F6/Shift+F6 ホットキー。`--fdd1` の一覧を順に切り替えるか、ドライブ A のディスクを取り出し/再挿入する。
 - デバッガの `fdd1`/`fdd2` コマンド。
@@ -764,9 +764,11 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | `CpuRegisters` | 出力 | レジスタのクエリの結果：AF、BC、DE、HL、裏レジスタ、IX、IY、SP、PC、I、R、IFF1 と IFF2（0 か 1）、IM |
 | `VdpInfo` | 出力 | VDP のクエリの結果：VDP の種類、コントロールレジスタとコマンドレジスタ、ステータスレジスタ、パレット、コマンドの進み具合 |
 | メディアのイメージ | 入出力 | `MediaId` で名前を付けた `bytes` |
-| `DiskMedium` | 入力 | `data`、`write_protected`、`path`。`path` は host 側でのファイルの名前。コアは記録するだけで、ファイルは開かない |
+| `DiskMedium` | 入力 | `data` と `write_protected`。コアはディスクのファイル名を持たない。各ドライブのファイルは、host が `host/media.py` の `DiskFiles` で持つ |
 
-`MediaId` は閉じた集合。値は `slot1.sram`、`slot2.sram`、`slot<n>.<sub>.sram`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`fmpac.sram`、`rtc.cmos`、`drive_a`〜`drive_d`（FDC のドライブ 0〜3）。外部とやり取りするときは、この文字列の値を使う。Python のコードでは `MediaId` を `.value` で文字列にする。
+`MediaId` は整数の id の閉じた集合。値は 0〜15 で、順に `SLOT1_SRAM`、`SLOT2_SRAM`、`SLOT<n>_SUB<sub>_SRAM`（拡張スロットのデバイス。スロット 1〜2、サブスロット 0〜3）、`FMPAC_SRAM`、`RTC_CMOS`、`DRIVE_A`〜`DRIVE_D`（FDC のドライブ 0〜3）。id は整数として境界を越える。Python のコードでは `MediaId` を `.name` で文字列にする。
+
+`VideoStandard` と `KeyboardLayout` も整数の列挙型。マシンの YAML と正規化した MachineConfig のドキュメントでは、`spelling` プロパティと `from_spelling` クラスメソッドを通して、テキスト（`ntsc` と `pal`、`int` と `jp`）で書く。
 
 ### コアの API
 
@@ -780,21 +782,22 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
 | 制御 | `reset()` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま |
 | | `save_state() -> bytes` | スナップショット（`msx/state.py`） |
-| | `load_state(data, source)` | スナップショットが合わなければ `ValueError`（`StateLoadError`、`SnapshotMismatchError`）を出し、何も変えない |
+| | `load_state(data) -> int` | `STATUS_OK`（0）を返す。スナップショットが合わなければ `STATUS_STATE_REJECTED`（1）を返し、何も変えない |
 | | `write_memory(addr, data)` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
 | | `read_media(media_id) -> bytes` | メディアの現在のバイト列 |
 | | `mark_persisted(media_id)` | host がバイト列を書いた後に呼ぶ |
-| | `mount_disk(drive, medium) -> bytes \| None` | `medium` に `None` を渡すと取り出す。外したイメージに保存していない書き込みがあれば、そのバイト列を返す。マシンにないドライブや、サイズが 512 の正の倍数でないイメージには `ValueError` を出す |
-| | `disk_mounted(drive)`、`disk_path(drive)` | ドライブの状態と、記録した host 側の名前 |
-| デバイス | `attach_mouse(MouseDevice(), JoystickPort(n))` | MSX のマウスをジョイスティックポート 1 か 2 につなぐ |
+| | `mount_disk(drive, data, write_protected) -> int` | `data` に `None` を渡すと取り出す。`STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
+| | `last_error_text() -> bytes` | 最後に失敗した `load_state` か `mount_disk` のメッセージ（UTF-8）。成功した後は `b""`。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
+| | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
+| デバイス | `attach_mouse(port)` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 | | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
 | | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
-| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し |
+| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
@@ -832,7 +835,7 @@ YAML のローダを持たない移植では、文書を直接書いてもよい
 `save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 19）で返す。形は `msx/snapshot.schema.json` に書いてある。オブジェクトはコンポーネントごとに 1 つ（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`）。キーは常にすべてそろい、マシンにない部分の値は `null`。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入る。
 
 - `load_state()` は、空白もキーの順序も問わない。浮動小数点数、NaN や Infinity、重複したキー、ほかのフォーマットバージョンは拒否する。
-- 最初にマシンの同一性（マシンの種類、マッパーの種類、スロットの配線、FDC、マウント中のディスク）を調べる。続いて `machine_config_sha256` を動作中のマシンのハッシュと比べる。このハッシュは、カートリッジの ROM のバイト列も対象に含む。つまり、スナップショットは同じ MachineConfig の文書から作ったコアにしか読み込めない。
+- 最初にマシンの同一性（マシンの種類、マッパーの種類、スロットの配線、FDC、マウント中のディスク。ディスクはサイズと SHA1 で比べるので、同じ内容なら別のファイルでも同じディスク）を調べる。続いて `machine_config_sha256` を動作中のマシンのハッシュと比べる。このハッシュは、カートリッジの ROM のバイト列も対象に含む。つまり、スナップショットは同じ MachineConfig の文書から作ったコアにしか読み込めない。
 - どれかの検査に失敗したスナップショットは、何も変えない。
 - `save_state()`、`load_state()`、もう一度 `save_state()` の順に呼ぶと、同じバイト列になる。
 
@@ -863,7 +866,7 @@ from pathlib import Path
 from host.machine_config import (
     load_device_registry, load_machine_config, load_machine_spec, sram_paths,
 )
-from host.media import persist_dirty_media
+from host.media import DiskFiles, persist_dirty_media
 from msx.input import InputFrame
 from msx.machine_loader import build_machine
 
@@ -879,10 +882,12 @@ for _ in range(120):
     # out.audio：samples_per_frame() 個の符号付き 16 ビット LE モノラルのサンプル
 
 snapshot = machine.save_state()                    # bytes。保存先は自由
-machine.load_state(snapshot)
+if machine.load_state(snapshot) != 0:             # 0 は STATUS_OK
+    print(machine.last_error_text().decode("utf-8"))
 assert machine.save_state() == snapshot
 
-persist_dirty_media(machine, sram_paths(config))   # SRAM/CMOS/ディスクの変更を書き戻す
+disk_files = DiskFiles(config.disk_files)          # host：各ドライブのディスクのファイル
+persist_dirty_media(machine, sram_paths(config), disk_files)  # SRAM/CMOS/ディスクの変更を書き戻す
 ```
 
 SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く。毎フレーム、入力の組み立て側が作ったフレームを `step_frame` に渡す。コアがフレームを描画したときは `out.video` をアップロードする。`out.audio` は `BiquadLowPass`（`frontend/audio_filter.py`）に通して SDL のキューに積む。終了時には `__main__.py` が `persist_dirty_media` を呼ぶ。自前の host 側を持たないフロントエンドは、一度の実行で得た `config.document` と `config.roms` を取っておき、それをもとに `MachineConfig` を直接作ればよい。
@@ -891,11 +896,11 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
-- 制御の操作は、結果を表すレコードではなく `None` を返す。`save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
+- 制御の操作は、結果を表すレコードではなく `None` を返す。ただし `load_state` と `mount_disk` は整数の状態を返す。`save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `eject_disk` は `mount_disk(drive, None)`。`read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ。
-- マウスはフロントエンドが実行時につなぐ（`attach_mouse`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
+- マウスはフロントエンドが実行時につなぐ（`attach_mouse(port)`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
 - `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
 
 次の点は未決定で、移植する側が決める必要がある。

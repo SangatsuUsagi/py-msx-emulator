@@ -14,6 +14,7 @@ from host.machine_config import (
     load_machine_config,
     sram_paths,
 )
+from msx.boundary import MediaId
 from msx.fmpac import SRAM_SIZE, FmPac
 from msx.machine_loader import build_machine
 from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
@@ -481,7 +482,7 @@ def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
-    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
+    assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path
 
 
 def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
@@ -496,8 +497,8 @@ def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
     machine = build_machine(config)
     assert machine.fmpac is not None
     assert machine.memory._mapper is machine.fmpac
-    assert sram_paths(config)["fmpac.sram"] == overlay.sram_save_path
-    assert machine.sram_media()["fmpac.sram"] is machine.fmpac.sram_image
+    assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path
+    assert machine.sram_media()[MediaId.FMPAC_SRAM] is machine.fmpac.sram_image
 
 
 def test_slot2_dispatch_reads_fmpac_rom(tmp_path: Path) -> None:

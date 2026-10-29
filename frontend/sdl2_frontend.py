@@ -28,14 +28,13 @@ from frontend.sdl2_keyboard import (
 from host.app_config import AppConfig
 from host.debugger.stop import handle_stop, sigint_requests_break
 from host.input_state import InputState
-from host.media import swap_disk
+from host.media import DiskFiles, swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
 from msx.boundary import STOP_NONE, RgbFrame
 from msx.core_api import CoreApi
 from msx.input import KEY_NAME_TO_CELL
-from msx.mouse import MouseDevice
-from msx.psg import SAMPLE_RATE, JoystickPort
+from msx.psg import SAMPLE_RATE
 from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
@@ -269,9 +268,12 @@ class _ShiftComboState:
 
 @dataclass
 class _DiskList:
-    """Drive A images cycled by the disk hotkeys (`--fdd1` / config `fdd1`)."""
+    """Drive A images cycled by the disk hotkeys (`--fdd1` / config `fdd1`),
+    and the file of each drive's disk, shared with the debugger and the RPC
+    server (host/media.py DiskFiles)."""
     paths: list[Path]
     index: int = 0
+    files: DiskFiles = field(default_factory=DiskFiles)
 
 
 @dataclass
@@ -419,13 +421,13 @@ def _handle_ctrl_combo_keyup(
     return False
 
 
-def _mount_disk(machine: CoreApi, path: Path) -> bool:
+def _mount_disk(machine: CoreApi, disks: _DiskList, path: Path) -> bool:
     """Swap `path` into drive A via `host.media.swap_disk` (outgoing image
     written back, disk change, transfer abort). Returns False, leaving the
     drive as it was, if the image cannot be opened."""
     assert machine.drive_count() > 0
     try:
-        swap_disk(machine, 0, path)
+        swap_disk(machine, disks.files, 0, path)
     except (ValueError, OSError) as exc:
         print(f"disk swap failed: {exc}", file=sys.stderr)
         return False
@@ -437,7 +439,7 @@ def _disk_next(machine: CoreApi, disks: _DiskList) -> None:
     if machine.drive_count() == 0 or not disks.paths:
         return
     next_index = (disks.index + 1) % len(disks.paths)
-    if _mount_disk(machine, disks.paths[next_index]):
+    if _mount_disk(machine, disks, disks.paths[next_index]):
         disks.index = next_index
 
 
@@ -447,9 +449,9 @@ def _disk_toggle_eject(machine: CoreApi, disks: _DiskList) -> None:
     if machine.drive_count() == 0 or not disks.paths:
         return
     if not machine.disk_mounted(0):
-        _mount_disk(machine, disks.paths[disks.index])
+        _mount_disk(machine, disks, disks.paths[disks.index])
     else:
-        swap_disk(machine, 0, None)
+        swap_disk(machine, disks.files, 0, None)
 
 
 def _toggle_fullscreen(sdl2: _EventApi, window: object, hotkeys: _HotkeyState) -> None:
@@ -548,7 +550,7 @@ def _handle_bound_hotkey_keyup(
 def _handle_hotkey_keydown(
     sdl2: _EventApi, sym: int, mod: int, machine: CoreApi,
     game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int, running: bool,
-    debugger: Debugger | None = None,
+    debugger: Debugger | None = None, disk_files: DiskFiles | None = None,
 ) -> tuple[bool, bool]:
     """Fixed application meta-hotkey KEYDOWN handling: Ctrl-Q quit, F8 save
     state, F9 load state, F10 screenshot, Ctrl-C debugger break (the
@@ -577,7 +579,7 @@ def _handle_hotkey_keydown(
     if sym == sdl2.SDLK_q and (mod & sdl2.KMOD_CTRL):
         return True, False
     if sym == sdl2.SDLK_F8:
-        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title)
+        save_state(machine, RgbFrame(tex_w, tex_h, rgb_buf), game_title, disk_files)
         return True, running
     if sym == sdl2.SDLK_F9:
         try:
@@ -694,6 +696,7 @@ def _handle_events(
                 sdl2, sym, event.key.keysym.mod, machine,
                 game_title, rgb_buf, tex_w, tex_h, running,
                 hotkeys.debugger if hotkeys is not None else None,
+                hotkeys.disks.files if hotkeys is not None else None,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
@@ -891,7 +894,7 @@ def _disk_status(machine: CoreApi, disks: _DiskList) -> str:
     count = len(disks.paths)
     if not machine.disk_mounted(0):
         return f"disk {disks.index + 1}/{count}: (ejected)"
-    path = machine.disk_path(0)
+    path = disks.files.path(0)
     name = path.name if path is not None else "?"
     if path == disks.paths[disks.index]:
         return f"disk {disks.index + 1}/{count}: {name}"
@@ -1080,6 +1083,7 @@ def run(
     hotkey_bindings: dict[tuple[int, bool], str] | None = None,
     keyboard_joystick: Mapping[str, str] | None = None,
     debugger: Debugger | None = None,
+    disk_files: DiskFiles | None = None,
 ) -> None:
     """Run the SDL2 window loop for `machine` until the user quits.
 
@@ -1109,6 +1113,8 @@ def run(
             from py_emulator.yaml; None or empty uses the built-in key map.
         debugger: the debug REPL a core stop (without an RPC server) or the
             Ctrl-C hotkey opens; None disables both.
+        disk_files: the file of each drive's disk, shared with the debugger
+            and the RPC server; None starts an empty table.
 
     Runtime hotkeys (built-in table; configurable): F6 next disk, Shift+F6
     eject/re-insert disk, F7 fast-forward while held, Shift+F7 latch
@@ -1170,7 +1176,7 @@ def run(
     mouse: _HostMouse | None = None
     if mouse_port is not None:
         mouse = _HostMouse(keyboard.input_state, scale)
-        machine.attach_mouse(MouseDevice(), JoystickPort(mouse_port))
+        machine.attach_mouse(mouse_port)
         sdl2.SDL_SetRelativeMouseMode(sdl2.SDL_TRUE)
     ctrl_combo = _CtrlComboState()
     # Ctrl+F1..F5 -> MSX HOME/INS/DEL/STOP/SELECT (alternate access on host
@@ -1191,7 +1197,10 @@ def run(
             hotkey_bindings if hotkey_bindings is not None
             else resolve_hotkeys(AppConfig().hotkey_bindings())
         ),
-        disks=_DiskList(list(fdd1_images) if fdd1_images else []),
+        disks=_DiskList(
+            list(fdd1_images) if fdd1_images else [],
+            files=disk_files if disk_files is not None else DiskFiles(),
+        ),
         debugger=debugger,
     )
 

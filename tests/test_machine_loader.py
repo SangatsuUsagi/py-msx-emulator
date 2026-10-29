@@ -19,6 +19,7 @@ from msx.kanji import KanjiRom
 from msx.machine_loader import _make_mapper, _require_scc
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    KeyboardLayout,
     MachineLoadError,
     MachineSpec,
     _ExpandedSubslotDevice,
@@ -473,14 +474,14 @@ def test_build_machine_extrom_override_msx2(tmp_path: Path) -> None:
 def test_keyboard_type_defaults_to_int_from_real_config() -> None:
     reg = load_device_registry(Path("config"))
     spec = load_machine_spec("cbios_msx2", Path("config"), reg, Path("."))
-    assert spec.keyboard_type == "int"
+    assert spec.keyboard_type is KeyboardLayout.INTERNATIONAL
 
 
 def test_keyboard_type_override_jp_from_real_config() -> None:
     reg = load_device_registry(Path("config"))
     for mid in ("cbios_msx1_jp", "cbios_msx2_jp"):
         spec = load_machine_spec(mid, Path("config"), reg, Path("."))
-        assert spec.keyboard_type == "jp", mid
+        assert spec.keyboard_type is KeyboardLayout.JAPANESE, mid
 
 
 # ---------------------------------------------------------------------------
@@ -678,9 +679,9 @@ def test_build_machine_keyboard_type_reaches_machine(tmp_path: Path) -> None:
     )
     _write(config_dir / "machines" / "test_msx1.yaml", yaml_text)
     spec = load_machine_spec("test_msx1", config_dir, registry, tmp_path)
-    assert spec.keyboard_type == "jp"
+    assert spec.keyboard_type is KeyboardLayout.JAPANESE
     machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
-    assert machine.keyboard_layout == "jp"
+    assert machine.keyboard_layout is KeyboardLayout.JAPANESE
 
 
 # ---------------------------------------------------------------------------

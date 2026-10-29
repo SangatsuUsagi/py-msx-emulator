@@ -18,12 +18,32 @@ from msx.ppi import PpiControlRead
 from msx.vdp._geometry import VideoStandard
 
 
-class KeyboardLayout(str, enum.Enum):
-    """A machine's keyboard matrix layout; the values are the machine-YAML
-    spellings (ppi8255 `keyboard_type`). Format one with `.value`."""
+class KeyboardLayout(enum.IntEnum):
+    """A machine's keyboard matrix layout, an integer at the core boundary.
+    The machine YAML (ppi8255 `keyboard_type`) and the canonical
+    MachineConfig document spell it with `spelling` and `from_spelling`."""
 
-    INTERNATIONAL = "int"
-    JAPANESE = "jp"
+    INTERNATIONAL = 0
+    JAPANESE = 1
+
+    @property
+    def spelling(self) -> str:
+        """The text form of the machine YAML and the canonical document."""
+        return _KEYBOARD_LAYOUT_SPELLINGS[self]
+
+    @classmethod
+    def from_spelling(cls, text: str) -> KeyboardLayout:
+        """The member spelled `text`. Raises ValueError for another text."""
+        for member in cls:
+            if _KEYBOARD_LAYOUT_SPELLINGS[member] == text:
+                return member
+        raise ValueError(f"unknown keyboard layout {text!r}")
+
+
+_KEYBOARD_LAYOUT_SPELLINGS: dict[KeyboardLayout, str] = {
+    KeyboardLayout.INTERNATIONAL: "int",
+    KeyboardLayout.JAPANESE: "jp",
+}
 
 
 class MachineLoadError(Exception):

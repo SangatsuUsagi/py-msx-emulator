@@ -58,7 +58,9 @@ from typing import TYPE_CHECKING, Any
 
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
+from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
+from host.watch import watch_kind
 from msx.boundary import (
     STOP_BREAKPOINT,
     STOP_REQUESTED,
@@ -179,8 +181,12 @@ class DebugServer:
         machine: "CoreApi",
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
+        disk_files: DiskFiles | None = None,
     ) -> None:
         self._machine = machine
+        # The file of each drive's disk, shared with the frontend and the
+        # debugger of the same run (host/media.py DiskFiles).
+        self._disk_files = disk_files if disk_files is not None else DiskFiles()
         self._sock_path = Path(sock_path)
         self._pause_state = pause_state if pause_state is not None else PauseState()
         self._queue: queue.Queue[tuple[dict[str, Any], list[dict[str, Any]], threading.Event]] = (
@@ -196,7 +202,7 @@ class DebugServer:
         # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
         # surface is decoupled from the interactive debugger's REPL state.
         self._breakpoints: dict[int, int] = {}
-        self._watchpoints: dict[int, tuple[int, str]] = {}
+        self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
         self._next_wp_id = 0
         # Desired joystick state per port (1, 2): direction/trigger booleans.
@@ -223,6 +229,10 @@ class DebugServer:
     @property
     def machine(self) -> "CoreApi":
         return self._machine
+
+    @property
+    def disk_files(self) -> DiskFiles:
+        return self._disk_files
 
     def apply_injected_input(self) -> None:
         """Hand the builder's current input to the machine at once, so the
@@ -513,10 +523,10 @@ class DebugServer:
         self._machine.set_breakpoints(list(self._breakpoints.values()))
         return True
 
-    def alloc_watchpoint(self, address: int, mode: str) -> int:
+    def alloc_watchpoint(self, address: int, kind: int) -> int:
         wp_id = self._next_wp_id
         self._next_wp_id += 1
-        self._watchpoints[wp_id] = (address, mode)
+        self._watchpoints[wp_id] = (address, kind)
         self._machine.set_watchpoints(list(self._watchpoints.values()))
         return wp_id
 
@@ -640,9 +650,10 @@ def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     mode = params.get("mode", "rw")
-    if mode not in ("r", "w", "rw"):
+    kind = watch_kind(mode) if mode in ("r", "w", "rw") else None
+    if kind is None:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
-    wp_id = server.alloc_watchpoint(addr, mode)
+    wp_id = server.alloc_watchpoint(addr, kind)
     return {"id": wp_id, "address": hex16(addr), "mode": mode, "active": True}
 
 
@@ -790,7 +801,7 @@ def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
     rgb, width, height = server.capture_rgb()
-    saved = save_state(server.machine, RgbFrame(width, height, rgb), title)
+    saved = save_state(server.machine, RgbFrame(width, height, rgb), title, server.disk_files)
     return {"path": str(saved)}
 
 
@@ -817,9 +828,9 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     drive_idx = drive - 1
     if path:
-        swap_disk(server.machine, drive_idx, Path(str(path)))
+        swap_disk(server.machine, server.disk_files, drive_idx, Path(str(path)))
         return {"drive": drive, "path": str(path), "mounted": True}
-    swap_disk(server.machine, drive_idx, None)
+    swap_disk(server.machine, server.disk_files, drive_idx, None)
     return {"drive": drive, "path": None, "mounted": False}
 
 

@@ -38,9 +38,13 @@ def test_timing_constants_keep_the_hardware_values() -> None:
     assert VideoStandard.NTSC.lines_per_frame == 262
 
 
-def test_video_standard_values_are_the_yaml_spellings() -> None:
-    assert VideoStandard("ntsc") is VideoStandard.NTSC
-    assert VideoStandard("pal") is VideoStandard.PAL
+def test_video_standard_spellings_are_the_yaml_spellings() -> None:
+    assert VideoStandard.from_spelling("ntsc") is VideoStandard.NTSC
+    assert VideoStandard.from_spelling("pal") is VideoStandard.PAL
+    assert VideoStandard.NTSC.spelling == "ntsc"
+    assert VideoStandard.PAL.spelling == "pal"
+    with pytest.raises(ValueError):
+        VideoStandard.from_spelling("secam")
 
 
 def test_directly_constructed_machine_defaults_to_ntsc() -> None:

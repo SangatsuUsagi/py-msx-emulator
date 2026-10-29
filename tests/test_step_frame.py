@@ -7,7 +7,6 @@ from __future__ import annotations
 from host.input_state import InputState
 from msx.boundary import STOP_BREAKPOINT, STOP_NONE
 from msx.input import InputFrame
-from msx.mouse import MouseDevice
 from msx.psg import JoystickPort
 from tests.factories import make_machine, make_machine_msx2
 
@@ -66,8 +65,9 @@ def test_input_replaces_the_previous_frames_lines() -> None:
 
 def test_mouse_motion_is_applied_once_per_frame() -> None:
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     frame_input = InputFrame(mouse_dx=5, mouse_dy=-3, mouse_left=True)
     machine.step_frame(frame_input, render_video=False)
     assert (mouse._cur_x_rel, mouse._cur_y_rel) == (5, -3)
@@ -92,11 +92,34 @@ def test_injected_key_is_visible_to_a_paused_single_step() -> None:
     assert machine.ppi.read_port(0xA9) & 1 == 0
 
 
+def test_the_mouse_attaches_by_port_number() -> None:
+    # machine-core "The mouse attaches by port number".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(1)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    assert machine.psg._mouse is not None
+    assert machine.psg._mouse.port == JoystickPort.JOY2
+    machine.step_frame(InputFrame(mouse_dx=4, mouse_dy=2), render_video=False)
+    assert (mouse._cur_x_rel, mouse._cur_y_rel) == (4, 2)
+
+
+def test_a_mouse_on_another_port_is_rejected() -> None:
+    import pytest
+
+    machine = make_machine(_ROM)
+    for port in (-1, 2):
+        with pytest.raises(ValueError):
+            machine.attach_mouse(port)
+    assert machine.psg.mouse is None
+
+
 def test_apply_input_does_not_move_the_mouse() -> None:
     # machine-core "apply_input does not move the mouse".
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     machine.apply_input(InputFrame(mouse_dx=7, mouse_right=True))
     assert mouse._cur_x_rel == 0
     assert mouse.read() & 0x20 == 0                 # right button pressed (active-low)
@@ -109,8 +132,9 @@ def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
     import pytest
 
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     frame = InputFrame(key_matrix=_row_pressed(2, 6), mouse_dx=3)
     machine.step_frame(frame, render_video=False)
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -138,8 +162,9 @@ def test_a_stopped_call_returns_no_video_and_no_audio() -> None:
 
 def test_continuing_a_stopped_frame_feeds_no_motion() -> None:
     machine = make_machine(_ROM)
-    mouse = MouseDevice()
-    machine.attach_mouse(mouse, JoystickPort.JOY2)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
     machine.set_breakpoints([0x0001])
     frame_input = InputFrame(mouse_dx=5)
     assert not machine.step_frame(frame_input, render_video=False).frame_complete

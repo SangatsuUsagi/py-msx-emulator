@@ -120,7 +120,10 @@ _T = TypeVar("_T")
 # Version 20: no layout change; the format-19 layout with cpu.registers.WZ,
 #   cpu.q and cpu.q_next, which add-z80-memptr added in v2.8.2 without a
 #   version bump. See openspec/changes/snapshot-format-20.
-CURRENT_FORMAT_VERSION: int = 20
+# Version 21: fdc.drives[].disk_path removed -- a mounted disk is identified
+#   by its size and SHA1 only; the host keeps the disk's file. See
+#   openspec/changes/flatten-core-api-types.
+CURRENT_FORMAT_VERSION: int = 21
 
 _SHA256_HEX_LEN = 64
 
@@ -709,7 +712,7 @@ def _parse_ppi(value: object) -> PpiSnapshot | None:
     )
 
 
-def _check_top_level_keys(data: dict[str, object], source: str) -> None:
+def _check_top_level_keys(data: dict[str, object]) -> None:
     """Refuse a file whose top-level keys are not the layout's: an unknown
     or a missing key."""
     unknown: list[str] = []
@@ -722,12 +725,12 @@ def _check_top_level_keys(data: dict[str, object], source: str) -> None:
             missing.append(key)
     if unknown or missing:
         raise ValueError(
-            f"incompatible state file layout ({source}): "
+            "incompatible state file layout: "
             f"unknown keys {sorted(unknown)}, missing keys {sorted(missing)}"
         )
 
 
-def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
+def parse_snapshot(decoded: object) -> MachineSnapshot:
     """Turn a decoded state file into a MachineSnapshot, checking the format
     version, then the top-level key set, then every component object's key
     set and every value's type, range and (where the snapshot fixes it)
@@ -737,15 +740,15 @@ def parse_snapshot(decoded: object, source: str) -> MachineSnapshot:
     parse_state, which needs the running machine. Nothing here touches a
     machine."""
     if not isinstance(decoded, dict):
-        raise ValueError(f"corrupt or unsupported save state: {source} (not an object)")
+        raise ValueError("corrupt or unsupported save state (not an object)")
     data = cast(dict[str, object], decoded)
     version = data.get("format_version")
     if version != CURRENT_FORMAT_VERSION:
         raise ValueError(
             f"incompatible state file: version {version}, "
-            f"expected {CURRENT_FORMAT_VERSION} ({source})"
+            f"expected {CURRENT_FORMAT_VERSION}"
         )
-    _check_top_level_keys(data, source)
+    _check_top_level_keys(data)
 
     def machine_type_of() -> str:
         text = check_str(data["machine_type"], "machine_type")
@@ -1021,9 +1024,9 @@ def save_state(machine: "Machine") -> bytes:
     return encode_canonical(to_jsonable(asdict(snap)))
 
 
-def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None:
-    """Restore a machine from save_state() bytes. `source` names the data in
-    error messages (the host passes the file path).
+def load_state(machine: "Machine", data: bytes) -> None:
+    """Restore a machine from save_state() bytes. The error messages do not
+    name the data's file: the host adds that.
 
     Raises:
         StateLoadError: If a field or producer object is malformed.
@@ -1038,8 +1041,7 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
     stripped = data.lstrip()
     if stripped[:1] != b"{":
         raise ValueError(
-            "legacy pickle save states are no longer supported; please re-save "
-            f"({source})"
+            "legacy pickle save states are no longer supported; please re-save"
         )
     try:
         decoded = decode_strict(data)
@@ -1049,9 +1051,9 @@ def load_state(machine: "Machine", data: bytes, source: str = "<state>") -> None
         if version is not None:
             raise ValueError(
                 f"incompatible state file: version {version}, "
-                f"expected {CURRENT_FORMAT_VERSION} ({source})"
+                f"expected {CURRENT_FORMAT_VERSION}"
             ) from exc
-        raise ValueError(f"corrupt or unsupported save state: {source} ({exc})") from exc
+        raise ValueError(f"corrupt or unsupported save state ({exc})") from exc
 
-    snap = parse_snapshot(decoded, source)
+    snap = parse_snapshot(decoded)
     _restore_snapshot(machine, snap)

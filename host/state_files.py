@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from host.media import persist_dirty_media
+from host.media import DiskFiles, persist_dirty_media
 from host.screenshot import scale_rgb24, write_rgb24_png
-from msx.boundary import RgbFrame
+from msx.boundary import STATUS_OK, RgbFrame
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -44,7 +44,9 @@ def _sanitise_title(title: str) -> str:
     return re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title) or "save"
 
 
-def save_state(machine: CoreApi, frame: RgbFrame, title: str) -> Path:
+def save_state(
+    machine: CoreApi, frame: RgbFrame, title: str, disk_files: DiskFiles | None = None
+) -> Path:
     """Serialise machine state and screenshot to saves/states/<title>_YYYYMMDD_HHMMSS.*
 
     Args:
@@ -52,6 +54,8 @@ def save_state(machine: CoreApi, frame: RgbFrame, title: str) -> Path:
         frame: Current frame, any size; the PNG is it scaled to
             THUMBNAIL_W x THUMBNAIL_H.
         title: Human-readable title used in the filename.
+        disk_files: The file of each drive's disk, which a dirty disk is
+            written back to first. None writes no disk back.
 
     Returns:
         Path of the written .state file.
@@ -66,7 +70,7 @@ def save_state(machine: CoreApi, frame: RgbFrame, title: str) -> Path:
     # Write pending disk writes back first so the disk-identity hash
     # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
     # the .dsk file's own on-disk bytes.
-    persist_dirty_media(machine)
+    persist_dirty_media(machine, disk_files=disk_files)
     state_path.write_bytes(machine.save_state())
 
     pixels = frame.pixels
@@ -90,8 +94,8 @@ def load_state(machine: CoreApi, path: Path | None = None) -> None:
 
     Raises:
         FileNotFoundError: If the target file does not exist.
-        StateLoadError: If a field or producer object is malformed.
-        ValueError: See CoreApi.load_state (msx.state.load_state). Nothing is restored then.
+        ValueError: "<file>: <message>" when the core rejects the state
+            (CoreApi.load_state, msx.state.load_state). Nothing is restored then.
     """
     if path is None:
         link = Path("saves") / "states" / "latest.state"
@@ -105,7 +109,9 @@ def load_state(machine: CoreApi, path: Path | None = None) -> None:
             raise FileNotFoundError(f"save state not found: {path}")
         resolved = path
 
-    machine.load_state(resolved.read_bytes(), str(resolved))
+    if machine.load_state(resolved.read_bytes()) != STATUS_OK:
+        message = machine.last_error_text().decode("utf-8")
+        raise ValueError(f"{resolved}: {message}")
     print(f"state loaded: {resolved}")
 
 

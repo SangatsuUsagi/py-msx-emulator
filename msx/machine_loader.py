@@ -986,7 +986,7 @@ def _build_msx1(
 
 def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     """Construct the FloppyDisk device from spec.fdc, mounting each disk in
-    `config.disks` into the drive with the matching id ("drive_a" -> drive A)."""
+    `config.disks` into the drive with the matching id (DRIVE_A -> drive A)."""
     from msx.fdc.disk_drive import DiskDrive
     from msx.fdc.disk_image import DskDiskImage
     from msx.fdc.interface import SonyPhilipsInterface, TC8566AFInterface
@@ -1007,14 +1007,14 @@ def _build_fdc(config: _ResolvedConfig) -> "FloppyDisk":
     for media_id in config.disks:
         if media_id not in drive_ids:
             raise MachineLoadError(
-                f"MachineConfig has a disk for {media_id.value} but the machine has "
+                f"MachineConfig has a disk for {media_id.name} but the machine has "
                 f"{len(drives)} drive(s)"
             )
     for idx, media_id in enumerate(drive_ids):
         disk = config.disks.get(media_id)
         if disk is None:
             continue
-        image = DskDiskImage(disk.data, write_protected=disk.write_protected, path=disk.path)
+        image = DskDiskImage(disk.data, write_protected=disk.write_protected)
         device.mount(image, drive=idx)
     return device
 

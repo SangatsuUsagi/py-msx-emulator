@@ -713,7 +713,7 @@ def _parse_builtin_devices(
                 raise MachineLoadError(
                     f"{machine_path}: ppi8255 keyboard_type must be 'int' or 'jp', got {kt!r}"
                 )
-            keyboard_type = KeyboardLayout(kt)
+            keyboard_type = KeyboardLayout.from_spelling(kt)
             if "control_readback" in dev.raw or (
                 isinstance(overrides, dict) and "control_readback" in overrides
             ):
@@ -797,11 +797,11 @@ def load_machine_spec(
 
     video_standard_name = str(raw.get("video_standard", "ntsc")).lower()
     try:
-        video_standard = VideoStandard(video_standard_name)
+        video_standard = VideoStandard.from_spelling(video_standard_name)
     except ValueError:
         expected: list[str] = []
         for member in VideoStandard:
-            expected.append(repr(member.value))
+            expected.append(repr(member.spelling))
         raise MachineLoadError(
             f"{machine_path}: unsupported video_standard {video_standard_name!r} "
             f"(expected one of {', '.join(expected)})"
@@ -1130,9 +1130,12 @@ def _cartridge_sram_path(cartridge: bytes) -> Path:
 class LoadedMachineConfig(MachineConfig):
     """The MachineConfig load_machine_config() produces, plus host data that
     never reaches the core: the file each battery-backed medium is persisted
-    in (see sram_paths). build_machine() reads only the MachineConfig part."""
+    in (see sram_paths) and the file of each disk in `disks`, by drive index
+    (the start of host.media.DiskFiles). build_machine() reads only the
+    MachineConfig part."""
 
     sram_files: dict[MediaId, Path] = field(default_factory=dict)
+    disk_files: dict[int, Path] = field(default_factory=dict)
 
 
 def sram_paths(config: LoadedMachineConfig) -> dict[MediaId, Path]:
@@ -1188,7 +1191,7 @@ def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, st
         for sub in range(_MAX_SUB_SLOT_INDEX + 1):
             if media_id == subslot_sram_id(slot, sub):
                 return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
-    raise ValueError(f"unknown SRAM media id {media_id.value!r}")
+    raise ValueError(f"unknown SRAM media id {media_id.name}")
 
 
 def _overlay_roms(
@@ -1262,11 +1265,13 @@ def _load_spec_roms(
 
 def _load_disks(
     spec: MachineSpec, fdd1: Path | None, fdd2: Path | None
-) -> dict[MediaId, DiskMedium]:
-    """The disk images for the drives an MSX2 machine's FDC has."""
+) -> tuple[dict[MediaId, DiskMedium], dict[int, Path]]:
+    """The disk images for the drives an MSX2 machine's FDC has, and the
+    file of each, by drive index."""
     disks: dict[MediaId, DiskMedium] = {}
+    files: dict[int, Path] = {}
     if spec.generation != "msx2" or spec.fdc is None:
-        return disks
+        return disks, files
     for index, path in enumerate((fdd1, fdd2)):
         if path is not None and index >= spec.fdc.drives:
             print(
@@ -1276,7 +1281,8 @@ def _load_disks(
             )
         elif path is not None:
             disks[drive_media_id(index)] = read_disk_medium(path)
-    return disks
+            files[index] = path
+    return disks, files
 
 
 def _load_media(
@@ -1334,7 +1340,7 @@ def load_machine_config(
     roms = _load_spec_roms(spec, bios_override, logo_override, extrom_override, disk_rom_override)
     roms.update(_overlay_roms(1, extension_overlay1))
     roms.update(_overlay_roms(2, extension_overlay2))
-    disks = _load_disks(spec, fdd1, fdd2)
+    disks, disk_files = _load_disks(spec, fdd1, fdd2)
     carts = _Cartridges(
         cartridge1=cartridge1, mapper1=_resolve_mapper_type(mapper1, cartridge1),
         cartridge2=cartridge2, mapper2=_resolve_mapper_type(mapper2, cartridge2),
@@ -1351,7 +1357,7 @@ def load_machine_config(
     return LoadedMachineConfig(
         document=document, roms=images, media=_load_media(sram_files, carts),
         disks=disks, rtc_initial_time=rtc_initial_time,
-        sram_files=sram_files,
+        sram_files=sram_files, disk_files=disk_files,
     )
 
 

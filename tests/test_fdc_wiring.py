@@ -238,7 +238,7 @@ def test_fdd2_on_single_drive_machine_is_skipped_by_the_host(
     dsk = tmp_path / "b.dsk"
     dsk.write_bytes(bytes(_2DD))
     config = load_machine_config(_fdc_spec(tmp_path), fdd2=dsk)
-    assert "drive_b" not in config.disks
+    assert MediaId.DRIVE_B not in config.disks
     assert "only 1 drive" in capsys.readouterr().err
 
 
@@ -246,8 +246,8 @@ def test_build_rejects_a_disk_for_a_missing_drive(tmp_path: Path) -> None:
     _make_roms(tmp_path)
     config = load_machine_config(_fdc_spec(tmp_path))
     config.disks[MediaId.DRIVE_B] = DiskMedium(bytes(_2DD))
-    # The message names the id by its value (not "MediaId.DRIVE_B").
-    with pytest.raises(MachineLoadError, match="disk for drive_b but"):
+    # The message names the id by its name (not "MediaId.DRIVE_B").
+    with pytest.raises(MachineLoadError, match="disk for DRIVE_B but"):
         build_machine(config)
 
 
@@ -265,5 +265,5 @@ def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     assert machine.fdc is not None
     assert len(machine.fdc.drives) == 4
     image = bytes([0x5A]) * _2DD
-    machine.mount_disk(2, DiskMedium(image, False, None))
+    machine.mount_disk(2, image, False)
     assert machine.read_media(MediaId.DRIVE_C) == image

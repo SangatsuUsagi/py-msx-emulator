@@ -14,12 +14,12 @@ import json
 
 import pytest
 
-from host.state_files import load_state, save_state
+from host.state_files import save_state
 from msx.boundary import RgbFrame
 from msx.snapshot_schema import SchemaError
 from msx.state import StateLoadError
 from msx.vdp.v9938 import V9938, parse_v9938_state
-from tests.factories import make_machine_msx2
+from tests.factories import load_state_file, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
 _EXTROM = b"\x00" * 0x4000
@@ -170,7 +170,7 @@ def test_msx2_file_with_null_vdp9938_is_rejected(tmp_path, monkeypatch) -> None:
         json.dump(data, f)
 
     with pytest.raises(StateLoadError, match="vdp.v9938"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ def test_state_restore_of_latch_and_first_byte_agree(tmp_path, monkeypatch) -> N
     save_state(machine, _RGB_MSX2, "test")
 
     vdp.reset()
-    load_state(machine)
+    load_state_file(machine)
 
     assert vdp.latch == 0x34
     assert vdp._pal_pending is True
@@ -255,7 +255,7 @@ def _edited_msx2_file(tmp_path, monkeypatch, edit):
 def test_disagreeing_port_latch_is_rejected(tmp_path, monkeypatch, edit) -> None:
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
     with pytest.raises(StateLoadError, match="V9938 latch"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 @pytest.mark.parametrize("value", [0x100, -1, "x", True])
@@ -264,7 +264,7 @@ def test_out_of_range_vdp_latch_is_rejected(tmp_path, monkeypatch, value) -> Non
         tmp_path, monkeypatch, lambda d: d["vdp"].__setitem__("latch", value)
     )
     with pytest.raises(StateLoadError) as exc_info:
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert exc_info.value.producer == "vdp"
     assert "vdp.latch" in str(exc_info.value)
 
@@ -277,7 +277,7 @@ def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None
     machine.vdp.regs[7] = 0x5A
     machine.memory.ram[0] = 0x99
     with pytest.raises(StateLoadError, match="vdp.v9938"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
     assert bytes(machine.vdp.vram[0:4]) == b"\x11\x22\x33\x44"
     assert machine.vdp.regs[7] == 0x5A
     assert machine.memory.ram[0] == 0x99
@@ -290,7 +290,7 @@ def test_rejected_vdp9938_object_restores_nothing(tmp_path, monkeypatch) -> None
 def test_other_top_level_layout_is_refused(tmp_path, monkeypatch, edit) -> None:
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
     with pytest.raises(ValueError, match="incompatible state file layout"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)
 
 
 @pytest.mark.parametrize(("where", "key"), [((), "palette"), (("cmd_engine",), "sx")])
@@ -311,4 +311,4 @@ def test_layout_is_checked_before_mapper_kinds_are_decoded(tmp_path, monkeypatch
         d["slots"]["slot1"]["mapper"]["kind"] = "no-such-mapper"
     machine, state_path = _edited_msx2_file(tmp_path, monkeypatch, edit)
     with pytest.raises(ValueError, match="incompatible state file layout"):
-        load_state(machine, state_path)
+        load_state_file(machine, state_path)

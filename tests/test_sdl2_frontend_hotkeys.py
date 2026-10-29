@@ -22,6 +22,7 @@ from frontend.sdl2_frontend import (
 )
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
+from host.media import DiskFiles
 from msx.boundary import FrameOutput, RgbFrame
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
@@ -122,6 +123,7 @@ class _FakeMachine:
         self.reset_calls = 0
         self.shift_at_reset: bool | None = None
         self._sram_table: dict[object, object] = {}
+        self._error_text = b""
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -130,7 +132,8 @@ class _FakeMachine:
     # The real swap path, so host.media.swap_disk drives the FloppyDisk.
     mount_disk = Machine.mount_disk
     disk_mounted = Machine.disk_mounted
-    disk_path = Machine.disk_path
+    last_error_text = Machine.last_error_text
+    _fail = Machine._fail
     _mounted_image = Machine._mounted_image
     dirty_media = Machine.dirty_media
     read_media = Machine.read_media
@@ -578,7 +581,12 @@ def _dsk(path: Path) -> Path:
 
 def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harness:
     paths = [_dsk(tmp_path / n) for n in names]
-    h = _Harness(_HotkeyState(bindings=dict(_DISK_BINDINGS), disks=_DiskList(paths)))
+    # The frontend's file table starts with the drive A image build_machine
+    # mounted, as __main__ makes it from LoadedMachineConfig.disk_files.
+    files = DiskFiles({0: paths[0]}) if fdc and paths else DiskFiles()
+    h = _Harness(_HotkeyState(
+        bindings=dict(_DISK_BINDINGS), disks=_DiskList(paths, files=files),
+    ))
     if fdc:
         h.machine.fdc = SonyPhilipsInterface(WD2793(), [DiskDrive()], disk_rom=bytes(16384))
         if paths:
@@ -588,8 +596,11 @@ def _disk_harness(tmp_path: Path, names: list[str], fdc: bool = True) -> _Harnes
 
 def _drive_a(h: _Harness) -> str | None:
     assert h.machine.fdc is not None
-    image = h.machine.fdc.drives[0].image
-    return None if image is None else image.path.name
+    assert h.hotkeys is not None
+    if h.machine.fdc.drives[0].image is None:
+        return None
+    path = h.hotkeys.disks.files.path(0)
+    return None if path is None else path.name
 
 
 def _no_cell_asserted(h: _Harness) -> bool:
@@ -675,8 +686,9 @@ def test_disk_hotkeys_do_nothing_without_an_fdc(tmp_path: Path, shift: bool) -> 
 @pytest.mark.parametrize("shift", [False, True])
 def test_disk_hotkeys_do_nothing_with_an_empty_list(tmp_path: Path, shift: bool) -> None:
     h = _disk_harness(tmp_path, [])
-    assert h.machine.fdc is not None
+    assert h.machine.fdc is not None and h.hotkeys is not None
     h.machine.fdc.mount(dsk_image(_dsk(tmp_path / "x.dsk")), 0)
+    h.hotkeys.disks.files.set(0, tmp_path / "x.dsk")
     if shift:
         h.keydown(_FakeSDL.SDLK_LSHIFT)
     h.keydown(_FakeSDL.SDLK_F6)
@@ -810,7 +822,9 @@ def test_title_shows_an_ejected_drive(tmp_path: Path) -> None:
 def test_title_shows_an_image_from_outside_the_list(tmp_path: Path) -> None:
     h = _disk_harness(tmp_path, ["a.dsk", "b.dsk"])
     assert h.machine.fdc is not None and h.hotkeys is not None
+    # Another swap path (the debugger or the RPC) records the shared table.
     h.machine.fdc.swap(0, dsk_image(_dsk(tmp_path / "other.dsk")))
+    h.hotkeys.disks.files.set(0, tmp_path / "other.dsk")
     title = _window_title("Game", 60.0, h.machine, h.hotkeys, False)
     assert title.endswith("disk -/2: other.dsk")
 

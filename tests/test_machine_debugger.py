@@ -131,7 +131,7 @@ def _store_rom() -> bytes:
 class TestLastStop:
     def test_watchpoint_hit_names_the_access(self):
         m = make_machine(rom=_store_rom())
-        m.set_watchpoints([(0xC000, "w")])
+        m.set_watchpoints([(0xC000, WATCH_WRITE)])
         m.step_frame(InputFrame(), render_video=False)
         assert m.last_stop() == StopInfo(
             STOP_WATCHPOINT, 0x4006, 0xC000, 0x5A, WATCH_WRITE
@@ -148,7 +148,7 @@ class TestLastStop:
 
     def test_single_step_records_a_watchpoint_hit(self):
         m = make_machine(rom=_store_rom())
-        m.set_watchpoints([(0xC000, "w")])
+        m.set_watchpoints([(0xC000, WATCH_WRITE)])
         while m.cpu_registers().PC != 0x4006:
             m.step()
         m.step()
