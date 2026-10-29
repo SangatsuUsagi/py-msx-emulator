@@ -93,3 +93,15 @@ def test_a_mapper_with_the_kind_off_behaves_identically() -> None:
     m.memory.write(0x7000, 2)
     assert m.memory._mapper.debug_bank_info(2) == "bank 2 @08000-0BFFF"
     assert m.drain_trace() == ()
+
+
+def test_no_event_when_the_write_does_not_change_the_bank() -> None:
+    # diag-mapper-tracer "No record when the write does not change the bank".
+    from msx.boundary import TRACE_MAPPER
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024), cartridge=_rom16(8), mapper="ASCII16")
+    m.set_trace_kinds(TRACE_MAPPER)
+    m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+    m.memory.write(0x7000, 0)  # window 1 already selects bank 0
+    assert m.drain_trace() == ()

@@ -7,12 +7,13 @@ from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
-from msx.boundary import WATCH_READ, RgbFrame
+from msx.boundary import TRACE_MAPPER, TRACE_VDP, WATCH_READ, RgbFrame
 from msx.cpu.registers import Registers
 from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.ram_mapper import RamMapper
+from msx.trace import TraceLog
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP
 
@@ -30,6 +31,7 @@ _CORE_QUERIES = (
     "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
     "main_ram_range", "drive_count", "slot_layout", "slot_info",
     "sprites_hidden", "set_sprites_hidden",
+    "set_trace_kinds", "trace_kinds", "trace_sources", "drain_trace",
 )
 
 
@@ -41,7 +43,7 @@ def _bind_core_queries(m: MagicMock) -> None:
     m._watch_read = frozenset()
     m._watch_write = frozenset()
     m._break_halt_di = False
-    m.__class__ = Machine  # the trace commands need the Python core
+    m._trace = TraceLog(sources=TRACE_VDP)
     for name in _CORE_QUERIES:
         setattr(m, name, functools.partial(getattr(Machine, name), m))
 
@@ -471,13 +473,12 @@ class TestTMS9918ADebug:
         lines = [line for line in out.strip().splitlines() if line.strip()]
         assert len(lines) == 8  # 128 bytes / 16 per row
 
-    def test_te_on_tms_attaches_tracer(self, capsys):
+    def test_te_on_tms_turns_the_vdp_trace_on(self, capsys):
         m = _make_tms_machine()
         dbg = Debugger(m)
-        assert m.vdp.tracer is None
+        assert not m.trace_kinds() & TRACE_VDP
         dbg._cmd_trace_enable()
-        assert m.vdp.tracer is not None
-        assert m.vdp.tracer.enabled is True
+        assert m.trace_kinds() & TRACE_VDP
 
     def test_rp_on_tms_prints_no_palette_error(self, capsys):
         dbg = Debugger(_make_tms_machine())
@@ -686,30 +687,76 @@ class _OtherCore:
         return getattr(self._real, name)
 
 
-def test_te_on_another_core_prints_a_message(capsys):
-    # debug-monitor "te on another core prints a message".
-    from tests.factories import make_machine
-
-    m = make_machine(bytes(32 * 1024))
-    with patch("builtins.input", side_effect=iter(["te", "c"])):
-        Debugger(_OtherCore(m)).enter()  # keeps running until `c`
-    assert "te: needs the Python core" in capsys.readouterr().out
-    assert m.vdp.tracer is None
-
-
-def test_ce_on_another_core_prints_a_message(capsys):
-    # debug-monitor "ce on another core prints a message".
+def test_ce_works_on_another_core(capsys):
+    # debug-monitor "ce works on another core".
     from tests.factories import make_machine
 
     m = make_machine(bytes(32 * 1024), cartridge=bytes(128 * 1024), mapper="ASCII16")
-    dbg = Debugger(_OtherCore(m))
-    dbg._cmd_mapper_trace_enable()
-    assert capsys.readouterr().out == "ce: needs the Python core\n"
-    assert m.memory._mapper._tracer is None
-    dbg._cmd_mapper_trace_disable()
-    assert capsys.readouterr().out == "cd: needs the Python core\n"
+    Debugger(_OtherCore(m))._cmd_mapper_trace_enable()
+    assert m.trace_kinds() & TRACE_MAPPER
+    assert "Mapper bank-switch trace enabled (stdout)" in capsys.readouterr().out
+
+
+# debug-monitor "te / td" and diag-vdp-tracer "Runtime trace enable/disable
+# via debugger (te / td)".
+
+def _trace_ram_machine():
+    """An MSX1 machine with RAM at 0xC000 holding LD A,01h / OUT (99h),A /
+    LD A,80h / OUT (99h),A, and the PC there."""
+    from tests.factories import make_machine
+
+    m = make_machine(bytes(32 * 1024))
+    m.io.write_port(0xA8, 0xF0)
+    m.write_memory(0xC000, bytes((0x3E, 0x01, 0xD3, 0x99, 0x3E, 0x80, 0xD3, 0x99)))
+    m.cpu.registers.PC = 0xC000
+    return m
+
+
+def test_te_creates_tracer_if_absent(capsys):
+    m = _trace_ram_machine()
+    Debugger(m)._cmd_trace_enable()
+    assert capsys.readouterr().out == "VDP trace enabled (stdout)\n"
+    assert m.trace_kinds() == TRACE_VDP
+
+
+def test_td_disables_existing_tracer(capsys):
+    m = _trace_ram_machine()
+    dbg = Debugger(m)
+    dbg._cmd_trace_enable()
+    capsys.readouterr()
     dbg._cmd_trace_disable()
-    assert capsys.readouterr().out == "td: needs the Python core\n"
+    assert capsys.readouterr().out == "VDP trace disabled\n"
+    assert m.trace_kinds() == 0
+    dbg._cmd_trace_disable()
+    assert capsys.readouterr().out == "VDP trace already disabled\n"
+
+
+def test_a_step_prints_its_trace_lines(capsys):
+    m = _trace_ram_machine()
+    dbg = Debugger(m)
+    dbg._cmd_trace_enable()
+    capsys.readouterr()
+    dbg._cmd_step(["4"])
+    out = capsys.readouterr().out
+    assert "PC=C006 VDP_REG R#00=01h" in out
+    assert out.index("VDP_REG") < out.index("=> ")
+
+
+def test_te_writes_to_the_vdp_trace_out_file(capsys):
+    import io
+
+    from host.trace import TraceOutput
+
+    m = _trace_ram_machine()
+    trace = TraceOutput()
+    log = io.StringIO()
+    trace.set_vdp_output(log, "trace.log")
+    dbg = Debugger(m, trace=trace)
+    dbg._cmd_trace_enable()
+    assert capsys.readouterr().out == "VDP trace enabled (trace.log)\n"
+    dbg._cmd_step(["4"])
+    assert "VDP_REG R#00=01h" in log.getvalue()
+    assert "VDP_REG" not in capsys.readouterr().out
 
 
 def test_ds_hides_and_shows_sprites(capsys):
@@ -843,51 +890,54 @@ class TestSlotRomMapperBank:
 # ce / cd — mapper bank-switch trace
 # ---------------------------------------------------------------------------
 
-def _make_mapper_machine(mapper):
-    from msx.mapper import FlatMapper
-    m = _make_machine()
-    m.memory = MagicMock()
-    m.memory._mapper = mapper
-    m.memory._mapper2 = FlatMapper(None)
-    m.cpu.instruction_pc = 0x402E
-    m.cycle_count = 45231
-    m.vdp._frame_count = 3
-    return m
-
-
 class TestMapperTrace:
     @staticmethod
-    def _rom16(pages: int):
-        return bytes([(p if i == 0 else 0) for p in range(pages) for i in range(16384)])
+    def _machine(mapper: str = "ASCII16"):
+        from tests.factories import make_machine
+
+        rom = bytes([(p if i == 0 else 0) for p in range(8) for i in range(16384)])
+        m = make_machine(bytes(32 * 1024), cartridge=rom, mapper=mapper)
+        m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
+        return m
 
     def test_ce_enables_and_logs_switch(self, capsys):
-        from msx.mapper import Ascii16Mapper
-        mapper = Ascii16Mapper(self._rom16(8))
-        m = _make_mapper_machine(mapper)
-        Debugger(m)._cmd_mapper_trace_enable()
+        m = self._machine()
+        dbg = Debugger(m)
+        dbg._cmd_mapper_trace_enable()
         capsys.readouterr()  # discard the "enabled" line
-        mapper.write(0x7000, 1)  # window 1: 0 -> 1
+        m.memory.write(0x7000, 1)  # window 1: 0 -> 1
+        dbg.drain_trace()
         out = capsys.readouterr().out
         assert "MAP_BANK win=1 00h->01h addr=7000h" in out
-        assert "PC=402E" in out
 
     def test_cd_disables(self, capsys):
-        from msx.mapper import Ascii16Mapper
-        mapper = Ascii16Mapper(self._rom16(8))
-        m = _make_mapper_machine(mapper)
+        m = self._machine()
         dbg = Debugger(m)
         dbg._cmd_mapper_trace_enable()
         dbg._cmd_mapper_trace_disable()
-        capsys.readouterr()
-        mapper.write(0x7000, 2)
+        assert "Mapper trace disabled" in capsys.readouterr().out
+        m.memory.write(0x7000, 2)
+        dbg.drain_trace()
         assert capsys.readouterr().out == ""
+        dbg._cmd_mapper_trace_disable()
+        assert capsys.readouterr().out == "Mapper trace already disabled\n"
 
     def test_ce_no_mapper_message(self, capsys):
-        from msx.mapper import FlatMapper
-        m = _make_mapper_machine(FlatMapper(b"\x00" * 32768))
+        m = self._machine(mapper="Normal")
         Debugger(m)._cmd_mapper_trace_enable()
         out = capsys.readouterr().out
         assert "no bank-switching ROM mapper" in out
+        assert m.trace_kinds() == 0
+
+    def test_ce_reads_only_the_trace_sources(self, capsys):
+        # debug-monitor "Bank-trace-capable mappers are identified by type,
+        # not attribute probing": ce asks the core API, not the mappers.
+        class _NoMapperCore:
+            def trace_sources(self):
+                return TRACE_VDP
+
+        Debugger(_NoMapperCore())._cmd_mapper_trace_enable()
+        assert "no bank-switching ROM mapper" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

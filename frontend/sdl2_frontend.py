@@ -1019,6 +1019,8 @@ def _run_frame(
     out = machine.step_frame(
         keyboard.input_state.take_frame(), render_video=not skip_this_frame
     )
+    if hotkeys.debugger is not None:
+        hotkeys.debugger.drain_trace()
     if out.stop_reason != STOP_NONE:
         # A break: the frame continues on the next step_frame, after the REPL
         # returns or the RPC client resumes. Keep the last picture on screen.
