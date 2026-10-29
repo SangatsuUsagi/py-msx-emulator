@@ -9,7 +9,7 @@ from __future__ import annotations
 import shlex
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Callable
 
 from host.debugger.disasm import disassemble
 from host.debugger.stop import sigint_interrupts, watch_hit_line
@@ -111,12 +111,16 @@ class Debugger:
         """One byte of CPU address space, through the core API (no watchpoint)."""
         return self._machine.read_memory(addr, 1)[0]
 
-    def _diagnostics_machine(self) -> Machine:
-        """The machine as the Python core, for the diagnostics commands only
-        (VDP and mapper trace, sprite toggle, slot views): they reach its
-        components, which a native core does not offer until a diagnostics
-        contract exists (tests/test_core_frontend_boundary.py allowlist)."""
-        return cast("Machine", self._machine)
+    def _diagnostics_machine(self) -> Machine | None:
+        """The machine as the Python core, for the trace commands only (te,
+        td, ce, cd): they attach Python tracer objects to its components
+        (tests/test_core_frontend_boundary.py allowlist). None on another
+        core, where each of them prints that it needs the Python core."""
+        from msx.machine import Machine
+
+        if isinstance(self._machine, Machine):
+            return self._machine
+        return None
 
     # ------------------------------------------------------------------
     # Public API
@@ -567,6 +571,9 @@ class Debugger:
     def _cmd_trace_enable(self) -> None:
         from msx.vdp.tracer import Tracer
         m = self._diagnostics_machine()
+        if m is None:
+            print("te: needs the Python core")
+            return
         vdp = m.vdp
         if vdp._get_pc is None:
             vdp._get_pc    = lambda: m.cpu.instruction_pc
@@ -578,7 +585,11 @@ class Debugger:
         print("VDP trace enabled (stdout)")
 
     def _cmd_trace_disable(self) -> None:
-        vdp = self._diagnostics_machine().vdp
+        m = self._diagnostics_machine()
+        if m is None:
+            print("td: needs the Python core")
+            return
+        vdp = m.vdp
         if vdp.tracer is None or not vdp.tracer.enabled:
             print("VDP trace already disabled")
             return
@@ -587,7 +598,10 @@ class Debugger:
 
     def _mapper_targets(self) -> list[BankTracingMapper]:
         """Cartridge ROM mappers (slots 1/2) that support bank-switch tracing."""
-        mem = self._diagnostics_machine().memory
+        m = self._diagnostics_machine()
+        if m is None:
+            return []
+        mem = m.memory
         result: list[BankTracingMapper] = []
         for mp in (mem._mapper, mem._mapper2):
             if isinstance(mp, BankTracingMapper):
@@ -596,12 +610,19 @@ class Debugger:
 
     def _cmd_mapper_trace_enable(self) -> None:
         from msx.mapper_tracer import attach_to_machine
-        if attach_to_machine(self._diagnostics_machine(), output=sys.stdout) is None:
+        m = self._diagnostics_machine()
+        if m is None:
+            print("ce: needs the Python core")
+            return
+        if attach_to_machine(m, output=sys.stdout) is None:
             print("ce: no bank-switching ROM mapper present")
             return
         print("Mapper bank-switch trace enabled (stdout)")
 
     def _cmd_mapper_trace_disable(self) -> None:
+        if self._diagnostics_machine() is None:
+            print("cd: needs the Python core")
+            return
         disabled = False
         for mp in self._mapper_targets():
             tracer = mp._tracer

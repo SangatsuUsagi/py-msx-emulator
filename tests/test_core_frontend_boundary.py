@@ -204,6 +204,16 @@ def test_the_allowlist_names_only_diagnostics() -> None:
         assert reason.strip(), f"allowlist entry without a reason: {entry}"
 
 
+def test_the_allowlist_names_only_the_trace_commands() -> None:
+    # machine-core "The allowlist names only the trace commands": each reason
+    # starts with the commands it serves ("ce / cd (mapper trace)").
+    for entry, reason in _DIAGNOSTICS_ALLOWLIST.items():
+        commands = reason.split("(")[0].replace("/", " ").split()
+        assert commands, f"allowlist entry names no command: {entry}"
+        for command in commands:
+            assert command in ("te", "td", "ce", "cd"), f"{entry}: {command}"
+
+
 def _calls_named(path: Path, name: str) -> list[int]:
     """Line numbers of calls to `name`, as a bare name or an attribute."""
     lines: list[int] = []

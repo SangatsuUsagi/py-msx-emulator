@@ -1112,8 +1112,10 @@ The same test also checks the other direction. Code in `host/`, `frontend/`,
 `tools/` and `__main__.py` uses the machine only through the core API
 (below). It must not read a core component (`.cpu`, `.vdp`, `.memory`,
 `.fdc` and the others) or a private field of the machine. The debugger's
-diagnostics commands (`te`/`td`, `ce`/`cd`, `ds`, `sl`, `st`) are the
-exception, on a named allowlist. A port of the core can thus replace the
+trace commands (`te`/`td`, `ce`/`cd`) are the exception, on a named
+allowlist. They attach Python tracer objects to the core's components. On a
+core that is not the Python `Machine`, each prints that it needs the Python
+core and does nothing else. A port of the core can thus replace the
 `Machine` and keep the debugger, the RPC server and the frontend.
 
 ### Values that cross the boundary
