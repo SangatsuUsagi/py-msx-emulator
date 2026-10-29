@@ -131,6 +131,11 @@ class Machine:
     _frame_result: bytearray = field(default_factory=bytearray, init=False, repr=False)
     # The scanline a loop arm stopped on (the next one to run).
     _stop_line: int = field(default=0, init=False, repr=False)
+    # Set while step() runs one instruction through run_frame(): the debug
+    # arm then skips the break tests and stops after one instruction, whose
+    # T-states it leaves in _step_cycles (-1 until it has run).
+    _step_one: bool = field(default=False, init=False, repr=False)
+    _step_cycles: int = field(default=-1, init=False, repr=False)
     # Set when step_frame() stopped or step() ran, so the next run skips the
     # breakpoint test for its first instruction (machine-core "A resume does
     # not re-break at once").
@@ -341,7 +346,8 @@ class Machine:
     def _break_conditions_active(self) -> bool:
         """True when any execution-break condition needs the per-instruction loop."""
         return (
-            bool(self._breakpoints)
+            self._step_one
+            or bool(self._breakpoints)
             or self._break_halt_di
             or self._sp_range is not None
             or self._temp_breakpoint is not None
@@ -564,12 +570,32 @@ class Machine:
         self.memory.write(addr, value)
 
     def step(self) -> int:
-        # Single-step (debugger / RPC) path: sample the VDP IRQ level the same
-        # way every run_frame() scanline loop does before each instruction.
+        """Run one instruction of the current frame and return its T-states
+        (machine-core "A single step runs inside the current frame").
+
+        The instruction runs through run_frame()'s debug arm, so it advances
+        cycle_count, the frame position and the VDP like any other; a line
+        end, the VBlank split or the frame end the previous call left
+        pending is handled first. No breakpoint, post-step condition or
+        break request is tested ("A single step ignores the break
+        settings"); a watchpoint hit is recorded in last_stop(). A frame
+        this call completes is counted and mixed, but its audio is
+        dropped: step() returns only the T-states.
+        """
         self._stop = StopInfo()
+        self._step_one = True
+        self._step_cycles = -1
+        try:
+            # One pass either runs the instruction or completes the frame
+            # the previous call left at its end; the next pass then starts
+            # a new frame and runs it.
+            while self._step_cycles < 0:
+                self.run_frame()
+        finally:
+            self._step_one = False
+        self.audio.take()
         self._resume_after_stop = True
-        self.cpu.int_pending = self.vdp.irq
-        return self.cpu.step()
+        return self._step_cycles
 
     def run_frame(self, skip_render: bool = False) -> bytearray:
         """Run one frame, or the rest of a stopped one, up to its end or the
@@ -602,11 +628,13 @@ class Machine:
         # begin_scanline(line) runs *after* that line's cycles, so the
         # pre-render segment is the half-open range [0, vblank_split).
         vblank_split = self.vdp.vblank_start_line + 1
-        if self._stop_pending or self._resume_after_stop:
-            # First instruction after a stop or a step: no breakpoint test.
-            self._resume_skip_pc = self.cpu.registers.PC
+        stepping = self._step_one
+        if not stepping:
+            if self._stop_pending or self._resume_after_stop:
+                # First instruction after a stop or a step: no breakpoint test.
+                self._resume_skip_pc = self.cpu.registers.PC
+            self._resume_after_stop = False
         self._stop_pending = False
-        self._resume_after_stop = False
         if not self._frame_active:
             self._frame_active = True
             self._frame_line = 0
@@ -618,7 +646,7 @@ class Machine:
         line = self._frame_line
         total = self._frame_total
         if line < vblank_split:
-            if self._take_break_request(line):
+            if not stepping and self._take_break_request(line):
                 return self._keep_stopped_frame(total)
             total = self._run_lines(vdp9938, line, vblank_split, total)
             if self._stop_pending:
@@ -633,7 +661,7 @@ class Machine:
                 self.vdp.begin_vblank()
             self._frame_rendered = True
         if line < lpf:
-            if self._take_break_request(line):
+            if not stepping and self._take_break_request(line):
                 return self._keep_stopped_frame(total)
             total = self._run_lines(vdp9938, line, lpf, total)
             if self._stop_pending:
@@ -782,6 +810,7 @@ class Machine:
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
         post_checks = self._post_step_checks_armed()
+        step_one = self._step_one
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -791,7 +820,9 @@ class Machine:
             line_end = (line + 1) * cpf // lpf
             while total < line_end:
                 pc = cpu.registers.PC
-                if pc == self._resume_skip_pc:
+                if step_one:
+                    pass  # step(): no breakpoint test
+                elif pc == self._resume_skip_pc:
                     # First instruction after a stop or a step: run it
                     # without the breakpoint test.
                     self._resume_skip_pc = None
@@ -814,7 +845,11 @@ class Machine:
                         vdp9938.tick(n)
                     else:
                         vdp9938._line_cycle += n
-                if post_checks and self._post_step_break():
+                if step_one:
+                    # step(): one instruction, then return like a stop.
+                    self._step_cycles = n
+                    self._stop_pending = True
+                elif post_checks and self._post_step_break():
                     self._enter_break(STOP_BREAKPOINT)
                 if self._stop_pending:
                     # A watchpoint (or post-step condition) stopped this
