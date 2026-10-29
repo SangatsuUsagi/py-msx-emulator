@@ -95,6 +95,10 @@ the debugger prints a compact register summary and the next instruction:
   => C012: CD 40 C0     CALL C040h
 ```
 
+Each step is one instruction of the stopped frame, so the prompt's `cyc`
+rises by its T-states, and a step can cross a scanline, the VBlank or the
+end of the frame. A step does not stop at a breakpoint.
+
 **`g ADDR`**: resume emulation and run until PC reaches `ADDR` (hex). This is
 a one-shot temporary breakpoint. The debugger clears it after the hit. It does
 not use a `ba` slot and does not change the permanent breakpoints.

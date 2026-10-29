@@ -1169,7 +1169,7 @@ belongs to the debugger's diagnostics.
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
 | Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back |
-| | `step() -> int` | Runs one instruction and returns its T-states |
+| | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
 | | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
 
