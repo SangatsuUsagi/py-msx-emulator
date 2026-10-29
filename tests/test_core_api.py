@@ -14,6 +14,7 @@ from msx.boundary import (
     STOP_NONE,
     STOP_WATCHPOINT,
     TRACE_CAPACITY,
+    TRACE_DEBUG,
     TRACE_EVENT_LOST,
     TRACE_EVENT_VDP_PORT99,
     TRACE_MAPPER,
@@ -278,21 +279,22 @@ def _ascii16_machine() -> Machine:
 def test_the_enabled_trace_kinds_round_trip() -> None:
     m = _ascii16_machine()
     assert m.trace_kinds() == 0
-    assert m.set_trace_kinds(TRACE_VDP | TRACE_MAPPER) == STATUS_OK
-    assert m.trace_kinds() == TRACE_VDP | TRACE_MAPPER
+    kinds = TRACE_VDP | TRACE_MAPPER | TRACE_DEBUG
+    assert m.set_trace_kinds(kinds) == STATUS_OK
+    assert m.trace_kinds() == kinds
 
 
 def test_an_unknown_trace_kind_is_rejected() -> None:
     m = _msx1()
     m.set_trace_kinds(TRACE_VDP)
-    assert m.set_trace_kinds(0x04) == STATUS_BAD_ARGUMENT
+    assert m.set_trace_kinds(0x08) == STATUS_BAD_ARGUMENT
     assert m.trace_kinds() == TRACE_VDP
-    assert m.last_error_text() == b"invalid trace kinds 4"
+    assert m.last_error_text() == b"invalid trace kinds 8"
 
 
 def test_the_mapper_trace_kind_needs_a_bank_switching_mapper() -> None:
-    assert _msx1().trace_sources() == TRACE_VDP
-    assert _ascii16_machine().trace_sources() == TRACE_VDP | TRACE_MAPPER
+    assert _msx1().trace_sources() == TRACE_VDP | TRACE_DEBUG
+    assert _ascii16_machine().trace_sources() == TRACE_VDP | TRACE_MAPPER | TRACE_DEBUG
 
 
 def test_a_trace_kind_that_is_off_records_nothing() -> None:
@@ -300,6 +302,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.io.write_port(0x99, 0x01)
     m.io.write_port(0x99, 0x80)
+    m.io.read_port(0xA8)
     m.memory.write(0x7000, 3)  # window 1 -> bank 3
     assert m.memory._mapper.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
     assert m.drain_trace() == ()
@@ -308,7 +311,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
 def test_the_saved_state_does_not_carry_the_trace_kinds() -> None:
     for m in (_msx1(), _msx2()):
         off = m.save_state()
-        m.set_trace_kinds(TRACE_VDP)
+        m.set_trace_kinds(TRACE_VDP | TRACE_DEBUG)
         assert m.save_state() == off
 
 

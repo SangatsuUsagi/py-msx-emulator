@@ -20,7 +20,8 @@ The slot queries (slot_layout, slot_info) and the sprite display flag
 (set_sprites_hidden, sprites_hidden) serve the debugger's sl, st and ds;
 the flag is a debug setting outside the saved state. The trace members
 (set_trace_kinds, trace_kinds, trace_sources, drain_trace) carry the VDP
-and mapper trace as flat integer events (msx/boundary.py TraceEvent) that
+and mapper trace and the debug log as flat integer events
+(msx/boundary.py TraceEvent) that
 the host formats; set_trace_kinds returns STATUS_BAD_ARGUMENT for an
 unknown kind, and the kinds are a debug setting outside the saved state
 too. The machine is built

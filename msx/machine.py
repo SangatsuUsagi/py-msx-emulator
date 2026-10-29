@@ -16,6 +16,9 @@ from msx.boundary import (
     STOP_NONE,
     STOP_REQUESTED,
     STOP_WATCHPOINT,
+    TRACE_DEBUG,
+    TRACE_EVENT_HANG_HALT_DI,
+    TRACE_EVENT_HANG_PC_LOOP,
     TRACE_MAPPER,
     TRACE_VDP,
     VDP_KIND_TMS9918A,
@@ -638,13 +641,22 @@ class Machine:
         return self.vdp.debug_disable_sprites
 
     def set_trace_kinds(self, kinds: int) -> int:
-        """Turn on exactly the trace kinds `kinds` (TRACE_VDP, TRACE_MAPPER)
-        and return STATUS_OK. Returns STATUS_BAD_ARGUMENT, changing nothing,
-        for another bit. A debug setting: no reset clears it and the saved
-        state omits it."""
-        if kinds & ~(TRACE_VDP | TRACE_MAPPER):
+        """Turn on exactly the trace kinds `kinds` (TRACE_VDP, TRACE_MAPPER,
+        TRACE_DEBUG) and return STATUS_OK. Returns STATUS_BAD_ARGUMENT,
+        changing nothing, for another bit. A debug setting: no reset clears
+        it and the saved state omits it. TRACE_DEBUG hands the CPU the
+        trace buffer, which it checks on each instruction, and starts an
+        empty instruction history when it turns on."""
+        if kinds & ~(TRACE_VDP | TRACE_MAPPER | TRACE_DEBUG):
             return self._fail(STATUS_BAD_ARGUMENT, f"invalid trace kinds {kinds}")
-        self._trace.kinds = kinds
+        trace = self._trace
+        if kinds & TRACE_DEBUG:
+            if not trace.kinds & TRACE_DEBUG:
+                trace.clear_history()
+            self.cpu._trace = trace
+        else:
+            self.cpu._trace = None
+        trace.kinds = kinds
         self._error_text = b""
         return STATUS_OK
 
@@ -653,8 +665,9 @@ class Machine:
         return self._trace.kinds
 
     def trace_sources(self) -> int:
-        """The trace kinds this machine can produce: TRACE_VDP, plus
-        TRACE_MAPPER with a bank-switching ROM mapper in slot 1 or 2."""
+        """The trace kinds this machine can produce: TRACE_VDP and
+        TRACE_DEBUG, plus TRACE_MAPPER with a bank-switching ROM mapper in
+        slot 1 or 2."""
         return self._trace.sources
 
     def drain_trace(self) -> tuple[TraceEvent, ...]:
@@ -929,7 +942,7 @@ class Machine:
         """
         if self._break_conditions_active():
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
-        if self._logger is None:
+        if self._logger is None and not self._trace.kinds & TRACE_DEBUG:
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
         return self._run_lines_logged(vdp9938, first_line, end_line, total)
 
@@ -1119,7 +1132,9 @@ class Machine:
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Scanline loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
-        assert self._logger is not None
+        logger = self._logger
+        trace = self._trace
+        debug = trace.kinds & TRACE_DEBUG
         cpu = self.cpu
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
@@ -1146,7 +1161,12 @@ class Machine:
                     if pc == self._last_pc:
                         self._pc_repeat += 1
                         if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                            self._logger.on_hang_pc_loop(pc)
+                            if logger is not None:
+                                logger.on_hang_pc_loop(pc)
+                            # Once per run of repeats: the host reports each
+                            # PC once per run.
+                            if debug and self._pc_repeat == HANG_PC_REPEAT_THRESHOLD:
+                                trace.record_hang(TRACE_EVENT_HANG_PC_LOOP, pc)
                     else:
                         self._pc_repeat = 0
                     self._last_pc = pc
@@ -1157,7 +1177,10 @@ class Machine:
         # frame reports a HALT-with-interrupts-off hang.
         is_final_segment = end_line >= lpf
         if is_final_segment and cpu.halted and not cpu.iff1:
-            self._logger.on_hang_halt_di(cpu.registers.PC)
+            if logger is not None:
+                logger.on_hang_halt_di(cpu.registers.PC)
+            if debug:
+                trace.record_hang(TRACE_EVENT_HANG_HALT_DI, cpu.registers.PC)
         return total
 
 
