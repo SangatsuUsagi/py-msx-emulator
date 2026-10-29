@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from msx.boundary import STOP_NONE, STOP_WATCHPOINT, WATCH_READ, StopInfo
+from msx.boundary import STOP_NONE, STOP_REQUESTED, STOP_WATCHPOINT, WATCH_READ, StopInfo
 
 if TYPE_CHECKING:
     from host.debugger.prompt import Debugger
@@ -37,18 +37,21 @@ def handle_stop(
     debugger: Debugger | None,
     rpc_server: DebugServer | None,
 ) -> None:
-    """Act on a step_frame stop: print the watchpoint line, then pause the
-    RPC gate when a server runs, or else open the debug REPL. Does nothing
-    for STOP_NONE."""
+    """Act on a step_frame stop: print the watchpoint line, then open the
+    debug REPL or pause the RPC gate. A break request (Ctrl-C in the
+    terminal) opens the REPL whenever there is a debugger, since a person
+    at the terminal made it; any other stop pauses the RPC gate when a
+    server runs, else opens the REPL (debug-monitor "The REPL opens after
+    the core stops"). Does nothing for STOP_NONE."""
     if stop_reason == STOP_NONE:
         return
     stop = machine.last_stop()
     if stop.reason == STOP_WATCHPOINT:
         print(watch_hit_line(stop))
-    if rpc_server is not None:
-        rpc_server.on_core_stop(stop_reason)
-    elif debugger is not None:
+    if debugger is not None and (stop_reason == STOP_REQUESTED or rpc_server is None):
         debugger.enter()
+    elif rpc_server is not None:
+        rpc_server.on_core_stop(stop_reason)
 
 
 @contextmanager

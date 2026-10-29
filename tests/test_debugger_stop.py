@@ -89,7 +89,7 @@ def test_a_watchpoint_stop_prints_the_line_then_opens_the_repl(capsys) -> None:
     debugger.enter.assert_called_once()
 
 
-def test_an_rpc_server_takes_the_stop_instead_of_the_repl(tmp_path: Path) -> None:
+def test_a_breakpoint_with_an_rpc_server_pauses_the_rpc_gate(tmp_path: Path) -> None:
     m = _machine()
     m.set_breakpoints([0x4006])
     srv = DebugServer(m, sock_path=str(tmp_path / "s.sock"))
@@ -145,6 +145,21 @@ def test_a_break_request_from_ctrl_c_opens_the_repl() -> None:
     assert reason == STOP_REQUESTED
     handle_stop(m, reason, debugger, None)
     debugger.enter.assert_called_once()
+
+
+def test_ctrl_c_opens_the_repl_with_an_rpc_server(tmp_path: Path) -> None:
+    # A person at the terminal made the request, so the REPL opens even
+    # though an RPC server runs; the RPC pause state does not change.
+    m = _machine()
+    srv = DebugServer(m, sock_path=str(tmp_path / "s.sock"))
+    debugger = MagicMock()
+    with sigint_requests_break(m):
+        os.kill(os.getpid(), signal.SIGINT)
+        reason = _step(m)
+    assert reason == STOP_REQUESTED
+    handle_stop(m, reason, debugger, srv)
+    debugger.enter.assert_called_once()
+    assert not srv.pause_state.paused
 
 
 def test_sigint_interrupts_while_active() -> None:

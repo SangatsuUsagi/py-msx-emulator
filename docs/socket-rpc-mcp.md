@@ -152,8 +152,9 @@ These `reason` values occur in all methods: `"user_request"`, `"breakpoint"`,
 
 - **`debugger.status`** → `{ paused, pc, reason }`. Reports the state and does
   not change it.
-- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`. The
-  same as Ctrl+C.
+- **`debugger.pause`** → `{ paused: true, pc, reason: "user_request" }`.
+  Ctrl+C in the terminal does not do this: it opens the debugger REPL, and
+  the server serves no request until the REPL resumes.
 
 ### CPU / execution
 
