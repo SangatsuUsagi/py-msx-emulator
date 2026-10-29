@@ -29,6 +29,7 @@ _CORE_QUERIES = (
     "cpu_registers", "read_memory", "vram_size", "read_vram", "vdp_info",
     "frame_number", "breakpoints", "watchpoints", "break_halt_di", "render_preview",
     "main_ram_range", "drive_count", "slot_layout", "slot_info",
+    "sprites_hidden", "set_sprites_hidden",
 )
 
 
@@ -671,6 +672,20 @@ def test_the_slot_views_use_only_the_core_api(capsys):
         getattr(Debugger(_SlotQueriesOnly(m)), command)()
         assert capsys.readouterr().out == expected
         assert "Primary" in expected or "P3" in expected
+
+
+def test_ds_hides_and_shows_sprites(capsys):
+    # debug-monitor "ds hides and shows sprites", on both VDP types.
+    from tests.factories import make_machine, make_machine_msx2
+
+    for m in (make_machine(bytes(32 * 1024)), make_machine_msx2(bytes(32 * 1024), bytes(0x4000))):
+        dbg = Debugger(m)
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: OFF (background only)\n"
+        assert m.sprites_hidden() is True
+        dbg._cmd_disable_sprites()
+        assert capsys.readouterr().out == "Sprite rendering: ON\n"
+        assert m.sprites_hidden() is False
 
 
 class TestSlotTree:

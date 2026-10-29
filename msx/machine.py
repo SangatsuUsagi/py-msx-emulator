@@ -364,6 +364,12 @@ class Machine:
         self._break_halt_di = enabled
         self._halt_di_seen = False
 
+    def set_sprites_hidden(self, hidden: bool) -> None:
+        """Hide or show sprites: while hidden, the renderer skips its sprite
+        pass (on the TMS9918A also the S#0 sprite flags of that frame). A
+        debug setting: no reset clears it and the saved state omits it."""
+        self.vdp.debug_disable_sprites = hidden
+
     def set_sp_range(self, rng: tuple[int, int] | None) -> None:
         """Set the valid-RAM range for SP; break when SP leaves it. None disables."""
         self._sp_range = rng
@@ -619,6 +625,10 @@ class Machine:
     def break_halt_di(self) -> bool:
         """Whether the HALT-with-interrupts-off break is enabled."""
         return self._break_halt_di
+
+    def sprites_hidden(self) -> bool:
+        """Whether sprites are hidden (set_sprites_hidden)."""
+        return self.vdp.debug_disable_sprites
 
     def render_preview(self) -> RgbFrame:
         """The current frame as RGB24, without changing emulated state (the

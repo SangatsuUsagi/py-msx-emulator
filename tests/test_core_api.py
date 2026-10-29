@@ -246,7 +246,22 @@ def test_an_invalid_slot_is_rejected() -> None:
     assert m.last_error_text() == b""
 
 
-# -- machine-core "The core API has no callback into the host" ---------------
+# -- machine-core "The core API sets and reports the sprite display flag" ----
+
+def test_hidden_sprites_are_reported() -> None:
+    for m in (_msx1(), _msx2()):
+        assert m.sprites_hidden() is False
+        m.set_sprites_hidden(True)
+        assert m.sprites_hidden() is True
+        m.set_sprites_hidden(False)
+        assert m.sprites_hidden() is False
+
+
+def test_a_saved_state_does_not_carry_the_flag() -> None:
+    for m in (_msx1(), _msx2()):
+        shown = m.save_state()
+        m.set_sprites_hidden(True)
+        assert m.save_state() == shown
 
 def test_no_core_api_member_takes_a_callback() -> None:
     # Annotations are strings here (from __future__ import annotations), so

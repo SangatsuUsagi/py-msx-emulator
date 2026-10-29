@@ -799,6 +799,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `slot_info(primary, secondary, page) -> SlotInfo \| None` | 1 つのスロットの内容の文字列、バンクの文字列、KB 単位のサイズ。`sl` と `st` が使う。`secondary` と `page` は `None` にできる。0-3 の外の値には `None` を返す |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。`set_watchpoints()` は `STATUS_OK` を返し、不正な kind には `STATUS_BAD_ARGUMENT`（6）を返す |
+| | `set_sprites_hidden(hidden)`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
