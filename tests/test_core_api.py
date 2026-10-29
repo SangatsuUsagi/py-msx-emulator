@@ -9,6 +9,8 @@ from dataclasses import fields
 import pytest
 
 from msx.boundary import (
+    STATUS_BAD_ARGUMENT,
+    STATUS_OK,
     STOP_NONE,
     STOP_WATCHPOINT,
     VDP_KIND_TMS9918A,
@@ -129,7 +131,8 @@ def test_break_setting_queries_reflect_the_setters() -> None:
 def test_watchpoints_round_trip_as_bit_flags() -> None:
     # machine-core "Watchpoints round-trip as bit flags".
     m = _msx1()
-    m.set_watchpoints([(0xC000, WATCH_READ), (0xD000, WATCH_READ | WATCH_WRITE)])
+    status = m.set_watchpoints([(0xC000, WATCH_READ), (0xD000, WATCH_READ | WATCH_WRITE)])
+    assert status == STATUS_OK
     assert m.watchpoints() == ((0xC000, WATCH_READ), (0xD000, WATCH_READ | WATCH_WRITE))
 
 
@@ -138,9 +141,19 @@ def test_an_invalid_watch_kind_is_rejected(kind: int) -> None:
     # machine-core "An invalid watch kind is rejected".
     m = _msx1()
     m.set_watchpoints([(0xC000, WATCH_WRITE)])
-    with pytest.raises(ValueError):
-        m.set_watchpoints([(0x8000, WATCH_READ), (0x9000, kind)])
+    status = m.set_watchpoints([(0x8000, WATCH_READ), (0x9000, kind)])
+    assert status == STATUS_BAD_ARGUMENT
     assert m.watchpoints() == ((0xC000, WATCH_WRITE),)
+    assert m.last_error_text() == f"invalid watch kind {kind}".encode()
+
+
+def test_a_later_success_clears_the_message() -> None:
+    # machine-core "A later success clears the message".
+    m = _msx1()
+    assert m.set_watchpoints([(0xC000, 0)]) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() != b""
+    assert m.set_watchpoints([(0xC000, WATCH_READ)]) == STATUS_OK
+    assert m.last_error_text() == b""
 
 
 def test_status_flags_survive_the_vdp_query() -> None:

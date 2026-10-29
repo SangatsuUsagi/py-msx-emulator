@@ -5,7 +5,7 @@ frame applies input but no motion")."""
 from __future__ import annotations
 
 from host.input_state import InputState
-from msx.boundary import STOP_BREAKPOINT, STOP_NONE
+from msx.boundary import STATUS_BAD_ARGUMENT, STATUS_OK, STOP_BREAKPOINT, STOP_NONE
 from msx.input import InputFrame
 from msx.psg import JoystickPort
 from tests.factories import make_machine, make_machine_msx2
@@ -95,7 +95,7 @@ def test_injected_key_is_visible_to_a_paused_single_step() -> None:
 def test_the_mouse_attaches_by_port_number() -> None:
     # machine-core "The mouse attaches by port number".
     machine = make_machine(_ROM)
-    machine.attach_mouse(1)
+    assert machine.attach_mouse(1) == STATUS_OK
     mouse = machine.psg.mouse
     assert mouse is not None
     assert machine.psg._mouse is not None
@@ -104,13 +104,12 @@ def test_the_mouse_attaches_by_port_number() -> None:
     assert (mouse._cur_x_rel, mouse._cur_y_rel) == (4, 2)
 
 
-def test_a_mouse_on_another_port_is_rejected() -> None:
-    import pytest
-
+def test_an_invalid_mouse_port_is_rejected() -> None:
+    # machine-core "An invalid mouse port is rejected".
     machine = make_machine(_ROM)
-    for port in (-1, 2):
-        with pytest.raises(ValueError):
-            machine.attach_mouse(port)
+    for port in (2, -1):
+        assert machine.attach_mouse(port) == STATUS_BAD_ARGUMENT
+        assert machine.last_error_text() == f"no joystick port {port}".encode()
     assert machine.psg.mouse is None
 
 

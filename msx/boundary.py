@@ -113,6 +113,8 @@ STATUS_STATE_REJECTED = 1   # load_state: not a state this machine can load
 STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
 STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
 STATUS_BAD_CONFIG = 4       # create_machine: a configuration the build rejects
+STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: None): no such medium
+STATUS_BAD_ARGUMENT = 6     # set_watchpoints: a watch kind; attach_mouse: a port
 
 # The access kind of a watchpoint hit (StopInfo.watch_access).
 WATCH_READ = 1

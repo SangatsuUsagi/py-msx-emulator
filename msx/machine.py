@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
+    STATUS_NO_MEDIUM,
     STATUS_OK,
     STATUS_STATE_REJECTED,
     STOP_BREAKPOINT,
@@ -255,13 +257,26 @@ class Machine:
                 dirty.append(media_id)
         return dirty
 
-    def read_media(self, media_id: MediaId) -> bytes:
-        """A medium's current bytes. Raises KeyError for an unknown id."""
-        return self._media()[media_id].data()
+    def read_media(self, media_id: MediaId) -> bytes | None:
+        """A medium's current bytes, or None for an id the machine does not
+        have (last_error_text() gives the message)."""
+        medium = self._media().get(media_id)
+        if medium is None:
+            self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+            return None
+        self._error_text = b""
+        return medium.data()
 
-    def mark_persisted(self, media_id: MediaId) -> None:
-        """Clear a medium's dirty flag after the host has written it."""
-        self._media()[media_id].mark_persisted()
+    def mark_persisted(self, media_id: MediaId) -> int:
+        """Clear a medium's dirty flag after the host has written it, and
+        return STATUS_OK. Returns STATUS_NO_MEDIUM, changing nothing, for an
+        id the machine does not have."""
+        medium = self._media().get(media_id)
+        if medium is None:
+            return self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+        medium.mark_persisted()
+        self._error_text = b""
+        return STATUS_OK
 
     def mount_disk(self, drive: int, data: bytes | None, write_protected: bool) -> int:
         """Swap the image `data` (None ejects) into `drive` (0 = A),
@@ -305,17 +320,20 @@ class Machine:
             return None
         return self.fdc.drives[drive].image
 
-    def attach_mouse(self, port: int) -> None:
+    def attach_mouse(self, port: int) -> int:
         """Attach a new MSX mouse to joystick port `port` (0 = Joy1, 1 =
-        Joy2). Its motion and buttons come from each InputFrame. Raises
-        ValueError for another port.
+        Joy2) and return STATUS_OK. Its motion and buttons come from each
+        InputFrame. Returns STATUS_BAD_ARGUMENT, attaching nothing, for
+        another port.
 
         Delegates to `PSG.attach_mouse` rather than setting `self.psg._mouse`
         directly, so the PSG stays the sole writer of its mouse slot.
         """
         if port != JoystickPort.JOY1 and port != JoystickPort.JOY2:
-            raise ValueError(f"no joystick port {port}")
+            return self._fail(STATUS_BAD_ARGUMENT, f"no joystick port {port}")
         self.psg.attach_mouse(MouseDevice(), JoystickPort(port))
+        self._error_text = b""
+        return STATUS_OK
 
     def _enter_break(self, reason: int) -> None:
         """Record a stop (`reason` is a STOP_* value) at the current PC and
@@ -420,13 +438,14 @@ class Machine:
             or self._stepout_sp is not None
         )
 
-    def set_watchpoints(self, entries: list[tuple[int, int]]) -> None:
+    def set_watchpoints(self, entries: list[tuple[int, int]]) -> int:
         """Set watchpoints: [(addr, kind), ...], where kind is WATCH_READ,
-        WATCH_WRITE or both ORed. Max 4. Raises ValueError, keeping the
-        current watchpoints, for a kind of 0 or with another bit."""
+        WATCH_WRITE or both ORed. Max 4. Returns STATUS_OK, or
+        STATUS_BAD_ARGUMENT, keeping the current watchpoints, for a kind of 0
+        or with another bit."""
         for _addr, kind in entries[:4]:
             if kind == 0 or kind & ~(WATCH_READ | WATCH_WRITE):
-                raise ValueError(f"invalid watch kind {kind}")
+                return self._fail(STATUS_BAD_ARGUMENT, f"invalid watch kind {kind}")
         # PORT-NOTE: enabling watchpoints re-swaps cpu.read_byte/write_byte
         #   between the plain memory bus and the watch variant at runtime --
         #   same shape as __post_init__'s initial wiring above.
@@ -453,6 +472,8 @@ class Machine:
         else:
             self.cpu.read_byte = self.memory.read
             self.cpu.write_byte = self.memory.write
+        self._error_text = b""
+        return STATUS_OK
 
     # ------------------------------------------------------------------
     # Inspection queries (core API, machine-core "Core inspection queries

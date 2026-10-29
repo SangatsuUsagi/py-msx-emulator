@@ -8,6 +8,7 @@ import pytest
 from msx.boundary import (
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
+    STATUS_NO_MEDIUM,
     STATUS_OK,
     MediaId,
     drive_media_id,
@@ -162,11 +163,16 @@ def test_an_id_outside_the_machines_media_is_rejected() -> None:
     # machine-core "An id outside the machine's media is rejected".
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     before = m.dirty_media()
-    with pytest.raises(KeyError):
-        m.read_media(MediaId.FMPAC_SRAM)
-    with pytest.raises(KeyError):
-        m.mark_persisted(MediaId.FMPAC_SRAM)
+    assert m.read_media(MediaId.FMPAC_SRAM) is None
+    assert m.mark_persisted(MediaId.FMPAC_SRAM) == STATUS_NO_MEDIUM
     assert m.dirty_media() == before
+
+
+def test_a_missing_medium_sets_the_message() -> None:
+    # machine-core "A missing medium sets the message".
+    m = make_machine(rom=_ROM)
+    assert m.read_media(MediaId.FMPAC_SRAM) is None
+    assert m.last_error_text() == b"no medium FMPAC_SRAM on this machine"
 
 
 def test_the_sram_table_is_built_once() -> None:
