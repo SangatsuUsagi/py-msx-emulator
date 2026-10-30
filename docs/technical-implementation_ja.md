@@ -790,7 +790,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `mark_persisted(media_id) -> int` | host がバイト列を書いた後に呼ぶ。`STATUS_OK`（0）を返す。マシンにない id には `STATUS_NO_MEDIUM`（5）を返す |
 | | `mount_disk(drive, data, write_protected) -> int` | `STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）、0 と 1 以外の `write_protected` には `STATUS_BAD_ARGUMENT`（6）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
 | | `eject_disk(drive) -> int` | ドライブを空にする。`STATUS_OK`（0）を返し、マシンにないドライブには `STATUS_NO_DRIVE`（2）を返す |
-| | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、`slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
+| | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、-1 の値を返した `slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込める。取り外しはない |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
@@ -799,7 +799,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `slot_layout() -> SlotLayout` | ポート 0xA8 の値、拡張された基本スロットのビットマスク、4 つの拡張スロットレジスタ（拡張されていないスロットは 0）。デバッガの `sl` と `st` が使う |
-| | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットの内容の文字列、バンクの文字列、KB 単位のサイズ。`sl` と `st` が使う。`secondary` と `page` は、なしのとき -1。0-3 の外の値には、空の文字列とサイズ -1 を返す |
+| | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットを整数で返す。`sl` と `st` が使う。内容の種類（`SLOT_CONTENT_*`）、カートリッジの `MapperId`、KB 単位のサイズ、バンクの種類（`BANK_*`）、2 つの窓（それぞれ `WINDOW_*` の種類と値）、Halnote のサブバンクとその ROM 上の位置からなる。文字列は `host/debugger/slots.py` が組み立てるので、表示の書式は境界を越えない。`secondary` と `page` は、なしのとき -1。0-3 の外の値には、内容、マッパー、サイズに -1 を返す |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。各設定は `STATUS_OK` を返す。`MAX_BREAKPOINTS` または `MAX_WATCHPOINTS`（4）を超える件数、0x0000〜0xFFFF の外のアドレスや SP の値、不正な kind、-1 より小さいフレーム、下限が上限より大きい SP の範囲には `STATUS_BAD_ARGUMENT`（6）を返し、設定を変えない。-1 は実行先のアドレスとフレームのブレークポイントを消し、`set_sp_range(-1, -1)` は SP の範囲を消す。`set_break_halt_di()` は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返して設定を変えない |
 | | `set_sprites_hidden(hidden) -> int`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない。設定は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返してフラグを変えない |
