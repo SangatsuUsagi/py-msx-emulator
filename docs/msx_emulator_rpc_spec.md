@@ -226,7 +226,9 @@ Read all CPU registers (works in any state).
 ### `debug.set_breakpoint`
 
 **Params:** `{ "address": "0xC000" }`  
-**Result:** `{ "id": 0, "address": "0xC000", "active": true }`
+**Result:** `{ "id": 0, "address": "0xC000", "active": true }`  
+**Errors:** `-32602` for a fifth breakpoint. The core holds at most four, and
+the four set stay.
 
 ---
 
@@ -248,7 +250,9 @@ Read all CPU registers (works in any state).
 
 **Params:** `{ "address": "0xE000", "mode": "rw" }`  
 `mode`: `"r"` | `"w"` | `"rw"` (default `"rw"`)  
-**Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`
+**Result:** `{ "id": 0, "address": "0xE000", "mode": "rw", "active": true }`  
+**Errors:** `-32602` for a fifth watchpoint. The core holds at most four, and
+the four set stay.
 
 ---
 
