@@ -1171,7 +1171,7 @@ belongs to the debugger's diagnostics.
 | | `eject_disk(drive) -> int` | Empties the drive. Returns `STATUS_OK` (0), or `STATUS_NO_DRIVE` (2) for a drive the machine lacks |
 | | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or an empty value from `read_media` or `slot_info`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 | | `disk_mounted(drive)` | Whether the drive exists and holds an image |
-| Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6) |
+| Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6). The host calls it at most once, before the first `step_frame` and the first `load_state`: a state saved with a mouse loads only on a machine with one. There is no detach |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
 | | `read_memory(addr, length) -> bytes` | Reads as the CPU would in the current slot selection, wrapping at 0xFFFF. It triggers no watchpoint. A memory-mapped device register reads with its side effects |
 | | `vram_size()`, `read_vram(addr, length) -> bytes` | 0x4000 or 0x20000. The read wraps at the VRAM size |
@@ -1383,14 +1383,11 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 - `read_media` returns the bytes alone. The write-protect flag stays with
   the mounted image.
 - The frame rate is `VideoStandard` data, not a method.
-- The frontend attaches the mouse at run time (`attach_mouse(port)`). The contract
-  has it as a config field. Which form to keep is an open question.
 - `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
   SRAM file paths of the host. The core reads only the `MachineConfig` part.
 
-These questions are open, and a port must decide them:
+A port must also decide one point:
 
-- **Mouse attachment**, as above.
 - **Debug control.** The break settings, `request_break()` and the stop
   result are in the contract (DebugControl). A port that supports the
   debugger keeps the position of a stopped frame and continues it on the
