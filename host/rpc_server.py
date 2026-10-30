@@ -149,8 +149,9 @@ class PauseState:
 
     PORT-NOTE: these plain fields are written by the emulator thread
       (``on_pause``, handlers via ``drain``) and by the socket thread
-      (``cpu.continue_sync``), and read by the frontend loop -- safe here
-      only because of the GIL.
+      (``cpu.continue_sync`` sets it running), and read by the frontend
+      loop -- safe here only because of the GIL. The socket thread makes no
+      core API call.
     Rust equivalent: guard with a Mutex, or use AtomicBool/an atomic enum for
       `paused`/`reason` -- Rust has no GIL to fall back on for cross-thread
       plain-field access.
@@ -200,6 +201,10 @@ class DebugServer:
         self._handlers: dict[str, Handler] = {}
         # Set when the machine pauses; cpu.continue_sync waits on it.
         self._pause_event = threading.Event()
+        # The last core stop, as cpu.continue_sync answers it: written on the
+        # emulator thread before _pause_event is set, read on the socket
+        # thread after the wait, so the socket thread never calls the core.
+        self._last_pause: dict[str, Any] = {}
         # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
         # surface is decoupled from the interactive debugger's REPL state.
         self._breakpoints: dict[int, int] = {}
@@ -276,20 +281,20 @@ class DebugServer:
         self.on_pause(_STOP_TO_REASON[stop_reason], self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
-        """Record the pause and push a notification. Runs on the emulator
-        thread (on_core_stop)."""
+        """Record the pause, wake cpu.continue_sync and push a notification.
+        Runs on the emulator thread (on_core_stop). The record is complete
+        before the event is set (Event orders the write before the waiter's
+        read)."""
+        registers = self.registers_dict()
+        self._last_pause = {
+            "paused": True, "reason": reason, "pc": hex16(pc), "registers": registers,
+        }
         self._pause_state.set_paused(reason)
         self._pause_event.set()
-        self._push_paused(reason, pc)
-
-    def _push_paused(self, reason: str, pc: int) -> None:
-        frame = {
-            "notification": "paused",
-            "reason": reason,
-            "pc": hex16(pc),
-            "registers": self.registers_dict(),
-        }
-        self._send_to_client(frame)
+        self._send_to_client({
+            "notification": "paused", "reason": reason, "pc": hex16(pc),
+            "registers": registers,
+        })
 
     # -- socket threads -----------------------------------------------------
 
@@ -446,22 +451,16 @@ class DebugServer:
     def _continue_sync(self, req: dict[str, Any]) -> dict[str, Any]:
         """Resume and block (on the socket thread) until the next pause event.
 
-        PORT-NOTE: this runs on the socket thread yet calls into the core
-          (reading the PC). It is
-          safe here only because of the GIL and because the machine is
-          quiescent by the time the pause event fires (the debug loop has
-          returned).
-        Rust equivalent: can't take `&mut Machine` from two threads -- route
-          continue as a command handled on the emulator thread instead
-          (e.g. via a channel/queue the emulator thread polls).
-        C++ equivalent: same -- route continue through a thread-safe
-          command queue handled on the emulator thread, rather than calling
-          into Machine directly from the socket thread.
-        Kept as-is here because: this file is an adapter-only layer; the
-          GIL-reliant cross-thread call is safe under CPython's actual
-          threading model as written, and Rust/C++ have no GIL to rely on so
-          this needs a real command-queue redesign at port time, not a
-          direct translation.
+        It makes no core API call: it answers from the pause record
+        on_pause writes on the emulator thread before it sets the event
+        (remote-socket-rpc "Threaded queue execution model").
+
+        PORT-NOTE: the pause flag and the record cross threads through
+          PauseState and threading.Event.
+        Rust equivalent: send the record over an mpsc/oneshot channel, or
+          keep it in a Mutex next to a Condvar.
+        C++ equivalent: the same, with std::mutex and
+          std::condition_variable.
         """
         req_id = req.get("id")
         params = req.get("params") or {}
@@ -477,12 +476,7 @@ class DebugServer:
         self._pause_event.clear()
         self._pause_state.set_running()
         if self._pause_event.wait(timeout=timeout_s):
-            return self._ok(req_id, {
-                "paused": True,
-                "reason": self._pause_state.reason,
-                "pc": hex16(self._machine.cpu_registers().PC),
-                "registers": self.registers_dict(),
-            })
+            return self._ok(req_id, self._last_pause)
         return self._ok(req_id, {"paused": False, "reason": "timeout"})
 
     def _process_key_releases(self) -> None:
@@ -677,7 +671,9 @@ def _h_remove_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 def _h_memory_read(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     length = _require_int(params, "length", default=16)
-    data = _fmt_bytes(server.machine.read_memory(addr, max(0, length)))
+    if not 0 <= length <= 0x10000:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-0x10000")
+    data = _fmt_bytes(server.machine.read_memory(addr, length))
     return {"address": hex16(addr), "data": data}
 
 
@@ -690,10 +686,16 @@ def _h_memory_write(server: DebugServer, params: dict[str, Any]) -> dict[str, An
 
 
 def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    addr = _parse_addr(params.get("address"))
+    size = server.machine.vram_size()
+    # The VRAM size is a power of two (0x4000 or 0x20000): the mask wraps the
+    # address at it, as the core does.
+    addr = _parse_addr(params.get("address"), size - 1)
     length = _require_int(params, "length", default=32)
-    data = _fmt_bytes(server.machine.read_vram(addr, max(0, length)))
-    return {"address": hex16(addr), "data": data}
+    if not 0 <= length <= size:
+        raise RpcError(ERR_INVALID_PARAMS, f"length {length} is outside 0-{size:#x}")
+    data = _fmt_bytes(server.machine.read_vram(addr, length))
+    # Four hex digits below 0x10000, five above (hex16 would cut it).
+    return {"address": f"0x{addr:04X}", "data": data}
 
 
 def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
@@ -883,15 +885,16 @@ def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:
     server.apply_injected_input()
 
 
-def _parse_addr(value: Any) -> int:
+def _parse_addr(value: Any, mask: int = 0xFFFF) -> int:
+    """An address param (an integer or a hex string), wrapped by `mask`."""
     if isinstance(value, bool):
         raise RpcError(ERR_INVALID_PARAMS, "address must be an integer or hex string")
     if isinstance(value, int):
-        return value & 0xFFFF
+        return value & mask
     if not isinstance(value, str) or not value:
         raise RpcError(ERR_INVALID_PARAMS, "address is required")
     try:
-        return int(value, 16) & 0xFFFF
+        return int(value, 16) & mask
     except ValueError:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid address: {value}") from None
 
