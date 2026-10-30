@@ -1222,8 +1222,8 @@ py-msx-emulator/
 │   ├── boundary.py        # Values passed across the core boundary (config, frame output)
 │   ├── core_api.py        # CoreApi: the operations host code may use on a machine
 │   ├── machine.py         # Component wiring, frame loop (step_frame)
-│   ├── machine_spec.py    # Resolved machine description
-│   ├── machine_config.py  # MachineConfig document (canonical JSON): encode and parse
+│   ├── machine_spec.py    # Machine description layer: the resolved machine model
+│   ├── machine_config.py  # Description layer: MachineConfig document (canonical JSON), encode and parse
 │   ├── machine_config.schema.json # JSON Schema of the MachineConfig document
 │   ├── machine_loader.py  # Builds a machine from a MachineConfig
 │   ├── canonical_json.py  # Canonical JSON writer and strict reader (documents, snapshots)

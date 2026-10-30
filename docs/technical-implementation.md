@@ -1118,6 +1118,19 @@ API, and `host/trace.py` formats the events that `drain_trace()` returns. A
 port of the core can thus replace the
 `Machine` and keep the debugger, the RPC server and the frontend.
 
+The test also checks what host code imports from `msx/`. It may import
+`msx/boundary.py`, `msx/core_api.py`, `InputFrame` from `msx/input.py`,
+`create_machine` from `msx/machine_loader.py`, and the public names of the
+machine description layer. The description layer is `msx/machine_spec.py`
+and `msx/machine_config.py`: the machine model, the vocabularies, and the
+encoder and parser of the MachineConfig document. It imports no device
+module, so it stays Python when the core is native. The host keeps using
+its encoder, and a native core parses the same document
+(`msx/machine_config.schema.json`) with its own parser. The fixed media
+sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`) are
+boundary constants, because the host creates a save file before the core
+exists.
+
 ### Values that cross the boundary
 
 All of them are in `msx/boundary.py` and `msx/input.py`:
