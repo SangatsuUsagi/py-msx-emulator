@@ -232,3 +232,41 @@ def test_no_host_code_builds_through_the_raising_wrapper() -> None:
         for lineno in _calls_named(path, "build_machine"):
             offenders.append(f"{rel}:{lineno}")
     assert offenders == []
+
+
+# machine-core "The host takes no constant or table from a core module".
+_CORE_CONSTANT_MODULES = ("msx.psg", "msx.vdp._geometry")
+_HOST_TABLES = frozenset({"KEY_NAME_TO_CELL", "_SRAM_SIZES"})
+
+
+def _core_constant_imports(path: Path) -> list[tuple[int, str]]:
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            if node.module in _CORE_CONSTANT_MODULES:
+                found.append((node.lineno, node.module))
+            elif node.module.split(".")[0] == "msx":
+                for alias in node.names:
+                    if alias.name in _HOST_TABLES:
+                        found.append((node.lineno, f"{node.module}.{alias.name}"))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _CORE_CONSTANT_MODULES:
+                    found.append((node.lineno, alias.name))
+    return found
+
+
+def test_no_host_module_imports_a_core_constant_or_table() -> None:
+    offenders = []
+    for path in _host_side_files():
+        for lineno, name in _core_constant_imports(path):
+            offenders.append(f"{path.relative_to(_REPO)}:{lineno} {name}")
+    assert offenders == []
+
+
+def test_the_core_constants_equal_the_boundary() -> None:
+    from msx.boundary import AUDIO_SAMPLE_RATE, OUTPUT_HEIGHT
+    from msx.psg import SAMPLE_RATE
+    from msx.vdp._geometry import OUTPUT_H
+
+    assert (SAMPLE_RATE, OUTPUT_H) == (AUDIO_SAMPLE_RATE, OUTPUT_HEIGHT)

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.input import InputLines
 from msx.mouse import MouseDevice
 from msx.snapshot_schema import (
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 _REG_IO_PORT_A = 14
 
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
-SAMPLE_RATE: int = 44_100
+SAMPLE_RATE: int = AUDIO_SAMPLE_RATE
 SAMPLES_PER_FRAME: int = 735  # 44100 // 60
 # Upper bound on recorded register writes per audio buffer. Far above any real
 # frame's write count; caps memory if generate_samples is never called (headless).

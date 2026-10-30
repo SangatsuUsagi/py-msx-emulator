@@ -88,3 +88,18 @@ class TestBreakPointCLI:
         code, out, err = _run_main(["--watch-point", "C000,w"], machine="cbios_msx1")
         assert code == 0
         assert "C000h" in out
+
+
+def test_a_rejected_setup_call_stops_with_the_core_message() -> None:
+    # __main__ checks the status of its setup calls: a core that rejects the
+    # breakpoints stops the run with its message.
+    from msx.boundary import STATUS_BAD_ARGUMENT
+    from msx.machine import Machine
+
+    def reject(self, addrs):
+        return self._fail(STATUS_BAD_ARGUMENT, "the core rejects these breakpoints")
+
+    with patch.object(Machine, "set_breakpoints", reject):
+        code, _out, err = _run_main(["--break-point", "C000"])
+    assert code == 1
+    assert "the core rejects these breakpoints" in err

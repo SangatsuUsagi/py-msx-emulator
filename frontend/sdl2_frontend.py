@@ -28,14 +28,19 @@ from frontend.sdl2_keyboard import (
 from host.app_config import AppConfig
 from host.debugger.stop import handle_stop, sigint_requests_break
 from host.input_state import InputState
+from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles, swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
-from msx.boundary import STOP_NONE, KeyboardLayout, RgbFrame, VideoStandard
+from msx.boundary import (
+    AUDIO_SAMPLE_RATE,
+    OUTPUT_HEIGHT,
+    STOP_NONE,
+    KeyboardLayout,
+    RgbFrame,
+    VideoStandard,
+)
 from msx.core_api import CoreApi
-from msx.input import KEY_NAME_TO_CELL
-from msx.psg import SAMPLE_RATE
-from msx.vdp._geometry import OUTPUT_H
 
 if TYPE_CHECKING:
     from host.debugger.prompt import Debugger
@@ -46,10 +51,10 @@ _SCREEN_WIDTH = 256
 # Every rendered frame is padded to a constant output height (see
 # msx/vdp/_geometry.py), so the window/texture height is fixed regardless of R#9
 # LN (192↔212). Only the width still varies (256, or 512 for SCREEN 6/7).
-_SCREEN_HEIGHT = OUTPUT_H
+_SCREEN_HEIGHT = OUTPUT_HEIGHT
 _MAX_FRAME_SKIP: int = 4
 
-# Audio output format: the core's mix rate (msx.psg.SAMPLE_RATE), mono S16LE.
+# Audio output format: the core's mix rate (AUDIO_SAMPLE_RATE), mono S16LE.
 # Machine.run_frame() mixes each frame; the frontend only queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
@@ -178,7 +183,7 @@ def _init_sdl(
     # Open SDL2 audio device (mono, 44100 Hz, signed 16-bit LE).
     # Fall back gracefully if unavailable — video and input remain functional.
     desired = sdl2.SDL_AudioSpec(
-        SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
+        AUDIO_SAMPLE_RATE, sdl2.AUDIO_S16LSB, _AUDIO_CHANNELS, _AUDIO_BUFFER_SAMPLES
     )
     audio_dev = sdl2.SDL_OpenAudioDevice(None, 0, desired, None, 0)
     if audio_dev == 0:

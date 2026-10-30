@@ -4,7 +4,7 @@ import math
 import struct
 from functools import lru_cache
 
-from msx.psg import SAMPLE_RATE
+from msx.boundary import AUDIO_SAMPLE_RATE
 
 
 @lru_cache(maxsize=8)
@@ -43,7 +43,7 @@ class BiquadLowPass:
         self,
         cutoff: float = _DEFAULT_CUTOFF_HZ,
         q: float = _BUTTERWORTH_Q,
-        sample_rate: int = SAMPLE_RATE,
+        sample_rate: int = AUDIO_SAMPLE_RATE,
     ) -> None:
         w0 = 2.0 * math.pi * cutoff / sample_rate
         cos_w0 = math.cos(w0)

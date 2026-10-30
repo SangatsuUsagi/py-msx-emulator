@@ -84,16 +84,6 @@ from msx.vdp.vdp import VDP, VdpDevice
 # The ids that name floppy drives, never a battery-backed medium.
 _DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
-_SRAM_SIZES: dict[str, int] = {
-    "ASCII8SRAM2": 2048,
-    "ASCII8SRAM8": 8192,
-    "ASCII16SRAM2": 2048,
-    "ASCII16SRAM8": 8192,
-    "KoeiSRAM32": 32768,
-    "GameMaster2": 8192,
-}
-
-
 def _require_scc(scc: SCC | None) -> SCC:
     if scc is None:
         raise MachineLoadError("KonamiSCC mapper requires an SCC instance")

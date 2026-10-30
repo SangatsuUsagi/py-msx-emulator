@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from host.debugger.disasm import disassemble
 from host.input_state import InputState
+from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
 from host.watch import watch_kind
@@ -68,7 +69,6 @@ from msx.boundary import (
     STOP_WATCHPOINT,
     VDP_KIND_V9938,
 )
-from msx.input import KEY_NAME_TO_CELL
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
