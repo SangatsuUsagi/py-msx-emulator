@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from host.debugger.prompt import Debugger
     from host.media import DiskFiles
     from host.rpc_server import DebugServer
+    from host.trace import TraceOutput
     from msx.boundary import MediaId, RtcTime
     from msx.core_api import CoreApi
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
@@ -121,7 +122,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true",
                         help="Enable diagnostic logging")
     parser.add_argument("--log", metavar="FILE",
-                        help="Write diagnostic log to FILE (requires --debug)")
+                        help="Also append the --debug log to FILE (requires --debug)")
     parser.add_argument("--speed", type=float, default=None,
                         help="Emulation speed multiplier (default: 1.0)")
     parser.add_argument("--scale", type=int, default=None, metavar="N",
@@ -355,17 +356,25 @@ def _run_headless_frames(
     A break opens the debugger; the stopped frame then continues and counts
     once.
     """
-    from host.debugger.stop import handle_stop, sigint_requests_break
-    from msx.input import InputFrame
-
     if resume is not None:
         from host.state_files import resume_state
         resume_state(machine, resume)
+    _run_frames(machine, count_frame, False, debugger)
+
+
+def _run_frames(
+    machine: "CoreApi", count: int, render_video: bool, debugger: "Debugger"
+) -> None:
+    """Run `count` complete frames with no host input. A break opens the
+    debugger; the stopped frame then continues and counts once."""
+    from host.debugger.stop import handle_stop, sigint_requests_break
+    from msx.input import InputFrame
+
     no_input = InputFrame()
     done = 0
     with sigint_requests_break(machine):
-        while done < count_frame:
-            out = machine.step_frame(no_input, render_video=False)
+        while done < count:
+            out = machine.step_frame(no_input, render_video=render_video)
             debugger.drain_trace()
             if out.stop_reason:
                 handle_stop(machine, out.stop_reason, debugger, None)
@@ -394,21 +403,9 @@ def _run_benchmark(
     if resume is not None:
         resume_state(machine, resume)
 
-    from host.debugger.stop import handle_stop, sigint_requests_break
-    from msx.input import InputFrame
-
     # Every frame renders RGB video, as interactive play does.
-    no_input = InputFrame()
-    done = 0
     start = time.perf_counter()
-    with sigint_requests_break(machine):
-        while done < frames:
-            out = machine.step_frame(no_input, render_video=True)
-            debugger.drain_trace()
-            if out.stop_reason:
-                handle_stop(machine, out.stop_reason, debugger, None)
-            if out.frame_complete:
-                done += 1
+    _run_frames(machine, frames, True, debugger)
     elapsed = time.perf_counter() - start
 
     print(f"frames  : {frames}")
@@ -560,6 +557,109 @@ def _validate_options(args: argparse.Namespace, opts: _EffectiveOptions) -> None
               "slots is not supported")
 
 
+def _load_spec_and_overlays(
+    machine_id: str, opts: _EffectiveOptions,
+) -> tuple["MachineSpec", "AnyExtensionOverlay | None", "AnyExtensionOverlay | None"]:
+    """The machine spec and the two extension overlays from the YAML, or
+    stop with the loader's message."""
+    from host.machine_config import (
+        load_device_registry,
+        load_extension_overlay,
+        load_machine_spec,
+    )
+    from msx.machine_spec import MachineLoadError
+
+    try:
+        device_registry = load_device_registry(_CONFIG_DIR)
+        spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
+        extension_overlay1 = (
+            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension1 is not None else None
+        )
+        extension_overlay2 = (
+            load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
+            if opts.extension2 is not None else None
+        )
+    except MachineLoadError as exc:
+        _fail(str(exc))
+    return spec, extension_overlay1, extension_overlay2
+
+
+def _disks_for(
+    spec: "MachineSpec", fdd1_paths: list[Path], fdd2_path: Path | None,
+) -> tuple[list[Path], Path | None]:
+    """The disk images to mount: none, with a warning, on a machine without
+    a floppy interface."""
+    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
+        print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
+              "ignoring", file=sys.stderr)
+        return [], None
+    return fdd1_paths, fdd2_path
+
+
+def _set_break_points(
+    machine: "CoreApi", breakpoint_addrs: list[int], watchpoint_entries: list[tuple[int, int]],
+) -> None:
+    """Set the --break-point and --watch-point lists and print them."""
+    if breakpoint_addrs:
+        _check(machine, machine.set_breakpoints(breakpoint_addrs))
+        print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
+    if watchpoint_entries:
+        _check(machine, machine.set_watchpoints(watchpoint_entries))
+        print(f"watch   : {_watch_summary(watchpoint_entries)}")
+
+
+def _open_trace_outputs(
+    args: argparse.Namespace,
+) -> tuple["TraceOutput", TextIO | None, TextIO | None]:
+    """The run's trace outputs, opened before the build: the VDP trace
+    stream and, with --debug, the debug log (stderr, and with --log appended
+    to FILE). Returns the outputs, the VDP trace file and the log file (None
+    when not opened)."""
+    from host.trace import TraceOutput
+
+    trace_output = TraceOutput()
+    trace_file = None
+    if args.vdp_trace:
+        if args.vdp_trace_out:
+            trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
+            trace_output.set_vdp_output(trace_file, args.vdp_trace_out)
+        else:
+            trace_output.set_vdp_output(sys.stdout, "stdout")
+    log_file = None
+    if args.debug:
+        if args.log:
+            log_file = open(args.log, "a", encoding="utf-8")
+        trace_output.set_debug_output(log_file)
+    return trace_output, trace_file, log_file
+
+
+def _start_traces(
+    machine: "CoreApi", args: argparse.Namespace, trace_output: "TraceOutput"
+) -> TextIO | None:
+    """Turn on the trace kinds the flags ask for, after the build, and open
+    the mapper trace output. Returns the mapper trace file (None when not
+    opened)."""
+    from msx.boundary import TRACE_DEBUG, TRACE_MAPPER, TRACE_VDP
+
+    if args.debug:
+        _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG))
+    if args.vdp_trace:
+        _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP))
+    mapper_trace_file = None
+    if args.mapper_trace:
+        if args.mapper_trace_out:
+            mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
+            trace_output.set_map_output(mapper_trace_file, args.mapper_trace_out)
+        else:
+            trace_output.set_map_output(sys.stdout, "stdout")
+        if machine.trace_sources() & TRACE_MAPPER:
+            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER))
+        else:
+            print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
+    return mapper_trace_file
+
+
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
@@ -585,43 +685,18 @@ def main() -> None:
     machine_id = _resolve_machine_id(args, app_cfg, db_system)
 
     # --- Load machine spec from YAML ---
-    from host.machine_config import (
-        load_device_registry,
-        load_extension_overlay,
-        load_machine_config,
-        load_machine_spec,
-        sram_paths,
-    )
+    from host.machine_config import load_machine_config, sram_paths
     from msx.machine_loader import create_machine
     from msx.machine_spec import MachineLoadError
-    try:
-        device_registry = load_device_registry(_CONFIG_DIR)
-        spec = load_machine_spec(machine_id, _CONFIG_DIR, device_registry, _PROJECT_ROOT)
-        extension_overlay1 = (
-            load_extension_overlay(opts.extension1, _CONFIG_DIR, _PROJECT_ROOT)
-            if opts.extension1 is not None else None
-        )
-        extension_overlay2 = (
-            load_extension_overlay(opts.extension2, _CONFIG_DIR, _PROJECT_ROOT)
-            if opts.extension2 is not None else None
-        )
-    except MachineLoadError as exc:
-        _fail(str(exc))
 
-    # --- Disk image only applies to machines with a floppy interface ---
-    if (fdd1_paths or fdd2_path is not None) and spec.fdc is None:
-        print("warning: --fdd1/--fdd2 given but machine has no floppy interface; "
-              "ignoring", file=sys.stderr)
-        fdd1_paths = []
-        fdd2_path = None
+    spec, extension_overlay1, extension_overlay2 = _load_spec_and_overlays(machine_id, opts)
+
+    fdd1_paths, fdd2_path = _disks_for(spec, fdd1_paths, fdd2_path)
 
     # --- Resolve display mapper for summary ---
-    if opts.mapper1 != "auto":
-        display_mapper = opts.mapper1
-    elif cartridge:
+    display_mapper = opts.mapper1
+    if display_mapper == "auto" and cartridge:
         display_mapper = lookup(cartridge) or "auto"
-    else:
-        display_mapper = "auto"
 
     breakpoint_addrs = _parse_breakpoints(args.break_point)
     watchpoint_entries = _parse_watchpoints(args.watch_point)
@@ -631,26 +706,11 @@ def main() -> None:
         opts.mouse_port, args,
     )
 
-    from host.trace import TraceOutput
-
     # --- Trace outputs (the kinds are turned on after the build) ---
-    trace_output = TraceOutput()
-    _trace_file = None
+    trace_output, _trace_file, _log_file = _open_trace_outputs(args)
     _mapper_trace_file = None
-    if args.vdp_trace:
-        if args.vdp_trace_out:
-            _trace_file = open(args.vdp_trace_out, "w", encoding="utf-8")
-            trace_output.set_vdp_output(_trace_file, args.vdp_trace_out)
-        else:
-            trace_output.set_vdp_output(sys.stdout, "stdout")
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
-    # --debug: the debug log goes to stderr, and with --log appended to FILE.
-    _log_file = None
-    if args.debug:
-        if args.log:
-            _log_file = open(args.log, "a", encoding="utf-8")
-        trace_output.set_debug_output(_log_file)
     machine = None
     rpc_server = None
     sram_files: "dict[MediaId, Path]" = {}
@@ -680,12 +740,6 @@ def main() -> None:
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
-        if args.debug:
-            from msx.boundary import TRACE_DEBUG
-            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG))
-        if args.vdp_trace:
-            from msx.boundary import TRACE_VDP
-            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP))
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
@@ -693,24 +747,9 @@ def main() -> None:
         from host.debugger.prompt import Debugger
         debugger = Debugger(machine, disk_files, trace_output)
 
-        if breakpoint_addrs:
-            _check(machine, machine.set_breakpoints(breakpoint_addrs))
-            print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
-        if watchpoint_entries:
-            _check(machine, machine.set_watchpoints(watchpoint_entries))
-            print(f"watch   : {_watch_summary(watchpoint_entries)}")
+        _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 
-        if args.mapper_trace:
-            from msx.boundary import TRACE_MAPPER
-            if args.mapper_trace_out:
-                _mapper_trace_file = open(args.mapper_trace_out, "w", encoding="utf-8")
-                trace_output.set_map_output(_mapper_trace_file, args.mapper_trace_out)
-            else:
-                trace_output.set_map_output(sys.stdout, "stdout")
-            if machine.trace_sources() & TRACE_MAPPER:
-                _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER))
-            else:
-                print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
+        _mapper_trace_file = _start_traces(machine, args, trace_output)
 
         headless = args.count_frame is not None or args.benchmark is not None
         if headless and opts.mouse_port is not None:
