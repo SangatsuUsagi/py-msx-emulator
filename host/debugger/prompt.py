@@ -17,6 +17,8 @@ from host.media import DiskFiles
 from host.trace import TraceOutput
 from host.watch import watch_kind, watch_text
 from msx.boundary import (
+    MAX_BREAKPOINTS,
+    MAX_WATCHPOINTS,
     STOP_WATCHPOINT,
     TRACE_MAPPER,
     TRACE_VDP,
@@ -53,9 +55,6 @@ _HELP = (
     "sv [TITLE] | ld FILE | fdd1/fdd2 [FILE|-] | reset | c | q"
 )
 
-# The machine caps hardware breakpoints and watchpoints at 4 each.
-MAX_BREAKPOINTS = 4
-MAX_WATCHPOINTS = 4
 # `da` disassembles a fixed window of instructions from the given address.
 _DISASM_WINDOW = 10
 
