@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    MAX_BREAKPOINTS,
+    MAX_WATCHPOINTS,
     STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
@@ -188,7 +190,7 @@ class Machine:
         self.cpu.read_port = self.io.read_port
         self.cpu.write_port = self.io.write_port
 
-    def reset(self) -> None:
+    def reset(self) -> int:
         """Full power-on reset: CPU, PSG, SCC (if present), FM-PAC (if
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the primary/secondary slot registers, the RAM mapper (if
@@ -201,7 +203,7 @@ class Machine:
         Every `Mapper` is reset unconditionally regardless of whether a given
         real cartridge's bank-select hardware is actually wired to the slot
         reset signal -- rationale in openspec/changes/
-        wire-cartridge-mapper-and-ppi-reset."""
+        wire-cartridge-mapper-and-ppi-reset. Always STATUS_OK."""
         self.cpu.reset()
         self.psg.reset()
         self.audio.reset()
@@ -236,6 +238,7 @@ class Machine:
             if sub_mapper is not None:
                 sub_mapper.reset()
         self._drop_frame()
+        return STATUS_OK
 
     def _drop_frame(self) -> None:
         """Forget a stopped frame: the next run_frame() starts a new one
@@ -351,11 +354,12 @@ class Machine:
         self._stop = StopInfo(reason, self.cpu.registers.PC)
         self._stop_pending = True
 
-    def request_break(self) -> None:
+    def request_break(self) -> int:
         """Ask the core to stop before the next frame segment (machine-core
         "The host requests a break"). Safe to call from a signal handler: it
-        only sets a flag."""
+        only sets a flag. Always STATUS_OK."""
         self._break_request = True
+        return STATUS_OK
 
     def last_stop(self) -> StopInfo:
         """The most recent stop of step_frame() or step(), or a STOP_NONE
@@ -363,37 +367,88 @@ class Machine:
         reported as a flat record")."""
         return self._stop
 
-    def set_breakpoints(self, addrs: list[int]) -> None:
-        """Set breakpoint addresses (max 4). Replaces existing set."""
-        self._breakpoints = frozenset(addrs[:4])
+    def set_breakpoints(self, addrs: list[int]) -> int:
+        """Set breakpoint addresses, replacing the existing set. Returns
+        STATUS_OK, or STATUS_BAD_ARGUMENT, keeping the set, for more than
+        MAX_BREAKPOINTS addresses or one outside 0x0000-0xFFFF."""
+        if len(addrs) > MAX_BREAKPOINTS:
+            return self._fail(
+                STATUS_BAD_ARGUMENT,
+                f"{len(addrs)} breakpoints, at most {MAX_BREAKPOINTS}")
+        for addr in addrs:
+            if addr < 0 or addr > 0xFFFF:
+                return self._fail(
+                    STATUS_BAD_ARGUMENT, f"breakpoint address 0x{addr:X} outside 0x0000-0xFFFF")
+        self._breakpoints = frozenset(addrs)
+        self._error_text = b""
+        return STATUS_OK
 
-    def set_break_halt_di(self, enabled: bool) -> None:
-        """Enable/disable breaking when the CPU executes HALT with interrupts off."""
+    def set_break_halt_di(self, enabled: bool) -> int:
+        """Enable/disable breaking when the CPU executes HALT with interrupts
+        off. Always STATUS_OK."""
         self._break_halt_di = enabled
         self._halt_di_seen = False
+        return STATUS_OK
 
-    def set_sprites_hidden(self, hidden: bool) -> None:
+    def set_sprites_hidden(self, hidden: bool) -> int:
         """Hide or show sprites: while hidden, the renderer skips its sprite
         pass (on the TMS9918A also the S#0 sprite flags of that frame). A
-        debug setting: no reset clears it and the saved state omits it."""
+        debug setting: no reset clears it and the saved state omits it.
+        Always STATUS_OK."""
         self.vdp.debug_disable_sprites = hidden
+        return STATUS_OK
 
-    def set_sp_range(self, rng: tuple[int, int] | None) -> None:
-        """Set the valid-RAM range for SP; break when SP leaves it. None disables."""
+    def set_sp_range(self, rng: tuple[int, int] | None) -> int:
+        """Set the valid-RAM range for SP; break when SP leaves it. None
+        disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping the
+        range, for an end outside 0x0000-0xFFFF or a low end above the high
+        end."""
+        if rng is not None:
+            low, high = rng
+            for value in (low, high):
+                if value < 0 or value > 0xFFFF:
+                    return self._fail(
+                        STATUS_BAD_ARGUMENT, f"SP range end 0x{value:X} outside 0x0000-0xFFFF")
+            if low > high:
+                return self._fail(
+                    STATUS_BAD_ARGUMENT,
+                    f"SP range low 0x{low:04X} above high 0x{high:04X}")
         self._sp_range = rng
         self._sp_out_seen = False
+        self._error_text = b""
+        return STATUS_OK
 
-    def set_temp_breakpoint(self, addr: int | None) -> None:
-        """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit."""
+    def set_temp_breakpoint(self, addr: int | None) -> int:
+        """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit.
+        Returns STATUS_OK, or STATUS_BAD_ARGUMENT for an address outside
+        0x0000-0xFFFF."""
+        if addr is not None and (addr < 0 or addr > 0xFFFF):
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"run-to address 0x{addr:X} outside 0x0000-0xFFFF")
         self._temp_breakpoint = addr
+        self._error_text = b""
+        return STATUS_OK
 
-    def set_step_out(self, sp: int) -> None:
-        """Break (once) when SP rises above sp, i.e. the current routine returns."""
+    def set_step_out(self, sp: int) -> int:
+        """Break (once) when SP rises above sp, i.e. the current routine
+        returns. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for an SP outside
+        0x0000-0xFFFF."""
+        if sp < 0 or sp > 0xFFFF:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"step-out SP 0x{sp:X} outside 0x0000-0xFFFF")
         self._stepout_sp = sp
+        self._error_text = b""
+        return STATUS_OK
 
-    def set_frame_breakpoint(self, frame: int | None) -> None:
-        """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared when hit."""
+    def set_frame_breakpoint(self, frame: int | None) -> int:
+        """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared
+        when hit. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for a negative
+        frame."""
+        if frame is not None and frame < 0:
+            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is negative")
         self._frame_breakpoint = frame
+        self._error_text = b""
+        return STATUS_OK
 
     def _break_conditions_active(self) -> bool:
         """True when any execution-break condition needs the per-instruction loop."""
@@ -456,10 +511,18 @@ class Machine:
 
     def set_watchpoints(self, entries: list[tuple[int, int]]) -> int:
         """Set watchpoints: [(addr, kind), ...], where kind is WATCH_READ,
-        WATCH_WRITE or both ORed. Max 4. Returns STATUS_OK, or
-        STATUS_BAD_ARGUMENT, keeping the current watchpoints, for a kind of 0
-        or with another bit."""
-        for _addr, kind in entries[:4]:
+        WATCH_WRITE or both ORed. Returns STATUS_OK, or STATUS_BAD_ARGUMENT,
+        keeping the current watchpoints, for more than MAX_WATCHPOINTS
+        entries, an address outside 0x0000-0xFFFF, or a kind of 0 or with
+        another bit."""
+        if len(entries) > MAX_WATCHPOINTS:
+            return self._fail(
+                STATUS_BAD_ARGUMENT,
+                f"{len(entries)} watchpoints, at most {MAX_WATCHPOINTS}")
+        for addr, kind in entries:
+            if addr < 0 or addr > 0xFFFF:
+                return self._fail(
+                    STATUS_BAD_ARGUMENT, f"watchpoint address 0x{addr:X} outside 0x0000-0xFFFF")
             if kind == 0 or kind & ~(WATCH_READ | WATCH_WRITE):
                 return self._fail(STATUS_BAD_ARGUMENT, f"invalid watch kind {kind}")
         # PORT-NOTE: enabling watchpoints re-swaps cpu.read_byte/write_byte
@@ -475,7 +538,7 @@ class Machine:
         #   single bound-method call with no added branch.
         r: set[int] = set()
         w: set[int] = set()
-        for addr, kind in entries[:4]:
+        for addr, kind in entries:
             if kind & WATCH_READ:
                 r.add(addr)
             if kind & WATCH_WRITE:
@@ -517,12 +580,13 @@ class Machine:
             out[i] = read((addr + i) & 0xFFFF)
         return bytes(out)
 
-    def write_memory(self, addr: int, data: bytes) -> None:
+    def write_memory(self, addr: int, data: bytes) -> int:
         """Write `data` from `addr` as the CPU would, wrapping at 0xFFFF.
-        Bypasses watchpoints."""
+        Bypasses watchpoints. Always STATUS_OK."""
         write = self.memory.write
         for i in range(len(data)):
             write((addr + i) & 0xFFFF, data[i])
+        return STATUS_OK
 
     def vram_size(self) -> int:
         """VRAM size in bytes (0x4000 or 0x20000)."""
@@ -838,7 +902,7 @@ class Machine:
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
         return int(SAMPLE_RATE // self.video_standard.target_fps)
 
-    def apply_input(self, frame_input: InputFrame) -> None:
+    def apply_input(self, frame_input: InputFrame) -> int:
         """Replace the input lines and mouse buttons with `frame_input`'s,
         effective for the next instruction (machine-core "apply_input
         replaces the input lines at once"). Feeds no mouse motion, so it can
@@ -848,6 +912,7 @@ class Machine:
         if mouse is not None:
             mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
             mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
+        return STATUS_OK
 
     def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
         """Run one frame with `frame_input` held for the whole frame (the

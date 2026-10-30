@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from msx.boundary import (
+    STATUS_BAD_ARGUMENT,
     STOP_BREAKPOINT,
     STOP_NONE,
     STOP_WATCHPOINT,
@@ -40,11 +41,11 @@ class TestSetBreakpoints:
         m.set_breakpoints([0x0000, 0xC000, 0xD000])
         assert m._breakpoints == frozenset([0x0000, 0xC000, 0xD000])
 
-    def test_max_4_truncated(self):
+    def test_a_fifth_breakpoint_is_rejected(self):
         m = make_machine(rom=_NOP_ROM)
-        m.set_breakpoints([0x1000, 0x2000, 0x3000, 0x4000, 0x5000])
-        assert len(m._breakpoints) == 4
-        assert 0x5000 not in m._breakpoints
+        status = m.set_breakpoints([0x1000, 0x2000, 0x3000, 0x4000, 0x5000])
+        assert status == STATUS_BAD_ARGUMENT
+        assert m._breakpoints == frozenset()
 
     def test_stored_as_frozenset(self):
         m = make_machine(rom=_NOP_ROM)
