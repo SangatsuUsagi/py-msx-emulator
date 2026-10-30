@@ -18,7 +18,7 @@ _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
 # What the mocked step_frame returns: a completed frame with no stop.
-_FRAME_DONE = FrameOutput(None, b"", 0)
+_FRAME_DONE = FrameOutput(0, 0, b"", b"", 0)
 
 # ---------------------------------------------------------------------------
 # CLI integration (mirror of tests/test_cli_breakpoint.py harness)

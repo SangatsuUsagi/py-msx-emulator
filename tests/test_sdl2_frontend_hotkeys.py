@@ -23,7 +23,7 @@ from frontend.sdl2_frontend import (
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
 from host.media import DiskFiles
-from msx.boundary import FrameOutput, RgbFrame
+from msx.boundary import FrameOutput
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
@@ -1002,8 +1002,9 @@ class _LoopMachine(_FakeMachine):
         self.frames += 1
         self.takes += 1
         self.cycle_count += 59736
-        video = RgbFrame(256, 212, bytes(256 * 212 * 3)) if render_video else None
-        return FrameOutput(video, b"\x10\x00" * _SAMPLES, self.frames)
+        if render_video:
+            return FrameOutput(256, 212, bytes(256 * 212 * 3), b"\x10\x00" * _SAMPLES, self.frames)
+        return FrameOutput(0, 0, b"", b"\x10\x00" * _SAMPLES, self.frames)
 
 
 class _LoopTimer:

@@ -92,13 +92,13 @@ def test_the_stopped_frame_continues_where_it_stopped(make):
     out = _step(m)
     assert not out.frame_complete
     assert m.frame_number() == frame
-    assert out.video is None and out.audio == b""
+    assert out.video_width == 0 and out.video_pixels == b"" and out.audio == b""
     m.set_breakpoints([])
     out = _step(m)
     assert out.frame_complete and out.stop_reason == STOP_NONE
     assert m.frame_number() == frame + 1
     assert len(out.audio) == m.samples_per_frame() * 2
-    assert out.video is not None
+    assert out.video_width == 256 and len(out.video_pixels) == 256 * 212 * 3
     # The two calls ran exactly the cycles of one uninterrupted frame.
     _step(ref)
     assert m.cycle_count == ref.cycle_count

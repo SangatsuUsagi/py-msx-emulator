@@ -23,9 +23,8 @@ _ROM = bytes([0xF3, 0x18, 0xFE]) + bytes(0x8000 - 3)   # DI; JR $
 def test_rendered_frame_returns_rgb_video_and_audio() -> None:
     machine = make_machine(_ROM)
     out = machine.step_frame(InputFrame(), render_video=True)
-    assert out.video is not None
-    assert (out.video.width, out.video.height) == (256, 212)
-    assert len(out.video.pixels) == 256 * 212 * 3
+    assert (out.video_width, out.video_height) == (256, 212)
+    assert len(out.video_pixels) == 256 * 212 * 3
     assert len(out.audio) == 735 * 2
     assert out.frame_number == machine.vdp.frame_count == 1
 
@@ -33,7 +32,7 @@ def test_rendered_frame_returns_rgb_video_and_audio() -> None:
 def test_skipped_video_still_returns_audio() -> None:
     machine = make_machine(_ROM)
     out = machine.step_frame(InputFrame(), render_video=False)
-    assert out.video is None
+    assert (out.video_width, out.video_height, out.video_pixels) == (0, 0, b"")
     assert len(out.audio) == 735 * 2
 
 
@@ -42,9 +41,8 @@ def test_512_wide_frame_reports_its_width() -> None:
     machine.vdp.regs[0] = 0x08            # GRAPHIC5 (SCREEN 6, 512 wide)
     machine.vdp.regs[1] = 0x40
     out = machine.step_frame(InputFrame(), render_video=True)
-    assert out.video is not None
-    assert out.video.width == 512
-    assert len(out.video.pixels) == 512 * 212 * 3
+    assert out.video_width == 512
+    assert len(out.video_pixels) == 512 * 212 * 3
 
 
 def test_matrix_row_reaches_the_ppi_for_the_whole_frame() -> None:
@@ -192,7 +190,7 @@ def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
 def test_a_frame_without_a_break_reports_no_stop() -> None:
     out = make_machine(_ROM).step_frame(InputFrame(), render_video=False)
     assert out.stop_reason == STOP_NONE
-    assert out.frame_complete
+    assert out.frame_complete == 1
 
 
 def test_a_stopped_call_returns_no_video_and_no_audio() -> None:
@@ -200,9 +198,9 @@ def test_a_stopped_call_returns_no_video_and_no_audio() -> None:
     machine.set_breakpoints([0x0001])  # the JR $ loop
     out = machine.step_frame(InputFrame(), render_video=True)
     assert out.stop_reason == STOP_BREAKPOINT
-    assert out.video is None
+    assert (out.video_width, out.video_pixels) == (0, b"")
     assert out.audio == b""
-    assert not out.frame_complete
+    assert out.frame_complete == 0
 
 
 def test_continuing_a_stopped_frame_feeds_no_motion() -> None:
