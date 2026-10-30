@@ -60,8 +60,8 @@ _FRAME_OVERRUN_RATIO: float = 1.05
 
 def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
-    (VideoStandard.target_fps)."""
-    return machine.video_standard.target_fps
+    (VideoStandard.target_fps, an int; the frame timer paces in float)."""
+    return float(machine.video_standard.target_fps)
 
 
 class _InitSdlApi(Protocol):

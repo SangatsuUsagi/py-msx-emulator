@@ -46,7 +46,7 @@ from msx.snapshot_schema import (
     check_object,
 )
 
-__all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME", "note_frequency"]
+__all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME"]
 
 # --- fixed-point / range constants (emu2413 names) ---
 _DP_BITS = 19
@@ -287,16 +287,6 @@ _DEFAULT_INST: tuple[tuple[int, ...], ...] = (
     (0x01, 0x01, 0x00, 0x00, 0xC8, 0xD8, 0xA7, 0x68),  # R: high-hat(M)/snare(C)
     (0x05, 0x01, 0x00, 0x00, 0xF8, 0xAA, 0x59, 0x55),  # R: tom(M)/top-cymbal(C)
 )
-
-
-def note_frequency(fnum: int, block: int) -> float:
-    """Return the note frequency in Hz for a 9-bit F-number and 3-bit block.
-
-    Standard YM2413 formula f = Fnum * 2^Block * clock / (2^19 * 72). Kept for
-    documentation and tests; the synthesis path uses the phase accumulator
-    directly (calc_phase), which is mathematically equivalent.
-    """
-    return fnum * (1 << block) * CPU_CLOCK_HZ / (1 << 19) / 72.0
 
 
 @dataclass

@@ -1,6 +1,7 @@
 """The core package (msx/) must not depend on SDL2, the frontend or the host,
 open files or read the host clock (machine-core "Core package has no frontend
-dependency")."""
+dependency"), and computes with integers only (machine-core "The core
+computes with integers only")."""
 from __future__ import annotations
 
 import ast
@@ -110,6 +111,21 @@ def test_no_file_io_or_host_clock_in_the_core() -> None:
         for root in _imported_roots(path):
             if root in _CLOCK_ROOTS:
                 offenders.append(f"{rel}: import {root}")
+    assert offenders == []
+
+
+def test_no_float_literal_or_true_division_in_the_core() -> None:
+    # machine-core "No float literal or true division in the core". The name
+    # `float` may appear (canonical_json rejects floats with isinstance).
+    offenders = []
+    for path in sorted(_MSX_DIR.rglob("*.py")):
+        rel = path.relative_to(_MSX_DIR.parent)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, float):
+                offenders.append(f"{rel}:{node.lineno}: float literal {node.value!r}")
+            elif isinstance(node, (ast.BinOp, ast.AugAssign)) and isinstance(node.op, ast.Div):
+                offenders.append(f"{rel}:{node.lineno}: true division")
     assert offenders == []
 
 

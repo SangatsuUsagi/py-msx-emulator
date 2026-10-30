@@ -159,3 +159,21 @@ def test_directly_constructed_pal_machine_runs_the_pal_budget() -> None:
     assert (machine.cycles_per_frame, machine.lines_per_frame) == (71_364, 313)
     machine.run_frame(skip_render=True)
     assert 71_364 <= machine.cycle_count <= 71_364 + 22
+
+
+# -- machine-core "The core computes with integers only" ---------------------
+
+def test_the_pacing_target_is_an_integer() -> None:
+    assert VideoStandard.NTSC.target_fps == 60
+    assert VideoStandard.PAL.target_fps == 50
+    assert type(VideoStandard.NTSC.target_fps) is int
+    assert type(VideoStandard.PAL.target_fps) is int
+
+
+def test_the_samples_per_frame_are_an_integer() -> None:
+    ntsc = make_machine(bytes(32 * 1024))
+    pal = make_machine(bytes(32 * 1024))
+    pal.video_standard = VideoStandard.PAL
+    assert (ntsc.samples_per_frame(), pal.samples_per_frame()) == (735, 882)
+    assert type(ntsc.samples_per_frame()) is int
+    assert type(pal.samples_per_frame()) is int
