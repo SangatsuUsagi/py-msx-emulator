@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import inspect
+import typing
 from dataclasses import fields
 
 import pytest
@@ -26,6 +27,7 @@ from msx.boundary import (
     WATCH_READ,
     WATCH_WRITE,
     CpuRegisters,
+    SlotInfo,
     SlotLayout,
 )
 from msx.core_api import CoreApi
@@ -196,7 +198,7 @@ def _run_every_query(m: Machine) -> None:
     m.slot_layout()
     for prim in range(4):
         for page in range(4):
-            m.slot_info(prim, None, page)
+            m.slot_info(prim, -1, page)
             m.slot_info(prim, page, page)
 
 
@@ -234,24 +236,29 @@ def test_a_bank_switching_cartridge_page_shows_its_bank() -> None:
     m = make_machine(_ROM, cartridge=bytes(128 * 1024), mapper="ASCII16")
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.write_memory(0x7000, b"\x00")  # window 1 (0x8000) -> bank 0
-    info = m.slot_info(1, None, 2)
-    assert info is not None
+    info = m.slot_info(1, -1, 2)
     assert b"Ascii16" in info.content
     assert info.bank == b"bank 0 @00000-03FFF"
 
 
 def test_the_main_rom_reports_its_size() -> None:
-    info = _msx1().slot_info(0, None, None)
-    assert info is not None
+    info = _msx1().slot_info(0, -1, -1)
     assert info.size_kb == 32
 
 
 def test_an_invalid_slot_is_rejected() -> None:
     m = _msx1()
-    assert m.slot_info(4, None, None) is None
+    assert m.slot_info(4, -1, -1) == SlotInfo(content=b"", bank=b"", size_kb=-1)
     assert b"4" in m.last_error_text()
-    assert m.slot_info(0, None, None) is not None
+    assert m.slot_info(0, -1, -1).size_kb == 32
     assert m.last_error_text() == b""
+
+
+@pytest.mark.parametrize("args", [(0, 4, -1), (0, -2, -1), (0, -1, 4), (0, -1, -2), (-1, -1, -1)])
+def test_every_slot_argument_outside_its_range_is_rejected(args: tuple[int, int, int]) -> None:
+    m = _msx1()
+    assert m.slot_info(*args) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.last_error_text() != b""
 
 
 # -- machine-core "The core API sets and reports the sprite display flag" ----
@@ -348,6 +355,37 @@ def test_a_full_trace_buffer_reports_the_lost_events() -> None:
 
 # -- machine-core "The core API has no callback into the host" ---------------
 
+def _core_api_type_hints() -> dict[str, dict[str, object]]:
+    """The resolved type hints of every CoreApi member, by member name."""
+    import msx.boundary
+    import msx.input
+    import msx.machine
+    import msx.machine_spec
+    import msx.vdp._geometry
+
+    names: dict[str, object] = {}
+    for module in (msx.boundary, msx.input, msx.machine, msx.machine_spec, msx.vdp._geometry):
+        names.update(vars(module))
+    result: dict[str, dict[str, object]] = {}
+    for name, member in vars(CoreApi).items():
+        func = member.fget if isinstance(member, property) else member
+        if name.startswith("_") or not callable(func):
+            continue
+        result[name] = typing.get_type_hints(func, globalns=names)
+    return result
+
+
+def test_no_core_api_member_takes_or_returns_none() -> None:
+    # machine-core "No core API member takes or returns None".
+    hints = _core_api_type_hints()
+    assert "slot_info" in hints and "read_media" in hints
+    for name, member_hints in hints.items():
+        for arg, hint in member_hints.items():
+            assert hint is not type(None) and type(None) not in typing.get_args(hint), (
+                f"CoreApi.{name} {arg}: {hint}"
+            )
+
+
 def test_no_core_api_member_takes_a_callback() -> None:
     # Annotations are strings here (from __future__ import annotations), so
     # the check reads them as text: no callable, hook or debugger parameter.
@@ -424,7 +462,7 @@ def test_a_fifth_watchpoint_is_rejected() -> None:
     assert m.watchpoints() == ((0xC000, WATCH_WRITE),)
 
 
-# -- machine-core "The break setters reject a value the core cannot use" -----
+# -- machine-core "The break setters reject a bad value and take -1 for none" -
 
 def test_an_address_outside_16_bits_is_rejected() -> None:
     m = _msx1()
@@ -439,8 +477,9 @@ def test_an_address_outside_16_bits_is_rejected() -> None:
     lambda m: m.set_breakpoints([-1]),
     lambda m: m.set_watchpoints([(0x10000, WATCH_READ)]),
     lambda m: m.set_step_out(0x10000),
-    lambda m: m.set_sp_range((0xC000, 0x10000)),
-    lambda m: m.set_sp_range((-1, 0xF000)),
+    lambda m: m.set_temp_breakpoint(-2),
+    lambda m: m.set_sp_range(0xC000, 0x10000),
+    lambda m: m.set_sp_range(-2, 0xF000),
 ])
 def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     m = _msx1()
@@ -449,26 +488,39 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     assert m._stepout_sp is None and m._sp_range is None
 
 
-def test_a_negative_frame_number_is_rejected() -> None:
+def test_a_frame_number_below_minus_1_is_rejected() -> None:
     m = _msx1()
     m.set_frame_breakpoint(10)
-    assert m.set_frame_breakpoint(-1) == STATUS_BAD_ARGUMENT
+    assert m.set_frame_breakpoint(-2) == STATUS_BAD_ARGUMENT
     assert m._frame_breakpoint == 10
 
 
 def test_an_inverted_sp_range_is_rejected() -> None:
     m = _msx1()
-    m.set_sp_range((0xC000, 0xF000))
-    assert m.set_sp_range((0xF000, 0xC000)) == STATUS_BAD_ARGUMENT
+    m.set_sp_range(0xC000, 0xF000)
+    assert m.set_sp_range(0xF000, 0xC000) == STATUS_BAD_ARGUMENT
     assert m._sp_range == (0xC000, 0xF000)
 
 
-def test_none_clears_a_setting() -> None:
+def test_minus_1_clears_a_setting() -> None:
     m = _msx1()
-    assert m.set_sp_range((0xC000, 0xF000)) == STATUS_OK
-    assert m.set_sp_range(None) == STATUS_OK
-    assert m._sp_range is None
+    assert m.set_sp_range(0xC000, 0xF000) == STATUS_OK
+    assert m.set_sp_range(-1, -1) == STATUS_OK
+    assert m.set_temp_breakpoint(0x4000) == STATUS_OK
+    assert m.set_temp_breakpoint(-1) == STATUS_OK
+    assert m.set_frame_breakpoint(10) == STATUS_OK
+    assert m.set_frame_breakpoint(-1) == STATUS_OK
+    assert m._sp_range is None and m._temp_breakpoint is None
+    assert m._frame_breakpoint is None
     assert not m._break_conditions_active()
+
+
+@pytest.mark.parametrize("ends", [(-1, 0xF000), (0xC000, -1)])
+def test_one_minus_1_end_is_rejected(ends: tuple[int, int]) -> None:
+    m = _msx1()
+    m.set_sp_range(0xC000, 0xF000)
+    assert m.set_sp_range(*ends) == STATUS_BAD_ARGUMENT
+    assert m._sp_range == (0xC000, 0xF000)
 
 
 def test_a_success_after_a_rejection_clears_the_message() -> None:

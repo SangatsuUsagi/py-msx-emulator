@@ -272,13 +272,14 @@ class Machine:
                 dirty.append(media_id)
         return dirty
 
-    def read_media(self, media_id: MediaId) -> bytes | None:
-        """A medium's current bytes, or None for an id the machine does not
-        have (last_error_text() gives the message)."""
+    def read_media(self, media_id: MediaId) -> bytes:
+        """A medium's current bytes, or b"" for an id the machine does not
+        have (last_error_text() gives the message). A medium is never empty,
+        so b"" is unambiguous."""
         medium = self._media().get(media_id)
         if medium is None:
             self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
-            return None
+            return b""
         self._error_text = b""
         return medium.data()
 
@@ -293,8 +294,8 @@ class Machine:
         self._error_text = b""
         return STATUS_OK
 
-    def mount_disk(self, drive: int, data: bytes | None, write_protected: bool) -> int:
-        """Swap the image `data` (None ejects) into `drive` (0 = A),
+    def mount_disk(self, drive: int, data: bytes, write_protected: bool) -> int:
+        """Swap the image `data` into `drive` (0 = A),
         rejecting sector writes when `write_protected`, and return STATUS_OK.
         The host writes a dirty outgoing image back before the swap. Returns
         STATUS_NO_DRIVE for a machine without that drive and STATUS_BAD_IMAGE
@@ -304,16 +305,23 @@ class Machine:
 
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
-        new_image = None
-        if data is not None:
-            size = len(data)
-            if size == 0 or size % SECTOR_SIZE != 0:
-                return self._fail(
-                    STATUS_BAD_IMAGE,
-                    f"size {size} is not a positive multiple of {SECTOR_SIZE}",
-                )
-            new_image = DskDiskImage(data, write_protected=write_protected)
-        self.fdc.swap(drive, new_image)
+        size = len(data)
+        if size == 0 or size % SECTOR_SIZE != 0:
+            return self._fail(
+                STATUS_BAD_IMAGE,
+                f"size {size} is not a positive multiple of {SECTOR_SIZE}",
+            )
+        self.fdc.swap(drive, DskDiskImage(data, write_protected=write_protected))
+        self._error_text = b""
+        return STATUS_OK
+
+    def eject_disk(self, drive: int) -> int:
+        """Empty `drive` (0 = A) and return STATUS_OK. The host writes a
+        dirty outgoing image back first. Returns STATUS_NO_DRIVE, changing
+        nothing, for a machine without that drive."""
+        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+            return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
+        self.fdc.swap(drive, None)
         self._error_text = b""
         return STATUS_OK
 
@@ -400,13 +408,13 @@ class Machine:
         self.vdp.debug_disable_sprites = hidden
         return STATUS_OK
 
-    def set_sp_range(self, rng: tuple[int, int] | None) -> int:
-        """Set the valid-RAM range for SP; break when SP leaves it. None
-        disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping the
-        range, for an end outside 0x0000-0xFFFF or a low end above the high
-        end."""
-        if rng is not None:
-            low, high = rng
+    def set_sp_range(self, low: int, high: int) -> int:
+        """Set the valid-RAM range for SP; break when SP leaves it.
+        (-1, -1) disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping
+        the range, for an end outside 0x0000-0xFFFF (one -1 included) or a
+        low end above the high end."""
+        rng: tuple[int, int] | None = None
+        if (low, high) != (-1, -1):
             for value in (low, high):
                 if value < 0 or value > 0xFFFF:
                     return self._fail(
@@ -415,19 +423,20 @@ class Machine:
                 return self._fail(
                     STATUS_BAD_ARGUMENT,
                     f"SP range low 0x{low:04X} above high 0x{high:04X}")
+            rng = (low, high)
         self._sp_range = rng
         self._sp_out_seen = False
         self._error_text = b""
         return STATUS_OK
 
-    def set_temp_breakpoint(self, addr: int | None) -> int:
+    def set_temp_breakpoint(self, addr: int) -> int:
         """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit.
-        Returns STATUS_OK, or STATUS_BAD_ARGUMENT for an address outside
-        0x0000-0xFFFF."""
-        if addr is not None and (addr < 0 or addr > 0xFFFF):
+        -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for another
+        address outside 0x0000-0xFFFF."""
+        if addr != -1 and (addr < 0 or addr > 0xFFFF):
             return self._fail(
                 STATUS_BAD_ARGUMENT, f"run-to address 0x{addr:X} outside 0x0000-0xFFFF")
-        self._temp_breakpoint = addr
+        self._temp_breakpoint = None if addr == -1 else addr
         self._error_text = b""
         return STATUS_OK
 
@@ -442,13 +451,13 @@ class Machine:
         self._error_text = b""
         return STATUS_OK
 
-    def set_frame_breakpoint(self, frame: int | None) -> int:
+    def set_frame_breakpoint(self, frame: int) -> int:
         """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared
-        when hit. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for a negative
-        frame."""
-        if frame is not None and frame < 0:
-            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is negative")
-        self._frame_breakpoint = frame
+        when hit. -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT
+        for a frame below -1."""
+        if frame < -1:
+            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is below -1")
+        self._frame_breakpoint = None if frame == -1 else frame
         self._error_text = b""
         return STATUS_OK
 
@@ -656,28 +665,31 @@ class Machine:
             secondary[3] = mem.sub_slot_reg & 0xFF
         return SlotLayout(mem.slot_register & 0xFF, expanded, bytes(secondary))
 
-    def slot_info(
-        self, primary: int, secondary: int | None, page: int | None
-    ) -> SlotInfo | None:
-        """The content text, bank text and size in KB of a primary slot, an
-        optional sub-slot and an optional page. Returns None for a value
-        outside 0-3 (last_error_text() gives the message)."""
+    def slot_info(self, primary: int, secondary: int, page: int) -> SlotInfo:
+        """The content text, bank text and size in KB of a primary slot, a
+        sub-slot (-1: none) and a page (-1: none). Returns empty texts and a
+        size of -1 for a value outside 0-3 (last_error_text() gives the
+        message)."""
         if not 0 <= primary <= 3:
-            self._fail(STATUS_BAD_ARGUMENT, f"no primary slot {primary}")
-            return None
-        if secondary is not None and not 0 <= secondary <= 3:
-            self._fail(STATUS_BAD_ARGUMENT, f"no sub-slot {secondary}")
-            return None
-        if page is not None and not 0 <= page <= 3:
-            self._fail(STATUS_BAD_ARGUMENT, f"no page {page}")
-            return None
+            return self._bad_slot(f"no primary slot {primary}")
+        if secondary != -1 and not 0 <= secondary <= 3:
+            return self._bad_slot(f"no sub-slot {secondary}")
+        if page != -1 and not 0 <= page <= 3:
+            return self._bad_slot(f"no page {page}")
+        # The Memory helpers take None for "no sub-slot" and "no page".
+        sec = None if secondary == -1 else secondary
+        pg = None if page == -1 else page
         mem = self.memory
         self._error_text = b""
         return SlotInfo(
-            content=mem.debug_slot_content(primary, secondary, page).encode("utf-8"),
-            bank=mem.debug_slot_bank(primary, secondary, page).encode("utf-8"),
-            size_kb=mem.debug_slot_size_kb(primary, secondary),
+            content=mem.debug_slot_content(primary, sec, pg).encode("utf-8"),
+            bank=mem.debug_slot_bank(primary, sec, pg).encode("utf-8"),
+            size_kb=mem.debug_slot_size_kb(primary, sec),
         )
+
+    def _bad_slot(self, message: str) -> SlotInfo:
+        self._fail(STATUS_BAD_ARGUMENT, message)
+        return SlotInfo(content=b"", bank=b"", size_kb=-1)
 
     def breakpoints(self) -> tuple[int, ...]:
         """The breakpoint addresses, ascending."""
