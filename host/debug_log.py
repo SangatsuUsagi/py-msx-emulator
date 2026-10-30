@@ -66,9 +66,9 @@ class DebugLogFormatter:
         its hang, or for a hang already reported)."""
         kind = event.kind
         if kind == TRACE_EVENT_IO_READ:
-            return [_line("IO", f"IN   port={event.a:02X}  val={event.b:02X}  PC={event.c:04X}")]
+            return [_line("IO", f"IN   port={event.a:02X}  val={event.b:02X}  PC={event.pc:04X}")]
         if kind == TRACE_EVENT_IO_WRITE:
-            return [_line("IO", f"OUT  port={event.a:02X}  val={event.b:02X}  PC={event.c:04X}")]
+            return [_line("IO", f"OUT  port={event.a:02X}  val={event.b:02X}  PC={event.pc:04X}")]
         if kind == TRACE_EVENT_VDP_MODE_REG:
             return self._vdp_reg_write(event.a, event.b, event.frame)
         if kind == TRACE_EVENT_UNDEFINED_OP:

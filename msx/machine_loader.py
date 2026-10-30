@@ -796,7 +796,6 @@ def _resolve_shared_dac(
 
 def _wire_post_construction_attrs(
     machine: "Machine",
-    io: IOBus,
     dac: MajutsushiMapper | None,
     wiring: _ExtensionWiring,
 ) -> None:
@@ -814,7 +813,6 @@ def _wire_post_construction_attrs(
         machine.ppi._clock = clock
     if dac is not None:
         dac._clock = clock
-    io._get_pc = lambda: machine.cpu.registers.PC
     _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
     machine.halnote_cart = wiring.halnote_device
@@ -989,7 +987,7 @@ def _build(machine_config: MachineConfig) -> "Machine":
             mapper2_subslots=mapper2_subslots,
         )
 
-    _wire_post_construction_attrs(machine, io, dac, wiring)
+    _wire_post_construction_attrs(machine, dac, wiring)
     machine._sram_table = _sram_table(machine)
     machine.machine_config_sha256 = config.config_sha256
     return machine

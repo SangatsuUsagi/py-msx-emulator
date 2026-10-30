@@ -218,8 +218,8 @@ TRACE_EVENT_VDP_PORT99 = 1  # a = the byte written to port 0x99
 TRACE_EVENT_VDP_PORT9B = 2  # a = the byte written to port 0x9B, b = R#17 before the write
 TRACE_EVENT_MAP_BANK = 3    # a = window, b = old bank, c = new bank, d = written address
 TRACE_EVENT_LOST = 4        # a = events lost to a full buffer; the other fields 0
-TRACE_EVENT_IO_READ = 5     # a = port, b = value read, c = the CPU's PC register
-TRACE_EVENT_IO_WRITE = 6    # a = port, b = value written, c = the CPU's PC register
+TRACE_EVENT_IO_READ = 5     # a = port, b = value read
+TRACE_EVENT_IO_WRITE = 6    # a = port, b = value written
 TRACE_EVENT_VDP_MODE_REG = 7  # a = register (0 or 1), b = stored value
 TRACE_EVENT_UNDEFINED_OP = 8  # a = PC, b = opcode byte
 TRACE_EVENT_CPU_HISTORY = 9   # a = PC, b = opcode: one entry of the last 64 instructions

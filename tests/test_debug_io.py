@@ -3,17 +3,18 @@ records each access while TRACE_DEBUG is on."""
 from __future__ import annotations
 
 from msx.boundary import TRACE_DEBUG, TRACE_EVENT_IO_READ, TRACE_EVENT_IO_WRITE
+from msx.clock import CoreClock
 from msx.io import IOBus
 from msx.trace import TraceLog
 
 
 def make_io(kinds: int = TRACE_DEBUG, pc: int = 0x0041) -> tuple[IOBus, TraceLog]:
-    trace = TraceLog(kinds=kinds)
-    return IOBus(_trace=trace, _get_pc=lambda: pc), trace
+    trace = TraceLog(kinds=kinds, _clock=CoreClock(instruction_pc=pc))
+    return IOBus(_trace=trace), trace
 
 
 def _events(trace: TraceLog) -> list[tuple[int, int, int, int]]:
-    return [(e.kind, e.a, e.b, e.c) for e in trace.drain()]
+    return [(e.kind, e.a, e.b, e.pc) for e in trace.drain()]
 
 
 def test_out_records_port_value_pc() -> None:

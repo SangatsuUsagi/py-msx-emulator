@@ -17,10 +17,3 @@ def test_the_build_wires_the_trace_buffer() -> None:
     machine.set_trace_kinds(TRACE_DEBUG)
     assert machine.cpu._trace is machine._trace
 
-
-def test_the_build_wires_get_pc() -> None:
-    machine = make_machine(rom=ROM)
-    assert machine.io._get_pc is not None
-    # _get_pc returns the CPU's PC register
-    machine.cpu.registers.PC = 0x1234
-    assert machine.io._get_pc() == 0x1234
