@@ -28,11 +28,21 @@ from msx.opll import (
     _TLL_TABLE,
     SAMPLE_RATE,
     Opll,
-    note_frequency,
 )
 from msx.snapshot_schema import SchemaError
 
 _LOUD_INSTRUMENT_VOL = 0x10  # instrument=1 (violin), vol=0 (loudest)
+
+
+def note_frequency(fnum: int, block: int) -> float:
+    """Return the note frequency in Hz for a 9-bit F-number and 3-bit block.
+
+    Standard YM2413 formula f = Fnum * 2^Block * clock / (2^19 * 72). The
+    synthesis path uses the phase accumulator directly (calc_phase), which is
+    mathematically equivalent; this float form lives here, not in the
+    integer-only core (machine-core "The core computes with integers only").
+    """
+    return fnum * (1 << block) * CPU_CLOCK_HZ / (1 << 19) / 72.0
 
 
 def _key_on(o: Opll, ch: int, fnum: int = 0x150, block: int = 3) -> None:

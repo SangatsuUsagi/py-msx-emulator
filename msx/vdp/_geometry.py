@@ -69,14 +69,15 @@ class VideoStandard(enum.IntEnum):
         return CYCLES_PER_LINE * self.lines_per_frame
 
     @property
-    def target_fps(self) -> float:
-        """Real-time pacing target: a round, host-vsync-friendly rate, not the
-        exact field rate (NTSC 59.92 Hz / PAL 50.16 Hz) -- see
-        openspec/specs/app-frame-timer/spec.md's Purpose."""
+    def target_fps(self) -> int:
+        """Real-time pacing target in frames per second, an integer: a
+        round, host-vsync-friendly rate, not the exact field rate (NTSC
+        59.92 Hz / PAL 50.16 Hz) -- see openspec/specs/app-frame-timer/spec.md's
+        Purpose."""
         if self is VideoStandard.NTSC:
-            return 60.0
+            return 60
         if self is VideoStandard.PAL:
-            return 50.0
+            return 50
         raise AssertionError(f"unhandled video standard {self!r}")
 
 
