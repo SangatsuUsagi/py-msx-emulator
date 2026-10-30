@@ -286,3 +286,85 @@ def test_the_devices_take_their_media_size_from_the_boundary() -> None:
     assert len(fmpac.sram_image.data()) == FMPAC_SRAM_SIZE == 8192
     assert len(rtc.cmos.data()) == RTC_CMOS_SIZE == 26
     assert len(halnote.sram_image.data()) == HALNOTE_SRAM_SIZE == 16384
+
+
+# machine-core "Host code imports only the boundary modules": the msx modules
+# host code may import, with the names it may take (None: any name).
+_HOST_IMPORTS: dict[str, frozenset[str] | None] = {
+    "msx.boundary": None,
+    "msx.core_api": None,
+    "msx.input": frozenset({"InputFrame"}),
+    "msx.machine_loader": frozenset({"create_machine"}),
+    "msx.machine_spec": None,
+    "msx.machine_config": None,
+}
+# The machine description layer, whose private names host code may not take.
+_DESCRIPTION_LAYER = ("msx.machine_spec", "msx.machine_config")
+
+
+def _msx_imports(path: Path) -> list[tuple[int, str, str | None]]:
+    """(line, module, name) for each import from msx in `path`, anywhere in
+    the file; the name is None for a plain `import msx.x`. `from msx import
+    x` counts as an import of the module msx.x."""
+    found: list[tuple[int, str, str | None]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "msx":
+                    found.append((node.lineno, alias.name, None))
+        elif isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
+            if node.module == "msx":
+                for alias in node.names:
+                    found.append((node.lineno, f"msx.{alias.name}", None))
+            elif node.module.split(".")[0] == "msx":
+                for alias in node.names:
+                    found.append((node.lineno, node.module, alias.name))
+    return found
+
+
+def _host_import_offence(module: str, name: str | None) -> str:
+    """Why host code may not import `name` from `module`, or "" if it may."""
+    if module not in _HOST_IMPORTS:
+        return "not a boundary module"
+    names = _HOST_IMPORTS[module]
+    if names is not None and name not in names:
+        return f"only {', '.join(sorted(names))}"
+    if module in _DESCRIPTION_LAYER and name is not None and name.startswith("_"):
+        return "a private description name"
+    return ""
+
+
+def test_no_host_module_imports_another_core_module() -> None:
+    offenders = []
+    for path in _host_side_files():
+        for lineno, module, name in _msx_imports(path):
+            reason = _host_import_offence(module, name)
+            if reason:
+                imported = module if name is None else f"{module}.{name}"
+                offenders.append(f"{path.relative_to(_REPO)}:{lineno} {imported}: {reason}")
+    assert offenders == []
+
+
+def test_the_host_import_rule_rejects_a_private_description_name() -> None:
+    # machine-core "No host module imports a private description name".
+    assert _host_import_offence("msx.machine_spec", "MachineSpec") == ""
+    assert _host_import_offence("msx.machine_spec", "_Hidden") != ""
+    assert _host_import_offence("msx.machine_config", "_parse_machine") != ""
+    assert _host_import_offence("msx.input", "InputLines") != ""
+    assert _host_import_offence("msx.ppi", "PPI") != ""
+
+
+# machine-core "The machine description layer imports no core device".
+_DESCRIPTION_IMPORTS = frozenset({
+    "msx.boundary", "msx.canonical_json", "msx.snapshot_schema", *_DESCRIPTION_LAYER,
+})
+
+
+def test_the_description_layer_imports_no_device_module() -> None:
+    offenders = []
+    for module in _DESCRIPTION_LAYER:
+        path = _REPO / (module.replace(".", "/") + ".py")
+        for lineno, imported, _name in _msx_imports(path):
+            if imported not in _DESCRIPTION_IMPORTS:
+                offenders.append(f"{path.relative_to(_REPO)}:{lineno} {imported}")
+    assert offenders == []
