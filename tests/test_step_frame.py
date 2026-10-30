@@ -5,7 +5,14 @@ frame applies input but no motion")."""
 from __future__ import annotations
 
 from host.input_state import InputState
-from msx.boundary import STATUS_BAD_ARGUMENT, STATUS_OK, STOP_BREAKPOINT, STOP_NONE
+from msx.boundary import (
+    MOUSE_LEFT,
+    MOUSE_RIGHT,
+    STATUS_BAD_ARGUMENT,
+    STATUS_OK,
+    STOP_BREAKPOINT,
+    STOP_NONE,
+)
 from msx.input import InputFrame
 from msx.psg import JoystickPort
 from tests.factories import make_machine, make_machine_msx2
@@ -68,7 +75,7 @@ def test_mouse_motion_is_applied_once_per_frame() -> None:
     machine.attach_mouse(JoystickPort.JOY2)
     mouse = machine.psg.mouse
     assert mouse is not None
-    frame_input = InputFrame(mouse_dx=5, mouse_dy=-3, mouse_left=True)
+    frame_input = InputFrame(mouse_dx=5, mouse_dy=-3, mouse_buttons=MOUSE_LEFT)
     machine.step_frame(frame_input, render_video=False)
     assert (mouse._cur_x_rel, mouse._cur_y_rel) == (5, -3)
     assert mouse.read() & 0x10 == 0                 # left button pressed (active-low)
@@ -77,10 +84,10 @@ def test_mouse_motion_is_applied_once_per_frame() -> None:
     assert mouse.read() & 0x10
 
 
-def _row_pressed(row: int, bit: int) -> tuple[int, ...]:
+def _row_pressed(row: int, bit: int) -> bytes:
     rows = [0xFF] * 11
     rows[row] &= ~(1 << bit) & 0xFF
-    return tuple(rows)
+    return bytes(rows)
 
 
 def test_injected_key_is_visible_to_a_paused_single_step() -> None:
@@ -119,9 +126,48 @@ def test_apply_input_does_not_move_the_mouse() -> None:
     machine.attach_mouse(JoystickPort.JOY2)
     mouse = machine.psg.mouse
     assert mouse is not None
-    machine.apply_input(InputFrame(mouse_dx=7, mouse_right=True))
+    machine.apply_input(InputFrame(mouse_dx=7, mouse_buttons=MOUSE_RIGHT))
     assert mouse._cur_x_rel == 0
     assert mouse.read() & 0x20 == 0                 # right button pressed (active-low)
+
+
+def test_a_mouse_button_is_a_bit_flag() -> None:
+    # machine-core "A mouse button is a bit flag".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.step_frame(InputFrame(mouse_buttons=MOUSE_LEFT), render_video=False)
+    assert mouse.read() & 0x10 == 0                 # left pressed (active-low)
+    assert mouse.read() & 0x20                      # right released
+
+
+def test_a_joystick_value_above_6_bits_is_masked() -> None:
+    # machine-core "A joystick value above 6 bits is masked".
+    machine = make_machine(_ROM)
+    assert machine.apply_input(InputFrame(joy1=0xFE)) == STATUS_OK
+    assert machine.input.joy1 == 0x3E
+
+
+def test_unknown_button_bits_are_ignored() -> None:
+    # machine-core "Unknown button bits are ignored".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.apply_input(InputFrame(mouse_buttons=0xFC))
+    assert mouse.read() & 0x30 == 0x30              # both released
+
+
+def test_mouse_motion_outside_16_bits_is_clamped() -> None:
+    # machine-core "Mouse motion outside 16 bits is clamped".
+    machine = make_machine(_ROM)
+    machine.attach_mouse(JoystickPort.JOY2)
+    mouse = machine.psg.mouse
+    assert mouse is not None
+    machine.step_frame(InputFrame(mouse_dx=100000, mouse_dy=-100000), render_video=False)
+    assert mouse._cur_x_rel == 32767
+    assert mouse._cur_y_rel == -32767
 
 
 def test_a_frame_value_cannot_be_changed_after_it_is_passed() -> None:
