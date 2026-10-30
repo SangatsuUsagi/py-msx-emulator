@@ -44,7 +44,7 @@ CB、DD、ED、FD のプレフィックス表も同じ方式。メインの振�
 2. `iff1` と `int_pending` がどちらも true で、`ei_pending` がセットされていなければ、割り込みを受け付ける。モード 1 は PC をプッシュして 0x0038 にジャンプし、13 T ステート。モード 2 は PC をプッシュし、`I<<8 | data_bus` からベクタを読んでハンドラにジャンプし、19 T ステート。
 3. `ei_pending` がセットされていれば、クリアする。EI が割り込みを有効にするのは、その次の命令の後から。手順 2 が `ei_pending` を見て、この手順がクリアするので、手順 2 で受け付けるはずの割り込みはちょうど 1 ステップ待つ。
 4. `halted` がセットされていれば、オペコードを読まずに `4 + m1_wait_states` T ステート進める。純粋な Z80 コアなら 4 で、MSX の M1 ウェイトもここで加わる。
-5. それ以外は、`instruction_pc` に現在の PC を記録し、`q_next` を `q` に移して `q_next` をクリアし（Q。`SCF`/`CCF` が読む）、`_fetch_opcode()` でオペコードを読んで振り分ける。
+5. それ以外は、clock 記録（`msx/clock.py`）の `instruction_pc` に現在の PC を記録し、`q_next` を `q` に移して `q_next` をクリアし（Q。`SCF`/`CCF` が読む）、`_fetch_opcode()` でオペコードを読んで振り分ける。
 
 `_fetch()` は `read_byte(PC)` で 1 バイト読み、PC を 1 進める。`_fetch_opcode()` は同じことをしたうえで、M1 サイクルごとに 1 回 R を進める。M1 サイクルにあたるのは、主オペコードと、CB/DD/ED/FD プレフィックスの次のオペコードバイト。オペランドとディスプレースメントのバイトは R を変えない。`DDCB`/`FDCB` のディスプレースメントと最後のオペコードも同じ。R が数えるのは bit 0〜6 だけ。bit 7 は保持され、`LD R,A` のようなレジスタ全体への書き込みでしか変わらない。実機の SONY HB-F1XD と HB-10 でも R の進み方は同じ。
 
@@ -338,7 +338,7 @@ Majutsushi DAC とキークリック（PPI ポートC bit 7）は、書き込み
 
 `PSG.generate_samples(n, frame_start, frame_end)` は、音量レジスタへの速い書き込みで鳴らすソフトウェア PCM を再現する。
 
-1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、`_machine` の参照を通して `machine.cycle_count` から読む。速いフレームループは、各スキャンラインの T ステートをラインの終わりで `cycle_count` に足す。そのため、書き込みの位置の分解能は 1 スキャンライン（228 T ステート、約 2.8 サンプル）。
+1. `write_port` は各レジスタ書き込みを `(cycle, reg, value)` として記録する。サイクルは、マシンの clock 記録（`msx/clock.py`）から読む。その値が `machine.cycle_count` である。速いフレームループは、各スキャンラインの T ステートをラインの終わりで `cycle_count` に足す。そのため、書き込みの位置の分解能は 1 スキャンライン（228 T ステート、約 2.8 サンプル）。
 2. `generate_samples` は、フレームの最初の書き込みの時点のレジスタとジェネレータの状態に戻る。
 3. バッファを、続いた区間の並びとして描き直す。各書き込みは、サンプル位置 `clamp((cycle - frame_start) * n // (frame_end - frame_start), 0, n)` から新しい区間を始める。
 4. トーン、ノイズ、エンベロープの状態は区間をまたいで引き継ぐ。
@@ -940,6 +940,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - **VRAM と RAM**：サイズ固定の `bytearray`（V9938 は `_VRAM_SIZE = 131072`、TMS9918A は 16384、RAM マッパーはセグメントの配列）。アクセスはすべてスライスとインデックスで直接行う。int のリストや辞書を使った記憶域はない。
 - **I/O バスの振り分け**（`msx/io.py`）：`list[tuple[int, int, Callable]]` を先頭から調べる。辞書の検索もリフレクションも使わない。登録するハンドラは少なく、マシン設定ごとに決まっている。
 - **コンポーネントの構造体**：ハードウェアのコンポーネントはすべて `@dataclass` で、フィールドはすべて型付きで明示的に宣言する。`msx/` のどこにも `__getattr__`/`__setattr__` の仕掛けはない。最も頻繁に通る 2 つの構造体、`Z80` と `Registers` は `@dataclass(slots=True)` にして、インスタンスごとの `__dict__` をなくしている。`Memory` と、V9938 の小さな値の型いくつか（ログのエントリの `_RegChange`/`_PaletteChange`、`_RenderStatus`、`_SatSegment`）も同じ。ほかは素の `@dataclass`。頻繁に通らない場所では、フィールド配置の保証はそれほど重要でないため。
+- **エミュレーション上の時刻**（`msx/clock.py`）：マシンは、サイクル数、フレーム数、命令のアドレスを持つ `CoreClock` の記録を 1 つ持つ。`build_machine` は、同じ記録を CPU、VDP、PSG、PPI、RTC、Majutsushi の DAC、トレースバッファに渡す。各値を書くのは 1 か所だけ。どのコンポーネントも、クロージャや `Machine` への参照を通して時刻を読まない。C や Zig の移植では、この記録を構造体にして、各コンポーネントがそれを指す。
 - **タイミングの定数**：`CYCLES_PER_LINE`、`NTSC_LINES_PER_FRAME` / `PAL_LINES_PER_FRAME`（`msx/vdp/_geometry.py`）、`_HBLANK_START`、`_TR_REASSERT_CYCLES` などは、モジュールレベルの整数定数。1 フレームの予算は、同じモジュールの `lines_per_frame(standard)` と `cycles_per_frame(standard)` から得る。移植では `match` / `const fn` として書く。
 
 ### 移植時に対応が必要な Python 固有パターン
@@ -969,12 +970,6 @@ Rust/C++ の符号なしの型はアンダーフローで折り返し、符号�
 V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は、`bytes.translate()` の表を `_G46_LUT_CACHE` / `_G5_LUT_CACHE` にためておく。どちらも `(tp: bool, border: int)` をキーにした辞書。`bytes.translate()` は CPython の組み込みで、256 バイトの変換表を C で一度に適用するので、Python でこの変換をする最も速い方法になる。辞書のキャッシュで、スキャンラインごとに同じ表を作り直さずに済む。
 
 `bytes.translate()` も呼び出しごとの辞書のハッシュも、システム言語では自然な書き方ではない。Rust/C++ の移植では、固定の `[u8; 256]` の配列を初期化時に計算しておき、直接インデックスで引く。`(tp, border)` の組み合わせは全部で 32 通りしかない。
-
-#### トレースバッファの値の取得
-
-トレースバッファ（`msx/trace.py` の `TraceLog`）は、各イベントに CPU の命令の PC、サイクル数、VDP のフレーム番号を付ける。これらは `_get_pc`、`_get_cycle`、`_get_frame` の 3 つのクロージャで読む。クロージャは `msx/machine_loader.py` が構築時につなぐ。イベントを記録する VDP とマッパーは、これらの値を手元に持っていないためである。クロージャはコアの中にとどまり、コアの API を通らない。
-
-Rust/C++ の移植では、クロージャを持たずに、3 つの値を記録の呼び出しに渡すか、共有の時計の構造体への参照をバッファに持たせる。
 
 #### フレームタイマーのスピンループ
 
