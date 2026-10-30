@@ -868,6 +868,89 @@ class TestSlotRomMapperBank:
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
         assert mem.debug_slot_bank(1, None, 2) == "bank 0 @00000-03FFF"
 
+    # -- debug-monitor "sl -- cartridge ROM mapper bank column": the text
+    # describes what each window maps, resolved as the mapper's reads are.
+
+    def test_rtype_shows_fixed_and_selected_banks(self):
+        from msx.mapper import RTypeMapper
+        m = RTypeMapper(self._rom16(24))  # 384 KB: block 0x17 selected directly
+        assert m.debug_bank_info(1) == "bank 23 @5C000-5FFFF"
+        assert m.debug_bank_info(2) == "bank 0 @00000-03FFF"
+        m.write(0x4000, 2)
+        assert m.debug_bank_info(2) == "bank 2 @08000-0BFFF"
+        assert m.debug_bank_info(0) is None and m.debug_bank_info(3) is None
+
+    def test_sl_bank_shows_the_rtype_banks(self):
+        from msx.mapper import RTypeMapper
+        rtype = RTypeMapper(self._rom16(24))
+        rtype.write(0x4000, 2)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=rtype)
+        assert mem.debug_slot_bank(1, None, 1) == "bank 23 @5C000-5FFFF"
+        assert mem.debug_slot_bank(1, None, 2) == "bank 2 @08000-0BFFF"
+
+    def test_fmpac_shows_its_bank_or_its_sram(self):
+        from msx.fmpac import FmPac
+        from msx.opll import Opll
+        m = FmPac(self._rom16(4), Opll())
+        m.write(0x7FF7, 1)  # bank register
+        assert m.debug_bank_info(1) == "bank 1 @04000-07FFF"
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=m)
+        assert mem.debug_slot_bank(1, None, 1) == "bank 1 @04000-07FFF"
+        m.write(0x5FFE, 0x4D)  # SRAM unlock
+        m.write(0x5FFF, 0x69)
+        assert m.debug_bank_info(1) == "bank SRAM@0000"
+        assert m.debug_bank_info(2) is None
+
+    def test_a_game_master_2_window_on_sram_shows_sram(self):
+        from msx.mapper import GameMaster2Mapper
+        m = GameMaster2Mapper(self._rom8(16))
+        m.write(0xA000, 0x30)  # window 3: SRAM, upper 4 KB half
+        assert m.debug_bank_info(2) == "w2=b2@04000  w3=SRAM@1000"
+
+    def test_ascii8_and_ascii16_sram_windows_show_sram(self):
+        from msx.mapper import Ascii8Sram2Mapper, Ascii16Sram2Mapper
+        a8 = Ascii8Sram2Mapper(self._rom8(32))
+        a8.write(0x7000, 0x20)  # window 2 (0x8000): SRAM
+        assert a8.debug_bank_info(2) == "w2=SRAM@0000  w3=b0@00000"
+        a16 = Ascii16Sram2Mapper(self._rom16(16))
+        a16.write(0x7000, 0x10)  # window 1 (0x8000): SRAM
+        assert a16.debug_bank_info(2) == "bank SRAM@0000"
+
+    def test_a_register_beyond_the_rom_shows_the_page_mapped(self):
+        from msx.mapper import Ascii16Mapper
+        m = Ascii16Mapper(self._rom16(8))  # 128 KB
+        m.write(0x7000, 0xFF)
+        assert m.read(0x8000) == 7
+        assert m.debug_bank_info(2) == "bank 7 @1C000-1FFFF"
+
+    def test_a_konami_page_past_the_rom_shows_open(self):
+        from msx.mapper import KonamiMapper
+        m = KonamiMapper(self._rom8(16))  # 128 KB
+        m.write(0x8000, 0x1F)  # page 31 is past the end: open bus
+        assert m.read(0x8000) == 0xFF
+        assert m.debug_bank_info(2) == "w2=open  w3=b3@06000"
+
+    def test_scc_i_shows_the_masked_ram_block(self):
+        from msx.mapper import SCCICart
+        from msx.scc import SCC
+        m = SCCICart(SCC())
+        m.write(0x9000, 0xFF)
+        assert m.debug_bank_info(2) == "w2=b7@0E000  w3=b3@06000"
+
+    def test_halnote_shows_sram_its_page_and_the_sub_mapper(self):
+        from msx.mapper import HalnoteMapper
+        m = HalnoteMapper(bytes(1024 * 1024))
+        assert m.debug_bank_info(0) is None
+        m.write(0x4FFF, 0x85)  # bank 0: page 5, SRAM on
+        assert m.debug_bank_info(0) == "SRAM@0000-3FFF"
+        assert m.debug_bank_info(1) == "w0=b5@0A000  w1=b1@02000"
+        m.write(0x6FFF, 0x86)  # bank 1: page 6, sub-mapper on
+        m.write(0x77FF, 0x12)
+        m.write(0x7FFF, 0x34)
+        assert m.debug_bank_info(1) == (
+            "w0=b5@0A000  w1=b6@0C000  sub=b18@89000,b52@9A000"
+        )
+
     def test_sl_bank_ram_mapper_segment_unchanged(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper()
