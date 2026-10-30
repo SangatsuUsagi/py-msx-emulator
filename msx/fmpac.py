@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
-from msx.mapper import MapperKind, format_bank_16k
+from msx.mapper import MapperKind, format_bank_16k, sram_label
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
 from msx.sram import SramImage
 
@@ -266,5 +266,5 @@ class FmPac:
         if page != 1:
             return None
         if self._sram_enabled:
-            return format_bank_16k("SRAM@0000")
+            return format_bank_16k(sram_label(0))
         return format_bank_16k(self._bank)

@@ -99,6 +99,7 @@ class RtcTime:
 # Start time when the host supplies none (a Saturday).
 RTC_DEFAULT_START = RtcTime(2000, 1, 1, 0, 0, 0)
 
+
 class MediaId(enum.IntEnum):
     """How the host and the core name each battery-backed image and each
     floppy drive (MachineConfig.media/disks, Machine.read_media, ...): a
@@ -131,7 +132,8 @@ _SUBSLOT_SRAM_IDS = (
     (MediaId.SLOT2_SUB0_SRAM, MediaId.SLOT2_SUB1_SRAM,
      MediaId.SLOT2_SUB2_SRAM, MediaId.SLOT2_SUB3_SRAM),
 )
-_DRIVE_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
+# The media ids of FDC drives 0-3: a drive, never a battery-backed medium.
+DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
 
 def slot_sram_id(slot: int) -> MediaId:
@@ -155,7 +157,7 @@ def drive_media_id(index: int) -> MediaId:
     four drives a TC8566AF selects). Raises ValueError for any other index."""
     if not 0 <= index <= 3:
         raise ValueError(f"no media id for floppy drive {index}")
-    return _DRIVE_IDS[index]
+    return DRIVE_MEDIA_IDS[index]
 
 
 @dataclass(frozen=True)
@@ -191,7 +193,8 @@ STATUS_BAD_ARGUMENT = 6     # a break setter: a value outside its range or too
                             # many entries; set_watchpoints: a watch kind;
                             # attach_mouse: a port; set_trace_kinds: a trace kind;
                             # a flag setter, mount_disk: a flag not 0 or 1;
-                            # read_memory, read_vram: a length (b"")
+                            # read_memory, read_vram: a length (b"");
+                            # slot_info: a slot, sub-slot or page
 
 # The most breakpoints set_breakpoints and watchpoints set_watchpoints take.
 MAX_BREAKPOINTS = 4
@@ -220,7 +223,8 @@ TRACE_EVENT_IO_WRITE = 6    # a = port, b = value written, c = the CPU's PC regi
 TRACE_EVENT_VDP_MODE_REG = 7  # a = register (0 or 1), b = stored value
 TRACE_EVENT_UNDEFINED_OP = 8  # a = PC, b = opcode byte
 TRACE_EVENT_CPU_HISTORY = 9   # a = PC, b = opcode: one entry of the last 64 instructions
-TRACE_EVENT_HANG_PC_LOOP = 10  # a = PC repeated HANG_PC_REPEAT_THRESHOLD times
+TRACE_EVENT_HANG_PC_LOOP = 10  # a = PC repeated 1000 times (msx/machine.py
+                               # HANG_PC_REPEAT_THRESHOLD)
 TRACE_EVENT_HANG_HALT_DI = 11  # a = PC of a HALT with interrupts off
 
 # Instructions the TRACE_DEBUG history keeps (TRACE_EVENT_CPU_HISTORY).
@@ -281,7 +285,8 @@ class FrameOutput:
     video_width: int     # 256 or 512; 0 when the frame was not rendered
     video_height: int    # OUTPUT_H (212); 0 when the frame was not rendered
     video_pixels: bytes  # packed RGB24, width * height * 3; b"" when not rendered
-    audio: bytes         # signed 16-bit LE mono PCM, before any output filter
+    audio: bytes         # signed 16-bit LE mono PCM, before any output filter;
+                         # b"" for a call that stopped at a break
     frame_number: int
     stop_reason: int = STOP_NONE  # nonzero when the call stopped at a break
     frame_complete: int = 1       # 0 when the frame continues on the next call
@@ -355,7 +360,8 @@ class SlotInfo:
     """One slot as the core API's slot description query returns it
     (msx/core_api.py): the content and the bank as UTF-8 text (bank b"-"
     when the page has no bank), and the size in KB (0 when no size
-    applies)."""
+    applies). Empty texts and a size of -1 for a slot, sub-slot or page
+    outside 0-3 (STATUS_BAD_ARGUMENT in last_error_text)."""
 
     content: bytes
     bank: bytes

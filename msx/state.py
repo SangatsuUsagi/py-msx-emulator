@@ -119,10 +119,10 @@ _T = TypeVar("_T")
 #   and port-0xAB bus latch. See openspec/changes/snapshot-ppi-state.
 # Version 20: no layout change; the format-19 layout with cpu.registers.WZ,
 #   cpu.q and cpu.q_next, which add-z80-memptr added in v2.8.2 without a
-#   version bump. See openspec/changes/snapshot-format-20.
+#   version bump. See openspec/changes/archive/2026-10-28-snapshot-format-20.
 # Version 21: fdc.drives[].disk_path removed -- a mounted disk is identified
 #   by its size and SHA1 only; the host keeps the disk's file. See
-#   openspec/changes/flatten-core-api-types.
+#   openspec/changes/archive/2026-10-29-flatten-core-api-types.
 CURRENT_FORMAT_VERSION: int = 21
 
 _SHA256_HEX_LEN = 64

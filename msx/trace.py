@@ -75,6 +75,8 @@ class TraceLog:
             self._history_len += 1
 
     def clear_history(self) -> None:
+        """Forget the instruction history (set_trace_kinds turning
+        TRACE_DEBUG on)."""
         self._history_len = 0
         self._history_next = 0
 

@@ -1,3 +1,5 @@
+"""The input lines the PPI and the PSG read (InputLines), and the per-frame
+input record of the core boundary (InputFrame)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
