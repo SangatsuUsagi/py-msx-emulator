@@ -529,3 +529,52 @@ def test_a_device_without_a_rom_file_to_read_is_a_load_error(
     )
     with pytest.raises(MachineLoadError, match="machine io_device: no ROM file to read"):
         load_machine_config(spec, **_overrides(spec))
+
+
+def test_a_ram_mapper_size_the_mapper_does_not_accept_is_rejected() -> None:
+    # machine-core "A RAM mapper size the mapper does not accept is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    document = json.loads(config.document)
+    document["machine"]["ram_mapper_size_kb"] = 8
+    config.document = json.dumps(document).encode("utf-8")
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        RtcTime(2000, 13, 1, 0, 0, 0),
+        RtcTime(2000, 1, 40, 0, 0, 0),
+        RtcTime(2000, 1, 1, 24, 0, 0),
+        RtcTime(-1, 1, 1, 0, 0, 0),
+        RtcTime(10000, 1, 1, 0, 0, 0),
+    ],
+)
+def test_an_invalid_rtc_start_time_is_rejected(start: RtcTime) -> None:
+    # machine-core "An invalid RTC start time is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = start
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+
+
+def test_a_valid_rtc_start_time_survives_a_state_round_trip() -> None:
+    # machine-core "A valid RTC start time survives a state round trip".
+    from msx.boundary import STATUS_OK
+    from msx.machine_loader import create_machine
+
+    config = make_config_msx2(_ROM, bytes(16 * 1024))
+    config.rtc_initial_time = RtcTime(2024, 2, 29, 23, 59, 59)
+    result = create_machine(config)
+    assert result.status == STATUS_OK
+    assert result.machine is not None
+    assert result.machine.load_state(result.machine.save_state()) == STATUS_OK

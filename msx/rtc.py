@@ -119,7 +119,7 @@ class RTC:
         """Validate a snapshot() object without touching the chip."""
         state = check_object(obj, label, _RTC_STATE_KEYS)
         start = check_int_list(state["start"], f"{label}.start", 6, 0, 9999)
-        _check_start(start, f"{label}.start")
+        check_start(start, f"{label}.start")
         return {
             "start": start,
             "elapsed_cycles": check_int(
@@ -247,11 +247,12 @@ class RTC:
         return hour12 % 10, hour12 // 10 + (2 if hour >= 12 else 0)
 
 
-def _check_start(start: list[int], label: str) -> None:
-    """Reject a start time that is not a real calendar date and time."""
+def check_start(start: list[int], label: str) -> None:
+    """Reject a start time that is not a real calendar date and time with a
+    year of 0-9999 (a state load and the build both check it)."""
     year, month, day, hour, minute, second = start
-    if not (1 <= month <= 12 and 1 <= day <= 31 and hour <= 23 and minute <= 59
-            and second <= 59):
+    if not (0 <= year <= 9999 and 1 <= month <= 12 and 1 <= day <= 31
+            and 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
         raise ValueError(f"{label}: invalid date/time {start}")
     if _civil_from_days(_days_from_civil(year, month, day)) != (year, month, day):
         raise ValueError(f"{label}: invalid date {year}-{month}-{day}")

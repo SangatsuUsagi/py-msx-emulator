@@ -72,7 +72,7 @@ from msx.opll import Opll
 from msx.ppi import PPI
 from msx.psg import PSG
 from msx.ram_mapper import RamMapper
-from msx.rtc import RTC
+from msx.rtc import RTC, check_start
 from msx.scc import SCC
 from msx.sram import SramImage
 from msx.vdp.v9938 import V9938
@@ -274,6 +274,18 @@ def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMo
     return disks
 
 
+def _check_rtc_initial_time(start: RtcTime | None) -> None:
+    """Reject an RTC start time that a state load would reject, so a built
+    machine can always load its own saved state."""
+    if start is None:
+        return
+    fields = [start.year, start.month, start.day, start.hour, start.minute, start.second]
+    try:
+        check_start(fields, "MachineConfig.rtc_initial_time")
+    except ValueError as exc:
+        raise MachineLoadError(str(exc)) from None
+
+
 def _resolve(config: MachineConfig) -> _ResolvedConfig:
     """Parse the document and pair every ROM reference with its checked
     image -- everything that can reject the config, before anything is built."""
@@ -287,6 +299,7 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
         drive_count = spec.fdc.drives
     media = _media_by_id(config)
     disks = _disks_by_drive(config, drive_count)
+    _check_rtc_initial_time(config.rtc_initial_time)
     roms: dict[str, bytes] = {}
     cartridges: dict[str, bytes] = {}
     for role, ref in parsed.roms.items():
@@ -860,7 +873,9 @@ def create_machine(machine_config: MachineConfig) -> BuildResult:
     core; host code builds through it."""
     try:
         machine = _build(machine_config)
-    except MachineLoadError as exc:
+    except (MachineLoadError, ValueError) as exc:
+        # ValueError: a device constructor (disk image, RAM mapper, Kanji
+        # ROM, Halnote, Memory) rejected a size or a combination.
         return BuildResult(STATUS_BAD_CONFIG, None, str(exc).encode("utf-8"))
     return BuildResult(STATUS_OK, machine, b"")
 
