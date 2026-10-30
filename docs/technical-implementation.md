@@ -1125,9 +1125,9 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 | Value | Direction | Content |
 | --- | --- | --- |
 | `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (`RomImage` records: an image and its lowercase hex SHA1), `media` (`MediaImage` records: a saved SRAM or CMOS image and its `MediaId`), `disks` (`DiskMount` records: an image to mount, its drive index and its write-protect flag), `rtc_initial_time`. The three image fields are tuples, with at most one record per id or drive |
-| `InputFrame` | in, per frame | 11 active-low keyboard matrix rows, two active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B), the mouse motion of the frame in MSX counts, and the two mouse buttons. Immutable. Its constructor checks every value |
-| `FrameOutput` | out, per frame | `video` (an `RgbFrame`, or `None` when the frame was not rendered), `audio`, `frame_number` |
-| `RgbFrame` | out | Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color) |
+| `InputFrame` | in, per frame | A flat record: `key_matrix`, 11 bytes of active-low keyboard matrix rows; `joy1` and `joy2`, the active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B); `mouse_dx` and `mouse_dy`, the mouse motion of the frame in MSX counts; `mouse_buttons`, the bit flags `MOUSE_LEFT` (1) and `MOUSE_RIGHT` (2). Immutable. The constructor checks only that `key_matrix` has 11 bytes. The core masks the ports and buttons and clamps the motion to -32768..32767 |
+| `FrameOutput` | out, per frame | A flat record: `video_width`, `video_height` and `video_pixels` (0, 0 and `b""` when the frame was not rendered), `audio`, `frame_number`, `stop_reason`, and `frame_complete` (1, or 0 when the frame continues on the next call) |
+| `RgbFrame` | out | The result of `render_preview()`. Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color). The video fields of `FrameOutput` follow the same layout |
 | audio | out | Signed 16-bit little-endian mono PCM at 44,100 Hz, before the output filter: 735 samples per NTSC frame, 882 per PAL frame |
 | snapshot | in/out | `bytes` from `Machine.save_state()` (below) |
 | `CpuRegisters` | out | The register query: AF, BC, DE, HL, the alternate set, IX, IY, SP, PC, I, R, IFF1 and IFF2 (0 or 1), IM |
@@ -1157,7 +1157,7 @@ belongs to the debugger's diagnostics.
 | Group | Operation | Notes |
 | --- | --- | --- |
 | Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
-| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
+| Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` 0 |
 | | `apply_input(frame_input) -> int` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it. Always returns `STATUS_OK` |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
 | Control | `reset() -> int` | Power-on reset. RAM, VRAM and mounted media stay as they are. Always returns `STATUS_OK` |
@@ -1282,7 +1282,7 @@ mouse gets the motion of the frame once. It then runs the frame and returns
 the `FrameOutput`. `render_video` decides only whether the core produces
 video. A skipped frame still runs the sprite pass. The VDP status, the audio
 and the next snapshot are thus the same either way. A call that stops at a
-break returns `stop_reason` and `frame_complete` false, with no video and no
+break returns `stop_reason` and `frame_complete` 0, with no video and no
 audio. The next call continues that frame. It applies its input lines and
 buttons again, but feeds no mouse motion, because the frame already has it.
 
@@ -1312,7 +1312,7 @@ an empty `InputFrame()`.
 - **Pre-filter audio.** The audio is the clamped sum of every present sound
   source (PSG, SCC, Majutsushi DAC, key click, OPLL) before any filter.
   Filtering, resampling and buffering are the frontend's.
-- **Output lifetime.** `FrameOutput.video` and `.audio` stay valid only
+- **Output lifetime.** `FrameOutput.video_pixels` and `.audio` stay valid only
   until the next `step_frame`. In Python they are fresh immutable `bytes`, so
   the SDL2 frontend keeps the last frame without a copy. A native core may
   reuse its buffers, and a frontend for it copies a frame that it keeps
@@ -1351,7 +1351,7 @@ machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
-    # out.video.pixels: width * 212 * 3 bytes of RGB24
+    # out.video_pixels: out.video_width * 212 * 3 bytes of RGB24
     # out.audio: samples_per_frame() signed 16-bit LE mono samples
 
 snapshot = machine.save_state()                    # bytes; store them anywhere
@@ -1365,7 +1365,7 @@ persist_dirty_media(machine, sram_paths(config), disk_files)  # write SRAM/CMOS/
 
 The SDL2 frontend (`frontend/sdl2_frontend.py`) follows the same pattern.
 Each frame, it passes the frame of its input builder to `step_frame`. It
-uploads `out.video` when the core rendered the frame. It passes `out.audio`
+uploads `out.video_pixels` when the core rendered the frame (`out.video_width` is not 0). It passes `out.audio`
 through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On
 exit, `__main__.py` calls `persist_dirty_media`. A frontend that has no host
 side of its own can keep `config.document` and `config.roms` from one run,
@@ -1425,7 +1425,7 @@ A suggested order for a port:
 5. **The FDC** (WD2793 and TC8566AF) and the media API.
 
 At each step, compare the bytes with the Python core. The same config and
-the same `InputFrame` sequence must give the same `RgbFrame.pixels`, audio
+the same `InputFrame` sequence must give the same `video_pixels`, audio
 and snapshot bytes.
 
 ## Portability
