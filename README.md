@@ -1213,6 +1213,8 @@ py-msx-emulator/
 │   ├── trace.py           # VDP and mapper trace text from the core's trace events
 │   ├── debug_log.py       # --debug log text (CPU/I/O trace, hangs) from the trace events
 │   └── debugger/          # Interactive REPL (prompt, disassembler)
+├── include/
+│   └── msx_core.h         # C header of the core API, for a native core (declarations only)
 ├── msx/                   # Core emulator package (no file I/O, no host clock)
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers)
