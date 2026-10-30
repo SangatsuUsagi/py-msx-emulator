@@ -359,10 +359,10 @@ class Debugger:
         if addr is None:
             return
         current = list(self._machine.breakpoints())
-        if len(current) >= MAX_BREAKPOINTS:
-            print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
-            return
         if addr not in current:
+            if len(current) >= MAX_BREAKPOINTS:
+                print(f"ba: maximum {MAX_BREAKPOINTS} breakpoints reached")
+                return
             current.append(addr)
         self._machine.set_breakpoints(current)
         print(f"  Breakpoint set at {addr:04X}h ({len(current)}/{MAX_BREAKPOINTS})")

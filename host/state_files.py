@@ -67,16 +67,18 @@ def save_state(
     state_path = saves_dir / f"{stem}.state"
     png_path = saves_dir / f"{stem}.png"
 
+    # The thumbnail first: core-owned pixels stay valid only until the next
+    # call on the core (include/msx_core.h).
+    pixels = frame.pixels
+    if (frame.width, frame.height) != (THUMBNAIL_W, THUMBNAIL_H):
+        pixels = scale_rgb24(pixels, frame.width, frame.height, THUMBNAIL_W, THUMBNAIL_H)
+    write_rgb24_png(pixels, THUMBNAIL_W, THUMBNAIL_H, png_path)
+
     # Write pending disk writes back first so the disk-identity hash
     # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
     # the .dsk file's own on-disk bytes.
     persist_dirty_media(machine, disk_files=disk_files)
     state_path.write_bytes(machine.save_state())
-
-    pixels = frame.pixels
-    if (frame.width, frame.height) != (THUMBNAIL_W, THUMBNAIL_H):
-        pixels = scale_rgb24(pixels, frame.width, frame.height, THUMBNAIL_W, THUMBNAIL_H)
-    write_rgb24_png(pixels, THUMBNAIL_W, THUMBNAIL_H, png_path)
 
     _update_symlink(saves_dir / "latest.state", state_path)
     _update_symlink(saves_dir / "latest.png", png_path)

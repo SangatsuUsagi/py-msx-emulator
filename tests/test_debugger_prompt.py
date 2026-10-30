@@ -299,6 +299,17 @@ class TestBreak:
         assert "maximum 4" in out
         assert 0x5000 not in m._breakpoints
 
+    def test_ba_on_an_address_already_set_with_4_set(self, capsys):
+        # debug-monitor "ba on an address already set with 4 set".
+        m = _make_machine()
+        m._breakpoints = frozenset([0x0000, 0x4000, 0x8000, 0xC000])
+        dbg = Debugger(m)
+        dbg._cmd_break(["a", "C000"])
+        out = capsys.readouterr().out
+        assert "Breakpoint set at C000h (4/4)" in out
+        assert "maximum" not in out
+        assert m._breakpoints == frozenset([0x0000, 0x4000, 0x8000, 0xC000])
+
     def test_remove_unknown_addr(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
