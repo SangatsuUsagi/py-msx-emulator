@@ -1243,7 +1243,7 @@ class TestStateSave:
         m = _make_machine()
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 192, rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
         mock_save.assert_called_once_with(
@@ -1254,7 +1254,7 @@ class TestStateSave:
         m = _make_machine()
         dbg = Debugger(m)
         rgb = b"\x00" * (256 * 192 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(rgb, 256, 192)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 192, rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save(["my-checkpoint"])
         mock_save.assert_called_once_with(
@@ -1265,7 +1265,7 @@ class TestStateSave:
         m = _make_machine()
         dbg = Debugger(m)
         tall_rgb = b"\x00" * (256 * 212 * 3)
-        with patch.object(dbg, "_render_rgb24", return_value=(tall_rgb, 256, 212)):
+        with patch.object(m, "render_preview", return_value=RgbFrame(256, 212, tall_rgb)):
             with patch("host.state_files.save_state") as mock_save:
                 dbg._cmd_state_save([])
         mock_save.assert_called_once_with(

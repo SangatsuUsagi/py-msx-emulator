@@ -43,6 +43,14 @@ def _line(category: str, message: str) -> str:
     return f"[{category}]  {message}"
 
 
+# The VDP register bits the debug log follows: R#1 BL (display enable), M1
+# and M2, and R#0 M3 (the screen mode bits).
+_R1_BL_BIT = 6
+_R1_M1_BIT = 4
+_R1_M2_BIT = 3
+_R0_M3_BIT = 1
+
+
 class DebugLogFormatter:
     """Debug log lines from TRACE_DEBUG events, one run's state."""
 
@@ -88,9 +96,9 @@ class DebugLogFormatter:
     def _vdp_reg_write(self, reg: int, value: int, frame: int) -> list[str]:
         lines: list[str] = []
         if reg == 1:
-            bl = (value >> 6) & 1
-            m1 = (value >> 4) & 1
-            m2 = (value >> 3) & 1
+            bl = (value >> _R1_BL_BIT) & 1
+            m1 = (value >> _R1_M1_BIT) & 1
+            m2 = (value >> _R1_M2_BIT) & 1
             if bl != self._prev_bl:
                 state = "enabled" if bl else "disabled"
                 message = f"VDP display {state}  R1=0x{value:02X}  frame={frame}"
@@ -102,8 +110,8 @@ class DebugLogFormatter:
                 name = _VDP_MODE_NAMES.get(mode_key, f"unknown (M1={m1} M2={m2})")
                 lines.append(_line("BOOT", f"VDP mode → {name}  R1=0x{value:02X}"))
                 self._prev_mode = mode_key
-        if reg == 0:
-            m3 = (value >> 1) & 1
+        elif reg == 0:
+            m3 = (value >> _R0_M3_BIT) & 1
             mode_key = (self._prev_mode[0], self._prev_mode[1], m3)
             if m3 != self._prev_mode[2]:
                 name = _VDP_MODE_NAMES.get(mode_key, f"unknown (M3={m3})")

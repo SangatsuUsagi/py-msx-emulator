@@ -1142,7 +1142,7 @@ class LoadedMachineConfig(MachineConfig):
     """The MachineConfig load_machine_config() produces, plus host data that
     never reaches the core: the file each battery-backed medium is persisted
     in (see sram_paths) and the file of each disk in `disks`, by drive index
-    (the start of host.media.DiskFiles). create_machine() reads only the
+    (the initial contents of the run's host.media.DiskFiles table). create_machine() reads only the
     MachineConfig part."""
 
     sram_files: dict[MediaId, Path] = field(default_factory=dict)

@@ -56,12 +56,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from host.debugger.disasm import disassemble
+from host.debugger.disasm import byte_reader, disassemble
 from host.input_state import InputState
 from host.key_names import KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
-from host.watch import watch_kind
+from host.watch import watch_kind_exact
 from msx.boundary import (
     STATUS_OK,
     STOP_BREAKPOINT,
@@ -99,8 +99,6 @@ _STOP_TO_REASON: dict[int, PauseReason] = {
     STOP_REQUESTED: PauseReason.USER_REQUEST,
 }
 
-REASON_USER = PauseReason.USER_REQUEST
-REASON_STEP = PauseReason.STEP_COMPLETE
 
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
@@ -165,7 +163,7 @@ class PauseState:
 
     def __init__(self) -> None:
         self.paused: bool = False
-        self.reason: str = REASON_USER
+        self.reason: str = PauseReason.USER_REQUEST
 
     def set_paused(self, reason: str) -> None:
         self.paused = True
@@ -180,7 +178,7 @@ class DebugServer:
 
     def __init__(
         self,
-        machine: "CoreApi",
+        machine: CoreApi,
         sock_path: str = DEFAULT_SOCKET_PATH,
         pause_state: PauseState | None = None,
         disk_files: DiskFiles | None = None,
@@ -233,7 +231,7 @@ class DebugServer:
         return self._pause_state
 
     @property
-    def machine(self) -> "CoreApi":
+    def machine(self) -> CoreApi:
         return self._machine
 
     @property
@@ -495,15 +493,6 @@ class DebugServer:
     def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
-    def capture_rgb(self) -> tuple[bytes, int, int]:
-        """Render the current VDP frame to RGB24 without advancing the frame counter.
-
-        Returns:
-            (rgb_bytes, width, height) for the current frame.
-        """
-        frame = self._machine.render_preview()
-        return frame.pixels, frame.width, frame.height
-
     def alloc_breakpoint(self, address: int) -> int:
         """Add a breakpoint and return its id. Raises an invalid-params
         RpcError, keeping the others, when the core rejects it (a fifth
@@ -596,11 +585,11 @@ def _h_debugger_status(server: DebugServer, params: dict[str, Any]) -> dict[str,
 
 
 def _h_debugger_pause(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    server.pause_state.set_paused(REASON_USER)
+    server.pause_state.set_paused(PauseReason.USER_REQUEST)
     return {
         "paused": True,
         "pc": hex16(server.machine.cpu_registers().PC),
-        "reason": REASON_USER,
+        "reason": PauseReason.USER_REQUEST,
     }
 
 
@@ -610,9 +599,9 @@ def _h_cpu_step(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     server.require_paused()
     m = server.machine
     pc_before = m.cpu_registers().PC
-    mnemonic, _size = disassemble(_byte_reader(m), pc_before)
+    mnemonic, _size = disassemble(byte_reader(m), pc_before)
     t_states = m.step()
-    server.pause_state.set_paused(REASON_STEP)
+    server.pause_state.set_paused(PauseReason.STEP_COMPLETE)
     return {
         "pc": hex16(m.cpu_registers().PC),
         "t_states": t_states,
@@ -655,7 +644,7 @@ def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_set_watchpoint(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     mode = params.get("mode", "rw")
-    kind = watch_kind(mode) if mode in ("r", "w", "rw") else None
+    kind = watch_kind_exact(mode)
     if kind is None:
         raise RpcError(ERR_INVALID_PARAMS, f"invalid watchpoint mode: {mode}")
     wp_id = server.alloc_watchpoint(addr, kind)
@@ -701,7 +690,7 @@ def _h_memory_read_vram(server: DebugServer, params: dict[str, Any]) -> dict[str
 def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     addr = _parse_addr(params.get("address"))
     count = _require_int(params, "count", default=10)
-    read = _byte_reader(server.machine)
+    read = byte_reader(server.machine)
     instructions: list[dict[str, Any]] = []
     cur = addr
     for _ in range(count):
@@ -722,7 +711,7 @@ def _h_vdp_get_registers(server: DebugServer, params: dict[str, Any]) -> dict[st
 
 
 def _h_vdp_get_status(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
-    return {"status": hex8(server.machine.vdp_info().status[0])}
+    return {"status": hex8(server.machine.vdp_info().status[0])}  # S#0
 
 
 # ── Input injection ──────────────────────────────────────────────────────────
@@ -790,7 +779,8 @@ def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> di
 
 def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     scale = _require_int(params, "scale", default=1)
-    rgb, width, height = server.capture_rgb()
+    frame = server.machine.render_preview()
+    rgb, width, height = frame.pixels, frame.width, frame.height
     if scale > 1:
         out_w, out_h = width * scale, height * scale
         rgb = scale_rgb24(rgb, width, height, out_w, out_h)
@@ -809,12 +799,10 @@ def _h_screen_capture(server: DebugServer, params: dict[str, Any]) -> dict[str, 
 
 def _h_state_save(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     from host.state_files import save_state
-    from msx.boundary import RgbFrame
 
     path = params.get("path")
     title = Path(path).stem if isinstance(path, str) and path else "rpc_checkpoint"
-    rgb, width, height = server.capture_rgb()
-    saved = save_state(server.machine, RgbFrame(width, height, rgb), title, server.disk_files)
+    saved = save_state(server.machine, server.machine.render_preview(), title, server.disk_files)
     return {"path": str(saved)}
 
 
@@ -857,13 +845,6 @@ _JOY_BITS: dict[str, int] = {
 }
 
 
-def _byte_reader(core: "CoreApi") -> Callable[[int], int]:
-    """A one-byte memory reader over the core API, for the disassembler."""
-
-    def read(addr: int) -> int:
-        return core.read_memory(addr, 1)[0]
-
-    return read
 
 
 class _Missing:

@@ -74,9 +74,8 @@ def save_state(
         pixels = scale_rgb24(pixels, frame.width, frame.height, THUMBNAIL_W, THUMBNAIL_H)
     write_rgb24_png(pixels, THUMBNAIL_W, THUMBNAIL_H, png_path)
 
-    # Write pending disk writes back first so the disk-identity hash
-    # FloppyDisk.snapshot() computes (via each DiskDrive.snapshot()) matches
-    # the .dsk file's own on-disk bytes.
+    # Write pending disk writes back first so the disk identity (SHA1) the
+    # core records in the state matches the .dsk file's own on-disk bytes.
     persist_dirty_media(machine, disk_files=disk_files)
     state_path.write_bytes(machine.save_state())
 

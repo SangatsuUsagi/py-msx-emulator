@@ -26,6 +26,19 @@ def watch_kind(text: str) -> int | None:
     return kind
 
 
+def watch_kind_exact(text: object) -> int | None:
+    """The kind of exactly "r", "w" or "rw", or None for any other value (a
+    non-str one included): the RPC and the CLI take only these spellings,
+    the REPL's watch_kind also takes upper case and "wr"."""
+    if text == "r":
+        return WATCH_READ
+    if text == "w":
+        return WATCH_WRITE
+    if text == "rw":
+        return WATCH_READ | WATCH_WRITE
+    return None
+
+
 def watch_text(kind: int) -> str:
     """The spelling of `kind`: "r", "w" or "rw". Raises ValueError for a
     kind of 0 or with another bit."""
