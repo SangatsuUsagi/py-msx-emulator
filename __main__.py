@@ -702,6 +702,13 @@ def main() -> None:
             else:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
+        headless = args.count_frame is not None or args.benchmark is not None
+        if headless and opts.mouse_port is not None:
+            # The SDL2 run attaches in run(), with the host mouse. A headless
+            # run attaches here, before its resume: a state saved with a mouse
+            # loads only on a machine with one (machine-core "The host
+            # attaches the mouse at run time").
+            machine.attach_mouse(opts.mouse_port)
         if args.count_frame is not None:
             _run_headless_frames(machine, args.count_frame, args.resume, debugger)
         elif args.benchmark is not None:

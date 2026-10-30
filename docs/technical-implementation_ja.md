@@ -790,7 +790,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `eject_disk(drive) -> int` | ドライブを空にする。`STATUS_OK`（0）を返し、マシンにないドライブには `STATUS_NO_DRIVE`（2）を返す |
 | | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、`slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
-| デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す |
+| デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込める。取り外しはない |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
 | | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
 | | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
@@ -907,12 +907,10 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ。
-- マウスはフロントエンドが実行時につなぐ（`attach_mouse(port)`）。契約では設定のフィールドになっている。どちらの形にするかは未決定。
 - `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
 
-次の点は未決定で、移植する側が決める必要がある。
+移植する側は、次の点も決める必要がある。
 
-- **マウスの接続**（上記）。
 - **デバッグの制御。** ブレークの設定、`request_break()`、停止の結果は契約に入っている（DebugControl）。デバッガに対応する移植では、止まったフレームの位置を覚えて次の `step_frame` で続きを実行し、止まった直後の最初の命令ではブレークポイントの照合を飛ばす。最初の移植では、ブレークの設定を省いてよい。何も設定しなければ、`step_frame` が止まることはない。
 
 静的型付けの言語にそのままの対応がない Python のパターンもある。バスフック、レジスタのプロパティ、PSG エンベロープのアンダーフロー、レンダラの変換表、Callable のフック。[移植性](#移植性) を参照。
