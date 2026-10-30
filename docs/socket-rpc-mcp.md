@@ -187,8 +187,8 @@ The `registers` object contains `AF`, `BC`, `DE`, `HL`, `IX`, `IY`, `SP`, `PC`
 You can give an address as a JSON int or a hex string (`"0xC000"` or
 `"C000"`). The machine keeps at most 4 breakpoints and 4 watchpoints, the same
 as the `ba`/`wa` limits of the [interactive debugger](debugger.md). A 5th
-`debug.set_*` call still returns a new `id`. But only the first 4 (in
-allocation order) are armed.
+`debug.set_*` call returns an invalid-params error (`-32602`), and the 4 set
+stay armed.
 
 ### Memory
 
