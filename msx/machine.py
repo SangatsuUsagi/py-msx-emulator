@@ -1278,10 +1278,10 @@ class Machine:
                         vdp9938._line_cycle += n
                 if not (cpu.halted and cpu.iff1):
                     if pc == self._last_pc:
-                        self._pc_repeat += 1
-                        if self._pc_repeat >= HANG_PC_REPEAT_THRESHOLD:
-                            # Once per run of repeats: the host reports each
-                            # PC once per run.
+                        # The count stops at the threshold, so it never wraps
+                        # and the hang is recorded once per run of repeats.
+                        if self._pc_repeat < HANG_PC_REPEAT_THRESHOLD:
+                            self._pc_repeat += 1
                             if self._pc_repeat == HANG_PC_REPEAT_THRESHOLD:
                                 trace.record_hang(TRACE_EVENT_HANG_PC_LOOP, pc)
                     else:

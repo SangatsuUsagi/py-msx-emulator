@@ -121,6 +121,17 @@ def test_a_pc_loop_is_recorded_once_per_run_of_repeats() -> None:
     assert _kinds(m.drain_trace()).count(TRACE_EVENT_HANG_PC_LOOP) == 1
 
 
+def test_the_pc_loop_count_stops_at_the_threshold() -> None:
+    from msx.machine import HANG_PC_REPEAT_THRESHOLD
+
+    m = _machine(bytes((0x18, 0xFE)))
+    m.set_trace_kinds(TRACE_DEBUG)
+    for _ in range(3):
+        m.step_frame(InputFrame(), render_video=False)
+    assert m._pc_repeat == HANG_PC_REPEAT_THRESHOLD
+    assert _kinds(m.drain_trace()).count(TRACE_EVENT_HANG_PC_LOOP) == 1
+
+
 # -- "The debug kind reaches every logging component" ----------------------------
 
 def test_the_debug_kind_records_a_vdp_register_write() -> None:

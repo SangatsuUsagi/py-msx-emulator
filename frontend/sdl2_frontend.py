@@ -1246,10 +1246,9 @@ def run(
                     )
 
                 except KeyboardInterrupt:
-                    if debugger is None:
-                        state.running = False
-                    else:
-                        debugger.enter()
+                    # Only without a debugger and an RPC server: otherwise
+                    # sigint_requests_break turns Ctrl-C into a break request.
+                    state.running = False
 
     finally:
         joy_manager.close_all()

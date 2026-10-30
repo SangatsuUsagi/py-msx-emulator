@@ -61,6 +61,29 @@ def test_save_state_creates_state_file(machine, saves_dir):
     assert "test_" in path.name
 
 
+def test_save_state_reads_the_pixels_before_other_core_calls(machine, saves_dir):
+    # Core-owned pixels are valid only until the next core call
+    # (include/msx_core.h), so the thumbnail is written first.
+    calls: list[str] = []
+
+    class _Frame:
+        width, height = 256, 192
+
+        @property
+        def pixels(self):
+            calls.append("pixels")
+            return bytes(256 * 192 * 3)
+
+    class _Core:
+        def __getattr__(self, name):
+            calls.append(name)
+            return getattr(machine, name)
+
+    save_state(_Core(), _Frame(), "order")
+    assert calls[0] == "pixels"
+    assert "save_state" in calls
+
+
 def test_save_state_creates_png(machine, saves_dir):
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     state_path = save_state(machine, rgb, "test")
