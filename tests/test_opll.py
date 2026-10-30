@@ -7,7 +7,9 @@ instrument ROM and exp/log-sin tables to emu2413's reference values.
 """
 from __future__ import annotations
 
+import math
 from array import array
+from pathlib import Path
 
 import pytest
 
@@ -19,9 +21,11 @@ from msx.opll import (
     _EG_MUTE,
     _EXP_TABLE,
     _FULLSIN_TABLE,
+    _HALFSIN_TABLE,
     _PERC_RELEASE_RATE,
     _RELEASE,
     _SUS_RELEASE_RATE,
+    _TLL_TABLE,
     SAMPLE_RATE,
     Opll,
     note_frequency,
@@ -211,24 +215,53 @@ def test_instrument_rom_matches_emu2413() -> None:
     assert _DEFAULT_INST == emu
 
 
-def test_exp_table_matches_emu2413_formula() -> None:
-    # exp_table[x] = round((2^(x/256) - 1) * 1024)
-    assert _EXP_TABLE[0] == 0
-    assert _EXP_TABLE[1] == 3
-    assert _EXP_TABLE[255] == 1018
-    for x in (5, 64, 128, 200):
-        assert _EXP_TABLE[x] == int((2 ** (x / 256.0) - 1) * 1024 + 0.5)
+# -- audio-ym2413 "OPLL synthesis tables are integer data" --------------------
+# The core holds the tables as integer data; these tests rebuild them with
+# emu2413's floating-point formulas (allowed here, not in msx/) and check
+# every entry.
+
+def test_the_exp_table_matches_the_formula() -> None:
+    expected = [int((2 ** (x / 256.0) - 1) * 1024 + 0.5) for x in range(256)]
+    assert _EXP_TABLE == expected
+    assert (_EXP_TABLE[0], _EXP_TABLE[1], _EXP_TABLE[255]) == (0, 3, 1018)
 
 
-def test_fullsin_table_matches_emu2413_formula() -> None:
-    # First quarter is -log2(sin(...)) * 256; the rest is mirrored/sign-extended.
-    assert _FULLSIN_TABLE[0] == 2137
-    assert _FULLSIN_TABLE[255] == 0
-    # Second quarter mirrors the first (makeSinTable).
-    assert _FULLSIN_TABLE[256] == _FULLSIN_TABLE[255]
-    assert _FULLSIN_TABLE[511] == _FULLSIN_TABLE[0]
-    # Negative half carries the 0x8000 sign bit.
-    assert _FULLSIN_TABLE[512] == (0x8000 | _FULLSIN_TABLE[0])
+def test_the_log_sin_table_matches_the_formula() -> None:
+    quarter = [
+        int(-math.log2(math.sin((x + 0.5) * math.pi / 512)) * 256 + 0.5) for x in range(256)
+    ]
+    full = quarter + quarter[::-1]                 # the second quarter mirrors the first
+    full = full + [0x8000 | v for v in full]       # the negative half carries bit 0x8000
+    half = full[:512] + [0xFFF] * 512              # half-sine: silent second half
+    assert _FULLSIN_TABLE == full
+    assert _HALFSIN_TABLE == half
+    assert (_FULLSIN_TABLE[0], _FULLSIN_TABLE[255]) == (2137, 0)
+
+
+def test_the_key_scale_table_matches_the_floating_point_build() -> None:
+    # emu2413's key-scale levels in dB, on its dB2 scale (dB * 2), and the
+    # 0.375 dB envelope step.
+    kl_db = (0.000, 9.000, 12.000, 13.875, 15.000, 16.125, 16.875, 17.625,
+             18.000, 18.750, 19.125, 19.500, 19.875, 20.250, 20.625, 21.000)
+    for fnum in range(16):
+        for block in range(8):
+            for tl in range(64):
+                for kl in range(4):
+                    expected = tl << 1
+                    if kl:
+                        tmp = int(kl_db[fnum] * 2.0 - 3.000 * 2.0 * (7 - block))
+                        if tmp > 0:
+                            expected = int((tmp >> (3 - kl)) / 0.375) + (tl << 1)
+                    assert _TLL_TABLE[(block << 4) | fnum][tl][kl] == expected
+
+
+def test_no_core_module_imports_math() -> None:
+    msx_dir = Path(__file__).resolve().parent.parent / "msx"
+    for path in sorted(msx_dir.rglob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            imports_math = text == "import math" or text.startswith(("import math ", "from math "))
+            assert not imports_math, f"{path.relative_to(msx_dir.parent)} imports math: {text}"
 
 
 def test_clarinet_pitch_is_accurate() -> None:
