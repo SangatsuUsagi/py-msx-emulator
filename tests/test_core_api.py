@@ -3,6 +3,7 @@
 "Inspection queries do not change emulated state"."""
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import typing
 from dataclasses import fields
@@ -260,6 +261,20 @@ def test_an_invalid_slot_is_rejected() -> None:
     assert b"4" in m.last_error_text()
     assert m.slot_info(0, -1, -1).size_kb == 32
     assert m.last_error_text() == b""
+
+
+def test_the_record_holds_no_text() -> None:
+    m = make_machine_msx2(_ROM, bytes(0x4000), cartridge=bytes(128 * 1024), mapper="ASCII16")
+    infos = [m.slot_info(4, -1, -1)]
+    for prim in range(4):
+        for sec in (-1, 0, 1, 2, 3):
+            for page in (-1, 0, 1, 2, 3):
+                infos.append(m.slot_info(prim, sec, page))
+    for info in infos:
+        for field in dataclasses.fields(info):
+            value = getattr(info, field.name)
+            items = value if isinstance(value, tuple) else (value,)
+            assert all(type(item) is int for item in items), field.name
 
 
 @pytest.mark.parametrize("args", [(0, 4, -1), (0, -2, -1), (0, -1, 4), (0, -1, -2), (-1, -1, -1)])
