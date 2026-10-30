@@ -250,14 +250,16 @@ CY=0000025000 FR=000005 PC=5B2A MAP_BANK win=1 03h->05h addr=6001h
   Page  Addr        Prim  Sec  Content                          Bank
   P0    0000-3FFF   0     -    ROM cbios_main_msx2.rom          -
   P1    4000-7FFF   1     -    Cartridge (mapped)               w0=b2@04000  w1=b0@00000
-  P2    8000-BFFF   1     -    Cartridge (mapped)               w0=b3@06000  w1=b1@02000
+  P2    8000-BFFF   1     -    Cartridge (mapped)               w2=b3@06000  w3=b1@02000
   P3    C000-FFFF   3     2    RAM (mapper)                     seg=2
 ```
 
 Bank 列の値：
 
 - RAM マッパーページ：`seg=N`
-- カートリッジ ROM マッパーページ：選択されたバンク番号と解決済みの ROM バイトオフセット範囲
+- カートリッジのマッパーページ：そのページの各窓に割り当てられているもの。マッパーの読み出しと同じ計算で求める。16 KB の窓は `bank N @XXXXX-YYYYY`（ASCII16、R-Type、FM-PAC）、8 KB の窓は `wW=bN@XXXXX`（ASCII8、Konami、SCC、Game Master 2、Halnote）。N は窓が実際に割り当てているページで、ゲストが書いた値が ROM の範囲を超えるときは、その値と違うことがある。
+- SRAM を割り当てた窓：バンクの代わりに `SRAM@XXXX`（SRAM の中のオフセット）。例：`bank SRAM@0000`、`w3=SRAM@1000`。Halnote のページ 0 の SRAM は `SRAM@0000-3FFF`、サブマッパーはページ 1 に `sub=…` を足す。
+- ROM の終わりより先を指す窓（読むと 0xFF）：`open`。
 - フラット ROM、BIOS、プレーン RAM：`-`
 
 **`st`** — スロットツリーを表示する。プライマリスロット 0–3 を走査し、拡張スロットのサブスロット構造を完全に表示します。
