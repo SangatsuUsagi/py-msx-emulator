@@ -17,8 +17,8 @@ from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from typing import TYPE_CHECKING, ClassVar, TypedDict, cast
 
-from msx.boundary import FMPAC_SRAM_SIZE
-from msx.mapper import MapperKind, format_bank_16k, sram_label
+from msx.boundary import BANK_WINDOW_16K, FMPAC_SRAM_SIZE, WINDOW_NONE, WINDOW_PAGE, WINDOW_SRAM
+from msx.mapper import NO_BANK, BankView, MapperKind
 from msx.snapshot_schema import SchemaError, check_bytes, check_choice, check_int, check_object
 from msx.sram import SramImage
 
@@ -259,12 +259,12 @@ class FmPac:
         self.opll.apply_state(parsed["opll"])
         self._check_sram_enable()
 
-    def debug_bank_info(self, page: int) -> str | None:
+    def debug_bank(self, page: int) -> BankView:
         """The one 16 KB window at 0x4000 (page 1): its ROM bank, or the
         SRAM while it is unlocked (debug-monitor "sl -- cartridge ROM mapper
         bank column")."""
         if page != 1:
-            return None
+            return NO_BANK
         if self._sram_enabled:
-            return format_bank_16k(sram_label(0))
-        return format_bank_16k(self._bank)
+            return BankView(BANK_WINDOW_16K, (WINDOW_SRAM, WINDOW_NONE), (0, 0))
+        return BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (self._bank, 0))

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from host.debugger.disasm import byte_reader, disassemble
+from host.debugger.slots import slot_bank_text, slot_content_text
 from host.debugger.stop import sigint_interrupts, watch_hit_line
 from host.media import DiskFiles, swap_disk
 from host.trace import VDP_COMMAND_NAMES, VDP_LOGICAL_OP_NAMES, TraceOutput
@@ -110,9 +111,12 @@ class Debugger:
 
     def __init__(
         self, machine: CoreApi, disk_files: DiskFiles | None = None,
-        trace: TraceOutput | None = None,
+        trace: TraceOutput | None = None, rom_names: tuple[str, str] = ("", ""),
     ) -> None:
         self._machine = machine
+        # The main and sub ROM file names `sl`/`st` print ("" for none): the
+        # host loaded them, and the core keeps no name.
+        self._rom_names = rom_names
         # The file of each drive's disk, shared with the frontend and the RPC
         # server of the same run (host/media.py DiskFiles).
         self._disk_files = disk_files if disk_files is not None else DiskFiles()
@@ -661,8 +665,8 @@ class Debugger:
                 sec = (layout.secondary[prim] >> (page * 2)) & 0x03
                 sec_str = str(sec)
             info = self._machine.slot_info(prim, sec, page)
-            content = info.content.decode("utf-8")
-            bank = info.bank.decode("utf-8")
+            content = slot_content_text(info, self._rom_names)
+            bank = slot_bank_text(info, page)
             print(f"  P{page}    {_page_addrs[page]:<12}{prim:<6}{sec_str:<5}{content:<33}{bank}")
 
     def _cmd_slot_tree(self) -> None:
@@ -670,12 +674,13 @@ class Debugger:
         _roles = {1: "cartridge slot", 2: "cartridge slot"}
         for prim in range(4):
             if layout.expanded & (1 << prim):
-                _print_expanded_slot(self._machine, prim, layout.secondary[prim])
+                _print_expanded_slot(
+                    self._machine, prim, layout.secondary[prim], self._rom_names)
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
                 info = self._machine.slot_info(prim, -1, -1)
-                print(f"  Primary {prim}{role_str}  {_slot_text(info)}")
+                print(f"  Primary {prim}{role_str}  {_slot_text(info, self._rom_names)}")
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
         """`fddN [FILE|-]`: show, swap, or eject the disk in floppy drive N.
@@ -759,7 +764,9 @@ def _decode_cmr(cmr: int) -> tuple[str, str]:
     return cmd, log
 
 
-def _print_expanded_slot(machine: CoreApi, prim: int, raw: int) -> None:
+def _print_expanded_slot(
+    machine: CoreApi, prim: int, raw: int, rom_names: tuple[str, str]
+) -> None:
     print(f"  Primary {prim} [EXPANDED]  secondary-select(raw)={raw:02X}h")
     parts = []
     for pg in range(4):
@@ -768,12 +775,12 @@ def _print_expanded_slot(machine: CoreApi, prim: int, raw: int) -> None:
     print(f"    page-map: {'  '.join(parts)}")
     for sec in range(4):
         info = machine.slot_info(prim, sec, -1)
-        print(f"    {prim}-{sec}  {_slot_text(info)}")
+        print(f"    {prim}-{sec}  {_slot_text(info, rom_names)}")
 
 
-def _slot_text(info: SlotInfo) -> str:
+def _slot_text(info: SlotInfo, rom_names: tuple[str, str]) -> str:
     """The `st` line text of a slot: its content, then its size if any."""
-    content = info.content.decode("utf-8")
+    content = slot_content_text(info, rom_names)
     if info.size_kb:
         return f"{content}  {info.size_kb}KB"
     return content

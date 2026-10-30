@@ -585,6 +585,13 @@ def _load_spec_and_overlays(
     return spec, extension_overlay1, extension_overlay2
 
 
+def _rom_names(spec: "MachineSpec") -> tuple[str, str]:
+    """The main and sub ROM file names the debugger's sl/st print ("" for
+    none): the core keeps no ROM name."""
+    sub = spec.sub_rom_entry.file if spec.sub_rom_entry is not None else ""
+    return spec.main_rom_entry.file, sub
+
+
 def _disks_for(
     spec: "MachineSpec", fdd1_paths: list[Path], fdd2_path: Path | None,
 ) -> tuple[list[Path], Path | None]:
@@ -745,7 +752,7 @@ def main() -> None:
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
         # host opens it when step_frame stops (host/debugger/stop.py).
         from host.debugger.prompt import Debugger
-        debugger = Debugger(machine, disk_files, trace_output)
+        debugger = Debugger(machine, disk_files, trace_output, _rom_names(spec))
 
         _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 

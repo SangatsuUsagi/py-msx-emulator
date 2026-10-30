@@ -114,6 +114,43 @@ extern "C" {
 #define MSX_VDP_KIND_TMS9918A 0
 #define MSX_VDP_KIND_V9938 1
 
+/* -- Slot description (msx_slot_info) -------------------------------------- */
+#define MSX_SLOT_CONTENT_EMPTY 0
+#define MSX_SLOT_CONTENT_MAIN_ROM 1
+#define MSX_SLOT_CONTENT_SUB_ROM 2
+#define MSX_SLOT_CONTENT_CARTRIDGE 3
+#define MSX_SLOT_CONTENT_CARTRIDGE_EMPTY 4
+#define MSX_SLOT_CONTENT_RAM 5
+#define MSX_SLOT_CONTENT_RAM_MAPPER 6
+#define MSX_SLOT_CONTENT_FDC 7
+#define MSX_BANK_NONE 0
+#define MSX_BANK_WINDOW_16K 1
+#define MSX_BANK_WINDOWS_8K 2
+#define MSX_BANK_SEGMENT 3
+#define MSX_BANK_SRAM_PAGE 4
+#define MSX_WINDOW_NONE 0
+#define MSX_WINDOW_PAGE 1
+#define MSX_WINDOW_SRAM 2
+#define MSX_WINDOW_OPEN 3
+#define MSX_MAPPER_FLAT 0
+#define MSX_MAPPER_FIXED_PAGE 1
+#define MSX_MAPPER_ASCII8 2
+#define MSX_MAPPER_ASCII16 3
+#define MSX_MAPPER_ASCII8_SRAM2 4
+#define MSX_MAPPER_ASCII8_SRAM8 5
+#define MSX_MAPPER_KOEI_SRAM32 6
+#define MSX_MAPPER_GAME_MASTER2 7
+#define MSX_MAPPER_ASCII16_SRAM2 8
+#define MSX_MAPPER_ASCII16_SRAM8 9
+#define MSX_MAPPER_R_TYPE 10
+#define MSX_MAPPER_KONAMI 11
+#define MSX_MAPPER_MAJUTSUSHI 12
+#define MSX_MAPPER_KONAMI_SCC 13
+#define MSX_MAPPER_SCC_I_CART 14
+#define MSX_MAPPER_HALNOTE 15
+#define MSX_MAPPER_FMPAC 16
+#define MSX_MAPPER_RAM_MAPPER 17
+
 /* -- Values ----------------------------------------------------------------- */
 
 typedef struct msx_core msx_core;
@@ -230,9 +267,15 @@ typedef struct msx_slot_layout {
 } msx_slot_layout;
 
 typedef struct msx_slot_info {
-    msx_bytes content; /* UTF-8 */
-    msx_bytes bank;    /* UTF-8; "-" when the page has no bank */
-    int32_t size_kb;   /* 0 when no size applies; -1 for a rejected value */
+    int32_t content;          /* MSX_SLOT_CONTENT_*; -1 for a rejected value */
+    int32_t mapper;           /* MSX_MAPPER_* for a cartridge, else -1 */
+    int32_t size_kb;          /* 0 when no size applies; -1 for a rejected value */
+    int32_t bank;             /* MSX_BANK_* */
+    int32_t window_kind[2];   /* MSX_WINDOW_* */
+    int32_t window_value[2];  /* page index or SRAM offset */
+    int32_t sub_bank_count;   /* 0 or 2 */
+    int32_t sub_bank[2];
+    int32_t sub_offset[2];    /* ROM offset of each sub-bank */
 } msx_slot_info;
 
 typedef struct msx_trace_event {

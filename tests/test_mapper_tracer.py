@@ -95,7 +95,7 @@ def test_a_mapper_with_the_kind_off_behaves_identically() -> None:
     m = make_machine(bytes(32 * 1024), cartridge=_rom16(8), mapper="ASCII16")
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.memory.write(0x7000, 2)
-    assert m.memory._mapper.debug_bank_info(2) == "bank 2 @08000-0BFFF"
+    assert m.memory._mapper.debug_bank(2).window_values[0] == 2
     assert m.drain_trace() == ()
 
 
