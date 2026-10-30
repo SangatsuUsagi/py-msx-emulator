@@ -775,7 +775,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するとき、デバイスが受け付けないサイズ（ディスクイメージ、RAM マッパー）のとき、RTC の開始時刻が 0〜9999 年の外か実在しない日時のときは、`STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。新しいマシンの外は何も変わらない。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が 0 になる |
 | | `apply_input(frame_input) -> int` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う。常に `STATUS_OK` を返す |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -784,23 +784,23 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `load_state(data) -> int` | `STATUS_OK`（0）を返す。スナップショットが合わなければ `STATUS_STATE_REJECTED`（1）を返し、何も変えない |
 | | `write_memory(addr, data) -> int` | CPU と同じように書き、0xFFFF で折り返す。RPC サーバは一時停止中にだけ使う。常に `STATUS_OK` を返す |
 | メディア | `dirty_media()` | 前回ファイルへ書き戻した後に書き込まれたメディアの id |
-| | `read_media(media_id) -> bytes` | メディアの現在のバイト列。マシンにない id には `b""`（メディアが空になることはない） |
+| | `read_media(media_id) -> bytes` | メディアの現在のバイト列。マシンにない id には、どの整数でも `b""`（メディアが空になることはない） |
 | | `mark_persisted(media_id) -> int` | host がバイト列を書いた後に呼ぶ。`STATUS_OK`（0）を返す。マシンにない id には `STATUS_NO_MEDIUM`（5）を返す |
-| | `mount_disk(drive, data, write_protected) -> int` | `STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
+| | `mount_disk(drive, data, write_protected) -> int` | `STATUS_OK`（0）を返す。マシンにないドライブには `STATUS_NO_DRIVE`（2）、サイズが 512 の正の倍数でないイメージには `STATUS_BAD_IMAGE`（3）、0 と 1 以外の `write_protected` には `STATUS_BAD_ARGUMENT`（6）を返す。失敗したときは何も変えない。外すイメージに保存していない書き込みがあれば、host が呼び出しの前にファイルへ書き戻す |
 | | `eject_disk(drive) -> int` | ドライブを空にする。`STATUS_OK`（0）を返し、マシンにないドライブには `STATUS_NO_DRIVE`（2）を返す |
 | | `last_error_text() -> bytes` | 状態を返すメンバー（と空の値を返した `read_media`、`slot_info`）のうち、最後に失敗した呼び出しのメッセージ（UTF-8）。成功した後は `b""`。コアの API のメンバーは、不正な引数に例外を出さない。`host/state_files.load_state` と `host/media.swap_disk` は、これを `ValueError("<ファイル>: <メッセージ>")` として出す |
 | | `disk_mounted(drive)` | ドライブがあり、イメージが入っているか |
 | デバイス | `attach_mouse(port) -> int` | MSX のマウスをジョイスティックポート 1（`0`）か 2（`1`）につなぐ。マウスのデバイスはコアが作る。ほかのポートには `STATUS_BAD_ARGUMENT`（6）を返す。host が呼ぶのは 1 回まで、最初の `step_frame` と最初の `load_state` の前。マウス付きで保存したステートは、マウスをつないだマシンでだけ読み込める。取り外しはない |
 | 状態の読み出し | `cpu_registers() -> CpuRegisters` | レジスタ一式 |
-| | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む |
-| | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しは VRAM のサイズで折り返す |
+| | `read_memory(addr, length) -> bytes` | 今のスロットの選択で、CPU と同じように読む。0xFFFF で折り返す。ウォッチポイントには反応しない。メモリに割り当てられたデバイスのレジスタは、副作用も含めて CPU と同じように読む。長さが 0〜0x10000 の外なら `b""` を返し、`last_error_text()` を設定する |
+| | `vram_size()`、`read_vram(addr, length) -> bytes` | 0x4000 か 0x20000。読み出しはアドレスの下位ビットで VRAM のサイズに折り返すので、負のアドレスは末尾に折り返す。長さが 0〜VRAM のサイズの外なら `b""` を返し、`last_error_text()` を設定する |
 | | `vdp_info() -> VdpInfo` | ステータスのフラグを消さない |
 | | `frame_number()`、`drive_count()`、`main_ram_range()` | フロッピーのインターフェースがなければ `drive_count()` は 0 |
 | | `slot_layout() -> SlotLayout` | ポート 0xA8 の値、拡張された基本スロットのビットマスク、4 つの拡張スロットレジスタ（拡張されていないスロットは 0）。デバッガの `sl` と `st` が使う |
 | | `slot_info(primary, secondary, page) -> SlotInfo` | 1 つのスロットの内容の文字列、バンクの文字列、KB 単位のサイズ。`sl` と `st` が使う。`secondary` と `page` は、なしのとき -1。0-3 の外の値には、空の文字列とサイズ -1 を返す |
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
-| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。各設定は `STATUS_OK` を返す。`MAX_BREAKPOINTS` または `MAX_WATCHPOINTS`（4）を超える件数、0x0000〜0xFFFF の外のアドレスや SP の値、不正な kind、-1 より小さいフレーム、下限が上限より大きい SP の範囲には `STATUS_BAD_ARGUMENT`（6）を返し、設定を変えない。-1 は実行先のアドレスとフレームのブレークポイントを消し、`set_sp_range(-1, -1)` は SP の範囲を消す。`set_break_halt_di()` は常に `STATUS_OK` を返す |
-| | `set_sprites_hidden(hidden) -> int`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない。設定は常に `STATUS_OK` を返す |
+| デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。各設定は `STATUS_OK` を返す。`MAX_BREAKPOINTS` または `MAX_WATCHPOINTS`（4）を超える件数、0x0000〜0xFFFF の外のアドレスや SP の値、不正な kind、-1 より小さいフレーム、下限が上限より大きい SP の範囲には `STATUS_BAD_ARGUMENT`（6）を返し、設定を変えない。-1 は実行先のアドレスとフレームのブレークポイントを消し、`set_sp_range(-1, -1)` は SP の範囲を消す。`set_break_halt_di()` は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返して設定を変えない |
+| | `set_sprites_hidden(hidden) -> int`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない。設定は 0 か 1 を取り、それ以外の値には `STATUS_BAD_ARGUMENT` を返してフラグを変えない |
 | | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP`、`TRACE_MAPPER`、`TRACE_DEBUG`。`TRACE_DEBUG` は `--debug` のログ）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
 | | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、`TRACE_DEBUG` が有効な間は I/O ポートへの各アクセス、VDP の R#0 と R#1 に保持された各書き込み、各未定義命令、各ハング（PC が 1000 回続くループか、フレームの終わりの割り込み禁止の HALT。直前の 64 命令の後に記録する）を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |

@@ -114,10 +114,12 @@ STATUS_STATE_REJECTED = 1   # load_state: not a state this machine can load
 STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
 STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
 STATUS_BAD_CONFIG = 4       # create_machine: a configuration the build rejects
-STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: None): no such medium
+STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: b""): no such medium
 STATUS_BAD_ARGUMENT = 6     # a break setter: a value outside its range or too
                             # many entries; set_watchpoints: a watch kind;
-                            # attach_mouse: a port; set_trace_kinds: a trace kind
+                            # attach_mouse: a port; set_trace_kinds: a trace kind;
+                            # a flag setter, mount_disk: a flag not 0 or 1;
+                            # read_memory, read_vram: a length (b"")
 
 # The most breakpoints set_breakpoints and watchpoints set_watchpoints take.
 MAX_BREAKPOINTS = 4

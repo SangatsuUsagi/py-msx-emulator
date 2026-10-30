@@ -22,7 +22,8 @@
  *   - A member that returns a status returns int32_t, one of MSX_STATUS_*.
  *     After a failure, msx_core_last_error_text gives the UTF-8 message.
  *   - Integer arguments are int32_t, so -1 can mean "none" where a member
- *     says so. Booleans are int32_t 0 or 1.
+ *     says so. Booleans are int32_t 0 or 1; a setter returns
+ *     MSX_STATUS_BAD_ARGUMENT for any other value.
  *   - Lists with a fixed limit are written to a caller array, and the
  *     function returns the count.
  */
@@ -244,7 +245,9 @@ int32_t msx_core_abi_version(void);
 
 /* MSX_STATUS_OK with *out_core set, or MSX_STATUS_BAD_CONFIG with *out_core
  * NULL and the UTF-8 message in *error_text (valid until the next
- * msx_core_create). */
+ * msx_core_create). Every rejection is a status: a device size a device
+ * does not accept, and an RTC start time outside year 0-9999 or not a real
+ * date and time. */
 int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core,
                         msx_bytes *error_text);
 void msx_core_destroy(msx_core *core);
@@ -267,8 +270,11 @@ int32_t msx_core_reset(msx_core *core);
 /* -- Media -------------------------------------------------------------------- */
 
 int32_t msx_core_dirty_media(msx_core *core, int32_t out_ids[MSX_MEDIA_COUNT]);
+/* media_id may be any integer: an id the machine does not have gives empty
+ * bytes / MSX_STATUS_NO_MEDIUM. */
 msx_bytes msx_core_read_media(msx_core *core, int32_t media_id); /* empty when absent */
 int32_t msx_core_mark_persisted(msx_core *core, int32_t media_id);
+/* write_protected 0 or 1, else MSX_STATUS_BAD_ARGUMENT and no change. */
 int32_t msx_core_mount_disk(msx_core *core, int32_t drive, const uint8_t *data,
                             size_t len, int32_t write_protected);
 int32_t msx_core_eject_disk(msx_core *core, int32_t drive);
@@ -307,10 +313,13 @@ void msx_core_last_stop(msx_core *core, msx_stop_info *out);
 /* -- Inspection queries ------------------------------------------------------- */
 
 void msx_core_cpu_registers(msx_core *core, msx_cpu_registers *out);
+/* length 0-0x10000, else empty bytes and an error text; addr wraps at 0xFFFF. */
 msx_bytes msx_core_read_memory(msx_core *core, int32_t addr, int32_t length);
 int32_t msx_core_write_memory(msx_core *core, int32_t addr, const uint8_t *data,
                               size_t len);
 int32_t msx_core_vram_size(msx_core *core);
+/* length 0 to vram_size, else empty bytes and an error text; addr wraps by
+ * addr & (vram_size - 1). */
 msx_bytes msx_core_read_vram(msx_core *core, int32_t addr, int32_t length);
 void msx_core_vdp_info(msx_core *core, msx_vdp_info *out);
 int64_t msx_core_frame_number(msx_core *core);
