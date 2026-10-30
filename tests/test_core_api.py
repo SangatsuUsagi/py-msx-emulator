@@ -10,8 +10,11 @@ from dataclasses import fields
 import pytest
 
 from msx.boundary import (
+    BANK_WINDOW_16K,
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
+    SLOT_CONTENT_CARTRIDGE,
+    SLOT_CONTENT_MAIN_ROM,
     STATUS_BAD_ARGUMENT,
     STATUS_OK,
     STATUS_STATE_REJECTED,
@@ -27,7 +30,9 @@ from msx.boundary import (
     VDP_KIND_V9938,
     WATCH_READ,
     WATCH_WRITE,
+    WINDOW_PAGE,
     CpuRegisters,
+    MapperId,
     SlotInfo,
     SlotLayout,
 )
@@ -238,18 +243,20 @@ def test_a_bank_switching_cartridge_page_shows_its_bank() -> None:
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.write_memory(0x7000, b"\x00")  # window 1 (0x8000) -> bank 0
     info = m.slot_info(1, -1, 2)
-    assert b"Ascii16" in info.content
-    assert info.bank == b"bank 0 @00000-03FFF"
+    assert (info.content, info.mapper) == (SLOT_CONTENT_CARTRIDGE, MapperId.ASCII16)
+    assert info.bank == BANK_WINDOW_16K
+    assert (info.window_kinds[0], info.window_values[0]) == (WINDOW_PAGE, 0)
 
 
 def test_the_main_rom_reports_its_size() -> None:
     info = _msx1().slot_info(0, -1, -1)
+    assert info.content == SLOT_CONTENT_MAIN_ROM
     assert info.size_kb == 32
 
 
 def test_an_invalid_slot_is_rejected() -> None:
     m = _msx1()
-    assert m.slot_info(4, -1, -1) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.slot_info(4, -1, -1) == SlotInfo(content=-1, mapper=-1, size_kb=-1)
     assert b"4" in m.last_error_text()
     assert m.slot_info(0, -1, -1).size_kb == 32
     assert m.last_error_text() == b""
@@ -258,7 +265,7 @@ def test_an_invalid_slot_is_rejected() -> None:
 @pytest.mark.parametrize("args", [(0, 4, -1), (0, -2, -1), (0, -1, 4), (0, -1, -2), (-1, -1, -1)])
 def test_every_slot_argument_outside_its_range_is_rejected(args: tuple[int, int, int]) -> None:
     m = _msx1()
-    assert m.slot_info(*args) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.slot_info(*args) == SlotInfo(content=-1, mapper=-1, size_kb=-1)
     assert m.last_error_text() != b""
 
 
@@ -314,7 +321,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
     m.io.write_port(0x99, 0x80)
     m.io.read_port(0xA8)
     m.memory.write(0x7000, 3)  # window 1 -> bank 3
-    assert m.memory._mapper.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
+    assert m.memory._mapper.debug_bank(2).window_values[0] == 3
     assert m.drain_trace() == ()
 
 

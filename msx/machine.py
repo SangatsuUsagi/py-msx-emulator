@@ -714,10 +714,10 @@ class Machine:
         return SlotLayout(mem.slot_register & 0xFF, expanded, bytes(secondary))
 
     def slot_info(self, primary: int, secondary: int, page: int) -> SlotInfo:
-        """The content text, bank text and size in KB of a primary slot, a
-        sub-slot (-1: none) and a page (-1: none). Returns empty texts and a
-        size of -1 for a value outside 0-3 (last_error_text() gives the
-        message)."""
+        """The content, mapper, size in KB and bank of a primary slot, a
+        sub-slot (-1: none) and a page (-1: none), as integers. Returns a
+        content, mapper and size of -1 for a value outside 0-3
+        (last_error_text() gives the message)."""
         if not 0 <= primary <= 3:
             return self._bad_slot(f"no primary slot {primary}")
         if secondary != -1 and not 0 <= secondary <= 3:
@@ -727,17 +727,12 @@ class Machine:
         # The Memory helpers take None for "no sub-slot" and "no page".
         sec = None if secondary == -1 else secondary
         pg = None if page == -1 else page
-        mem = self.memory
         self._error_text = b""
-        return SlotInfo(
-            content=mem.debug_slot_content(primary, sec, pg).encode("utf-8"),
-            bank=mem.debug_slot_bank(primary, sec, pg).encode("utf-8"),
-            size_kb=mem.debug_slot_size_kb(primary, sec),
-        )
+        return self.memory.describe_slot(primary, sec, pg)
 
     def _bad_slot(self, message: str) -> SlotInfo:
         self._fail(STATUS_BAD_ARGUMENT, message)
-        return SlotInfo(content=b"", bank=b"", size_kb=-1)
+        return SlotInfo(content=-1, mapper=-1, size_kb=-1)
 
     def breakpoints(self) -> tuple[int, ...]:
         """The breakpoint addresses, ascending."""

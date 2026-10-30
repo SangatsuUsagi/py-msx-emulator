@@ -3,6 +3,7 @@ import struct
 import pytest
 
 from msx.mapper import (
+    NO_BANK,
     Ascii8Mapper,
     Ascii16Mapper,
     FixedPageMapper,
@@ -157,7 +158,7 @@ def test_fixed_page_snapshot_restore_is_empty_and_noop() -> None:
 def test_fixed_page_has_no_bank_info() -> None:
     rom = bytes([0xAB] + [0] * (16384 - 1))
     m = FixedPageMapper(rom, base=0x8000)
-    assert m.debug_bank_info(1) is None
+    assert m.debug_bank(1) == NO_BANK
 
 
 # ---------------------------------------------------------------------------

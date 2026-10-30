@@ -26,8 +26,9 @@ returns an integer status (msx/boundary.py STATUS_*):
 - read_media: b"" for an id the machine lacks (any integer);
 - read_memory, read_vram: b"" for a length outside 0-0x10000 /
   0-vram_size;
-- slot_info: empty texts and a size of -1 for a slot, sub-slot or page
-  outside 0-3 (-1 is "none" for the last two).
+- slot_info: a content, mapper and size of -1 for a slot, sub-slot or
+  page outside 0-3 (-1 is "none" for the last two). Its record is
+  integers only; the host builds the sl/st text.
 
 last_error_text() gives the message of the last failure. A disk is
 ejected with eject_disk.

@@ -9,7 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, TypedDict, cast
 
-from msx.mapper import MapperKind
+from msx.boundary import BANK_WINDOW_16K, WINDOW_NONE, WINDOW_PAGE
+from msx.mapper import NO_BANK, BankView, MapperKind
 from msx.snapshot_schema import check_bytes, check_int_list, check_object
 from msx.sram import SramImage
 
@@ -130,15 +131,15 @@ class RamMapper:
     def restore(self, state: dict[str, object]) -> None:
         self.apply_state(self.parse_state(state, "state"))
 
-    def debug_bank_info(self, page: int) -> str | None:
-        """Describe the bank visible at CPU page (0-3, i.e. addr >> 14).
+    def debug_bank(self, page: int) -> BankView:
+        """The bank visible at CPU page (0-3, i.e. addr >> 14), as one
+        16 KB window.
 
         One bank register maps directly to one 16 KB page here -- unlike
-        ASCII8/Konami's two-8KB-windows-per-page pairing (`_format_bank_info`
-        in msx/mapper.py), which does not apply to this mapper.
+        ASCII8/Konami's two-8KB-windows-per-page pairing (`_bank_view` in
+        msx/mapper.py), which does not apply to this mapper.
         """
         if not 0 <= page <= 3:
-            return None
+            return NO_BANK
         bank = self.banks[page] & self.bank_mask
-        start = bank * _BANK_SIZE
-        return f"bank {bank} @{start:05X}-{start + _BANK_SIZE - 1:05X}"
+        return BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (bank, 0))

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 import msx.boundary as boundary
-from msx.boundary import KeyboardLayout, MediaId, VideoStandard
+from msx.boundary import KeyboardLayout, MapperId, MediaId, VideoStandard
 from msx.core_api import CoreApi
 
 _HEADER = Path(__file__).resolve().parent.parent / "include" / "msx_core.h"
@@ -42,6 +42,7 @@ def _python_constants() -> dict[str, int]:
             result[name] = value
     enums: tuple[tuple[str, type[enum.IntEnum]], ...] = (
         ("MEDIA", MediaId), ("VIDEO", VideoStandard), ("KEYBOARD", KeyboardLayout),
+        ("MAPPER", MapperId),
     )
     for prefix, enum_type in enums:
         for member in enum_type:

@@ -7,7 +7,15 @@ from unittest.mock import MagicMock, patch
 
 from host.debugger import prompt as prompt_module
 from host.debugger.prompt import Debugger
-from msx.boundary import TRACE_MAPPER, TRACE_VDP, WATCH_READ, RgbFrame
+from host.debugger.slots import slot_bank_text
+from msx.boundary import (
+    SLOT_CONTENT_CARTRIDGE,
+    TRACE_MAPPER,
+    TRACE_VDP,
+    WATCH_READ,
+    RgbFrame,
+    SlotInfo,
+)
 from msx.cpu.registers import Registers
 from msx.machine import Machine
 from msx.mapper import FlatMapper
@@ -507,8 +515,7 @@ def _make_slot_memory(
     slot_register: int = 0xD4,
     sub_slot_enabled: bool = False,
     sub_slot_reg: int = 0x00,
-    rom_name: str = "cbios_main.rom",
-    sub0_rom_name: str = "",
+    with_sub_rom: bool = False,
     with_ram_mapper: bool = False,
     slot1_sub_slot_enabled: bool = False,
     slot1_sub_slot_reg: int = 0x00,
@@ -525,9 +532,7 @@ def _make_slot_memory(
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
-        rom_name=rom_name,
-        sub0_rom=b"\x00" * 16384 if sub0_rom_name else None,
-        sub0_rom_name=sub0_rom_name,
+        sub0_rom=b"\x00" * 16384 if with_sub_rom else None,
         ram_mapper=RamMapper() if with_ram_mapper else None,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
@@ -544,8 +549,7 @@ def _make_slot_machine(
     slot_register: int = 0xD4,
     sub_slot_enabled: bool = False,
     sub_slot_reg: int = 0x00,
-    rom_name: str = "cbios_main.rom",
-    sub0_rom_name: str = "",
+    with_sub_rom: bool = False,
     with_ram_mapper: bool = False,
     slot1_sub_slot_enabled: bool = False,
     slot1_sub_slot_reg: int = 0x00,
@@ -559,8 +563,7 @@ def _make_slot_machine(
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
-        rom_name=rom_name,
-        sub0_rom_name=sub0_rom_name,
+        with_sub_rom=with_sub_rom,
         with_ram_mapper=with_ram_mapper,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
@@ -612,7 +615,7 @@ class TestSlotActive:
             slot_register=0xD4,
             sub_slot_enabled=True,
             sub_slot_reg=0xA8,  # P0=0,P1=2,P2=2,P3=2 (sub slots for slot 3)
-            sub0_rom_name="cbios_sub.rom",
+            with_sub_rom=True,
             with_ram_mapper=True,
         )
         Debugger(m)._cmd_slot_active()
@@ -790,7 +793,7 @@ class TestSlotTree:
         m = _make_slot_machine(
             sub_slot_enabled=True,
             sub_slot_reg=0xA4,
-            sub0_rom_name="cbios_sub.rom",
+            with_sub_rom=True,
             with_ram_mapper=True,
         )
         Debugger(m)._cmd_slot_tree()
@@ -845,6 +848,21 @@ class TestSlotTree:
 # sl — cartridge ROM mapper bank column
 # ---------------------------------------------------------------------------
 
+def _bank(mapper, page: int) -> str:
+    """The sl bank text of a mapper's page, through the host formatter."""
+    view = mapper.debug_bank(page)
+    info = SlotInfo(
+        SLOT_CONTENT_CARTRIDGE, -1, 0, view.bank, view.window_kinds,
+        view.window_values, view.sub_bank_count, view.sub_banks, view.sub_offsets,
+    )
+    return slot_bank_text(info, page)
+
+
+def _slot_bank(mem: Memory, primary: int, secondary, page: int) -> str:
+    """The sl bank text of a Memory slot's page, through the host formatter."""
+    return slot_bank_text(mem.describe_slot(primary, secondary, page), page)
+
+
 class TestSlotRomMapperBank:
     @staticmethod
     def _rom16(pages: int):
@@ -858,27 +876,27 @@ class TestSlotRomMapperBank:
         from msx.mapper import Ascii16Mapper
         m = Ascii16Mapper(self._rom16(8))
         # power-on: both windows bank 0
-        assert m.debug_bank_info(1) == "bank 0 @00000-03FFF"
-        assert m.debug_bank_info(2) == "bank 0 @00000-03FFF"
+        assert _bank(m, 1) == "bank 0 @00000-03FFF"
+        assert _bank(m, 2) == "bank 0 @00000-03FFF"
         # switch window 1 (0x8000) to bank 3
         m.write(0x7000, 3)
-        assert m.debug_bank_info(2) == "bank 3 @0C000-0FFFF"
+        assert _bank(m, 2) == "bank 3 @0C000-0FFFF"
 
     def test_ascii8_shows_both_windows_per_page(self):
         from msx.mapper import Ascii8Mapper
         m = Ascii8Mapper(self._rom8(8))
         m.write(0x6000, 1)  # window 0 (0x4000) -> bank 1
         m.write(0x6800, 2)  # window 1 (0x6000) -> bank 2
-        assert m.debug_bank_info(1) == "w0=b1@02000  w1=b2@04000"
+        assert _bank(m, 1) == "w0=b1@02000  w1=b2@04000"
 
     def test_flat_mapper_has_no_bank(self):
         from msx.mapper import FlatMapper
-        assert FlatMapper(b"\x00" * 32768).debug_bank_info(1) is None
+        assert _bank(FlatMapper(b"\x00" * 32768), 1) == "-"
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
         from msx.mapper import Ascii16Mapper
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
-        assert mem.debug_slot_bank(1, None, 2) == "bank 0 @00000-03FFF"
+        assert _slot_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
 
     # -- debug-monitor "sl -- cartridge ROM mapper bank column": the text
     # describes what each window maps, resolved as the mapper's reads are.
@@ -886,80 +904,80 @@ class TestSlotRomMapperBank:
     def test_rtype_shows_fixed_and_selected_banks(self):
         from msx.mapper import RTypeMapper
         m = RTypeMapper(self._rom16(24))  # 384 KB: block 0x17 selected directly
-        assert m.debug_bank_info(1) == "bank 23 @5C000-5FFFF"
-        assert m.debug_bank_info(2) == "bank 0 @00000-03FFF"
+        assert _bank(m, 1) == "bank 23 @5C000-5FFFF"
+        assert _bank(m, 2) == "bank 0 @00000-03FFF"
         m.write(0x4000, 2)
-        assert m.debug_bank_info(2) == "bank 2 @08000-0BFFF"
-        assert m.debug_bank_info(0) is None and m.debug_bank_info(3) is None
+        assert _bank(m, 2) == "bank 2 @08000-0BFFF"
+        assert _bank(m, 0) == "-" and _bank(m, 3) == "-"
 
     def test_sl_bank_shows_the_rtype_banks(self):
         from msx.mapper import RTypeMapper
         rtype = RTypeMapper(self._rom16(24))
         rtype.write(0x4000, 2)
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=rtype)
-        assert mem.debug_slot_bank(1, None, 1) == "bank 23 @5C000-5FFFF"
-        assert mem.debug_slot_bank(1, None, 2) == "bank 2 @08000-0BFFF"
+        assert _slot_bank(mem, 1, None, 1) == "bank 23 @5C000-5FFFF"
+        assert _slot_bank(mem, 1, None, 2) == "bank 2 @08000-0BFFF"
 
     def test_fmpac_shows_its_bank_or_its_sram(self):
         from msx.fmpac import FmPac
         from msx.opll import Opll
         m = FmPac(self._rom16(4), Opll())
         m.write(0x7FF7, 1)  # bank register
-        assert m.debug_bank_info(1) == "bank 1 @04000-07FFF"
+        assert _bank(m, 1) == "bank 1 @04000-07FFF"
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=m)
-        assert mem.debug_slot_bank(1, None, 1) == "bank 1 @04000-07FFF"
+        assert _slot_bank(mem, 1, None, 1) == "bank 1 @04000-07FFF"
         m.write(0x5FFE, 0x4D)  # SRAM unlock
         m.write(0x5FFF, 0x69)
-        assert m.debug_bank_info(1) == "bank SRAM@0000"
-        assert m.debug_bank_info(2) is None
+        assert _bank(m, 1) == "bank SRAM@0000"
+        assert _bank(m, 2) == "-"
 
     def test_a_game_master_2_window_on_sram_shows_sram(self):
         from msx.mapper import GameMaster2Mapper
         m = GameMaster2Mapper(self._rom8(16))
         m.write(0xA000, 0x30)  # window 3: SRAM, upper 4 KB half
-        assert m.debug_bank_info(2) == "w2=b2@04000  w3=SRAM@1000"
+        assert _bank(m, 2) == "w2=b2@04000  w3=SRAM@1000"
 
     def test_ascii8_and_ascii16_sram_windows_show_sram(self):
         from msx.mapper import Ascii8Sram2Mapper, Ascii16Sram2Mapper
         a8 = Ascii8Sram2Mapper(self._rom8(32))
         a8.write(0x7000, 0x20)  # window 2 (0x8000): SRAM
-        assert a8.debug_bank_info(2) == "w2=SRAM@0000  w3=b0@00000"
+        assert _bank(a8, 2) == "w2=SRAM@0000  w3=b0@00000"
         a16 = Ascii16Sram2Mapper(self._rom16(16))
         a16.write(0x7000, 0x10)  # window 1 (0x8000): SRAM
-        assert a16.debug_bank_info(2) == "bank SRAM@0000"
+        assert _bank(a16, 2) == "bank SRAM@0000"
 
     def test_a_register_beyond_the_rom_shows_the_page_mapped(self):
         from msx.mapper import Ascii16Mapper
         m = Ascii16Mapper(self._rom16(8))  # 128 KB
         m.write(0x7000, 0xFF)
         assert m.read(0x8000) == 7
-        assert m.debug_bank_info(2) == "bank 7 @1C000-1FFFF"
+        assert _bank(m, 2) == "bank 7 @1C000-1FFFF"
 
     def test_a_konami_page_past_the_rom_shows_open(self):
         from msx.mapper import KonamiMapper
         m = KonamiMapper(self._rom8(16))  # 128 KB
         m.write(0x8000, 0x1F)  # page 31 is past the end: open bus
         assert m.read(0x8000) == 0xFF
-        assert m.debug_bank_info(2) == "w2=open  w3=b3@06000"
+        assert _bank(m, 2) == "w2=open  w3=b3@06000"
 
     def test_scc_i_shows_the_masked_ram_block(self):
         from msx.mapper import SCCICart
         from msx.scc import SCC
         m = SCCICart(SCC())
         m.write(0x9000, 0xFF)
-        assert m.debug_bank_info(2) == "w2=b7@0E000  w3=b3@06000"
+        assert _bank(m, 2) == "w2=b7@0E000  w3=b3@06000"
 
     def test_halnote_shows_sram_its_page_and_the_sub_mapper(self):
         from msx.mapper import HalnoteMapper
         m = HalnoteMapper(bytes(1024 * 1024))
-        assert m.debug_bank_info(0) is None
+        assert _bank(m, 0) == "-"
         m.write(0x4FFF, 0x85)  # bank 0: page 5, SRAM on
-        assert m.debug_bank_info(0) == "SRAM@0000-3FFF"
-        assert m.debug_bank_info(1) == "w0=b5@0A000  w1=b1@02000"
+        assert _bank(m, 0) == "SRAM@0000-3FFF"
+        assert _bank(m, 1) == "w0=b5@0A000  w1=b1@02000"
         m.write(0x6FFF, 0x86)  # bank 1: page 6, sub-mapper on
         m.write(0x77FF, 0x12)
         m.write(0x7FFF, 0x34)
-        assert m.debug_bank_info(1) == (
+        assert _bank(m, 1) == (
             "w0=b5@0A000  w1=b6@0C000  sub=b18@89000,b52@9A000"
         )
 
@@ -968,17 +986,17 @@ class TestSlotRomMapperBank:
         rm = RamMapper()
         rm.banks[3] = 2
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_bank(3, 2, 3) == "seg=2"
+        assert _slot_bank(mem, 3, 2, 3) == "seg=2"
 
     def test_sl_bank_dash_for_bios(self):
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
-        assert mem.debug_slot_bank(0, None, 0) == "-"
+        assert _slot_bank(mem, 0, None, 0) == "-"
 
-    def test_debug_slot_size_kb_reflects_configured_ram_mapper_size(self):
+    def test_slot_size_kb_reflects_configured_ram_mapper_size(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.debug_slot_size_kb(3, 2) == 256
+        assert mem.describe_slot(3, 2, None).size_kb == 256
 
 
 # ---------------------------------------------------------------------------

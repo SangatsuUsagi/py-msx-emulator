@@ -362,17 +362,77 @@ class SlotLayout:
     secondary: bytes
 
 
+# What a slot holds (SlotInfo.content).
+SLOT_CONTENT_EMPTY = 0
+SLOT_CONTENT_MAIN_ROM = 1
+SLOT_CONTENT_SUB_ROM = 2
+SLOT_CONTENT_CARTRIDGE = 3        # SlotInfo.mapper names its mapper
+SLOT_CONTENT_CARTRIDGE_EMPTY = 4
+SLOT_CONTENT_RAM = 5
+SLOT_CONTENT_RAM_MAPPER = 6       # RAM behind the standard memory mapper
+SLOT_CONTENT_FDC = 7
+
+# How a page's bank is described (SlotInfo.bank).
+BANK_NONE = 0
+BANK_WINDOW_16K = 1   # one 16 KB window: window 0
+BANK_WINDOWS_8K = 2   # two 8 KB windows: windows 0 and 1 of the page
+BANK_SEGMENT = 3      # a slot-3 RAM mapper segment: window_values[0]
+BANK_SRAM_PAGE = 4    # the whole page is SRAM (the Halnote's page 0)
+
+# What one window maps (SlotInfo.window_kinds).
+WINDOW_NONE = 0
+WINDOW_PAGE = 1   # ROM or RAM page window_values[i]
+WINDOW_SRAM = 2   # SRAM at offset window_values[i]
+WINDOW_OPEN = 3   # a page past the end of the ROM: it reads 0xFF
+
+
+class MapperId(enum.IntEnum):
+    """A cartridge mapper as the core API names it (SlotInfo.mapper): one
+    fixed integer per msx.mapper.MapperKind, of the same name."""
+
+    FLAT = 0
+    FIXED_PAGE = 1
+    ASCII8 = 2
+    ASCII16 = 3
+    ASCII8_SRAM2 = 4
+    ASCII8_SRAM8 = 5
+    KOEI_SRAM32 = 6
+    GAME_MASTER2 = 7
+    ASCII16_SRAM2 = 8
+    ASCII16_SRAM8 = 9
+    R_TYPE = 10
+    KONAMI = 11
+    MAJUTSUSHI = 12
+    KONAMI_SCC = 13
+    SCC_I_CART = 14
+    HALNOTE = 15
+    FMPAC = 16
+    RAM_MAPPER = 17
+
+
 @dataclass(frozen=True)
 class SlotInfo:
     """One slot as the core API's slot description query returns it
-    (msx/core_api.py): the content and the bank as UTF-8 text (bank b"-"
-    when the page has no bank), and the size in KB (0 when no size
-    applies). Empty texts and a size of -1 for a slot, sub-slot or page
-    outside 0-3 (STATUS_BAD_ARGUMENT in last_error_text)."""
+    (msx/core_api.py), integers only; the host builds the text
+    (host/debugger/slots.py).
 
-    content: bytes
-    bank: bytes
+    `content` is a SLOT_CONTENT_* value and `mapper` the cartridge's
+    MapperId (-1 for anything else). `size_kb` is 0 when no size applies.
+    `bank` is a BANK_* value; each of the two windows has a WINDOW_* kind
+    and a value (a page index or an SRAM offset). `sub_bank_count` sub-banks
+    (0 or 2: the Halnote dictionary) follow, with their ROM offsets. A slot,
+    sub-slot or page outside 0-3 gives `content`, `mapper` and `size_kb` -1
+    and zeros elsewhere (STATUS_BAD_ARGUMENT in last_error_text)."""
+
+    content: int
+    mapper: int
     size_kb: int
+    bank: int = BANK_NONE
+    window_kinds: tuple[int, int] = (WINDOW_NONE, WINDOW_NONE)
+    window_values: tuple[int, int] = (0, 0)
+    sub_bank_count: int = 0
+    sub_banks: tuple[int, int] = (0, 0)
+    sub_offsets: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
