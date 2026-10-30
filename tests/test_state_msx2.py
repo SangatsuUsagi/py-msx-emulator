@@ -667,14 +667,14 @@ def test_vram_blob_roundtrips_byte_for_byte(saves_dir):
 def _make_msx2_no_ram_mapper():
     """Build an MSX2 machine (V9938) that has no RAM mapper (ram_mapper is None)."""
     from host.machine_config import build_machine_from_spec
-    from msx.machine_spec import MachineSpec, _RomEntry
+    from msx.machine_spec import MachineSpec, RomEntry
     spec = MachineSpec(
         name="test_msx2_nomap",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,

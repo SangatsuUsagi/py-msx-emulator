@@ -15,10 +15,10 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.mapper import Ascii8Mapper, Ascii16Mapper
 
@@ -42,9 +42,9 @@ def _msx2_spec() -> MachineSpec:
         machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
@@ -224,9 +224,9 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
     (rom_dir / "game.rom").write_bytes(_page_marked_rom(8192, 8))
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="ascii8", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="game.rom", size_kb=64, pages=[]),
+                rom_entry=RomEntry(file="game.rom", size_kb=64, pages=[]),
             ),
         },
     )
@@ -248,9 +248,9 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
     (rom_dir / "game.rom").write_bytes(_page_marked_rom(16384, 4))
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="ascii16", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="game.rom", size_kb=64, pages=[]),
+                rom_entry=RomEntry(file="game.rom", size_kb=64, pages=[]),
             ),
         },
     )
@@ -275,9 +275,9 @@ def test_missing_ascii8_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     rom_dir.mkdir()
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="ascii8", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="missing.rom", size_kb=64, pages=[]),
+                rom_entry=RomEntry(file="missing.rom", size_kb=64, pages=[]),
             ),
         },
     )
@@ -293,9 +293,9 @@ def test_missing_ascii16_subslot_rom_raises_naming_file(tmp_path: Path) -> None:
     rom_dir.mkdir()
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="ascii16", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="missing.rom", size_kb=64, pages=[]),
+                rom_entry=RomEntry(file="missing.rom", size_kb=64, pages=[]),
             ),
         },
     )

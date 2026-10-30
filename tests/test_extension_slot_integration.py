@@ -20,11 +20,11 @@ from msx.boundary import MediaId, RgbFrame
 from msx.machine_loader import build_machine
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.mapper import FixedPageMapper, HalnoteMapper
 from msx.ram_mapper import RamMapper
@@ -41,9 +41,9 @@ def _msx2_spec() -> MachineSpec:
         machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
@@ -57,19 +57,19 @@ def _hbi_j1_overlay(rom_dir: Path) -> ExpandedExtensionOverlay:
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     return ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(
                 device="halnote", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
+                rom_entry=RomEntry(file="msx-je.rom", size_kb=1024, pages=[]),
                 sram_save_path=rom_dir / "msx-je.sram",
             ),
-            1: _ExpandedSubslotDevice(
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="kanjibasic.rom", size_kb=32, pages=[]),
             ),
         },
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
 
@@ -78,10 +78,10 @@ def _msxdos2_512k_overlay(rom_dir: Path) -> ExpandedExtensionOverlay:
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
     return ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
-            1: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
             ),
         },
     )
@@ -91,7 +91,7 @@ def _fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     (rom_dir / "fmpac.rom").write_bytes(bytes(65536))
     return ExtensionOverlay(
         device="fmpac", rom_base_dir=rom_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=rom_dir / "fmpac.sram",
     )
 
@@ -167,16 +167,16 @@ def test_two_kanji_rom_io_devices_at_once_rejected(tmp_path: Path) -> None:
     (other_dir / "kanjifont.rom").write_bytes(bytes(_KANJIFONT_ROM_SIZE))
     overlay1 = ExpandedExtensionOverlay(
         subslots={},
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=hbi_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     overlay2 = ExpandedExtensionOverlay(
         subslots={},
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=other_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=256, pages=[]),
         ),
     )
     with pytest.raises(MachineLoadError, match="Kanji-ROM"):

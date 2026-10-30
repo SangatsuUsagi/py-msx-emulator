@@ -21,7 +21,7 @@ from msx.canonical_json import encode_canonical
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from msx.snapshot_schema import SnapshotMismatchError
 from tests.factories import make_machine, make_machine_msx2
 
@@ -238,18 +238,18 @@ def _loaded_machine(tmp_path: Path) -> Machine:
         disk.write_bytes(bytes(737280))
     spec = MachineSpec(
         name="round_trip", generation="msx2", rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=True, ram_size_kb=128, has_v9938=True, has_rtc=True,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793", connection_style="sony", drives=1,
         ),
     )
     fmpac = ExtensionOverlay(
         device="fmpac", rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
     machine = build_machine_from_spec(
@@ -364,7 +364,7 @@ def test_a_difference_the_specific_checks_see_is_named_by_them(
     (fmpac_dir / "fmpac.rom").write_bytes(bytes(65536))
     fmpac = ExtensionOverlay(
         device="fmpac", rom_base_dir=fmpac_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=fmpac_dir / "fmpac.sram",
     )
     data = state.save_state(make_machine(rom=_ROM, extension_overlay=fmpac))

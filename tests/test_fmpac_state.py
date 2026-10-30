@@ -14,7 +14,7 @@ from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine import Machine
-from msx.machine_spec import ExtensionOverlay, MachineSpec, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineSpec, RomEntry
 
 _RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 _BANK_SIZE = 0x4000
@@ -33,7 +33,7 @@ def _make_fmpac_overlay(rom_dir: Path) -> ExtensionOverlay:
     return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=rom_dir,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=rom_dir / "fmpac.sram",
     )
 
@@ -44,7 +44,7 @@ def _msx1_spec(main_rom_dir: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=main_rom_dir,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,

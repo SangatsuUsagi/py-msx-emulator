@@ -27,7 +27,7 @@ from msx.fdc.interface import (
     FloppyDiskParsed,
 )
 from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from msx.snapshot_schema import SchemaError
 from tests.disk_factories import dsk_image
 
@@ -47,17 +47,17 @@ def _spec(tmp_path: Path, kind: str) -> MachineSpec:
         name="test_fdc_parse_state",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=False,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller=kind,
             connection_style=style,
             drives=2,

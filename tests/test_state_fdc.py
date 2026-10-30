@@ -14,7 +14,7 @@ from msx.fdc.disk_image import DskDiskImage
 from msx.fdc.interface import REG_DRIVE, FloppyDiskState
 from msx.fdc.tc8566af import TC8566AF
 from msx.fdc.wd2793 import WD2793
-from msx.machine_spec import MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from tests.disk_factories import dsk_image
 from tests.factories import load_state_file
 
@@ -39,17 +39,17 @@ def _fdc_spec(tmp_path: Path, *, controller: str, connection_style: str) -> Mach
         name="test_fdc_state",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=False,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller=controller,
             connection_style=connection_style,
             drives=1,

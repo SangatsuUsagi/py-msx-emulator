@@ -87,14 +87,14 @@ from msx.machine_loader import create_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
+    FdcDef,
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
-    _ExpandedSubslotDevice,
-    _FdcDef,
-    _RomEntry,
-    _Slot0RamEntry,
+    RomEntry,
+    Slot0RamEntry,
 )
 
 # The SRAM size of each cartridge mapper with battery-backed SRAM: the host
@@ -145,13 +145,13 @@ class _DeviceDef:
 @dataclass
 class _Slot3Msx2:
     """Resolved MSX2 slot 3 layout (named to avoid a positional tuple)."""
-    sub_rom: _RomEntry | None = None
+    sub_rom: RomEntry | None = None
     sub_rom_subslot: int = 0
     has_ram_mapper: bool = False
     ram_mapper_size_kb: int = 128
     flat_ram_subslot: int | None = None
     flat_ram_size_kb: int = 64
-    fdc: _FdcDef | None = None
+    fdc: FdcDef | None = None
     fdc_subslot: int = 0
 
 
@@ -418,8 +418,8 @@ def load_device_registry(config_dir: Path) -> dict[str, _DeviceDef]:
 # Slot parsers
 # ---------------------------------------------------------------------------
 
-def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
-    """Parse a `rom: {file, size_kb, pages, sha1}` block into a _RomEntry.
+def _parse_rom_entry(entry: RomEntryYaml, context: str) -> RomEntry:
+    """Parse a `rom: {file, size_kb, pages, sha1}` block into a RomEntry.
 
     This is the one shared slot-resident-device ROM schema in the loader: it
     parses every `rom:` block in the codebase, with the same shape and the
@@ -436,7 +436,7 @@ def _parse_rom_entry(entry: RomEntryYaml, context: str) -> _RomEntry:
     pages_raw = entry.get("pages", [])
     pages: list[int] = [int(p) for p in pages_raw]
     sha1 = entry.get("sha1") or None
-    return _RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
+    return RomEntry(file=str(file), size_kb=size_kb, pages=pages, sha1=sha1)
 
 
 def _coerce_int_key(key: Any) -> int | None:
@@ -458,15 +458,15 @@ def _int_keys(slot_map: dict[Any, Any]) -> dict[int, Any]:
 
 def _parse_slot0(
     slot0: Slot0Yaml, machine_id: str
-) -> tuple[_RomEntry | None, _RomEntry | None, _Slot0RamEntry | None]:
+) -> tuple[RomEntry | None, RomEntry | None, Slot0RamEntry | None]:
     """Extract main ROM (pages [0,1]), optional logo ROM (page [2]), and an
     optional flat RAM region (e.g. Sony HB-10's 16 KB page 3) from slot 0's
     content list. RAM coexists with the ROM entries -- see
     openspec/specs/memory-slot-bus/spec.md's "Slot 0 MAY host flat RAM at a
     configured page" Requirement."""
-    main_rom: _RomEntry | None = None
-    logo_rom: _RomEntry | None = None
-    ram_entry: _Slot0RamEntry | None = None
+    main_rom: RomEntry | None = None
+    logo_rom: RomEntry | None = None
+    ram_entry: Slot0RamEntry | None = None
     context = f"machine '{machine_id}' slot 0"
     for item in slot0.get("content", []):
         if not _is_content_item_shape(item):
@@ -498,7 +498,7 @@ def _parse_slot0(
                 raise MachineLoadError(
                     f"{context}: 'ram' content item must be 16 KB (one page), got {size_kb}"
                 )
-            ram_entry = _Slot0RamEntry(size_kb=size_kb, page=pages[0])
+            ram_entry = Slot0RamEntry(size_kb=size_kb, page=pages[0])
     if ram_entry is not None and ram_entry.page == 2 and logo_rom is not None:
         raise MachineLoadError(f"{context}: page-2 'ram' conflicts with the page-2 ROM")
     return main_rom, logo_rom, ram_entry
@@ -509,7 +509,7 @@ def _parse_slot3_msx1(slot3: Slot3Msx1Yaml) -> int:
     return int(slot3.get("size_kb", 32))
 
 
-def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef | None:
+def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> FdcDef | None:
     """Resolve an optional `fdc:` block in the given MSX2 slot 3 sub-slot.
 
     Raises:
@@ -545,7 +545,7 @@ def _parse_fdc(sub_val: SubSlotYaml, machine_id: str, sub_idx: int) -> _FdcDef |
     drives = int(fdc_raw.get("drives", 1))
     if drives <= 0:
         raise MachineLoadError(f"{context}: drives must be positive, got {drives}")
-    return _FdcDef(
+    return FdcDef(
         disk_rom_entry=disk_rom_entry,
         controller=controller,
         connection_style=style,
@@ -834,14 +834,14 @@ def load_machine_spec(
             f"{machine_path}: slot 0 has no main ROM (content with pages [0] or [1])"
         )
 
-    sub_rom_entry: _RomEntry | None = None
+    sub_rom_entry: RomEntry | None = None
     sub_rom_subslot = 0
     has_ram_mapper = False
     ram_mapper_size_kb = 128
     ram_size_kb = 32
     flat_ram_subslot: int | None = None
     flat_ram_size_kb = 64
-    fdc: _FdcDef | None = None
+    fdc: FdcDef | None = None
     fdc_subslot = 0
 
     slot3: dict[str, Any] = primary.get(3, {})
@@ -873,7 +873,7 @@ def load_machine_spec(
 
     # --- Machine-level global I/O device (e.g. a built-in Kanji font ROM) ---
     io_device_raw = raw.get("io_device")
-    io_device: _ExpandedSubslotDevice | None = None
+    io_device: ExpandedSubslotDevice | None = None
     if io_device_raw is not None:
         if not _is_expanded_device_shape(io_device_raw):
             raise MachineLoadError(f"{machine_path}: io_device: expected a YAML mapping")
@@ -922,7 +922,7 @@ def _parse_expanded_device(
     known_devices: frozenset[str],
     devices_requiring_rom: frozenset[str],
     devices_requiring_size: frozenset[str] = frozenset(),
-) -> _ExpandedSubslotDevice:
+) -> ExpandedSubslotDevice:
     """Parse one expanded-overlay device declaration (a sub-slot entry or
     the top-level io_device) -- resolved against its own known-device set
     rather than _KNOWN_EXTENSION_DEVICES."""
@@ -940,12 +940,12 @@ def _parse_expanded_device(
             raise MachineLoadError(f"{context}: device {device!r} requires a 'size_kb' entry")
         if device == "ram_mapper":
             _check_ram_mapper_size_kb(context, size_kb)
-        return _ExpandedSubslotDevice(device=str(device), size_kb=size_kb)
+        return ExpandedSubslotDevice(device=str(device), size_kb=size_kb)
     rom_data = data.get("rom")
     if rom_data is None:
         if device in devices_requiring_rom:
             raise MachineLoadError(f"{context}: device {device!r} requires a 'rom' entry")
-        return _ExpandedSubslotDevice(device=str(device))
+        return ExpandedSubslotDevice(device=str(device))
     if not _is_rom_entry_shape(rom_data):
         raise MachineLoadError(f"{context}: missing required 'rom' entry")
     rom_entry = _parse_rom_entry(rom_data, context)
@@ -954,7 +954,7 @@ def _parse_expanded_device(
     sram_save_path = Path(str(sram_data.get("save_file"))) \
         if _is_sram_shape(sram_data) and sram_data.get("save_file") else None
 
-    return _ExpandedSubslotDevice(
+    return ExpandedSubslotDevice(
         device=str(device),
         rom_base_dir=rom_base_dir,
         rom_entry=rom_entry,
@@ -971,7 +971,7 @@ def _parse_expanded_extension_overlay(
     subslots_raw = raw.get("subslots")
     if not isinstance(subslots_raw, dict) or not subslots_raw:
         raise MachineLoadError(f"{path}: expanded overlay missing required 'subslots' mapping")
-    subslots: dict[int, _ExpandedSubslotDevice] = {}
+    subslots: dict[int, ExpandedSubslotDevice] = {}
     for index, sub_data in _int_keys(cast("dict[Any, Any]", subslots_raw)).items():
         _check_subslot_index(str(path), "extension", index)
         if not _is_expanded_device_shape(sub_data):
@@ -991,7 +991,7 @@ def _parse_expanded_extension_overlay(
         )
 
     io_device_raw = raw.get("io_device")
-    io_device: _ExpandedSubslotDevice | None = None
+    io_device: ExpandedSubslotDevice | None = None
     if io_device_raw is not None:
         if not _is_expanded_device_shape(io_device_raw):
             raise MachineLoadError(f"{path}: io_device: expected a YAML mapping")
@@ -1115,7 +1115,7 @@ def _load_sram_or_warn(path: Path, expected_size: int, label: str = "") -> bytea
     return None
 
 
-def _load_device_rom(device: _ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
+def _load_device_rom(device: ExpandedSubslotDevice | ExtensionOverlay, label: str) -> bytes:
     """Load a resolved device's required ROM file. A device resolved from
     YAML (`_parse_expanded_device`/`load_extension_overlay`) always has both
     `rom_base_dir` and `rom_entry` when it needs a ROM; one without them --

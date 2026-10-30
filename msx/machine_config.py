@@ -23,14 +23,14 @@ from msx.canonical_json import decode_strict, encode_canonical, mismatched_versi
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
+    FdcDef,
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
-    _ExpandedSubslotDevice,
-    _FdcDef,
-    _RomEntry,
-    _Slot0RamEntry,
+    RomEntry,
+    Slot0RamEntry,
 )
 from msx.snapshot_schema import (
     SAFE_INT_MAX,
@@ -157,7 +157,7 @@ def _entry_ref(
 
 
 def _device_object(
-    device: _ExpandedSubslotDevice, role: str, roms: dict[str, bytes], images: dict[str, bytes]
+    device: ExpandedSubslotDevice, role: str, roms: dict[str, bytes], images: dict[str, bytes]
 ) -> dict[str, object]:
     rom = None
     if device.rom_entry is not None:
@@ -343,11 +343,11 @@ def _optional_rom(value: object, label: str) -> RomRef | None:
     return None if value is None else _rom(value, label)
 
 
-def _entry(ref: RomRef) -> _RomEntry:
-    return _RomEntry(file=ref.name, size_kb=ref.size // 1024, pages=list(ref.pages), sha1=ref.sha1)
+def _entry(ref: RomRef) -> RomEntry:
+    return RomEntry(file=ref.name, size_kb=ref.size // 1024, pages=list(ref.pages), sha1=ref.sha1)
 
 
-def _add_rom(roms: dict[str, RomRef], role: str, ref: RomRef | None) -> _RomEntry | None:
+def _add_rom(roms: dict[str, RomRef], role: str, ref: RomRef | None) -> RomEntry | None:
     if ref is None:
         return None
     roms[role] = ref
@@ -358,7 +358,7 @@ def _device(
     value: object, label: str, role: str, roms: dict[str, RomRef],
     devices: frozenset[str], requiring_rom: frozenset[str],
     requiring_size: frozenset[str] = frozenset(),
-) -> _ExpandedSubslotDevice:
+) -> ExpandedSubslotDevice:
     """A sub-slot or io_device entry whose `device` is one of `devices`, with
     the ROM / size_kb the requiring sets demand."""
     obj = check_object(value, label, _DEVICE_KEYS)
@@ -369,7 +369,7 @@ def _device(
     size_kb = check_optional_int(obj["size_kb"], f"{label}.size_kb", 0, _MAX_KB)
     if size_kb is None and device in requiring_size:
         raise SchemaError(f"{label}.size_kb is required for device {device!r}")
-    return _ExpandedSubslotDevice(
+    return ExpandedSubslotDevice(
         device=device,
         rom_entry=_add_rom(roms, role, rom),
         size_kb=size_kb,
@@ -378,7 +378,7 @@ def _device(
 
 def _optional_io_device(
     value: object, label: str, role: str, roms: dict[str, RomRef]
-) -> _ExpandedSubslotDevice | None:
+) -> ExpandedSubslotDevice | None:
     if value is None:
         return None
     return _device(value, label, role, roms, IO_DEVICES, IO_DEVICES_REQUIRING_ROM)
@@ -392,7 +392,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
     slot0_ram = None
     if obj["slot0_ram"] is not None:
         ram = check_object(obj["slot0_ram"], f"{label}.slot0_ram", _SLOT0_RAM_KEYS)
-        slot0_ram = _Slot0RamEntry(
+        slot0_ram = Slot0RamEntry(
             size_kb=check_int(ram["size_kb"], f"{label}.slot0_ram.size_kb", 0, 64),
             page=check_int(ram["page"], f"{label}.slot0_ram.page", 0, _PAGES - 1),
         )
@@ -411,7 +411,7 @@ def _parse_machine(value: object, roms: dict[str, RomRef]) -> MachineSpec:
                 f"{label}.fdc: controller {controller!r} with connection_style {style!r} "
                 f"is not a supported pair {sorted(FDC_PAIRS)}"
             )
-        fdc = _FdcDef(
+        fdc = FdcDef(
             disk_rom_entry=disk,
             controller=controller,
             connection_style=style,
@@ -501,7 +501,7 @@ def _parse_overlay(
         )
     obj = check_object(value, label, _EXPANDED_KEYS)
     subslots_obj = check_object(obj["subslots"], f"{label}.subslots")
-    subslots: dict[int, _ExpandedSubslotDevice] = {}
+    subslots: dict[int, ExpandedSubslotDevice] = {}
     for key, device in subslots_obj.items():
         if key not in ("0", "1", "2", "3"):
             raise SchemaError(f"{label}.subslots has a key {key!r} that is not a sub-slot 0-3")

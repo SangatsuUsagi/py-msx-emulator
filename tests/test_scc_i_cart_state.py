@@ -18,7 +18,7 @@ from host.machine_config import build_machine_from_spec
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
 from msx.machine import Machine
-from msx.machine_spec import ExtensionOverlay, MachineSpec, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineSpec, RomEntry
 
 _RGB = RgbFrame(256, 192, bytes(256 * 192 * 3))
 
@@ -29,7 +29,7 @@ def _msx1_spec(main_rom_dir: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=main_rom_dir,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,

@@ -20,12 +20,12 @@ from msx.kanji import KanjiRom
 from msx.machine_loader import _make_mapper, _require_scc
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     MachineLoadError,
     MachineSpec,
     PpiControlRead,
-    _ExpandedSubslotDevice,
-    _RomEntry,
-    _Slot0RamEntry,
+    RomEntry,
+    Slot0RamEntry,
 )
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
@@ -368,7 +368,7 @@ def test_build_machine_msx1_slot0_ram_entry_reaches_memory(tmp_path: Path) -> No
     """Sony HB-10 shape: slot0_ram_entry threads through build_machine into
     Memory.slot0_ram/slot0_ram_page, coexisting with the main ROM."""
     spec = dataclasses.replace(
-        _make_msx1_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
+        _make_msx1_spec(tmp_path), slot0_ram_entry=Slot0RamEntry(size_kb=16, page=3)
     )
     machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
     assert machine.memory.slot0_ram is not None
@@ -999,7 +999,7 @@ def test_build_machine_logo_override_bypasses_disk(tmp_path: Path) -> None:
     spec = _make_msx1_spec(tmp_path)
     # spec.logo_rom_entry is None (msx1 fixture declares no page-2 ROM) — set
     # one by hand so the override path has a file to bypass.
-    spec.logo_rom_entry = _RomEntry(
+    spec.logo_rom_entry = RomEntry(
         file="nonexistent_logo.rom", size_kb=32, pages=[2], sha1=None
     )
     custom_logo = bytes([0xCD] + [0x00] * 32767)
@@ -1187,9 +1187,9 @@ def test_build_machine_wires_machine_declared_kanji_device(tmp_path: Path) -> No
     (rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
     spec = dataclasses.replace(
         _make_msx1_spec(tmp_path),
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
         ),
     )
     machine = build_machine_from_spec(spec, bios_override=_FAKE_ROM_32K)
@@ -1203,9 +1203,9 @@ def test_build_machine_missing_machine_declared_kanji_rom_raises_naming_file(
     rom_dir.mkdir()
     spec = dataclasses.replace(
         _make_msx1_spec(tmp_path),
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
         ),
     )
     with pytest.raises(MachineLoadError, match="kanjifont.rom"):
@@ -1225,9 +1225,9 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     # goes through _wire_expanded_overlay, which now checks generation first.
     spec = dataclasses.replace(
         _make_msx2_spec(tmp_path),
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=machine_rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
         ),
     )
     overlay_rom_dir = tmp_path / "overlay_kanji_rom_dir"
@@ -1235,9 +1235,9 @@ def test_build_machine_machine_declared_and_overlay_io_device_conflict(
     (overlay_rom_dir / "kanjifont.rom").write_bytes(bytes(_KANJI_FONT_ROM_SIZE))
     overlay = ExpandedExtensionOverlay(
         subslots={},
-        io_device=_ExpandedSubslotDevice(
+        io_device=ExpandedSubslotDevice(
             device="kanji_rom", rom_base_dir=overlay_rom_dir,
-            rom_entry=_RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
+            rom_entry=RomEntry(file="kanjifont.rom", size_kb=128, pages=[]),
         ),
     )
     with pytest.raises(MachineLoadError, match="cannot coexist"):
@@ -1275,7 +1275,7 @@ def test_parse_slot0_page2_ram_with_page2_rom_raises() -> None:
 
 def test_build_machine_msx2_slot0_ram_entry_reaches_memory(tmp_path: Path) -> None:
     spec = dataclasses.replace(
-        _make_msx2_spec(tmp_path), slot0_ram_entry=_Slot0RamEntry(size_kb=16, page=3)
+        _make_msx2_spec(tmp_path), slot0_ram_entry=Slot0RamEntry(size_kb=16, page=3)
     )
     machine = build_machine_from_spec(
         spec, bios_override=_FAKE_ROM_32K, extrom_override=_FAKE_ROM_32K
