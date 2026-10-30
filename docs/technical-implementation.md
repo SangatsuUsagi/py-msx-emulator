@@ -1165,10 +1165,11 @@ belongs to the debugger's diagnostics.
 | | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
 | | `write_memory(addr, data) -> int` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused. Always returns `STATUS_OK` |
 | Media | `dirty_media()` | The ids written since they were last persisted |
-| | `read_media(media_id) -> bytes \| None` | The current bytes of a medium. `None` for an id the machine does not have |
+| | `read_media(media_id) -> bytes` | The current bytes of a medium. `b""` for an id the machine does not have (a medium is never empty) |
 | | `mark_persisted(media_id) -> int` | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have |
-| | `mount_disk(drive, data, write_protected) -> int` | `None` ejects. Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
-| | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or `None` from `read_media` or `slot_info`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
+| | `mount_disk(drive, data, write_protected) -> int` | Returns `STATUS_OK` (0), `STATUS_NO_DRIVE` (2) for a drive the machine lacks, or `STATUS_BAD_IMAGE` (3) for an image whose size is not a positive multiple of 512. A failure changes nothing. The host writes a dirty outgoing image back before the call |
+| | `eject_disk(drive) -> int` | Empties the drive. Returns `STATUS_OK` (0), or `STATUS_NO_DRIVE` (2) for a drive the machine lacks |
+| | `last_error_text() -> bytes` | The UTF-8 message of the last failed call of a member that returns a status (or an empty value from `read_media` or `slot_info`), `b""` after a successful one. No core API member raises for an invalid argument. `host/state_files.load_state` and `host/media.swap_disk` raise it as `ValueError("<file>: <message>")` |
 | | `disk_mounted(drive)` | Whether the drive exists and holds an image |
 | Devices | `attach_mouse(port) -> int` | Connects an MSX mouse to joystick port 1 (`0`) or 2 (`1`). The core makes the mouse device. Another port returns `STATUS_BAD_ARGUMENT` (6) |
 | Inspection | `cpu_registers() -> CpuRegisters` | The register file |
@@ -1177,9 +1178,9 @@ belongs to the debugger's diagnostics.
 | | `vdp_info() -> VdpInfo` | It clears no status flag |
 | | `frame_number()`, `drive_count()`, `main_ram_range()` | `drive_count()` is 0 without a floppy interface |
 | | `slot_layout() -> SlotLayout` | The port 0xA8 value, the expanded primary slots as a bit mask, and the 4 secondary slot registers (0 for a slot that is not expanded). The debugger's `sl` and `st` use it |
-| | `slot_info(primary, secondary, page) -> SlotInfo \| None` | The content text, bank text and size in KB of one slot, for `sl` and `st`. `secondary` and `page` can be `None`. A value outside 0-3 returns `None` |
+| | `slot_info(primary, secondary, page) -> SlotInfo` | The content text, bank text and size in KB of one slot, for `sl` and `st`. `secondary` and `page` are -1 for none. A value outside 0-3 returns empty texts and a size of -1 |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
-| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. Each setter returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) and keeps its setting for more than `MAX_BREAKPOINTS` or `MAX_WATCHPOINTS` (4) entries, an address or SP value outside 0x0000-0xFFFF, an invalid kind, a negative frame, or an SP range whose low end is above its high end. `set_break_halt_di()` always returns `STATUS_OK` |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. Each setter returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) and keeps its setting for more than `MAX_BREAKPOINTS` or `MAX_WATCHPOINTS` (4) entries, an address or SP value outside 0x0000-0xFFFF, an invalid kind, a frame below -1, or an SP range whose low end is above its high end. -1 clears the run-to address and the frame breakpoint, and `set_sp_range(-1, -1)` clears the SP range. `set_break_halt_di()` always returns `STATUS_OK` |
 | | `set_sprites_hidden(hidden) -> int`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it. The setter always returns `STATUS_OK` |
 | | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()` | The trace kinds that are on, as the bit flags `TRACE_VDP`, `TRACE_MAPPER` and `TRACE_DEBUG` (the `--debug` log), and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them |
 | | `drain_trace() -> tuple[TraceEvent, ...]` | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, and while `TRACE_DEBUG` is on each I/O port access, each stored write to VDP R#0 or R#1, each undefined opcode and each hang (a PC loop of 1000 repeats, or a HALT with interrupts off at the end of a frame) after the last 64 instructions, with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
@@ -1376,13 +1377,11 @@ and build the `MachineConfig` from them directly.
 These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 
-- The control operations return `None`, not a status record. `load_state`
-  and `mount_disk` return an integer status instead. `save_state` and
-  `load_state` are `Machine` methods over `msx/state.py`.
+- `save_state` and `load_state` are `Machine` methods over `msx/state.py`.
 - The inspection records use the Python register names (`AF`, `AF_`) and
   hold the palette as a tuple.
-- `eject_disk` is `mount_disk(drive, None)`. `read_media` returns the bytes
-  alone. The write-protect flag stays with the mounted image.
+- `read_media` returns the bytes alone. The write-protect flag stays with
+  the mounted image.
 - The frame rate is `VideoStandard` data, not a method.
 - The frontend attaches the mouse at run time (`attach_mouse(port)`). The contract
   has it as a config field. Which form to keep is an open question.
@@ -1391,11 +1390,6 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 
 These questions are open, and a port must decide them:
 
-- **OPLL tables.** `msx/opll.py` builds its log-sin, exponent and key-scale
-  tables at import with floating-point math. A port that calculates them
-  again can differ in the last bit, and its FM-PAC audio then does not match
-  byte for byte. Ship the tables as integer data that the Python build
-  generated.
 - **Mouse attachment**, as above.
 - **Debug control.** The break settings, `request_break()` and the stop
   result are in the contract (DebugControl). A port that supports the
