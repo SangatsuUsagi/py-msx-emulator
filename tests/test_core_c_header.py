@@ -68,6 +68,26 @@ def test_every_constant_matches() -> None:
     assert macros == _python_constants()
 
 
+def test_the_mouse_motion_and_the_frame_breakpoint_are_wide() -> None:
+    # machine-c-abi "The mouse motion and the frame breakpoint are wide".
+    code = _code()
+    assert re.search(r"\bint32_t\s+mouse_dx;", code)
+    assert re.search(r"\bint32_t\s+mouse_dy;", code)
+    assert re.search(
+        r"msx_core_set_frame_breakpoint\(\s*msx_core\s*\*core,\s*int64_t\s+frame\s*\)", code
+    )
+
+
+def test_the_create_call_takes_a_caller_buffer() -> None:
+    # machine-c-abi "The create call takes a caller buffer".
+    code = " ".join(_code().split())
+    assert (
+        "int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core, "
+        "char *error_text, size_t error_cap, size_t *error_len);"
+    ) in code
+    assert "has_rtc_initial_time" not in code
+
+
 def test_the_header_states_the_ownership_rule() -> None:
     # machine-c-abi "The header states the ownership rule".
     # One line of words: each comment line's leading "*" dropped.

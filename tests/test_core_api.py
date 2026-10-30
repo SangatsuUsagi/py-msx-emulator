@@ -489,6 +489,15 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     assert m._stepout_sp is None and m._sp_range is None
 
 
+def test_a_frame_number_above_64_bits_is_rejected() -> None:
+    # machine-core "A frame number above 64 bits is rejected".
+    m = _msx1()
+    m.set_frame_breakpoint(10)
+    assert m.set_frame_breakpoint(2**63) == STATUS_BAD_ARGUMENT
+    assert m._frame_breakpoint == 10
+    assert m.set_frame_breakpoint(2**63 - 1) == STATUS_OK
+
+
 def test_a_frame_number_below_minus_1_is_rejected() -> None:
     m = _msx1()
     m.set_frame_breakpoint(10)

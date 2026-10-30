@@ -19,6 +19,7 @@ from host.watch import watch_kind, watch_text
 from msx.boundary import (
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
+    STATUS_OK,
     STOP_WATCHPOINT,
     TRACE_MAPPER,
     TRACE_VDP,
@@ -411,7 +412,9 @@ class Debugger:
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
             return False
-        self._machine.set_frame_breakpoint(target)
+        if self._machine.set_frame_breakpoint(target) != STATUS_OK:
+            print(f"gf: {self._machine.last_error_text().decode('utf-8')}")
+            return False
         print(f"  Running to frame {target} ...")
         return True
 

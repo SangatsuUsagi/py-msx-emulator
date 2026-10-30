@@ -475,9 +475,9 @@ class Machine:
     def set_frame_breakpoint(self, frame: int) -> int:
         """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared
         when hit. -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT
-        for a frame below -1."""
-        if frame < -1:
-            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is below -1")
+        for a frame below -1 or above 2^63 - 1 (the C int64_t)."""
+        if frame < -1 or frame > 0x7FFF_FFFF_FFFF_FFFF:
+            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is outside -1 to 2^63 - 1")
         self._frame_breakpoint = None if frame == -1 else frame
         self._error_text = b""
         return STATUS_OK

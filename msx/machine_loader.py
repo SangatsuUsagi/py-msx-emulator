@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 from msx.boundary import (
-    RTC_DEFAULT_START,
     STATUS_BAD_CONFIG,
     STATUS_OK,
     TRACE_DEBUG,
@@ -223,7 +222,7 @@ class _ResolvedConfig:
     extension_overlay2: AnyExtensionOverlay | None
     media: dict[MediaId, bytes]
     disks: dict[int, DiskMount]       # by drive index
-    rtc_initial_time: RtcTime | None
+    rtc_initial_time: RtcTime
     config_sha256: str
 
 
@@ -274,11 +273,9 @@ def _disks_by_drive(config: MachineConfig, drive_count: int) -> dict[int, DiskMo
     return disks
 
 
-def _check_rtc_initial_time(start: RtcTime | None) -> None:
+def _check_rtc_initial_time(start: RtcTime) -> None:
     """Reject an RTC start time that a state load would reject, so a built
     machine can always load its own saved state."""
-    if start is None:
-        return
     fields = [start.year, start.month, start.day, start.hour, start.minute, start.second]
     try:
         check_start(fields, "MachineConfig.rtc_initial_time")
@@ -1181,11 +1178,7 @@ def _build_msx2(
     rtc: RTC | None = None
     if spec.has_rtc:
         rtc_sram = config.media.get(MediaId.RTC_CMOS)
-        start = config.rtc_initial_time
-        rtc = RTC(
-            sram=rtc_sram,
-            start=start if start is not None else RTC_DEFAULT_START,
-        )
+        rtc = RTC(sram=rtc_sram, start=config.rtc_initial_time)
     ppi = PPI(
         memory=memory, _input=input_state, control_read=spec.ppi_control_read
     )

@@ -394,12 +394,13 @@ class MachineConfig:
     run inputs, outside the document: `media` holds initial battery-backed
     images (the SRAM ids and RTC_CMOS of MediaId; an absent id starts
     blank), `disks` the images to mount by drive index, and
-    `rtc_initial_time` the RTC's start time. All three are tuples of flat
-    records, at most one record per id or drive.
+    `rtc_initial_time` the RTC's start time (RTC_DEFAULT_START,
+    2000-01-01 00:00:00, unless the host gives one). The three image fields
+    are tuples of flat records, at most one record per id or drive.
     """
 
     document: bytes
     roms: tuple[RomImage, ...] = ()
     media: tuple[MediaImage, ...] = ()
     disks: tuple[DiskMount, ...] = ()
-    rtc_initial_time: RtcTime | None = None
+    rtc_initial_time: RtcTime = RTC_DEFAULT_START
