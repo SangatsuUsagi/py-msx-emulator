@@ -327,15 +327,22 @@ address range, primary slot, secondary slot, content, and bank/segment:
   Page  Addr        Prim  Sec  Content                          Bank
   P0    0000-3FFF   0     -    ROM cbios_main_msx2.rom          -
   P1    4000-7FFF   1     -    Cartridge (mapped)               w0=b2@04000  w1=b0@00000
-  P2    8000-BFFF   1     -    Cartridge (mapped)               w0=b3@06000  w1=b1@02000
+  P2    8000-BFFF   1     -    Cartridge (mapped)               w2=b3@06000  w3=b1@02000
   P3    C000-FFFF   3     2    RAM (mapper)                     seg=2
 ```
 
 Values in the Bank column:
 
 - RAM mapper pages: `seg=N`
-- Cartridge ROM mapper pages: the selected bank number and the resolved ROM
-  byte-offset range
+- Cartridge mapper pages: what each window of the page maps, worked out as
+  the mapper's reads work it out. A 16 KB window shows `bank N @XXXXX-YYYYY`
+  (ASCII16, R-Type, FM-PAC), and an 8 KB window shows `wW=bN@XXXXX` (ASCII8,
+  Konami, SCC, Game Master 2, Halnote). N is the page the window maps, which
+  can differ from the value the guest wrote when that value is beyond the ROM.
+- A window that maps SRAM: `SRAM@XXXX`, the offset in the SRAM, in place of
+  the bank (`bank SRAM@0000`, `w3=SRAM@1000`). Halnote's SRAM at page 0 shows
+  `SRAM@0000-3FFF`, and its sub-mapper adds `sub=…` to page 1.
+- A window past the end of the ROM, which reads 0xFF: `open`.
 - Flat ROM, BIOS, plain RAM: `-`
 
 **`st`**: slot tree. It goes through primary slots 0-3 and shows the full
