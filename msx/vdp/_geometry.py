@@ -15,10 +15,10 @@ cycles-per-frame is derived.
 """
 from __future__ import annotations
 
-from msx.boundary import VideoStandard
+from msx.boundary import OUTPUT_HEIGHT, VideoStandard
 
 ACTIVE_H = 192  # TMS9918A active height (also V9938 with R#9 LN=0)
-OUTPUT_H = 212  # constant emitted frame height (V9938 LN=1 native height)
+OUTPUT_H = OUTPUT_HEIGHT  # constant emitted frame height (V9938 LN=1 native height)
 
 CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
 NTSC_LINES_PER_FRAME = 262

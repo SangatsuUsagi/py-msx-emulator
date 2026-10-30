@@ -81,6 +81,8 @@ extern "C" {
 #define MSX_TRACE_EVENT_HANG_HALT_DI 11
 #define MSX_TRACE_HISTORY_SIZE 64
 #define MSX_TRACE_CAPACITY 65536
+#define MSX_AUDIO_SAMPLE_RATE 44100
+#define MSX_OUTPUT_HEIGHT 212
 
 /* -- Media ids -------------------------------------------------------------- */
 #define MSX_MEDIA_SLOT1_SRAM 0

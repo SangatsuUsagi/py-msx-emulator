@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from host.media import DiskFiles
     from host.rpc_server import DebugServer
     from msx.boundary import MediaId, RtcTime
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
 _PROJECT_ROOT = Path(__file__).parent
@@ -347,7 +347,7 @@ def _print_startup_summary(
 
 
 def _run_headless_frames(
-    machine: "Machine", count_frame: int, resume: str | None, debugger: "Debugger"
+    machine: "CoreApi", count_frame: int, resume: str | None, debugger: "Debugger"
 ) -> None:
     """Run exactly `count_frame` frames headlessly (no SDL window).
 
@@ -384,7 +384,7 @@ def _host_rtc_time() -> "RtcTime":
 
 
 def _run_benchmark(
-    machine: "Machine", frames: int, resume: str | None, debugger: "Debugger"
+    machine: "CoreApi", frames: int, resume: str | None, debugger: "Debugger"
 ) -> None:
     """Run `frames` frames unthrottled and report average FPS (no SDL window).
     A break opens the debugger, and the time spent there counts."""
@@ -417,7 +417,7 @@ def _run_benchmark(
 
 
 def _cleanup(
-    machine: "Machine | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
+    machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
     sram_files: "dict[MediaId, Path]", disk_files: "DiskFiles",
 ) -> None:
@@ -503,6 +503,16 @@ def _resolve_effective_options(
         extension2=_resolve_extension(args.extension2, app_cfg.extension2),
         frame_skip=_first_set(args.frame_skip, frame_skip_cfg, default="auto"),
     )
+
+
+def _check(machine: "CoreApi", status: int) -> None:
+    """Stop with the core's message when a setup call did not return
+    STATUS_OK (the CLI checks its values first, so this guards a core that
+    disagrees)."""
+    from msx.boundary import STATUS_OK
+
+    if status != STATUS_OK:
+        _fail(machine.last_error_text().decode("utf-8"))
 
 
 def _fail(msg: str) -> NoReturn:
@@ -672,10 +682,10 @@ def main() -> None:
         machine = result.machine
         if args.debug:
             from msx.boundary import TRACE_DEBUG
-            machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG)
+            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_DEBUG))
         if args.vdp_trace:
             from msx.boundary import TRACE_VDP
-            machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP)
+            _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_VDP))
 
         # The interactive debugger for all machines, so Ctrl-C drops into the
         # REPL on MSX1 too (the slot/mapper tools are most useful there). The
@@ -684,10 +694,10 @@ def main() -> None:
         debugger = Debugger(machine, disk_files, trace_output)
 
         if breakpoint_addrs:
-            machine.set_breakpoints(breakpoint_addrs)
+            _check(machine, machine.set_breakpoints(breakpoint_addrs))
             print(f"break   : {', '.join(f'{a:04X}h' for a in breakpoint_addrs)}")
         if watchpoint_entries:
-            machine.set_watchpoints(watchpoint_entries)
+            _check(machine, machine.set_watchpoints(watchpoint_entries))
             print(f"watch   : {_watch_summary(watchpoint_entries)}")
 
         if args.mapper_trace:
@@ -698,7 +708,7 @@ def main() -> None:
             else:
                 trace_output.set_map_output(sys.stdout, "stdout")
             if machine.trace_sources() & TRACE_MAPPER:
-                machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER)
+                _check(machine, machine.set_trace_kinds(machine.trace_kinds() | TRACE_MAPPER))
             else:
                 print("mapper-trace: no bank-switching ROM mapper present", file=sys.stderr)
 
@@ -708,7 +718,7 @@ def main() -> None:
             # run attaches here, before its resume: a state saved with a mouse
             # loads only on a machine with one (machine-core "The host
             # attaches the mouse at run time").
-            machine.attach_mouse(opts.mouse_port)
+            _check(machine, machine.attach_mouse(opts.mouse_port))
         if args.count_frame is not None:
             _run_headless_frames(machine, args.count_frame, args.resume, debugger)
         elif args.benchmark is not None:

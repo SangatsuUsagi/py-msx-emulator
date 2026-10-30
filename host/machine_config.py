@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, TypeGuard, cast
 
 if TYPE_CHECKING:
-    from msx.machine import Machine
+    from msx.core_api import CoreApi
 
 import yaml
 
@@ -81,7 +81,7 @@ from msx.machine_config import (
     SUBSLOT_DEVICES_REQUIRING_SIZE as _EXPANDED_SUBSLOT_DEVICES_REQUIRING_SIZE,
 )
 from msx.machine_config import encode_machine_config
-from msx.machine_loader import _SRAM_SIZES, create_machine
+from msx.machine_loader import create_machine
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
@@ -96,6 +96,17 @@ from msx.machine_spec import (
 from msx.mapper import HALNOTE_SRAM_SIZE
 from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
+
+# The SRAM size of each cartridge mapper with battery-backed SRAM: the host
+# reads and writes the save file at this size.
+_SRAM_SIZES: dict[str, int] = {
+    "ASCII8SRAM2": 2048,
+    "ASCII8SRAM8": 8192,
+    "ASCII16SRAM2": 2048,
+    "ASCII16SRAM8": 8192,
+    "KoeiSRAM32": 32768,
+    "GameMaster2": 8192,
+}
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register
@@ -1385,10 +1396,11 @@ def build_machine_from_spec(
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
     rtc_initial_time: RtcTime = RTC_DEFAULT_START,
-) -> Machine:
+) -> CoreApi:
     """load_machine_config() then create_machine(), raising MachineLoadError
     with the build's message, for callers that need no
-    access to the MachineConfig (see load_machine_config for the arguments)."""
+    access to the MachineConfig (see load_machine_config for the arguments).
+    The media file tables are dropped: no SRAM or disk is written back."""
     config = load_machine_config(
         spec, cartridge1, mapper1, cartridge2, mapper2,
         bios_override=bios_override, logo_override=logo_override,

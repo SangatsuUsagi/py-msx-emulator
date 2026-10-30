@@ -229,6 +229,12 @@ TRACE_HISTORY_SIZE = 64
 # Events the trace buffer holds between two drain_trace() calls.
 TRACE_CAPACITY = 65536
 
+# The rate of FrameOutput.audio, in samples per second.
+AUDIO_SAMPLE_RATE = 44_100
+
+# The height of every rendered frame, in rows (FrameOutput.video_height).
+OUTPUT_HEIGHT = 212
+
 
 @dataclass(frozen=True)
 class TraceEvent:

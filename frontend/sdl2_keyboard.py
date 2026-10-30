@@ -148,7 +148,7 @@ _K_ZERO_SHIFT = -1
 # (openMSX unicodemap.int / unicodemap.jp_jis; map.grauw.nl keymatrix.)
 #
 # PORT-LIBRARY-NOTE: _COMMON_MATRIX/_INT_SYMBOLS/_JP_SYMBOLS/KEY_MATRIX_INT/
-#   KEY_MATRIX_JP/JOY_MAP/KEY_NAME_TO_SDLKEY (this file; KEY_NAME_TO_CELL in msx/input.py) are
+#   KEY_MATRIX_JP/JOY_MAP/KEY_NAME_TO_SDLKEY (this file; KEY_NAME_TO_CELL in host/key_names.py) are
 #   sizable dict literals used as static, immutable lookup tables, built once
 #   at import via MappingProxyType.
 # Rust crate candidates: phf (compile-time perfect-hash maps) for the same

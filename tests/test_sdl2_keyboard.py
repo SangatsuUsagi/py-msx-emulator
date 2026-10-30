@@ -44,8 +44,8 @@ from frontend.sdl2_keyboard import (
     resolve_keyboard_joy_map,
 )
 from host.input_state import InputState
+from host.key_names import KEY_NAME_TO_CELL
 from msx.boundary import KeyboardLayout
-from msx.input import KEY_NAME_TO_CELL
 
 
 class _Kb:
