@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from msx.machine import Machine
 
 from msx.boundary import (
+    DRIVE_MEDIA_IDS,
     STATUS_BAD_CONFIG,
     STATUS_OK,
     TRACE_DEBUG,
@@ -80,9 +81,6 @@ from msx.vdp.vdp import VDP, VdpDevice
 # ---------------------------------------------------------------------------
 # Mapper helpers
 # ---------------------------------------------------------------------------
-
-# The ids that name floppy drives, never a battery-backed medium.
-_DRIVE_MEDIA_IDS = (MediaId.DRIVE_A, MediaId.DRIVE_B, MediaId.DRIVE_C, MediaId.DRIVE_D)
 
 def _require_scc(scc: SCC | None) -> SCC:
     if scc is None:
@@ -235,7 +233,7 @@ def _media_by_id(config: MachineConfig) -> dict[MediaId, bytes]:
     drive id (disks travel in MachineConfig.disks)."""
     media: dict[MediaId, bytes] = {}
     for image in config.media:
-        if image.media_id in _DRIVE_MEDIA_IDS:
+        if image.media_id in DRIVE_MEDIA_IDS:
             raise MachineLoadError(
                 f"MachineConfig has a medium image for {image.media_id.name}, a drive id"
             )
@@ -281,6 +279,7 @@ def _resolve(config: MachineConfig) -> _ResolvedConfig:
     for rom in config.roms:
         images[rom.sha1] = rom.data
     spec = parsed.spec
+    # Only _build_msx2 wires an FDC, so an MSX1 has no drive to mount into.
     drive_count = 0
     if spec.generation == "msx2" and spec.fdc is not None:
         drive_count = spec.fdc.drives
@@ -823,16 +822,17 @@ def _wire_post_construction_attrs(
 
 
 def _wire_trace(machine: "Machine") -> None:
-    """Wire the machine's trace buffer (msx/trace.py) into the VDP and the
-    slot 1/2 bank-switching ROM mappers, with the getters it stamps each
-    event with, and record which trace kinds this machine can produce."""
+    """Wire the machine's trace buffer (msx/trace.py) into the VDP, the I/O
+    bus and the slot 1/2 bank-switching ROM mappers, with the getters it
+    stamps each event with, and record which trace kinds this machine can
+    produce."""
     trace = machine._trace
     trace._get_pc = lambda: machine.cpu.instruction_pc
     trace._get_cycle = lambda: machine.cycle_count
     trace._get_frame = lambda: machine.vdp.frame_count
     machine.vdp._trace = trace
-    trace.sources = TRACE_VDP | TRACE_DEBUG
     machine.io._trace = trace
+    trace.sources = TRACE_VDP | TRACE_DEBUG
     mem = machine.memory
     for mp in (mem._mapper, mem._mapper2):
         if isinstance(mp, BankTracingMapper):

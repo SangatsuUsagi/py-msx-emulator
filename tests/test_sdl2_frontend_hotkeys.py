@@ -136,6 +136,7 @@ class _FakeMachine:
     last_error_text = Machine.last_error_text
     _fail = Machine._fail
     _mounted_image = Machine._mounted_image
+    _has_drive = Machine._has_drive
     dirty_media = Machine.dirty_media
     read_media = Machine.read_media
     mark_persisted = Machine.mark_persisted

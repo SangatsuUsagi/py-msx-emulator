@@ -45,8 +45,8 @@ class VdpDevice(Protocol):
 
     Includes the debug/diagnostic fields (`_trace`/`debug_disable_sprites`)
     too -- both classes declare these identically (the trace buffer is wired
-    at machine-construction time by msx/machine_loader.py, and Machine's
-    core API members set both), so `Machine.vdp`
+    at machine-construction time by msx/machine_loader.py, and
+    Machine.set_sprites_hidden sets debug_disable_sprites), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 

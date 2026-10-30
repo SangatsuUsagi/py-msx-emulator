@@ -60,7 +60,8 @@ def _power_on_regs() -> list[int]:
 def _apply_log(src: int, dst: int, log_op: int, mask: int = 0xF) -> int:
     """Apply V9938 logical operation (LOG[2:0]) at pixel level.
 
-    LOG codes (see host/trace.py _LOP_NAMES): 0=IMP, 1=AND, 2=OR, 3=XOR, 4=NOT.
+    LOG codes (the host's names: host/trace.py VDP_LOGICAL_OP_NAMES): 0=IMP,
+    1=AND, 2=OR, 3=XOR, 4=NOT.
     Codes 5-7 are undefined and perform no write at all; callers filter them
     out before reaching here (see _vram_pixel_write).
     """
@@ -410,12 +411,13 @@ class V9938:
     regs: list[int] = field(default_factory=_power_on_regs)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
-    # Observation seam for scanline timing (tests, tracing): called with the
-    # raster line at the end of begin_scanline(). A field, not a monkey-patched
-    # method, so the same observation is expressible in a Rust/C++ port.
+    # Observation seam for scanline timing, set only by tests: called with
+    # the raster line at the end of begin_scanline(). A field, not a
+    # monkey-patched method, so the same observation is expressible in a
+    # Rust/C++ port.
     on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: on_scanline is stored as a Python closure assigned at
-    #   wiring time.
+    # PORT-NOTE: on_scanline is a Python closure a test assigns; the build
+    #   never wires it.
     # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
     #   resolved once at construction, not per-call function pointers.
     # C++ equivalent: std::function members or a virtual interface pointer,

@@ -61,7 +61,7 @@ class IOBus:
     #   costs nothing on the always-hot IN/OUT dispatch path in
     #   normal operation -- confirmed by investigation, not deferred pending
     #   benchmarking. Full reasoning (including why msx/psg.py's
-    #   PSG._get_cycle -- read unconditionally, not logger-gated -- reached a
+    #   PSG._get_cycle -- read unconditionally, not trace-gated -- reached a
     #   different conclusion) in openspec/changes/archive/
     #   *-psg-cycle-source-refactor/design.md, Decision 1.
     _get_pc: Callable[[], int] | None = field(default=None, repr=False)

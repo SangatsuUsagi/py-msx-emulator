@@ -174,7 +174,7 @@ def _rom_window(page: int, page_size: int, rom: bytes) -> int | str:
     return page
 
 
-def _sram_label(offset: int) -> str:
+def sram_label(offset: int) -> str:
     """A window's entry for _format_bank_info when it maps SRAM: the
     window's start offset in the SRAM."""
     return f"SRAM@{offset:04X}"
@@ -195,7 +195,7 @@ def _format_bank_info(windows: list[int | str], page: int) -> str | None:
 
     `windows` holds one entry per window, resolved as the mapper's reads
     resolve it: an int is the ROM (or SCC-I RAM) page the window maps, a
-    str is printed in its place (_sram_label, "open"). Two entries are two
+    str is printed in its place (sram_label, "open"). Two entries are two
     16 KB windows (page 1 -> window 0, page 2 -> window 1); four are 8 KB
     windows (page 1 -> windows 0 and 1, page 2 -> windows 2 and 3). Returns
     None for a page outside the windows.
@@ -746,7 +746,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
         windows = super()._debug_windows()
         for window in range(4):
             if self._window_is_sram[window]:
-                windows[window] = _sram_label(self._sram_offset(window, 0, 0))
+                windows[window] = sram_label(self._sram_offset(window, 0, 0))
         return windows
 
     def _sync_window(self, window: int) -> None:
@@ -1059,7 +1059,7 @@ class GameMaster2Mapper(BankTracingMapper):
         windows: list[int | str] = []
         for window in range(4):
             if self._window_is_sram[window]:
-                windows.append(_sram_label(self._window_sram_half[window]))
+                windows.append(sram_label(self._window_sram_half[window]))
             else:
                 page_no = (self._banks[window] & self._ROM_PAGE_MASK) % self._num_pages
                 windows.append(_rom_window(page_no, _PAGE_8K, self.rom))
@@ -1146,7 +1146,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
         windows = super()._debug_windows()
         for window in range(2):
             if self._window_is_sram[window]:
-                windows[window] = _sram_label(0)
+                windows[window] = sram_label(0)
         return windows
 
     def _sync_window(self, window: int) -> None:
@@ -2080,7 +2080,8 @@ class HalnoteMapper(BankTracingMapper):
 
     def debug_bank_info(self, page: int) -> str | None:
         if page == 0:
-            return "SRAM@0000-3FFF" if self._sram_enabled else None
+            # Page 0 is one 16 KB SRAM window, so the label gives its range.
+            return sram_label(0) + "-3FFF" if self._sram_enabled else None
         windows: list[int | str] = []
         for bank in self._banks:
             windows.append(_rom_window(bank & _HALNOTE_PAGE_MASK, _PAGE_8K, self.rom))

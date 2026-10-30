@@ -102,8 +102,9 @@ class Machine:
     #   arbitrary-precision int never wraps, so this width requirement is
     #   invisible in Python and must be sized explicitly at port time.
     cycle_count: int = 0
-    # The trace buffer the VDP and the slot 1/2 mappers record into
-    # (set_trace_kinds, drain_trace); wired by msx/machine_loader.py.
+    # The trace buffer the CPU, the I/O bus, the VDP, the slot 1/2 mappers
+    # and the frame loop record into (set_trace_kinds, drain_trace); wired by
+    # msx/machine_loader.py.
     _trace: TraceLog = field(default_factory=TraceLog, repr=False)
     # SRAM media by id, filled once by build_machine (see sram_media()).
     _sram_table: dict[MediaId, SramImage] = field(default_factory=dict, repr=False)
@@ -138,8 +139,8 @@ class Machine:
     # Set by request_break() (Ctrl-C); run_frame() honors it before the next
     # frame segment.
     _break_request: bool = field(default=False, init=False, repr=False)
-    # The message of the last failed load_state or mount_disk (UTF-8), b""
-    # after a successful one (last_error_text()).
+    # The UTF-8 message of the last call that failed with a status other than
+    # STATUS_OK, b"" after a later call that clears it (last_error_text()).
     _error_text: bytes = field(default=b"", init=False, repr=False)
     # Position of a frame that stopped at a break (machine-core "A break stops
     # step_frame and the next call continues the frame"): the next scanline
@@ -312,7 +313,7 @@ class Machine:
             return self._fail(
                 STATUS_BAD_ARGUMENT, f"write_protected {write_protected} is not 0 or 1"
             )
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if self.fdc is None or not self._has_drive(drive):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         size = len(data)
         if size == 0 or size % SECTOR_SIZE != 0:
@@ -328,15 +329,17 @@ class Machine:
         """Empty `drive` (0 = A) and return STATUS_OK. The host writes a
         dirty outgoing image back first. Returns STATUS_NO_DRIVE, changing
         nothing, for a machine without that drive."""
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if self.fdc is None or not self._has_drive(drive):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         self.fdc.swap(drive, None)
         self._error_text = b""
         return STATUS_OK
 
     def last_error_text(self) -> bytes:
-        """The UTF-8 message of the last failed load_state or mount_disk
-        call, or b"" when the last such call succeeded."""
+        """The UTF-8 message of the last call that failed with a status other
+        than STATUS_OK (or an empty result from read_media, read_memory,
+        read_vram or slot_info). A member that checks its arguments clears
+        it on success; the members that cannot fail leave it as it is."""
         return self._error_text
 
     def _fail(self, status: int, message: str) -> int:
@@ -348,9 +351,13 @@ class Machine:
         return self._mounted_image(drive) is not None
 
     def _mounted_image(self, drive: int) -> DskDiskImage | None:
-        if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
+        if self.fdc is None or not self._has_drive(drive):
             return None
         return self.fdc.drives[drive].image
+
+    def _has_drive(self, drive: int) -> bool:
+        """Whether the machine has floppy drive `drive` (0 = A)."""
+        return self.fdc is not None and 0 <= drive < len(self.fdc.drives)
 
     def attach_mouse(self, port: int) -> int:
         """Attach a new MSX mouse to joystick port `port` (0 = Joy1, 1 =
@@ -855,7 +862,7 @@ class Machine:
                 self.run_frame()
         finally:
             self._step_one = False
-        self.audio.take()
+        self.take_audio()  # a step returns no audio
         self._resume_after_stop = True
         return self._step_cycles
 
@@ -984,7 +991,8 @@ class Machine:
         self.apply_input(frame_input)
         mouse = self.psg.mouse
         if mouse is not None and new_frame:
-            # The motion is an int16 in the C struct: clamp it to that range.
+            # The core clamps the motion to 16 bits (machine-core "The core
+            # masks or clamps an input value outside its range").
             dx = max(-0x8000, min(0x7FFF, frame_input.mouse_dx))
             dy = max(-0x8000, min(0x7FFF, frame_input.mouse_dy))
             mouse.add_motion(dx, dy)
@@ -1030,20 +1038,20 @@ class Machine:
         True when the frame stops there.
 
         Checked at segment boundaries, not in the scanline loops: Ctrl-C needs
-        no finer stop (openspec/changes/add-core-debug-control design
-        Decision 3)."""
+        no finer stop (openspec/changes/archive/2026-10-29-add-core-debug-control
+        design Decision 3)."""
         if not self._break_request:
             return False
         self._break_request = False
         self._stop_line = line
         self._enter_break(STOP_REQUESTED)
-        return self._stop_pending
+        return True
 
     def _run_lines(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
         """Run scanlines [first_line, end_line) with the loop arm this mode
-        needs (break conditions / hot / logger); return the running T-state
+        needs (break conditions / hot / TRACE_DEBUG); return the running T-state
         total, measured from the start of the frame.
 
         PORT-NOTE: the arms take `self` and `vdp9938` -- which aliases
@@ -1066,7 +1074,7 @@ class Machine:
             return self._run_lines_debug(vdp9938, first_line, end_line, total)
         if not self._trace.kinds & TRACE_DEBUG:
             return self._run_lines_fast(vdp9938, first_line, end_line, total)
-        return self._run_lines_logged(vdp9938, first_line, end_line, total)
+        return self._run_lines_traced(vdp9938, first_line, end_line, total)
 
     def _run_lines_debug(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
@@ -1137,8 +1145,9 @@ class Machine:
     def _run_lines_fast(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
-        """Hot-path scanline loop (no debugger, no logger); see `_run_lines`."""
-        # Hot path (no debugger, no logger). Two frame-invariants are lifted
+        """Hot-path scanline loop (no break conditions, TRACE_DEBUG off); see
+        `_run_lines`."""
+        # Hot path (no break conditions, TRACE_DEBUG off). Two frame-invariants are lifted
         # out of the inner loop: (1) the is_v9938 branch — split into a
         # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
         # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
@@ -1250,10 +1259,11 @@ class Machine:
                 self.cycle_count += line_cycles
         return total
 
-    def _run_lines_logged(
+    def _run_lines_traced(
         self, vdp9938: V9938 | None, first_line: int, end_line: int, total: int
     ) -> int:
-        """Scanline loop with diagnostic logging: detects PC-loop / HALT+DI hangs."""
+        """Scanline loop while TRACE_DEBUG is on: records PC-loop and HALT+DI
+        hang events."""
         trace = self._trace
         cpu = self.cpu
         cpu_step = cpu.step
