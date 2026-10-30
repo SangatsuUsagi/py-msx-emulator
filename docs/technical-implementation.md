@@ -1374,6 +1374,14 @@ and build the `MachineConfig` from them directly.
 
 ### Porting the core
 
+`include/msx_core.h` is the C form of the core API that a native core
+implements: one `msx_core_<member>` function for each `CoreApi` member, a
+struct for each boundary record, and every constant with its
+`msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and
+the constants equal to the Python code. Bytes that the core returns stay
+valid until the next call on the same core, input is read only during the
+call, and one core is used from one thread at a time.
+
 These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 

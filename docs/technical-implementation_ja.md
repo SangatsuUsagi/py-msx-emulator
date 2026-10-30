@@ -901,6 +901,8 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 ### コアの移植
 
+ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。コアが返すバイト列は、同じコアに対する次の呼び出しまで有効で、渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。
+
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
 - `save_state` と `load_state` は、`msx/state.py` を呼ぶ `Machine` のメソッド。
