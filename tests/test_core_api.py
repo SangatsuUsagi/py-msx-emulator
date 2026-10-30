@@ -549,3 +549,60 @@ def test_a_state_with_a_mouse_is_rejected_on_a_machine_without_one() -> None:
     m = _msx1()
     assert m.load_state(saved.save_state()) == STATUS_STATE_REJECTED
     assert b"mouse wiring" in m.last_error_text()
+
+
+# ---------------------------------------------------------------------------
+# machine-core "Memory and VRAM reads take a length in range"
+# ---------------------------------------------------------------------------
+
+def test_a_negative_read_length_is_rejected() -> None:
+    m = _msx1()
+    assert m.read_memory(0x0000, -1) == b""
+    assert b"-1" in m.last_error_text()
+    assert m.read_vram(0x0000, -1) == b""
+    assert b"-1" in m.last_error_text()
+
+
+def test_a_read_length_above_the_range_is_rejected() -> None:
+    for m in (_msx1(), _msx2()):
+        assert m.read_memory(0x0000, 0x10001) == b""
+        assert m.read_vram(0x0000, m.vram_size() + 1) == b""
+
+
+def test_the_full_read_range_is_read() -> None:
+    for m in (_msx1(), _msx2()):
+        m.read_vram(0x0000, -1)
+        assert len(m.read_memory(0x0000, 0x10000)) == 0x10000
+        assert m.last_error_text() == b""
+        m.read_memory(0x0000, -1)
+        assert len(m.read_vram(0x0000, m.vram_size())) == m.vram_size()
+        assert m.last_error_text() == b""
+
+
+def test_a_negative_vram_address_wraps_to_the_end() -> None:
+    for m in (_msx1(), _msx2()):
+        size = m.vram_size()
+        m.vdp.vram[size - 1] = 0x5A
+        m.vdp.vram[0] = 0xA5
+        assert m.read_vram(-1, 2) == b"\x5a\xa5"
+
+
+# ---------------------------------------------------------------------------
+# machine-core "The boolean settings take 0 or 1"
+# ---------------------------------------------------------------------------
+
+def test_a_halt_di_value_other_than_0_and_1_is_rejected() -> None:
+    m = _msx1()
+    assert m.set_break_halt_di(1) == STATUS_OK
+    assert m.set_break_halt_di(2) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() == b"set_break_halt_di value 2 is not 0 or 1"
+    assert m.break_halt_di() == 1
+    assert m.set_break_halt_di(0) == STATUS_OK
+    assert m.last_error_text() == b""
+
+
+def test_the_sprite_flag_rejects_a_value_other_than_0_and_1() -> None:
+    m = _msx1()
+    assert m.set_sprites_hidden(2) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() == b"set_sprites_hidden value 2 is not 0 or 1"
+    assert m.sprites_hidden() == 0
