@@ -749,6 +749,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はない。デバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）と `--vdp-trace`/`--mapper-trace` のフラグは、コアの API でトレースの種類を設定する。`drain_trace()` が返すイベントは `host/trace.py` が文字列にする。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
 
+このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`）は境界の定数。host は、コアができる前にセーブファイルを作るため。
+
 ### 境界を通る値
 
 次の値は、どれも `msx/boundary.py` か `msx/input.py` にある。

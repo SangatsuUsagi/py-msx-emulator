@@ -871,8 +871,8 @@ py-msx-emulator/
 │   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
 │   ├── core_api.py        # CoreApi：host 側のコードがマシンに使える操作
 │   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
-│   ├── machine_spec.py    # 解決済みのマシン記述
-│   ├── machine_config.py  # MachineConfig 文書（正規化した JSON）の作成と解析
+│   ├── machine_spec.py    # マシン記述層：解決済みのマシンのモデル
+│   ├── machine_config.py  # 記述層：MachineConfig 文書（正規化した JSON）の作成と解析
 │   ├── machine_config.schema.json # MachineConfig 文書の構成を定める JSON Schema
 │   ├── machine_loader.py  # MachineConfig からマシンを組み立てる
 │   ├── canonical_json.py  # 正規化 JSON の書き出しと厳密な読み込み（文書、ステート）
