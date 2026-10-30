@@ -31,7 +31,7 @@ from host.input_state import InputState
 from host.media import DiskFiles, swap_disk
 from host.screenshot import save_screenshot
 from host.state_files import load_state, resume_state, save_state
-from msx.boundary import STOP_NONE, RgbFrame
+from msx.boundary import STOP_NONE, KeyboardLayout, RgbFrame, VideoStandard
 from msx.core_api import CoreApi
 from msx.input import KEY_NAME_TO_CELL
 from msx.psg import SAMPLE_RATE
@@ -60,8 +60,9 @@ _FRAME_OVERRUN_RATIO: float = 1.05
 
 def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
-    (VideoStandard.target_fps, an int; the frame timer paces in float)."""
-    return float(machine.video_standard.target_fps)
+    (VideoStandard.target_fps of the core's int, which the frame timer
+    paces in float)."""
+    return float(VideoStandard(machine.video_standard).target_fps)
 
 
 class _InitSdlApi(Protocol):
@@ -1172,7 +1173,7 @@ def run(
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
-        keyboard_layout=machine.keyboard_layout,
+        keyboard_layout=KeyboardLayout(machine.keyboard_layout),
     )
 
     mouse: _HostMouse | None = None

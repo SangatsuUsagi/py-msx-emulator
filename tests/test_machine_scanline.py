@@ -1,14 +1,14 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
-from msx.boundary import STOP_BREAKPOINT
+from msx.boundary import STOP_BREAKPOINT, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
+from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, cycles_per_frame, pad_rows
 from msx.vdp.v9938 import V9938
 from tests.factories import make_machine_msx2
 
-NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
+NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
 _DUMMY_ROM = bytes(32768)
 _DUMMY_EXTROM = bytes(16384)

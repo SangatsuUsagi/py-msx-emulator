@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from frontend.sdl2_frontend import _target_fps_for
+from msx.boundary import VideoStandard
 from msx.machine import Machine
-from msx.vdp._geometry import VideoStandard
 
 
 def _machine_with_video_standard(standard: VideoStandard) -> Machine:
@@ -26,6 +26,15 @@ def test_ntsc_machine_paces_at_60_fps() -> None:
 
 def test_pal_machine_paces_at_50_fps() -> None:
     assert _target_fps_for(_machine_with_video_standard(VideoStandard.PAL)) == 50.0
+
+
+def test_the_frame_rate_is_taken_from_a_plain_int() -> None:
+    # machine-core "The frontend takes the layout and the frame rate by
+    # value": a native core returns the standard as a plain int.
+    class _Core:
+        video_standard = 1
+
+    assert _target_fps_for(_Core()) == 50.0
 
 
 @pytest.mark.parametrize("machine_id", ["cbios_msx1_eu", "cbios_msx2_eu"])

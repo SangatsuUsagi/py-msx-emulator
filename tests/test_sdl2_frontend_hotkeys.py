@@ -23,13 +23,12 @@ from frontend.sdl2_frontend import (
 from frontend.sdl2_keyboard import KEY_MATRIX_INT, SdlKeyboard
 from host.input_state import InputState
 from host.media import DiskFiles
-from msx.boundary import FrameOutput
+from msx.boundary import FrameOutput, KeyboardLayout
 from msx.fdc.disk_drive import DiskDrive
 from msx.fdc.interface import SonyPhilipsInterface
 from msx.fdc.wd2793 import WD2793
 from msx.input import KEY_NAME_TO_CELL, InputFrame
 from msx.machine import Machine
-from msx.machine_spec import KeyboardLayout
 from tests.disk_factories import dsk_image
 
 

@@ -31,6 +31,7 @@ from msx.boundary import (
     WATCH_WRITE,
     CpuRegisters,
     FrameOutput,
+    KeyboardLayout,
     MediaId,
     RgbFrame,
     SlotInfo,
@@ -38,13 +39,13 @@ from msx.boundary import (
     StopInfo,
     TraceEvent,
     VdpInfo,
+    VideoStandard,
     drive_media_id,
 )
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
-from msx.machine_spec import KeyboardLayout
 from msx.mapper import HalnoteMapper, MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
@@ -53,7 +54,7 @@ from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
 from msx.sram import Medium, SramImage
 from msx.trace import TraceLog
-from msx.vdp._geometry import OUTPUT_H, VideoStandard
+from msx.vdp._geometry import OUTPUT_H, cycles_per_frame, lines_per_frame
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -165,12 +166,12 @@ class Machine:
     @property
     def cycles_per_frame(self) -> int:
         """Z80 T-states per frame, from the video standard."""
-        return self.video_standard.cycles_per_frame
+        return cycles_per_frame(self.video_standard)
 
     @property
     def lines_per_frame(self) -> int:
         """Scanlines per frame, from the video standard."""
-        return self.video_standard.lines_per_frame
+        return lines_per_frame(self.video_standard)
 
     def __post_init__(self) -> None:
         # PORT-NOTE: this wires the CPU's memory/IO bus by reassigning bound

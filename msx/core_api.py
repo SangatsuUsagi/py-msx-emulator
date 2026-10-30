@@ -55,8 +55,6 @@ if TYPE_CHECKING:
     )
     from msx.input import InputFrame
     from msx.machine import Machine
-    from msx.machine_spec import KeyboardLayout
-    from msx.vdp._geometry import VideoStandard
 
 
 @runtime_checkable
@@ -68,9 +66,9 @@ class CoreApi(Protocol):
     @property
     def cycle_count(self) -> int: ...
     @property
-    def video_standard(self) -> VideoStandard: ...
+    def video_standard(self) -> int: ...  # a VideoStandard value
     @property
-    def keyboard_layout(self) -> KeyboardLayout: ...
+    def keyboard_layout(self) -> int: ...  # a KeyboardLayout value
     def samples_per_frame(self) -> int: ...
 
     # -- running ---------------------------------------------------------------

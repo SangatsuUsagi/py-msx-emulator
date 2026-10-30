@@ -89,15 +89,14 @@ def test_sram_size_of_a_non_sram_id_names_it_by_name() -> None:
 
 def test_machine_properties_are_integers() -> None:
     # machine-core "Machine properties are integers".
-    from msx.machine_spec import KeyboardLayout
-    from msx.vdp._geometry import VideoStandard
+    from msx.boundary import KeyboardLayout, VideoStandard
 
     spec = _spec("cbios_msx1_jp")
     machine = build_machine(load_machine_config(spec, **_overrides(spec)))
     assert isinstance(machine.video_standard, int)
     assert isinstance(machine.keyboard_layout, int)
-    assert VideoStandard(int(machine.video_standard)) is VideoStandard.NTSC
-    assert KeyboardLayout(int(machine.keyboard_layout)) is KeyboardLayout.JAPANESE
+    assert machine.video_standard == VideoStandard.NTSC
+    assert machine.keyboard_layout == KeyboardLayout.JAPANESE
 
 
 # The canonical documents' SHA-256, recorded before the video standard and
@@ -123,7 +122,7 @@ def test_the_canonical_document_spells_the_enums_as_text(machine_id: str) -> Non
 
 def test_machine_keyboard_layout_defaults_to_international() -> None:
     # input-keyboard "Default layout is International".
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     machine = build_machine(make_config(_ROM))
     assert machine.keyboard_layout is KeyboardLayout.INTERNATIONAL
@@ -131,7 +130,7 @@ def test_machine_keyboard_layout_defaults_to_international() -> None:
 
 def test_a_jis_machine_definition_gives_the_japanese_layout() -> None:
     from host.machine_config import load_device_registry, load_machine_spec
-    from msx.machine_spec import KeyboardLayout
+    from msx.boundary import KeyboardLayout
 
     root = Path(__file__).resolve().parent.parent
     config_dir = root / "config"

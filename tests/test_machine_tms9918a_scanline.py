@@ -12,15 +12,15 @@ from unittest.mock import patch
 import pytest
 
 from host.state_files import load_state, save_state
-from msx.boundary import STOP_BREAKPOINT, STOP_NONE, TRACE_DEBUG, RgbFrame
+from msx.boundary import STOP_BREAKPOINT, STOP_NONE, TRACE_DEBUG, RgbFrame, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.machine import Machine
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
+from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, cycles_per_frame, pad_rows
 from msx.vdp.renderer import render_frame as vdp_render_frame
 from msx.vdp.vdp import VDP
 from tests.factories import make_machine
 
-NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
+NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
 _DUMMY_ROM = bytes(32768)
 _MID_DISPLAY_PC = 0x1000  # well inside the pre-render segment (all-NOP ROM)

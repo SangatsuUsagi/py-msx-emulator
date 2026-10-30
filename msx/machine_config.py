@@ -18,12 +18,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
+from msx.boundary import KeyboardLayout, VideoStandard
 from msx.canonical_json import decode_strict, encode_canonical, mismatched_version
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
     ExtensionOverlay,
-    KeyboardLayout,
     MachineLoadError,
     MachineSpec,
     _ExpandedSubslotDevice,
@@ -43,7 +43,6 @@ from msx.snapshot_schema import (
     check_optional_int,
     check_str,
 )
-from msx.vdp._geometry import VideoStandard
 
 _T = TypeVar("_T")
 
