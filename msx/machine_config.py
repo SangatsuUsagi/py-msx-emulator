@@ -26,12 +26,12 @@ from msx.machine_spec import (
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
+    PpiControlRead,
     _ExpandedSubslotDevice,
     _FdcDef,
     _RomEntry,
     _Slot0RamEntry,
 )
-from msx.ppi import PpiControlRead
 from msx.snapshot_schema import (
     SAFE_INT_MAX,
     SchemaError,

@@ -22,11 +22,11 @@ from msx.machine_spec import (
     ExpandedExtensionOverlay,
     MachineLoadError,
     MachineSpec,
+    PpiControlRead,
     _ExpandedSubslotDevice,
     _RomEntry,
     _Slot0RamEntry,
 )
-from msx.ppi import PpiControlRead
 from msx.ram_mapper import RamMapper
 from msx.vdp.v9938 import V9938
 from msx.vdp.vdp import VDP

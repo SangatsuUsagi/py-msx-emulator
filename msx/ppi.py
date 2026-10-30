@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import ClassVar, TypedDict
 
 from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.input import InputLines
+from msx.machine_spec import PpiControlRead
 from msx.memory import Memory
 
 # Key-click output while Port C bit 7 is 1: the PSG single-channel maximum
@@ -14,20 +14,6 @@ from msx.memory import Memory
 # to a DACSound8U (127/128 of full scale), and its machine configs give the PPI
 # sound volume 16000 against the PSG's 21000. 12287 * 127/128 * 16000/21000.
 KEY_CLICK_LEVEL: int = 9288
-
-
-class PpiControlRead(str, Enum):
-    """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
-
-    # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
-    CONTROL = "control"
-    # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
-    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
-    OPEN_BUS = "open_bus"
-    # The byte latched by the last PPI access (see PPI._bus_latch). Verified
-    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
-    # 2026-10-08.
-    BUS_LATCH = "bus_latch"
 
 
 class PpiState(TypedDict):

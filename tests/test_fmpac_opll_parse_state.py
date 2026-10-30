@@ -10,8 +10,9 @@ from typing import Any, Callable
 
 import pytest
 
+from msx.boundary import FMPAC_SRAM_SIZE
 from msx.canonical_json import to_jsonable
-from msx.fmpac import SRAM_SIZE, FmPac
+from msx.fmpac import FmPac
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
 
@@ -104,7 +105,7 @@ def _assert_rejected(fmpac: FmPac, mutate: Callable[[dict[str, Any]], None], pat
     with pytest.raises(ValueError, match=path):
         fmpac.restore(bad)
     assert fmpac.snapshot() == pre
-    assert len(fmpac.sram_image) == SRAM_SIZE
+    assert len(fmpac.sram_image) == FMPAC_SRAM_SIZE
 
 
 def test_short_sram_rejected_without_resizing(fmpac: FmPac) -> None:
