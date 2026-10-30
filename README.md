@@ -814,7 +814,7 @@ python . path/to/game.rom --benchmark 30000 --resume saves/states/game_20260605_
 | `--fdd1 DSK [DSK ...]` | _(none)_ | Floppy `*.dsk` image(s) for drive A (machines with an FDC, e.g. `hb_f1xd`). The emulator mounts the first image at startup. F6 steps through the list. Writes go back to the file on exit, before a save state, and when the disk leaves its drive. Put the positional `cartridge` before `--fdd1` (or use `--slot1`). Otherwise the emulator reads the cartridge path as one more disk image |
 | `--fdd2 DSK` | _(none)_ | Floppy `*.dsk` image mounted in drive B, on a machine with two drives. Every shipped machine has one drive, so the emulator ignores `--fdd2` with a warning |
 | `--resume [FILE]` | _(none)_ | Resume from `saves/states/latest.state`, or a specific `.state` file. Mount the disks the state was saved with: the first `--fdd1` image must be the one that was in drive A |
-| `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs ignore it |
+| `--mouse [1\|2]` | _(none)_ | Attach an MSX mouse to a joystick port (bare = Joy2). Overrides the `mouse` settings in `py_emulator.yaml`. Headless runs (`--count-frame`, `--benchmark`) attach it too, so a state saved with a mouse resumes there |
 | `--frame-skip MODE` | `auto` | Frame skip: `auto` skips VDP rendering on late frames. `none` disables frame skip |
 | `--debug` | off | Enable structured diagnostic logging to stderr |
 | `--log FILE` | _(none)_ | Write diagnostic log to a file (requires `--debug`) |
