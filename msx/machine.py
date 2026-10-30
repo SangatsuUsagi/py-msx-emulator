@@ -914,7 +914,7 @@ class Machine:
     def samples_per_frame(self) -> int:
         """Audio samples per frame: the output rate over the pacing rate (735 at
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
-        return int(SAMPLE_RATE // self.video_standard.target_fps)
+        return SAMPLE_RATE // self.video_standard.target_fps
 
     def apply_input(self, frame_input: InputFrame) -> int:
         """Replace the input lines and mouse buttons with `frame_input`'s,
