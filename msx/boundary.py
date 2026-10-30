@@ -127,6 +127,10 @@ MAX_WATCHPOINTS = 4
 WATCH_READ = 1
 WATCH_WRITE = 2
 
+# The mouse buttons of InputFrame.mouse_buttons, bit flags.
+MOUSE_LEFT = 1
+MOUSE_RIGHT = 2
+
 # The trace kinds (set_trace_kinds, trace_kinds, trace_sources), bit flags.
 TRACE_VDP = 0x01
 TRACE_MAPPER = 0x02

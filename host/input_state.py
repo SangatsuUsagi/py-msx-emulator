@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from msx.boundary import MOUSE_LEFT, MOUSE_RIGHT
 from msx.input import InputFrame
 
 _NUM_ROWS = 11
@@ -44,13 +45,18 @@ class InputState:
 
     def frame(self) -> InputFrame:
         """The current input as a frame value (motion included, not reset)."""
+        buttons = 0
+        if self.mouse_left:
+            buttons |= MOUSE_LEFT
+        if self.mouse_right:
+            buttons |= MOUSE_RIGHT
         return InputFrame(
-            key_matrix=tuple(self.matrix),
-            joystick_ports=(self.joy1, self.joy2),
+            key_matrix=bytes(self.matrix),
+            joy1=self.joy1,
+            joy2=self.joy2,
             mouse_dx=self.mouse_dx,
             mouse_dy=self.mouse_dy,
-            mouse_left=self.mouse_left,
-            mouse_right=self.mouse_right,
+            mouse_buttons=buttons,
         )
 
     def take_frame(self) -> InputFrame:
