@@ -17,7 +17,10 @@ file path. No member raises for an invalid argument: every control
 operation returns an integer status (msx/boundary.py STATUS_*), the break
 setters STATUS_BAD_ARGUMENT for a value outside its range or more than
 MAX_BREAKPOINTS / MAX_WATCHPOINTS entries, read_media returns b"" for an
-id the machine lacks, slot_info returns empty texts and a size of -1 for a
+id the machine lacks (any integer), the flag setters and mount_disk's
+write_protected take 0 or 1 (else STATUS_BAD_ARGUMENT), read_memory and
+read_vram return b"" for a length outside 0-0x10000 / 0-vram_size,
+slot_info returns empty texts and a size of -1 for a
 slot, sub-slot or page outside 0-3 (-1 is "none" for the last two), and
 last_error_text() gives the message of the last failure. A disk is ejected
 with eject_disk.
@@ -30,8 +33,9 @@ and mapper trace and the debug log as flat integer events
 the host formats; set_trace_kinds returns STATUS_BAD_ARGUMENT for an
 unknown kind, and the kinds are a debug setting outside the saved state
 too. The machine is built
-by msx.machine_loader.create_machine, which reports a rejected
-configuration the same way (allium/core-frontend.allium).
+by msx.machine_loader.create_machine, which reports every rejected
+configuration the same way, a device size and an RTC start time included
+(allium/core-frontend.allium).
 """
 from __future__ import annotations
 
