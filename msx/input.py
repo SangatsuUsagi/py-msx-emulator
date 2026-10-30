@@ -34,36 +34,34 @@ KEY_NAME_TO_CELL: dict[str, tuple[int, int]] = {
 
 _NUM_ROWS = 11
 _RELEASED_ROW = 0xFF
+_RELEASED_MATRIX = bytes((_RELEASED_ROW,)) * _NUM_ROWS
 _JOY_LINES_MASK = 0x3F  # bits 0-5: up/down/left/right/trigger A/trigger B
 
 
 @dataclass(frozen=True)
 class InputFrame:
     """One frame's input, the value the core takes (allium/core-frontend.allium
-    InputState): 11 active-low keyboard matrix rows, both merged 6-bit
-    active-low joystick ports, this frame's mouse motion in MSX counts and the
-    two mouse buttons. Immutable, so a caller cannot change it after handing
-    it over; the defaults are "nothing pressed, no motion".
+    InputState), a flat record of integers and bytes: 11 active-low keyboard
+    matrix rows, the two merged 6-bit active-low joystick ports, this frame's
+    mouse motion in MSX counts and the mouse buttons as the bit flags
+    MOUSE_LEFT and MOUSE_RIGHT (msx/boundary.py). Immutable, so a caller
+    cannot change it after handing it over; the defaults are "nothing
+    pressed, no motion". The core masks the ports and buttons and clamps the
+    motion to 16 bits (machine-core "The core masks or clamps an input value
+    outside its range").
     """
 
-    key_matrix: tuple[int, ...] = (_RELEASED_ROW,) * _NUM_ROWS
-    joystick_ports: tuple[int, int] = (_JOY_LINES_MASK, _JOY_LINES_MASK)
+    key_matrix: bytes = _RELEASED_MATRIX
+    joy1: int = _JOY_LINES_MASK
+    joy2: int = _JOY_LINES_MASK
     mouse_dx: int = 0
     mouse_dy: int = 0
-    mouse_left: bool = False
-    mouse_right: bool = False
+    mouse_buttons: int = 0
 
     def __post_init__(self) -> None:
+        # The one check: a C struct has a fixed 11-byte array, bytes do not.
         if len(self.key_matrix) != _NUM_ROWS:
             raise ValueError(f"key_matrix needs {_NUM_ROWS} rows, got {len(self.key_matrix)}")
-        for row in self.key_matrix:
-            if not 0 <= row <= 0xFF:
-                raise ValueError(f"key_matrix row out of range: {row}")
-        if len(self.joystick_ports) != 2:
-            raise ValueError(f"joystick_ports needs 2 ports, got {len(self.joystick_ports)}")
-        for port in self.joystick_ports:
-            if not 0 <= port <= _JOY_LINES_MASK:
-                raise ValueError(f"joystick port value out of range: {port}")
 
 
 @dataclass
@@ -79,5 +77,5 @@ class InputLines:
         """Take `frame`'s rows and ports. The matrix list object is kept, so
         readers holding this InputLines see the new rows."""
         self.matrix[:] = frame.key_matrix
-        self.joy1 = frame.joystick_ports[0]
-        self.joy2 = frame.joystick_ports[1]
+        self.joy1 = frame.joy1 & _JOY_LINES_MASK
+        self.joy2 = frame.joy2 & _JOY_LINES_MASK

@@ -8,6 +8,8 @@ from msx.audio_mixer import AudioMixer
 from msx.boundary import (
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
+    MOUSE_LEFT,
+    MOUSE_RIGHT,
     STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
@@ -910,8 +912,9 @@ class Machine:
         self.input.apply(frame_input)
         mouse = self.psg.mouse
         if mouse is not None:
-            mouse.set_button(TRIGGER_A_BIT, frame_input.mouse_left)
-            mouse.set_button(TRIGGER_B_BIT, frame_input.mouse_right)
+            buttons = frame_input.mouse_buttons
+            mouse.set_button(TRIGGER_A_BIT, bool(buttons & MOUSE_LEFT))
+            mouse.set_button(TRIGGER_B_BIT, bool(buttons & MOUSE_RIGHT))
         return STATUS_OK
 
     def step_frame(self, frame_input: InputFrame, render_video: bool) -> FrameOutput:
@@ -924,7 +927,7 @@ class Machine:
         `render_video` never changes emulated state.
 
         A call that stops at a break returns its stop reason, no video, no
-        audio and `frame_complete` false; the next call continues the frame,
+        audio and `frame_complete` 0; the next call continues the frame,
         applies its input lines and buttons and feeds no mouse motion.
         """
         self._stop = StopInfo()
@@ -932,20 +935,27 @@ class Machine:
         self.apply_input(frame_input)
         mouse = self.psg.mouse
         if mouse is not None and new_frame:
-            mouse.add_motion(frame_input.mouse_dx, frame_input.mouse_dy)
+            # The motion is an int16 in the C struct: clamp it to that range.
+            dx = max(-0x8000, min(0x7FFF, frame_input.mouse_dx))
+            dy = max(-0x8000, min(0x7FFF, frame_input.mouse_dy))
+            mouse.add_motion(dx, dy)
         index_buf = self.run_frame(skip_render=not render_video)
-        video: RgbFrame | None = None
+        width = 0
+        height = 0
+        pixels = b""
         if index_buf:
-            video = RgbFrame(
-                len(index_buf) // OUTPUT_H, OUTPUT_H, self.vdp.to_rgb24(index_buf)
-            )
+            width = len(index_buf) // OUTPUT_H
+            height = OUTPUT_H
+            pixels = self.vdp.to_rgb24(index_buf)
         stop_reason = self._stop.reason if self._stop_pending else STOP_NONE
         return FrameOutput(
-            video,
+            width,
+            height,
+            pixels,
             self.take_audio(),
             self.vdp.frame_count,
             stop_reason,
-            not self._frame_active,
+            0 if self._frame_active else 1,
         )
 
     def take_audio(self) -> bytes:

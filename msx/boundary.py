@@ -127,6 +127,10 @@ MAX_WATCHPOINTS = 4
 WATCH_READ = 1
 WATCH_WRITE = 2
 
+# The mouse buttons of InputFrame.mouse_buttons, bit flags.
+MOUSE_LEFT = 1
+MOUSE_RIGHT = 2
+
 # The trace kinds (set_trace_kinds, trace_kinds, trace_sources), bit flags.
 TRACE_VDP = 0x01
 TRACE_MAPPER = 0x02
@@ -184,19 +188,23 @@ class StopInfo:
 
 @dataclass(frozen=True)
 class FrameOutput:
-    """What Machine.step_frame returns for one frame.
+    """What Machine.step_frame returns for one frame, a flat record of
+    integers and bytes.
 
-    `video` and `audio` are guaranteed only until the next step_frame call
-    (allium/core-frontend.allium FrameOutputValidUntilNextStep); a frontend
-    that keeps them longer copies them. Here they are fresh immutable bytes,
-    which satisfies that, but a native port may reuse its buffers.
+    `video_pixels` and `audio` are guaranteed only until the next step_frame
+    call (allium/core-frontend.allium FrameOutputValidUntilNextStep); a
+    frontend that keeps them longer copies them. Here they are fresh
+    immutable bytes, which satisfies that, but a native port may reuse its
+    buffers.
     """
 
-    video: RgbFrame | None   # absent when the frame was not rendered
-    audio: bytes             # signed 16-bit LE mono PCM, before any output filter
+    video_width: int     # 256 or 512; 0 when the frame was not rendered
+    video_height: int    # OUTPUT_H (212); 0 when the frame was not rendered
+    video_pixels: bytes  # packed RGB24, width * height * 3; b"" when not rendered
+    audio: bytes         # signed 16-bit LE mono PCM, before any output filter
     frame_number: int
     stop_reason: int = STOP_NONE  # nonzero when the call stopped at a break
-    frame_complete: bool = True   # false when the frame continues on the next call
+    frame_complete: int = 1       # 0 when the frame continues on the next call
 
 
 @dataclass(frozen=True)

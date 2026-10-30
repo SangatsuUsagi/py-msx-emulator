@@ -756,9 +756,9 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | 値 | 向き | 中身 |
 | --- | --- | --- |
 | `MachineConfig` | 入力、1 回 | `document`（正規化した MachineConfig の JSON、後述）、`roms`（`RomImage` のレコード。イメージと、その小文字 16 進の SHA1）、`media`（`MediaImage` のレコード。保存済みの SRAM か CMOS のイメージと、その `MediaId`）、`disks`（`DiskMount` のレコード。マウントするイメージ、ドライブ番号、書き込み禁止のフラグ）、`rtc_initial_time`。3 つのイメージのフィールドはタプルで、1 つの id やドライブにレコードは 1 つまで |
-| `InputFrame` | 入力、毎フレーム | アクティブ Low のキーボードマトリクス 11 行、アクティブ Low の 6 ビットのジョイスティックポート 2 つ（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、そのフレームのマウスの移動量（MSX 側の単位）、マウスの 2 つのボタン。作った後は変更できず、コンストラクタがすべてのフィールドを調べる |
-| `FrameOutput` | 出力、毎フレーム | `video`（`RgbFrame`。描画しなかったフレームでは `None`）、`audio`、`frame_number` |
-| `RgbFrame` | 出力 | 行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める） |
+| `InputFrame` | 入力、毎フレーム | 平らなレコード。`key_matrix` はアクティブ Low のキーボードマトリクス 11 行の 11 バイト、`joy1` と `joy2` はアクティブ Low の 6 ビットのジョイスティックポート（bit 0 上、1 下、2 左、3 右、4 トリガ A、5 トリガ B）、`mouse_dx` と `mouse_dy` はそのフレームのマウスの移動量（MSX 側の単位）、`mouse_buttons` はビットフラグ `MOUSE_LEFT`（1）と `MOUSE_RIGHT`（2）。作った後は変更できない。コンストラクタが調べるのは、`key_matrix` が 11 バイトであることだけ。ポートとボタンはコアがマスクし、移動量は -32768〜32767 に丸める |
+| `FrameOutput` | 出力、毎フレーム | 平らなレコード。`video_width`、`video_height`、`video_pixels`（描画しなかったフレームでは 0、0、`b""`）、`audio`、`frame_number`、`stop_reason`、`frame_complete`（1。フレームが次の呼び出しに続くときは 0） |
+| `RgbFrame` | 出力 | `render_preview()` の結果。行優先に詰めた RGB24。`width` は 256 か 512、`height` は常に 212（192 ラインのモードは、コアがボーダーの色で埋める）。`FrameOutput` の映像のフィールドも同じ並び |
 | 音声 | 出力 | 出力フィルタを通す前の、44,100 Hz・符号付き 16 ビット・リトルエンディアンのモノラル PCM。NTSC は 1 フレーム 735 サンプル、PAL は 882 サンプル |
 | スナップショット | 入出力 | `Machine.save_state()` の `bytes`（後述） |
 | `CpuRegisters` | 出力 | レジスタのクエリの結果：AF、BC、DE、HL、裏レジスタ、IX、IY、SP、PC、I、R、IFF1 と IFF2（0 か 1）、IM |
@@ -776,7 +776,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
 | 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
-| フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
+| フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が 0 になる |
 | | `apply_input(frame_input) -> int` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う。常に `STATUS_OK` を返す |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
 | 制御 | `reset() -> int` | 電源投入時のリセット。RAM、VRAM、マウント中のメディアはそのまま。常に `STATUS_OK` を返す |
@@ -846,7 +846,7 @@ YAML のローダを持たない移植では、文書を直接書いてもよい
 
 ### フレームの実行
 
-`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し。`frame_input` を、PPI と PSG が読む入力線（`InputLines`）に反映するので、入力はフレームの間ずっと変わらず、マウスはそのフレームの移動量を 1 回だけ受け取る。その後フレームを実行し、`FrameOutput` を返す。`render_video` が決めるのは、コアが映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP のステータス、音声、次のスナップショットは、どちらでも同じになる。ブレークで止まった呼び出しは、`stop_reason` を入れ、`frame_complete` を偽にして返す。映像も音声も返さない。次の呼び出しはそのフレームの続きを実行する。入力線とボタンはもう一度反映するが、マウスの移動量は渡さない。そのフレームはもう受け取っているからである。
+`Machine.step_frame(frame_input, render_video)` は、コアを 1 フレーム進める呼び出し。`frame_input` を、PPI と PSG が読む入力線（`InputLines`）に反映するので、入力はフレームの間ずっと変わらず、マウスはそのフレームの移動量を 1 回だけ受け取る。その後フレームを実行し、`FrameOutput` を返す。`render_video` が決めるのは、コアが映像を作るかどうかだけ。映像を作らないフレームでもスプライトの処理は行うので、VDP のステータス、音声、次のスナップショットは、どちらでも同じになる。ブレークで止まった呼び出しは、`stop_reason` を入れ、`frame_complete` を 0 にして返す。映像も音声も返さない。次の呼び出しはそのフレームの続きを実行する。入力線とボタンはもう一度反映するが、マウスの移動量は渡さない。そのフレームはもう受け取っているからである。
 
 入力は、コアの外にある `host/input_state.py` の `InputState` が組み立てる。キーボード、ゲームパッド、マウス、RPC の入力メソッドはそこに書き込む。各ポートのキーボード側とゲームパッド側の入力は、合成するまで別々に持つ。フロントエンドは毎フレーム `take_frame()` を `step_frame` に渡し、そのとき組み立て側のマウスの移動量も 0 に戻る。RPC の入力メソッドは `Machine.apply_input` を呼ぶ。`apply_input` はフレームを動かさずに入力線とマウスのボタンをすぐ反映するので、一時停止中のマシンでも次の命令から入力が見える。ヘッドレスの実行（`--count-frame`、`--benchmark`）は空の `InputFrame()` を渡す。
 
@@ -856,7 +856,7 @@ YAML のローダを持たない移植では、文書を直接書いてもよい
 - **1 回の呼び出しで 1 フレーム。** ふつうの実行モードでは、`step_frame` の 1 回の呼び出しでちょうど 1 フレーム進み、1 フレーム分の音声を返す。1 フレームは NTSC で 59,736 T ステート、PAL で 71,364 T ステート（1 命令分の誤差の範囲で）。デバッガのブレークでフレームが途中で終わることがある。このモードは契約の外。
 - **RGB 変換はコアの中。** コアは整数の表だけを使って、すべてのピクセルを RGB に変換する。フロントエンドがパレットや VDP のレジスタを知る必要はない。
 - **フィルタ前の音声。** 音声は、マシンにあるすべての音源（PSG、SCC、Majutsushi DAC、キークリック、OPLL）の出力を、フィルタを通す前に足し合わせて範囲に収めたもの。フィルタ、リサンプリング、バッファリングはフロントエンドの担当。
-- **出力の有効期間。** `FrameOutput.video` と `.audio` が有効なのは、次の `step_frame` まで。Python では毎回新しく作る、変更できない `bytes` なので、SDL2 フロントエンドは最後のフレームをコピーせずに持っている。ネイティブのコアはバッファを使い回してよい。その場合、フロントエンドは手元に長く残すフレームをコピーする。
+- **出力の有効期間。** `FrameOutput.video_pixels` と `.audio` が有効なのは、次の `step_frame` まで。Python では毎回新しく作る、変更できない `bytes` なので、SDL2 フロントエンドは最後のフレームをコピーせずに持っている。ネイティブのコアはバッファを使い回してよい。その場合、フロントエンドは手元に長く残すフレームをコピーする。
 - **メディア。** メディアは、エミュレートしたマシンが最初に書き込んだ時点から、`mark_persisted` が呼ばれるまで dirty。すでに入っている値と同じ値の書き込みは数えない。書き込み禁止のメディアは dirty にならない。SRAM の id の集合はコアが構築時に決め、その後は変わらない。ディスクを交換するときは、外す側のイメージが dirty なら先に書き戻し、それから `mount_disk` を呼ぶ。`host/media.py` の `swap_disk` はこの順で処理するので、書き戻しに失敗しても、ドライブは元の状態のまま。
 
 ### 組み込み例
@@ -884,7 +884,7 @@ machine = result.machine
 
 for _ in range(120):
     out = machine.step_frame(InputFrame(), render_video=True)
-    # out.video.pixels：width * 212 * 3 バイトの RGB24
+    # out.video_pixels：out.video_width * 212 * 3 バイトの RGB24
     # out.audio：samples_per_frame() 個の符号付き 16 ビット LE モノラルのサンプル
 
 snapshot = machine.save_state()                    # bytes。保存先は自由
@@ -896,7 +896,7 @@ disk_files = DiskFiles(config.disk_files)          # host：各ドライブの�
 persist_dirty_media(machine, sram_paths(config), disk_files)  # SRAM/CMOS/ディスクの変更を書き戻す
 ```
 
-SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く。毎フレーム、入力の組み立て側が作ったフレームを `step_frame` に渡す。コアがフレームを描画したときは `out.video` をアップロードする。`out.audio` は `BiquadLowPass`（`frontend/audio_filter.py`）に通して SDL のキューに積む。終了時には `__main__.py` が `persist_dirty_media` を呼ぶ。自前の host 側を持たないフロントエンドは、一度の実行で得た `config.document` と `config.roms` を取っておき、それをもとに `MachineConfig` を直接作ればよい。
+SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く。毎フレーム、入力の組み立て側が作ったフレームを `step_frame` に渡す。コアがフレームを描画したとき（`out.video_width` が 0 でないとき）は `out.video_pixels` をアップロードする。`out.audio` は `BiquadLowPass`（`frontend/audio_filter.py`）に通して SDL のキューに積む。終了時には `__main__.py` が `persist_dirty_media` を呼ぶ。自前の host 側を持たないフロントエンドは、一度の実行で得た `config.document` と `config.roms` を取っておき、それをもとに `MachineConfig` を直接作ればよい。
 
 ### コアの移植
 
@@ -925,7 +925,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 4. **残りの音源とカートリッジ**：SCC、DAC とキークリック、表を持たせた OPLL、SRAM 付きのマッパー。
 5. **FDC**（WD2793 と TC8566AF）とメディアの API。
 
-どの段階でも、Python のコアとバイト列を比べる。同じ設定と同じ `InputFrame` の列から、同じ `RgbFrame.pixels`、音声、スナップショットのバイト列が得られなければならない。
+どの段階でも、Python のコアとバイト列を比べる。同じ設定と同じ `InputFrame` の列から、同じ `video_pixels`、音声、スナップショットのバイト列が得られなければならない。
 
 ## 移植性
 

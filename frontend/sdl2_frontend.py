@@ -1026,14 +1026,14 @@ def _run_frame(
         # returns or the RPC client resumes. Keep the last picture on screen.
         handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
         return
-    if out.video is not None:
-        state.rgb_buf = out.video.pixels
+    if out.video_width:
+        state.rgb_buf = out.video_pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
         # 512-wide). Recreate the texture / resize the window on a width
         # change before uploading, or the texture copy would overflow.
         state.texture, state.tex_w, state.tex_h, state.running = _resize_texture_if_needed(
-            sdl2, renderer, window, state.texture, out.video.width, state.tex_w, state.tex_h,
+            sdl2, renderer, window, state.texture, out.video_width, state.tex_w, state.tex_h,
             scale,
         )
         if not state.running:
