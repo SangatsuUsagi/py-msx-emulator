@@ -424,7 +424,7 @@ def test_a_fifth_watchpoint_is_rejected() -> None:
     assert m.watchpoints() == ((0xC000, WATCH_WRITE),)
 
 
-# -- machine-core "The break setters reject a value the core cannot use" -----
+# -- machine-core "The break setters reject a bad value and take -1 for none" -
 
 def test_an_address_outside_16_bits_is_rejected() -> None:
     m = _msx1()
@@ -439,8 +439,9 @@ def test_an_address_outside_16_bits_is_rejected() -> None:
     lambda m: m.set_breakpoints([-1]),
     lambda m: m.set_watchpoints([(0x10000, WATCH_READ)]),
     lambda m: m.set_step_out(0x10000),
-    lambda m: m.set_sp_range((0xC000, 0x10000)),
-    lambda m: m.set_sp_range((-1, 0xF000)),
+    lambda m: m.set_temp_breakpoint(-2),
+    lambda m: m.set_sp_range(0xC000, 0x10000),
+    lambda m: m.set_sp_range(-2, 0xF000),
 ])
 def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     m = _msx1()
@@ -449,26 +450,39 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     assert m._stepout_sp is None and m._sp_range is None
 
 
-def test_a_negative_frame_number_is_rejected() -> None:
+def test_a_frame_number_below_minus_1_is_rejected() -> None:
     m = _msx1()
     m.set_frame_breakpoint(10)
-    assert m.set_frame_breakpoint(-1) == STATUS_BAD_ARGUMENT
+    assert m.set_frame_breakpoint(-2) == STATUS_BAD_ARGUMENT
     assert m._frame_breakpoint == 10
 
 
 def test_an_inverted_sp_range_is_rejected() -> None:
     m = _msx1()
-    m.set_sp_range((0xC000, 0xF000))
-    assert m.set_sp_range((0xF000, 0xC000)) == STATUS_BAD_ARGUMENT
+    m.set_sp_range(0xC000, 0xF000)
+    assert m.set_sp_range(0xF000, 0xC000) == STATUS_BAD_ARGUMENT
     assert m._sp_range == (0xC000, 0xF000)
 
 
-def test_none_clears_a_setting() -> None:
+def test_minus_1_clears_a_setting() -> None:
     m = _msx1()
-    assert m.set_sp_range((0xC000, 0xF000)) == STATUS_OK
-    assert m.set_sp_range(None) == STATUS_OK
-    assert m._sp_range is None
+    assert m.set_sp_range(0xC000, 0xF000) == STATUS_OK
+    assert m.set_sp_range(-1, -1) == STATUS_OK
+    assert m.set_temp_breakpoint(0x4000) == STATUS_OK
+    assert m.set_temp_breakpoint(-1) == STATUS_OK
+    assert m.set_frame_breakpoint(10) == STATUS_OK
+    assert m.set_frame_breakpoint(-1) == STATUS_OK
+    assert m._sp_range is None and m._temp_breakpoint is None
+    assert m._frame_breakpoint is None
     assert not m._break_conditions_active()
+
+
+@pytest.mark.parametrize("ends", [(-1, 0xF000), (0xC000, -1)])
+def test_one_minus_1_end_is_rejected(ends: tuple[int, int]) -> None:
+    m = _msx1()
+    m.set_sp_range(0xC000, 0xF000)
+    assert m.set_sp_range(*ends) == STATUS_BAD_ARGUMENT
+    assert m._sp_range == (0xC000, 0xF000)
 
 
 def test_a_success_after_a_rejection_clears_the_message() -> None:
