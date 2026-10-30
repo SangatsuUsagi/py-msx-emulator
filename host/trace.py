@@ -22,19 +22,39 @@ from msx.boundary import (
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
 
-# Command code (upper 4 bits of R#46) -> mnemonic.
-_CMD_NAMES: dict[int, str] = {
-    0x0: "ABRT", 0x1: "????", 0x2: "????", 0x3: "????",
-    0x4: "POINT", 0x5: "PSET", 0x6: "SRCH", 0x7: "LINE",
-    0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM", 0xB: "LMMC",
-    0xC: "HMMV", 0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
+# The V9938 command codes (upper 4 bits of R#46) that name a command; the
+# trace and the debugger's `v` share it and each spell an undefined code
+# their own way.
+VDP_COMMAND_NAMES: dict[int, str] = {
+    0x0: "ABRT", 0x4: "POINT", 0x5: "PSET", 0x6: "SRCH",
+    0x7: "LINE", 0x8: "LMMV", 0x9: "LMMM", 0xA: "LMCM",
+    0xB: "LMMC", 0xC: "HMMV", 0xD: "HMMM", 0xE: "YMMM", 0xF: "HMMC",
 }
 
-# Logical operation (lower 4 bits of R#46) -> mnemonic.
-_LOP_NAMES: list[str] = [
-    "IMP", "AND", "OR", "XOR", "NOT", "????", "????", "????",
-    "TIMP", "TAND", "TOR", "TXOR", "TNOT", "????", "????", "????",
-]
+# The logical operations (bits 0-2 of R#46); bit 3 selects the transparent
+# form (TIMP ...).
+VDP_LOGICAL_OP_NAMES: dict[int, str] = {
+    0: "IMP", 1: "AND", 2: "OR", 3: "XOR", 4: "NOT",
+}
+
+# R#46 bit 3: the logical operation skips source colour 0.
+_LOP_TRANSPARENT = 0x08
+
+# R#46 starts a command; R#32-R#45 are its parameters.
+_CMD_REG = 46
+_CMD_PARAM_FIRST = 32
+_CMD_PARAM_LAST = 45
+
+
+def _trace_lop_name(lop: int) -> str:
+    """The trace's text of R#46 bits 0-3: TIMP for a transparent IMP, ????
+    for an undefined operation."""
+    name = VDP_LOGICAL_OP_NAMES.get(lop & 0x07)
+    if name is None:
+        return "????"
+    if lop & _LOP_TRANSPARENT:
+        return "T" + name
+    return name
 
 
 class VdpTraceFormatter:
@@ -69,20 +89,20 @@ class VdpTraceFormatter:
     def _reg_write(self, event: TraceEvent, reg: int, data: int, via: str) -> str:
         suffix = f"  {via}" if via else ""
         prefix = f"CY={event.cycle:010d} FR={event.frame:06d} PC={event.pc:04X}"
-        if reg == 46:
-            name = _CMD_NAMES[(data >> 4) & 0xF]
-            lop = _LOP_NAMES[data & 0xF]
+        if reg == _CMD_REG:
+            name = VDP_COMMAND_NAMES.get((data >> 4) & 0xF, "????")
+            lop = _trace_lop_name(data & 0xF)
             params = self._format_params()
             self._params.clear()
             return f"{prefix} VDP_CMD {name:<4s}/{lop:<4s} ({data:02X}h) R32-45={params}{suffix}"
-        if 32 <= reg <= 45:
+        if _CMD_PARAM_FIRST <= reg <= _CMD_PARAM_LAST:
             self._params[reg] = data
         return f"{prefix} VDP_REG R#{reg:02d}={data:02X}h{suffix}"
 
     def _format_params(self) -> str:
         """R#32-R#45 as ['XX',...], with '--' for a register not written."""
         parts = []
-        for reg in range(32, 46):
+        for reg in range(_CMD_PARAM_FIRST, _CMD_PARAM_LAST + 1):
             value = self._params.get(reg)
             parts.append(f"'{value:02X}'" if value is not None else "'--'")
         return "[" + ",".join(parts) + "]"
@@ -130,25 +150,31 @@ class TraceOutput:
         events = core.drain_trace()
         if not events:
             return
+        # The stderr lines (debug log, lost events) and the --log lines of
+        # this drain, written once each at the end: stderr is line-buffered,
+        # so a write per line is a system call per line.
+        err_lines: list[str] = []
+        log_lines: list[str] = []
         for event in events:
             if event.kind == TRACE_EVENT_MAP_BANK:
                 if self.map_out is not None:
                     print(map_bank_line(event), file=self.map_out)
             elif event.kind == TRACE_EVENT_LOST:
-                print(f"trace: {event.a} events lost", file=sys.stderr)
+                err_lines.append(f"trace: {event.a} events lost")
             elif event.kind in DEBUG_EVENT_KINDS:
                 if self._debug is not None:
-                    self._write_debug(self._debug.feed(event))
+                    lines = self._debug.feed(event)
+                    err_lines.extend(lines)
+                    log_lines.extend(lines)
             else:
+                # The remaining kinds are the VDP port events.
                 line = self._vdp.feed(event)
                 if line is not None and self.vdp_out is not None:
                     print(line, file=self.vdp_out)
+        if err_lines:
+            sys.stderr.write("\n".join(err_lines) + "\n")
+        if log_lines and self._debug_file is not None:
+            self._debug_file.write("\n".join(log_lines) + "\n")
         for stream in (self.vdp_out, self.map_out, self._debug_file):
             if stream is not None:
                 stream.flush()
-
-    def _write_debug(self, lines: list[str]) -> None:
-        for line in lines:
-            sys.stderr.write(line + "\n")
-            if self._debug_file is not None:
-                self._debug_file.write(line + "\n")

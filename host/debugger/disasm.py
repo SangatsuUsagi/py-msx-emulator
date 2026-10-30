@@ -2,13 +2,29 @@
 
 disassemble(read, addr) -> tuple[str, int]
     Returns (mnemonic_string, bytes_consumed).
+byte_reader(core) -> read
+    The one-byte reader over the core API that the debugger and the RPC
+    server pass to disassemble.
     Covers all documented Z80 opcodes including CB/DD/ED/FD/DDCB/FDCB prefixes.
     Unknown bytes are rendered as "DB XXh".
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from msx.core_api import CoreApi
+
+
+def byte_reader(core: CoreApi) -> Callable[[int], int]:
+    """A one-byte reader of CPU address space over the core API (no
+    watchpoint), for disassemble."""
+
+    def read(addr: int) -> int:
+        return core.read_memory(addr, 1)[0]
+
+    return read
 
 # ---------------------------------------------------------------------------
 # Template format

@@ -1,7 +1,7 @@
 """Host side of the machine's writable media: files <-> media bytes.
 
 The core exposes SRAM, RTC CMOS RAM and mounted disk images as bytes with
-dirty flags (Machine.dirty_media/read_media/mark_persisted/mount_disk); this
+dirty flags (CoreApi.dirty_media/read_media/mark_persisted/mount_disk/eject_disk); this
 module reads disk files, keeps the file of each drive's disk (DiskFiles),
 writes dirty media back to their files and resolves swap paths.
 """

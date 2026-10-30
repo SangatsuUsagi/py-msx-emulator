@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from host.watch import watch_kind, watch_text
+from host.watch import watch_kind, watch_kind_exact, watch_text
 from msx.boundary import WATCH_READ, WATCH_WRITE
 
 
@@ -30,3 +30,15 @@ def test_each_kind_has_one_spelling() -> None:
 def test_an_invalid_kind_has_no_spelling(kind: int) -> None:
     with pytest.raises(ValueError):
         watch_text(kind)
+
+
+@pytest.mark.parametrize(("text", "kind"), [
+    ("r", WATCH_READ), ("w", WATCH_WRITE), ("rw", WATCH_READ | WATCH_WRITE),
+])
+def test_the_exact_parser_takes_r_w_and_rw(text: str, kind: int) -> None:
+    assert watch_kind_exact(text) == kind
+
+
+@pytest.mark.parametrize("text", ["R", "wr", "RW", " r", "", 1, None])
+def test_the_exact_parser_rejects_any_other_value(text: object) -> None:
+    assert watch_kind_exact(text) is None

@@ -55,7 +55,8 @@ _SCREEN_HEIGHT = OUTPUT_HEIGHT
 _MAX_FRAME_SKIP: int = 4
 
 # Audio output format: the core's mix rate (AUDIO_SAMPLE_RATE), mono S16LE.
-# Machine.run_frame() mixes each frame; the frontend only queues it.
+# step_frame() mixes each frame's audio (FrameOutput.audio); the frontend
+# only filters and queues it.
 _AUDIO_CHANNELS: int = 1
 _AUDIO_BUFFER_SAMPLES: int = 1024
 
@@ -571,6 +572,10 @@ def _handle_hotkey_keydown(
     ESC is deliberately not claimed here: it has its own MSX matrix cell
     (row 7, column 2) and reaches it through the plain key_down fallback,
     like any other ordinary key.
+
+    With `debugger` None, Ctrl-C is no debugger break and falls through to
+    the MSX key. With `disk_files` None, F8 writes no dirty disk back before
+    the save.
     """
     # PORT-NOTE: `mod & sdl2.KMOD_CTRL` relies on Python's implicit
     #   int-to-bool truthiness (0 is falsy, any nonzero bit pattern truthy).
@@ -698,11 +703,12 @@ def _handle_events(
                 sdl2, sym, event.key.repeat, machine, keyboard, window, ctrl_combo, hotkeys
             ):
                 continue
+            debugger, disk_files = (
+                (hotkeys.debugger, hotkeys.disks.files) if hotkeys is not None else (None, None)
+            )
             consumed, running = _handle_hotkey_keydown(
                 sdl2, sym, event.key.keysym.mod, machine,
-                game_title, rgb_buf, tex_w, tex_h, running,
-                hotkeys.debugger if hotkeys is not None else None,
-                hotkeys.disks.files if hotkeys is not None else None,
+                game_title, rgb_buf, tex_w, tex_h, running, debugger, disk_files,
             )
             if not consumed and not _handle_ctrl_combo_keydown(
                 sdl2, sym, ctrl_combo, ctrl_fkey_cells, keyboard
@@ -956,7 +962,7 @@ class _LoopState:
     last_present: float = 0.0
 
 
-def _is_paused(hotkeys: _HotkeyState, rpc_server: "DebugServer | None") -> bool:
+def _is_paused(hotkeys: _HotkeyState, rpc_server: DebugServer | None) -> bool:
     return hotkeys.user_paused or (rpc_server is not None and rpc_server.pause_state.paused)
 
 
@@ -971,7 +977,7 @@ def _run_frame(
     state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
     ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
     mouse: _HostMouse | None, event: _EventLike,
-    rpc_server: "DebugServer | None", frame_timer: FrameTimer,
+    rpc_server: DebugServer | None, frame_timer: FrameTimer,
     frame_skip: str, audio_dev: int, scale: int,
     hotkeys: _HotkeyState,
 ) -> None:
@@ -1030,9 +1036,10 @@ def _run_frame(
     if out.stop_reason != STOP_NONE:
         # A break: the frame continues on the next step_frame, after the REPL
         # returns or the RPC client resumes. Keep the last picture on screen.
+        # A stopped call returns no audio, so there is nothing to queue.
         handle_stop(machine, out.stop_reason, hotkeys.debugger, rpc_server)
         return
-    if out.video_width:
+    if out.video_width > 0:  # 0: no video this frame (not rendered)
         state.rgb_buf = out.video_pixels
         # The output height is constant (192-line frames are padded to
         # 212); only the width can change at runtime (SCREEN 6/7 is
@@ -1083,7 +1090,7 @@ def run(
     game_title: str = "py-msx-emulator",
     resume: str | None = None,
     frame_skip: str = "auto",
-    rpc_server: "DebugServer | None" = None,
+    rpc_server: DebugServer | None = None,
     gamepad_map: "tuple[dict[int, int], dict[int, int]] | None" = None,
     turbo_period: int | None = None,
     mouse_port: int | None = None,
@@ -1113,7 +1120,7 @@ def run(
         mouse_port: 0 (Joy1) or 1 (Joy2) to attach an MSX mouse driven by the
             host mouse (relative-mouse mode); None disables mouse emulation.
         fdd1_images: drive A disk list stepped through by F6 / Shift+F6; the
-            first entry is the one build_machine already mounted.
+            first entry is the one create_machine already mounted.
         hotkey_bindings: (SDL keycode, Shift held) -> action table resolved
             from py_emulator.yaml (`resolve_hotkeys(AppConfig.hotkey_bindings())`); None uses the
             built-in table.

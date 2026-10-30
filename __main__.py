@@ -71,7 +71,7 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
     """Parse a comma-separated `addr[,mode]` watchpoint list (mode in r/w/rw,
     default rw) into up to MAX_WATCHPOINTS (4) (addr, kind) entries
     (host/watch.py)."""
-    from host.watch import watch_kind
+    from host.watch import watch_kind_exact
     from msx.boundary import MAX_WATCHPOINTS, WATCH_READ, WATCH_WRITE
 
     entries: list[tuple[int, int]] = []
@@ -82,7 +82,7 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
         tok = tok.strip().lower()
         if not tok:
             continue
-        kind = watch_kind(tok) if tok in ("r", "w", "rw") else None
+        kind = watch_kind_exact(tok)
         if kind is not None:
             if pending_addr is not None:
                 entries.append((pending_addr, kind))
