@@ -49,22 +49,9 @@ class IOBus:
         default_factory=list
     )
     # The machine's trace buffer (msx/trace.py), wired at build time; port
-    # reads and writes are recorded while TRACE_DEBUG is on.
+    # reads and writes are recorded while TRACE_DEBUG is on, stamped with
+    # the address of the instruction that made the access.
     _trace: TraceLog | None = field(default=None, repr=False)
-    # PORT-NOTE: _get_pc is a closure assigned at wiring time, capturing the
-    #   owning Z80/Machine.
-    # Rust equivalent: a trait object or feature-flagged field resolved once
-    #   at construction, not a per-call closure capturing the owner.
-    # C++ equivalent: same -- a std::function member or virtual interface
-    #   pointer, assigned once at construction.
-    # Kept as-is here because: only called while TRACE_DEBUG is on, so it
-    #   costs nothing on the always-hot IN/OUT dispatch path in
-    #   normal operation -- confirmed by investigation, not deferred pending
-    #   benchmarking. Full reasoning (including why msx/psg.py's
-    #   PSG._get_cycle -- read unconditionally, not trace-gated -- reached a
-    #   different conclusion) in openspec/changes/archive/
-    #   *-psg-cycle-source-refactor/design.md, Decision 1.
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
 
     def register_read(self, start: int, end: int, handler: Callable[[int], int]) -> None:
         self._read_handlers.append((start, end, handler))
@@ -73,13 +60,6 @@ class IOBus:
         self, start: int, end: int, handler: Callable[[int, int], None]
     ) -> None:
         self._write_handlers.append((start, end, handler))
-
-    def _record_io(self, trace: TraceLog, kind: int, port: int, value: int) -> None:
-        """Record a port access, with the CPU's PC register (the PC the
-        debug log prints). Callers check TRACE_DEBUG first, so a port access
-        with the kind off costs no call."""
-        pc = self._get_pc() if self._get_pc is not None else 0
-        trace.record(kind, port, value, pc)
 
     def read_port(self, port: int) -> int:
         # The Z80 drives a 16-bit port address (high byte = B or A), but MSX
@@ -91,18 +71,18 @@ class IOBus:
                 value = handler(port)
                 trace = self._trace
                 if trace is not None and trace.kinds & TRACE_DEBUG:
-                    self._record_io(trace, TRACE_EVENT_IO_READ, port, value)
+                    trace.record(TRACE_EVENT_IO_READ, port, value)
                 return value
         trace = self._trace
         if trace is not None and trace.kinds & TRACE_DEBUG:
-            self._record_io(trace, TRACE_EVENT_IO_READ, port, 0xFF)
+            trace.record(TRACE_EVENT_IO_READ, port, 0xFF)
         return 0xFF
 
     def write_port(self, port: int, value: int) -> None:
         port &= 0xFF
         trace = self._trace
         if trace is not None and trace.kinds & TRACE_DEBUG:
-            self._record_io(trace, TRACE_EVENT_IO_WRITE, port, value)
+            trace.record(TRACE_EVENT_IO_WRITE, port, value)
         for start, end, handler in self._write_handlers:
             if start <= port <= end:
                 handler(port, value)
