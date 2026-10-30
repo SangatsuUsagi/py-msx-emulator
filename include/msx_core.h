@@ -156,16 +156,15 @@ typedef struct msx_machine_config {
     size_t media_count;
     const msx_disk_mount *disks;
     size_t disk_count;
-    int32_t has_rtc_initial_time; /* 0: the RTC starts at 2000-01-01 00:00:00 */
-    msx_rtc_time rtc_initial_time;
+    msx_rtc_time rtc_initial_time; /* always given; Python's default is 2000-01-01 */
 } msx_machine_config;
 
 typedef struct msx_input_frame {
     uint8_t key_matrix[11]; /* active-low rows 0-10 */
     int32_t joy1;           /* active-low, the core uses bits 0-5 */
     int32_t joy2;
-    int16_t mouse_dx;       /* MSX counts */
-    int16_t mouse_dy;
+    int32_t mouse_dx;       /* MSX counts; the core clamps to -32768..32767 */
+    int32_t mouse_dy;
     int32_t mouse_buttons;  /* MSX_MOUSE_LEFT | MSX_MOUSE_RIGHT */
 } msx_input_frame;
 
@@ -243,13 +242,14 @@ typedef struct msx_trace_event {
 
 int32_t msx_core_abi_version(void);
 
-/* MSX_STATUS_OK with *out_core set, or MSX_STATUS_BAD_CONFIG with *out_core
- * NULL and the UTF-8 message in *error_text (valid until the next
- * msx_core_create). Every rejection is a status: a device size a device
- * does not accept, and an RTC start time outside year 0-9999 or not a real
- * date and time. */
+/* MSX_STATUS_OK with *out_core set and *error_len 0, or MSX_STATUS_BAD_CONFIG
+ * with *out_core NULL. The UTF-8 message goes to the caller's buffer: at most
+ * error_cap bytes, no NUL, and *error_len is its full length, so a caller can
+ * retry with a larger buffer. The core keeps no state outside an msx_core.
+ * Every rejection is a status: a device size a device does not accept, and
+ * an RTC start time outside year 0-9999 or not a real date and time. */
 int32_t msx_core_create(const msx_machine_config *config, msx_core **out_core,
-                        msx_bytes *error_text);
+                        char *error_text, size_t error_cap, size_t *error_len);
 void msx_core_destroy(msx_core *core);
 
 /* -- Machine properties ----------------------------------------------------- */
@@ -299,7 +299,7 @@ int32_t msx_core_set_watchpoints(msx_core *core, const msx_watchpoint *entries,
                                  size_t count);
 int32_t msx_core_set_temp_breakpoint(msx_core *core, int32_t addr);   /* -1 clears */
 int32_t msx_core_set_step_out(msx_core *core, int32_t sp);
-int32_t msx_core_set_frame_breakpoint(msx_core *core, int32_t frame); /* -1 clears */
+int32_t msx_core_set_frame_breakpoint(msx_core *core, int64_t frame); /* -1 clears */
 int32_t msx_core_set_break_halt_di(msx_core *core, int32_t enabled);
 int32_t msx_core_set_sprites_hidden(msx_core *core, int32_t hidden);
 int32_t msx_core_set_trace_kinds(msx_core *core, int32_t kinds);

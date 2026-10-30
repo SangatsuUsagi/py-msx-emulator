@@ -48,6 +48,7 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
+    RTC_DEFAULT_START,
     DiskMount,
     KeyboardLayout,
     MachineConfig,
@@ -1320,7 +1321,7 @@ def load_machine_config(
     fdd2: Path | None = None,
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
-    rtc_initial_time: RtcTime | None = None,
+    rtc_initial_time: RtcTime = RTC_DEFAULT_START,
 ) -> LoadedMachineConfig:
     """Read every file `spec` and the arguments name, and encode the
     MachineConfig document, for msx.machine_loader.create_machine: the
@@ -1383,7 +1384,7 @@ def build_machine_from_spec(
     fdd2: Path | None = None,
     extension_overlay1: AnyExtensionOverlay | None = None,
     extension_overlay2: AnyExtensionOverlay | None = None,
-    rtc_initial_time: RtcTime | None = None,
+    rtc_initial_time: RtcTime = RTC_DEFAULT_START,
 ) -> Machine:
     """load_machine_config() then create_machine(), raising MachineLoadError
     with the build's message, for callers that need no

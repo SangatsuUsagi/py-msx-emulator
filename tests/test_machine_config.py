@@ -577,3 +577,32 @@ def test_a_valid_rtc_start_time_survives_a_state_round_trip() -> None:
     assert result.status == STATUS_OK
     assert result.machine is not None
     assert result.machine.load_state(result.machine.save_state()) == STATUS_OK
+
+
+def test_a_configuration_without_a_start_time_starts_at_2000() -> None:
+    # machine-core "A configuration without a start time starts at 2000".
+    from msx.boundary import RTC_DEFAULT_START, MachineConfig, RtcTime
+    from msx.machine_loader import create_machine
+
+    assert MachineConfig(document=b"{}").rtc_initial_time == RTC_DEFAULT_START
+    assert RTC_DEFAULT_START == RtcTime(2000, 1, 1, 0, 0, 0)
+    machine = create_machine(make_config_msx2(_ROM, bytes(16 * 1024))).machine
+    assert machine is not None
+    machine.rtc._refresh_time_regs()
+    # Block 0 BCD digits: seconds, minutes, hours (0-5), day (7, 8),
+    # month (9, 10), years since 1980 (11, 12).
+    regs = machine.rtc._regs
+    assert regs[0:6] == [0, 0, 0, 0, 0, 0]
+    assert (regs[7], regs[8], regs[9], regs[10]) == (1, 0, 1, 0)
+    assert (regs[11], regs[12]) == (0, 2)
+
+
+def test_the_start_time_admits_no_none() -> None:
+    # machine-core "The start time admits no None".
+    import typing
+
+    from msx.boundary import MachineConfig
+
+    hint = typing.get_type_hints(MachineConfig)["rtc_initial_time"]
+    assert hint is not type(None)
+    assert type(None) not in typing.get_args(hint)
