@@ -9,7 +9,9 @@ API has no callback into the host"): a break is the step_frame stop reason
 and the last-stop query. Every parameter and result is an integer, bytes,
 None, or a flat record or tuple of these (machine-core "Core API values are
 integers, bytes or flat records"): the ids and machine properties are
-integer enums, watch kinds are bit flags, and no member takes or returns a
+integer enums, watch kinds and mouse buttons are bit flags, step_frame's
+InputFrame and FrameOutput hold no nested or optional record (a frame that
+was not rendered has a video width of 0), and no member takes or returns a
 file path. No member raises for an invalid argument: every control
 operation returns an integer status (msx/boundary.py STATUS_*), the break
 setters STATUS_BAD_ARGUMENT for a value outside its range or more than

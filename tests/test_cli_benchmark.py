@@ -15,7 +15,7 @@ _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
 # What the mocked step_frame returns: a completed frame with no stop.
-_FRAME_DONE = FrameOutput(None, b"", 0)
+_FRAME_DONE = FrameOutput(0, 0, b"", b"", 0)
 
 def _run_main(argv: list[str]) -> tuple[int, str, str, Mock]:
     """Run __main__.main() in MSX2 mode with patched filesystem.
