@@ -342,7 +342,6 @@ class _ExtensionWiring:
     slot2_sub_slot_enabled: bool
     mapper2_subslots: list[Mapper | None]
     fmpac_device: FmPac | None
-    halnote_device: HalnoteMapper | None
     kanji_device: KanjiRom | None
 
 
@@ -362,27 +361,12 @@ class _ExpandedOverlayWiring:
     `_wire_extension_overlay` to fold into `_ExtensionWiring`."""
 
     subslots: list[Mapper | None]
-    halnote_device: HalnoteMapper | None
     kanji_device: KanjiRom | None
-
-
-@dataclass
-class _ExpandedSubslotDeviceWiring:
-    """One expanded-overlay sub-slot's constructed device, from
-    `_build_expanded_subslot_device`. `halnote_device` is populated only when
-    `mapper_instance` is that sub-slot's `HalnoteMapper`
-    (`None` for every other device kind), so the caller can still track
-    `Machine`'s single `halnote_cart` field without this dataclass needing a
-    separate "which kind was this" flag -- `halnote_device is not None` already
-    says so unambiguously."""
-
-    mapper_instance: Mapper
-    halnote_device: HalnoteMapper | None
 
 
 def _build_expanded_subslot_device(
     config: _ResolvedConfig, slot: int, subslot: _ExpandedSubslotDevice, index: int
-) -> _ExpandedSubslotDeviceWiring:
+) -> Mapper:
     """Construct one expanded-overlay sub-slot's device.
 
     Raises:
@@ -394,21 +378,16 @@ def _build_expanded_subslot_device(
     rom_role = f"slot{slot}.{index}"
     if subslot.device == "halnote":
         halnote_sram = config.media.get(subslot_sram_id(slot, index))
-        halnote_device = HalnoteMapper(
-            rom=_rom(config, rom_role),
-            sram=halnote_sram,
-        )
-        return _ExpandedSubslotDeviceWiring(halnote_device, halnote_device)
+        return HalnoteMapper(rom=_rom(config, rom_role), sram=halnote_sram)
     if subslot.device == "flat_rom":
-        mapper = FixedPageMapper(rom=_rom(config, rom_role), base=0x4000)
-        return _ExpandedSubslotDeviceWiring(mapper, None)
+        return FixedPageMapper(rom=_rom(config, rom_role), base=0x4000)
     if subslot.device == "ascii8":
-        return _ExpandedSubslotDeviceWiring(Ascii8Mapper(rom=_rom(config, rom_role)), None)
+        return Ascii8Mapper(rom=_rom(config, rom_role))
     if subslot.device == "ascii16":
-        return _ExpandedSubslotDeviceWiring(Ascii16Mapper(rom=_rom(config, rom_role)), None)
+        return Ascii16Mapper(rom=_rom(config, rom_role))
     if subslot.device == "ram_mapper":
         assert subslot.size_kb is not None  # guaranteed by load-time validation
-        return _ExpandedSubslotDeviceWiring(RamMapper(size_kb=subslot.size_kb), None)
+        return RamMapper(size_kb=subslot.size_kb)
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
         f"{index} device {subslot.device!r} passed load-time validation "
@@ -433,8 +412,7 @@ def _wire_expanded_overlay(
     expanded overlay (wired first by `_wire_extension_overlay`) already
     claimed a 'ram_mapper'/'halnote' sub-slot -- two independent RamMapper
     instances would otherwise both register on the same I/O ports
-    (0xFC-0xFF), and two independent HalnoteMapper instances would otherwise
-    both claim `Machine`'s single `halnote_cart` field.
+    (0xFC-0xFF), and a machine never has two HBI-J1 MSX-JE cartridges.
 
     Raises:
         MachineLoadError: If applied to an MSX1 machine, if the overlay
@@ -479,16 +457,11 @@ def _wire_expanded_overlay(
         raise MachineLoadError(
             f"{spec.machine_id}: a 'halnote' extension sub-slot conflicts with the "
             "other cartridge slot's extension overlay, which already claimed one -- "
-            "real hardware never has two HBI-J1 MSX-JE cartridges attached at once, "
-            "and Machine has a single halnote_cart field"
+            "real hardware never has two HBI-J1 MSX-JE cartridges attached at once"
         )
     subslots: list[Mapper | None] = _empty_subslots()
-    halnote_device: HalnoteMapper | None = None
     for index, subslot in extension_overlay.subslots.items():
-        built = _build_expanded_subslot_device(config, slot, subslot, index)
-        subslots[index] = built.mapper_instance
-        if built.halnote_device is not None:
-            halnote_device = built.halnote_device
+        subslots[index] = _build_expanded_subslot_device(config, slot, subslot, index)
     if (
         extension_overlay.io_device is not None
         and extension_overlay.io_device.device == "kanji_rom"
@@ -501,11 +474,7 @@ def _wire_expanded_overlay(
                 "0xD8-0xDB -- these cannot coexist"
             )
         kanji_device = KanjiRom(rom=_rom(config, f"slot{slot}.io_device"))
-    return _ExpandedOverlayWiring(
-        subslots=subslots,
-        halnote_device=halnote_device,
-        kanji_device=kanji_device,
-    )
+    return _ExpandedOverlayWiring(subslots=subslots, kanji_device=kanji_device)
 
 
 @dataclass
@@ -635,7 +604,6 @@ def _wire_extension_overlay(
     mapper1_subslots: list[Mapper | None] = _empty_subslots()
     slot2_sub_slot_enabled = False
     mapper2_subslots: list[Mapper | None] = _empty_subslots()
-    halnote_device: HalnoteMapper | None = None
     fmpac_device: FmPac | None = None
     slot1_ram_mapper_claimed = False
     slot1_halnote_claimed = False
@@ -653,9 +621,7 @@ def _wire_extension_overlay(
         expanded1 = _wire_expanded_overlay(config, 1, extension_overlay1, kanji_device)
         slot1_sub_slot_enabled = True
         mapper1_subslots = expanded1.subslots
-        if expanded1.halnote_device is not None:
-            halnote_device = expanded1.halnote_device
-            slot1_halnote_claimed = True
+        slot1_halnote_claimed = any(_is_halnote_mapper(sub) for sub in mapper1_subslots)
         kanji_device = expanded1.kanji_device
         slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
     elif extension_overlay1 is not None:
@@ -675,8 +641,6 @@ def _wire_extension_overlay(
         )
         slot2_sub_slot_enabled = True
         mapper2_subslots = expanded2.subslots
-        if expanded2.halnote_device is not None:
-            halnote_device = expanded2.halnote_device
         kanji_device = expanded2.kanji_device
     elif extension_overlay2 is not None:
         flat2 = _wire_flat_overlay(config, 2, extension_overlay2, scc, existing_fmpac=fmpac_device)
@@ -694,7 +658,6 @@ def _wire_extension_overlay(
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         mapper2_subslots=mapper2_subslots,
         fmpac_device=fmpac_device,
-        halnote_device=halnote_device,
         kanji_device=kanji_device,
     )
 
@@ -773,6 +736,11 @@ def _is_ram_mapper(mapper: Mapper | None) -> TypeGuard[RamMapper]:
     return mapper is not None and mapper.kind == MapperKind.RAM_MAPPER
 
 
+def _is_halnote_mapper(mapper: Mapper | None) -> bool:
+    """True if `mapper` is a `HalnoteMapper` -- see `_is_majutsushi_mapper`."""
+    return mapper is not None and mapper.kind == MapperKind.HALNOTE
+
+
 def _resolve_shared_dac(
     spec: MachineSpec, mapper1_instance: Mapper, mapper2_instance: Mapper
 ) -> MajutsushiMapper | None:
@@ -802,8 +770,8 @@ def _wire_post_construction_attrs(
     """Wire the clock record and the device attributes onto an already-built
     Machine: every component that reads or advances the emulated time gets
     the machine's clock record (msx/clock.py), and the machine gets the
-    FM-PAC/Halnote/Kanji attributes `build_machine`'s extension-overlay
-    resolution produced. Every value of the record is 0 here, so a
+    FM-PAC/Kanji attributes `build_machine`'s extension-overlay resolution
+    produced. Every value of the record is 0 here, so a
     component's own record held nothing to keep."""
     clock = machine.clock
     machine.cpu._clock = clock
@@ -815,7 +783,6 @@ def _wire_post_construction_attrs(
         dac._clock = clock
     _wire_trace(machine)
     machine.fmpac = wiring.fmpac_device
-    machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
 
 
