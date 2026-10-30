@@ -1158,12 +1158,12 @@ belongs to the debugger's diagnostics.
 | --- | --- | --- |
 | Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
-| | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
+| | `apply_input(frame_input) -> int` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it. Always returns `STATUS_OK` |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
-| Control | `reset()` | Power-on reset. RAM, VRAM and mounted media stay as they are |
+| Control | `reset() -> int` | Power-on reset. RAM, VRAM and mounted media stay as they are. Always returns `STATUS_OK` |
 | | `save_state() -> bytes` | The snapshot (`msx/state.py`) |
 | | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
-| | `write_memory(addr, data)` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused |
+| | `write_memory(addr, data) -> int` | Writes as the CPU would, wrapping at 0xFFFF. The RPC server uses it only while paused. Always returns `STATUS_OK` |
 | Media | `dirty_media()` | The ids written since they were last persisted |
 | | `read_media(media_id) -> bytes \| None` | The current bytes of a medium. `None` for an id the machine does not have |
 | | `mark_persisted(media_id) -> int` | Call it after the host has written the bytes. Returns `STATUS_OK` (0), or `STATUS_NO_MEDIUM` (5) for an id the machine does not have |
@@ -1179,12 +1179,12 @@ belongs to the debugger's diagnostics.
 | | `slot_layout() -> SlotLayout` | The port 0xA8 value, the expanded primary slots as a bit mask, and the 4 secondary slot registers (0 for a slot that is not expanded). The debugger's `sl` and `st` use it |
 | | `slot_info(primary, secondary, page) -> SlotInfo \| None` | The content text, bank text and size in KB of one slot, for `sl` and `st`. `secondary` and `page` can be `None`. A value outside 0-3 returns `None` |
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
-| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. `set_watchpoints()` returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) for an invalid kind |
-| | `set_sprites_hidden(hidden)`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it |
+| Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. Each setter returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) and keeps its setting for more than `MAX_BREAKPOINTS` or `MAX_WATCHPOINTS` (4) entries, an address or SP value outside 0x0000-0xFFFF, an invalid kind, a negative frame, or an SP range whose low end is above its high end. `set_break_halt_di()` always returns `STATUS_OK` |
+| | `set_sprites_hidden(hidden) -> int`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it. The setter always returns `STATUS_OK` |
 | | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()` | The trace kinds that are on, as the bit flags `TRACE_VDP`, `TRACE_MAPPER` and `TRACE_DEBUG` (the `--debug` log), and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them |
 | | `drain_trace() -> tuple[TraceEvent, ...]` | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, and while `TRACE_DEBUG` is on each I/O port access, each stored write to VDP R#0 or R#1, each undefined opcode and each hang (a PC loop of 1000 repeats, or a HALT with interrupts off at the end of a frame) after the last 64 instructions, with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
-| | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
+| | `request_break() -> int` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C). Always returns `STATUS_OK` |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
 
 Apart from that device-register case, no inspection query changes emulated
