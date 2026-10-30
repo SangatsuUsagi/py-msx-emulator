@@ -20,9 +20,6 @@ if TYPE_CHECKING:
 _PROJECT_ROOT = Path(__file__).parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 
-# Hardware debug register count (MSX2): caps the breakpoint/watchpoint lists.
-_MAX_BREAKPOINTS = 4
-
 _T = TypeVar("_T")
 
 
@@ -36,7 +33,10 @@ def _first_set(*candidates: _T | None, default: _T) -> _T:
 
 
 def _parse_breakpoints(spec: str | None) -> list[int]:
-    """Parse a comma-separated hex breakpoint list into up to 4 addresses."""
+    """Parse a comma-separated hex breakpoint list into up to MAX_BREAKPOINTS
+    (4) addresses."""
+    from msx.boundary import MAX_BREAKPOINTS
+
     addrs: list[int] = []
     if spec is None:
         return addrs
@@ -50,10 +50,10 @@ def _parse_breakpoints(spec: str | None) -> list[int]:
             print(f"error: invalid breakpoint address: {tok!r} (expected hex)",
                   file=sys.stderr)
             sys.exit(1)
-    if len(addrs) > _MAX_BREAKPOINTS:
-        print(f"warning: more than {_MAX_BREAKPOINTS} breakpoints given; "
-              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
-        addrs = addrs[:_MAX_BREAKPOINTS]
+    if len(addrs) > MAX_BREAKPOINTS:
+        print(f"warning: more than {MAX_BREAKPOINTS} breakpoints given; "
+              f"only first {MAX_BREAKPOINTS} will be used", file=sys.stderr)
+        addrs = addrs[:MAX_BREAKPOINTS]
     return addrs
 
 
@@ -69,9 +69,10 @@ def _watch_summary(entries: list[tuple[int, int]]) -> str:
 
 def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
     """Parse a comma-separated `addr[,mode]` watchpoint list (mode in r/w/rw,
-    default rw) into up to 4 (addr, kind) entries (host/watch.py)."""
+    default rw) into up to MAX_WATCHPOINTS (4) (addr, kind) entries
+    (host/watch.py)."""
     from host.watch import watch_kind
-    from msx.boundary import WATCH_READ, WATCH_WRITE
+    from msx.boundary import MAX_WATCHPOINTS, WATCH_READ, WATCH_WRITE
 
     entries: list[tuple[int, int]] = []
     if spec is None:
@@ -103,10 +104,10 @@ def _parse_watchpoints(spec: str | None) -> list[tuple[int, int]]:
                 sys.exit(1)
     if pending_addr is not None:
         entries.append((pending_addr, WATCH_READ | WATCH_WRITE))
-    if len(entries) > _MAX_BREAKPOINTS:
-        print(f"warning: more than {_MAX_BREAKPOINTS} watchpoints given; "
-              f"only first {_MAX_BREAKPOINTS} will be used", file=sys.stderr)
-        entries = entries[:_MAX_BREAKPOINTS]
+    if len(entries) > MAX_WATCHPOINTS:
+        print(f"warning: more than {MAX_WATCHPOINTS} watchpoints given; "
+              f"only first {MAX_WATCHPOINTS} will be used", file=sys.stderr)
+        entries = entries[:MAX_WATCHPOINTS]
     return entries
 
 

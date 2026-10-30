@@ -162,6 +162,29 @@ def test_list_and_remove_breakpoint(rig) -> None:
     assert all(b["id"] != bp["id"] for b in listed2)
 
 
+def test_a_fifth_breakpoint_is_an_error(rig) -> None:
+    # remote-socket-rpc "A fifth breakpoint is an error".
+    machine, _srv, client = rig
+    addrs = ["0xC000", "0xC100", "0xC200", "0xC300"]
+    for addr in addrs:
+        client.result("debug.set_breakpoint", {"address": addr})
+    resp = client.call("debug.set_breakpoint", {"address": "0xC400"})
+    assert resp["error"]["code"] == -32602
+    listed = client.result("debug.list_breakpoints")["breakpoints"]
+    assert [b["address"] for b in listed] == addrs
+    assert machine.breakpoints() == (0xC000, 0xC100, 0xC200, 0xC300)
+
+
+def test_a_fifth_watchpoint_is_an_error(rig) -> None:
+    # remote-socket-rpc "A fifth watchpoint is an error".
+    machine, _srv, client = rig
+    for addr in ("0xC000", "0xC100", "0xC200", "0xC300"):
+        client.result("debug.set_watchpoint", {"address": addr, "mode": "w"})
+    resp = client.call("debug.set_watchpoint", {"address": "0xC400", "mode": "w"})
+    assert resp["error"]["code"] == -32602
+    assert [addr for addr, _kind in machine.watchpoints()] == [0xC000, 0xC100, 0xC200, 0xC300]
+
+
 # ── Memory ───────────────────────────────────────────────────────────────────
 
 def test_memory_write_requires_paused(rig) -> None:

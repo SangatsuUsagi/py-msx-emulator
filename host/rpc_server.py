@@ -62,6 +62,7 @@ from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
 from host.watch import watch_kind
 from msx.boundary import (
+    STATUS_OK,
     STOP_BREAKPOINT,
     STOP_REQUESTED,
     STOP_WATCHPOINT,
@@ -510,10 +511,15 @@ class DebugServer:
         return frame.pixels, frame.width, frame.height
 
     def alloc_breakpoint(self, address: int) -> int:
+        """Add a breakpoint and return its id. Raises an invalid-params
+        RpcError, keeping the others, when the core rejects it (a fifth
+        one)."""
         bp_id = self._next_bp_id
         self._next_bp_id += 1
         self._breakpoints[bp_id] = address
-        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        if self._machine.set_breakpoints(list(self._breakpoints.values())) != STATUS_OK:
+            del self._breakpoints[bp_id]
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return bp_id
 
     def remove_breakpoint(self, bp_id: int) -> bool:
@@ -524,10 +530,15 @@ class DebugServer:
         return True
 
     def alloc_watchpoint(self, address: int, kind: int) -> int:
+        """Add a watchpoint and return its id. Raises an invalid-params
+        RpcError, keeping the others, when the core rejects it (a fifth
+        one)."""
         wp_id = self._next_wp_id
         self._next_wp_id += 1
         self._watchpoints[wp_id] = (address, kind)
-        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        if self._machine.set_watchpoints(list(self._watchpoints.values())) != STATUS_OK:
+            del self._watchpoints[wp_id]
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return wp_id
 
     def remove_watchpoint(self, wp_id: int) -> bool:
