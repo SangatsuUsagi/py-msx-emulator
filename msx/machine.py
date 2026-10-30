@@ -400,13 +400,13 @@ class Machine:
         self.vdp.debug_disable_sprites = hidden
         return STATUS_OK
 
-    def set_sp_range(self, rng: tuple[int, int] | None) -> int:
-        """Set the valid-RAM range for SP; break when SP leaves it. None
-        disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping the
-        range, for an end outside 0x0000-0xFFFF or a low end above the high
-        end."""
-        if rng is not None:
-            low, high = rng
+    def set_sp_range(self, low: int, high: int) -> int:
+        """Set the valid-RAM range for SP; break when SP leaves it.
+        (-1, -1) disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping
+        the range, for an end outside 0x0000-0xFFFF (one -1 included) or a
+        low end above the high end."""
+        rng: tuple[int, int] | None = None
+        if (low, high) != (-1, -1):
             for value in (low, high):
                 if value < 0 or value > 0xFFFF:
                     return self._fail(
@@ -415,19 +415,20 @@ class Machine:
                 return self._fail(
                     STATUS_BAD_ARGUMENT,
                     f"SP range low 0x{low:04X} above high 0x{high:04X}")
+            rng = (low, high)
         self._sp_range = rng
         self._sp_out_seen = False
         self._error_text = b""
         return STATUS_OK
 
-    def set_temp_breakpoint(self, addr: int | None) -> int:
+    def set_temp_breakpoint(self, addr: int) -> int:
         """Set a one-shot run-to breakpoint (debugger 'g'); cleared when hit.
-        Returns STATUS_OK, or STATUS_BAD_ARGUMENT for an address outside
-        0x0000-0xFFFF."""
-        if addr is not None and (addr < 0 or addr > 0xFFFF):
+        -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for another
+        address outside 0x0000-0xFFFF."""
+        if addr != -1 and (addr < 0 or addr > 0xFFFF):
             return self._fail(
                 STATUS_BAD_ARGUMENT, f"run-to address 0x{addr:X} outside 0x0000-0xFFFF")
-        self._temp_breakpoint = addr
+        self._temp_breakpoint = None if addr == -1 else addr
         self._error_text = b""
         return STATUS_OK
 
@@ -442,13 +443,13 @@ class Machine:
         self._error_text = b""
         return STATUS_OK
 
-    def set_frame_breakpoint(self, frame: int | None) -> int:
+    def set_frame_breakpoint(self, frame: int) -> int:
         """Set a one-shot run-to-frame breakpoint (debugger 'gf'); cleared
-        when hit. Returns STATUS_OK, or STATUS_BAD_ARGUMENT for a negative
-        frame."""
-        if frame is not None and frame < 0:
-            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is negative")
-        self._frame_breakpoint = frame
+        when hit. -1 clears it. Returns STATUS_OK, or STATUS_BAD_ARGUMENT
+        for a frame below -1."""
+        if frame < -1:
+            return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is below -1")
+        self._frame_breakpoint = None if frame == -1 else frame
         self._error_text = b""
         return STATUS_OK
 

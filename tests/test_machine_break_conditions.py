@@ -85,7 +85,7 @@ def test_bh_does_not_break_on_halt_with_interrupts_enabled() -> None:
 def test_bs_breaks_when_sp_enters_rom_window() -> None:
     # LD SP,7252h ; HALT  — SP jumps into the ROM window.
     m = _build(rom=bytes([0x31, 0x52, 0x72, 0x76] + [0x00] * 32764))
-    m.set_sp_range((0xC000, 0xFFFF))
+    m.set_sp_range(0xC000, 0xFFFF)
     assert _run(m) == STOP_BREAKPOINT
     assert m.cpu.registers.SP == 0x7252
 
@@ -93,14 +93,14 @@ def test_bs_breaks_when_sp_enters_rom_window() -> None:
 def test_bs_within_range_does_not_break() -> None:
     # LD SP,F000h ; HALT — SP stays inside the RAM range.
     m = _build(rom=bytes([0x31, 0x00, 0xF0, 0x76] + [0x00] * 32764))
-    m.set_sp_range((0xC000, 0xFFFF))
+    m.set_sp_range(0xC000, 0xFFFF)
     assert _run(m) == STOP_NONE
 
 
 def test_set_sp_range_none_disables() -> None:
     m = _build(rom=bytes([0x31, 0x52, 0x72, 0x76] + [0x00] * 32764))
-    m.set_sp_range((0xC000, 0xFFFF))
-    m.set_sp_range(None)
+    m.set_sp_range(0xC000, 0xFFFF)
+    m.set_sp_range(-1, -1)
     assert _run(m) == STOP_NONE
 
 

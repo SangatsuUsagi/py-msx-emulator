@@ -965,25 +965,25 @@ class TestBreakSp:
         m = _make_machine()
         m.memory.main_ram_range.return_value = (0x8000, 0xFFFF)
         Debugger(m)._cmd_break_sp([])
-        m.set_sp_range.assert_called_once_with((0x8000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0x8000, 0xFFFF)
         out = capsys.readouterr().out
         assert "8000h-FFFFh" in out and "auto" in out
 
     def test_bs_off_disables(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["off"])
-        m.set_sp_range.assert_called_once_with(None)
+        m.set_sp_range.assert_called_once_with(-1, -1)
         assert "disabled" in capsys.readouterr().out
 
     def test_bs_explicit_range(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["c000", "ffff"])
-        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0xC000, 0xFFFF)
 
     def test_bs_swaps_reversed_range(self, capsys):
         m = _make_machine()
         Debugger(m)._cmd_break_sp(["ffff", "c000"])
-        m.set_sp_range.assert_called_once_with((0xC000, 0xFFFF))
+        m.set_sp_range.assert_called_once_with(0xC000, 0xFFFF)
 
 
 # ---------------------------------------------------------------------------

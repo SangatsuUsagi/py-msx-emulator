@@ -441,11 +441,11 @@ class Debugger:
         m = self._machine
         if not args:
             low, high = m.main_ram_range()
-            m.set_sp_range((low, high))
+            m.set_sp_range(low, high)
             print(f"  Break on SP outside {low:04X}h-{high:04X}h (auto: machine RAM)")
             return
         if args[0].lower() == "off":
-            m.set_sp_range(None)
+            m.set_sp_range(-1, -1)
             print("  SP-range break disabled")
             return
         if len(args) < 2:
@@ -459,7 +459,7 @@ class Debugger:
             return
         if low > high:
             low, high = high, low
-        m.set_sp_range((low, high))
+        m.set_sp_range(low, high)
         print(f"  Break on SP outside {low:04X}h-{high:04X}h")
 
     def _cmd_watch(self, args: list[str]) -> None:
