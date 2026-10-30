@@ -49,11 +49,13 @@ import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
     DiskMount,
+    KeyboardLayout,
     MachineConfig,
     MediaId,
     MediaImage,
     RomImage,
     RtcTime,
+    VideoStandard,
     slot_sram_id,
     subslot_sram_id,
 )
@@ -83,7 +85,6 @@ from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
     ExtensionOverlay,
-    KeyboardLayout,
     MachineLoadError,
     MachineSpec,
     _ExpandedSubslotDevice,
@@ -94,7 +95,6 @@ from msx.machine_spec import (
 from msx.mapper import HALNOTE_SRAM_SIZE
 from msx.ppi import PpiControlRead
 from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
-from msx.vdp._geometry import VideoStandard
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
 # field (openspec/specs/memory-slot-bus/spec.md's "Secondary slot register

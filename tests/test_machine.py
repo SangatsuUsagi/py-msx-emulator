@@ -4,16 +4,16 @@ from collections.abc import Callable
 import pytest
 
 from host.romdb import RomDbEntry
-from msx.boundary import MediaId
+from msx.boundary import MediaId, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.input import InputLines
 from msx.machine import Machine
 from msx.machine_spec import MachineLoadError
 from msx.mapper import Ascii8Mapper, Ascii16Mapper, FlatMapper, KonamiMapper, KonamiSCCMapper
-from msx.vdp._geometry import VideoStandard
+from msx.vdp._geometry import cycles_per_frame
 from tests.factories import make_machine, make_machine_msx2
 
-NTSC_CYCLES = VideoStandard.NTSC.cycles_per_frame
+NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
 # 32 KB BIOS ROM filled with NOP (0x00), then HALT (0x76) at offset 0
 _NOP_ROM = bytes(32768)

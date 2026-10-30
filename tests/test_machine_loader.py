@@ -15,11 +15,11 @@ from host.machine_config import (
     load_device_registry,
     load_machine_spec,
 )
+from msx.boundary import KeyboardLayout
 from msx.kanji import KanjiRom
 from msx.machine_loader import _make_mapper, _require_scc
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
-    KeyboardLayout,
     MachineLoadError,
     MachineSpec,
     _ExpandedSubslotDevice,

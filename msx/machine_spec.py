@@ -10,40 +10,12 @@ in a spec parsed from a document (which carries no host paths).
 """
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from msx.boundary import KeyboardLayout, VideoStandard
 from msx.ppi import PpiControlRead
-from msx.vdp._geometry import VideoStandard
-
-
-class KeyboardLayout(enum.IntEnum):
-    """A machine's keyboard matrix layout, an integer at the core boundary.
-    The machine YAML (ppi8255 `keyboard_type`) and the canonical
-    MachineConfig document spell it with `spelling` and `from_spelling`."""
-
-    INTERNATIONAL = 0
-    JAPANESE = 1
-
-    @property
-    def spelling(self) -> str:
-        """The text form of the machine YAML and the canonical document."""
-        return _KEYBOARD_LAYOUT_SPELLINGS[self]
-
-    @classmethod
-    def from_spelling(cls, text: str) -> KeyboardLayout:
-        """The member spelled `text`. Raises ValueError for another text."""
-        for member in cls:
-            if _KEYBOARD_LAYOUT_SPELLINGS[member] == text:
-                return member
-        raise ValueError(f"unknown keyboard layout {text!r}")
-
-
-_KEYBOARD_LAYOUT_SPELLINGS: dict[KeyboardLayout, str] = {
-    KeyboardLayout.INTERNATIONAL: "int",
-    KeyboardLayout.JAPANESE: "jp",
-}
+from msx.vdp._geometry import cycles_per_frame, lines_per_frame
 
 
 class MachineLoadError(Exception):
@@ -141,7 +113,7 @@ class MachineSpec:
     io_device: _ExpandedSubslotDevice | None = None
 
     # Video standard from the YAML (NTSC default); the frame timing derives
-    # from it (VideoStandard.cycles_per_frame / lines_per_frame).
+    # from it (msx/vdp/_geometry.py cycles_per_frame / lines_per_frame).
     video_standard: VideoStandard = VideoStandard.NTSC
 
     # Extra T-states per Z80 M1 (opcode fetch), from the YAML `cpu:` block.
@@ -169,12 +141,12 @@ class MachineSpec:
     @property
     def cycles_per_frame(self) -> int:
         """Z80 T-states per frame, from the video standard."""
-        return self.video_standard.cycles_per_frame
+        return cycles_per_frame(self.video_standard)
 
     @property
     def lines_per_frame(self) -> int:
         """Scanlines per frame, from the video standard."""
-        return self.video_standard.lines_per_frame
+        return lines_per_frame(self.video_standard)
 
 
 @dataclass

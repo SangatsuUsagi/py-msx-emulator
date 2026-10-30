@@ -13,10 +13,8 @@ from pathlib import Path
 import pytest
 
 import msx.boundary as boundary
-from msx.boundary import MediaId
+from msx.boundary import KeyboardLayout, MediaId, VideoStandard
 from msx.core_api import CoreApi
-from msx.machine_spec import KeyboardLayout
-from msx.vdp._geometry import VideoStandard
 
 _HEADER = Path(__file__).resolve().parent.parent / "include" / "msx_core.h"
 _EXTRA_FUNCTIONS = {"create", "destroy", "abi_version"}
