@@ -60,9 +60,9 @@ the basic clock-cycle unit of the Z80:
    step.
 4. If `halted` is set, advance `4 + m1_wait_states` T-states without an opcode
    fetch. The value is 4 on a pure Z80 core, and the MSX M1 wait also applies.
-5. Otherwise, record the current PC in `instruction_pc`, move `q_next` into
-   `q` and clear `q_next` (Q, read by `SCF`/`CCF`), fetch the opcode with
-   `_fetch_opcode()`, and dispatch.
+5. Otherwise, record the current PC in the clock record's `instruction_pc`
+   (`msx/clock.py`), move `q_next` into `q` and clear `q_next` (Q, read by
+   `SCF`/`CCF`), fetch the opcode with `_fetch_opcode()`, and dispatch.
 
 `_fetch()` reads one byte from `read_byte(PC)` and increments PC.
 `_fetch_opcode()` does the same and also increments R, once per M1 cycle: the
@@ -567,8 +567,8 @@ channel.
 a program plays through rapid volume-register writes:
 
 1. `write_port` records each register write as `(cycle, reg, value)`. It
-   reads the cycle from `machine.cycle_count` through its `_machine`
-   reference. The fast frame loop adds the T-states of each scanline to
+   reads the cycle from the machine's clock record (`msx/clock.py`), whose
+   cycle is `machine.cycle_count`. The fast frame loop adds the T-states of each scanline to
    `cycle_count` at the end of the line. The position of a write thus has a
    resolution of one scanline (228 T-states, about 2.8 samples).
 2. `generate_samples` goes back to the register and generator state at the
@@ -1470,6 +1470,13 @@ These patterns translate directly to any statically typed target:
   use it: the `_RegChange`/`_PaletteChange` log entries, `_RenderStatus` and
   `_SatSegment`. The other components use a plain `@dataclass`, because the
   field-layout guarantee is less important off the hot path.
+- **Emulated time** (`msx/clock.py`): the machine owns one `CoreClock`
+  record with the cycle count, the frame count and the instruction address.
+  `build_machine` gives the same record to the CPU, the VDP, the PSG, the
+  PPI, the RTC, the Majutsushi DAC and the trace buffer. Each value has one
+  writer. No component reads the time through a closure or a reference to
+  the `Machine`. A C or Zig port holds the record as a struct that the
+  components point to.
 - **Timing constants**: `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
   `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
   `_TR_REASSERT_CYCLES`, etc. are module-level integer constants. The per-frame
@@ -1533,18 +1540,6 @@ allocation of identical tables on every scanline.
 systems language. A Rust/C++ port keeps fixed `[u8; 256]` arrays, precomputed
 at init, and indexes them directly. Only 32 combinations exist across all
 `(tp, border)` pairs.
-
-#### Trace buffer getters
-
-The trace buffer (`TraceLog` in `msx/trace.py`) stamps each event with the
-CPU's instruction PC, the cycle count and the VDP's frame number. It reads
-them through three closures, `_get_pc`, `_get_cycle` and `_get_frame`, that
-`msx/machine_loader.py` wires at build time. The VDP and the mappers that
-record events do not have these values at hand. The closures stay inside
-the core and never cross the core API.
-
-A Rust/C++ port passes the three values into the record call, or gives the
-buffer a reference to a shared clock struct, instead of storing closures.
 
 #### Spin loop in the frame timer
 
