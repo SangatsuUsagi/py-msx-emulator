@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar, TypedDict
 
+from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.input import InputLines
 from msx.memory import Memory
@@ -60,8 +60,9 @@ class PPI:
     _bus_latch: int = field(default=0xFF, repr=False)
     # Key click (Port C bit 7) as a 1-bit DAC; the frontend mixes its output.
     click: EventDac = field(default_factory=EventDac, repr=False)
-    # Cycle source for click timestamps, wired by build_machine.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py) that timestamps the clicks;
+    # build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
 
     @property
     def control(self) -> int:
@@ -96,8 +97,7 @@ class PPI:
     def _set_port_c(self, value: int) -> None:
         # The click sounds only on a bit 7 change (openMSX MSXPPI::writeC1).
         if (self._port_c ^ value) & 0x80:
-            cycle = self._get_cycle() if self._get_cycle is not None else 0
-            self.click.write(cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
+            self.click.write(self._clock.cycle, KEY_CLICK_LEVEL if value & 0x80 else 0)
         self._port_c = value
 
     def reset(self) -> None:

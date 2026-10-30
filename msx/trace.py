@@ -6,7 +6,6 @@ reads them with Machine.drain_trace().
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
 
 from msx.boundary import (
     TRACE_CAPACITY,
@@ -15,15 +14,17 @@ from msx.boundary import (
     TRACE_HISTORY_SIZE,
     TraceEvent,
 )
+from msx.clock import CoreClock
 
 
 @dataclass
 class TraceLog:
     """The enabled trace kinds, the recorded events and the lost count.
 
-    `sources` is the set of kinds this machine can produce. The getters
-    give the CPU's instruction PC, the cycle count and the VDP's frame
-    number; msx/machine_loader.py wires them at build time. While
+    `sources` is the set of kinds this machine can produce. Each event is
+    stamped with the clock record's cycle count, frame number and
+    instruction address; msx/machine_loader.py gives the machine's record
+    at build time. While
     TRACE_DEBUG is on, the CPU also fills the instruction history: the
     last TRACE_HISTORY_SIZE (pc, opcode) pairs, a ring of fixed lists.
     """
@@ -38,30 +39,18 @@ class TraceLog:
         default_factory=lambda: [0] * TRACE_HISTORY_SIZE, repr=False)
     _history_len: int = field(default=0, repr=False)
     _history_next: int = field(default=0, repr=False)
-    # PORT-NOTE: closures over the machine, wired at build time like
-    #   IOBus._get_pc; they stay inside the core.
-    # Rust/C++ equivalent: pass the PC, cycle and frame into record(), or
-    #   hold a narrow reference to a shared clock struct.
-    # Kept as-is here because: the recording sites (VDP port writes, mapper
-    #   bank writes) do not have the CPU or the cycle count at hand.
-    _get_pc: Callable[[], int] | None = field(default=None, repr=False)
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
-    _get_frame: Callable[[], int] | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py) that stamps each event;
+    # build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
 
     def record(self, kind: int, a: int = 0, b: int = 0, c: int = 0, d: int = 0) -> None:
         """Append one event, or count it as lost when the buffer is full."""
         if len(self.events) >= TRACE_CAPACITY:
             self.lost += 1
             return
-        get_pc = self._get_pc
-        get_cycle = self._get_cycle
-        get_frame = self._get_frame
+        clock = self._clock
         self.events.append(TraceEvent(
-            kind,
-            get_cycle() if get_cycle is not None else 0,
-            get_frame() if get_frame is not None else 0,
-            get_pc() if get_pc is not None else 0,
-            a, b, c, d,
+            kind, clock.cycle, clock.frame, clock.instruction_pc, a, b, c, d,
         ))
 
     def push_history(self, pc: int, opcode: int) -> None:

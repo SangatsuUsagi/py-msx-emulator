@@ -296,7 +296,7 @@ def _ram_cpu(code: list[int], m1_wait: int = 1) -> tuple[Z80, bytearray]:
 def _registers(cpu: Z80) -> tuple[int, ...]:
     r = cpu.registers
     return (r.AF, r.BC, r.DE, r.HL, r.IX, r.IY, r.SP, r.PC, r.WZ, r.I, r.R,
-            cpu.instruction_pc, cpu.q, cpu.q_next, int(cpu.ei_pending))
+            cpu._clock.instruction_pc, cpu.q, cpu.q_next, int(cpu.ei_pending))
 
 
 def test_jr_self_sets_the_idle_hint() -> None:

@@ -153,16 +153,16 @@ def test_frame_breakpoint_fires_at_target_frame() -> None:
     m = _build(rom=bytes(32768))  # all NOPs
     m.set_frame_breakpoint(2)
     assert _run(m) == STOP_NONE
-    assert m.vdp._frame_count == 1
+    assert m.vdp.frame_count == 1
     assert _run(m) == STOP_BREAKPOINT
-    assert m.vdp._frame_count == 2
+    assert m.vdp.frame_count == 2
 
 
 def test_frame_breakpoint_does_not_fire_before_target() -> None:
     m = _build(rom=bytes(32768))
     m.set_frame_breakpoint(2)
     assert _run(m) == STOP_NONE  # frame 1 — should not fire
-    assert m.vdp._frame_count == 1
+    assert m.vdp.frame_count == 1
 
 
 def test_frame_breakpoint_clears_after_firing() -> None:

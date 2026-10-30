@@ -18,12 +18,11 @@ deterministic. Calendar arithmetic is integer-only (days-from-civil).
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from typing import TypedDict
 
 from msx.boundary import RTC_DEFAULT_START, RtcTime
-from msx.clock import CPU_CLOCK_HZ
+from msx.clock import CPU_CLOCK_HZ, CoreClock
 from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_int_list, check_object
 from msx.sram import SramImage
 
@@ -87,9 +86,10 @@ class RTC:
     cmos: SramImage = field(init=False, repr=False)
     # Time at emulated cycle _start_cycle, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
-    # Emulated cycle source (machine.cycle_count), wired by build_machine. A
-    # bare RTC without one stays at its start time.
-    _get_cycle: Callable[[], int] | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py); build_machine gives the machine's
+    # record. A bare RTC reads its own record, which stays at cycle 0, so
+    # it stays at its start time.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
     _start_cycle: int = field(default=0, repr=False)
 
     def __post_init__(self, sram: bytes | bytearray | None) -> None:
@@ -138,8 +138,7 @@ class RTC:
         """Assign an already-parsed RtcState (see parse_state)."""
         y, mo, d, h, mi, sec = state["start"]
         self.start = RtcTime(y, mo, d, h, mi, sec)
-        now = self._get_cycle() if self._get_cycle is not None else 0
-        self._start_cycle = now - state["elapsed_cycles"]
+        self._start_cycle = self._clock.cycle - state["elapsed_cycles"]
         self._addr = state["addr"]
         self._mode = state["mode"]
         self._test = state["test"]
@@ -148,9 +147,7 @@ class RTC:
         self.cmos.restore(bytes(state["regs"][2 * REGS_PER_BLOCK:]))
 
     def _elapsed_cycles(self) -> int:
-        if self._get_cycle is None:
-            return 0
-        return self._get_cycle() - self._start_cycle
+        return self._clock.cycle - self._start_cycle
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.

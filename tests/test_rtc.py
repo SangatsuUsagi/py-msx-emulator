@@ -6,6 +6,7 @@ import pytest
 from host.machine_config import load_machine_config, sram_paths
 from host.media import persist_dirty_media
 from msx.boundary import MachineConfig, MediaId, RtcTime
+from msx.clock import CoreClock
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineSpec, _RomEntry
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
@@ -333,10 +334,10 @@ def _read_block0(rtc: RTC) -> list[int]:
     return digits
 
 
-def _clocked(start: RtcTime) -> tuple[RTC, list[int]]:
-    cycle = [0]
-    rtc = RTC(start=start, _get_cycle=lambda: cycle[0])
-    return rtc, cycle
+def _clocked(start: RtcTime) -> tuple[RTC, CoreClock]:
+    clock = CoreClock()
+    rtc = RTC(start=start, _clock=clock)
+    return rtc, clock
 
 
 def test_block0_reflects_the_supplied_start_time() -> None:
@@ -352,17 +353,17 @@ def test_no_start_time_gives_the_fixed_epoch() -> None:
 
 
 def test_one_emulated_second_advances_the_seconds_digit() -> None:
-    rtc, cycle = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
-    cycle[0] = 3_579_545 - 1
+    rtc, clock = _clocked(RtcTime(2026, 1, 1, 12, 0, 0))
+    clock.cycle = 3_579_545 - 1
     assert _read_block0(rtc)[0:2] == [0, 0]
-    cycle[0] = 3_579_545
+    clock.cycle = 3_579_545
     assert _read_block0(rtc)[0:2] == [1, 0]
 
 
 def test_midnight_carries_into_the_next_day() -> None:
-    rtc, cycle = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
+    rtc, clock = _clocked(RtcTime(1999, 12, 31, 23, 59, 59))
     before = _read_block0(rtc)
-    cycle[0] = 3_579_545
+    clock.cycle = 3_579_545
     after = _read_block0(rtc)
     # 2000-01-01 00:00:00; year register (2000 - 1980) % 100 = 20
     assert after[0:6] == [0, 0, 0, 0, 0, 0]
