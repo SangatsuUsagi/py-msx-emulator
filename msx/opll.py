@@ -32,7 +32,6 @@ msx/fmpac.py drives it exactly as before.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Callable, TypedDict
 
@@ -56,7 +55,6 @@ _PG_BITS = 10
 _PG_WIDTH = 1 << _PG_BITS
 _DP_BASE_BITS = _DP_BITS - _PG_BITS  # 9
 
-_EG_STEP = 0.375
 _EG_BITS = 7
 _EG_MUTE = (1 << _EG_BITS) - 1  # 127
 _EG_MAX = _EG_MUTE - 4          # 123
@@ -88,21 +86,62 @@ _SLOT_CYM = 17  # CAR(8)
 
 
 # ---------------------------------------------------------------------------
-# Static tables (built once at import; formulas match emu2413's tabulations)
+# Static tables: integer data and integer builds only, so every implementation
+# of the core uses the same values (audio-ym2413 "OPLL synthesis tables are
+# integer data"). The values are those of emu2413's formulas; tests/test_opll.py
+# recomputes them with floating point and checks every entry.
 # ---------------------------------------------------------------------------
 
-def _build_exp_table() -> list[int]:
-    # exp_table[x] = round((2^(x/256) - 1) * 1024)
-    return [int((2 ** (x / 256.0) - 1) * 1024 + 0.5) for x in range(256)]
+# exp_table[x] = round((2^(x/256) - 1) * 1024), x = 0-255.
+_EXP_TABLE_DATA: tuple[int, ...] = (
+    0, 3, 6, 8, 11, 14, 17, 20, 22, 25, 28, 31, 34, 37, 40, 42,
+    45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90,
+    93, 96, 99, 102, 105, 108, 111, 114, 117, 120, 123, 126, 130, 133, 136, 139,
+    142, 145, 148, 152, 155, 158, 161, 164, 168, 171, 174, 177, 181, 184, 187, 190,
+    194, 197, 200, 204, 207, 210, 214, 217, 220, 224, 227, 231, 234, 237, 241, 244,
+    248, 251, 255, 258, 262, 265, 268, 272, 276, 279, 283, 286, 290, 293, 297, 300,
+    304, 308, 311, 315, 318, 322, 326, 329, 333, 337, 340, 344, 348, 352, 355, 359,
+    363, 367, 370, 374, 378, 382, 385, 389, 393, 397, 401, 405, 409, 412, 416, 420,
+    424, 428, 432, 436, 440, 444, 448, 452, 456, 460, 464, 468, 472, 476, 480, 484,
+    488, 492, 496, 501, 505, 509, 513, 517, 521, 526, 530, 534, 538, 542, 547, 551,
+    555, 560, 564, 568, 572, 577, 581, 585, 590, 594, 599, 603, 607, 612, 616, 621,
+    625, 630, 634, 639, 643, 648, 652, 657, 661, 666, 670, 675, 680, 684, 689, 693,
+    698, 703, 708, 712, 717, 722, 726, 731, 736, 741, 745, 750, 755, 760, 765, 770,
+    774, 779, 784, 789, 794, 799, 804, 809, 814, 819, 824, 829, 834, 839, 844, 849,
+    854, 859, 864, 869, 874, 880, 885, 890, 895, 900, 906, 911, 916, 921, 927, 932,
+    937, 942, 948, 953, 959, 964, 969, 975, 980, 986, 991, 996, 1002, 1007, 1013, 1018,
+)
+
+
+# The first quarter of fullsin_table:
+# round(-log2(sin((x + 0.5) * pi / 512)) * 256), x = 0-255.
+_LOGSIN_QUARTER: tuple[int, ...] = (
+    2137, 1731, 1543, 1419, 1326, 1252, 1190, 1137, 1091, 1050, 1013, 979, 949, 920, 894, 869,
+    846, 825, 804, 785, 767, 749, 732, 717, 701, 687, 672, 659, 646, 633, 621, 609,
+    598, 587, 576, 566, 556, 546, 536, 527, 518, 509, 501, 492, 484, 476, 468, 461,
+    453, 446, 439, 432, 425, 418, 411, 405, 399, 392, 386, 380, 375, 369, 363, 358,
+    352, 347, 341, 336, 331, 326, 321, 316, 311, 307, 302, 297, 293, 289, 284, 280,
+    276, 271, 267, 263, 259, 255, 251, 248, 244, 240, 236, 233, 229, 226, 222, 219,
+    215, 212, 209, 205, 202, 199, 196, 193, 190, 187, 184, 181, 178, 175, 172, 169,
+    167, 164, 161, 159, 156, 153, 151, 148, 146, 143, 141, 138, 136, 134, 131, 129,
+    127, 125, 122, 120, 118, 116, 114, 112, 110, 108, 106, 104, 102, 100, 98, 96,
+    94, 92, 91, 89, 87, 85, 83, 82, 80, 78, 77, 75, 74, 72, 70, 69,
+    67, 66, 64, 63, 62, 60, 59, 57, 56, 55, 53, 52, 51, 49, 48, 47,
+    46, 45, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30,
+    29, 28, 27, 26, 25, 24, 23, 23, 22, 21, 20, 20, 19, 18, 17, 17,
+    16, 15, 15, 14, 13, 13, 12, 12, 11, 10, 10, 9, 9, 8, 8, 7,
+    7, 7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2,
+    2, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+)
 
 
 def _build_sin_tables() -> tuple[list[int], list[int]]:
-    # fullsin_table[x] = round(-log2(sin((x + 0.5) * pi / (PG_WIDTH/4) / 2)) * 256)
-    # for the first quarter, then mirrored/sign-extended (makeSinTable).
+    # The first quarter from _LOGSIN_QUARTER, then mirrored/sign-extended
+    # (emu2413 makeSinTable).
     full = [0] * _PG_WIDTH
     quarter = _PG_WIDTH // 4  # 256
     for x in range(quarter):
-        full[x] = int(-math.log2(math.sin((x + 0.5) * math.pi / (quarter * 2))) * 256 + 0.5)
+        full[x] = _LOGSIN_QUARTER[x]
     for x in range(quarter):
         full[quarter + x] = full[quarter - x - 1]
     for x in range(_PG_WIDTH // 2):
@@ -115,7 +154,7 @@ def _build_sin_tables() -> tuple[list[int], list[int]]:
     return full, half
 
 
-_EXP_TABLE = _build_exp_table()
+_EXP_TABLE = list(_EXP_TABLE_DATA)
 _FULLSIN_TABLE, _HALFSIN_TABLE = _build_sin_tables()
 _WAVE_TABLE_MAP = (_FULLSIN_TABLE, _HALFSIN_TABLE)
 
@@ -165,15 +204,13 @@ _ML_TABLE: tuple[int, ...] = (
 )
 
 
-def _db2(x: float) -> float:
-    return x * 2.0
-
-
-_KL_TABLE: tuple[float, ...] = (
-    _db2(0.000), _db2(9.000), _db2(12.000), _db2(13.875), _db2(15.000), _db2(16.125),
-    _db2(16.875), _db2(17.625), _db2(18.000), _db2(18.750), _db2(19.125), _db2(19.500),
-    _db2(19.875), _db2(20.250), _db2(20.625), _db2(21.000),
+# emu2413's key-scale levels (0.000-21.000 dB, multiples of 0.125 dB) on its
+# dB2 scale (dB * 2), in quarter units: dB * 8, so each is an exact integer.
+_KL_TABLE: tuple[int, ...] = (
+    0, 72, 96, 111, 120, 129, 135, 141, 144, 150, 153, 156, 159, 162, 165, 168,
 )
+# The dB2 of 3 dB per block below 7, in the same quarter units.
+_KL_BLOCK_STEP = 24
 
 
 def _build_tll_table() -> list[list[list[int]]]:
@@ -186,12 +223,15 @@ def _build_tll_table() -> list[list[list[int]]]:
                     if kl == 0:
                         result[(block << 4) | fnum][tl][kl] = _tl2eg(tl)
                     else:
-                        tmp = int(_KL_TABLE[fnum] - _db2(3.000) * (7 - block))
+                        # Floor division: equal to emu2413's truncation for
+                        # tmp > 0, and either is <= 0 otherwise.
+                        tmp = (_KL_TABLE[fnum] - _KL_BLOCK_STEP * (7 - block)) // 4
                         if tmp <= 0:
                             result[(block << 4) | fnum][tl][kl] = _tl2eg(tl)
                         else:
+                            # Divide by the 0.375 dB envelope step: * 8 // 3.
                             result[(block << 4) | fnum][tl][kl] = (
-                                int((tmp >> (3 - kl)) / _EG_STEP) + _tl2eg(tl)
+                                (tmp >> (3 - kl)) * 8 // 3 + _tl2eg(tl)
                             )
     return result
 
