@@ -57,7 +57,6 @@ from msx.boundary import (
     slot_sram_id,
     subslot_sram_id,
 )
-from msx.diagnostics.logger import DebugLogger, attach_logger
 from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 
 # The closed vocabularies are defined once, in the core's document parser,
@@ -1376,7 +1375,6 @@ def build_machine_from_spec(
     mapper1: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
-    logger: DebugLogger | None = None,
     bios_override: bytes | None = None,
     logo_override: bytes | None = None,
     extrom_override: bytes | None = None,
@@ -1401,7 +1399,4 @@ def build_machine_from_spec(
     result = create_machine(config)
     if result.machine is None:
         raise MachineLoadError(result.error_text.decode("utf-8"))
-    machine = result.machine
-    if logger is not None:
-        attach_logger(machine, logger)
-    return machine
+    return result.machine

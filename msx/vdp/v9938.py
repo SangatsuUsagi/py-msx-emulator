@@ -11,7 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, TypedDict
 
-from msx.boundary import TRACE_EVENT_VDP_PORT9B, TRACE_EVENT_VDP_PORT99, TRACE_VDP
+from msx.boundary import (
+    TRACE_DEBUG,
+    TRACE_EVENT_VDP_MODE_REG,
+    TRACE_EVENT_VDP_PORT9B,
+    TRACE_EVENT_VDP_PORT99,
+    TRACE_VDP,
+)
 from msx.snapshot_schema import check_bool, check_int, check_int_list, check_object
 from msx.vdp import v9938_renderer
 from msx.vdp._geometry import CYCLES_PER_LINE
@@ -26,7 +32,6 @@ from msx.vdp._v9938_defs import (
 from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
     from msx.trace import TraceLog
 
 _VRAM_SIZE = 131072  # 128 KB
@@ -418,9 +423,6 @@ class V9938:
     # Kept as-is here because: resolved once at wiring time and called at
     #   most once per scanline, not per VRAM/command-engine access; the
     #   closure indirection costs nothing measurable here.
-    # --debug milestone logging (display enable / mode change), as on the
-    # TMS9918A; fed from both the port-0x99 and port-0x9B register paths.
-    _logger: DebugLogger | None = field(default=None, repr=False)
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 and 0x9B bytes are recorded while TRACE_VDP is on.
     _trace: TraceLog | None = field(default=None, repr=False)
@@ -964,8 +966,9 @@ class V9938:
             if reg == 0:
                 self._apply_r0_write(value)
             self.regs[reg] = value
-            if self._logger is not None:
-                self._logger.on_vdp_reg_write(reg, value, self._frame_count)
+            trace = self._trace
+            if reg <= 1 and trace is not None and trace.kinds & TRACE_DEBUG:
+                trace.record(TRACE_EVENT_VDP_MODE_REG, reg, value)
             if reg in _DISPLAY_REGS:
                 self._reg_write_log.append(_RegChange(self.display_line, reg, value))
             if reg <= 1:  # R#0 (IE1) / R#1 (IE0) affect the IRQ line

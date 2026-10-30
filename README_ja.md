@@ -345,7 +345,7 @@ Ctrl+C かブレークポイントで開く REPL。ブレークポイントと�
 
 必要なときに有効にする構造化ログ、CPU 命令トレース、I/O ポートトレース、ハング検出。
 
-- 実装：`msx/diagnostics/`
+- 実装：`msx/trace.py`（コアがイベントを記録する）、`host/debug_log.py`（ログの文字列）
 
 ---
 
@@ -860,12 +860,12 @@ py-msx-emulator/
 │   ├── screenshot.py      # RGB24→PNG 書き出し（スクリーンショット + ステート画像）
 │   ├── rpc_server.py      # Unix ソケット JSON-RPC 制御サーバ（--rpc）
 │   ├── trace.py           # コアのトレースイベントから VDP とマッパーのトレースの文字列を作る
+│   ├── debug_log.py       # トレースイベントから --debug のログ（CPU/I/O トレース、ハング）の文字列を作る
 │   └── debugger/          # インタラクティブ REPL（プロンプト、逆アセンブラ）
 ├── msx/                   # コアエミュレータパッケージ（ファイル入出力・ホスト時計なし）
 │   ├── cpu/               # Z80 CPU（レジスタ、フラグ、オペコード）
 │   ├── vdp/               # VDP（TMS9918A + V9938 コア、レンダラ）
 │   ├── fdc/               # フロッピー（ディスクイメージ、ドライブ、WD2793/TC8566AF、インターフェース）
-│   ├── diagnostics/       # DebugLogger、CPU/I/O トレース、ハング検出器
 │   ├── boundary.py        # コアの境界を渡る値（設定、フレーム出力）
 │   ├── core_api.py        # CoreApi：host 側のコードがマシンに使える操作
 │   ├── machine.py         # コンポーネント配線とフレームループ（step_frame）
@@ -890,7 +890,7 @@ py-msx-emulator/
 │   ├── input.py           # フレームごとの入力値（InputFrame）+ PPI/PSG が読む入力線
 │   ├── mouse.py           # MSX マウスプロトコル状態機械（pin-8 クロックのニブル転送）
 │   ├── screenshot.py      # 現在のフレームの RGB24 キャプチャ
-│   ├── trace.py           # トレースバッファ（VDP のポート書き込み、マッパーのバンク切り替え）
+│   ├── trace.py           # トレースバッファ（VDP とマッパーのトレース、デバッグログのイベント、ハングの履歴）
 │   ├── snapshot.schema.json # ステートの構成を定める JSON Schema
 │   └── state.py           # マシン状態のスナップショット（正規化した JSON）
 ├── config/

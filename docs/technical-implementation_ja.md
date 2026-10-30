@@ -775,7 +775,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 | 分類 | 操作 | 備考 |
 | --- | --- | --- |
-| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。ロガーは構築したマシンに `attach_logger()`（`msx/diagnostics/logger.py`）でつなぐ。VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
+| 構築 | `create_machine(config) -> BuildResult` | `status`、`machine`、`error_text` を返す。文書に誤りがあるとき、ROM イメージが欠けているか合わないとき、イメージのレコードが矛盾するときは、何かを作る前に `STATUS_BAD_CONFIG`（4）を返し、マシンはなく、メッセージを付ける。`build_machine(config)` はテストと Python への組み込み用のラッパーで、同じメッセージの `MachineLoadError`（`msx/machine_spec.py`）を出す。host のコードは `create_machine` を呼ぶ。どちらもロガーとトレーサは引数に取らない。デバッグのログ、VDP とマッパーのトレースは、後述のトレースのメンバーを使う |
 | フレームの実行 | `step_frame(frame_input, render_video) -> FrameOutput` | 1 フレーム、または止まったフレームの残りを実行する。ブレークすると途中で戻り、`stop_reason` が入り、`frame_complete` が偽になる |
 | | `apply_input(frame_input)` | フレームを動かさずに、入力線とマウスのボタンをすぐ置き換える。RPC のキー入力が使う |
 | | `samples_per_frame()`、`video_standard` | 735 か 882。NTSC か PAL（`video_standard.target_fps` は 60 か 50） |
@@ -800,8 +800,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 | | `render_preview() -> RgbFrame` | 今のフレーム。スクリーンショットとステートセーブのサムネイルに使う |
 | デバッグの制御 | `set_breakpoints()`、`set_watchpoints()` などのブレークの設定、`breakpoints()`、`watchpoints()`、`break_halt_di()` | ブレークの設定と、その読み出し。ウォッチポイントは `(addr, kind)` の組で、kind は `WATCH_READ`、`WATCH_WRITE`、またはその両方。デバッガ、RPC、CLI の `r`、`w`、`rw` との変換は `host/watch.py` が行う。`set_watchpoints()` は `STATUS_OK` を返し、不正な kind には `STATUS_BAD_ARGUMENT`（6）を返す |
 | | `set_sprites_hidden(hidden)`、`sprites_hidden()` | デバッガの `ds` が使うスプライト表示のフラグ。立っている間、描画はスプライトの処理を飛ばす。リセットでは消えず、ステートセーブにも入らない |
-| | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP` と `TRACE_MAPPER`）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
-| | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
+| | `set_trace_kinds(kinds) -> int`、`trace_kinds()`、`trace_sources()` | 有効なトレースの種類（ビットフラグ `TRACE_VDP`、`TRACE_MAPPER`、`TRACE_DEBUG`。`TRACE_DEBUG` は `--debug` のログ）と、このマシンが出せる種類。`TRACE_MAPPER` には、スロット 1 か 2 にバンク切り替えのある ROM マッパーが要る。ほかのビットには `STATUS_BAD_ARGUMENT`（6）を返す。リセットでは消えず、ステートセーブにも入らない |
+| | `drain_trace() -> tuple[TraceEvent, ...]` | 記録したイベントを順に返す。`TRACE_VDP` が有効な間はポート 0x99 と 0x9B に書いた各バイト、`TRACE_MAPPER` が有効な間はスロット 1/2 のマッパーのバンクの変化を、`TRACE_DEBUG` が有効な間は I/O ポートへの各アクセス、VDP の R#0 と R#1 に保持された各書き込み、各未定義命令、各ハング（PC が 1000 回続くループか、フレームの終わりの割り込み禁止の HALT。直前の 64 命令の後に記録する）を、サイクル数、フレーム番号、PC とともに記録する。取り出すとバッファは空になる。バッファは `TRACE_CAPACITY`（65536）件まで持つ。あふれた後の取り出しは、失われた件数を示す `TRACE_EVENT_LOST` の record 1 つで終わる |
 | | `step() -> int` | 今のフレームの 1 命令を実行し、その T ステート数を返す。サイクル数、フレーム内の位置、VDP は `step_frame` と同じように進む。ブレークポイントとブレーク要求は確かめない |
 | | `request_break()` | 次のフレームの区間に入る前に止める。シグナルハンドラ（Ctrl-C）から呼んでよい |
 | | `last_stop() -> StopInfo` | 直前の停止。理由、PC、ウォッチポイントならアドレス、値、アクセスの種類 |
@@ -813,7 +813,6 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 ほかのメンバーは境界を通らない。ソフトウェアを動かすだけなら、移植する必要はない。
 
 - `run_frame()`：内部のフレームループ
-- 診断用のロガー。構築したマシンに `attach_logger()` でつなぐ
 
 ### MachineConfig の文書
 

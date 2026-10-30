@@ -12,9 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from host.state_files import load_state, save_state
-from msx.boundary import STOP_BREAKPOINT, STOP_NONE, RgbFrame
+from msx.boundary import STOP_BREAKPOINT, STOP_NONE, TRACE_DEBUG, RgbFrame
 from msx.cpu.z80 import Z80
-from msx.diagnostics.logger import DebugLogger
 from msx.machine import Machine
 from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, VideoStandard, pad_rows
 from msx.vdp.renderer import render_frame as vdp_render_frame
@@ -269,7 +268,9 @@ _UNREACHED_PC = 0x7FFF  # breakpoint address these test ROMs never execute
 
 def _machine_on_arm(rom: bytes, arm: str) -> Machine:
     if arm == "logged":
-        return make_machine(rom, logger=DebugLogger())
+        machine = make_machine(rom)
+        machine.set_trace_kinds(TRACE_DEBUG)
+        return machine
     machine = make_machine(rom)
     machine.set_breakpoints([_UNREACHED_PC])
     return machine

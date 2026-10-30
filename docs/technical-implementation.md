@@ -1156,7 +1156,7 @@ belongs to the debugger's diagnostics.
 
 | Group | Operation | Notes |
 | --- | --- | --- |
-| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: `attach_logger()` (`msx/diagnostics/logger.py`) attaches the logger to a built machine, and the VDP and mapper trace go through the trace members below |
+| Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, or conflicting image records give `STATUS_BAD_CONFIG` (4), no machine and the message, before anything is built. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` false |
 | | `apply_input(frame_input)` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it |
 | | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
@@ -1181,8 +1181,8 @@ belongs to the debugger's diagnostics.
 | | `render_preview() -> RgbFrame` | The current frame, for screenshots and save-state thumbnails |
 | Debug control | `set_breakpoints()`, `set_watchpoints()` and the other break setters, `breakpoints()`, `watchpoints()`, `break_halt_di()` | The break settings and their read-back. A watchpoint is an `(addr, kind)` pair, where the kind is `WATCH_READ`, `WATCH_WRITE` or both. `host/watch.py` converts it to and from the `r`, `w` and `rw` of the debugger, the RPC and the CLI. `set_watchpoints()` returns `STATUS_OK`, or `STATUS_BAD_ARGUMENT` (6) for an invalid kind |
 | | `set_sprites_hidden(hidden)`, `sprites_hidden()` | The sprite display flag of the debugger's `ds`. While it is set, the renderer skips its sprite pass. No reset clears it, and the save state does not carry it |
-| | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()` | The trace kinds that are on, as the bit flags `TRACE_VDP` and `TRACE_MAPPER`, and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them |
-| | `drain_trace() -> tuple[TraceEvent, ...]` | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, and each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
+| | `set_trace_kinds(kinds) -> int`, `trace_kinds()`, `trace_sources()` | The trace kinds that are on, as the bit flags `TRACE_VDP`, `TRACE_MAPPER` and `TRACE_DEBUG` (the `--debug` log), and the kinds this machine can produce (`TRACE_MAPPER` needs a bank-switching ROM mapper in slot 1 or 2). Another bit returns `STATUS_BAD_ARGUMENT` (6). No reset clears the kinds, and the save state does not carry them |
+| | `drain_trace() -> tuple[TraceEvent, ...]` | The recorded events in order: each port 0x99 and 0x9B byte while `TRACE_VDP` is on, each bank change of the slot 1/2 mapper while `TRACE_MAPPER` is on, and while `TRACE_DEBUG` is on each I/O port access, each stored write to VDP R#0 or R#1, each undefined opcode and each hang (a PC loop of 1000 repeats, or a HALT with interrupts off at the end of a frame) after the last 64 instructions, with the cycle count, the frame number and the PC. It empties the buffer. The buffer holds `TRACE_CAPACITY` (65536) events, and a drain after a full buffer ends with one `TRACE_EVENT_LOST` record that gives the lost count |
 | | `step() -> int` | Runs one instruction of the current frame and returns its T-states. The cycle count, the frame position and the VDP advance as in `step_frame`. It tests no breakpoint or break request |
 | | `request_break()` | Stops before the next frame segment. Safe from a signal handler (Ctrl-C) |
 | | `last_stop() -> StopInfo` | The most recent stop: reason, PC, and for a watchpoint the address, value and access kind |
@@ -1204,8 +1204,6 @@ The other members do not cross the boundary, and a port does not need them
 to run software:
 
 - `run_frame()`, the internal frame loop
-- the diagnostic logger, which `attach_logger()` attaches to a built
-  machine
 
 ### MachineConfig document
 

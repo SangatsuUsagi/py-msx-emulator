@@ -22,6 +22,7 @@ from msx.boundary import (
     RTC_DEFAULT_START,
     STATUS_BAD_CONFIG,
     STATUS_OK,
+    TRACE_DEBUG,
     TRACE_MAPPER,
     TRACE_VDP,
     DiskMount,
@@ -830,7 +831,8 @@ def _wire_trace(machine: "Machine") -> None:
     trace._get_cycle = lambda: machine.cycle_count
     trace._get_frame = lambda: machine.vdp.frame_count
     machine.vdp._trace = trace
-    trace.sources = TRACE_VDP
+    trace.sources = TRACE_VDP | TRACE_DEBUG
+    machine.io._trace = trace
     mem = machine.memory
     for mp in (mem._mapper, mem._mapper2):
         if isinstance(mp, BankTracingMapper):

@@ -7,7 +7,7 @@ from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
 if TYPE_CHECKING:
-    from msx.diagnostics.logger import DebugLogger
+    from msx.trace import TraceLog
 
 
 # PORT-NOTE: this module-level binding aliases opcodes_main._DISPATCH so the
@@ -86,7 +86,10 @@ class Z80:
     # matching openMSX Z80 WAIT_CYCLES=1). Supplied at construction
     # from the machine config.
     m1_wait_states: int = 0
-    _logger: DebugLogger | None = field(default=None, repr=False)
+    # The machine's trace buffer while TRACE_DEBUG is on, None otherwise
+    # (Machine.set_trace_kinds): step() keeps the instruction history in
+    # it, so the per-instruction cost with the kind off is one None check.
+    _trace: TraceLog | None = field(default=None, repr=False)
 
     def reset(self) -> None:
         self.registers.reset()
@@ -285,8 +288,8 @@ class Z80:
         opcode = self.read_byte(pc)
         r.PC = (pc + 1) & 0xFFFF
         r.R = (r.R & 0x80) | ((r.R + 1) & 0x7F)
-        if self._logger is not None:
-            self._logger.on_step(pc, opcode)
+        if self._trace is not None:
+            self._trace.push_history(pc, opcode)
         # + the M1 wait for this opcode fetch. Prefixed instructions add one more
         # per prefix byte inside their prefix handlers (each is its own M1).
         return _DISPATCH[opcode](self) + self.m1_wait_states

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
+from msx.boundary import TRACE_EVENT_UNDEFINED_OP
 from msx.cpu import flags as F
 
 if TYPE_CHECKING:
@@ -1261,8 +1262,8 @@ def _ed_block_out(cpu: Z80, op: int) -> int:  # OUTI / OUTD / OTIR / OTDR
 
 
 def _ed_undefined(cpu: Z80, op: int) -> int:
-    if cpu._logger is not None:
-        cpu._logger.on_undefined_opcode((cpu.registers.PC - 2) & 0xFFFF, op)
+    if cpu._trace is not None:
+        cpu._trace.record(TRACE_EVENT_UNDEFINED_OP, (cpu.registers.PC - 2) & 0xFFFF, op)
     return 8
 
 
@@ -1497,8 +1498,8 @@ def _make_rst(n: int) -> Callable[[Z80], int]:
 
 
 def _op_illegal(cpu: Z80) -> int:
-    if cpu._logger is not None:
-        cpu._logger.on_undefined_opcode((cpu.registers.PC - 1) & 0xFFFF, 0)
+    if cpu._trace is not None:
+        cpu._trace.record(TRACE_EVENT_UNDEFINED_OP, (cpu.registers.PC - 1) & 0xFFFF, 0)
     return 4
 
 

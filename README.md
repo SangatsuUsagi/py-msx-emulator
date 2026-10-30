@@ -583,7 +583,7 @@ For the full command reference, see [`docs/debugger.md`](docs/debugger.md).
 Opt-in structured logging, CPU instruction trace, I/O port trace, and a hang
 detector.
 
-- Implementation: `msx/diagnostics/`
+- Implementation: `msx/trace.py` (the core records the events), `host/debug_log.py` (the log text)
 
 ---
 
@@ -1211,12 +1211,12 @@ py-msx-emulator/
 │   ├── screenshot.py      # RGB24→PNG writer (screenshots + save-state images)
 │   ├── rpc_server.py      # Unix-socket JSON-RPC control server (--rpc)
 │   ├── trace.py           # VDP and mapper trace text from the core's trace events
+│   ├── debug_log.py       # --debug log text (CPU/I/O trace, hangs) from the trace events
 │   └── debugger/          # Interactive REPL (prompt, disassembler)
 ├── msx/                   # Core emulator package (no file I/O, no host clock)
 │   ├── cpu/               # Z80 CPU (registers, flags, opcodes)
 │   ├── vdp/               # VDP (TMS9918A + V9938 core, renderers)
 │   ├── fdc/               # Floppy (disk image, drive, WD2793/TC8566AF, interface)
-│   ├── diagnostics/       # DebugLogger, CPU/I/O trace, hang detector
 │   ├── boundary.py        # Values passed across the core boundary (config, frame output)
 │   ├── core_api.py        # CoreApi: the operations host code may use on a machine
 │   ├── machine.py         # Component wiring, frame loop (step_frame)
@@ -1241,7 +1241,7 @@ py-msx-emulator/
 │   ├── input.py           # Per-frame input value (InputFrame) + the lines the PPI/PSG read
 │   ├── mouse.py           # MSX mouse protocol state machine (pin-8-clocked nibbles)
 │   ├── screenshot.py      # Current-frame RGB24 capture
-│   ├── trace.py           # Trace buffer (VDP port writes, mapper bank changes)
+│   ├── trace.py           # Trace buffer (VDP and mapper trace, debug log events, hang history)
 │   ├── snapshot.schema.json # JSON Schema of the save-state layout
 │   └── state.py           # Machine state snapshot (canonical JSON)
 ├── config/
