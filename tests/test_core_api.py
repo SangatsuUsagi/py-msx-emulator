@@ -14,6 +14,7 @@ from msx.boundary import (
     MAX_WATCHPOINTS,
     STATUS_BAD_ARGUMENT,
     STATUS_OK,
+    STATUS_STATE_REJECTED,
     STOP_NONE,
     STOP_WATCHPOINT,
     TRACE_CAPACITY,
@@ -529,3 +530,22 @@ def test_a_success_after_a_rejection_clears_the_message() -> None:
     assert m.last_error_text() != b""
     assert m.set_step_out(0xF000) == STATUS_OK
     assert m.last_error_text() == b""
+
+
+# -- machine-core "The host attaches the mouse at run time" ------------------
+
+def test_a_state_with_a_mouse_loads_on_a_machine_with_a_mouse() -> None:
+    saved = _msx1()
+    assert saved.attach_mouse(1) == STATUS_OK
+    state = saved.save_state()
+    m = _msx1()
+    assert m.attach_mouse(1) == STATUS_OK
+    assert m.load_state(state) == STATUS_OK
+
+
+def test_a_state_with_a_mouse_is_rejected_on_a_machine_without_one() -> None:
+    saved = _msx1()
+    saved.attach_mouse(1)
+    m = _msx1()
+    assert m.load_state(saved.save_state()) == STATUS_STATE_REJECTED
+    assert b"mouse wiring" in m.last_error_text()
