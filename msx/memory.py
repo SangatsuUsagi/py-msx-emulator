@@ -590,16 +590,16 @@ class Memory:
         return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
 
     def _describe_slot12(self, primary: int, secondary: int | None) -> tuple[int, int]:
-        """(content, mapper id) of cartridge slot 1 or 2."""
+        """(content, mapper id as a plain int) of cartridge slot 1 or 2."""
         sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
         if sub_slot_enabled and secondary is not None:
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
-            return SLOT_CONTENT_CARTRIDGE, mapper_id(sub_mapper.kind)
+            return SLOT_CONTENT_CARTRIDGE, int(mapper_id(sub_mapper.kind))
         if isinstance(mapper, FlatMapper) and mapper.cartridge is None:
             return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
-        return SLOT_CONTENT_CARTRIDGE, mapper_id(mapper.kind)
+        return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
     def _describe_slot3(self, secondary: int | None, page: int | None) -> int:
         flat_sub = self.flat_ram_subslot
