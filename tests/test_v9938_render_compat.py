@@ -33,7 +33,7 @@ def test_render_frame_does_not_own_frame_count() -> None:
     _enable(vdp)
     render_frame(vdp)
     render_frame(vdp, skip_render=True)
-    assert vdp._frame_count == 0
+    assert vdp.frame_count == 0
 
 
 # ---------------------------------------------------------------------------

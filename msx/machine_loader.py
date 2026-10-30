@@ -800,22 +800,22 @@ def _wire_post_construction_attrs(
     dac: MajutsushiMapper | None,
     wiring: _ExtensionWiring,
 ) -> None:
-    """Wire closures and device/save-path attributes onto an already-built
-    Machine: the CPU PC accessor IOBus needs, the cycle-count accessor a
-    Majutsushi DAC and the PPI key click need, and the FM-PAC/Halnote/Kanji
-    attributes `build_machine`'s extension-overlay resolution produced."""
+    """Wire the clock record and the device attributes onto an already-built
+    Machine: every component that reads or advances the emulated time gets
+    the machine's clock record (msx/clock.py), and the machine gets the
+    FM-PAC/Halnote/Kanji attributes `build_machine`'s extension-overlay
+    resolution produced. Every value of the record is 0 here, so a
+    component's own record held nothing to keep."""
+    clock = machine.clock
+    machine.cpu._clock = clock
+    machine.vdp._clock = clock
+    machine.psg._clock = clock
+    if machine.ppi is not None:
+        machine.ppi._clock = clock
+    if dac is not None:
+        dac._clock = clock
     io._get_pc = lambda: machine.cpu.registers.PC
     _wire_trace(machine)
-    # PORT-NOTE: these cycle closures capture `machine`, which owns the
-    #   devices -- a cycle in Rust/C++. A port should pass the cycle into the
-    #   write call (or share a narrow cycle counter) instead.
-    if dac is not None:
-        dac._get_cycle = lambda: machine.cycle_count
-    if machine.ppi is not None:
-        machine.ppi._get_cycle = lambda: machine.cycle_count
-    # PSG software PCM: timestamp register writes so generate_samples can place
-    # them at their sub-frame sample positions (mirrors the DAC wiring).
-    machine.psg._machine = machine
     machine.fmpac = wiring.fmpac_device
     machine.halnote_cart = wiring.halnote_device
     machine.kanji = wiring.kanji_device
@@ -823,13 +823,11 @@ def _wire_post_construction_attrs(
 
 def _wire_trace(machine: "Machine") -> None:
     """Wire the machine's trace buffer (msx/trace.py) into the VDP, the I/O
-    bus and the slot 1/2 bank-switching ROM mappers, with the getters it
-    stamps each event with, and record which trace kinds this machine can
-    produce."""
+    bus and the slot 1/2 bank-switching ROM mappers, give it the clock
+    record it stamps each event with, and record which trace kinds this
+    machine can produce."""
     trace = machine._trace
-    trace._get_pc = lambda: machine.cpu.instruction_pc
-    trace._get_cycle = lambda: machine.cycle_count
-    trace._get_frame = lambda: machine.vdp.frame_count
+    trace._clock = machine.clock
     machine.vdp._trace = trace
     machine.io._trace = trace
     trace.sources = TRACE_VDP | TRACE_DEBUG
@@ -1199,8 +1197,6 @@ def _build_msx2(
         ppi=ppi,
     )
     if rtc is not None:
-        # PORT-NOTE: same back-reference as _wire_post_construction_attrs' cycle
-        #   closures; a port shares a narrow cycle counter with the RTC.
-        rtc._get_cycle = lambda: machine.cycle_count
-        rtc._start_cycle = machine.cycle_count
+        rtc._clock = machine.clock
+        rtc._start_cycle = machine.clock.cycle
     return machine

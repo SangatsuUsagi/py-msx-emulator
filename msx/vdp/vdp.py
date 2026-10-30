@@ -10,6 +10,7 @@ from msx.boundary import (
     TRACE_EVENT_VDP_PORT99,
     TRACE_VDP,
 )
+from msx.clock import CoreClock
 from msx.vdp import renderer
 from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
 
@@ -44,8 +45,9 @@ class VdpDevice(Protocol):
     pending flags, so it is restored through `V9938.restore_state()`.
 
     Includes the debug/diagnostic fields (`_trace`/`debug_disable_sprites`)
-    too -- both classes declare these identically (the trace buffer is wired
-    at machine-construction time by msx/machine_loader.py, and
+    and the clock record (`_clock`, which holds the frame count) too -- both
+    classes declare these identically (the trace buffer and the clock are
+    wired at machine-construction time by msx/machine_loader.py, and
     Machine.set_sprites_hidden sets debug_disable_sprites), so `Machine.vdp`
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
@@ -74,6 +76,7 @@ class VdpDevice(Protocol):
     read_buf: int
     irq: bool
     _trace: TraceLog | None
+    _clock: CoreClock
     debug_disable_sprites: bool
 
     @property
@@ -290,7 +293,9 @@ class VDP:
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
     # instruction; kept current by update_irq() -- mirrors V9938.irq.
     irq: bool = False
-    _frame_count: int = field(default=0, init=False, repr=False)
+    # The emulated time (msx/clock.py): increment_frame() advances its
+    # frame count. build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 bytes are recorded while TRACE_VDP is on.
     _trace: TraceLog | None = field(default=None, repr=False)
@@ -319,16 +324,16 @@ class VDP:
 
     def increment_frame(self) -> None:
         """Advance the completed-frame counter. Called once per frame."""
-        self._frame_count += 1
+        self._clock.frame += 1
 
     @property
     def frame_count(self) -> int:
-        """Public accessor for _frame_count -- see VdpDevice's own docstring."""
-        return self._frame_count
+        """The clock record's frame count -- see VdpDevice's own docstring."""
+        return self._clock.frame
 
     @frame_count.setter
     def frame_count(self, value: int) -> None:
-        self._frame_count = value
+        self._clock.frame = value
 
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""

@@ -42,6 +42,7 @@ from msx.boundary import (
     VideoStandard,
     drive_media_id,
 )
+from msx.clock import CoreClock
 from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
 from msx.io import IOBus
@@ -93,15 +94,11 @@ class Machine:
     # The keyboard matrix layout, from the machine definition (frontends pick
     # their host-key table from it).
     keyboard_layout: KeyboardLayout = KeyboardLayout.INTERNATIONAL
-    # Free-running T-state clock, never reset.
-    #
-    # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
-    # Rust/C++ equivalent: u64/uint64_t for this field; the per-frame totals
-    #   threaded through _run_lines() are frame-relative and fit in u32.
-    # Kept as-is here because: semantic necessity, not performance -- Python's
-    #   arbitrary-precision int never wraps, so this width requirement is
-    #   invisible in Python and must be sized explicitly at port time.
-    cycle_count: int = 0
+    # The emulated time (msx/clock.py): the free-running T-state count
+    # (never reset), the frame count and the instruction address. The run
+    # loop adds to its cycle count; build_machine gives the record to the
+    # components that read or advance it.
+    clock: CoreClock = field(default_factory=CoreClock, repr=False)
     # The trace buffer the CPU, the I/O bus, the VDP, the slot 1/2 mappers
     # and the frame loop record into (set_trace_kinds, drain_trace); wired by
     # msx/machine_loader.py.
@@ -163,6 +160,15 @@ class Machine:
     # breakpoint test for its first instruction (machine-core "A resume does
     # not re-break at once").
     _resume_after_stop: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def cycle_count(self) -> int:
+        """T-states since power-on (the clock record's cycle count)."""
+        return self.clock.cycle
+
+    @cycle_count.setter
+    def cycle_count(self, value: int) -> None:
+        self.clock.cycle = value
 
     @property
     def cycles_per_frame(self) -> int:
@@ -826,14 +832,14 @@ class Machine:
     def _read_with_watch(self, addr: int) -> int:
         val = self.memory.read(addr)
         if addr in self._watch_read:
-            pc = self.cpu.instruction_pc
+            pc = self.clock.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, val, WATCH_READ)
             self._stop_pending = True
         return val
 
     def _write_with_watch(self, addr: int, value: int) -> None:
         if addr in self._watch_write:
-            pc = self.cpu.instruction_pc
+            pc = self.clock.instruction_pc
             self._stop = StopInfo(STOP_WATCHPOINT, pc, addr, value, WATCH_WRITE)
             self._stop_pending = True
         self.memory.write(addr, value)
@@ -1085,6 +1091,7 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         # Two loop-invariants lifted out of the inner loop: the post-step
         # condition test (see _post_step_checks_armed) and, as in the fast arm,
         # cycle_count aggregation into a per-line local flushed once a scanline.
@@ -1109,7 +1116,7 @@ class Machine:
                     if pc == self._temp_breakpoint:
                         self._temp_breakpoint = None
                     self._enter_break(STOP_BREAKPOINT)
-                    self.cycle_count += line_cycles
+                    clock.cycle += line_cycles
                     self._stop_line = line
                     return total
                 cpu.int_pending = vdp.irq
@@ -1133,10 +1140,10 @@ class Machine:
                 if self._stop_pending:
                     # A watchpoint (or post-step condition) stopped this
                     # instruction; return at the boundary.
-                    self.cycle_count += line_cycles
+                    clock.cycle += line_cycles
                     self._stop_line = line
                     return total
-            self.cycle_count += line_cycles
+            clock.cycle += line_cycles
             line_cycles = 0
             if vdp9938 is not None:
                 vdp9938.begin_scanline(line)
@@ -1161,6 +1168,7 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         if vdp9938 is not None:
             for line in range(first_line, end_line):
                 line_end = (line + 1) * cpf // lpf
@@ -1228,7 +1236,7 @@ class Machine:
                         vdp9938.tick(n)
                     else:
                         vdp9938._line_cycle += n
-                self.cycle_count += line_cycles
+                clock.cycle += line_cycles
                 vdp9938.begin_scanline(line)
         else:
             vdp = self.vdp  # hot-loop local for the per-instruction .irq read
@@ -1256,7 +1264,7 @@ class Machine:
                         n = cpu_step()
                     total += n
                     line_cycles += n
-                self.cycle_count += line_cycles
+                clock.cycle += line_cycles
         return total
 
     def _run_lines_traced(
@@ -1269,6 +1277,7 @@ class Machine:
         cpu_step = cpu.step
         cpf = self.cycles_per_frame
         lpf = self.lines_per_frame
+        clock = self.clock
         # Either chip; hot-loop local for the per-instruction .irq read. When
         # vdp9938 is not None it is this same object, passed only to gate the
         # V9938 per-scanline hooks.
@@ -1280,7 +1289,7 @@ class Machine:
                 cpu.int_pending = vdp.irq
                 n = cpu_step()
                 total += n
-                self.cycle_count += n
+                clock.cycle += n
                 if vdp9938 is not None:
                     # Same optimization as _run_lines_fast's own comment.
                     if vdp9938._cmd_active:

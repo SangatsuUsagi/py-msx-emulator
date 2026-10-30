@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
+from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.snapshot_schema import (
     check_bool,
@@ -1503,9 +1504,9 @@ class MajutsushiMapper(KonamiMapper):
     the read-side mirror can differ between the two classes on real
     hardware either.
 
-    DAC writes are timestamped via _get_cycle callback and fed to an EventDac
-    (msx/dac.py), which places them at their sub-frame sample positions (same
-    role as openMSX's BlipBuffer delta).
+    DAC writes are timestamped with the clock record's cycle count and fed
+    to an EventDac (msx/dac.py), which places them at their sub-frame
+    sample positions (same role as openMSX's BlipBuffer delta).
     """
 
     kind: ClassVar[MapperKind] = MapperKind.MAJUTSUSHI
@@ -1513,9 +1514,9 @@ class MajutsushiMapper(KonamiMapper):
     # Last byte written to the DAC: the save-state value.
     _last_dac: int = field(default=_DAC_SILENCE, init=False, repr=False)
     pcm: EventDac = field(default_factory=EventDac, init=False, repr=False)
-    # The cycle count, wired by msx/machine_loader.py, that timestamps DAC
-    # writes.
-    _get_cycle: Callable[[], int] | None = field(default=None, init=False, repr=False)
+    # The emulated time (msx/clock.py) that timestamps DAC writes;
+    # msx/machine_loader.py gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, init=False, repr=False)
 
     def reset(self) -> None:
         """super().reset() restores the bank registers (see
@@ -1528,10 +1529,9 @@ class MajutsushiMapper(KonamiMapper):
 
     def write(self, addr: int, value: int) -> None:
         if 0x5000 <= addr < 0x6000:
-            cycle = self._get_cycle() if self._get_cycle else 0
             value = value & 0xFF
             self._last_dac = value
-            self.pcm.write(cycle, _dac_level(value))
+            self.pcm.write(self._clock.cycle, _dac_level(value))
         else:
             super().write(addr, value)
 

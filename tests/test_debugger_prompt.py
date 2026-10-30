@@ -88,7 +88,6 @@ def _make_tms_machine(pc: int = 0x4000) -> MagicMock:
     regs.PC = pc
     m.cpu.registers = regs
     m.cpu.read_byte = lambda addr: 0x00
-    m.cpu.instruction_pc = pc
 
     vdp = VDP()
     vdp.regs[0] = 0x00
@@ -424,7 +423,7 @@ class TestStep:
         m = _make_machine(pc=0x4000)
         m.step = MagicMock(return_value=4)
         m.cycle_count = 12345
-        m.vdp._frame_count = 60
+        m.vdp.frame_count = 60
         dbg = Debugger(m)
         prompts = []
         with patch("builtins.input", side_effect=lambda p="": (prompts.append(p), "c")[1]):
@@ -1146,7 +1145,7 @@ class TestWatchList:
 class TestGotoFrame:
     def test_gf_arms_frame_breakpoint_and_resumes(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         assert Debugger(m)._cmd_goto_frame(["150"]) is True
         m.set_frame_breakpoint.assert_called_once_with(150)
         assert "150" in capsys.readouterr().out
@@ -1164,7 +1163,7 @@ class TestGotoFrame:
 
     def test_gf_rejects_current_or_past_frame(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         assert Debugger(m)._cmd_goto_frame(["100"]) is False
         m.set_frame_breakpoint.assert_not_called()
         assert "already reached" in capsys.readouterr().out
@@ -1172,7 +1171,7 @@ class TestGotoFrame:
     def test_gf_with_a_frame_number_the_core_rejects(self, capsys):
         # debug-monitor "gf with a frame number the core rejects".
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         m.set_frame_breakpoint.return_value = 6  # STATUS_BAD_ARGUMENT
         m.last_error_text.return_value = b"frame 9223372036854775808 is outside -1 to 2^63 - 1"
         assert Debugger(m)._cmd_goto_frame([str(2**63)]) is False
@@ -1182,7 +1181,7 @@ class TestGotoFrame:
 
     def test_gf_in_repl_resumes_without_c(self, capsys):
         m = _make_machine()
-        m.vdp._frame_count = 100
+        m.vdp.frame_count = 100
         inputs = iter(["gf 150"])
         with patch("builtins.input", side_effect=inputs):
             Debugger(m).enter()

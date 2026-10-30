@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
+from msx.clock import CoreClock
 from msx.cpu import opcodes_main as _opcodes_main
 from msx.cpu.registers import Registers
 
@@ -73,7 +74,6 @@ class Z80:
     int_pending: bool = False
     nmi_pending: bool = False
     ei_pending: bool = False
-    instruction_pc: int = 0
     # Q (u8): the flags the ALU latched in the previous instruction (its new F
     # if it wrote F, else 0), read by SCF/CCF. Each step() moves q_next (u8)
     # into q and clears q_next; every handler whose ALU writes F sets q_next
@@ -90,6 +90,9 @@ class Z80:
     # (Machine.set_trace_kinds): step() keeps the instruction history in
     # it, so the per-instruction cost with the kind off is one None check.
     _trace: TraceLog | None = field(default=None, repr=False)
+    # The emulated time (msx/clock.py): step() writes the address of each
+    # instruction into it. build_machine gives the machine's record.
+    _clock: CoreClock = field(default_factory=CoreClock, repr=False)
 
     def reset(self) -> None:
         self.registers.reset()
@@ -176,7 +179,7 @@ class Z80:
         reg = self.registers
         pc = reg.PC
         if (
-            pc != self.instruction_pc
+            pc != self._clock.instruction_pc
             or self.read_byte(pc) != 0x18
             or self.read_byte((pc + 1) & 0xFFFF) != 0xFE
         ):
@@ -282,7 +285,7 @@ class Z80:
 
         r = self.registers
         pc = r.PC
-        self.instruction_pc = pc
+        self._clock.instruction_pc = pc
         self.q = self.q_next
         self.q_next = 0
         opcode = self.read_byte(pc)
