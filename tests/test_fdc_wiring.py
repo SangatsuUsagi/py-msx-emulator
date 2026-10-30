@@ -302,3 +302,18 @@ def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     image = bytes([0x5A]) * _2DD
     machine.mount_disk(2, image, False)
     assert machine.read_media(MediaId.DRIVE_C) == image
+
+
+@pytest.mark.parametrize("size", [100, 0])
+def test_a_disk_of_a_bad_size_is_rejected(tmp_path: Path, size: int) -> None:
+    # machine-core "A disk of a bad size is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    _make_roms(tmp_path)
+    config = load_machine_config(_fdc_spec(tmp_path))
+    config.disks = (DiskMount(0, bytes(size)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert result.machine is None
+    assert f"size {size}".encode() in result.error_text
