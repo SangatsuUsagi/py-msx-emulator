@@ -20,7 +20,7 @@ _2DD = 737280
 
 # The real media/swap methods, so host.media.swap_disk drives the FloppyDisk.
 _MEDIA_API = (
-    "mount_disk", "disk_mounted", "last_error_text", "_fail", "_mounted_image",
+    "mount_disk", "eject_disk", "disk_mounted", "last_error_text", "_fail", "_mounted_image",
     "dirty_media", "read_media", "mark_persisted", "_media", "sram_media",
     "drive_count",
 )
