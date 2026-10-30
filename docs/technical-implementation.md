@@ -1124,7 +1124,7 @@ All of them are in `msx/boundary.py` and `msx/input.py`:
 
 | Value | Direction | Content |
 | --- | --- | --- |
-| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (`RomImage` records: an image and its lowercase hex SHA1), `media` (`MediaImage` records: a saved SRAM or CMOS image and its `MediaId`), `disks` (`DiskMount` records: an image to mount, its drive index and its write-protect flag), `rtc_initial_time`. The three image fields are tuples, with at most one record per id or drive |
+| `MachineConfig` | in, once | `document` (the canonical MachineConfig JSON, below), `roms` (`RomImage` records: an image and its lowercase hex SHA1), `media` (`MediaImage` records: a saved SRAM or CMOS image and its `MediaId`), `disks` (`DiskMount` records: an image to mount, its drive index and its write-protect flag), `rtc_initial_time` (default `RTC_DEFAULT_START`, 2000-01-01 00:00:00). The three image fields are tuples, with at most one record per id or drive |
 | `InputFrame` | in, per frame | A flat record: `key_matrix`, 11 bytes of active-low keyboard matrix rows; `joy1` and `joy2`, the active-low 6-bit joystick ports (bit 0 up, 1 down, 2 left, 3 right, 4 trigger A, 5 trigger B); `mouse_dx` and `mouse_dy`, the mouse motion of the frame in MSX counts; `mouse_buttons`, the bit flags `MOUSE_LEFT` (1) and `MOUSE_RIGHT` (2). Immutable. The constructor checks only that `key_matrix` has 11 bytes. The core masks the ports and buttons and clamps the motion to -32768..32767 |
 | `FrameOutput` | out, per frame | A flat record: `video_width`, `video_height` and `video_pixels` (0, 0 and `b""` when the frame was not rendered), `audio`, `frame_number`, `stop_reason`, and `frame_complete` (1, or 0 when the frame continues on the next call) |
 | `RgbFrame` | out | The result of `render_preview()`. Packed RGB24, row-major. `width` is 256 or 512, `height` is always 212 (the core pads 192-line modes with the border color). The video fields of `FrameOutput` follow the same layout |
@@ -1159,7 +1159,7 @@ belongs to the debugger's diagnostics.
 | Construction | `create_machine(config) -> BuildResult` | Returns `status`, `machine` and `error_text`. A malformed document, a missing or mismatched ROM image, conflicting image records, a device size that the device does not accept (a disk image, a RAM mapper), or an RTC start time outside year 0-9999 or not a real date and time give `STATUS_BAD_CONFIG` (4), no machine and the message. Nothing outside the new machine changes. `build_machine(config)` is a wrapper for tests and Python embedding that raises `MachineLoadError` (`msx/machine_spec.py`) with the same message. Host code calls `create_machine`. Neither takes a logger or tracer: the debug log and the VDP and mapper trace go through the trace members below |
 | Frame stepping | `step_frame(frame_input, render_video) -> FrameOutput` | Runs one frame, or the rest of a stopped one. At a break it returns early with `stop_reason` set and `frame_complete` 0 |
 | | `apply_input(frame_input) -> int` | Replaces the input lines and mouse buttons at once, without running a frame. RPC key injection uses it. Always returns `STATUS_OK` |
-| | `samples_per_frame()`, `video_standard` | 735 or 882. NTSC or PAL (`video_standard.target_fps` is 60 or 50) |
+| | `samples_per_frame()`, `video_standard`, `keyboard_layout` | 735 or 882. The video standard and the keyboard layout are plain integers. The host converts them with the `VideoStandard` and `KeyboardLayout` enums of `msx/boundary.py` (`VideoStandard(core.video_standard).target_fps` is 60 or 50) |
 | Control | `reset() -> int` | Power-on reset. RAM, VRAM and mounted media stay as they are. Always returns `STATUS_OK` |
 | | `save_state() -> bytes` | The snapshot (`msx/state.py`) |
 | | `load_state(data) -> int` | Returns `STATUS_OK` (0), or `STATUS_STATE_REJECTED` (1) and changes nothing when the snapshot does not fit |
@@ -1380,7 +1380,14 @@ struct for each boundary record, and every constant with its
 `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and
 the constants equal to the Python code. Bytes that the core returns stay
 valid until the next call on the same core, input is read only during the
-call, and one core is used from one thread at a time.
+call, and one core is used from one thread at a time. Each C type is wide
+enough for every value the core masks, clamps or rejects: the mouse motion is
+`int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its
+message into a buffer that the caller passes, so the core keeps no global
+state. The host takes the audio rate and the frame height from
+`msx/boundary.py` (`AUDIO_SAMPLE_RATE`, `OUTPUT_HEIGHT`). It keeps the MSX
+key names (`host/key_names.py`) and the cartridge SRAM sizes
+(`host/machine_config.py`) itself, because no core module uses them.
 
 These are the differences between the Python code and the language-neutral
 contract in `allium/core-frontend.allium` (its *Status* comment lists them):
@@ -1390,7 +1397,7 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
   hold the palette as a tuple.
 - `read_media` returns the bytes alone. The write-protect flag stays with
   the mounted image.
-- The frame rate is `VideoStandard` data, not a method.
+- The frame rate is `VideoStandard` data (`target_fps`), not a method.
 - `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
   SRAM file paths of the host. The core reads only the `MachineConfig` part.
 
@@ -1466,8 +1473,8 @@ These patterns translate directly to any statically typed target:
 - **Timing constants**: `CYCLES_PER_LINE`, `NTSC_LINES_PER_FRAME` /
   `PAL_LINES_PER_FRAME` (`msx/vdp/_geometry.py`), `_HBLANK_START`,
   `_TR_REASSERT_CYCLES`, etc. are module-level integer constants. The per-frame
-  budget comes from the properties of the `VideoStandard` enum. A port writes
-  these as a `match` / `const fn`.
+  budget comes from `lines_per_frame(standard)` and `cycles_per_frame(standard)`
+  in the same module. A port writes these as a `match` / `const fn`.
 
 ### Python-specific patterns a port must adapt
 
