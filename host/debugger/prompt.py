@@ -676,7 +676,7 @@ class Debugger:
         _page_addrs = ["0000-3FFF", "4000-7FFF", "8000-BFFF", "C000-FFFF"]
         for page in range(4):
             prim = (layout.primary >> (page * 2)) & 0x03
-            sec: int | None = None
+            sec = -1
             sec_str = "-"
             if layout.expanded & (1 << prim):
                 sec = (layout.secondary[prim] >> (page * 2)) & 0x03
@@ -695,7 +695,7 @@ class Debugger:
             else:
                 role = _roles.get(prim)
                 role_str = f"  [{role}]" if role else ""
-                info = _slot_info(self._machine, prim, None, None)
+                info = _slot_info(self._machine, prim, -1, -1)
                 print(f"  Primary {prim}{role_str}  {_slot_text(info)}")
 
     def _cmd_fdd(self, args: list[str], drive_index: int) -> None:
@@ -795,16 +795,14 @@ def _print_expanded_slot(machine: CoreApi, prim: int, raw: int) -> None:
         parts.append(f"P{pg}->{prim}-{s}")
     print(f"    page-map: {'  '.join(parts)}")
     for sec in range(4):
-        info = _slot_info(machine, prim, sec, None)
+        info = _slot_info(machine, prim, sec, -1)
         print(f"    {prim}-{sec}  {_slot_text(info)}")
 
 
-def _slot_info(machine: CoreApi, prim: int, sec: int | None, page: int | None) -> SlotInfo:
-    """The core's description of a slot. The slot views pass only values
-    0-3, which the query never rejects."""
-    info = machine.slot_info(prim, sec, page)
-    assert info is not None
-    return info
+def _slot_info(machine: CoreApi, prim: int, sec: int, page: int) -> SlotInfo:
+    """The core's description of a slot (-1: no sub-slot, no page). The
+    slot views pass only values 0-3 or -1, which the query never rejects."""
+    return machine.slot_info(prim, sec, page)
 
 
 def _slot_text(info: SlotInfo) -> str:

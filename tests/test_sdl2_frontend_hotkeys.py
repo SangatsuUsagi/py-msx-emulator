@@ -131,6 +131,7 @@ class _FakeMachine:
 
     # The real swap path, so host.media.swap_disk drives the FloppyDisk.
     mount_disk = Machine.mount_disk
+    eject_disk = Machine.eject_disk
     disk_mounted = Machine.disk_mounted
     last_error_text = Machine.last_error_text
     _fail = Machine._fail

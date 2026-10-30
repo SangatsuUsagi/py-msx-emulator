@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import inspect
+import typing
 from dataclasses import fields
 
 import pytest
@@ -26,6 +27,7 @@ from msx.boundary import (
     WATCH_READ,
     WATCH_WRITE,
     CpuRegisters,
+    SlotInfo,
     SlotLayout,
 )
 from msx.core_api import CoreApi
@@ -196,7 +198,7 @@ def _run_every_query(m: Machine) -> None:
     m.slot_layout()
     for prim in range(4):
         for page in range(4):
-            m.slot_info(prim, None, page)
+            m.slot_info(prim, -1, page)
             m.slot_info(prim, page, page)
 
 
@@ -234,24 +236,29 @@ def test_a_bank_switching_cartridge_page_shows_its_bank() -> None:
     m = make_machine(_ROM, cartridge=bytes(128 * 1024), mapper="ASCII16")
     m.io.write_port(0xA8, 0xD4)  # pages 1 and 2 in slot 1
     m.write_memory(0x7000, b"\x00")  # window 1 (0x8000) -> bank 0
-    info = m.slot_info(1, None, 2)
-    assert info is not None
+    info = m.slot_info(1, -1, 2)
     assert b"Ascii16" in info.content
     assert info.bank == b"bank 0 @00000-03FFF"
 
 
 def test_the_main_rom_reports_its_size() -> None:
-    info = _msx1().slot_info(0, None, None)
-    assert info is not None
+    info = _msx1().slot_info(0, -1, -1)
     assert info.size_kb == 32
 
 
 def test_an_invalid_slot_is_rejected() -> None:
     m = _msx1()
-    assert m.slot_info(4, None, None) is None
+    assert m.slot_info(4, -1, -1) == SlotInfo(content=b"", bank=b"", size_kb=-1)
     assert b"4" in m.last_error_text()
-    assert m.slot_info(0, None, None) is not None
+    assert m.slot_info(0, -1, -1).size_kb == 32
     assert m.last_error_text() == b""
+
+
+@pytest.mark.parametrize("args", [(0, 4, -1), (0, -2, -1), (0, -1, 4), (0, -1, -2), (-1, -1, -1)])
+def test_every_slot_argument_outside_its_range_is_rejected(args: tuple[int, int, int]) -> None:
+    m = _msx1()
+    assert m.slot_info(*args) == SlotInfo(content=b"", bank=b"", size_kb=-1)
+    assert m.last_error_text() != b""
 
 
 # -- machine-core "The core API sets and reports the sprite display flag" ----
@@ -347,6 +354,37 @@ def test_a_full_trace_buffer_reports_the_lost_events() -> None:
 
 
 # -- machine-core "The core API has no callback into the host" ---------------
+
+def _core_api_type_hints() -> dict[str, dict[str, object]]:
+    """The resolved type hints of every CoreApi member, by member name."""
+    import msx.boundary
+    import msx.input
+    import msx.machine
+    import msx.machine_spec
+    import msx.vdp._geometry
+
+    names: dict[str, object] = {}
+    for module in (msx.boundary, msx.input, msx.machine, msx.machine_spec, msx.vdp._geometry):
+        names.update(vars(module))
+    result: dict[str, dict[str, object]] = {}
+    for name, member in vars(CoreApi).items():
+        func = member.fget if isinstance(member, property) else member
+        if name.startswith("_") or not callable(func):
+            continue
+        result[name] = typing.get_type_hints(func, globalns=names)
+    return result
+
+
+def test_no_core_api_member_takes_or_returns_none() -> None:
+    # machine-core "No core API member takes or returns None".
+    hints = _core_api_type_hints()
+    assert "slot_info" in hints and "read_media" in hints
+    for name, member_hints in hints.items():
+        for arg, hint in member_hints.items():
+            assert hint is not type(None) and type(None) not in typing.get_args(hint), (
+                f"CoreApi.{name} {arg}: {hint}"
+            )
+
 
 def test_no_core_api_member_takes_a_callback() -> None:
     # Annotations are strings here (from __future__ import annotations), so

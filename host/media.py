@@ -91,8 +91,6 @@ def persist_dirty_media(
         if path is None:
             continue
         data = machine.read_media(media_id)
-        if data is None:   # never: the id came from dirty_media()
-            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         machine.mark_persisted(media_id)
@@ -114,12 +112,11 @@ def swap_disk(
     if outgoing_path is not None:
         media_id = drive_media_id(drive)
         if media_id in machine.dirty_media():
-            data = machine.read_media(media_id)
-            if data is not None:   # always: the id came from dirty_media()
-                outgoing_path.write_bytes(data)
-                machine.mark_persisted(media_id)
+            # The id came from dirty_media(), so the bytes are there.
+            outgoing_path.write_bytes(machine.read_media(media_id))
+            machine.mark_persisted(media_id)
     if medium is None:
-        status = machine.mount_disk(drive, None, False)
+        status = machine.eject_disk(drive)
     else:
         status = machine.mount_disk(drive, medium.data, medium.write_protected)
     if status != STATUS_OK:

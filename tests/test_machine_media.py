@@ -111,14 +111,23 @@ def test_a_success_clears_the_message() -> None:
     assert m.last_error_text() == b""
 
 
-def test_none_ejects() -> None:
-    # machine-core "None ejects".
+def test_eject_disk_empties_the_drive() -> None:
+    # machine-core "eject_disk empties the drive".
     m = _fdc_machine()
     m.mount_disk(0, _2DD, False)
     m.fdc.drives[0].image.write_sector(0, b"\xAB" * SECTOR_SIZE)
-    assert m.mount_disk(0, None, False) == STATUS_OK
+    assert m.eject_disk(0) == STATUS_OK
     assert m.fdc.drives[0].image is None
     assert not m.disk_mounted(0)
+
+
+def test_eject_disk_on_a_missing_drive_returns_a_status() -> None:
+    # machine-core "eject_disk on a missing drive returns a status".
+    m = _fdc_machine(drives=1)
+    m.mount_disk(0, _2DD, False)
+    assert m.eject_disk(1) == STATUS_NO_DRIVE
+    assert b"drive 1" in m.last_error_text()
+    assert m.disk_mounted(0)
 
 
 def test_disk_queries_report_the_mounted_image() -> None:
@@ -163,7 +172,7 @@ def test_an_id_outside_the_machines_media_is_rejected() -> None:
     # machine-core "An id outside the machine's media is rejected".
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     before = m.dirty_media()
-    assert m.read_media(MediaId.FMPAC_SRAM) is None
+    assert m.read_media(MediaId.FMPAC_SRAM) == b""
     assert m.mark_persisted(MediaId.FMPAC_SRAM) == STATUS_NO_MEDIUM
     assert m.dirty_media() == before
 
@@ -171,7 +180,7 @@ def test_an_id_outside_the_machines_media_is_rejected() -> None:
 def test_a_missing_medium_sets_the_message() -> None:
     # machine-core "A missing medium sets the message".
     m = make_machine(rom=_ROM)
-    assert m.read_media(MediaId.FMPAC_SRAM) is None
+    assert m.read_media(MediaId.FMPAC_SRAM) == b""
     assert m.last_error_text() == b"no medium FMPAC_SRAM on this machine"
 
 
