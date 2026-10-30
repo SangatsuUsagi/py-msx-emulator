@@ -278,7 +278,7 @@ class Machine:
         so b"" is unambiguous."""
         medium = self._media().get(media_id)
         if medium is None:
-            self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+            self._fail(STATUS_NO_MEDIUM, f"no medium {_media_label(media_id)} on this machine")
             return b""
         self._error_text = b""
         return medium.data()
@@ -289,7 +289,9 @@ class Machine:
         id the machine does not have."""
         medium = self._media().get(media_id)
         if medium is None:
-            return self._fail(STATUS_NO_MEDIUM, f"no medium {media_id.name} on this machine")
+            return self._fail(
+                STATUS_NO_MEDIUM, f"no medium {_media_label(media_id)} on this machine"
+            )
         medium.mark_persisted()
         self._error_text = b""
         return STATUS_OK
@@ -300,9 +302,15 @@ class Machine:
         The host writes a dirty outgoing image back before the swap. Returns
         STATUS_NO_DRIVE for a machine without that drive and STATUS_BAD_IMAGE
         for an image whose size is not a positive multiple of 512, changing
-        nothing (last_error_text() gives the message)."""
+        nothing (last_error_text() gives the message). Returns
+        STATUS_BAD_ARGUMENT, changing nothing, for a `write_protected` other
+        than 0 and 1."""
         from msx.fdc.disk_image import SECTOR_SIZE, DskDiskImage
 
+        if write_protected != 0 and write_protected != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"write_protected {write_protected} is not 0 or 1"
+            )
         if self.fdc is None or not 0 <= drive < len(self.fdc.drives):
             return self._fail(STATUS_NO_DRIVE, f"no floppy drive {drive} on this machine")
         size = len(data)
@@ -311,7 +319,7 @@ class Machine:
                 STATUS_BAD_IMAGE,
                 f"size {size} is not a positive multiple of {SECTOR_SIZE}",
             )
-        self.fdc.swap(drive, DskDiskImage(data, write_protected=write_protected))
+        self.fdc.swap(drive, DskDiskImage(data, write_protected=write_protected == 1))
         self._error_text = b""
         return STATUS_OK
 
@@ -394,18 +402,30 @@ class Machine:
         return STATUS_OK
 
     def set_break_halt_di(self, enabled: bool) -> int:
-        """Enable/disable breaking when the CPU executes HALT with interrupts
-        off. Always STATUS_OK."""
-        self._break_halt_di = enabled
+        """Enable (1) or disable (0) breaking when the CPU executes HALT with
+        interrupts off, and return STATUS_OK. Returns STATUS_BAD_ARGUMENT,
+        keeping the setting, for any other value."""
+        if enabled != 0 and enabled != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"set_break_halt_di value {enabled} is not 0 or 1"
+            )
+        self._break_halt_di = enabled == 1
         self._halt_di_seen = False
+        self._error_text = b""
         return STATUS_OK
 
     def set_sprites_hidden(self, hidden: bool) -> int:
         """Hide or show sprites: while hidden, the renderer skips its sprite
         pass (on the TMS9918A also the S#0 sprite flags of that frame). A
         debug setting: no reset clears it and the saved state omits it.
-        Always STATUS_OK."""
-        self.vdp.debug_disable_sprites = hidden
+        Takes 0 or 1 and returns STATUS_OK. Returns STATUS_BAD_ARGUMENT,
+        keeping the setting, for any other value."""
+        if hidden != 0 and hidden != 1:
+            return self._fail(
+                STATUS_BAD_ARGUMENT, f"set_sprites_hidden value {hidden} is not 0 or 1"
+            )
+        self.vdp.debug_disable_sprites = hidden == 1
+        self._error_text = b""
         return STATUS_OK
 
     def set_sp_range(self, low: int, high: int) -> int:
@@ -584,7 +604,13 @@ class Machine:
     def read_memory(self, addr: int, length: int) -> bytes:
         """`length` bytes from `addr` as the CPU reads them in the current slot
         selection, wrapping at 0xFFFF. Bypasses watchpoints. A memory-mapped
-        device register reads as it does for the CPU, side effects included."""
+        device register reads as it does for the CPU, side effects included.
+        Returns b"" for a length outside 0-0x10000 (last_error_text() gives
+        the message)."""
+        if not 0 <= length <= 0x10000:
+            self._fail(STATUS_BAD_ARGUMENT, f"read_memory length {length} is outside 0-0x10000")
+            return b""
+        self._error_text = b""
         read = self.memory.read
         out = bytearray(length)
         for i in range(length):
@@ -604,12 +630,22 @@ class Machine:
         return len(self.vdp.vram)
 
     def read_vram(self, addr: int, length: int) -> bytes:
-        """`length` VRAM bytes from `addr`, wrapping at the VRAM size."""
+        """`length` VRAM bytes from `addr`, wrapping at the VRAM size by the
+        address's low bits (a negative address wraps to the end). Returns b""
+        for a length outside 0 to vram_size() (last_error_text() gives the
+        message)."""
         vram = self.vdp.vram
         size = len(vram)
+        if not 0 <= length <= size:
+            self._fail(STATUS_BAD_ARGUMENT, f"read_vram length {length} is outside 0-{size:#x}")
+            return b""
+        self._error_text = b""
+        # The VRAM size is a power of two (0x4000 or 0x20000), so the mask
+        # wraps the same way in every language.
+        mask = size - 1
         out = bytearray(length)
         for i in range(length):
-            out[i] = vram[(addr + i) % size]
+            out[i] = vram[(addr + i) & mask]
         return bytes(out)
 
     def vdp_info(self) -> VdpInfo:
@@ -1262,3 +1298,9 @@ class Machine:
         return total
 
 
+def _media_label(media_id: int) -> str:
+    """A media id for a message: its MediaId name, or its number for an
+    integer outside MediaId (the ids are 0 to DRIVE_D, without gaps)."""
+    if 0 <= media_id <= MediaId.DRIVE_D:
+        return MediaId(media_id).name
+    return str(int(media_id))
