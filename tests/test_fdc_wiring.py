@@ -16,7 +16,7 @@ from host.machine_config import (
 from msx.boundary import DiskMount, MediaId, MediaImage, RomImage
 from msx.fdc.disk_image import DskDiskImage
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineLoadError, MachineSpec, _FdcDef, _RomEntry
+from msx.machine_spec import FdcDef, MachineLoadError, MachineSpec, RomEntry
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -158,17 +158,17 @@ def _fdc_spec(tmp_path: Path) -> MachineSpec:
         name="test_fdc",
         generation="msx2",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="sub.rom", size_kb=16, pages=[0]),
+        sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
         has_ram_mapper=False,
         ram_size_kb=32,
         has_v9938=True,
         has_rtc=True,
         flat_ram_subslot=3,
         flat_ram_size_kb=64,
-        fdc=_FdcDef(
-            disk_rom_entry=_RomEntry(file="disk.rom", size_kb=16, pages=[1]),
+        fdc=FdcDef(
+            disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793",
             connection_style="sony",
             drives=1,
@@ -208,7 +208,7 @@ def test_fdd1_mounts_into_drive_a(tmp_path: Path) -> None:
 
 def _fdc_spec_two_drives(tmp_path: Path) -> MachineSpec:
     spec = _fdc_spec(tmp_path)
-    spec.fdc = _FdcDef(
+    spec.fdc = FdcDef(
         disk_rom_entry=spec.fdc.disk_rom_entry,
         controller=spec.fdc.controller,
         connection_style=spec.fdc.connection_style,
@@ -290,7 +290,7 @@ def test_every_drive_of_a_four_drive_fdc_has_a_media_id(tmp_path: Path) -> None:
     # machine-core "Every drive of a four-drive FDC has a media id".
     _make_roms(tmp_path)
     spec = _fdc_spec(tmp_path)
-    spec.fdc = _FdcDef(
+    spec.fdc = FdcDef(
         disk_rom_entry=spec.fdc.disk_rom_entry,
         controller="tc8566af",
         connection_style="tc8566af",

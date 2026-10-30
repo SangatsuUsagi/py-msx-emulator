@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from host.machine_config import build_machine_from_spec
-from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, _RomEntry
+from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, RomEntry
 from msx.mapper import SCCICart
 
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
@@ -138,7 +138,7 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=tmp_path,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -157,7 +157,7 @@ def _make_fmpac_overlay(tmp_path: Path) -> ExtensionOverlay:
     return ExtensionOverlay(
         device="fmpac",
         rom_base_dir=tmp_path,
-        rom_entry=_RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
+        rom_entry=RomEntry(file="fmpac.rom", size_kb=64, pages=[]),
         sram_save_path=tmp_path / "fmpac.sram",
     )
 

@@ -20,10 +20,10 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from msx.machine_spec import (
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
-    _RomEntry,
+    RomEntry,
 )
 from msx.mapper import FixedPageMapper
 from msx.ram_mapper import RamMapper
@@ -121,7 +121,7 @@ def _msx1_spec(main_rom_dir: Path) -> MachineSpec:
         name="test_msx1",
         generation="msx1",
         rom_base_dir=main_rom_dir,
-        main_rom_entry=_RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=None,
         has_ram_mapper=False,
@@ -144,9 +144,9 @@ def _msx2_spec(has_ram_mapper: bool = False) -> MachineSpec:
         machine_id="test_msx2",
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=has_ram_mapper,
         ram_size_kb=32,
         has_v9938=True,
@@ -158,10 +158,10 @@ def _msxdos2_512k_overlay(rom_dir: Path, size_kb: int = 512) -> ExpandedExtensio
     (rom_dir / "msxd22s.rom").write_bytes(bytes(_KERNEL_ROM_SIZE))
     return ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
-            1: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(device="ram_mapper", size_kb=size_kb),
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
             ),
         },
     )
@@ -190,10 +190,10 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
     (rom_dir / "msxd22s.rom").write_bytes(b"\x42" + bytes(_KERNEL_ROM_SIZE - 1))
     overlay = ExpandedExtensionOverlay(
         subslots={
-            0: _ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
-            1: _ExpandedSubslotDevice(
+            0: ExpandedSubslotDevice(device="ram_mapper", size_kb=512),
+            1: ExpandedSubslotDevice(
                 device="flat_rom", rom_base_dir=rom_dir,
-                rom_entry=_RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
+                rom_entry=RomEntry(file="msxd22s.rom", size_kb=32, pages=[]),
             ),
         },
     )

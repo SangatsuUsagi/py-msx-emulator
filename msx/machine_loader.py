@@ -41,10 +41,10 @@ from msx.machine_config import RomRef, parse_machine_config
 from msx.machine_spec import (
     AnyExtensionOverlay,
     ExpandedExtensionOverlay,
+    ExpandedSubslotDevice,
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
-    _ExpandedSubslotDevice,
 )
 from msx.mapper import (
     Ascii8Mapper,
@@ -365,7 +365,7 @@ class _ExpandedOverlayWiring:
 
 
 def _build_expanded_subslot_device(
-    config: _ResolvedConfig, slot: int, subslot: _ExpandedSubslotDevice, index: int
+    config: _ResolvedConfig, slot: int, subslot: ExpandedSubslotDevice, index: int
 ) -> Mapper:
     """Construct one expanded-overlay sub-slot's device.
 

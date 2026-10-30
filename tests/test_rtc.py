@@ -8,7 +8,7 @@ from host.media import persist_dirty_media
 from msx.boundary import RTC_CMOS_SIZE, MachineConfig, MediaId, RtcTime
 from msx.clock import CoreClock
 from msx.machine_loader import build_machine
-from msx.machine_spec import MachineSpec, _RomEntry
+from msx.machine_spec import MachineSpec, RomEntry
 from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, TEST_REG
 from tests.factories import make_config_msx2, make_machine_msx2
 
@@ -276,9 +276,9 @@ def _rtc_spec(machine_id: str) -> MachineSpec:
         machine_id=machine_id,
         generation="msx2",
         rom_base_dir=Path("."),
-        main_rom_entry=_RomEntry(file="", size_kb=0, pages=[0, 1]),
+        main_rom_entry=RomEntry(file="", size_kb=0, pages=[0, 1]),
         logo_rom_entry=None,
-        sub_rom_entry=_RomEntry(file="", size_kb=0, pages=[]),
+        sub_rom_entry=RomEntry(file="", size_kb=0, pages=[]),
         has_ram_mapper=True,
         ram_size_kb=32,
         has_v9938=True,
