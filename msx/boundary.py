@@ -106,16 +106,22 @@ STOP_BREAKPOINT = 1
 STOP_WATCHPOINT = 2
 STOP_REQUESTED = 3
 
-# The result of load_state and mount_disk. A failed call changes nothing,
-# and last_error_text() gives its message.
+# The result of every control operation (load_state, mount_disk, the break
+# setters, reset, ...). A failed call changes nothing, and last_error_text()
+# gives its message.
 STATUS_OK = 0
 STATUS_STATE_REJECTED = 1   # load_state: not a state this machine can load
 STATUS_NO_DRIVE = 2         # mount_disk: the machine has no such drive
 STATUS_BAD_IMAGE = 3        # mount_disk: size not a positive multiple of 512
 STATUS_BAD_CONFIG = 4       # create_machine: a configuration the build rejects
 STATUS_NO_MEDIUM = 5        # mark_persisted (read_media: None): no such medium
-STATUS_BAD_ARGUMENT = 6     # set_watchpoints: a watch kind; attach_mouse: a port;
-                            # set_trace_kinds: a trace kind
+STATUS_BAD_ARGUMENT = 6     # a break setter: a value outside its range or too
+                            # many entries; set_watchpoints: a watch kind;
+                            # attach_mouse: a port; set_trace_kinds: a trace kind
+
+# The most breakpoints set_breakpoints and watchpoints set_watchpoints take.
+MAX_BREAKPOINTS = 4
+MAX_WATCHPOINTS = 4
 
 # The access kind of a watchpoint hit (StopInfo.watch_access).
 WATCH_READ = 1

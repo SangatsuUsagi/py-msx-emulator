@@ -9,6 +9,8 @@ from dataclasses import fields
 import pytest
 
 from msx.boundary import (
+    MAX_BREAKPOINTS,
+    MAX_WATCHPOINTS,
     STATUS_BAD_ARGUMENT,
     STATUS_OK,
     STOP_NONE,
@@ -374,3 +376,104 @@ def test_the_build_takes_no_logger_or_tracer() -> None:
 
     for build in (create_machine, build_machine):
         assert list(inspect.signature(build).parameters) == ["machine_config"]
+
+
+# -- machine-core "Every control operation returns a status" -----------------
+
+def test_a_reset_returns_status_ok() -> None:
+    assert _msx1().reset() == STATUS_OK
+
+
+def test_a_memory_write_wraps_and_returns_status_ok(monkeypatch) -> None:
+    m = _msx1()
+    writes: list[tuple[int, int]] = []
+    # Memory has __slots__: patch the class for this test.
+    monkeypatch.setattr(type(m.memory), "write", lambda _self, a, v: writes.append((a, v)))
+    assert m.write_memory(0xFFFF, bytes((0x12, 0x34))) == STATUS_OK
+    assert writes == [(0xFFFF, 0x12), (0x0000, 0x34)]
+
+
+def test_a_break_request_returns_status_ok() -> None:
+    assert _msx1().request_break() == STATUS_OK
+
+
+def test_the_other_control_operations_return_status_ok() -> None:
+    m = _msx1()
+    assert m.apply_input(InputFrame()) == STATUS_OK
+    assert m.set_break_halt_di(True) == STATUS_OK
+    assert m.set_sprites_hidden(True) == STATUS_OK
+
+
+# -- machine-core "The core API limits breakpoints and watchpoints to four" --
+
+def test_a_fifth_breakpoint_is_rejected() -> None:
+    m = _msx1()
+    four = [0x1000, 0x2000, 0x3000, 0x4000]
+    assert len(four) == MAX_BREAKPOINTS
+    assert m.set_breakpoints(four) == STATUS_OK
+    assert m.set_breakpoints(four + [0x5000]) == STATUS_BAD_ARGUMENT
+    assert m.breakpoints() == tuple(four)
+    assert m.last_error_text() == b"5 breakpoints, at most 4"
+
+
+def test_a_fifth_watchpoint_is_rejected() -> None:
+    m = _msx1()
+    m.set_watchpoints([(0xC000, WATCH_WRITE)])
+    five = [(0xC000 + i, WATCH_READ) for i in range(MAX_WATCHPOINTS + 1)]
+    assert m.set_watchpoints(five) == STATUS_BAD_ARGUMENT
+    assert m.watchpoints() == ((0xC000, WATCH_WRITE),)
+
+
+# -- machine-core "The break setters reject a value the core cannot use" -----
+
+def test_an_address_outside_16_bits_is_rejected() -> None:
+    m = _msx1()
+    m.set_temp_breakpoint(0x4000)
+    assert m.set_temp_breakpoint(0x10000) == STATUS_BAD_ARGUMENT
+    assert m._temp_breakpoint == 0x4000
+    assert b"0x10000" in m.last_error_text()
+
+
+@pytest.mark.parametrize("call", [
+    lambda m: m.set_breakpoints([0x10000]),
+    lambda m: m.set_breakpoints([-1]),
+    lambda m: m.set_watchpoints([(0x10000, WATCH_READ)]),
+    lambda m: m.set_step_out(0x10000),
+    lambda m: m.set_sp_range((0xC000, 0x10000)),
+    lambda m: m.set_sp_range((-1, 0xF000)),
+])
+def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
+    m = _msx1()
+    assert call(m) == STATUS_BAD_ARGUMENT
+    assert m.breakpoints() == () and m.watchpoints() == ()
+    assert m._stepout_sp is None and m._sp_range is None
+
+
+def test_a_negative_frame_number_is_rejected() -> None:
+    m = _msx1()
+    m.set_frame_breakpoint(10)
+    assert m.set_frame_breakpoint(-1) == STATUS_BAD_ARGUMENT
+    assert m._frame_breakpoint == 10
+
+
+def test_an_inverted_sp_range_is_rejected() -> None:
+    m = _msx1()
+    m.set_sp_range((0xC000, 0xF000))
+    assert m.set_sp_range((0xF000, 0xC000)) == STATUS_BAD_ARGUMENT
+    assert m._sp_range == (0xC000, 0xF000)
+
+
+def test_none_clears_a_setting() -> None:
+    m = _msx1()
+    assert m.set_sp_range((0xC000, 0xF000)) == STATUS_OK
+    assert m.set_sp_range(None) == STATUS_OK
+    assert m._sp_range is None
+    assert not m._break_conditions_active()
+
+
+def test_a_success_after_a_rejection_clears_the_message() -> None:
+    m = _msx1()
+    assert m.set_step_out(0x10000) == STATUS_BAD_ARGUMENT
+    assert m.last_error_text() != b""
+    assert m.set_step_out(0xF000) == STATUS_OK
+    assert m.last_error_text() == b""
