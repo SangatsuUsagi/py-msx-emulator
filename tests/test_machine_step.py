@@ -8,7 +8,7 @@ from msx.boundary import STOP_BREAKPOINT, STOP_NONE, STOP_REQUESTED, FrameOutput
 from msx.input import InputFrame
 from msx.machine import Machine
 from msx.vdp.v9938 import V9938
-from tests.factories import make_machine, make_machine_msx2
+from tests.factories import make_machine, make_machine_msx2, watch_scanlines
 
 # A loop in ROM that reaches INC D about every 88 scanlines, so a breakpoint
 # on it lands in the middle of a frame (as in tests/test_machine_stop.py):
@@ -79,7 +79,7 @@ def test_steps_cross_a_scanline_end() -> None:
     vdp = m.vdp
     assert isinstance(vdp, V9938)
     begun: list[int] = []
-    vdp.on_scanline = begun.append
+    watch_scanlines(vdp, begun.append)
     line = m._frame_line
     line_end = (line + 1) * m.cycles_per_frame // m.lines_per_frame
     for _ in range(1000):  # bounded: a regression must fail, not hang

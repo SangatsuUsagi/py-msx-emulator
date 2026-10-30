@@ -9,7 +9,7 @@ the block more coarsely mirrors these four).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from msx.boundary import (
     TRACE_DEBUG,
@@ -412,20 +412,6 @@ class V9938:
     regs: list[int] = field(default_factory=_power_on_regs)
     status: int = 0
     palette: list[int] = field(default_factory=lambda: list(_MSX2_DEFAULT_PALETTE))
-    # Observation seam for scanline timing, set only by tests: called with
-    # the raster line at the end of begin_scanline(). A field, not a
-    # monkey-patched method, so the same observation is expressible in a
-    # Rust/C++ port.
-    on_scanline: Callable[[int], None] | None = None
-    # PORT-NOTE: on_scanline is a Python closure a test assigns; the build
-    #   never wires it.
-    # Rust equivalent: trait objects (Box<dyn Fn>) or feature-flagged fields
-    #   resolved once at construction, not per-call function pointers.
-    # C++ equivalent: std::function members or a virtual interface pointer,
-    #   assigned once at construction.
-    # Kept as-is here because: resolved once at wiring time and called at
-    #   most once per scanline, not per VRAM/command-engine access; the
-    #   closure indirection costs nothing measurable here.
     # The machine's trace buffer (msx/trace.py), wired at build time; port
     # 0x99 and 0x9B bytes are recorded while TRACE_VDP is on.
     _trace: TraceLog | None = field(default=None, repr=False)
@@ -841,8 +827,6 @@ class V9938:
         if line == effective and (self.regs[0] & _R0_IE1):
             self._status1 |= _S1_FH
             self.update_irq()
-        if self.on_scanline is not None:
-            self.on_scanline(line)
 
     # ------------------------------------------------------------------
     # Command timer

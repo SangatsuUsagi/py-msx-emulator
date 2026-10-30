@@ -117,7 +117,6 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
     assert machine.memory.slot1_sub_slot_enabled is True
     assert isinstance(machine.memory._mapper1_subslots[0], HalnoteMapper)
     assert isinstance(machine.memory._mapper1_subslots[1], FixedPageMapper)
-    assert machine.halnote_cart is machine.memory._mapper1_subslots[0]
 
     # Slot 2: msxdos2_512k's RAM mapper + flat kernel ROM -- no cross-talk
     # with slot 1's devices above.
@@ -140,9 +139,8 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
 
 
 def test_two_halnote_overlays_at_once_rejected(tmp_path: Path) -> None:
-    # Two HBI-J1-shaped overlays (one per slot) would both claim Machine's
-    # single halnote_cart field -- real hardware never has two MSX-JE
-    # cartridges attached at once.
+    # Two HBI-J1-shaped overlays (one per slot) are rejected -- real
+    # hardware never has two MSX-JE cartridges attached at once.
     hbi_dir1 = tmp_path / "hbi_j1_rom1"
     hbi_dir1.mkdir()
     hbi_dir2 = tmp_path / "hbi_j1_rom2"
@@ -283,8 +281,8 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     machine = build_machine(config)
     assert machine.fmpac is not None
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
-    halnote = machine.halnote_cart
-    assert halnote is not None
+    halnote = machine.memory._mapper2_subslots[0]
+    assert isinstance(halnote, HalnoteMapper)
 
     machine.fmpac.write(0x5FFE, 0x4D)  # unlock magic (byte 1/2)
     machine.fmpac.write(0x5FFF, 0x69)  # unlock magic (byte 2/2)

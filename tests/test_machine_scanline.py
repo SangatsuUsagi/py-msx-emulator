@@ -6,7 +6,7 @@ from msx.mapper import FlatMapper
 from msx.memory import Memory
 from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, cycles_per_frame, pad_rows
 from msx.vdp.v9938 import V9938
-from tests.factories import make_machine_msx2
+from tests.factories import make_machine_msx2, watch_scanlines
 
 NTSC_CYCLES = cycles_per_frame(VideoStandard.NTSC)
 
@@ -220,14 +220,14 @@ def test_vblank_isr_vram_write_lands_on_the_next_frame() -> None:
     vdp.regs[0] = 0x06  # R#0 M4|M3 -> G4
     vdp.regs[1] = 0x40  # R#1 BL: display enabled
 
-    def on_scanline(line: int) -> None:
+    def after_scanline(line: int) -> None:
         if line == vdp.vblank_start_line + 1:
             # End of the first scanline after the render split — the VBlank ISR
             # has had one line to run, and its VRAM writes must not be visible
             # in the frame that was just rendered.
             vdp.vram[0] = 0x55  # G4: two pixels of palette index 5
 
-    vdp.on_scanline = on_scanline
+    watch_scanlines(vdp, after_scanline)
 
     first = machine.run_frame()
     second = machine.run_frame()
@@ -248,7 +248,7 @@ def test_a_break_during_active_display_stops_the_call_there() -> None:
     assert isinstance(vdp, V9938)
 
     lines: list[int] = []
-    vdp.on_scanline = lines.append
+    watch_scanlines(vdp, lines.append)
 
     machine.set_breakpoints([_MID_DISPLAY_PC])
     machine.run_frame(skip_render=True)

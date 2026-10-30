@@ -47,7 +47,7 @@ from msx.cpu.z80 import Z80
 from msx.input import InputFrame, InputLines
 from msx.io import IOBus
 from msx.kanji import KanjiRom
-from msx.mapper import HalnoteMapper, MajutsushiMapper
+from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
@@ -83,7 +83,6 @@ class Machine:
     dac: MajutsushiMapper | None = field(default=None)
     fdc: "FloppyDisk | None" = field(default=None)
     fmpac: "FmPac | None" = field(default=None, repr=False)
-    halnote_cart: HalnoteMapper | None = field(default=None, repr=False)
     kanji: KanjiRom | None = field(default=None, repr=False)
     ppi: PPI | None = field(default=None, repr=False)
     rtc: "RTC | None" = field(default=None, repr=False)
@@ -237,12 +236,11 @@ class Machine:
             self.memory.ram_mapper.reset()
         self.memory._mapper.reset()
         self.memory._mapper2.reset()
-        # halnote_cart (when present) is always also one of these sub-slot
+        # A HalnoteMapper (when present) is always one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
-        # constructs a HalnoteMapper (EXTENSION_DEVICES, the flat overlay's
-        # device allow-list in msx/machine_config.py, lacks "halnote") -- so
-        # resetting it via this loop, not a separate halnote_cart branch,
-        # covers it exactly once. Slot 1's own sub-slots (openspec/changes/
+        # constructs one (EXTENSION_DEVICES, the flat overlay's device
+        # allow-list in msx/machine_config.py, lacks "halnote") -- so this
+        # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.
         for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
             if sub_mapper is not None:
