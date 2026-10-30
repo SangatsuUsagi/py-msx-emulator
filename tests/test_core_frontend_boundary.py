@@ -270,3 +270,19 @@ def test_the_core_constants_equal_the_boundary() -> None:
     from msx.vdp._geometry import OUTPUT_H
 
     assert (SAMPLE_RATE, OUTPUT_H) == (AUDIO_SAMPLE_RATE, OUTPUT_HEIGHT)
+
+
+def test_the_devices_take_their_media_size_from_the_boundary() -> None:
+    # machine-core "The host takes no constant or table from a core module".
+    from msx.boundary import FMPAC_SRAM_SIZE, HALNOTE_SRAM_SIZE, RTC_CMOS_SIZE
+    from msx.fmpac import FmPac
+    from msx.mapper import HalnoteMapper
+    from msx.opll import Opll
+    from msx.rtc import RTC
+
+    fmpac = FmPac(rom=bytes(0x10000), opll=Opll())
+    rtc = RTC()
+    halnote = HalnoteMapper(rom=bytes(0x100000))
+    assert len(fmpac.sram_image.data()) == FMPAC_SRAM_SIZE == 8192
+    assert len(rtc.cmos.data()) == RTC_CMOS_SIZE == 26
+    assert len(halnote.sram_image.data()) == HALNOTE_SRAM_SIZE == 16384

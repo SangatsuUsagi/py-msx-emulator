@@ -48,6 +48,9 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
+    FMPAC_SRAM_SIZE,
+    HALNOTE_SRAM_SIZE,
+    RTC_CMOS_SIZE,
     RTC_DEFAULT_START,
     DiskMount,
     KeyboardLayout,
@@ -60,7 +63,6 @@ from msx.boundary import (
     slot_sram_id,
     subslot_sram_id,
 )
-from msx.fmpac import SRAM_SIZE as FMPAC_SRAM_SIZE
 
 # The closed vocabularies are defined once, in the core's document parser,
 # which enforces them too; the YAML loader checks the authored files against
@@ -88,14 +90,12 @@ from msx.machine_spec import (
     ExtensionOverlay,
     MachineLoadError,
     MachineSpec,
+    PpiControlRead,
     _ExpandedSubslotDevice,
     _FdcDef,
     _RomEntry,
     _Slot0RamEntry,
 )
-from msx.mapper import HALNOTE_SRAM_SIZE
-from msx.ppi import PpiControlRead
-from msx.rtc import SRAM_SIZE as RTC_SRAM_SIZE
 
 # The SRAM size of each cartridge mapper with battery-backed SRAM: the host
 # reads and writes the save file at this size.
@@ -1197,7 +1197,7 @@ def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, st
     if media_id == MediaId.FMPAC_SRAM:
         return FMPAC_SRAM_SIZE, "FM-PAC "
     if media_id == MediaId.RTC_CMOS:
-        return RTC_SRAM_SIZE, "RTC "
+        return RTC_CMOS_SIZE, "RTC "
     for slot in (1, 2):
         for sub in range(_MAX_SUB_SLOT_INDEX + 1):
             if media_id == subslot_sram_id(slot, sub):

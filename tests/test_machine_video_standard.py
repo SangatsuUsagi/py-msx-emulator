@@ -102,8 +102,8 @@ def test_loader_derives_timing_from_video_standard(
     registry = load_device_registry(_ROOT / "config")
     spec = load_machine_spec(machine_id, _ROOT / "config", registry, _ROOT)
     assert spec.video_standard is standard
-    assert spec.lines_per_frame == lines
-    assert spec.cycles_per_frame == CYCLES_PER_LINE * lines
+    assert lines_per_frame(spec.video_standard) == lines
+    assert cycles_per_frame(spec.video_standard) == CYCLES_PER_LINE * lines
 
 
 def test_loader_rejects_an_unknown_video_standard(tmp_path: Path) -> None:

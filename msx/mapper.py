@@ -5,7 +5,7 @@ from dataclasses import InitVar, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
-from msx.boundary import TRACE_EVENT_MAP_BANK, TRACE_MAPPER
+from msx.boundary import HALNOTE_SRAM_SIZE, TRACE_EVENT_MAP_BANK, TRACE_MAPPER
 from msx.clock import CoreClock
 from msx.dac import EventDac
 from msx.snapshot_schema import (
@@ -1920,10 +1920,6 @@ class SCCICart(BankTracingMapper):
 
 
 _HALNOTE_ROM_SIZE = 1048576   # 1 MB, 128 x 8 KB banks
-_HALNOTE_SRAM_SIZE = 16384    # 16 KB, two 8 KB windows at 0x0000-0x3FFF
-# Public alias for cross-module use (msx/machine_loader.py's HBI-J1 overlay
-# wiring), mirroring msx/fmpac.py's public SRAM_SIZE constant.
-HALNOTE_SRAM_SIZE = _HALNOTE_SRAM_SIZE
 _HALNOTE_SUBBANK_SIZE = 2048  # 2 KB JIS2 dictionary sub-mapper block
 _HALNOTE_SUBMAPPER_ROM_BASE = 524288  # 0x80000: upper half of the 1 MB ROM
 _HALNOTE_SRAM_ENABLE_BIT = 0x80    # bank-0 register bit 7
@@ -1984,7 +1980,7 @@ class HalnoteMapper(BankTracingMapper):
                 f"HalnoteMapper: expected a {_HALNOTE_ROM_SIZE}-byte ROM, "
                 f"got {len(self.rom)}"
             )
-        self.sram_image = SramImage.of(_HALNOTE_SRAM_SIZE, sram)
+        self.sram_image = SramImage.of(HALNOTE_SRAM_SIZE, sram)
         self._flat = bytearray(_WINDOW_BYTES)
         for window in range(4):
             self._sync_window(window)
@@ -2061,7 +2057,7 @@ class HalnoteMapper(BankTracingMapper):
         return {
             "banks": _parse_banks(state, label, 4),
             "subbanks": check_int_list(state["subbanks"], f"{label}.subbanks", 2, 0, 0xFF),
-            "sram": check_bytes(state["sram"], f"{label}.sram", _HALNOTE_SRAM_SIZE),
+            "sram": check_bytes(state["sram"], f"{label}.sram", HALNOTE_SRAM_SIZE),
         }
 
     def apply_state(self, state: Mapping[str, object]) -> None:

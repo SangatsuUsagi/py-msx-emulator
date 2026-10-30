@@ -102,6 +102,9 @@ extern "C" {
 #define MSX_MEDIA_DRIVE_C 14
 #define MSX_MEDIA_DRIVE_D 15
 #define MSX_MEDIA_COUNT 16
+#define MSX_FMPAC_SRAM_SIZE 8192
+#define MSX_RTC_CMOS_SIZE 26
+#define MSX_HALNOTE_SRAM_SIZE 16384
 
 /* -- Machine properties ----------------------------------------------------- */
 #define MSX_VIDEO_NTSC 0

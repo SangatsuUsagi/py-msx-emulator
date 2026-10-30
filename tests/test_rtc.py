@@ -5,11 +5,11 @@ import pytest
 
 from host.machine_config import load_machine_config, sram_paths
 from host.media import persist_dirty_media
-from msx.boundary import MachineConfig, MediaId, RtcTime
+from msx.boundary import RTC_CMOS_SIZE, MachineConfig, MediaId, RtcTime
 from msx.clock import CoreClock
 from msx.machine_loader import build_machine
 from msx.machine_spec import MachineSpec, _RomEntry
-from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, SRAM_SIZE, TEST_REG
+from msx.rtc import HOUR_MODE_REG, MODE_REG, RESET_REG, RTC, TEST_REG
 from tests.factories import make_config_msx2, make_machine_msx2
 
 _ROM = b"\x00" * 0x8000
@@ -189,7 +189,7 @@ def test_cmos_ram_save_and_load_round_trip(tmp_path: Path) -> None:
 
     assert rtc.cmos.dirty is True
     image = rtc.cmos.data()
-    assert len(image) == SRAM_SIZE
+    assert len(image) == RTC_CMOS_SIZE
 
     reloaded = RTC(sram=bytearray(image))
     _set_block(reloaded, 2)

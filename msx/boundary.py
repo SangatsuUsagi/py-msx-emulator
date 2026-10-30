@@ -125,6 +125,13 @@ class MediaId(enum.IntEnum):
     DRIVE_D = 15
 
 
+# The fixed sizes of the battery-backed media that are not a cartridge
+# mapper's: the host creates a save file of this size before the core
+# exists, and the device blanks an image of any other size.
+FMPAC_SRAM_SIZE = 8192      # MediaId.FMPAC_SRAM
+RTC_CMOS_SIZE = 26          # MediaId.RTC_CMOS: 26 nibbles, one per byte
+HALNOTE_SRAM_SIZE = 16384   # an HBI-J1 MSX-JE sub-slot's SRAM
+
 _SLOT_SRAM_IDS = (MediaId.SLOT1_SRAM, MediaId.SLOT2_SRAM)
 _SUBSLOT_SRAM_IDS = (
     (MediaId.SLOT1_SUB0_SRAM, MediaId.SLOT1_SUB1_SRAM,

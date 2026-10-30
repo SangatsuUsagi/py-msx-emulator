@@ -11,11 +11,24 @@ in a spec parsed from a document (which carries no host paths).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from msx.boundary import KeyboardLayout, VideoStandard
-from msx.ppi import PpiControlRead
-from msx.vdp._geometry import cycles_per_frame, lines_per_frame
+
+
+class PpiControlRead(str, Enum):
+    """What a port 0xAB read returns; the 8255A data sheet calls it illegal."""
+
+    # The last mode-set word: CMOS 82C55A, as openMSX I8255::readControlPort.
+    CONTROL = "control"
+    # 0xFF: nothing drives the bus. Verified on a real SONY HB-F1XD (S1985
+    # MSX-ENGINE), extras/HB-F1XD/PORTRD.BAS, 2026-10-05.
+    OPEN_BUS = "open_bus"
+    # The byte latched by the last PPI access (see msx/ppi.py PPI._bus_latch). Verified
+    # on a real SONY HB-10 (S3527 MSX-ENGINE), extras/HB-10/PORTRD1-4.BAS,
+    # 2026-10-08.
+    BUS_LATCH = "bus_latch"
 
 
 class MachineLoadError(Exception):
@@ -137,16 +150,6 @@ class MachineSpec:
     # hardware layout).
     fdc: _FdcDef | None = None
     fdc_subslot: int = 0
-
-    @property
-    def cycles_per_frame(self) -> int:
-        """Z80 T-states per frame, from the video standard."""
-        return cycles_per_frame(self.video_standard)
-
-    @property
-    def lines_per_frame(self) -> int:
-        """Scanlines per frame, from the video standard."""
-        return lines_per_frame(self.video_standard)
 
 
 @dataclass

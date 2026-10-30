@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import InitVar, dataclass, field
 from typing import TypedDict
 
-from msx.boundary import RTC_DEFAULT_START, RtcTime
+from msx.boundary import RTC_CMOS_SIZE, RTC_DEFAULT_START, RtcTime
 from msx.clock import CPU_CLOCK_HZ, CoreClock
 from msx.snapshot_schema import SAFE_INT_MAX, check_int, check_int_list, check_object
 from msx.sram import SramImage
@@ -37,9 +37,6 @@ REGS_PER_BLOCK = 13
 # Block 1, register 10: 12/24-hour select (bit 0 -- see _encode_hour).
 HOUR_MODE_REG = 10
 HOUR_MODE_24H = 0x1
-
-# Blocks 2/3 (26 nibbles of battery-backed CMOS RAM), persisted to disk.
-SRAM_SIZE = 26
 
 # Per-block write/read masks; 0-bits are ignored on write and read back as 0.
 _MASK: tuple[tuple[int, ...], ...] = (
@@ -79,7 +76,7 @@ class RTC:
     # Blocks 0/1 (time and alarm/settings), 2 x 13 nibbles.
     _regs: list[int] = field(default_factory=lambda: [0] * (2 * REGS_PER_BLOCK), repr=False)
     # Blocks 2/3's persisted image, the initial bytes of `cmos` (blank when
-    # not SRAM_SIZE bytes).
+    # not RTC_CMOS_SIZE bytes).
     sram: InitVar[bytes | bytearray | None] = None
     # Blocks 2/3 (the BIOS CMOS config), one nibble per byte: the medium the
     # host persists. A write or restore that changes a nibble marks it dirty.
@@ -93,7 +90,7 @@ class RTC:
     _start_cycle: int = field(default=0, repr=False)
 
     def __post_init__(self, sram: bytes | bytearray | None) -> None:
-        self.cmos = SramImage.of(SRAM_SIZE, sram)
+        self.cmos = SramImage.of(RTC_CMOS_SIZE, sram)
         # Default to 24-hour (register 10 defaults to all-zero storage
         # otherwise, which would read as 12-hour) -- matches this
         # implementation's behaviour before 12-hour support existed.
