@@ -45,7 +45,9 @@ handler ever runs at the same time as a CPU step or a VDP render.
 
 There is one exception. `cpu.continue_sync` blocks the calling socket thread
 until the next pause event. The server thus handles it directly on that thread
-and does not queue it (see `DebugServer._continue_sync`).
+and does not queue it (see `DebugServer._continue_sync`). That thread makes no
+call into the core: it answers from the pause record that the emulator thread
+writes before it wakes the call.
 
 The core emulator (`machine`, `cpu`, `vdp`, `memory`) has no knowledge of RPC.
 For this feature, `host/rpc_server.py` is the only place that uses `socket`,
@@ -193,11 +195,17 @@ stay armed.
 ### Memory
 
 - **`memory.read`**: params `{ address, length? }` (default 16) →
-  `{ address, data }`, with `data` as space-separated hex bytes.
+  `{ address, data }`, with `data` as space-separated hex bytes. The length
+  must be 0-0x10000. Any other length gives an invalid-params error
+  (`-32602`).
 - **`memory.write`** *(requires paused)*: params `{ address, data }` (hex
   bytes, e.g. `"3E 01 C9"`) → `{ written }`.
 - **`memory.read_vram`**: params `{ address, length? }` (default 32) →
-  `{ address, data }`. The address wraps within the VRAM size.
+  `{ address, data }`. The address wraps within the VRAM size (0x4000 or
+  0x20000), so an MSX2 address above 0xFFFF reads the VRAM above 64 KB. The
+  result's `address` has five hex digits there (`0x1C000`). The length must
+  be 0 to the VRAM size. Any other length gives an invalid-params error
+  (`-32602`).
 - **`memory.disassemble`**: params `{ address, count? }` (default 10) →
   `{ instructions: [{ address, bytes, mnemonic }] }`.
 
