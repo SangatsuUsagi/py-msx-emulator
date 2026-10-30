@@ -21,7 +21,7 @@ MCP client  <-- MCP (stdio) -->  tools/mcp_server.py  <-- Unix socket -->  host/
 
 エミュレータプロセス内部では、`DebugServer`（`host/rpc_server.py`）がソケットの accept/read ループをバックグラウンドのデーモンスレッドで実行します。リクエストはそのスレッドでパースされますが、実行はされません。各リクエストはキューに積まれ、ホストループが `DebugServer.drain()` を呼び出したとき（1フレームに1回、およびデバッガで一時停止している間は継続的に）にエミュレータのメインスレッドで処理されます。これにより CPU/VDP のホットパスはロックフリーのままとなり、RPC ハンドラが CPU ステップや VDP レンダリングと並行して実行されることはありません。
 
-1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。
+1つ例外があります。`cpu.continue_sync` は呼び出し元のソケットスレッドを次の一時停止イベントまでブロックするため、キューに積まれずそのスレッド上でインラインに処理されます（`DebugServer._continue_sync` を参照）。このスレッドはコアを呼びません。エミュレータのスレッドが呼び出しを起こす前に書いた一時停止の記録から応答します。
 
 コアのエミュレータ（`machine`、`cpu`、`vdp`、`memory`）は RPC について一切関知しません。`host/rpc_server.py` はこの機能のために `socket`・`json`・`threading` を使用する唯一の場所です。コアが RPC サーバーを呼ぶことはありません。ブレークすると `step_frame` が停止理由を返し、フロントエンドのループがそれを `DebugServer.on_core_stop` に渡します（`host/debugger/stop.py`）。このレイヤー構造が Python 以外への移植先にどう対応するかは、`host/rpc_server.py` 冒頭の移植性に関する注記を参照してください。
 
@@ -133,9 +133,9 @@ RPC は Unix ドメインソケットを使うため、macOS か Linux が必要
 
 ### メモリ
 
-- **`memory.read`** — params: `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。
+- **`memory.read`** — params: `{ address, length? }`（デフォルト 16）→ `{ address, data }`。`data` はスペース区切りの16進バイト列です。長さは 0〜0x10000 です。それ以外の長さは invalid-params エラー（`-32602`）になります。
 - **`memory.write`** *（一時停止が必要）* — params: `{ address, data }`（16進バイト、例：`"3E 01 C9"`）→ `{ written }`。
-- **`memory.read_vram`** — params: `{ address, length? }`（デフォルト 32）→ `{ address, data }`。VRAM サイズ内でラップします。
+- **`memory.read_vram`** — params: `{ address, length? }`（デフォルト 32）→ `{ address, data }`。アドレスは VRAM サイズ（0x4000 か 0x20000）内でラップするので、MSX2 では 0xFFFF より上のアドレスで 64 KB より上の VRAM を読めます。そのとき結果の `address` は 16進 5 桁（`0x1C000`）です。長さは 0〜VRAM サイズです。それ以外の長さは invalid-params エラー（`-32602`）になります。
 - **`memory.disassemble`** — params: `{ address, count? }`（デフォルト 10）→ `{ instructions: [{ address, bytes, mnemonic }] }`。
 
 ### VDP
