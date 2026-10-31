@@ -8,7 +8,7 @@ PORT-LIBRARY-NOTE: this file's `yaml.safe_load()` -> `dict[str, Any]` ->
   et al.) used to be the largest source of `Any` in this codebase (same
   pattern, at smaller scale, still applies to host/app_config.py and
   host/romdb.py). RESOLVED for this file by
-  openspec/changes/typed-machine-loader-yaml: every raw YAML mapping this
+  openspec/changes/archive/2026-08-22-typed-machine-loader-yaml: every raw YAML mapping this
   file validates is now typed via `TypedDict` (`RomEntryYaml`,
   `DeviceEntryYaml`, `MachineEntryYaml`, etc.) with `TypeGuard`-returning
   `_is_<thing>_shape` narrowing functions, so a field read off an
@@ -172,7 +172,7 @@ class RomEntryYaml(TypedDict, total=False):
 def _is_rom_entry_shape(data: object) -> TypeGuard[RomEntryYaml]:
     """True if `data` is a dict (rom: block shape). `file`'s presence is
     still checked by `_parse_rom_entry` itself, not guaranteed here -- see
-    openspec/changes/typed-machine-loader-yaml/design.md Decision 2."""
+    openspec/changes/archive/2026-08-22-typed-machine-loader-yaml/design.md Decision 2."""
     return isinstance(data, dict)
 
 
@@ -1023,7 +1023,7 @@ def load_extension_overlay(
 
     Returns:
         A resolved ExtensionOverlay (flat shape) or ExpandedExtensionOverlay
-        (expanded shape), ready for build_machine(extension_overlay=...).
+        (expanded shape), ready for load_machine_config(extension_overlay1/2=...).
 
     Raises:
         MachineLoadError: On missing file, bad schema_version, an
@@ -1050,8 +1050,8 @@ def load_extension_overlay(
 
     # `slot:` documents which primary slot this overlay YAML's author
     # targeted/tested -- both slots 1 and 2 are supported placements now
-    # (openspec/changes/slot1-slot2-symmetrization); it does NOT itself
-    # route the overlay to a slot -- build_machine's caller decides that via
+    # (openspec/changes/archive/2026-09-21-slot1-slot2-symmetrization); it does NOT itself
+    # route the overlay to a slot -- load_machine_config's caller decides that via
     # which of extension_overlay1/extension_overlay2 it passes the resolved
     # overlay through as.
     slot = int(raw.get("slot", 2))
@@ -1175,7 +1175,7 @@ class _Cartridges:
     extension_overlay2: AnyExtensionOverlay | None
 
 
-def _sram_paths(spec: MachineSpec, carts: _Cartridges) -> dict[int, Path]:
+def _resolve_sram_files(spec: MachineSpec, carts: _Cartridges) -> dict[int, Path]:
     paths: dict[int, Path] = {}
     slots = ((1, carts.cartridge1, carts.mapper1), (2, carts.cartridge2, carts.mapper2))
     for slot, cartridge, mapper in slots:
@@ -1380,7 +1380,7 @@ def load_machine_config(
         extension_overlay1=carts.extension_overlay1,
         extension_overlay2=carts.extension_overlay2,
     )
-    sram_files = _sram_paths(spec, carts)
+    sram_files = _resolve_sram_files(spec, carts)
     return LoadedMachineConfig(
         config=MachineConfig(
             document=document, roms=_rom_images(images), media=_load_media(sram_files, carts),

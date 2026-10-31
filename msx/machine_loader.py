@@ -561,9 +561,8 @@ def _wire_flat_overlay(
         # incoming `scc` param reflects whatever either cartridge slot's
         # mapper resolution and/or the other slot's extension overlay
         # already produced -- all four sources are threaded through the
-        # same `scc` variable by build_machine before either overlay is
-        # wired (see build_machine's "Either slot's KonamiSCC mapper shares
-        # the machine's single SCC chip" handling), so this single check
+        # same `scc` variable before either overlay is wired (see
+        # _resolve_shared_scc), so this single check
         # covers every combination.
         if scc is not None:
             raise MachineLoadError(

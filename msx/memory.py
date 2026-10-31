@@ -106,9 +106,7 @@ class Memory:
     # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
     # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
     # resolves them to sub-slot 1 and 2 respectively, its real hardware's
-    # 4-independent-secondary-slot layout (RESOLVED by
-    # openspec/changes/parameterize-subslot-index -- previously this dataclass
-    # only supported sub-slot 0 for both roles). fdc_page defaults to 1 (the
+    # 4-independent-secondary-slot layout. fdc_page defaults to 1 (the
     # DISK-ROM window's existing fixed page). Construction-time-fixed, like
     # flat_ram_subslot/_mapper/_mapper2 -- no code ever reassigns them after
     # construction, so they have no setter (see the "Page-routing cache
@@ -131,7 +129,7 @@ class Memory:
     # above (0 when slot0_ram is None).
     _slot0_ram_len: int = field(init=False, repr=False, default=0)
     # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever one
-    # of the 8 set_*() methods below invalidates it (event-driven: a single
+    # of the 4 set_*() methods below invalidates it (event-driven: a single
     # bool check per access, no per-access recomputation of a comparison
     # key). extrom has no setter and needs none: _read_rom() reads
     # self.extrom live, unconditionally correct regardless of when it's
@@ -230,8 +228,7 @@ class Memory:
         self._rebuild_page_cache()
 
     # -- terminal (leaf) read/write operations -------------------------------
-    # Mechanical extraction of read()/write()'s former inline branches; each
-    # keeps exactly the logic it had inline. Selected once per page by
+    # Selected once per page by
     # _rebuild_page_cache() instead of re-decoded on every access.
 
     def _read_rom(self, addr: int) -> int:
@@ -553,11 +550,8 @@ class Memory:
 
     # ------------------------------------------------------------- debug REPL
     #
-    # The three methods below back the debugger's `sl`/`st` slot-inspector
-    # commands (host/debugger/prompt.py). They exist so that debugger code
-    # never needs to reflect on Memory's private fields (_mapper/_mapper2)
-    # from outside this class -- see openspec/changes/archive/
-    # *-debugger-slot-mapper-interface.
+    # The methods below back the core API's slot_info (Machine.slot_info), which
+    # host/debugger/slots.py formats for `sl` and `st`.
 
     def _cartridge_slot_state(self, primary: int) -> tuple[bool, list[Mapper | None], Mapper]:
         """(sub_slot_enabled, subslots, mapper) for cartridge slot 1 or 2 --

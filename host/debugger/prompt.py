@@ -1,4 +1,4 @@
-"""Interactive debug REPL for MSX2 / V9938 emulation.
+"""Interactive debug REPL for MSX1 and MSX2 emulation.
 
 Opened by the host after step_frame returns at a stop (host/debugger/stop.py).
 Runs in the main thread; emulation is paused while the REPL is active.
@@ -136,7 +136,7 @@ class Debugger:
     # ------------------------------------------------------------------
 
     def enter(self) -> None:
-        """Suspend emulation and run the debug REPL until 'cont' or 'quit'."""
+        """Suspend emulation and run the debug REPL until 'c' or 'q'."""
         print("\nDebugger entered. Type 'c' to resume, 'q' to exit.")
         pc = self._machine.cpu_registers().PC
         line, _ = _format_disasm(byte_reader(self._machine), pc)

@@ -28,6 +28,9 @@ class PpiState(TypedDict):
 
 @dataclass
 class PPI:
+    """The 8255 PPI: the primary slot register, the keyboard row select and
+    matrix read, and the key-click bit, on ports 0xA8-0xAB."""
+
     memory: Memory
     _input: InputLines | None = field(default=None, repr=False)
     # Intel 8255 post-reset control word: mode 0, ports A/B/C all input.

@@ -39,6 +39,9 @@ def _noop_write(_port: int, _value: int) -> None:
 
 @dataclass(slots=True)
 class Z80:
+    """The Z80 core. step() runs one instruction, or accepts an interrupt, and
+    returns the T-states it took. The bus is the read_byte/write_byte hooks."""
+
     # PORT-NOTE: these bus hooks are stored as Python closures (bound methods
     #   assigned at wiring time by Machine.__post_init__).
     # Rust equivalent: a trait object (`Box<dyn Bus>`) or a feature-flagged
