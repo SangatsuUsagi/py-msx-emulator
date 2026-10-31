@@ -1234,7 +1234,10 @@ The machine definition reaches the core in two layers:
    (never `auto`), and the extension overlays. `msx/machine_config.py`
    encodes and parses it. `msx/machine_config.schema.json` (JSON Schema
    draft 2020-12) describes it. The tests read the schema, and the core never
-   does.
+   does. `tests/vectors/canonical_json.json` lists inputs with their
+   canonical form and its SHA-256, inputs the reader refuses, and base64
+   blobs, so another implementation of the core can check its own writer
+   and reader.
 
 Every ROM in the document is a reference `{name, size, sha1, pages}`. `name`
 is a bare file name, used only as a label. `sha1` is the SHA1 of the bytes

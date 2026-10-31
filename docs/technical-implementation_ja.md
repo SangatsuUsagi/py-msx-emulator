@@ -822,7 +822,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 マシンの定義は、2 つの層を経てコアに届く。
 
 1. **手で書く YAML**（`config/machines`、`config/devices`、`config/extensions`）。ハードウェアについてのコメントを残せる。読むのは host だけ（[マシンと拡張の YAML スキーマ](#マシンと拡張の-yaml-スキーマ) を参照）。
-2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作る。RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）。`format_version` は `1`。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持つ。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてある。スキーマを読むのはテストで、コアは読まない。
+2. **MachineConfig の文書**。`load_machine_config()` が YAML とコマンドラインの指定から作る。RFC 8785（JCS）で正規化した JSON（UTF-8、キーはソート済み、空白なし、整数のみ）。`format_version` は `1`。解決済みのマシン、スロットごとのカートリッジとそのマッパー（`auto` にはならない）、拡張オーバーレイを持つ。エンコードと解析は `msx/machine_config.py` が行い、形は `msx/machine_config.schema.json`（JSON Schema draft 2020-12）に書いてある。スキーマを読むのはテストで、コアは読まない。`tests/vectors/canonical_json.json` には、入力とその正規形と SHA-256、読み込みで拒否する入力、base64 のバイト列を載せてある。コアを別の言語で実装するときは、このファイルで自分の書き出しと読み込みを確かめられる。
 
 文書の中の ROM は、どれも `{name, size, sha1, pages}` の参照。`name` はディレクトリを含まないファイル名で、表示用のラベルにすぎない。`sha1` は host が読んだバイト列の SHA1。イメージは、その SHA1 をキーにして `MachineConfig.roms` で渡す。解析は厳密で、次のものを拒否する。
 
