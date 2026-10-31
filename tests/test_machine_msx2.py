@@ -146,5 +146,5 @@ def test_build_machine_wires_psg_clock() -> None:
     writes are timestamped for sub-frame audio."""
     machine = make_machine_msx2(bytes(32768), bytes(32768))
     assert machine.psg._clock is machine.clock
-    machine.cycle_count = 4242
+    machine.clock.cycle = 4242
     assert machine.psg._clock.cycle == 4242

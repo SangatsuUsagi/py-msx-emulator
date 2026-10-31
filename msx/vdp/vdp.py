@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from msx.boundary import (
+    OUTPUT_HEIGHT,
     TRACE_DEBUG,
     TRACE_EVENT_VDP_MODE_REG,
     TRACE_EVENT_VDP_PORT99,
@@ -12,7 +13,7 @@ from msx.boundary import (
 )
 from msx.clock import CoreClock
 from msx.vdp import renderer
-from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
+from msx.vdp._geometry import ZERO_BYTE
 
 if TYPE_CHECKING:
     from msx.trace import TraceLog
@@ -227,10 +228,10 @@ class Rgb24RowCache:
         return rgb
 
     def frame(self, src: bytearray, channels: Channels) -> bytes:
-        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`. A
-        buffer that is not OUTPUT_H whole rows is converted without the memo."""
-        width = len(src) // OUTPUT_H
-        if width == 0 or width * OUTPUT_H != len(src):
+        """RGB24 bytes of all OUTPUT_HEIGHT rows of `src` through `channels`. A
+        buffer that is not OUTPUT_HEIGHT whole rows is converted without the memo."""
+        width = len(src) // OUTPUT_HEIGHT
+        if width == 0 or width * OUTPUT_HEIGHT != len(src):
             return _translate_rgb24(src, channels)
         rows = self._rows_for(channels)
         parts: list[bytes] = []

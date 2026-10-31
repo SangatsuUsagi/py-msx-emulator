@@ -42,7 +42,7 @@ def test_mount_sets_has_disk_and_write_protected(tmp_path: Path) -> None:
 
 def test_unmount_clears_disk(tmp_path: Path) -> None:
     drive = DiskDrive(dsk_image(_make_dsk(tmp_path / "d.dsk")))
-    drive.unmount()
+    drive.mount(None)
     assert drive.has_disk is False
     assert drive.read_sector(0, 0, 1) is None
     assert drive.write_sector(0, 0, 1, b"\x00" * SECTOR_SIZE) is False

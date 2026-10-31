@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.clock import CPU_CLOCK_HZ
 from msx.opll import (
     _DAMPER_RATE,
@@ -26,7 +27,6 @@ from msx.opll import (
     _RELEASE,
     _SUS_RELEASE_RATE,
     _TLL_TABLE,
-    SAMPLE_RATE,
     Opll,
 )
 from msx.snapshot_schema import SchemaError
@@ -175,7 +175,7 @@ def test_multiple_channels_sound_together() -> None:
     assert _max_abs(buf) > 0
 
 
-@pytest.mark.parametrize("sample_rate", [SAMPLE_RATE])
+@pytest.mark.parametrize("sample_rate", [AUDIO_SAMPLE_RATE])
 def test_sample_rate_matches_psg(sample_rate: int) -> None:
     assert sample_rate == 44_100
 
@@ -570,7 +570,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 # integer arithmetic")
 # ---------------------------------------------------------------------------
 
-_PHASE_RANGE = 72 * SAMPLE_RATE
+_PHASE_RANGE = 72 * AUDIO_SAMPLE_RATE
 
 
 def test_the_phase_is_an_integer_in_range() -> None:
@@ -594,9 +594,10 @@ def test_native_ticks_per_sample_follow_the_exact_ratio() -> None:
         return update()
 
     o._update_output = counting_update  # type: ignore[method-assign]
-    o.generate_samples(SAMPLE_RATE)
-    assert ticks == -(-SAMPLE_RATE * CPU_CLOCK_HZ // _PHASE_RANGE) == 49716
-    assert o.snapshot()["resample_phase"] == 49716 * _PHASE_RANGE - SAMPLE_RATE * CPU_CLOCK_HZ
+    o.generate_samples(AUDIO_SAMPLE_RATE)
+    assert ticks == -(-AUDIO_SAMPLE_RATE * CPU_CLOCK_HZ // _PHASE_RANGE) == 49716
+    expected = 49716 * _PHASE_RANGE - AUDIO_SAMPLE_RATE * CPU_CLOCK_HZ
+    assert o.snapshot()["resample_phase"] == expected
     assert o.snapshot()["resample_phase"] == 308700
 
 

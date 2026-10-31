@@ -28,7 +28,6 @@ from msx.vdp._v9938_defs import (
     _RegChange,
     display_height_of,
     display_width_of,
-    even_odd_enabled_of,
 )
 from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
@@ -458,7 +457,6 @@ class V9938:
     # The emulated time (msx/clock.py): increment_frame() advances its
     # frame count. build_machine gives the machine's record.
     _clock: CoreClock = field(default_factory=CoreClock, repr=False)
-    _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
     # R#13 blink timer, shared by TEXT2 character blink and GRAPHIC4-7 page
     # alternation: blink_state True = ON period (R#12 colours / even page),
@@ -561,16 +559,6 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return display_height_of(self.regs)
-
-    @property
-    def interlaced(self) -> bool:
-        """R#9 bit 3 (IL): interlace enable."""
-        return bool(self.regs[9] & 0x08)
-
-    @property
-    def even_odd_enabled(self) -> bool:
-        """R#9 bit 2 (EO): automatic even/odd page alternation enable."""
-        return even_odd_enabled_of(self.regs)
 
     @property
     def vblank_start_line(self) -> int:

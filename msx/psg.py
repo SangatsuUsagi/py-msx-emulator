@@ -19,8 +19,6 @@ from msx.snapshot_schema import (
 _REG_IO_PORT_A = 14
 
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
-SAMPLE_RATE: int = AUDIO_SAMPLE_RATE
-SAMPLES_PER_FRAME: int = 735  # 44100 // 60
 # Upper bound on recorded register writes per audio buffer. Far above any real
 # frame's write count; caps memory if generate_samples is never called (headless).
 _MAX_EVENTS: int = 4096
@@ -266,7 +264,9 @@ class PSG:
             "env_alternate": check_bool(state["env_alternate"], f"{label}.env_alternate"),
             "env_hold_flag": check_bool(state["env_hold_flag"], f"{label}.env_hold_flag"),
             "env_holding": check_bool(state["env_holding"], f"{label}.env_holding"),
-            "clk_frac": check_int(state["clk_frac"], f"{label}.clk_frac", 0, SAMPLE_RATE - 1),
+            "clk_frac": check_int(
+                state["clk_frac"], f"{label}.clk_frac", 0, AUDIO_SAMPLE_RATE - 1
+            ),
         }
 
     def restore_synth(self, state: dict[str, object]) -> None:
@@ -457,8 +457,8 @@ class PSG:
         for i in range(start, end):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
             clk_frac += PSG_CLOCK
-            ticks = clk_frac // SAMPLE_RATE
-            clk_frac %= SAMPLE_RATE
+            ticks = clk_frac // AUDIO_SAMPLE_RATE
+            clk_frac %= AUDIO_SAMPLE_RATE
 
             # tone channels (inline _step_tone).  Integrate the square wave over
             # the sample instead of point-sampling: hi0/hi1/hi2 count the PSG

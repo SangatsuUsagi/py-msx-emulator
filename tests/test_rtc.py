@@ -381,7 +381,7 @@ def test_rtc_never_reads_the_host_clock() -> None:
 def test_build_machine_wires_the_rtc_to_the_machine_clock() -> None:
     machine = make_machine_msx2(bytes(0x8000), bytes(0x4000))
     assert machine.rtc is not None
-    machine.cycle_count = 3 * 3_579_545
+    machine.clock.cycle = 3 * 3_579_545
     assert _read_block0(machine.rtc)[0:2] == [3, 0]
 
 

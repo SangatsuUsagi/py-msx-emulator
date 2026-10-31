@@ -56,6 +56,11 @@ class DiskDriveState(TypedDict):
 _STATE_KEYS: frozenset[str] = frozenset(DiskDriveState.__annotations__)
 
 
+def _disk_identity(image: DskDiskImage) -> tuple[int, str]:
+    """What the snapshot records of a mounted disk: its size and SHA1."""
+    return image.num_sectors * SECTOR_SIZE, image.content_sha1()
+
+
 class DiskDrive:
     """One drive with a physical head position and an optional mounted image."""
 
@@ -75,11 +80,6 @@ class DiskDrive:
 
     def mount(self, image: DskDiskImage | None) -> None:
         self.image = image
-
-    def unmount(self) -> None:
-        # Kept for the symmetric mount()/unmount() public API; runtime ejection
-        # currently goes through mount(None) / FloppyDisk.swap(drive, None).
-        self.image = None
 
     def _geometry(self) -> tuple[int, int]:
         """(sectors_per_track, sides) from the mounted image, or the 2DD default."""
@@ -133,8 +133,7 @@ class DiskDrive:
             disk_size: int | None = None
             disk_sha1: str | None = None
         else:
-            disk_size = self.image.num_sectors * SECTOR_SIZE
-            disk_sha1 = self.image.content_sha1()
+            disk_size, disk_sha1 = _disk_identity(self.image)
         return {
             "track": self.track,
             "side": self.side,
@@ -170,7 +169,7 @@ class DiskDrive:
                 f"saved state has {'a disk' if has_disk else 'no disk'} mounted"
             )
         if self.image is not None:
-            current = (self.image.num_sectors * SECTOR_SIZE, self.image.content_sha1())
+            current = _disk_identity(self.image)
             saved = (disk_size, disk_sha1)
             if current != saved:
                 raise SnapshotMismatchError(

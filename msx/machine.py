@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    AUDIO_SAMPLE_RATE,
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
     MOUSE_LEFT,
     MOUSE_RIGHT,
+    OUTPUT_HEIGHT,
     STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
@@ -51,12 +53,12 @@ from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
-from msx.psg import PSG, SAMPLE_RATE, JoystickPort
+from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
 from msx.snapshot_schema import SnapshotError
 from msx.sram import Medium, SramImage
 from msx.trace import TraceLog
-from msx.vdp._geometry import OUTPUT_H, cycles_per_frame, lines_per_frame
+from msx.vdp._geometry import cycles_per_frame, lines_per_frame
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -172,10 +174,6 @@ class Machine:
     def cycle_count(self) -> int:
         """T-states since power-on (the clock record's cycle count)."""
         return self.clock.cycle
-
-    @cycle_count.setter
-    def cycle_count(self, value: int) -> None:
-        self.clock.cycle = value
 
     @property
     def cycles_per_frame(self) -> int:
@@ -875,7 +873,7 @@ class Machine:
         """Run one frame, or the rest of a stopped one, up to its end or the
         next break, and return the rendered index framebuffer.
 
-        Returns a `width * OUTPUT_H` buffer (the frame's width, see
+        Returns a `width * OUTPUT_HEIGHT` buffer (the frame's width, see
         v9938_renderer.render_frame) when the frame completes in this call,
         and an empty bytearray when the call stops at a break or the render
         was skipped (`skip_render` in the call that reached the render). A
@@ -963,7 +961,7 @@ class Machine:
     def samples_per_frame(self) -> int:
         """Audio samples per frame: the output rate over the pacing rate (735 at
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
-        return SAMPLE_RATE // self.video_standard.target_fps
+        return AUDIO_SAMPLE_RATE // self.video_standard.target_fps
 
     def apply_input(self, frame_input: InputFrame) -> int:
         """Replace the input lines and mouse buttons with `frame_input`'s,
@@ -1006,8 +1004,8 @@ class Machine:
         height = 0
         pixels = b""
         if index_buf:
-            width = len(index_buf) // OUTPUT_H
-            height = OUTPUT_H
+            width = len(index_buf) // OUTPUT_HEIGHT
+            height = OUTPUT_HEIGHT
             pixels = self.vdp.to_rgb24(index_buf)
         stop_reason = self._stop.reason if self._stop_pending else STOP_NONE
         return FrameOutput(
