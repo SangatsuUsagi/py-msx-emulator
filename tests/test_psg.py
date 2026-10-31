@@ -372,6 +372,27 @@ def test_snapshot_synth_and_restore_synth_round_trip() -> None:
     assert psg.snapshot_synth() == snapshot
 
 
+def test_a_state_load_discards_the_pending_events() -> None:
+    # audio-psg "A state load discards the pending events": writes in a
+    # frame, then a state load before generate_samples. The frame continues
+    # from the loaded generator state, not the one before the load.
+    source = PSG()
+    _program_tone_noise_envelope(source)
+    source.generate_samples(500)
+    loaded_state = source.snapshot_synth()
+
+    psg = PSG()
+    _program_tone_noise_envelope(psg)  # recorded as this frame's events
+    psg.restore_synth(loaded_state)
+    out = psg.generate_samples(500, frame_start=0, frame_end=1000)
+
+    reference = PSG()
+    reference.regs[:] = psg.regs
+    reference.restore_synth(loaded_state)
+    assert out == reference.generate_samples(500)
+    assert psg.snapshot_synth() == reference.snapshot_synth()
+
+
 def test_restore_synth_with_missing_key_does_not_partially_mutate() -> None:
     """restore_synth() parses the whole object before assigning any field,
     so a missing key fails before earlier fields are touched."""

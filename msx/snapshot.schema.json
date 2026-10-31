@@ -309,6 +309,9 @@
         "nmi_pending": {
           "type": "boolean"
         },
+        "ei_pending": {
+          "type": "boolean"
+        },
         "im": {
           "type": "integer",
           "minimum": 0,
@@ -326,6 +329,7 @@
         }
       },
       "required": [
+        "ei_pending",
         "halted",
         "iff1",
         "iff2",
