@@ -1275,7 +1275,7 @@ take one from the Python host: encode it with `load_machine_config()` and save
 ### Snapshots
 
 `save_state()` returns the whole machine state as canonical JSON (format
-version 19). The layout is `msx/snapshot.schema.json`: one object per
+version 21). The layout is `msx/snapshot.schema.json`: one object per
 component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`,
 `mouse`), every key always present, and `null` for a part that the machine
 does not have. Byte arrays are padded RFC 4648 base64 strings, and every
