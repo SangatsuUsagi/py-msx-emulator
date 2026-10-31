@@ -574,6 +574,10 @@ class Memory:
         return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
     def _describe_slot3(self, secondary: int, page: int) -> int:
+        # The legacy branch below reports each sub-slot's nominal role (0 SUB
+        # ROM, 1 empty, 2-3 RAM). _resolve_slot3_read_leaf_legacy decides what a
+        # read of one page returns, so it also checks the page and whether the
+        # ROM is loaded: the two answer different questions.
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
             # Data-driven layout (e.g. FS-A1F): mirror

@@ -971,14 +971,7 @@ def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _Parse
     )
 
 
-def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
-    # Everything that can fail runs here, before the first write; the rest of
-    # this function only assigns already-validated values.
-    parsed = _validate_snapshot(machine, snap)
-    memory = machine.memory
-    vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
-
-    cpu = snap.cpu
+def _apply_cpu(machine: "Machine", cpu: CpuSnapshot) -> None:
     _restore_cpu_regs(machine, cpu.registers)
     machine.cpu.halted = cpu.halted
     # Not saved (Z80.idle_hint): HALT is the only idle state the saved
@@ -993,38 +986,56 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.q = cpu.q
     machine.cpu.q_next = cpu.q_next
 
+
+def _apply_memory_and_slots(
+    machine: "Machine", snap: MachineSnapshot, parsed: _ParsedProducers
+) -> None:
+    memory = machine.memory
     memory.ram[:] = snap.memory.ram
+    if memory.slot0_ram is not None and snap.memory.slot0_ram is not None:
+        memory.slot0_ram[:] = snap.memory.slot0_ram
+    rm = memory.ram_mapper
+    saved_rm = snap.memory.ram_mapper
+    if rm is not None and saved_rm is not None:
+        rm.ram[:] = saved_rm.ram
+        rm.banks[:] = saved_rm.banks
     memory.set_slot_register(snap.memory.primary_slot_register)
+    slot1_reg = snap.slots.slot1.secondary_slot_register
+    if slot1_reg is not None:
+        memory.set_slot1_sub_slot_reg(slot1_reg)
+    slot2_reg = snap.slots.slot2.secondary_slot_register
+    if slot2_reg is not None:
+        memory.set_slot2_sub_slot_reg(slot2_reg)
+    slot3_reg = snap.slots.slot3.secondary_slot_register
+    if slot3_reg is not None:
+        memory.set_sub_slot_reg(slot3_reg)
     for producer, state in parsed.mappers:
         producer.apply_state(state)
 
-    vdp = snap.vdp
+
+def _apply_vdp(machine: "Machine", vdp: VdpSnapshot) -> None:
     machine.vdp.vram[:] = vdp.vram
     machine.vdp.regs[:] = vdp.registers
     machine.vdp.status = vdp.status
     machine.vdp.frame_count = vdp.frame_count
-    # Common VDP address state — identical field names on both VDP types. The
+    # Common VDP address state -- identical field names on both VDP types. The
     # V9938's port latch is restored with the rest of its own state.
     machine.vdp.addr = vdp.address
     machine.vdp.read_buf = vdp.read_buffer
-    if vdp9938 is None:
+    if isinstance(machine.vdp, V9938):
+        assert vdp.v9938 is not None  # parse_snapshot requires it for MSX2
+        machine.vdp.restore_state(vdp.v9938)
+    else:
         assert isinstance(machine.vdp, VDP)
         machine.vdp.restore_latch(vdp.latch)
-    else:
-        assert vdp.v9938 is not None  # parse_snapshot requires it for MSX2
-        vdp9938.restore_state(vdp.v9938)
-        rm = memory.ram_mapper
-        saved_rm = snap.memory.ram_mapper
-        if rm is not None and saved_rm is not None:
-            rm.ram[:] = saved_rm.ram
-            rm.banks[:] = saved_rm.banks
-        slot3_reg = snap.slots.slot3.secondary_slot_register
-        if slot3_reg is not None:
-            memory.set_sub_slot_reg(slot3_reg)
     # The VDP's cached /INT level is what the scanline loop feeds the CPU, so
     # it must follow the restored status/registers (incl. V9938 S#1 FH).
     machine.vdp.update_irq()
 
+
+def _apply_sound_and_io(
+    machine: "Machine", snap: MachineSnapshot, parsed: _ParsedProducers
+) -> None:
     machine.psg.regs[:] = snap.psg.registers
     machine.psg.latch = snap.psg.latch
     machine.psg.apply_synth_state(parsed.psg_synth)
@@ -1037,19 +1048,21 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.scc.apply_state(parsed.scc)
     if machine.fdc is not None and parsed.fdc is not None:
         machine.fdc.apply_state(parsed.fdc)
-    slot1_reg = snap.slots.slot1.secondary_slot_register
-    if slot1_reg is not None:
-        memory.set_slot1_sub_slot_reg(slot1_reg)
-    slot2_reg = snap.slots.slot2.secondary_slot_register
-    if slot2_reg is not None:
-        memory.set_slot2_sub_slot_reg(slot2_reg)
-    if memory.slot0_ram is not None and snap.memory.slot0_ram is not None:
-        memory.slot0_ram[:] = snap.memory.slot0_ram
     if machine.rtc is not None and parsed.rtc is not None:
         machine.rtc.apply_state(parsed.rtc)
     mouse = machine.psg.mouse
     if mouse is not None and parsed.mouse is not None:
         mouse.apply_state(parsed.mouse, machine.cycle_count)
+
+
+def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+    # Everything that can fail runs here, before the first write; the functions
+    # below only assign already-validated values.
+    parsed = _validate_snapshot(machine, snap)
+    _apply_cpu(machine, snap.cpu)
+    _apply_memory_and_slots(machine, snap, parsed)
+    _apply_vdp(machine, snap.vdp)
+    _apply_sound_and_io(machine, snap, parsed)
 
 
 # --- encoding ---------------------------------------------------------------

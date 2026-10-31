@@ -920,13 +920,9 @@ class Machine:
             self._frame_result = bytearray()
 
         line = self._frame_line
-        total = self._frame_total
         if line < vblank_split:
-            if not stepping and self._take_break_request(line):
-                return self._keep_stopped_frame(total)
-            total = self._run_lines(vdp9938, line, vblank_split, total)
-            if self._stop_pending:
-                return self._keep_stopped_frame(total)
+            if self._run_segment(vdp9938, line, vblank_split, stepping):
+                return bytearray()
             line = vblank_split
         if not self._frame_rendered:
             if vdp9938 is not None:
@@ -937,11 +933,8 @@ class Machine:
                 self.vdp.begin_vblank()
             self._frame_rendered = True
         if line < lpf:
-            if not stepping and self._take_break_request(line):
-                return self._keep_stopped_frame(total)
-            total = self._run_lines(vdp9938, line, lpf, total)
-            if self._stop_pending:
-                return self._keep_stopped_frame(total)
+            if self._run_segment(vdp9938, line, lpf, stepping):
+                return bytearray()
         self._resume_skip_pc = -1
         self._frame_active = False
         self.vdp.increment_frame()
@@ -955,12 +948,19 @@ class Machine:
             self._enter_break(STOP_BREAKPOINT)
         return result
 
-    def _keep_stopped_frame(self, total: int) -> bytearray:
-        """Record where a stopped frame continues; return no video."""
+    def _run_segment(
+        self, vdp9938: V9938 | None, line: int, end_line: int, stepping: bool
+    ) -> bool:
+        """Run scanlines [line, end_line) of the frame, unless a break request
+        comes first. Returns True when the frame stopped, after recording where
+        it continues."""
+        if stepping or not self._take_break_request(line):
+            self._frame_total = self._run_lines(vdp9938, line, end_line, self._frame_total)
+            if not self._stop_pending:
+                return False
         self._resume_skip_pc = -1
         self._frame_line = self._stop_line
-        self._frame_total = total
-        return bytearray()
+        return True
 
     def samples_per_frame(self) -> int:
         """Audio samples per frame: the output rate over the pacing rate (735 at
@@ -1155,6 +1155,8 @@ class Machine:
     ) -> int:
         """Hot-path scanline loop (no break conditions, TRACE_DEBUG off); see
         `_run_lines`."""
+        # This loop reads vdp9938._cmd_active and writes _line_cycle directly, per
+        # instruction: a method call here costs measurable frame rate.
         # Hot path (no break conditions, TRACE_DEBUG off). Two frame-invariants are lifted
         # out of the inner loop: (1) the is_v9938 branch — split into a
         # V9938 loop and a plain loop so the per-instruction `if vdp9938 /

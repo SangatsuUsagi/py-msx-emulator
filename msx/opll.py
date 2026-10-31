@@ -329,6 +329,13 @@ def _dump_to_patch(dump: tuple[int, ...] | bytes, off: int = 0) -> tuple[_Patch,
     return mod, car
 
 
+# _Slot.type: an operator's role. Bit 0 is set for the carrier and for a rhythm
+# voice (emu2413's slot type).
+_TYPE_MOD = 0
+_TYPE_CAR = 1
+_TYPE_RHYTHM = 3
+
+
 def _buddy_index(number: int, slot_type: int) -> int | None:
     """The paired mod/car slot index for a normal (non-rhythm) slot, or None
     for a rhythm single-slot-mode slot (type 3) which has no FM buddy.
@@ -693,12 +700,11 @@ class Opll:
         per slot, of which operators should currently be keyed on.
         """
         r14 = self._reg[0x0E]
-        rhythm = (r14 >> 5) & 1
         new_status = 0
         for ch in range(9):
             if self._reg[0x20 + ch] & 0x10:
                 new_status |= 3 << (ch * 2)
-        if rhythm:
+        if self._rhythm_mode:
             if r14 & 0x10:
                 new_status |= 3 << _SLOT_BD1
             if r14 & 0x01:
@@ -772,14 +778,14 @@ class Opll:
         new_mode = (self._reg[0x0E] >> 5) & 1
         if self._rhythm_mode != new_mode:
             if new_mode:
-                self._slot[_SLOT_HH].type = 3
+                self._slot[_SLOT_HH].type = _TYPE_RHYTHM
                 self._slot[_SLOT_HH].buddy_index = None
                 self._slot[_SLOT_HH].pg_keep = 1
-                self._slot[_SLOT_SD].type = 3
+                self._slot[_SLOT_SD].type = _TYPE_RHYTHM
                 self._slot[_SLOT_SD].buddy_index = None
-                self._slot[_SLOT_TOM].type = 3
+                self._slot[_SLOT_TOM].type = _TYPE_RHYTHM
                 self._slot[_SLOT_TOM].buddy_index = None
-                self._slot[_SLOT_CYM].type = 3
+                self._slot[_SLOT_CYM].type = _TYPE_RHYTHM
                 self._slot[_SLOT_CYM].buddy_index = None
                 self._slot[_SLOT_CYM].pg_keep = 1
                 self._set_patch(6, 16)
@@ -788,29 +794,23 @@ class Opll:
                 self._set_slot_volume(self._slot[_SLOT_HH], ((self._reg[0x37] >> 4) & 15) << 2)
                 self._set_slot_volume(self._slot[_SLOT_TOM], ((self._reg[0x38] >> 4) & 15) << 2)
             else:
-                self._slot[_SLOT_HH].type = 0
-                self._slot[_SLOT_HH].buddy_index = _buddy_index(_SLOT_HH, 0)
+                self._slot[_SLOT_HH].type = _TYPE_MOD
+                self._slot[_SLOT_HH].buddy_index = _buddy_index(_SLOT_HH, _TYPE_MOD)
                 self._slot[_SLOT_HH].pg_keep = 0
-                self._slot[_SLOT_SD].type = 1
-                self._slot[_SLOT_SD].buddy_index = _buddy_index(_SLOT_SD, 1)
-                self._slot[_SLOT_TOM].type = 0
-                self._slot[_SLOT_TOM].buddy_index = _buddy_index(_SLOT_TOM, 0)
-                self._slot[_SLOT_CYM].type = 1
-                self._slot[_SLOT_CYM].buddy_index = _buddy_index(_SLOT_CYM, 1)
+                self._slot[_SLOT_SD].type = _TYPE_CAR
+                self._slot[_SLOT_SD].buddy_index = _buddy_index(_SLOT_SD, _TYPE_CAR)
+                self._slot[_SLOT_TOM].type = _TYPE_MOD
+                self._slot[_SLOT_TOM].buddy_index = _buddy_index(_SLOT_TOM, _TYPE_MOD)
+                self._slot[_SLOT_CYM].type = _TYPE_CAR
+                self._slot[_SLOT_CYM].buddy_index = _buddy_index(_SLOT_CYM, _TYPE_CAR)
                 self._slot[_SLOT_CYM].pg_keep = 0
                 self._set_patch(6, self._reg[0x36] >> 4)
                 self._set_patch(7, self._reg[0x37] >> 4)
                 self._set_patch(8, self._reg[0x38] >> 4)
         self._rhythm_mode = new_mode
 
-    def _write_reg(self, reg: int, data: int) -> None:  # emu2413: OPLL_writeReg
-        if reg >= 0x40:
-            return
-        # Mirror registers (0x19-0x1f, 0x29-0x2f, 0x39-0x3f) map down by 9.
-        if (0x19 <= reg <= 0x1F) or (0x29 <= reg <= 0x2F) or (0x39 <= reg <= 0x3F):
-            reg -= 9
-        self._reg[reg] = data
-
+    def _write_user_patch_reg(self, reg: int, data: int) -> None:
+        """Registers 0x00-0x07: the user instrument's two operator patches."""
         if reg == 0x00 or reg == 0x01:
             p = self._patch[reg]  # patch[0]=mod user, patch[1]=car user
             p.AM = (data >> 7) & 1
@@ -842,6 +842,17 @@ class Opll:
             p.SL = (data >> 4) & 15
             p.RR = data & 15
             self._notify_user_patch_slots(self._mod if reg == 0x06 else self._car, _UPDATE_EG)
+
+    def _write_reg(self, reg: int, data: int) -> None:  # emu2413: OPLL_writeReg
+        if reg >= 0x40:
+            return
+        # Mirror registers (0x19-0x1f, 0x29-0x2f, 0x39-0x3f) map down by 9.
+        if (0x19 <= reg <= 0x1F) or (0x29 <= reg <= 0x2F) or (0x39 <= reg <= 0x3F):
+            reg -= 9
+        self._reg[reg] = data
+
+        if reg <= 0x07:
+            self._write_user_patch_reg(reg, data)
         elif reg == 0x0E:
             self._update_rhythm_mode()
             self._update_key_status()
@@ -857,7 +868,7 @@ class Opll:
             self._set_sus_flag(ch, (data >> 5) & 1)
             self._update_key_status()
         elif 0x30 <= reg <= 0x38:
-            if (self._reg[0x0E] & 32) and reg >= 0x36:
+            if self._rhythm_mode and reg >= 0x36:
                 if reg == 0x37:
                     self._set_slot_volume(self._mod(7), ((data >> 4) & 15) << 2)
                 elif reg == 0x38:
