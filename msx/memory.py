@@ -38,6 +38,9 @@ class Memory:
 
     rom: bytes
     ram: bytearray
+    # _mapper, _mapper2, _mapper1_subslots and _mapper2_subslots are core-internal:
+    # the build, the state load and Machine read them. No code outside msx/ does
+    # (it uses the core API), so the leading underscore stays.
     _mapper: Mapper = field(repr=False)
     _mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
