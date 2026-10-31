@@ -145,6 +145,10 @@ def mapper_id(kind: MapperKind) -> MapperId:
 
 
 class Mapper(Protocol):
+    # PORT-NOTE: one class per MapperKind (18) implements this Protocol,
+    #   and the loader picks one per slot at build time. A port uses one
+    #   tagged union keyed by MapperKind (Rust `enum Mapper`, Zig
+    #   `union(enum)`) and a switch in read/write, not a vtable.
     kind: ClassVar[MapperKind]
     def read(self, addr: int) -> int: ...
     def write(self, addr: int, value: int) -> None: ...
