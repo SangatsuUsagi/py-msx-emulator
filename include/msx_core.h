@@ -9,10 +9,11 @@
  * Python boundary.
  *
  * Ownership and threads:
- *   - Bytes the core returns (msx_bytes, and the pointer drain_trace returns)
- *     are owned by the core. They stay valid until the next call on the same
- *     core, or until the core is destroyed. A host that keeps them longer
- *     copies them.
+ *   - Bytes the core returns are owned by the core. A frame output's video
+ *     and audio stay valid until the next step_frame, reset or load_state on
+ *     the same core. Other bytes (msx_bytes, and the pointer drain_trace
+ *     returns) stay valid until the next call on the same core. Both end when
+ *     the core is destroyed. A host that keeps them longer copies them.
  *   - Bytes and structs the host passes in are read only during the call;
  *     the core keeps no pointer to them.
  *   - One msx_core is used from one thread at a time.
@@ -81,6 +82,7 @@ extern "C" {
 #define MSX_TRACE_EVENT_HANG_HALT_DI 11
 #define MSX_TRACE_HISTORY_SIZE 64
 #define MSX_TRACE_CAPACITY 65536
+#define MSX_TRACE_LOST_MAX 0x7FFFFFFF
 #define MSX_AUDIO_SAMPLE_RATE 44100
 #define MSX_OUTPUT_HEIGHT 212
 
@@ -105,6 +107,12 @@ extern "C" {
 #define MSX_FMPAC_SRAM_SIZE 8192
 #define MSX_RTC_CMOS_SIZE 26
 #define MSX_HALNOTE_SRAM_SIZE 16384
+#define MSX_ASCII8_SRAM2_SIZE 2048
+#define MSX_ASCII8_SRAM8_SIZE 8192
+#define MSX_ASCII16_SRAM2_SIZE 2048
+#define MSX_ASCII16_SRAM8_SIZE 8192
+#define MSX_KOEI_SRAM32_SIZE 32768
+#define MSX_GAME_MASTER2_SRAM_SIZE 8192
 
 /* -- Machine properties ----------------------------------------------------- */
 #define MSX_VIDEO_NTSC 0

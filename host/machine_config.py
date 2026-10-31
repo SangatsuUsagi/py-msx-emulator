@@ -48,8 +48,14 @@ import yaml
 import host.romdb as romdb
 from host.media import read_disk_medium
 from msx.boundary import (
+    ASCII8_SRAM2_SIZE,
+    ASCII8_SRAM8_SIZE,
+    ASCII16_SRAM2_SIZE,
+    ASCII16_SRAM8_SIZE,
     FMPAC_SRAM_SIZE,
+    GAME_MASTER2_SRAM_SIZE,
     HALNOTE_SRAM_SIZE,
+    KOEI_SRAM32_SIZE,
     RTC_CMOS_SIZE,
     RTC_DEFAULT_START,
     DiskMount,
@@ -100,12 +106,12 @@ from msx.machine_spec import (
 # The SRAM size of each cartridge mapper with battery-backed SRAM: the host
 # reads and writes the save file at this size.
 _SRAM_SIZES: dict[str, int] = {
-    "ASCII8SRAM2": 2048,
-    "ASCII8SRAM8": 8192,
-    "ASCII16SRAM2": 2048,
-    "ASCII16SRAM8": 8192,
-    "KoeiSRAM32": 32768,
-    "GameMaster2": 8192,
+    "ASCII8SRAM2": ASCII8_SRAM2_SIZE,
+    "ASCII8SRAM8": ASCII8_SRAM8_SIZE,
+    "ASCII16SRAM2": ASCII16_SRAM2_SIZE,
+    "ASCII16SRAM8": ASCII16_SRAM8_SIZE,
+    "KoeiSRAM32": KOEI_SRAM32_SIZE,
+    "GameMaster2": GAME_MASTER2_SRAM_SIZE,
 }
 
 # The MSX2 secondary slot register selects each page's sub-slot via a 2-bit
@@ -1145,11 +1151,11 @@ class LoadedMachineConfig(MachineConfig):
     (the initial contents of the run's host.media.DiskFiles table). create_machine() reads only the
     MachineConfig part."""
 
-    sram_files: dict[MediaId, Path] = field(default_factory=dict)
+    sram_files: dict[int, Path] = field(default_factory=dict)
     disk_files: dict[int, Path] = field(default_factory=dict)
 
 
-def sram_paths(config: LoadedMachineConfig) -> dict[MediaId, Path]:
+def sram_paths(config: LoadedMachineConfig) -> dict[int, Path]:
     """The file each battery-backed medium of `config` is persisted in, by
     media id: an SRAM cartridge's `saves/sram/<sha1>.sram`, an extension's
     own `sram:` file, and an RTC machine's `saves/sram/rtc_<machine_id>.sram`."""
@@ -1168,27 +1174,27 @@ class _Cartridges:
     extension_overlay2: AnyExtensionOverlay | None
 
 
-def _sram_paths(spec: MachineSpec, carts: _Cartridges) -> dict[MediaId, Path]:
-    paths: dict[MediaId, Path] = {}
+def _sram_paths(spec: MachineSpec, carts: _Cartridges) -> dict[int, Path]:
+    paths: dict[int, Path] = {}
     slots = ((1, carts.cartridge1, carts.mapper1), (2, carts.cartridge2, carts.mapper2))
     for slot, cartridge, mapper in slots:
         if cartridge is not None and mapper in _SRAM_SIZES:
-            paths[slot_sram_id(slot)] = _cartridge_sram_path(cartridge)
+            paths[int(slot_sram_id(slot))] = _cartridge_sram_path(cartridge)
     overlays = ((1, carts.extension_overlay1), (2, carts.extension_overlay2))
     for slot, overlay in overlays:
         if isinstance(overlay, ExpandedExtensionOverlay):
             for index, sub in overlay.subslots.items():
                 if sub.device == "halnote" and sub.sram_save_path is not None:
-                    paths[subslot_sram_id(slot, index)] = sub.sram_save_path
+                    paths[int(subslot_sram_id(slot, index))] = sub.sram_save_path
         elif (overlay is not None and overlay.device == "fmpac"
               and overlay.sram_save_path is not None):
-            paths[MediaId.FMPAC_SRAM] = overlay.sram_save_path
+            paths[int(MediaId.FMPAC_SRAM)] = overlay.sram_save_path
     if spec.generation == "msx2" and spec.has_rtc:
-        paths[MediaId.RTC_CMOS] = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
+        paths[int(MediaId.RTC_CMOS)] = Path(f"saves/sram/rtc_{spec.machine_id}.sram")
     return paths
 
 
-def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, str]:
+def _sram_size_and_label(carts: _Cartridges, media_id: int) -> tuple[int, str]:
     """Expected image size and warning label of an id _sram_paths produced."""
     if media_id == slot_sram_id(1):
         return _SRAM_SIZES[carts.mapper1], ""
@@ -1202,7 +1208,7 @@ def _sram_size_and_label(carts: _Cartridges, media_id: MediaId) -> tuple[int, st
         for sub in range(_MAX_SUB_SLOT_INDEX + 1):
             if media_id == subslot_sram_id(slot, sub):
                 return HALNOTE_SRAM_SIZE, "HBI-J1 MSX-JE "
-    raise ValueError(f"unknown SRAM media id {media_id.name}")
+    raise ValueError(f"unknown SRAM media id {MediaId(media_id).name}")
 
 
 def _overlay_roms(
@@ -1306,7 +1312,7 @@ def _rom_images(images: dict[str, bytes]) -> tuple[RomImage, ...]:
 
 
 def _load_media(
-    sram_files: dict[MediaId, Path], carts: _Cartridges
+    sram_files: dict[int, Path], carts: _Cartridges
 ) -> tuple[MediaImage, ...]:
     """The saved image of each battery-backed medium that has one."""
     media: list[MediaImage] = []
@@ -1314,7 +1320,7 @@ def _load_media(
         size, label = _sram_size_and_label(carts, media_id)
         sram = _load_sram_or_warn(path, size, label)
         if sram is not None:
-            media.append(MediaImage(media_id, bytes(sram)))
+            media.append(MediaImage(MediaId(media_id), bytes(sram)))
     return tuple(media)
 
 

@@ -132,6 +132,15 @@ FMPAC_SRAM_SIZE = 8192      # MediaId.FMPAC_SRAM
 RTC_CMOS_SIZE = 26          # MediaId.RTC_CMOS: 26 nibbles, one per byte
 HALNOTE_SRAM_SIZE = 16384   # an HBI-J1 MSX-JE sub-slot's SRAM
 
+# The SRAM size of each cartridge mapper with battery-backed SRAM: the host
+# reads and writes the save file at this size.
+ASCII8_SRAM2_SIZE = 2048
+ASCII8_SRAM8_SIZE = 8192
+ASCII16_SRAM2_SIZE = 2048
+ASCII16_SRAM8_SIZE = 8192
+KOEI_SRAM32_SIZE = 32768
+GAME_MASTER2_SRAM_SIZE = 8192
+
 _SLOT_SRAM_IDS = (MediaId.SLOT1_SRAM, MediaId.SLOT2_SRAM)
 _SUBSLOT_SRAM_IDS = (
     (MediaId.SLOT1_SUB0_SRAM, MediaId.SLOT1_SUB1_SRAM,
@@ -239,6 +248,7 @@ TRACE_HISTORY_SIZE = 64
 
 # Events the trace buffer holds between two drain_trace() calls.
 TRACE_CAPACITY = 65536
+TRACE_LOST_MAX = 0x7FFFFFFF  # the lost count stops here: TraceEvent.a is int32
 
 # The rate of FrameOutput.audio, in samples per second.
 AUDIO_SAMPLE_RATE = 44_100
@@ -282,8 +292,9 @@ class FrameOutput:
     """What Machine.step_frame returns for one frame, a flat record of
     integers and bytes.
 
-    `video_pixels` and `audio` are guaranteed only until the next step_frame
-    call (allium/core-frontend.allium FrameOutputValidUntilNextStep); a
+    `video_pixels` and `audio` are guaranteed only until the next step_frame,
+    reset or state load (allium/core-frontend.allium
+    FrameOutputValidUntilNextStep); a
     frontend that keeps them longer copies them. Here they are fresh
     immutable bytes, which satisfies that, but a native port may reuse its
     buffers.

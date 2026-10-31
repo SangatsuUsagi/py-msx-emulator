@@ -262,23 +262,25 @@ class Machine:
         replaced afterwards), so this is a read-only view of that table."""
         return self._sram_table
 
-    def _media(self) -> dict[MediaId, Medium]:
-        media: dict[MediaId, Medium] = dict(self.sram_media())
+    def _media(self) -> dict[int, Medium]:
+        media: dict[int, Medium] = {}
+        for media_id, image in self.sram_media().items():
+            media[int(media_id)] = image
         if self.fdc is not None:
             for index, drive in enumerate(self.fdc.drives):
                 if drive.image is not None:
-                    media[drive_media_id(index)] = drive.image
+                    media[int(drive_media_id(index))] = drive.image
         return media
 
-    def dirty_media(self) -> list[MediaId]:
+    def dirty_media(self) -> list[int]:
         """Ids of the media written since they were last persisted."""
-        dirty: list[MediaId] = []
+        dirty: list[int] = []
         for media_id, medium in self._media().items():
             if medium.dirty:
                 dirty.append(media_id)
         return dirty
 
-    def read_media(self, media_id: MediaId) -> bytes:
+    def read_media(self, media_id: int) -> bytes:
         """A medium's current bytes, or b"" for an id the machine does not
         have (last_error_text() gives the message). A medium is never empty,
         so b"" is unambiguous."""
@@ -289,7 +291,7 @@ class Machine:
         self._error_text = b""
         return medium.data()
 
-    def mark_persisted(self, media_id: MediaId) -> int:
+    def mark_persisted(self, media_id: int) -> int:
         """Clear a medium's dirty flag after the host has written it, and
         return STATUS_OK. Returns STATUS_NO_MEDIUM, changing nothing, for an
         id the machine does not have."""

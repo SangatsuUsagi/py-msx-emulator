@@ -6,11 +6,17 @@ from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 from msx.boundary import (
+    ASCII8_SRAM2_SIZE,
+    ASCII8_SRAM8_SIZE,
+    ASCII16_SRAM2_SIZE,
+    ASCII16_SRAM8_SIZE,
     BANK_NONE,
     BANK_SRAM_PAGE,
     BANK_WINDOW_16K,
     BANK_WINDOWS_8K,
+    GAME_MASTER2_SRAM_SIZE,
     HALNOTE_SRAM_SIZE,
+    KOEI_SRAM32_SIZE,
     TRACE_EVENT_MAP_BANK,
     TRACE_MAPPER,
     WINDOW_NONE,
@@ -711,7 +717,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
-    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_SIZE: ClassVar[int] = ASCII8_SRAM2_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
@@ -835,7 +841,7 @@ class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
     """ASCII8 mapper + 8 KB battery-backed SRAM."""
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM8
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = ASCII8_SRAM8_SIZE
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
 
@@ -848,7 +854,7 @@ class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.KOEI_SRAM32
-    _SRAM_SIZE: ClassVar[int] = 32768
+    _SRAM_SIZE: ClassVar[int] = KOEI_SRAM32_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FFF
     _SRAM_PAGES: ClassVar[int] = 0x34
 
@@ -908,7 +914,7 @@ class GameMaster2Mapper(BankTracingMapper):
     # blank when it is not exactly `_SRAM_SIZE` bytes.
     sram: InitVar[bytes | bytearray | None] = None
     sram_image: SramImage = field(init=False, repr=False)
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = GAME_MASTER2_SRAM_SIZE
 
     # PORT-NOTE: `_banks`, `_window_is_sram` and `_window_sram_half` are all
     #   fixed length 4 (indexed by window 0-3) and never resized. `_banks`
@@ -1119,7 +1125,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
-    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_SIZE: ClassVar[int] = ASCII16_SRAM2_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
 
@@ -1238,7 +1244,7 @@ class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
     """ASCII16 mapper + 8 KB battery-backed SRAM."""
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM8
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = ASCII16_SRAM8_SIZE
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
 

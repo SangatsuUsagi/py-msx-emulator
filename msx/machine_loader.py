@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeGuard
 
 if TYPE_CHECKING:
+    from msx.core_api import CoreApi
     from msx.fdc.interface import FloppyDisk
     from msx.machine import Machine
 
@@ -843,6 +844,12 @@ def create_machine(machine_config: MachineConfig) -> BuildResult:
         # ROM, Halnote, Memory) rejected a size or a combination.
         return BuildResult(STATUS_BAD_CONFIG, None, str(exc).encode("utf-8"))
     return BuildResult(STATUS_OK, machine, b"")
+
+
+def release_machine(machine: "CoreApi") -> None:
+    """The host's last use of a machine, the form of msx_core_destroy. The
+    Python core has nothing to free: the garbage collector takes the
+    machine."""
 
 
 def build_machine(machine_config: MachineConfig) -> "Machine":
