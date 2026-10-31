@@ -61,7 +61,13 @@ def sigint_requests_break(machine: CoreApi) -> Iterator[None]:
     """While active, Ctrl-C asks the core to stop (request_break) instead of
     raising KeyboardInterrupt. Restores the previous handler on exit. Off
     the main thread (where signal handlers cannot be set) it changes
-    nothing."""
+    nothing.
+
+    Python runs the handler only between bytecodes of the main thread. The
+    Python core runs as bytecode, so the request can stop the current
+    step_frame call at the start of vertical blanking. A native core
+    returns to Python only when step_frame returns, so the request stops
+    the next call at its start, up to one frame later."""
     if threading.current_thread() is not threading.main_thread():
         yield
         return
