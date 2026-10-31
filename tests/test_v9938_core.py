@@ -651,6 +651,14 @@ def test_display_width_256_for_screen8() -> None:
 # even_odd_enabled_of (R#9 EO)
 # ---------------------------------------------------------------------------
 
+def test_the_il_bit_stays_in_the_register_file() -> None:
+    # vdp-v9938 "interlaced property reflects R#9 IL bit".
+    vdp = V9938()
+    vdp.write_port(1, 0x08)
+    vdp.write_port(1, 0x80 | 9)
+    assert vdp.regs[9] & 0x08
+
+
 def test_even_odd_enabled_follows_the_eo_bit() -> None:
     vdp = V9938()
     assert even_odd_enabled_of(vdp.regs) is False
