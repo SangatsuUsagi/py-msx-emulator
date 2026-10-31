@@ -241,7 +241,7 @@ def _loaded_machine(tmp_path: Path) -> Machine:
         main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
-        has_ram_mapper=True, ram_size_kb=128, has_v9938=True, has_rtc=True,
+        has_ram_mapper=True, ram_size_kb=64, has_v9938=True, has_rtc=True,
         fdc=FdcDef(
             disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793", connection_style="sony", drives=1,
