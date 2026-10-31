@@ -469,6 +469,11 @@ def _apply_xycb_template(tmpl: str, read: Callable[[int], int], addr: int) -> st
     return tmpl.replace("{id}", _fmt_disp(d))
 
 
+def instruction_bytes(read: Callable[[int], int], addr: int, size: int) -> str:
+    """The `size` bytes at `addr` as space-separated hex."""
+    return " ".join(f"{read((addr + i) & 0xFFFF) & 0xFF:02X}" for i in range(size))
+
+
 def disassemble(read: Callable[[int], int], addr: int) -> tuple[str, int]:
     """Decode one Z80 instruction.
 

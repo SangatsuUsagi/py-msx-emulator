@@ -56,9 +56,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from host.debugger.disasm import byte_reader, disassemble
+from host.debugger.disasm import byte_reader, disassemble, instruction_bytes
 from host.input_state import InputState
-from host.key_names import KEY_NAME_TO_CELL
+from host.key_names import JOY_FUNCTION_BITS, KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
 from host.watch import watch_kind_exact
@@ -210,11 +210,6 @@ class DebugServer:
         self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
         self._next_wp_id = 0
-        # Desired joystick state per port (1, 2): direction/trigger booleans.
-        self._joy: dict[int, dict[str, bool]] = {
-            1: _blank_joy_state(),
-            2: _blank_joy_state(),
-        }
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
         # The frontend's per-frame input accumulator, when one runs (set by
@@ -342,10 +337,10 @@ class DebugServer:
         try:
             req = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         if not isinstance(req, dict):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         # cpu.continue_sync blocks until the next pause; handle it on this socket
         # thread (never the emulator thread) so the machine keeps running.
@@ -358,13 +353,7 @@ class DebugServer:
         if done.wait(timeout=_DISPATCH_TIMEOUT_S) and result_box:
             self._send(conn, result_box[0])
         else:
-            self._send(
-                conn,
-                {
-                    "id": req.get("id"),
-                    "error": {"code": ERR_INTERNAL, "message": "dispatch timeout"},
-                },
-            )
+            self._send(conn, self._err(req.get("id"), ERR_INTERNAL, "dispatch timeout"))
 
     # -- main-thread dispatch ----------------------------------------------
 
@@ -387,23 +376,16 @@ class DebugServer:
         method = req.get("method", "")
         params = req.get("params") or {}
         if not isinstance(params, dict):
-            return {
-                "id": req_id,
-                "error": {"code": ERR_INVALID_PARAMS, "message": "params must be an object"},
-            }
+            return self._err(req_id, ERR_INVALID_PARAMS, "params must be an object")
         handler = self._handlers.get(method)
         if handler is None:
-            return {
-                "id": req_id,
-                "error": {"code": ERR_METHOD_NOT_FOUND, "message": f"method not found: {method}"},
-            }
+            return self._err(req_id, ERR_METHOD_NOT_FOUND, f"method not found: {method}")
         try:
-            result = handler(self, params)
-            return {"id": req_id, "result": result}
+            return self._ok(req_id, handler(self, params))
         except RpcError as exc:
-            return {"id": req_id, "error": {"code": exc.code, "message": exc.message}}
+            return self._err(req_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 — surface any handler bug as internal error
-            return {"id": req_id, "error": {"code": ERR_INTERNAL, "message": str(exc)}}
+            return self._err(req_id, ERR_INTERNAL, str(exc))
 
     # -- send helpers -------------------------------------------------------
 
@@ -567,10 +549,6 @@ class DebugServer:
     def breakpoints(self) -> dict[int, int]:
         return self._breakpoints
 
-    @property
-    def joystick_state(self) -> dict[int, dict[str, bool]]:
-        return self._joy
-
     # -- handler registration ----------------------------------------------
 
     def _register_handlers(self) -> None:
@@ -729,7 +707,7 @@ def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[s
     cur = addr
     for _ in range(count):
         mnemonic, size = disassemble(read, cur)
-        raw = _fmt_bytes(read((cur + i) & 0xFFFF) for i in range(size))
+        raw = instruction_bytes(read, cur, size)
         instructions.append({"address": hex16(cur), "bytes": raw, "mnemonic": mnemonic})
         cur = (cur + size) & 0xFFFF
     return {"instructions": instructions}
@@ -783,9 +761,9 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
+    state: dict[str, bool] = {}
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
+    for name, bit in JOY_FUNCTION_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
         if pressed:
@@ -793,17 +771,15 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
         else:
             server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
-    return {"port": port, "state": dict(state)}
+    return {"port": port, "state": state}
 
 
 def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
-        state[name] = False
+    for bit in JOY_FUNCTION_BITS.values():
         server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
     return {"port": port, "released": True}
@@ -873,23 +849,11 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 # Handler helpers
 # ---------------------------------------------------------------------------
 
-# Per-joystick direction/trigger bit within the 6-bit active-low port state.
-_JOY_BITS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
-
-
-
-
 class _Missing:
     pass
 
 
 _MISSING = _Missing()
-
-
-def _blank_joy_state() -> dict[str, bool]:
-    return {name: False for name in _JOY_BITS}
 
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:

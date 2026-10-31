@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from host.input_state import InputState
+from host.key_names import JOY_FUNCTION_BITS
 from msx.boundary import KeyboardLayout
 
 # SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
@@ -353,9 +354,6 @@ KEY_NAME_TO_SDLKEY: dict[str, int] = {
 }
 
 # MSX Joy1 function -> port bit, for keyboard_joystick.buttons config names.
-_KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
 
 
 def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[int, int]]:
@@ -373,13 +371,13 @@ def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[i
         return JOY_MAP
     overridden_bits = set()
     for func in buttons:
-        overridden_bits.add(_KEYBOARD_JOY_FUNCTIONS[func])
+        overridden_bits.add(JOY_FUNCTION_BITS[func])
     result: dict[int, tuple[int, int]] = {}
     for sdlkey, (port, bit) in JOY_MAP.items():
         if not (port == 0 and bit in overridden_bits):
             result[sdlkey] = (port, bit)
     for func, key_name in buttons.items():
-        result[KEY_NAME_TO_SDLKEY[key_name]] = (0, _KEYBOARD_JOY_FUNCTIONS[func])
+        result[KEY_NAME_TO_SDLKEY[key_name]] = (0, JOY_FUNCTION_BITS[func])
     return result
 
 

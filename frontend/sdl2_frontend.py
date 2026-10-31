@@ -12,9 +12,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from frontend.audio_filter import BiquadLowPass
 from frontend.frame_timer import FrameTimer
 from frontend.sdl2_joystick import (
-    _DEFAULT_GC_BUTTON_BIT,
-    _DEFAULT_GC_TURBO_BUTTON_BIT,
-    TURBO_PERIOD,
     JoystickManager,
 )
 from frontend.sdl2_keyboard import (
@@ -1157,7 +1154,6 @@ def run(
     """
     try:
         import sdl2
-        import sdl2.ext
     except ImportError:
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
@@ -1178,26 +1174,17 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
-    # Falls back to the same default tables JoystickManager's own dataclass
-    # fields would use, resolved here (not left to the field defaults)
-    # because an explicit gamepad_map always needs `dict(...)`-copying into
-    # the constructor kwargs below either way.
-    gc_button_bit, gc_turbo_button_bit = (
-        gamepad_map if gamepad_map is not None
-        else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
-    )
     # Host input accumulates here and reaches the machine once per frame
     # through step_frame (allium/core-frontend.allium InputHeldForFrame).
     frame_input = InputState()
     if rpc_server is not None:
         rpc_server.input_target = frame_input
-    joy_manager = JoystickManager(
-        _input=frame_input,
-        _sdl=sdl2,
-        _gc_button_bit=dict(gc_button_bit),
-        _gc_turbo_button_bit=dict(gc_turbo_button_bit),
-        _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
-    )
+    joy_manager = JoystickManager(_input=frame_input, _sdl=sdl2)
+    if gamepad_map is not None:
+        joy_manager._gc_button_bit = dict(gamepad_map[0])
+        joy_manager._gc_turbo_button_bit = dict(gamepad_map[1])
+    if turbo_period is not None:
+        joy_manager._turbo_period = turbo_period
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
