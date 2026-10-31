@@ -277,7 +277,9 @@ class PSG:
         self.apply_synth_state(self.parse_synth_state(state, "psg.synth"))
 
     def apply_synth_state(self, state: PsgSynthState) -> None:
-        """Assign an already-parsed PsgSynthState (see parse_synth_state)."""
+        """Assign an already-parsed PsgSynthState (see parse_synth_state).
+        Drops the frame's recorded writes and rewind base, as reset() does:
+        they belong to the state before the load."""
         self._tone_cnt = list(state["tone_cnt"])
         self._tone_out = list(state["tone_out"])
         self._noise_cnt = state["noise_cnt"]
@@ -289,6 +291,9 @@ class PSG:
         self._env_hold_flag = state["env_hold_flag"]
         self._env_holding = state["env_holding"]
         self._clk_frac = state["clk_frac"]
+        self._events = []
+        self._regs_base = []
+        self._gen_base = None
 
     # --------------------------------------------------------- envelope reset
 

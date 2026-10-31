@@ -123,6 +123,9 @@ _T = TypeVar("_T")
 # Version 21: fdc.drives[].disk_path removed -- a mounted disk is identified
 #   by its size and SHA1 only; the host keeps the disk's file. See
 #   openspec/changes/archive/2026-10-29-flatten-core-api-types.
+#   cpu.ei_pending (the one-instruction delay after EI) was added later
+#   without a version bump. See
+#   openspec/changes/archive/2026-10-31-fix-review-bugs.
 CURRENT_FORMAT_VERSION: int = 21
 
 _SHA256_HEX_LEN = 64
@@ -175,6 +178,7 @@ class CpuSnapshot:
     iff2: bool
     int_pending: bool
     nmi_pending: bool
+    ei_pending: bool  # the one-instruction delay after EI
     im: int
     q: int  # Z80.q / q_next: the SCF/CCF flag latch (see msx/cpu/z80.py)
     q_next: int
@@ -475,6 +479,7 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
             iff2=machine.cpu.iff2,
             int_pending=machine.cpu.int_pending,
             nmi_pending=machine.cpu.nmi_pending,
+            ei_pending=machine.cpu.ei_pending,
             im=machine.cpu.im,
             q=machine.cpu.q,
             q_next=machine.cpu.q_next,
@@ -586,6 +591,7 @@ def _parse_cpu(value: object) -> CpuSnapshot:
         iff2=check_bool(obj["iff2"], "cpu.iff2"),
         int_pending=check_bool(obj["int_pending"], "cpu.int_pending"),
         nmi_pending=check_bool(obj["nmi_pending"], "cpu.nmi_pending"),
+        ei_pending=check_bool(obj["ei_pending"], "cpu.ei_pending"),
         im=check_int(obj["im"], "cpu.im", 0, 2),
         q=_byte(obj["q"], "cpu.q"),
         q_next=_byte(obj["q_next"], "cpu.q_next"),
@@ -949,6 +955,7 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.iff2 = cpu.iff2
     machine.cpu.int_pending = cpu.int_pending
     machine.cpu.nmi_pending = cpu.nmi_pending
+    machine.cpu.ei_pending = cpu.ei_pending
     machine.cpu.im = cpu.im
     machine.cpu.q = cpu.q
     machine.cpu.q_next = cpu.q_next
