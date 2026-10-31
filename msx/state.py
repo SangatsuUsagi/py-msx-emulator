@@ -1039,6 +1039,7 @@ def _apply_sound_and_io(
     machine.psg.regs[:] = snap.psg.registers
     machine.psg.latch = snap.psg.latch
     machine.psg.apply_synth_state(parsed.psg_synth)
+    machine.psg.discard_frame_events()
     ppi = snap.ppi
     if machine.ppi is not None and ppi is not None:
         machine.ppi.apply_state(

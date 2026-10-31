@@ -77,8 +77,9 @@ def restore_state(producer: object, state: object, label: str = "state") -> None
 
 
 def restore_psg_synth(psg: object, state: object) -> None:
-    """The PSG generator state's parse_state then apply_state."""
+    """The PSG part of a state load: parse, apply, drop the frame's events."""
     psg.apply_synth_state(psg.parse_synth_state(state, "psg.synth"))  # type: ignore[attr-defined]
+    psg.discard_frame_events()  # type: ignore[attr-defined]
 
 
 def make_loaded_config(
