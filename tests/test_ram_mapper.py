@@ -198,6 +198,27 @@ def test_minimum_size_16kb_single_bank() -> None:
     assert rm.read_port(0xFF) == 0xFF  # 0 | ~0 & 0xFF
 
 
+def test_bank_past_non_power_of_two_size_wraps() -> None:
+    # memory-ram-mapper "A bank past a non-power-of-two size wraps": 48 KB is
+    # 3 banks, bank_mask 3; register value 3 selects bank 3 & 2 = 2.
+    rm = RamMapper(size_kb=48)
+    rm.ram[2 * 0x4000] = 0x5A
+    rm.write_port(0xFC, 0x03)
+    assert rm.read(0x0000) == 0x5A
+    assert rm.debug_bank(0) == BankView(BANK_WINDOW_16K, (WINDOW_PAGE, WINDOW_NONE), (2, 0))
+    assert rm.read_port(0xFC) == 0xFF  # 0x03 | 0xFC
+
+
+@pytest.mark.parametrize("size_kb", [48, 80, 96, 112, 208])
+def test_every_register_value_stays_in_ram(size_kb: int) -> None:
+    # A restored register may hold any byte; every value maps inside ram.
+    rm = RamMapper(size_kb=size_kb)
+    for value in range(0x100):
+        rm.banks[0] = value
+        rm.write(0x3FFF, 0x11)
+        assert rm.read(0x3FFF) == 0x11
+
+
 # ---------------------------------------------------------------------------
 # Mapper protocol: kind, snapshot/restore, debug_bank
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import pytest
 from host.machine_config import build_machine_from_spec, load_extension_overlay
 from host.state_files import load_state, save_state
 from msx.boundary import RgbFrame
+from msx.fmpac import FMPAC_ROM_SIZE
 from msx.kanji import KanjiRom
 from msx.machine import Machine
 from msx.machine_spec import (
@@ -43,10 +44,10 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     stderr_buf = io.StringIO()
 
     def fake_read_bytes(self: Path) -> bytes:
-        # HalnoteMapper/KanjiRom validate ROM size strictly in __post_init__,
-        # unlike fmpac/scc_plus's tests (which mock every ROM to one fixed
-        # size) -- resolve the right size per filename.
+        # HalnoteMapper/KanjiRom and the FM-PAC build check validate ROM
+        # size strictly -- resolve the right size per filename.
         sizes = {
+            "fmpac.rom": FMPAC_ROM_SIZE,
             "hbi-j1_msx-je.rom": _HALNOTE_ROM_SIZE,
             "hbi-j1_kanjibasic.rom": _KANJIBASIC_ROM_SIZE,
             "hbi-j1_kanjifont.rom": _KANJIFONT_ROM_SIZE,

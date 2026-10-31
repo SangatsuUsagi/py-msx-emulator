@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from host import app_config as app_config_module
 from host.debugger import prompt as debugger_prompt_module
 from msx.cpu.z80 import Z80
 from msx.mapper import FlatMapper
@@ -19,6 +20,17 @@ def _isolated_debugger_history_file(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     which every test that calls Debugger.enter() does."""
     monkeypatch.setattr(debugger_prompt_module, "_HISTORY_FILE", tmp_path / ".msx_dbg_history")
     monkeypatch.setattr(debugger_prompt_module, "_readline_ready", False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_app_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make main() look for py_emulator.yaml in an empty directory, so the
+    developer's own (git-ignored) file never changes a CLI test. A test that
+    patches Path.read_text still gets its own text; tests that call
+    load_app_config by its imported name are not affected."""
+    real_load = app_config_module.load_app_config
+    empty_root = tmp_path / "no_app_config"
+    monkeypatch.setattr(app_config_module, "load_app_config", lambda _root: real_load(empty_root))
 
 
 def _short_tmp_base() -> str | None:

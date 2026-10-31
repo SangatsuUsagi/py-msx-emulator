@@ -355,6 +355,50 @@ def test_a_drive_id_is_not_a_medium_image(
         build_machine(config)
 
 
+def test_two_plain_int_records_for_one_medium_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "Two plain-int records for one medium are rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(0, bytes(8192)), MediaImage(0, bytes(8192)))
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"two medium images for SLOT1_SRAM" in result.error_text
+
+
+def test_a_plain_int_drive_id_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(12, bytes(737280)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"DRIVE_A, a drive id" in result.error_text
+
+
+def test_an_unknown_medium_id_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # machine-loader "An unknown medium id is rejected".
+    from msx.boundary import STATUS_BAD_CONFIG
+    from msx.machine_loader import create_machine
+
+    monkeypatch.chdir(tmp_path)
+    config = make_config(_ROM)
+    config.media = (MediaImage(99, bytes(8192)),)
+    result = create_machine(config)
+    assert result.status == STATUS_BAD_CONFIG
+    assert b"unknown id 99" in result.error_text
+
+
 def test_a_missing_rom_image_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     config = _hb_f1xd_config(tmp_path)
