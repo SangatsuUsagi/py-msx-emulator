@@ -8,16 +8,17 @@ compatibility.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dataclass_fields
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, cast
 
 from msx.canonical_json import decode_strict, encode_canonical, mismatched_version, to_jsonable
 from msx.mapper import MapperKind
 from msx.snapshot_schema import (
     SAFE_INT_MAX,
     SchemaError,
+    SnapshotError,
     SnapshotMismatchError,
     check_bool,
     check_bytes,
@@ -38,12 +39,12 @@ if TYPE_CHECKING:
     from msx.fdc.interface import FloppyDiskParsed
     from msx.machine import Machine
     from msx.mapper import Mapper
+    from msx.memory import Memory
     from msx.mouse import MouseState
     from msx.psg import PsgSynthState
     from msx.rtc import RtcState
     from msx.scc import SccState
 
-_T = TypeVar("_T")
 
 # Version 5: stdlib JSON container replacing the legacy pickle format (<= 4).
 # Version 6: mapper_class: str (Python class name) replaced with
@@ -123,18 +124,21 @@ _T = TypeVar("_T")
 # Version 21: fdc.drives[].disk_path removed -- a mounted disk is identified
 #   by its size and SHA1 only; the host keeps the disk's file. See
 #   openspec/changes/archive/2026-10-29-flatten-core-api-types.
+#   cpu.ei_pending (the one-instruction delay after EI) was added later
+#   without a version bump. See
+#   openspec/changes/archive/2026-10-31-fix-review-bugs.
 CURRENT_FORMAT_VERSION: int = 21
 
 _SHA256_HEX_LEN = 64
 
 
-class StateLoadError(ValueError):
+class StateLoadError(SnapshotError):
     """A save-state value was rejected while loading: a top-level field
     (parse_snapshot) or a producer object (its producer's parse_state, run by
     _validate_snapshot), always before anything is restored.
 
     `producer` names the field or producer. Distinct from the plain
-    ValueErrors raised for a file of another format version or layout, and
+    SnapshotError raised for a file of another format version or layout, and
     from SnapshotMismatchError (machine type, mapper kind, wiring, mounted
     disk), both of which already carry clear top-level messages, so a
     corrupted or hand-edited .state file fails with one predictable,
@@ -147,16 +151,7 @@ class StateLoadError(ValueError):
         self.producer = producer
 
 
-def _parse_producer(producer: str, parse: Callable[[], _T]) -> _T:
-    """Run one producer's parse_state, reporting a rejection (any ValueError,
-    including SchemaError and identity mismatches) as StateLoadError(producer)."""
-    try:
-        return parse()
-    except ValueError as exc:
-        raise StateLoadError(producer, exc) from exc
-
-
-# The snapshot layout (format 18): one dataclass per JSON object, so
+# The snapshot layout: one dataclass per JSON object, so
 # asdict(MachineSnapshot) is the document and parse_snapshot builds the same
 # tree. Every field is always present in the file; None (JSON null) means the
 # machine has no such part. msx/snapshot.schema.json states the same layout
@@ -168,13 +163,35 @@ def _parse_producer(producer: str, parse: Callable[[], _T]) -> _T:
 
 
 @dataclass
+class CpuRegistersSnapshot:
+    A: int
+    F: int
+    BC: int
+    DE: int
+    HL: int
+    IX: int
+    IY: int
+    SP: int
+    PC: int
+    I: int  # noqa: E741
+    R: int
+    WZ: int
+    A_: int
+    F_: int
+    BC_: int
+    DE_: int
+    HL_: int
+
+
+@dataclass
 class CpuSnapshot:
-    registers: dict[str, int]
+    registers: CpuRegistersSnapshot
     halted: bool
     iff1: bool
     iff2: bool
     int_pending: bool
     nmi_pending: bool
+    ei_pending: bool  # the one-instruction delay after EI
     im: int
     q: int  # Z80.q / q_next: the SCF/CCF flag latch (see msx/cpu/z80.py)
     q_next: int
@@ -292,35 +309,35 @@ class MachineSnapshot:
 
 # --- internal helpers ---------------------------------------------------------
 
-def _cpu_regs_to_dict(machine: "Machine") -> dict[str, int]:
+def _cpu_regs_snapshot(machine: "Machine") -> CpuRegistersSnapshot:
     r = machine.cpu.registers
-    return {
-        "A": r.A, "F": r.F, "BC": r.BC, "DE": r.DE, "HL": r.HL,
-        "IX": r.IX, "IY": r.IY, "SP": r.SP, "PC": r.PC,
-        "I": r.I, "R": r.R, "WZ": r.WZ,
-        "A_": r.A_, "F_": r.F_, "BC_": r.BC_, "DE_": r.DE_, "HL_": r.HL_,
-    }
+    return CpuRegistersSnapshot(
+        A=r.A, F=r.F, BC=r.BC, DE=r.DE, HL=r.HL,
+        IX=r.IX, IY=r.IY, SP=r.SP, PC=r.PC,
+        I=r.I, R=r.R, WZ=r.WZ,
+        A_=r.A_, F_=r.F_, BC_=r.BC_, DE_=r.DE_, HL_=r.HL_,
+    )
 
 
-def _restore_cpu_regs(machine: "Machine", regs: dict[str, int]) -> None:
+def _restore_cpu_regs(machine: "Machine", regs: CpuRegistersSnapshot) -> None:
     r = machine.cpu.registers
-    r.A = regs["A"]
-    r.F = regs["F"]
-    r.BC = regs["BC"]
-    r.DE = regs["DE"]
-    r.HL = regs["HL"]
-    r.IX = regs["IX"]
-    r.IY = regs["IY"]
-    r.SP = regs["SP"]
-    r.PC = regs["PC"]
-    r.I = regs["I"]
-    r.R = regs["R"]
-    r.WZ = regs["WZ"]
-    r.A_ = regs["A_"]
-    r.F_ = regs["F_"]
-    r.BC_ = regs["BC_"]
-    r.DE_ = regs["DE_"]
-    r.HL_ = regs["HL_"]
+    r.A = regs.A
+    r.F = regs.F
+    r.BC = regs.BC
+    r.DE = regs.DE
+    r.HL = regs.HL
+    r.IX = regs.IX
+    r.IY = regs.IY
+    r.SP = regs.SP
+    r.PC = regs.PC
+    r.I = regs.I
+    r.R = regs.R
+    r.WZ = regs.WZ
+    r.A_ = regs.A_
+    r.F_ = regs.F_
+    r.BC_ = regs.BC_
+    r.DE_ = regs.DE_
+    r.HL_ = regs.HL_
 
 
 def _scc_to_dict(machine: "Machine") -> dict[str, object] | None:
@@ -469,12 +486,13 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         machine_type="msx2" if vdp9938 is not None else "msx1",
         machine_config_sha256=machine.machine_config_sha256,
         cpu=CpuSnapshot(
-            registers=_cpu_regs_to_dict(machine),
+            registers=_cpu_regs_snapshot(machine),
             halted=machine.cpu.halted,
             iff1=machine.cpu.iff1,
             iff2=machine.cpu.iff2,
             int_pending=machine.cpu.int_pending,
             nmi_pending=machine.cpu.nmi_pending,
+            ei_pending=machine.cpu.ei_pending,
             im=machine.cpu.im,
             q=machine.cpu.q,
             q_next=machine.cpu.q_next,
@@ -490,12 +508,12 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         # tied to vdp9938 presence).
         slots=SlotsSnapshot(
             slot1=_snapshot_slot(
-                memory._mapper, memory.slot1_sub_slot_enabled, memory.slot1_sub_slot_reg,
-                memory._mapper1_subslots,
+                memory.mapper1, memory.slot1_sub_slot_enabled, memory.slot1_sub_slot_reg,
+                memory.mapper1_subslots,
             ),
             slot2=_snapshot_slot(
-                memory._mapper2, memory.slot2_sub_slot_enabled, memory.slot2_sub_slot_reg,
-                memory._mapper2_subslots,
+                memory.mapper2, memory.slot2_sub_slot_enabled, memory.slot2_sub_slot_reg,
+                memory.mapper2_subslots,
             ),
             slot3=Slot3Snapshot(slot3_reg),
         ),
@@ -522,13 +540,6 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
     )
 
 
-_CPU_REGS_8: tuple[str, ...] = ("A", "F", "I", "R", "A_", "F_")
-_CPU_REGS_16: tuple[str, ...] = (
-    "BC", "DE", "HL", "IX", "IY", "SP", "PC", "WZ", "BC_", "DE_", "HL_",
-)
-_CPU_REG_KEYS: frozenset[str] = frozenset(_CPU_REGS_8 + _CPU_REGS_16)
-
-
 def _keys_of(cls: type) -> frozenset[str]:
     """The JSON object keys of a snapshot dataclass: its field names."""
     names: list[str] = []
@@ -539,6 +550,7 @@ def _keys_of(cls: type) -> frozenset[str]:
 
 _TOP_KEYS = _keys_of(MachineSnapshot)
 _CPU_KEYS = _keys_of(CpuSnapshot)
+_CPU_REG_KEYS = _keys_of(CpuRegistersSnapshot)
 _MEMORY_KEYS = _keys_of(MemorySnapshot)
 _RAM_MAPPER_KEYS = _keys_of(RamMapperSnapshot)
 _MAPPED_KEYS = _keys_of(MappedSlot)
@@ -558,34 +570,43 @@ _RAM_MAPPER_PAGES = 4  # the four 16 KB pages a RAM mapper bank register serves
 _SUBSLOTS = 4
 
 
-def _field(name: str, parse: Callable[[], _T]) -> _T:
-    """Run one top-level field's parse, reporting a SchemaError (whose
-    message names the JSON path) as StateLoadError naming that field."""
-    try:
-        return parse()
-    except SchemaError as exc:
-        raise StateLoadError(name, exc) from exc
-
-
 def _byte(value: object, label: str) -> int:
     return check_int(value, label, 0, 0xFF)
+
+
+def _word(value: object, label: str) -> int:
+    return check_int(value, label, 0, 0xFFFF)
 
 
 def _parse_cpu(value: object) -> CpuSnapshot:
     obj = check_object(value, "cpu", _CPU_KEYS)
     regs_obj = check_object(obj["registers"], "cpu.registers", _CPU_REG_KEYS)
-    regs: dict[str, int] = {}
-    for key in _CPU_REGS_8:
-        regs[key] = check_int(regs_obj[key], f"cpu.registers.{key}", 0, 0xFF)
-    for key in _CPU_REGS_16:
-        regs[key] = check_int(regs_obj[key], f"cpu.registers.{key}", 0, 0xFFFF)
     return CpuSnapshot(
-        registers=regs,
+        registers=CpuRegistersSnapshot(
+            A=_byte(regs_obj["A"], "cpu.registers.A"),
+            F=_byte(regs_obj["F"], "cpu.registers.F"),
+            BC=_word(regs_obj["BC"], "cpu.registers.BC"),
+            DE=_word(regs_obj["DE"], "cpu.registers.DE"),
+            HL=_word(regs_obj["HL"], "cpu.registers.HL"),
+            IX=_word(regs_obj["IX"], "cpu.registers.IX"),
+            IY=_word(regs_obj["IY"], "cpu.registers.IY"),
+            SP=_word(regs_obj["SP"], "cpu.registers.SP"),
+            PC=_word(regs_obj["PC"], "cpu.registers.PC"),
+            I=_byte(regs_obj["I"], "cpu.registers.I"),
+            R=_byte(regs_obj["R"], "cpu.registers.R"),
+            WZ=_word(regs_obj["WZ"], "cpu.registers.WZ"),
+            A_=_byte(regs_obj["A_"], "cpu.registers.A_"),
+            F_=_byte(regs_obj["F_"], "cpu.registers.F_"),
+            BC_=_word(regs_obj["BC_"], "cpu.registers.BC_"),
+            DE_=_word(regs_obj["DE_"], "cpu.registers.DE_"),
+            HL_=_word(regs_obj["HL_"], "cpu.registers.HL_"),
+        ),
         halted=check_bool(obj["halted"], "cpu.halted"),
         iff1=check_bool(obj["iff1"], "cpu.iff1"),
         iff2=check_bool(obj["iff2"], "cpu.iff2"),
         int_pending=check_bool(obj["int_pending"], "cpu.int_pending"),
         nmi_pending=check_bool(obj["nmi_pending"], "cpu.nmi_pending"),
+        ei_pending=check_bool(obj["ei_pending"], "cpu.ei_pending"),
         im=check_int(obj["im"], "cpu.im", 0, 2),
         q=_byte(obj["q"], "cpu.q"),
         q_next=_byte(obj["q_next"], "cpu.q_next"),
@@ -724,7 +745,7 @@ def _check_top_level_keys(data: dict[str, object]) -> None:
         if key not in data:
             missing.append(key)
     if unknown or missing:
-        raise ValueError(
+        raise SnapshotError(
             "incompatible state file layout: "
             f"unknown keys {sorted(unknown)}, missing keys {sorted(missing)}"
         )
@@ -740,44 +761,64 @@ def parse_snapshot(decoded: object) -> MachineSnapshot:
     parse_state, which needs the running machine. Nothing here touches a
     machine."""
     if not isinstance(decoded, dict):
-        raise ValueError("corrupt or unsupported save state (not an object)")
+        raise SnapshotError("corrupt or unsupported save state (not an object)")
     data = cast(dict[str, object], decoded)
     version = data.get("format_version")
     if version != CURRENT_FORMAT_VERSION:
-        raise ValueError(
+        raise SnapshotError(
             f"incompatible state file: version {version}, "
             f"expected {CURRENT_FORMAT_VERSION}"
         )
     _check_top_level_keys(data)
 
-    def machine_type_of() -> str:
-        text = check_str(data["machine_type"], "machine_type")
-        if text != "msx1" and text != "msx2":
-            raise SchemaError(f"machine_type must be 'msx1' or 'msx2', got {text!r}")
-        return text
-
-    def config_sha256_of() -> str:
-        text = check_str(data["machine_config_sha256"], "machine_config_sha256")
-        if text == "":
-            return text
-        return check_lower_hex(text, "machine_config_sha256", _SHA256_HEX_LEN)
-
-    machine_type = _field("machine_type", machine_type_of)
-    msx2 = machine_type == "msx2"
+    # The top-level field being parsed: a SchemaError's message names the JSON
+    # path, and StateLoadError.producer names this field.
+    field_name = "machine_type"
+    try:
+        machine_type = check_str(data["machine_type"], "machine_type")
+        if machine_type != "msx1" and machine_type != "msx2":
+            raise SchemaError(f"machine_type must be 'msx1' or 'msx2', got {machine_type!r}")
+        msx2 = machine_type == "msx2"
+        field_name = "machine_config_sha256"
+        config_sha256 = check_str(data["machine_config_sha256"], "machine_config_sha256")
+        if config_sha256 != "":
+            check_lower_hex(config_sha256, "machine_config_sha256", _SHA256_HEX_LEN)
+        field_name = "cpu"
+        cpu = _parse_cpu(data["cpu"])
+        field_name = "memory"
+        memory = _parse_memory(data["memory"], msx2)
+        field_name = "slots"
+        slots = _parse_slots(data["slots"], msx2)
+        field_name = "vdp"
+        vdp = _parse_vdp(data["vdp"], msx2)
+        field_name = "psg"
+        psg = _parse_psg(data["psg"])
+        field_name = "ppi"
+        ppi = _parse_ppi(data["ppi"])
+        field_name = "scc"
+        scc = check_optional_object(data["scc"], "scc")
+        field_name = "fdc"
+        fdc = check_optional_object(data["fdc"], "fdc")
+        field_name = "rtc"
+        rtc = check_optional_object(data["rtc"], "rtc")
+        field_name = "mouse"
+        mouse = check_optional_object(data["mouse"], "mouse")
+    except SchemaError as exc:
+        raise StateLoadError(field_name, exc) from exc
     return MachineSnapshot(
         format_version=CURRENT_FORMAT_VERSION,
         machine_type=machine_type,
-        machine_config_sha256=_field("machine_config_sha256", config_sha256_of),
-        cpu=_field("cpu", lambda: _parse_cpu(data["cpu"])),
-        memory=_field("memory", lambda: _parse_memory(data["memory"], msx2)),
-        slots=_field("slots", lambda: _parse_slots(data["slots"], msx2)),
-        vdp=_field("vdp", lambda: _parse_vdp(data["vdp"], msx2)),
-        psg=_field("psg", lambda: _parse_psg(data["psg"])),
-        ppi=_field("ppi", lambda: _parse_ppi(data["ppi"])),
-        scc=_field("scc", lambda: check_optional_object(data["scc"], "scc")),
-        fdc=_field("fdc", lambda: check_optional_object(data["fdc"], "fdc")),
-        rtc=_field("rtc", lambda: check_optional_object(data["rtc"], "rtc")),
-        mouse=_field("mouse", lambda: check_optional_object(data["mouse"], "mouse")),
+        machine_config_sha256=config_sha256,
+        cpu=cpu,
+        memory=memory,
+        slots=slots,
+        vdp=vdp,
+        psg=psg,
+        ppi=ppi,
+        scc=scc,
+        fdc=fdc,
+        rtc=rtc,
+        mouse=mouse,
     )
 
 
@@ -791,7 +832,7 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
     # parse_snapshot already checked the version; this guards a MachineSnapshot
     # built by hand (tests, tools).
     if snap.format_version != CURRENT_FORMAT_VERSION:
-        raise ValueError(
+        raise SnapshotError(
             f"incompatible state file: version {snap.format_version}, "
             f"expected {CURRENT_FORMAT_VERSION}"
         )
@@ -803,8 +844,8 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
-    _check_slot_mapper(1, memory._mapper, snap.slots.slot1.mapper)
-    _check_slot_mapper(2, memory._mapper2, snap.slots.slot2.mapper)
+    _check_slot_mapper(1, memory.mapper1, snap.slots.slot1.mapper)
+    _check_slot_mapper(2, memory.mapper2, snap.slots.slot2.mapper)
     ram_len = len(memory.ram)
     if len(snap.memory.ram) != ram_len:
         raise StateLoadError(
@@ -824,10 +865,10 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
             )
     _check_optional_wiring("FDC", machine.fdc is not None, snap.fdc)
     _check_expanded_subslots(
-        1, memory.slot1_sub_slot_enabled, memory._mapper1_subslots, snap.slots.slot1.subslots
+        1, memory.slot1_sub_slot_enabled, memory.mapper1_subslots, snap.slots.slot1.subslots
     )
     _check_expanded_subslots(
-        2, memory.slot2_sub_slot_enabled, memory._mapper2_subslots, snap.slots.slot2.subslots
+        2, memory.slot2_sub_slot_enabled, memory.mapper2_subslots, snap.slots.slot2.subslots
     )
     _check_optional_wiring("SCC", machine.scc is not None, snap.scc)
     _check_slot0_ram_wiring(machine, snap.memory.slot0_ram)
@@ -865,81 +906,72 @@ class _ParsedProducers:
     mouse: "MouseState | None"
 
 
-def _parse_mapper_producer(
-    mapper: "Mapper", state: dict[str, object], label: str, parsed: _MapperStates
-) -> None:
-    producer = f"mapper ({mapper.kind.value})"
-    parsed.append((mapper, _parse_producer(producer, lambda: mapper.parse_state(state, label))))
-
-
-def _parse_subslot_producers(
-    label: str,
-    subslots: list["Mapper | None"],
-    saved: list[MappedSlot | None] | None,
-    parsed: _MapperStates,
-) -> None:
-    if saved is None:
-        return
-    for i, sub_mapper in enumerate(subslots):
-        entry = saved[i]
-        # _check_expanded_subslots matched every assigned sub-slot to an entry.
-        if sub_mapper is not None and entry is not None:
-            _parse_mapper_producer(sub_mapper, entry.state, f"{label}[{i}].state", parsed)
+def _mapper_producers(
+    memory: "Memory", slots: SlotsSnapshot
+) -> list[tuple["Mapper", dict[str, object], str]]:
+    """(mapper, its saved state, JSON path) of slot 1, slot 2, then each
+    assigned sub-slot. _check_expanded_subslots matched every assigned sub-slot
+    to an entry."""
+    jobs: list[tuple[Mapper, dict[str, object], str]] = [
+        (memory.mapper1, slots.slot1.mapper.state, "slots.slot1.mapper.state"),
+        (memory.mapper2, slots.slot2.mapper.state, "slots.slot2.mapper.state"),
+    ]
+    expanded = (
+        ("slots.slot1.subslots", memory.mapper1_subslots, slots.slot1.subslots),
+        ("slots.slot2.subslots", memory.mapper2_subslots, slots.slot2.subslots),
+    )
+    for label, subslots, saved in expanded:
+        if saved is None:
+            continue
+        for i, sub_mapper in enumerate(subslots):
+            entry = saved[i]
+            if sub_mapper is not None and entry is not None:
+                jobs.append((sub_mapper, entry.state, f"{label}[{i}].state"))
+    return jobs
 
 
 def _parse_producer_objects(machine: "Machine", snap: MachineSnapshot) -> _ParsedProducers:
     """Parse every producer object the snapshot carries with its producer's
     parse_state, before anything is restored (the wiring checks have already
-    matched each object to a running producer)."""
-    memory = machine.memory
-    slots = snap.slots
+    matched each object to a running producer). A rejection, an identity
+    mismatch included, becomes StateLoadError naming the producer."""
     mappers: _MapperStates = []
-    _parse_mapper_producer(memory._mapper, slots.slot1.mapper.state, "slots.slot1.mapper.state",
-                           mappers)
-    _parse_mapper_producer(memory._mapper2, slots.slot2.mapper.state,
-                           "slots.slot2.mapper.state", mappers)
-    _parse_subslot_producers(
-        "slots.slot1.subslots", memory._mapper1_subslots, slots.slot1.subslots, mappers
-    )
-    _parse_subslot_producers(
-        "slots.slot2.subslots", memory._mapper2_subslots, slots.slot2.subslots, mappers
-    )
-    psg_synth = _parse_producer(
-        "psg", lambda: machine.psg.parse_synth_state(snap.psg.synth, "psg.synth")
-    )
+    for mapper, state, label in _mapper_producers(machine.memory, snap.slots):
+        try:
+            mappers.append((mapper, mapper.parse_state(state, label)))
+        except SnapshotError as exc:
+            raise StateLoadError(f"mapper ({mapper.kind.value})", exc) from exc
     scc = machine.scc
-    scc_state = snap.scc
-    scc_parsed = None
-    if scc is not None and scc_state is not None:
-        scc_parsed = _parse_producer("scc", lambda: scc.parse_state(scc_state, "scc"))
     fdc = machine.fdc
-    fdc_state = snap.fdc
-    fdc_parsed = None
-    if fdc is not None and fdc_state is not None:
-        fdc_parsed = _parse_producer("fdc", lambda: fdc.parse_state(fdc_state, "fdc"))
     rtc = machine.rtc
-    rtc_state = snap.rtc
-    rtc_parsed = None
-    if rtc is not None and rtc_state is not None:
-        rtc_parsed = _parse_producer("rtc", lambda: rtc.parse_state(rtc_state, "rtc"))
     mouse = machine.psg.mouse
-    mouse_state = snap.mouse
+    scc_parsed = None
+    fdc_parsed = None
+    rtc_parsed = None
     mouse_parsed = None
-    if mouse is not None and mouse_state is not None:
-        mouse_parsed = _parse_producer("mouse", lambda: mouse.parse_state(mouse_state, "mouse"))
+    producer = "psg"
+    try:
+        psg_synth = machine.psg.parse_synth_state(snap.psg.synth, "psg.synth")
+        producer = "scc"
+        if scc is not None and snap.scc is not None:
+            scc_parsed = scc.parse_state(snap.scc, "scc")
+        producer = "fdc"
+        if fdc is not None and snap.fdc is not None:
+            fdc_parsed = fdc.parse_state(snap.fdc, "fdc")
+        producer = "rtc"
+        if rtc is not None and snap.rtc is not None:
+            rtc_parsed = rtc.parse_state(snap.rtc, "rtc")
+        producer = "mouse"
+        if mouse is not None and snap.mouse is not None:
+            mouse_parsed = mouse.parse_state(snap.mouse, "mouse")
+    except SnapshotError as exc:
+        raise StateLoadError(producer, exc) from exc
     return _ParsedProducers(
         mappers, psg_synth, scc_parsed, fdc_parsed, rtc_parsed, mouse_parsed
     )
 
 
-def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
-    # Everything that can fail runs here, before the first write; the rest of
-    # this function only assigns already-validated values.
-    parsed = _validate_snapshot(machine, snap)
-    memory = machine.memory
-    vdp9938 = machine.vdp if isinstance(machine.vdp, V9938) else None
-
-    cpu = snap.cpu
+def _apply_cpu(machine: "Machine", cpu: CpuSnapshot) -> None:
     _restore_cpu_regs(machine, cpu.registers)
     machine.cpu.halted = cpu.halted
     # Not saved (Z80.idle_hint): HALT is the only idle state the saved
@@ -949,45 +981,65 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
     machine.cpu.iff2 = cpu.iff2
     machine.cpu.int_pending = cpu.int_pending
     machine.cpu.nmi_pending = cpu.nmi_pending
+    machine.cpu.ei_pending = cpu.ei_pending
     machine.cpu.im = cpu.im
     machine.cpu.q = cpu.q
     machine.cpu.q_next = cpu.q_next
 
+
+def _apply_memory_and_slots(
+    machine: "Machine", snap: MachineSnapshot, parsed: _ParsedProducers
+) -> None:
+    memory = machine.memory
     memory.ram[:] = snap.memory.ram
+    if memory.slot0_ram is not None and snap.memory.slot0_ram is not None:
+        memory.slot0_ram[:] = snap.memory.slot0_ram
+    rm = memory.ram_mapper
+    saved_rm = snap.memory.ram_mapper
+    if rm is not None and saved_rm is not None:
+        rm.ram[:] = saved_rm.ram
+        rm.banks[:] = saved_rm.banks
     memory.set_slot_register(snap.memory.primary_slot_register)
+    slot1_reg = snap.slots.slot1.secondary_slot_register
+    if slot1_reg is not None:
+        memory.set_slot1_sub_slot_reg(slot1_reg)
+    slot2_reg = snap.slots.slot2.secondary_slot_register
+    if slot2_reg is not None:
+        memory.set_slot2_sub_slot_reg(slot2_reg)
+    slot3_reg = snap.slots.slot3.secondary_slot_register
+    if slot3_reg is not None:
+        memory.set_sub_slot_reg(slot3_reg)
     for producer, state in parsed.mappers:
         producer.apply_state(state)
 
-    vdp = snap.vdp
+
+def _apply_vdp(machine: "Machine", vdp: VdpSnapshot) -> None:
     machine.vdp.vram[:] = vdp.vram
     machine.vdp.regs[:] = vdp.registers
     machine.vdp.status = vdp.status
     machine.vdp.frame_count = vdp.frame_count
-    # Common VDP address state — identical field names on both VDP types. The
+    # Common VDP address state -- identical field names on both VDP types. The
     # V9938's port latch is restored with the rest of its own state.
     machine.vdp.addr = vdp.address
     machine.vdp.read_buf = vdp.read_buffer
-    if vdp9938 is None:
-        assert isinstance(machine.vdp, VDP)
-        machine.vdp.latch = vdp.latch
-    else:
+    if isinstance(machine.vdp, V9938):
         assert vdp.v9938 is not None  # parse_snapshot requires it for MSX2
-        vdp9938.restore_state(vdp.v9938)
-        rm = memory.ram_mapper
-        saved_rm = snap.memory.ram_mapper
-        if rm is not None and saved_rm is not None:
-            rm.ram[:] = saved_rm.ram
-            rm.banks[:] = saved_rm.banks
-        slot3_reg = snap.slots.slot3.secondary_slot_register
-        if slot3_reg is not None:
-            memory.set_sub_slot_reg(slot3_reg)
+        machine.vdp.restore_state(vdp.v9938)
+    else:
+        assert isinstance(machine.vdp, VDP)
+        machine.vdp.restore_latch(vdp.latch)
     # The VDP's cached /INT level is what the scanline loop feeds the CPU, so
     # it must follow the restored status/registers (incl. V9938 S#1 FH).
     machine.vdp.update_irq()
 
+
+def _apply_sound_and_io(
+    machine: "Machine", snap: MachineSnapshot, parsed: _ParsedProducers
+) -> None:
     machine.psg.regs[:] = snap.psg.registers
     machine.psg.latch = snap.psg.latch
     machine.psg.apply_synth_state(parsed.psg_synth)
+    machine.psg.discard_frame_events()
     ppi = snap.ppi
     if machine.ppi is not None and ppi is not None:
         machine.ppi.apply_state(
@@ -997,19 +1049,21 @@ def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
         machine.scc.apply_state(parsed.scc)
     if machine.fdc is not None and parsed.fdc is not None:
         machine.fdc.apply_state(parsed.fdc)
-    slot1_reg = snap.slots.slot1.secondary_slot_register
-    if slot1_reg is not None:
-        memory.set_slot1_sub_slot_reg(slot1_reg)
-    slot2_reg = snap.slots.slot2.secondary_slot_register
-    if slot2_reg is not None:
-        memory.set_slot2_sub_slot_reg(slot2_reg)
-    if memory.slot0_ram is not None and snap.memory.slot0_ram is not None:
-        memory.slot0_ram[:] = snap.memory.slot0_ram
     if machine.rtc is not None and parsed.rtc is not None:
         machine.rtc.apply_state(parsed.rtc)
     mouse = machine.psg.mouse
     if mouse is not None and parsed.mouse is not None:
         mouse.apply_state(parsed.mouse, machine.cycle_count)
+
+
+def _restore_snapshot(machine: "Machine", snap: MachineSnapshot) -> None:
+    # Everything that can fail runs here, before the first write; the functions
+    # below only assign already-validated values.
+    parsed = _validate_snapshot(machine, snap)
+    _apply_cpu(machine, snap.cpu)
+    _apply_memory_and_slots(machine, snap, parsed)
+    _apply_vdp(machine, snap.vdp)
+    _apply_sound_and_io(machine, snap, parsed)
 
 
 # --- encoding ---------------------------------------------------------------
@@ -1040,7 +1094,7 @@ def load_state(machine: "Machine", data: bytes) -> None:
     # not JSON. Refuse to unpickle them; the format is now stdlib JSON.
     stripped = data.lstrip()
     if stripped[:1] != b"{":
-        raise ValueError(
+        raise SnapshotError(
             "legacy pickle save states are no longer supported; please re-save"
         )
     try:
@@ -1049,11 +1103,11 @@ def load_state(machine: "Machine", data: bytes) -> None:
         # An older format may hold floats: report its version, not the floats.
         version = mismatched_version(data, CURRENT_FORMAT_VERSION)
         if version is not None:
-            raise ValueError(
+            raise SnapshotError(
                 f"incompatible state file: version {version}, "
                 f"expected {CURRENT_FORMAT_VERSION}"
             ) from exc
-        raise ValueError(f"corrupt or unsupported save state ({exc})") from exc
+        raise SnapshotError(f"corrupt or unsupported save state ({exc})") from exc
 
     snap = parse_snapshot(decoded)
     _restore_snapshot(machine, snap)

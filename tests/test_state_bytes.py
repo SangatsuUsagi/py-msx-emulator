@@ -241,7 +241,7 @@ def _loaded_machine(tmp_path: Path) -> Machine:
         main_rom_entry=RomEntry(file="main.rom", size_kb=32, pages=[0, 1]),
         logo_rom_entry=None,
         sub_rom_entry=RomEntry(file="sub.rom", size_kb=16, pages=[0]),
-        has_ram_mapper=True, ram_size_kb=128, has_v9938=True, has_rtc=True,
+        has_ram_mapper=True, ram_size_kb=64, has_v9938=True, has_rtc=True,
         fdc=FdcDef(
             disk_rom_entry=RomEntry(file="disk.rom", size_kb=16, pages=[1]),
             controller="wd2793", connection_style="sony", drives=1,
@@ -267,11 +267,11 @@ def test_round_trip_is_byte_identical(tmp_path: Path) -> None:
     for reg, value in ((8, 0x0F), (0, 0x40)):          # PSG channel A audible
         saved.io.write_port(0xA0, reg)
         saved.io.write_port(0xA1, value)
-    saved.memory._mapper.write(0x9000, 0x3F)           # SCC on, then a wave and a tone
-    saved.memory._mapper.write(0x9800, 0x7F)
-    saved.memory._mapper.write(0x9880, 0x20)
-    saved.memory._mapper.write(0x988A, 0x0F)
-    saved.memory._mapper.write(0x988F, 0x01)
+    saved.memory.mapper1.write(0x9000, 0x3F)           # SCC on, then a wave and a tone
+    saved.memory.mapper1.write(0x9800, 0x7F)
+    saved.memory.mapper1.write(0x9880, 0x20)
+    saved.memory.mapper1.write(0x988A, 0x0F)
+    saved.memory.mapper1.write(0x988F, 0x01)
     saved.fmpac.write(0x7FF4, 0x30)                    # OPLL channel 0: key on
     saved.fmpac.write(0x7FF5, 0x10)
     saved.fmpac.write(0x7FF4, 0x10)

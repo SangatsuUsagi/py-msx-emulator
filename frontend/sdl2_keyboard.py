@@ -14,10 +14,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from host.input_state import InputState
+from host.key_names import JOY_FUNCTION_BITS
 from msx.boundary import KeyboardLayout
 
 # SDL2 SDLK key constants as integers so sdl2 is not a hard dependency at import time.
-# ASCII-range keys share values between SDL2 and pygame; special keys use SDL2 SDLK_* values.
+# ASCII-range keys use their ASCII value; special keys use SDL2 SDLK_* values.
 # SDL2 uses 0x40000000 | SDL_SCANCODE for non-ASCII keys.
 _K_BACKSPACE = 8
 _K_TAB = 9
@@ -130,7 +131,7 @@ _K_RO = 1073741959   # 0x40000000 | SDL_SCANCODE_INTERNATIONAL1 (135)
 # this scancode, since it has no key at that position.
 SDLK_JIS_RO: int = _K_RO
 
-# Internal-only sentinel for InputState's SHIFT+"0" -> "_" escape hatch (see
+# Internal-only sentinel for SdlKeyboard's SHIFT+"0" -> "_" escape hatch (see
 # SdlKeyboard.key_down). Not a real SDL keycode -- every real SDL key
 # constant is non-negative -- so it cannot collide with any host key.
 # Callers never pass this value directly; SdlKeyboard substitutes it
@@ -279,7 +280,7 @@ _INT_SYMBOLS: dict[int, tuple[int, int]] = {
 # nothing, matching the real key), SHIFT+cell renders "_", exactly
 # reproducing real JIS underscore-key behaviour. For a host with no such
 # key at all (an International/US keyboard, possibly under a JIS input
-# source), InputState's SHIFT+"0" escape hatch reaches the same cell --
+# source), SdlKeyboard's SHIFT+"0" escape hatch reaches the same cell --
 # see SdlKeyboard.key_down's own comment.
 #
 # The ¥ key is different: on real JIS hardware it is a dedicated key with its
@@ -317,8 +318,8 @@ KEY_MATRIX_JP: dict[int, tuple[int, int]] = {**_COMMON_MATRIX, **_JP_SYMBOLS}
 # 0-5; JOY_SELECT (PSG register 15 bit 6) picks the port (0 → Joy1, 1 → Joy2).
 # Bits 6-7 are not joystick lines (PSG.read_port pulls them high).
 #
-# MappingProxyType: every default-constructed InputState (and every
-# AppConfig.keyboard_joy_map() call with no overrides) shares this exact
+# MappingProxyType: every default-constructed SdlKeyboard (and every
+# resolve_keyboard_joy_map() call with no overrides) shares this exact
 # object rather than a copy — the proxy makes accidental in-place mutation of
 # the shared default raise immediately instead of silently corrupting it for
 # every other instance.
@@ -353,9 +354,6 @@ KEY_NAME_TO_SDLKEY: dict[str, int] = {
 }
 
 # MSX Joy1 function -> port bit, for keyboard_joystick.buttons config names.
-_KEYBOARD_JOY_FUNCTIONS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
 
 
 def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[int, int]]:
@@ -373,13 +371,13 @@ def resolve_keyboard_joy_map(buttons: Mapping[str, str]) -> Mapping[int, tuple[i
         return JOY_MAP
     overridden_bits = set()
     for func in buttons:
-        overridden_bits.add(_KEYBOARD_JOY_FUNCTIONS[func])
+        overridden_bits.add(JOY_FUNCTION_BITS[func])
     result: dict[int, tuple[int, int]] = {}
     for sdlkey, (port, bit) in JOY_MAP.items():
         if not (port == 0 and bit in overridden_bits):
             result[sdlkey] = (port, bit)
     for func, key_name in buttons.items():
-        result[KEY_NAME_TO_SDLKEY[key_name]] = (0, _KEYBOARD_JOY_FUNCTIONS[func])
+        result[KEY_NAME_TO_SDLKEY[key_name]] = (0, JOY_FUNCTION_BITS[func])
     return result
 
 
@@ -430,6 +428,7 @@ class SdlKeyboard:
         return _K_LSHIFT in self._held_keys or _K_RSHIFT in self._held_keys
 
     def key_down(self, key: int) -> None:
+        """Press an SDL key: its matrix cell and its keyboard-joystick line."""
         # SHIFT+"0" escape hatch (see _K_ZERO_SHIFT): redirected here rather
         # than in _matrix_map, since a static key->cell table can't express a
         # binding that depends on another key's current state. Latched into
@@ -448,6 +447,7 @@ class SdlKeyboard:
             self.input_state.keyboard_joystick_down(port, bit)
 
     def key_up(self, key: int) -> None:
+        """Release an SDL key: its matrix cell and its keyboard-joystick line."""
         matrix_key = key
         if key == _K_0 and self._zero_shift_redirect:
             matrix_key = _K_ZERO_SHIFT

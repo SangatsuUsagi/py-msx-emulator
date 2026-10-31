@@ -46,7 +46,7 @@ def test_guest_write_marks_the_medium_dirty(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     m = _sram_machine(monkeypatch, tmp_path)
-    mapper = m.memory._mapper
+    mapper = m.memory.mapper1
     assert isinstance(mapper, Ascii8Sram2Mapper)
     assert m.dirty_media() == []
     mapper.write(0x7000, mapper._sram_enable_bit())  # window 2 = SRAM
@@ -142,12 +142,12 @@ def test_disk_queries_report_the_mounted_image() -> None:
 def test_media_ids_are_integers() -> None:
     # machine-core "Media ids are integers".
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
-    m.memory._mapper.sram_image.write(0, 0x42)
+    m.memory.mapper1.sram_image.write(0, 0x42)
     ids = m.dirty_media()
     assert ids == [MediaId.SLOT1_SRAM]
     for media_id in ids:
-        assert type(int(media_id)) is int and isinstance(media_id, int)
-        assert MediaId(int(media_id)) is media_id
+        assert type(media_id) is int
+        assert MediaId(media_id) is MediaId.SLOT1_SRAM
     assert drive_media_id(0) is MediaId.DRIVE_A
     assert drive_media_id(3) is MediaId.DRIVE_D
     assert slot_sram_id(1) is MediaId.SLOT1_SRAM
@@ -188,7 +188,7 @@ def test_a_missing_medium_sets_the_message() -> None:
 def test_the_sram_table_is_built_once() -> None:
     m = make_machine(rom=_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     assert m.sram_media() is m.sram_media()
-    assert m.sram_media()[MediaId.SLOT1_SRAM] is m.memory._mapper.sram_medium()
+    assert m.sram_media()[MediaId.SLOT1_SRAM] is m.memory.mapper1.sram_medium()
 
 
 def test_an_integer_outside_the_media_ids_is_rejected() -> None:

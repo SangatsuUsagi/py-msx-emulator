@@ -30,6 +30,7 @@ from msx.fdc.tc8566af import CMD_READ_DATA, CMD_SEEK
 from msx.machine_spec import FdcDef, MachineSpec, RomEntry
 from msx.snapshot_schema import SchemaError
 from tests.disk_factories import dsk_image
+from tests.factories import restore_state
 
 _2DD = 737280
 _KINDS = ["wd2793", "tc8566af"]
@@ -145,7 +146,7 @@ def test_restore_of_decoded_snapshot_restores_it(tmp_path: Path, kind: str) -> N
     _activity(fdc, 4)
     saved = _roundtrip(fdc.snapshot())
     _activity(fdc, 9)
-    fdc.restore(saved)
+    restore_state(fdc, saved)
     assert _roundtrip(fdc.snapshot()) == saved
 
 
@@ -244,7 +245,7 @@ def _assert_rejected_unchanged(
     selected = fdc.controller.drive
 
     with pytest.raises(ValueError, match=match):
-        fdc.restore(bad)
+        restore_state(fdc, bad, "fdc")
     with pytest.raises(ValueError, match=match):
         fdc.parse_state(bad, "fdc")
 

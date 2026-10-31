@@ -17,6 +17,11 @@ _NUM_ROWS = 11
 _JOY_LINES_MASK = 0x3F  # bits 0-5: up/down/left/right/trigger A/trigger B
 
 
+def _clamp_int32(value: int) -> int:
+    """A motion total in the range of msx_input_frame.mouse_dx and mouse_dy."""
+    return max(-0x8000_0000, min(0x7FFF_FFFF, value))
+
+
 @dataclass
 class InputState:
     """Mutable input being built between frames: the keyboard matrix, both
@@ -54,8 +59,8 @@ class InputState:
             key_matrix=bytes(self.matrix),
             joy1=self.joy1,
             joy2=self.joy2,
-            mouse_dx=self.mouse_dx,
-            mouse_dy=self.mouse_dy,
+            mouse_dx=_clamp_int32(self.mouse_dx),
+            mouse_dy=_clamp_int32(self.mouse_dy),
             mouse_buttons=buttons,
         )
 

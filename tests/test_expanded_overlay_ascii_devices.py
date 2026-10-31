@@ -164,7 +164,7 @@ def test_ascii16_subslot_without_rom_block_rejected(tmp_path: Path) -> None:
 # ExpandedOverlayDeviceNamespacesAreDisjoint invariant): a sub-slot-only
 # device kind (ascii8) is unrecognized as an io_device, and an io_device-only
 # kind (kanji_rom) is unrecognized as a sub-slot -- _KNOWN_EXPANDED_SUBSLOT_
-# DEVICES and _KNOWN_IO_DEVICES share no members, so each parse call rejects
+# DEVICES and IO_DEVICES share no members, so each parse call rejects
 # the other namespace's kind the same way it rejects any unknown value.
 # ---------------------------------------------------------------------------
 
@@ -234,7 +234,7 @@ def test_build_machine_wires_ascii8_subslot(tmp_path: Path) -> None:
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, Ascii8Mapper)
     assert sub0.read(0x4000) == 0x00  # window 0, bank 0 (power-on state)
 
@@ -258,7 +258,7 @@ def test_build_machine_wires_ascii16_subslot(tmp_path: Path) -> None:
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, Ascii16Mapper)
     assert sub0.read(0x8000) == 0x00  # window 1, bank 0 (power-on state)
 

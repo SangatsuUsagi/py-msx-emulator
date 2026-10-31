@@ -7,7 +7,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF

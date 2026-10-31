@@ -1,10 +1,10 @@
 """Tests for scanline-based run_frame() and level-based IRQ."""
-from msx.boundary import STOP_BREAKPOINT, VideoStandard
+from msx.boundary import OUTPUT_HEIGHT, STOP_BREAKPOINT, VideoStandard
 from msx.cpu.z80 import Z80
 from msx.machine import Machine
 from msx.mapper import FlatMapper
 from msx.memory import Memory
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, cycles_per_frame, pad_rows
+from msx.vdp._geometry import ACTIVE_H, cycles_per_frame, pad_rows
 from msx.vdp.v9938 import V9938
 from tests.factories import make_machine_msx2, watch_scanlines
 
@@ -75,7 +75,7 @@ def _make_cpu_with_rom(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0x00] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFF0
@@ -232,9 +232,9 @@ def test_vblank_isr_vram_write_lands_on_the_next_frame() -> None:
     first = machine.run_frame()
     second = machine.run_frame()
 
-    # A 192-line frame is centred in the constant OUTPUT_H-line output buffer.
+    # A 192-line frame is centred in the constant OUTPUT_HEIGHT-line output buffer.
     top_left = pad_rows(ACTIVE_H) * 256
-    assert len(first) == 256 * OUTPUT_H
+    assert len(first) == 256 * OUTPUT_HEIGHT
     assert first[top_left] == 0
     assert second[top_left] == 5
 

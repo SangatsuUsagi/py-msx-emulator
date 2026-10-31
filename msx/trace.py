@@ -12,6 +12,7 @@ from msx.boundary import (
     TRACE_EVENT_CPU_HISTORY,
     TRACE_EVENT_LOST,
     TRACE_HISTORY_SIZE,
+    TRACE_LOST_MAX,
     TraceEvent,
 )
 from msx.clock import CoreClock
@@ -51,7 +52,8 @@ class TraceLog:
     def record(self, kind: int, a: int = 0, b: int = 0, c: int = 0, d: int = 0) -> None:
         """Append one event, or count it as lost when the buffer is full."""
         if len(self.events) >= TRACE_CAPACITY:
-            self.lost += 1
+            if self.lost < TRACE_LOST_MAX:
+                self.lost += 1
             return
         clock = self._clock
         self.events.append(TraceEvent(

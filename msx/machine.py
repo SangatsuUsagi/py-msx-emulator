@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 
 from msx.audio_mixer import AudioMixer
 from msx.boundary import (
+    AUDIO_SAMPLE_RATE,
     MAX_BREAKPOINTS,
     MAX_WATCHPOINTS,
     MOUSE_LEFT,
     MOUSE_RIGHT,
+    OUTPUT_HEIGHT,
     STATUS_BAD_ARGUMENT,
     STATUS_BAD_IMAGE,
     STATUS_NO_DRIVE,
@@ -51,11 +53,12 @@ from msx.mapper import MajutsushiMapper
 from msx.memory import Memory
 from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
-from msx.psg import PSG, SAMPLE_RATE, JoystickPort
+from msx.psg import PSG, JoystickPort
 from msx.scc import SCC
+from msx.snapshot_schema import SnapshotError
 from msx.sram import Medium, SramImage
 from msx.trace import TraceLog
-from msx.vdp._geometry import OUTPUT_H, cycles_per_frame, lines_per_frame
+from msx.vdp._geometry import cycles_per_frame, lines_per_frame
 from msx.vdp.renderer import render_frame
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame as render_frame_v9938
@@ -70,8 +73,17 @@ if TYPE_CHECKING:
 HANG_PC_REPEAT_THRESHOLD: int = 1000
 
 
+# PORT-NOTE: Machine owns every device. A reference that one device holds to
+# another (the trace log, the input lines, the SCC, the Majutsushi mapper as
+# `dac`, the FM-PAC in a slot and in `fmpac`) does not own it and lives no longer
+# than the Machine, as CoreClock's readers do (msx/clock.py). In Rust, these are
+# indices or a borrow of the Machine; in C++ and Zig, plain pointers.
 @dataclass
 class Machine:
+    """The whole emulated machine, and the implementation of the core API
+    (msx/core_api.py): it owns the devices build_machine wires and runs them
+    frame by frame (step_frame)."""
+
     cpu: Z80
     # VDP and V9938 are unrelated classes sharing this structural contract by
     # convention, not inheritance -- see VdpDevice's own docstring.
@@ -112,7 +124,7 @@ class Machine:
     # run_frame() keeps the frame position. _resume_skip_pc is the PC whose
     # breakpoint test the first instruction of the next run skips.
     _stop_pending: bool = field(default=False, init=False, repr=False)
-    _resume_skip_pc: int | None = field(default=None, init=False, repr=False)
+    _resume_skip_pc: int = field(default=-1, init=False, repr=False)  # -1: none
     _breakpoints: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_read: frozenset[int] = field(default_factory=frozenset, repr=False)
     _watch_write: frozenset[int] = field(default_factory=frozenset, repr=False)
@@ -120,15 +132,17 @@ class Machine:
     _pc_repeat: int = field(default=0, init=False, repr=False)
     # Crash-signature auto-break conditions (debugger bh/bs).
     _break_halt_di: bool = field(default=False, init=False, repr=False)
-    _sp_range: tuple[int, int] | None = field(default=None, init=False, repr=False)
+    _sp_low: int = field(default=-1, init=False, repr=False)  # -1: no SP range
+    _sp_high: int = field(default=-1, init=False, repr=False)
     _halt_di_seen: bool = field(default=False, init=False, repr=False)
     _sp_out_seen: bool = field(default=False, init=False, repr=False)
     # Targeted execution control (debugger g/so); one-shot, cleared on hit.
-    _temp_breakpoint: int | None = field(default=None, init=False, repr=False)
-    _stepout_sp: int | None = field(default=None, init=False, repr=False)
+    # -1: not set, here and in _frame_breakpoint.
+    _temp_breakpoint: int = field(default=-1, init=False, repr=False)
+    _stepout_sp: int = field(default=-1, init=False, repr=False)
     # One-shot run-to-frame breakpoint (debugger 'gf'); checked once per
     # run_frame() call, not per instruction — see set_frame_breakpoint.
-    _frame_breakpoint: int | None = field(default=None, init=False, repr=False)
+    _frame_breakpoint: int = field(default=-1, init=False, repr=False)
     # The most recent stop (last_stop()), cleared at the start of each
     # step_frame() and step() call.
     _stop: StopInfo = field(default_factory=StopInfo, init=False, repr=False)
@@ -165,10 +179,6 @@ class Machine:
         """T-states since power-on (the clock record's cycle count)."""
         return self.clock.cycle
 
-    @cycle_count.setter
-    def cycle_count(self, value: int) -> None:
-        self.clock.cycle = value
-
     @property
     def cycles_per_frame(self) -> int:
         """Z80 T-states per frame, from the video standard."""
@@ -204,7 +214,7 @@ class Machine:
         present), VDP, FDC (if present), Kanji ROM (if present), PPI (if
         present), the primary/secondary slot registers, the RAM mapper (if
         present, in either its slot-3 or its expanded-slot-2-sub-slot
-        placement), and every `Mapper` -- `memory._mapper`, `memory._mapper2`,
+        placement), and every `Mapper` -- `memory.mapper1`, `memory.mapper2`,
         and every non-`None` entry of an expanded slot's per-sub-slot array
         (this also covers a present Halnote cartridge, which only ever lives
         in one of those sub-slot entries). Memory/VRAM contents are retained.
@@ -234,15 +244,15 @@ class Machine:
         self.memory.set_slot2_sub_slot_reg(0x00)
         if self.memory.ram_mapper is not None:
             self.memory.ram_mapper.reset()
-        self.memory._mapper.reset()
-        self.memory._mapper2.reset()
+        self.memory.mapper1.reset()
+        self.memory.mapper2.reset()
         # A HalnoteMapper (when present) is always one of these sub-slot
         # entries -- _wire_expanded_overlay is the only place that ever
         # constructs one (EXTENSION_DEVICES, the flat overlay's device
         # allow-list in msx/machine_config.py, lacks "halnote") -- so this
         # loop resets it exactly once. Slot 1's own sub-slots (openspec/changes/
         # slot1-slot2-symmetrization) get the identical treatment.
-        for sub_mapper in (*self.memory._mapper1_subslots, *self.memory._mapper2_subslots):
+        for sub_mapper in (*self.memory.mapper1_subslots, *self.memory.mapper2_subslots):
             if sub_mapper is not None:
                 sub_mapper.reset()
         self._drop_frame()
@@ -262,23 +272,25 @@ class Machine:
         replaced afterwards), so this is a read-only view of that table."""
         return self._sram_table
 
-    def _media(self) -> dict[MediaId, Medium]:
-        media: dict[MediaId, Medium] = dict(self.sram_media())
+    def _media(self) -> dict[int, Medium]:
+        media: dict[int, Medium] = {}
+        for media_id, image in self.sram_media().items():
+            media[int(media_id)] = image
         if self.fdc is not None:
             for index, drive in enumerate(self.fdc.drives):
                 if drive.image is not None:
-                    media[drive_media_id(index)] = drive.image
+                    media[int(drive_media_id(index))] = drive.image
         return media
 
-    def dirty_media(self) -> list[MediaId]:
+    def dirty_media(self) -> list[int]:
         """Ids of the media written since they were last persisted."""
-        dirty: list[MediaId] = []
+        dirty: list[int] = []
         for media_id, medium in self._media().items():
             if medium.dirty:
                 dirty.append(media_id)
         return dirty
 
-    def read_media(self, media_id: MediaId) -> bytes:
+    def read_media(self, media_id: int) -> bytes:
         """A medium's current bytes, or b"" for an id the machine does not
         have (last_error_text() gives the message). A medium is never empty,
         so b"" is unambiguous."""
@@ -289,7 +301,7 @@ class Machine:
         self._error_text = b""
         return medium.data()
 
-    def mark_persisted(self, media_id: MediaId) -> int:
+    def mark_persisted(self, media_id: int) -> int:
         """Clear a medium's dirty flag after the host has written it, and
         return STATUS_OK. Returns STATUS_NO_MEDIUM, changing nothing, for an
         id the machine does not have."""
@@ -445,8 +457,7 @@ class Machine:
         (-1, -1) disables. Returns STATUS_OK, or STATUS_BAD_ARGUMENT, keeping
         the range, for an end outside 0x0000-0xFFFF (one -1 included) or a
         low end above the high end."""
-        rng: tuple[int, int] | None = None
-        if (low, high) != (-1, -1):
+        if low != -1 or high != -1:
             for value in (low, high):
                 if value < 0 or value > 0xFFFF:
                     return self._fail(
@@ -455,8 +466,8 @@ class Machine:
                 return self._fail(
                     STATUS_BAD_ARGUMENT,
                     f"SP range low 0x{low:04X} above high 0x{high:04X}")
-            rng = (low, high)
-        self._sp_range = rng
+        self._sp_low = low
+        self._sp_high = high
         self._sp_out_seen = False
         self._error_text = b""
         return STATUS_OK
@@ -468,7 +479,7 @@ class Machine:
         if addr != -1 and (addr < 0 or addr > 0xFFFF):
             return self._fail(
                 STATUS_BAD_ARGUMENT, f"run-to address 0x{addr:X} outside 0x0000-0xFFFF")
-        self._temp_breakpoint = None if addr == -1 else addr
+        self._temp_breakpoint = addr
         self._error_text = b""
         return STATUS_OK
 
@@ -489,7 +500,7 @@ class Machine:
         for a frame below -1 or above 2^63 - 1 (the C int64_t)."""
         if frame < -1 or frame > 0x7FFF_FFFF_FFFF_FFFF:
             return self._fail(STATUS_BAD_ARGUMENT, f"frame {frame} is outside -1 to 2^63 - 1")
-        self._frame_breakpoint = None if frame == -1 else frame
+        self._frame_breakpoint = frame
         self._error_text = b""
         return STATUS_OK
 
@@ -499,9 +510,9 @@ class Machine:
             self._step_one
             or bool(self._breakpoints)
             or self._break_halt_di
-            or self._sp_range is not None
-            or self._temp_breakpoint is not None
-            or self._stepout_sp is not None
+            or self._sp_low != -1
+            or self._temp_breakpoint != -1
+            or self._stepout_sp != -1
             # Watchpoints need the per-instruction loop so a hit can return at the
             # instruction boundary instead of running to frame end.
             # NOTE: mere RPC attachment does NOT force the debug loop — a bare
@@ -526,16 +537,16 @@ class Machine:
                     return True
             else:
                 self._halt_di_seen = False
-        if self._sp_range is not None:
+        if self._sp_low != -1:
             sp = cpu.registers.SP
-            if sp < self._sp_range[0] or sp > self._sp_range[1]:
+            if sp < self._sp_low or sp > self._sp_high:
                 if not self._sp_out_seen:
                     self._sp_out_seen = True
                     return True
             else:
                 self._sp_out_seen = False
-        if self._stepout_sp is not None and cpu.registers.SP > self._stepout_sp:
-            self._stepout_sp = None
+        if self._stepout_sp != -1 and cpu.registers.SP > self._stepout_sp:
+            self._stepout_sp = -1
             return True
         return False
 
@@ -548,8 +559,8 @@ class Machine:
         the loop, so the value holds for the whole call."""
         return (
             self._break_halt_di
-            or self._sp_range is not None
-            or self._stepout_sp is not None
+            or self._sp_low != -1
+            or self._stepout_sp != -1
         )
 
     def set_watchpoints(self, entries: list[tuple[int, int]]) -> int:
@@ -724,11 +735,8 @@ class Machine:
             return self._bad_slot(f"no sub-slot {secondary}")
         if page != -1 and not 0 <= page <= 3:
             return self._bad_slot(f"no page {page}")
-        # The Memory helpers take None for "no sub-slot" and "no page".
-        sec = None if secondary == -1 else secondary
-        pg = None if page == -1 else page
         self._error_text = b""
-        return self.memory.describe_slot(primary, sec, pg)
+        return self.memory.describe_slot(primary, secondary, page)
 
     def _bad_slot(self, message: str) -> SlotInfo:
         self._fail(STATUS_BAD_ARGUMENT, message)
@@ -816,7 +824,7 @@ class Machine:
 
         try:
             state.load_state(self, data)
-        except ValueError as exc:
+        except SnapshotError as exc:
             return self._fail(STATUS_STATE_REJECTED, str(exc))
         self._drop_frame()
         self._error_text = b""
@@ -869,7 +877,7 @@ class Machine:
         """Run one frame, or the rest of a stopped one, up to its end or the
         next break, and return the rendered index framebuffer.
 
-        Returns a `width * OUTPUT_H` buffer (the frame's width, see
+        Returns a `width * OUTPUT_HEIGHT` buffer (the frame's width, see
         v9938_renderer.render_frame) when the frame completes in this call,
         and an empty bytearray when the call stops at a break or the render
         was skipped (`skip_render` in the call that reached the render). A
@@ -912,13 +920,9 @@ class Machine:
             self._frame_result = bytearray()
 
         line = self._frame_line
-        total = self._frame_total
         if line < vblank_split:
-            if not stepping and self._take_break_request(line):
-                return self._keep_stopped_frame(total)
-            total = self._run_lines(vdp9938, line, vblank_split, total)
-            if self._stop_pending:
-                return self._keep_stopped_frame(total)
+            if self._run_segment(vdp9938, line, vblank_split, stepping):
+                return bytearray()
             line = vblank_split
         if not self._frame_rendered:
             if vdp9938 is not None:
@@ -929,12 +933,9 @@ class Machine:
                 self.vdp.begin_vblank()
             self._frame_rendered = True
         if line < lpf:
-            if not stepping and self._take_break_request(line):
-                return self._keep_stopped_frame(total)
-            total = self._run_lines(vdp9938, line, lpf, total)
-            if self._stop_pending:
-                return self._keep_stopped_frame(total)
-        self._resume_skip_pc = None
+            if self._run_segment(vdp9938, line, lpf, stepping):
+                return bytearray()
+        self._resume_skip_pc = -1
         self._frame_active = False
         self.vdp.increment_frame()
         self._mix_frame_audio(self._frame_start_cycle)
@@ -942,22 +943,29 @@ class Machine:
         self._frame_result = bytearray()
         # Frame breakpoint (debugger 'gf'): once per frame, after the frame
         # is complete, so the stop reports a complete frame.
-        if self._frame_breakpoint is not None and self.vdp.frame_count == self._frame_breakpoint:
-            self._frame_breakpoint = None
+        if self._frame_breakpoint != -1 and self.vdp.frame_count == self._frame_breakpoint:
+            self._frame_breakpoint = -1
             self._enter_break(STOP_BREAKPOINT)
         return result
 
-    def _keep_stopped_frame(self, total: int) -> bytearray:
-        """Record where a stopped frame continues; return no video."""
-        self._resume_skip_pc = None
+    def _run_segment(
+        self, vdp9938: V9938 | None, line: int, end_line: int, stepping: bool
+    ) -> bool:
+        """Run scanlines [line, end_line) of the frame, unless a break request
+        comes first. Returns True when the frame stopped, after recording where
+        it continues."""
+        if stepping or not self._take_break_request(line):
+            self._frame_total = self._run_lines(vdp9938, line, end_line, self._frame_total)
+            if not self._stop_pending:
+                return False
+        self._resume_skip_pc = -1
         self._frame_line = self._stop_line
-        self._frame_total = total
-        return bytearray()
+        return True
 
     def samples_per_frame(self) -> int:
         """Audio samples per frame: the output rate over the pacing rate (735 at
         60 fps NTSC, 882 at 50 fps PAL; both divide exactly)."""
-        return SAMPLE_RATE // self.video_standard.target_fps
+        return AUDIO_SAMPLE_RATE // self.video_standard.target_fps
 
     def apply_input(self, frame_input: InputFrame) -> int:
         """Replace the input lines and mouse buttons with `frame_input`'s,
@@ -1000,8 +1008,8 @@ class Machine:
         height = 0
         pixels = b""
         if index_buf:
-            width = len(index_buf) // OUTPUT_H
-            height = OUTPUT_H
+            width = len(index_buf) // OUTPUT_HEIGHT
+            height = OUTPUT_HEIGHT
             pixels = self.vdp.to_rgb24(index_buf)
         stop_reason = self._stop.reason if self._stop_pending else STOP_NONE
         return FrameOutput(
@@ -1099,15 +1107,13 @@ class Machine:
             line_end = (line + 1) * cpf // lpf
             while total < line_end:
                 pc = cpu.registers.PC
-                if step_one:
-                    pass  # step(): no breakpoint test
-                elif pc == self._resume_skip_pc:
+                if pc == self._resume_skip_pc and not step_one:
                     # First instruction after a stop or a step: run it
                     # without the breakpoint test.
-                    self._resume_skip_pc = None
-                elif pc in self._breakpoints or pc == self._temp_breakpoint:
+                    self._resume_skip_pc = -1
+                elif not step_one and (pc in self._breakpoints or pc == self._temp_breakpoint):
                     if pc == self._temp_breakpoint:
-                        self._temp_breakpoint = None
+                        self._temp_breakpoint = -1
                     self._enter_break(STOP_BREAKPOINT)
                     clock.cycle += line_cycles
                     self._stop_line = line
@@ -1147,13 +1153,15 @@ class Machine:
     ) -> int:
         """Hot-path scanline loop (no break conditions, TRACE_DEBUG off); see
         `_run_lines`."""
+        # This loop reads vdp9938._cmd_active and writes _line_cycle directly, per
+        # instruction: a method call here costs measurable frame rate.
         # Hot path (no break conditions, TRACE_DEBUG off). Two frame-invariants are lifted
         # out of the inner loop: (1) the is_v9938 branch — split into a
         # V9938 loop and a plain loop so the per-instruction `if vdp9938 /
         # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
         # into a per-line local and flushed once per scanline instead of
         # once per instruction. Line granularity is the finest flush
-        # allowed: io/dac read cycle_count *within* a frame, so a frame-end
+        # allowed: devices read cycle_count *within* a frame, so a frame-end
         # flush would starve them; a one-scanline lag matches the existing
         # scanline-stepped timing. The duplicated loop body is the
         # readability cost of removing that per-instruction overhead.

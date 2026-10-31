@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from msx.fmpac import FMPAC_ROM_SIZE
+
 _MAIN_PATH = Path(__file__).parent.parent / "__main__.py"
 
 
@@ -16,7 +18,8 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
     stderr_buf = io.StringIO()
 
     def fake_read_bytes(self: Path) -> bytes:
-        return b"\x00" * 32768
+        # The FM-PAC build check needs a 64 KB FM-PAC ROM.
+        return b"\x00" * (FMPAC_ROM_SIZE if self.name == "fmpac.rom" else 32768)
 
     def fake_read_text(self: Path, encoding: str | None = None) -> str:
         # Isolate from the developer's own (git-ignored) py_emulator.yaml.

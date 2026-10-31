@@ -38,8 +38,8 @@ class Memory:
 
     rom: bytes
     ram: bytearray
-    _mapper: Mapper = field(repr=False)
-    _mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
+    mapper1: Mapper = field(repr=False)
+    mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
@@ -68,24 +68,24 @@ class Memory:
     slot2_sub_slot_reg: int = 0x00
     slot2_sub_slot_enabled: bool = False
     # Per-sub-slot Mapper for primary slot 1 when slot1_sub_slot_enabled is
-    # True -- the identical mechanism _mapper2_subslots/slot2_sub_slot_enabled
+    # True -- the identical mechanism mapper2_subslots/slot2_sub_slot_enabled
     # provides for slot 2 below, applied independently to slot 1. Fixed
     # length 4, indexed by the 2-bit sub-slot decoded from
     # slot1_sub_slot_reg; None entries read open bus. Construction-time-
-    # fixed, like _mapper/_mapper2/flat_ram_subslot -- no setter. This is a
+    # fixed, like mapper1/mapper2/flat_ram_subslot -- no setter. This is a
     # new, independent dispatch path; it does not reuse or modify slot 2's
     # own sub-slot dispatch or slot 3's role-based sub-slot dispatch
     # (SUB ROM/FDC/flat-RAM) below.
-    _mapper1_subslots: list[Mapper | None] = field(
+    mapper1_subslots: list[Mapper | None] = field(
         default_factory=lambda: [None, None, None, None], repr=False
     )
     # Per-sub-slot Mapper for primary slot 2 when slot2_sub_slot_enabled is
     # True (fixed length 4, indexed by the 2-bit sub-slot decoded from
     # slot2_sub_slot_reg; None entries read open bus). Construction-time-
-    # fixed, like _mapper/_mapper2/flat_ram_subslot -- no setter. This is a
+    # fixed, like mapper1/mapper2/flat_ram_subslot -- no setter. This is a
     # new, independent dispatch path; it does not reuse or modify slot 3's
     # role-based sub-slot dispatch (SUB ROM/FDC/flat-RAM) below.
-    _mapper2_subslots: list[Mapper | None] = field(
+    mapper2_subslots: list[Mapper | None] = field(
         default_factory=lambda: [None, None, None, None], repr=False
     )
     # Data-driven MSX2 slot-3 layout: when set, slot 3 hosts a flat (non-mapper)
@@ -106,11 +106,9 @@ class Memory:
     # flat_ram_subslot. Both default to 0, still true for every MSX2 machine
     # except FS-A1F (HB-F1XD combines SUB ROM + FDC in sub-slot 0); FS-A1F
     # resolves them to sub-slot 1 and 2 respectively, its real hardware's
-    # 4-independent-secondary-slot layout (RESOLVED by
-    # openspec/changes/parameterize-subslot-index -- previously this dataclass
-    # only supported sub-slot 0 for both roles). fdc_page defaults to 1 (the
+    # 4-independent-secondary-slot layout. fdc_page defaults to 1 (the
     # DISK-ROM window's existing fixed page). Construction-time-fixed, like
-    # flat_ram_subslot/_mapper/_mapper2 -- no code ever reassigns them after
+    # flat_ram_subslot/mapper1/mapper2 -- no code ever reassigns them after
     # construction, so they have no setter (see the "Page-routing cache
     # invalidation happens through explicit setter methods" spec Requirement).
     sub_rom_subslot: int = field(default=0)
@@ -131,7 +129,7 @@ class Memory:
     # above (0 when slot0_ram is None).
     _slot0_ram_len: int = field(init=False, repr=False, default=0)
     # Per-page (16 KB) resolved routing cache: index 0-3, rebuilt whenever one
-    # of the 8 set_*() methods below invalidates it (event-driven: a single
+    # of the 4 set_*() methods below invalidates it (event-driven: a single
     # bool check per access, no per-access recomputation of a comparison
     # key). extrom has no setter and needs none: _read_rom() reads
     # self.extrom live, unconditionally correct regardless of when it's
@@ -167,13 +165,8 @@ class Memory:
         """Enforce SlotThreeStrategyIsExclusive: ram_mapper/flat_ram_subslot
         are mutually exclusive slot-3 RAM strategies, and fdc requires one of
         the two (either satisfies it; an fdc may coexist with either RAM
-        strategy). Called from __post_init__ (once, at the end of
-        construction) and from set_ram_mapper/set_fdc (so a post-construction
-        reassignment of either can't silently desync the routing cache from
-        this invariant -- flat_ram_subslot itself is construction-time-fixed,
-        with no setter, so it can't cause the same desync) -- every caller
-        runs after the dataclass __init__ has finished, so all three fields
-        always exist by the time this runs.
+        strategy). Called once, from __post_init__: the three fields have no
+        setter.
         """
         ram_mapper = self.ram_mapper
         flat_ram_subslot = self.flat_ram_subslot
@@ -190,12 +183,11 @@ class Memory:
             )
 
     # Explicit setters for the fields that affect page routing and are
-    # reassigned after construction (_mapper/_mapper2/flat_ram_subslot are
+    # reassigned after construction (mapper1/mapper2/flat_ram_subslot are
     # only ever set once, as Memory(...) constructor kwargs, so they have no
     # setter here). Callers outside this class must use these, not direct
-    # assignment -- this class has no __setattr__ hook (removed by the
-    # memory-explicit-setters OpenSpec change) to catch a stray
-    # `mem.field = value` the way it used to, so a direct assignment here
+    # assignment -- this class has no __setattr__ hook to catch a stray
+    # `mem.field = value`, so a direct assignment here
     # silently leaves the routing cache stale instead of raising or
     # invalidating anything. A regression test
     # (tests/test_memory_setter_discipline.py) statically scans for this
@@ -217,33 +209,16 @@ class Memory:
         self.slot2_sub_slot_reg = value
         self._page_cache_valid = False
 
-    def set_ram_mapper(self, value: "RamMapper | None") -> None:
-        self.ram_mapper = value
-        self._page_cache_valid = False
-        # ram_mapper participates in the slot-3 RAM strategy exclusivity
-        # check -- see _validate_slot3_strategy.
-        self._validate_slot3_strategy()
-
-    def set_sub0_rom(self, value: bytes | None) -> None:
-        self.sub0_rom = value
-        self._page_cache_valid = False
-
-    def set_fdc(self, value: "FloppyDisk | None") -> None:
-        self.fdc = value
-        self._page_cache_valid = False
-        # fdc requires flat_ram_subslot -- see _validate_slot3_strategy.
-        self._validate_slot3_strategy()
-
     def __post_init__(self) -> None:
         self._rom_len = len(self.rom)
         self._extrom_len = len(self.extrom) if self.extrom is not None else 0
         self._ram_len = len(self.ram)
         self._msx1_ram_base = 0x10000 - self._ram_len
         self._slot0_ram_len = len(self.slot0_ram) if self.slot0_ram is not None else 0
-        if len(self._mapper1_subslots) != 4:
-            raise ValueError("Memory: _mapper1_subslots must have exactly 4 entries")
-        if len(self._mapper2_subslots) != 4:
-            raise ValueError("Memory: _mapper2_subslots must have exactly 4 entries")
+        if len(self.mapper1_subslots) != 4:
+            raise ValueError("Memory: mapper1_subslots must have exactly 4 entries")
+        if len(self.mapper2_subslots) != 4:
+            raise ValueError("Memory: mapper2_subslots must have exactly 4 entries")
         if self.slot0_ram is not None and self.slot0_ram_page == 2 and self.extrom is not None:
             raise ValueError(
                 "Memory: slot0_ram_page 2 conflicts with the MSX2 ext ROM overlay (extrom)"
@@ -252,8 +227,7 @@ class Memory:
         self._rebuild_page_cache()
 
     # -- terminal (leaf) read/write operations -------------------------------
-    # Mechanical extraction of read()/write()'s former inline branches; each
-    # keeps exactly the logic it had inline. Selected once per page by
+    # Selected once per page by
     # _rebuild_page_cache() instead of re-decoded on every access.
 
     def _read_rom(self, addr: int) -> int:
@@ -440,7 +414,7 @@ class Memory:
         expanded (`slot1_sub_slot_enabled`/`slot2_sub_slot_enabled`) -- a
         plain Mapper-per-sub-slot array, no SUB-ROM/FDC/RAM role concepts
         involved (unlike slot 3's role-based dispatch above). The caller
-        passes that slot's own `slot{1,2}_sub_slot_reg`/`_mapper{1,2}_
+        passes that slot's own `slot{1,2}_sub_slot_reg`/`mapper1{1,2}_
         subslots`, so this single implementation serves both slots."""
         sub = (sub_slot_reg >> (page * 2)) & 0x03
         mapper = subslots[sub]
@@ -462,15 +436,15 @@ class Memory:
         if slot == 1:
             if self.slot1_sub_slot_enabled:
                 return self._resolve_expanded_subslot_read_leaf(
-                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                    self.slot1_sub_slot_reg, self.mapper1_subslots, page
                 )
-            return self._mapper.read
+            return self.mapper1.read
         if slot == 2:
             if self.slot2_sub_slot_enabled:
                 return self._resolve_expanded_subslot_read_leaf(
-                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                    self.slot2_sub_slot_reg, self.mapper2_subslots, page
                 )
-            return self._mapper2.read
+            return self.mapper2.read
         return self._resolve_slot3_read_leaf(page)
 
     def _resolve_page_write_leaf(self, page: int) -> Callable[[int, int], None]:
@@ -482,15 +456,15 @@ class Memory:
         if slot == 1:
             if self.slot1_sub_slot_enabled:
                 return self._resolve_expanded_subslot_write_leaf(
-                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                    self.slot1_sub_slot_reg, self.mapper1_subslots, page
                 )
-            return self._mapper.write
+            return self.mapper1.write
         if slot == 2:
             if self.slot2_sub_slot_enabled:
                 return self._resolve_expanded_subslot_write_leaf(
-                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                    self.slot2_sub_slot_reg, self.mapper2_subslots, page
                 )
-            return self._mapper2.write
+            return self.mapper2.write
         return self._resolve_slot3_write_leaf(page)
 
     def _rebuild_page_cache(self) -> None:
@@ -544,13 +518,13 @@ class Memory:
         # perf — see _rebuild_page_cache.
         if page == 3 and addr == 0xFFFF and self._page3_intercept_slot:
             if self._page3_intercept_slot == 3:
-                self.set_sub_slot_reg(value & 0xFF)
+                self.set_sub_slot_reg(value)
             elif self._page3_intercept_slot == 2:
-                self.set_slot2_sub_slot_reg(value & 0xFF)
+                self.set_slot2_sub_slot_reg(value)
             else:
                 # _page3_intercept_slot's only remaining value here is 1 --
                 # see _rebuild_page_cache, which never sets it to anything else.
-                self.set_slot1_sub_slot_reg(value & 0xFF)
+                self.set_slot1_sub_slot_reg(value)
             return
         self._page_write[page](addr, value)
 
@@ -575,24 +549,21 @@ class Memory:
 
     # ------------------------------------------------------------- debug REPL
     #
-    # The three methods below back the debugger's `sl`/`st` slot-inspector
-    # commands (host/debugger/prompt.py). They exist so that debugger code
-    # never needs to reflect on Memory's private fields (_mapper/_mapper2)
-    # from outside this class -- see openspec/changes/archive/
-    # *-debugger-slot-mapper-interface.
+    # The methods below back the core API's slot_info (Machine.slot_info), which
+    # host/debugger/slots.py formats for `sl` and `st`.
 
     def _cartridge_slot_state(self, primary: int) -> tuple[bool, list[Mapper | None], Mapper]:
         """(sub_slot_enabled, subslots, mapper) for cartridge slot 1 or 2 --
         shared lookup so the debug helpers below don't each repeat the same
         `primary == 1 ? slot1 : slot2` ternary independently."""
         if primary == 1:
-            return self.slot1_sub_slot_enabled, self._mapper1_subslots, self._mapper
-        return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
+            return self.slot1_sub_slot_enabled, self.mapper1_subslots, self.mapper1
+        return self.slot2_sub_slot_enabled, self.mapper2_subslots, self.mapper2
 
-    def _describe_slot12(self, primary: int, secondary: int | None) -> tuple[int, int]:
+    def _describe_slot12(self, primary: int, secondary: int) -> tuple[int, int]:
         """(content, mapper id as a plain int) of cartridge slot 1 or 2."""
         sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
-        if sub_slot_enabled and secondary is not None:
+        if sub_slot_enabled and secondary != -1:
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
@@ -601,26 +572,30 @@ class Memory:
             return SLOT_CONTENT_CARTRIDGE_EMPTY, -1
         return SLOT_CONTENT_CARTRIDGE, int(mapper_id(mapper.kind))
 
-    def _describe_slot3(self, secondary: int | None, page: int | None) -> int:
+    def _describe_slot3(self, secondary: int, page: int) -> int:
+        # The legacy branch below reports each sub-slot's nominal role (0 SUB
+        # ROM, 1 empty, 2-3 RAM). _resolve_slot3_read_leaf_legacy decides what a
+        # read of one page returns, so it also checks the page and whether the
+        # ROM is loaded: the two answer different questions.
         flat_sub = self.flat_ram_subslot
         if flat_sub is not None:
             # Data-driven layout (e.g. FS-A1F): mirror
             # _resolve_slot3_read_leaf's precedence -- SUB ROM at page 0
             # of sub_rom_subslot, FDC at fdc_page of fdc_subslot, flat
-            # RAM in flat_sub, open bus elsewhere. `page is None` (the
+            # RAM in flat_sub, open bus elsewhere. Page -1 (the
             # `st` tree view, one line per sub-slot) matches the
             # page-0/fdc_page role regardless of page, same as the
             # legacy branch below always describing sub-slot 0 as ROM.
             if (
                 secondary == self.sub_rom_subslot
                 and self.sub0_rom is not None
-                and page in (0, None)
+                and page in (0, -1)
             ):
                 return SLOT_CONTENT_SUB_ROM
             if (
                 secondary == self.fdc_subslot
                 and self.fdc is not None
-                and page in (self.fdc_page, None)
+                and page in (self.fdc_page, -1)
             ):
                 return SLOT_CONTENT_FDC
             if secondary == flat_sub:
@@ -636,11 +611,10 @@ class Memory:
             return SLOT_CONTENT_RAM
         return SLOT_CONTENT_EMPTY
 
-    def describe_slot(
-        self, primary: int, secondary: int | None, page: int | None
-    ) -> SlotInfo:
+    def describe_slot(self, primary: int, secondary: int, page: int) -> SlotInfo:
         """What a slot/sub-slot holds, its bank at `page` and its size, for
-        the core API's slot description (debug-monitor `sl`/`st`)."""
+        the core API's slot description (debug-monitor `sl`/`st`). -1 means no
+        sub-slot and no page, as in the core API."""
         mapper = -1
         if primary == 0:
             content = SLOT_CONTENT_MAIN_ROM
@@ -655,29 +629,28 @@ class Memory:
             bank.sub_banks, bank.sub_offsets,
         )
 
-    def _slot_bank(
-        self, primary: int, secondary: int | None, page: int | None
-    ) -> BankView:
+    def _slot_bank(self, primary: int, secondary: int, page: int) -> BankView:
         """The bank at `page` for the `sl` active-slot view."""
-        if primary == 3 and secondary in (2, 3) and page is not None:
+        if primary == 3 and secondary in (2, 3) and page != -1:
             rm = self.ram_mapper
             if rm is not None:
-                return BankView(BANK_SEGMENT, (WINDOW_PAGE, WINDOW_NONE), (rm.banks[page], 0))
+                segment = rm.debug_bank(page).window_values[0]
+                return BankView(BANK_SEGMENT, (WINDOW_PAGE, WINDOW_NONE), (segment, 0))
         if primary not in (1, 2):
             return NO_BANK
         sub_slot_enabled, subslots, mapper = self._cartridge_slot_state(primary)
-        if sub_slot_enabled and secondary is not None:
-            if page is None:
+        if sub_slot_enabled and secondary != -1:
+            if page == -1:
                 return NO_BANK
             sub_mapper = subslots[secondary]
             if sub_mapper is None:
                 return NO_BANK
             return sub_mapper.debug_bank(page)
-        if page is not None:
+        if page != -1:
             return mapper.debug_bank(page)
         return NO_BANK
 
-    def _slot_size_kb(self, primary: int, secondary: int | None) -> int:
+    def _slot_size_kb(self, primary: int, secondary: int) -> int:
         """Size in KB (e.g. 32) for the `st` tree view, or 0 for none."""
         if primary == 0:
             return len(self.rom) // 1024

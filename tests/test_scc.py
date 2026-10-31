@@ -3,8 +3,11 @@ import struct
 
 import pytest
 
-from msx.psg import SAMPLES_PER_FRAME
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.scc import SCC
+from tests.factories import restore_state
+
+_SAMPLES_PER_FRAME = AUDIO_SAMPLE_RATE // 60  # an NTSC frame
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -212,7 +215,7 @@ def test_silent_when_all_channels_disabled() -> None:
 
 def test_nonzero_output_with_enabled_channel() -> None:
     scc = _make_scc_tone(freq=253, vol=15, ch=0)
-    samples = _samples_as_int16(scc.generate_samples(SAMPLES_PER_FRAME))
+    samples = _samples_as_int16(scc.generate_samples(_SAMPLES_PER_FRAME))
     assert any(s != 0 for s in samples)
 
 
@@ -229,7 +232,7 @@ def test_higher_frequency_more_transitions() -> None:
     """Higher frequency → shorter period → more phase steps per frame."""
     scc_hi = _make_scc_tone(freq=50, vol=15, ch=0)
     scc_lo = _make_scc_tone(freq=1000, vol=15, ch=0)
-    n = SAMPLES_PER_FRAME
+    n = _SAMPLES_PER_FRAME
 
     def transitions(buf: bytearray) -> int:
         s = _samples_as_int16(buf)
@@ -264,8 +267,8 @@ def test_shared_waveform_ch4_ch5_doubles_output() -> None:
     scc_one.write(0x8D, vol)
     scc_one.write(0x8F, 0b01000)  # channel 4 only (bit 3)
 
-    s_both = _samples_as_int16(scc_both.generate_samples(SAMPLES_PER_FRAME))
-    s_one  = _samples_as_int16(scc_one.generate_samples(SAMPLES_PER_FRAME))
+    s_both = _samples_as_int16(scc_both.generate_samples(_SAMPLES_PER_FRAME))
+    s_one  = _samples_as_int16(scc_one.generate_samples(_SAMPLES_PER_FRAME))
     assert s_both == [2 * s for s in s_one]
 
 
@@ -314,7 +317,7 @@ def test_snapshot_and_restore_round_trip() -> None:
     scc.generate_samples(500)  # mutate further so restore is meaningfully exercised
     assert scc.snapshot() != snapshot
 
-    scc.restore(snapshot)
+    restore_state(scc, snapshot)
     assert scc.snapshot() == snapshot
 
 
@@ -329,7 +332,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
     snap = dict(pre)
     del snap["clk_frac"]
     with pytest.raises(ValueError, match="clk_frac"):
-        scc.restore(snap)
+        restore_state(scc, snap)
 
     assert scc.snapshot() == pre
 
@@ -339,7 +342,7 @@ def test_snapshot_on_silent_scc_round_trips() -> None:
     # sounding one.
     scc = SCC()
     snapshot = scc.snapshot()
-    scc.restore(snapshot)
+    restore_state(scc, snapshot)
     assert scc.snapshot() == snapshot
 
 

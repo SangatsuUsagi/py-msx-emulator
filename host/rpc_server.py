@@ -38,7 +38,7 @@ Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_jso
 request/response struct per RPC method, dispatched via a tagged enum on the
 ``method`` field -- the Python side stays duck-typed at this boundary because
 the wire payload's shape genuinely isn't known until parsed, matching every
-other JSON-boundary module in this codebase (see ``machine_loader.py``'s
+other JSON-boundary module in this codebase (see ``host/machine_config.py``'s
 equivalent note for its YAML config boundary). The ``tools/`` MCP server and
 CLI client are separate processes that speak only the newline-JSON wire protocol,
 so they are language-agnostic and stay as-is under any core port.
@@ -56,9 +56,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from host.debugger.disasm import byte_reader, disassemble
+from host.debugger.disasm import byte_reader, disassemble, instruction_bytes
 from host.input_state import InputState
-from host.key_names import KEY_NAME_TO_CELL
+from host.key_names import JOY_FUNCTION_BITS, KEY_NAME_TO_CELL
 from host.media import DiskFiles
 from host.screenshot import encode_rgb24_png, scale_rgb24
 from host.watch import watch_kind_exact
@@ -103,7 +103,7 @@ _STOP_TO_REASON: dict[int, PauseReason] = {
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
 
-# JSON-RPC / emulator error codes (see specs/socket-rpc).
+# JSON-RPC / emulator error codes (see openspec/specs/remote-socket-rpc).
 ERR_PARSE = -32700
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
@@ -166,10 +166,12 @@ class PauseState:
         self.reason: str = PauseReason.USER_REQUEST
 
     def set_paused(self, reason: str) -> None:
+        """Record a pause and why."""
         self.paused = True
         self.reason = reason
 
     def set_running(self) -> None:
+        """Record that emulation runs."""
         self.paused = False
 
 
@@ -203,24 +205,18 @@ class DebugServer:
         # emulator thread before _pause_event is set, read on the socket
         # thread after the wait, so the socket thread never calls the core.
         self._last_pause: dict[str, Any] = {}
-        # Breakpoint / watchpoint registries (id -> spec), owned here so the RPC
-        # surface is decoupled from the interactive debugger's REPL state.
+        # The RPC breakpoint / watchpoint ids (id -> spec). The core's set,
+        # shared with the command line and the REPL, is the source of truth:
+        # the methods add or remove only their own entry there.
         self._breakpoints: dict[int, int] = {}
         self._watchpoints: dict[int, tuple[int, int]] = {}
         self._next_bp_id = 0
         self._next_wp_id = 0
-        # Desired joystick state per port (1, 2): direction/trigger booleans.
-        self._joy: dict[int, dict[str, bool]] = {
-            1: _blank_joy_state(),
-            2: _blank_joy_state(),
-        }
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
-        # The frontend's per-frame input accumulator, when one runs (set by
-        # frontend.sdl2_frontend.run). Injected input goes to it too, so the
-        # next step_frame keeps it.
         # Where injected input is built: the frontend's own builder when one
-        # runs (it replaces this), so injection carries into its next frame.
+        # runs (frontend.sdl2_frontend.run replaces this), so injection carries
+        # into its next frame.
         self.input_target: InputState = InputState()
         self._register_handlers()
 
@@ -228,14 +224,17 @@ class DebugServer:
 
     @property
     def pause_state(self) -> PauseState:
+        """The pause flag and reason."""
         return self._pause_state
 
     @property
     def machine(self) -> CoreApi:
+        """The core the server drives."""
         return self._machine
 
     @property
     def disk_files(self) -> DiskFiles:
+        """The file of each drive's disk."""
         return self._disk_files
 
     def apply_injected_input(self) -> None:
@@ -276,7 +275,8 @@ class DebugServer:
     def on_core_stop(self, stop_reason: int) -> None:
         """Pause for a core stop (a nonzero ``FrameOutput.stop_reason``).
         Runs on the emulator thread, after ``step_frame`` returned."""
-        self.on_pause(_STOP_TO_REASON[stop_reason], self._machine.cpu_registers().PC)
+        reason = _STOP_TO_REASON.get(stop_reason, PauseReason.USER_REQUEST)
+        self.on_pause(reason, self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
         """Record the pause, wake cpu.continue_sync and push a notification.
@@ -340,10 +340,10 @@ class DebugServer:
         try:
             req = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         if not isinstance(req, dict):
-            self._send(conn, {"id": None, "error": {"code": ERR_PARSE, "message": "parse error"}})
+            self._send(conn, self._err(None, ERR_PARSE, "parse error"))
             return
         # cpu.continue_sync blocks until the next pause; handle it on this socket
         # thread (never the emulator thread) so the machine keeps running.
@@ -356,13 +356,7 @@ class DebugServer:
         if done.wait(timeout=_DISPATCH_TIMEOUT_S) and result_box:
             self._send(conn, result_box[0])
         else:
-            self._send(
-                conn,
-                {
-                    "id": req.get("id"),
-                    "error": {"code": ERR_INTERNAL, "message": "dispatch timeout"},
-                },
-            )
+            self._send(conn, self._err(req.get("id"), ERR_INTERNAL, "dispatch timeout"))
 
     # -- main-thread dispatch ----------------------------------------------
 
@@ -385,23 +379,16 @@ class DebugServer:
         method = req.get("method", "")
         params = req.get("params") or {}
         if not isinstance(params, dict):
-            return {
-                "id": req_id,
-                "error": {"code": ERR_INVALID_PARAMS, "message": "params must be an object"},
-            }
+            return self._err(req_id, ERR_INVALID_PARAMS, "params must be an object")
         handler = self._handlers.get(method)
         if handler is None:
-            return {
-                "id": req_id,
-                "error": {"code": ERR_METHOD_NOT_FOUND, "message": f"method not found: {method}"},
-            }
+            return self._err(req_id, ERR_METHOD_NOT_FOUND, f"method not found: {method}")
         try:
-            result = handler(self, params)
-            return {"id": req_id, "result": result}
+            return self._ok(req_id, handler(self, params))
         except RpcError as exc:
-            return {"id": req_id, "error": {"code": exc.code, "message": exc.message}}
+            return self._err(req_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 — surface any handler bug as internal error
-            return {"id": req_id, "error": {"code": ERR_INTERNAL, "message": str(exc)}}
+            return self._err(req_id, ERR_INTERNAL, str(exc))
 
     # -- send helpers -------------------------------------------------------
 
@@ -435,6 +422,7 @@ class DebugServer:
         }
 
     def require_paused(self) -> None:
+        """Raise an RpcError unless the emulator is paused."""
         if not self._pause_state.paused:
             raise RpcError(ERR_NEED_PAUSED, "emulator must be paused for this operation")
 
@@ -491,53 +479,81 @@ class DebugServer:
         self._key_releases = still_pending
 
     def schedule_key_release(self, row: int, bit: int, duration_ms: int) -> None:
+        """Release a key matrix cell after `duration_ms`, from drain()."""
         self._key_releases.append((time.monotonic() + duration_ms / 1000.0, row, bit))
 
     def alloc_breakpoint(self, address: int) -> int:
-        """Add a breakpoint and return its id. Raises an invalid-params
-        RpcError, keeping the others, when the core rejects it (a fifth
-        one)."""
+        """Add a breakpoint to the core's set and return its id. The core's
+        set is shared with the command line and the REPL, so only this
+        address is added. Raises an invalid-params RpcError, keeping the
+        set, when the core rejects it (a fifth one)."""
+        addrs = list(self._machine.breakpoints())
+        if address not in addrs:
+            addrs.append(address)
+        if self._machine.set_breakpoints(addrs) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         bp_id = self._next_bp_id
         self._next_bp_id += 1
         self._breakpoints[bp_id] = address
-        if self._machine.set_breakpoints(list(self._breakpoints.values())) != STATUS_OK:
-            del self._breakpoints[bp_id]
-            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return bp_id
 
     def remove_breakpoint(self, bp_id: int) -> bool:
+        """Drop the id. Its address leaves the core's set unless another id
+        holds it."""
         if bp_id not in self._breakpoints:
             return False
-        del self._breakpoints[bp_id]
-        self._machine.set_breakpoints(list(self._breakpoints.values()))
+        address = self._breakpoints.pop(bp_id)
+        if address not in self._breakpoints.values():
+            addrs = [a for a in self._machine.breakpoints() if a != address]
+            self._machine.set_breakpoints(addrs)
         return True
 
     def alloc_watchpoint(self, address: int, kind: int) -> int:
-        """Add a watchpoint and return its id. Raises an invalid-params
-        RpcError, keeping the others, when the core rejects it (a fifth
-        one)."""
+        """Add a watchpoint to the core's set and return its id. The core
+        keeps one kind per address, so a set at a watched address ORs `kind`
+        into it. Raises an invalid-params RpcError, keeping the set, when
+        the core rejects it (a fifth one)."""
+        entries: list[tuple[int, int]] = []
+        found = False
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                entries.append((addr, old_kind | kind))
+                found = True
+            else:
+                entries.append((addr, old_kind))
+        if not found:
+            entries.append((address, kind))
+        if self._machine.set_watchpoints(entries) != STATUS_OK:
+            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         wp_id = self._next_wp_id
         self._next_wp_id += 1
         self._watchpoints[wp_id] = (address, kind)
-        if self._machine.set_watchpoints(list(self._watchpoints.values())) != STATUS_OK:
-            del self._watchpoints[wp_id]
-            raise RpcError(ERR_INVALID_PARAMS, self._machine.last_error_text().decode("utf-8"))
         return wp_id
 
     def remove_watchpoint(self, wp_id: int) -> bool:
+        """Drop the id. The core's kind at its address loses the bits no
+        other id at that address holds; an address with no bit left goes."""
         if wp_id not in self._watchpoints:
             return False
-        del self._watchpoints[wp_id]
-        self._machine.set_watchpoints(list(self._watchpoints.values()))
+        address, kind = self._watchpoints.pop(wp_id)
+        keep = 0
+        for addr, other_kind in self._watchpoints.values():
+            if addr == address:
+                keep |= other_kind
+        drop = kind & ~keep
+        entries: list[tuple[int, int]] = []
+        for addr, old_kind in self._machine.watchpoints():
+            if addr == address:
+                old_kind &= ~drop
+            if old_kind != 0:
+                entries.append((addr, old_kind))
+        self._machine.set_watchpoints(entries)
         return True
 
     @property
     def breakpoints(self) -> dict[int, int]:
+        """The RPC breakpoints: id -> address."""
         return self._breakpoints
-
-    @property
-    def joystick_state(self) -> dict[int, dict[str, bool]]:
-        return self._joy
 
     # -- handler registration ----------------------------------------------
 
@@ -633,9 +649,11 @@ def _h_remove_breakpoint(server: DebugServer, params: dict[str, Any]) -> dict[st
 
 
 def _h_list_breakpoints(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
+    # active: the core still holds the address (the REPL may have removed it).
+    in_core = server.machine.breakpoints()
     return {
         "breakpoints": [
-            {"id": i, "address": hex16(a), "active": True}
+            {"id": i, "address": hex16(a), "active": a in in_core}
             for i, a in sorted(server.breakpoints.items())
         ]
     }
@@ -695,7 +713,7 @@ def _h_memory_disassemble(server: DebugServer, params: dict[str, Any]) -> dict[s
     cur = addr
     for _ in range(count):
         mnemonic, size = disassemble(read, cur)
-        raw = _fmt_bytes(read((cur + i) & 0xFFFF) for i in range(size))
+        raw = instruction_bytes(read, cur, size)
         instructions.append({"address": hex16(cur), "bytes": raw, "mnemonic": mnemonic})
         cur = (cur + size) & 0xFFFF
     return {"instructions": instructions}
@@ -749,9 +767,9 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
+    state: dict[str, bool] = {}
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
+    for name, bit in JOY_FUNCTION_BITS.items():
         pressed = bool(params.get(name, False))
         state[name] = pressed
         if pressed:
@@ -759,17 +777,15 @@ def _h_input_joystick(server: DebugServer, params: dict[str, Any]) -> dict[str, 
         else:
             server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
-    return {"port": port, "state": dict(state)}
+    return {"port": port, "state": state}
 
 
 def _h_input_joystick_release(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
     port = _require_int(params, "port", default=1)
     if port not in (1, 2):
         raise RpcError(ERR_INVALID_PARAMS, "port must be 1 or 2")
-    state = server.joystick_state[port]
     port_idx = port - 1
-    for name, bit in _JOY_BITS.items():
-        state[name] = False
+    for bit in JOY_FUNCTION_BITS.values():
         server.input_target.joystick_button_up(port_idx, bit)
     server.apply_injected_input()
     return {"port": port, "released": True}
@@ -839,23 +855,11 @@ def _h_fdd_swap(server: DebugServer, params: dict[str, Any]) -> dict[str, Any]:
 # Handler helpers
 # ---------------------------------------------------------------------------
 
-# Per-joystick direction/trigger bit within the 6-bit active-low port state.
-_JOY_BITS: dict[str, int] = {
-    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
-}
-
-
-
-
 class _Missing:
     pass
 
 
 _MISSING = _Missing()
-
-
-def _blank_joy_state() -> dict[str, bool]:
-    return {name: False for name in _JOY_BITS}
 
 
 def _set_key(server: DebugServer, row: int, bit: int, pressed: bool) -> None:

@@ -16,7 +16,7 @@ def make_cpu(code: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(code + [0] * (32768 - len(code))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 

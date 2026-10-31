@@ -217,7 +217,7 @@ def test_the_shared_name_tables_keep_the_trace_text() -> None:
 
 
 def test_the_shared_name_tables_keep_the_debugger_text() -> None:
-    from host.debugger.prompt import _decode_cmr
+    from host.debugger.vdp_view import decode_cmr
 
     old_log = {0: "IMP", 1: "AND", 2: "OR", 3: "XOR", 4: "NOT"}
     for value in range(256):
@@ -225,4 +225,4 @@ def test_the_shared_name_tables_keep_the_debugger_text() -> None:
         cmd = _OLD_CMD_NAMES[cmd_code] if _OLD_CMD_NAMES[cmd_code] != "????" \
             else f"CMD{cmd_code:X}"
         log = old_log.get(log_code, f"LOG{log_code}") + ("/T" if value & 0x08 else "")
-        assert _decode_cmr(value) == (cmd, log)
+        assert decode_cmr(value) == (cmd, log)

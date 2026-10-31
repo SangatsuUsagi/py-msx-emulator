@@ -6,11 +6,17 @@ from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Protocol, TypedDict, cast
 
 from msx.boundary import (
+    ASCII8_SRAM2_SIZE,
+    ASCII8_SRAM8_SIZE,
+    ASCII16_SRAM2_SIZE,
+    ASCII16_SRAM8_SIZE,
     BANK_NONE,
     BANK_SRAM_PAGE,
     BANK_WINDOW_16K,
     BANK_WINDOWS_8K,
+    GAME_MASTER2_SRAM_SIZE,
     HALNOTE_SRAM_SIZE,
+    KOEI_SRAM32_SIZE,
     TRACE_EVENT_MAP_BANK,
     TRACE_MAPPER,
     WINDOW_NONE,
@@ -101,14 +107,14 @@ class MapperKind(str, Enum):
     SCC_I_CART = "scc_i_cart"
     HALNOTE = "halnote"
     # FmPac (msx/fmpac.py) structurally satisfies Mapper (it's assignable to
-    # Memory._mapper2, see machine_loader.py), so it needs a kind too --
+    # Memory.mapper2, see machine_loader.py), so it needs a kind too --
     # msx/state.py's mapper2_kind identity check covers slot 2 (Memory.
-    # _mapper2/_mapper2_subslots) the same way mapper_kind already covers
-    # slot 1 (Memory._mapper), see openspec/changes/
+    # mapper2/mapper2_subslots) the same way mapper_kind already covers
+    # slot 1 (Memory.mapper1), see openspec/changes/
     # generalize-slot2-mapper-state.
     FMPAC = "fmpac"
     # RamMapper (msx/ram_mapper.py) structurally satisfies Mapper so it can be
-    # placed in Memory._mapper2_subslots (an expanded slot 2's --extension
+    # placed in Memory.mapper2_subslots (an expanded slot 2's --extension
     # memory_512k RAM cartridge) and covered by the same generic slot-2
     # save-state mechanism as every other slot-2 device kind above.
     RAM_MAPPER = "ram_mapper"
@@ -171,7 +177,6 @@ class Mapper(Protocol):
     # `apply_state(MapperState)`.
     def parse_state(self, obj: object, label: str) -> Mapping[str, object]: ...
     def apply_state(self, state: Mapping[str, object]) -> None: ...
-    def restore(self, state: dict[str, object]) -> None: ...
     def debug_bank(self, page: int) -> BankView: ...
     def reset(self) -> None: ...
     # The battery-backed SRAM the host persists, or None for a mapper without
@@ -285,12 +290,6 @@ class BankTracingMapper:
         """Overridden by every concrete subclass with its own state schema."""
         raise NotImplementedError
 
-    def restore(self, state: dict[str, object]) -> None:
-        """parse_state + apply_state in one call -- shared by every
-        BankTracingMapper subclass, since only parse_state/apply_state
-        themselves differ per mapper, never how restore composes them."""
-        self.apply_state(self.parse_state(state, "state"))
-
 
 _GM2_SRAM_HALVES: tuple[int, ...] = (0, 0x1000)
 
@@ -339,9 +338,6 @@ class _NoStateMapperMixin:
 
     def apply_state(self, state: Mapping[str, object]) -> None:
         pass
-
-    def restore(self, state: dict[str, object]) -> None:
-        self.apply_state(self.parse_state(state, "state"))
 
     def debug_bank(self, page: int) -> BankView:
         return NO_BANK
@@ -397,7 +393,7 @@ class _WindowedRomMapperMixin:
     """Shared page-resolution behaviour for a bank-switching ROM mapper with N
     fixed-size windows and a raw `_banks: list[int]` register per window.
 
-    Factors out what were previously separate, near-identical copies of
+    Holds the one copy of
     `_num_pages`/`_select_page`/`_sync_window`/`debug_bank` on
     Ascii8Mapper and Ascii16Mapper -- differing only by `_MAPPER_PAGE_SIZE`
     -- so the openMSX `RomBlocks::setRom` two-tier resolution rationale in
@@ -711,7 +707,7 @@ class Ascii8Sram2Mapper(Ascii8Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM2
-    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_SIZE: ClassVar[int] = ASCII8_SRAM2_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FF
     # Region bitmask of windows that may map SRAM: 0x8000 (1<<4) and 0xA000 (1<<5).
     _SRAM_PAGES: ClassVar[int] = 0x30
@@ -835,7 +831,7 @@ class Ascii8Sram8Mapper(Ascii8Sram2Mapper):
     """ASCII8 mapper + 8 KB battery-backed SRAM."""
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII8_SRAM8
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = ASCII8_SRAM8_SIZE
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
 
@@ -848,7 +844,7 @@ class KoeiSRAM32Mapper(Ascii8Sram2Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.KOEI_SRAM32
-    _SRAM_SIZE: ClassVar[int] = 32768
+    _SRAM_SIZE: ClassVar[int] = KOEI_SRAM32_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FFF
     _SRAM_PAGES: ClassVar[int] = 0x34
 
@@ -908,7 +904,7 @@ class GameMaster2Mapper(BankTracingMapper):
     # blank when it is not exactly `_SRAM_SIZE` bytes.
     sram: InitVar[bytes | bytearray | None] = None
     sram_image: SramImage = field(init=False, repr=False)
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = GAME_MASTER2_SRAM_SIZE
 
     # PORT-NOTE: `_banks`, `_window_is_sram` and `_window_sram_half` are all
     #   fixed length 4 (indexed by window 0-3) and never resized. `_banks`
@@ -1119,7 +1115,7 @@ class Ascii16Sram2Mapper(Ascii16Mapper):
     """
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM2
-    _SRAM_SIZE: ClassVar[int] = 2048
+    _SRAM_SIZE: ClassVar[int] = ASCII16_SRAM2_SIZE
     _SRAM_MASK: ClassVar[int] = 0x7FF
     _SRAM_SELECT: ClassVar[int] = 0x10
 
@@ -1238,7 +1234,7 @@ class Ascii16Sram8Mapper(Ascii16Sram2Mapper):
     """ASCII16 mapper + 8 KB battery-backed SRAM."""
 
     kind: ClassVar[MapperKind] = MapperKind.ASCII16_SRAM8
-    _SRAM_SIZE: ClassVar[int] = 8192
+    _SRAM_SIZE: ClassVar[int] = ASCII16_SRAM8_SIZE
     _SRAM_MASK: ClassVar[int] = 0x1FFF
 
 
@@ -1755,6 +1751,7 @@ _SCCI_RAM_BLOCKS = 8
 _SCCI_BANK_MASK = 0x07
 _SCCI_RAM_SIZE = _SCCI_RAM_BLOCKS * _PAGE_8K  # 64 KB
 _SCCI_SCC_WINDOW_LEN = 0x800  # 0x9800-0x9FFF or 0xB800-0xBFFF
+_SCCI_NO_WINDOW = 0x10000  # above every CPU address, so no access matches
 
 
 class SCCICartState(TypedDict):
@@ -1811,9 +1808,9 @@ class SCCICart(BankTracingMapper):
     _window_base: list[int] = field(
         default_factory=lambda: [0, 0, 0, 0], init=False, repr=False
     )
-    # None when the SCC register window is inactive; otherwise the window's
-    # base address (0x9800 classic, 0xB800 Plus).
-    _scc_window_base: int | None = field(default=None, init=False, repr=False)
+    # The SCC register window's base address (0x9800 classic, 0xB800 Plus), or
+    # _SCCI_NO_WINDOW when it is inactive.
+    _scc_window_base: int = field(default=_SCCI_NO_WINDOW, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for window in range(4):
@@ -1825,7 +1822,7 @@ class SCCICart(BankTracingMapper):
 
     def read(self, addr: int) -> int:
         base = self._scc_window_base
-        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+        if base <= addr < base + _SCCI_SCC_WINDOW_LEN:
             return self.scc.read(addr - base)
         if 0x4000 <= addr < 0xC000:
             window = (addr >> 13) - 2
@@ -1856,7 +1853,7 @@ class SCCICart(BankTracingMapper):
             _trace_bank(self, window, old, new, addr)
             return
         base = self._scc_window_base
-        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+        if base <= addr < base + _SCCI_SCC_WINDOW_LEN:
             self.scc.write(addr - base, value)
         # Writes outside all of the above zones are ignored.
 
@@ -1885,7 +1882,7 @@ class SCCICart(BankTracingMapper):
         elif not (self._mode_register & 0x20) and ((self._banks[2] & 0x3F) == 0x3F):
             self._scc_window_base = 0x9800
         else:
-            self._scc_window_base = None
+            self._scc_window_base = _SCCI_NO_WINDOW
 
     def reset(self) -> None:
         """Restore the four bank registers and the mode register to their
@@ -1894,8 +1891,7 @@ class SCCICart(BankTracingMapper):
         window base from the freshly-reset banks, then push mode register
         0 through _set_mode_register -- which itself re-derives Compatible
         mode/the inactive SCC window and pushes scc.set_mode(False), so no
-        separate re-sync step is needed the way resync_scc_mode() used to
-        provide when reset() was a no-op."""
+        separate re-sync step is needed."""
         self._banks[:] = [0, 1, 2, 3]
         for window in range(4):
             self._sync_window_base(window)

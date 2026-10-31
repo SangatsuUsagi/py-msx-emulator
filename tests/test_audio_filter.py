@@ -4,13 +4,13 @@ import math
 import struct
 
 from frontend.audio_filter import _BUTTERWORTH_Q, _DEFAULT_CUTOFF_HZ, BiquadLowPass
-from msx.psg import SAMPLE_RATE
+from msx.boundary import AUDIO_SAMPLE_RATE
 
 
 def _sine(freq: float, n: int, amp: int = 30000) -> bytes:
     return struct.pack(
         "<%dh" % n,
-        *(int(amp * math.sin(2 * math.pi * freq * i / SAMPLE_RATE)) for i in range(n)),
+        *(int(amp * math.sin(2 * math.pi * freq * i / AUDIO_SAMPLE_RATE)) for i in range(n)),
     )
 
 

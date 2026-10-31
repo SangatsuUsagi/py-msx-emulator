@@ -253,7 +253,7 @@ def test_unmodified_file_round_trips(tmp_path, monkeypatch, factory) -> None:
 
 def _producer_fingerprint(machine) -> tuple:
     return _fingerprint(machine) + (
-        dict(machine.memory._mapper.snapshot()),
+        dict(machine.memory.mapper1.snapshot()),
         dict(machine.psg.snapshot_synth()),
     )
 
@@ -274,7 +274,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
     machine = make_machine(_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     state_path = _edited(tmp_path, monkeypatch, machine, edit)
     _disturb(machine)
-    machine.memory._mapper.sram_image.write(0, 0x5A)
+    machine.memory.mapper1.sram_image.write(0, 0x5A)
     before = _producer_fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
@@ -282,7 +282,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
 
     assert exc_info.value.producer == producer
     assert _producer_fingerprint(machine) == before
-    assert machine.memory._mapper.sram_image.read(0) == 0x5A
+    assert machine.memory.mapper1.sram_image.read(0) == 0x5A
 
 
 def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:
@@ -369,7 +369,7 @@ def test_validate_snapshot_pairs_each_parsed_state_with_its_producer(mapper) -> 
     parsed = _validate_snapshot(machine, snap)
 
     assert [producer for producer, _ in parsed.mappers] == [
-        machine.memory._mapper, machine.memory._mapper2,
+        machine.memory.mapper1, machine.memory.mapper2,
     ]
     assert dict(parsed.psg_synth) == dict(machine.psg.snapshot_synth())
     if machine.scc is None:
@@ -378,3 +378,36 @@ def test_validate_snapshot_pairs_each_parsed_state_with_its_producer(mapper) -> 
         assert dict(parsed.scc) == dict(machine.scc.snapshot())
     assert parsed.fdc is None
     assert _producer_fingerprint(machine) == before  # validating writes nothing
+
+
+def test_the_ei_delay_survives_a_save_and_load() -> None:
+    # machine-state "The EI delay survives a save and load": EI at 0x0000,
+    # NOP at 0x0001, IM 1. After EI with an interrupt pending, the next
+    # step runs the NOP; only the step after it accepts the interrupt.
+    from msx import state
+
+    rom = bytes([0xFB, 0x00, 0x00]) + _ROM[3:]
+    saved = make_machine(rom)
+    saved.cpu.im = 1
+    saved.cpu.step()  # EI
+    saved.cpu.int_pending = True
+    assert saved.cpu.ei_pending
+
+    loaded = make_machine(rom)
+    state.load_state(loaded, state.save_state(saved))
+    assert loaded.cpu.ei_pending
+    loaded.cpu.step()
+    assert loaded.cpu.registers.PC == 0x0002  # the NOP ran
+    loaded.cpu.step()
+    assert loaded.cpu.registers.PC == 0x0038  # then RST 38H
+
+
+def test_a_missing_ei_pending_is_rejected(tmp_path, monkeypatch) -> None:
+    # machine-state "A missing ei_pending is rejected".
+    machine = make_machine(_ROM)
+    state_path = _edited(tmp_path, monkeypatch, machine, _pop("cpu.ei_pending"))
+    _disturb(machine)
+    before = _fingerprint(machine)
+    with pytest.raises(StateLoadError, match="ei_pending"):
+        load_state_file(machine, state_path)
+    assert _fingerprint(machine) == before

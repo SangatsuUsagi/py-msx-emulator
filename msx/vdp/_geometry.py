@@ -1,13 +1,13 @@
 """Shared display-output geometry: constant frame height and border padding.
 
-Every renderer emits a constant `OUTPUT_H`-line frame so the displayed image
+Every renderer emits a constant `OUTPUT_HEIGHT`-line frame so the displayed image
 keeps a stable 4:3 geometry regardless of R#9 LN (192 active lines when LN=0,
-212 when LN=1). A native-height frame shorter than `OUTPUT_H` is centred, with
+212 when LN=1). A native-height frame shorter than `OUTPUT_HEIGHT` is centred, with
 `pad_rows(h)` border-coloured rows added above and below.
 
 Both `msx/vdp/renderer.py` (TMS9918A) and `msx/vdp/v9938_renderer.py` (V9938)
 share these definitions so the two output paths cannot diverge; the SDL2
-frontend reads `OUTPUT_H` for its fixed window/texture height.
+frontend reads `OUTPUT_HEIGHT` for its fixed window/texture height.
 
 Also the raster timing both VDPs share: `CYCLES_PER_LINE` Z80 T-states per
 scanline and the per-standard line counts, from which the machine's
@@ -18,7 +18,6 @@ from __future__ import annotations
 from msx.boundary import OUTPUT_HEIGHT, VideoStandard
 
 ACTIVE_H = 192  # TMS9918A active height (also V9938 with R#9 LN=0)
-OUTPUT_H = OUTPUT_HEIGHT  # constant emitted frame height (V9938 LN=1 native height)
 
 CYCLES_PER_LINE = 228  # Z80 T-states per scanline (TMS9918A / V99x8 raster)
 NTSC_LINES_PER_FRAME = 262
@@ -46,15 +45,15 @@ def cycles_per_frame(standard: VideoStandard) -> int:
 
 
 def pad_rows(native_h: int) -> int:
-    """Border rows to add above (and below) a `native_h`-line frame to reach OUTPUT_H."""
-    return (OUTPUT_H - native_h) // 2
+    """Border rows to add above (and below) a `native_h`-line frame to reach OUTPUT_HEIGHT."""
+    return (OUTPUT_HEIGHT - native_h) // 2
 
 
 def pad_to_output_height(buf: bytearray, h: int, w: int, border: bytes) -> bytearray:
-    """Centre a native-height frame buffer in a constant `OUTPUT_H`-row buffer.
+    """Centre a native-height frame buffer in a constant `OUTPUT_HEIGHT`-row buffer.
 
-    Returns `buf` unchanged when `h >= OUTPUT_H` (already full height). Otherwise
-    builds a `w × OUTPUT_H` buffer filled by repeating `border` and copies `buf` into the
+    Returns `buf` unchanged when `h >= OUTPUT_HEIGHT` (already full height). Otherwise
+    builds a `w × OUTPUT_HEIGHT` buffer filled by repeating `border` and copies `buf` into the
     centre rows.
 
     Args:
@@ -66,11 +65,11 @@ def pad_to_output_height(buf: bytearray, h: int, w: int, border: bytes) -> bytea
             its length).
 
     Returns:
-        A bytearray of length `w * OUTPUT_H`.
+        A bytearray of length `w * OUTPUT_HEIGHT`.
     """
-    if h >= OUTPUT_H:
+    if h >= OUTPUT_HEIGHT:
         return buf
-    out = bytearray(border * (w * OUTPUT_H // len(border)))
+    out = bytearray(border * (w * OUTPUT_HEIGHT // len(border)))
     top = pad_rows(h) * w
     assert len(buf) == w * h  # simple slice-assign below would silently resize otherwise
     out[top:top + w * h] = buf

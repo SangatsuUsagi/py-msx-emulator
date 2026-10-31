@@ -12,7 +12,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
@@ -21,7 +21,7 @@ def test_ldi() -> None:
     rom = bytes([0xED, 0xA0] + [0] * 32766)
     ram = bytearray(32768)
     ram[0x4000] = 0xAB  # source at 0xC000: addr - 0x8000 = 0x4000
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.DE = 0xC010
@@ -40,7 +40,7 @@ def test_ldir() -> None:
     ram[0x4000] = 0x01  # 0xC000: addr - 0x8000
     ram[0x4001] = 0x02
     ram[0x4002] = 0x03
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.DE = 0xC010
@@ -98,7 +98,7 @@ def test_ldd() -> None:
     rom = bytes([0xED, 0xA8] + [0] * 32766)
     ram = bytearray(32768)
     ram[0x4005] = 0x55  # 0xC005: addr - 0x8000
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC005
     cpu.registers.DE = 0xC010
@@ -114,7 +114,7 @@ def test_reti() -> None:
     ram = bytearray(32768)
     ram[0x7FFE] = 0x00  # 0xFFFE: addr - 0x8000
     ram[0x7FFF] = 0x10
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE
     cpu.iff2 = True
@@ -170,7 +170,7 @@ def test_lddr_copies_backward_and_clears_pv() -> None:
     ram[0x4000] = 0x01  # 0xC000
     ram[0x4001] = 0x02  # 0xC001
     ram[0x4002] = 0x03  # 0xC002
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC002
     cpu.registers.DE = 0xC012
@@ -194,7 +194,7 @@ def test_cpir_finds_match_sets_zero() -> None:
     ram[0x4000] = 0x01
     ram[0x4001] = 0x02
     ram[0x4002] = 0x03  # match is the last byte scanned
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.A = 0x03
     cpu.registers.HL = 0xC000
@@ -215,7 +215,7 @@ def test_cpdr_finds_match_scanning_down() -> None:
     ram[0x4000] = 0x01  # match is the last byte scanned (lowest address)
     ram[0x4001] = 0x02
     ram[0x4002] = 0x03
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.A = 0x01
     cpu.registers.HL = 0xC002
@@ -232,7 +232,7 @@ def test_cpdr_finds_match_scanning_down() -> None:
 def test_inir_loops_until_b_zero() -> None:
     rom = bytes([0xED, 0xB2] + [0] * 32766)  # INIR
     ram = bytearray(32768)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.read_port = lambda port: 0xAA
     cpu.registers.B = 0x03
@@ -255,7 +255,7 @@ def test_otir_loops_until_b_zero() -> None:
     ram[0x4000] = 0x11
     ram[0x4001] = 0x22
     ram[0x4002] = 0x33
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.write_port = lambda port, value: writes.append((port, value))
     cpu.registers.B = 0x03
@@ -378,7 +378,7 @@ def test_retn_pops_pc_and_restores_iff1() -> None:
     ram = bytearray(32768)
     ram[0x7FFE] = 0x00  # 0xFFFE
     ram[0x7FFF] = 0x20  # 0xFFFF
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE
     cpu.iff2 = True
@@ -462,7 +462,7 @@ def test_rrd_rotates_nibbles() -> None:
     rom = bytes([0xED, 0x67] + [0] * 32766)  # RRD
     ram = bytearray(32768)
     ram[0x4000] = 0x34  # (0xC000)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.A = 0x12
@@ -476,7 +476,7 @@ def test_rld_rotates_nibbles() -> None:
     rom = bytes([0xED, 0x6F] + [0] * 32766)  # RLD
     ram = bytearray(32768)
     ram[0x4000] = 0x34  # (0xC000)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.HL = 0xC000
     cpu.registers.A = 0x12
@@ -550,7 +550,7 @@ def test_ld_a_r_iff2_false_clears_pv() -> None:
 
 def _store_pair_direct(op: int, nn: int, pair_setup) -> tuple[Z80, Memory]:
     rom = bytes([0xED, op, nn & 0xFF, (nn >> 8) & 0xFF] + [0] * 32764)
-    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=bytearray(32768), mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     pair_setup(cpu.registers)
     cpu.step()
@@ -587,7 +587,7 @@ def _load_pair_direct(op: int, nn: int, lo: int, hi: int) -> Z80:
     ram = bytearray(32768)
     ram[(nn - 0x8000) & 0x7FFF] = lo
     ram[(nn - 0x8000 + 1) & 0x7FFF] = hi
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.step()
     return cpu
@@ -663,7 +663,7 @@ def test_outi_sets_pv_without_carry_or_half() -> None:
     rom = bytes([0xED, 0xA3] + [0] * 32766)  # OUTI
     ram = bytearray(32768)
     ram[0x4000] = 0x80  # (0xC000)
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     writes: list[tuple[int, int]] = []
     cpu.write_port = lambda port, value: writes.append((port, value))

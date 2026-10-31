@@ -29,7 +29,7 @@ __all__ = ["FmPac", "FmPacState"]
 
 
 class FmPacState(TypedDict):
-    """Save-state schema for FmPac.snapshot()/FmPac.restore().
+    """Save-state schema for FmPac.snapshot()/FmPac.apply_state().
 
     Nests the carried OPLL's own OpllState, so restoring a FmPacState fully
     reinstates the device's persistent state (SRAM/bank/enable/magic
@@ -47,6 +47,8 @@ class FmPacState(TypedDict):
 _WINDOW_BASE = 0x4000
 _WINDOW_SIZE = 0x4000
 _BANK_SIZE = 0x4000
+# The ROM is four 16 KB banks; the machine build rejects another size.
+FMPAC_ROM_SIZE = 4 * _BANK_SIZE
 
 # Window-relative (address & 0x3FFF) offsets of the fixed registers.
 _OFF_MAGIC_LO = 0x1FFE
@@ -237,13 +239,6 @@ class FmPac:
             "r1fff": check_int(d["r1fff"], f"{label}.r1fff", 0, 0xFF),
             "opll": self.opll.parse_state(d["opll"], f"{label}.opll"),
         }
-
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore device state produced by snapshot(), including the
-        carried OPLL's own state. Parses the whole object first, so a
-        rejected state leaves the device and its OPLL unchanged.
-        """
-        self.apply_state(self.parse_state(state, "state"))
 
     def apply_state(self, state: Mapping[str, object]) -> None:
         """Assign an already-parsed FmPacState (see parse_state), including

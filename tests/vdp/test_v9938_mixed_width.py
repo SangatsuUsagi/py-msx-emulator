@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import random
 
+from msx.boundary import OUTPUT_HEIGHT
 from msx.screenshot import render_current_rgb24
 from msx.vdp import v9938_renderer
-from msx.vdp._geometry import OUTPUT_H
 from msx.vdp._v9938_defs import _RegChange
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
@@ -67,7 +67,7 @@ _END = _PAD + 192
 def test_wide_to_narrow_switch_renders_a_512_wide_frame() -> None:
     out = render_frame(_mixed(_G6, _G4))
 
-    assert len(out) == 512 * OUTPUT_H
+    assert len(out) == 512 * OUTPUT_HEIGHT
     assert _rows(out, 512, _PAD, _SPLIT) == _rows(_single(_G6), 512, _PAD, _SPLIT)
     assert _rows(out, 512, _SPLIT, _END) == _doubled(_rows(_single(_G4), 256, _SPLIT, _END))
 
@@ -75,7 +75,7 @@ def test_wide_to_narrow_switch_renders_a_512_wide_frame() -> None:
 def test_narrow_to_wide_switch_keeps_each_bands_rows() -> None:
     out = render_frame(_mixed(_G4, _G6))
 
-    assert len(out) == 512 * OUTPUT_H
+    assert len(out) == 512 * OUTPUT_HEIGHT
     assert _rows(out, 512, _PAD, _SPLIT) == _doubled(_rows(_single(_G4), 256, _PAD, _SPLIT))
     assert _rows(out, 512, _SPLIT, _END) == _rows(_single(_G6), 512, _SPLIT, _END)
 
@@ -83,7 +83,7 @@ def test_narrow_to_wide_switch_keeps_each_bands_rows() -> None:
 def test_rgb24_conversion_of_a_mixed_frame_has_the_frame_width() -> None:
     vdp = _mixed(_G6, _G4)
     rgb = vdp.to_rgb24(render_frame(vdp))
-    assert len(rgb) == 512 * OUTPUT_H * 3
+    assert len(rgb) == 512 * OUTPUT_HEIGHT * 3
 
 
 def test_sprite_passes_do_not_span_a_width_change(monkeypatch) -> None:
@@ -105,7 +105,7 @@ def test_sprite_passes_do_not_span_a_width_change(monkeypatch) -> None:
 def test_screenshot_reports_the_rendered_frames_width() -> None:
     vdp = _mixed(_G6, _G4)  # live registers select the 256-dot GRAPHIC 4
     rgb, width, height = render_current_rgb24(vdp)
-    assert (width, height) == (512, OUTPUT_H)
+    assert (width, height) == (512, OUTPUT_HEIGHT)
     assert len(rgb) == width * height * 3
 
 
@@ -114,7 +114,7 @@ def test_frame_without_a_width_change_is_unchanged() -> None:
     vdp.regs[7] = 0x05
     vdp._reg_write_log.append(_RegChange(50, 7, 0x05))
     out = render_frame(vdp)
-    assert len(out) == 256 * OUTPUT_H
+    assert len(out) == 256 * OUTPUT_HEIGHT
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ def test_render_status_accumulates_across_runs(monkeypatch) -> None:
 def test_single_run_banded_frame_has_one_sprite_pass_over_the_frame(monkeypatch) -> None:
     calls = _spy_sprite_passes(monkeypatch)
     out = render_frame(_banded(_G4, [(_CHANGE_LINE, 7, 0x05)]))
-    assert len(out) == 256 * OUTPUT_H
+    assert len(out) == 256 * OUTPUT_HEIGHT
     assert [(y0, y1) for _, y0, y1, *_ in calls] == [(0, 192)]
 
 
@@ -247,10 +247,10 @@ def test_mixed_frame_padding_rows_span_the_frame_width() -> None:
     vdp._reg_write_log.append(_RegChange(_CHANGE_LINE, 0, _G4))
     out = render_frame(vdp)
 
-    assert len(out) == 512 * OUTPUT_H
+    assert len(out) == 512 * OUTPUT_HEIGHT
     border = bytes([0x03]) * 512
     assert _rows(out, 512, 0, _PAD) == [border] * _PAD
-    assert _rows(out, 512, _END, OUTPUT_H) == [border] * (OUTPUT_H - _END)
+    assert _rows(out, 512, _END, OUTPUT_HEIGHT) == [border] * (OUTPUT_HEIGHT - _END)
 
 
 def test_display_adjust_uses_the_buffer_width_not_the_live_mode() -> None:

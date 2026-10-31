@@ -1,7 +1,10 @@
 """Tests for AY-3-8910 PSG synthesiser: tone, noise, envelope, mixer, generate_samples."""
 import struct
 
-from msx.psg import _VOL_TABLE, PSG, SAMPLES_PER_FRAME
+from msx.boundary import AUDIO_SAMPLE_RATE
+from msx.psg import _VOL_TABLE, PSG
+
+_SAMPLES_PER_FRAME = AUDIO_SAMPLE_RATE // 60  # an NTSC frame
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,10 +43,6 @@ def test_generate_samples_returns_bytearray() -> None:
     assert isinstance(psg.generate_samples(10), bytearray)
 
 
-def test_generate_samples_per_frame_constant() -> None:
-    assert SAMPLES_PER_FRAME == 735
-
-
 # ---------------------------------------------------------------------------
 # Tone channel
 # ---------------------------------------------------------------------------
@@ -66,7 +65,7 @@ def test_tone_produces_nonzero_output() -> None:
     _set_tone_period(psg, 0, 254)  # ≈ 440 Hz (A4) at PSG_CLOCK=223722
     psg.regs[7] = 0x3E  # tone A enabled only
     psg.regs[8] = 0x0F  # channel A max volume
-    buf = psg.generate_samples(SAMPLES_PER_FRAME)
+    buf = psg.generate_samples(_SAMPLES_PER_FRAME)
     samples = _samples_as_int16(buf)
     assert any(s > 0 for s in samples)
 
@@ -387,7 +386,7 @@ def test_440hz_tone_nonzero_and_transitions() -> None:
     _set_tone_period(psg, 0, 254)   # ≈ A4 at PSG_CLOCK=223722 Hz
     psg.regs[7] = 0x3E              # tone A enabled, noise disabled
     psg.regs[8] = 0x0F              # max volume (no envelope)
-    buf = psg.generate_samples(SAMPLES_PER_FRAME)
+    buf = psg.generate_samples(_SAMPLES_PER_FRAME)
     samples = _samples_as_int16(buf)
     # There must be both zero and non-zero samples (square wave transitions).
     assert any(s == 0 for s in samples)

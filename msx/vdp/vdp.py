@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from msx.boundary import (
+    OUTPUT_HEIGHT,
     TRACE_DEBUG,
     TRACE_EVENT_VDP_MODE_REG,
     TRACE_EVENT_VDP_PORT99,
@@ -12,7 +13,7 @@ from msx.boundary import (
 )
 from msx.clock import CoreClock
 from msx.vdp import renderer
-from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE
+from msx.vdp._geometry import ZERO_BYTE
 
 if TYPE_CHECKING:
     from msx.trace import TraceLog
@@ -52,8 +53,7 @@ class VdpDevice(Protocol):
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
-    Several callers (msx/machine.py, msx/state.py,
-    host/rpc_server.py, host/debugger/prompt.py, msx/machine_loader.py)
+    Core callers (msx/machine.py, msx/state.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
     `_reg_write_log`). For the Rust/C++ target of that narrowing pattern
@@ -111,13 +111,18 @@ def _channel_tables_indexed(lut16: list[bytes]) -> tuple[bytes, bytes, bytes]:
     """Three 256-byte (R, G, B) translate tables for a 16-entry RGB24 LUT.
 
     Table index i maps through (i & 0x0F), folding the 4-bit palette-index mask
-    into the table so bytes.translate needs no separate masking step.
+    into the table so bytes.translate needs no separate masking step: each
+    table is its 16 entries repeated 16 times.
     """
-    return (
-        bytes(lut16[i & 0x0F][0] for i in range(256)),
-        bytes(lut16[i & 0x0F][1] for i in range(256)),
-        bytes(lut16[i & 0x0F][2] for i in range(256)),
-    )
+    r = bytearray(16)
+    g = bytearray(16)
+    b = bytearray(16)
+    for i in range(16):
+        rgb = lut16[i]
+        r[i] = rgb[0]
+        g[i] = rgb[1]
+        b[i] = rgb[2]
+    return (bytes(r) * 16, bytes(g) * 16, bytes(b) * 16)
 
 
 def _translate_rgb24(src: bytearray, channels: tuple[bytes, bytes, bytes]) -> bytes:
@@ -222,10 +227,10 @@ class Rgb24RowCache:
         return rgb
 
     def frame(self, src: bytearray, channels: Channels) -> bytes:
-        """RGB24 bytes of all OUTPUT_H rows of `src` through `channels`. A
-        buffer that is not OUTPUT_H whole rows is converted without the memo."""
-        width = len(src) // OUTPUT_H
-        if width == 0 or width * OUTPUT_H != len(src):
+        """RGB24 bytes of all OUTPUT_HEIGHT rows of `src` through `channels`. A
+        buffer that is not OUTPUT_HEIGHT whole rows is converted without the memo."""
+        width = len(src) // OUTPUT_HEIGHT
+        if width == 0 or width * OUTPUT_HEIGHT != len(src):
             return _translate_rgb24(src, channels)
         rows = self._rows_for(channels)
         parts: list[bytes] = []
@@ -287,7 +292,10 @@ class VDP:
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
     regs: list[int] = field(default_factory=lambda: [0] * 8)
     addr: int = 0
-    latch: int | None = None
+    # The control port's first byte, valid while _ctrl_pending is set (as in
+    # the V9938).
+    _first_byte: int = field(default=0, repr=False)
+    _ctrl_pending: bool = field(default=False, repr=False)
     status: int = 0
     read_buf: int = 0
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
@@ -335,12 +343,23 @@ class VDP:
     def frame_count(self, value: int) -> None:
         self._clock.frame = value
 
+    @property
+    def latch(self) -> int | None:
+        """Pending control-port first byte, or None: the snapshot's view."""
+        return self._first_byte if self._ctrl_pending else None
+
+    def restore_latch(self, value: int | None) -> None:
+        """Set the control-port latch from the snapshot's view."""
+        self._first_byte = value if value is not None else 0
+        self._ctrl_pending = value is not None
+
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
         self.regs = [0] * 8
         self.status = 0
         self.addr = 0
-        self.latch = None
+        self._first_byte = 0
+        self._ctrl_pending = False
         self.read_buf = 0
         self.irq = False
 
@@ -392,17 +411,18 @@ class VDP:
             self.addr = (self.addr + 1) & 0x3FFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
-            self.latch = None
+            self._ctrl_pending = False
         elif port == 0x99:
             trace = self._trace
             if trace is not None and trace.kinds & TRACE_VDP:
                 trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
-            if self.latch is None:
-                self.latch = value
+            if not self._ctrl_pending:
+                self._first_byte = value
+                self._ctrl_pending = True
                 self.addr = (self.addr & 0x3F00) | value
             else:
-                low = self.latch
-                self.latch = None
+                low = self._first_byte
+                self._ctrl_pending = False
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
@@ -433,7 +453,7 @@ class VDP:
             result = self.read_buf
             self.read_buf = self.vram[self.addr]
             self.addr = (self.addr + 1) & 0x3FFF
-            self.latch = None
+            self._ctrl_pending = False
             return result
         if port == 0x99:
             # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)
@@ -463,7 +483,7 @@ class VDP:
             # cleared when the status register is read).
             self.status &= 0x1F
             self.update_irq()     # F is now clear, so the /INT line drops
-            self.latch = None     # reading status resets the address latch
+            self._ctrl_pending = False     # reading status resets the address latch
             return result & 0xFF
         return 0xFF
 

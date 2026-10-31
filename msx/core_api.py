@@ -41,9 +41,15 @@ integer events (msx/boundary.py TraceEvent) that the host formats;
 set_trace_kinds returns STATUS_BAD_ARGUMENT for an unknown kind. The flag
 and the kinds are outside the saved state.
 
+Bytes. Every bytes value a member returns belongs to the caller. An adapter
+over a native core copies the core's buffer, whose life the header states
+(include/msx_core.h, machine-c-abi "The core owns the bytes it returns").
+
 Construction. msx.machine_loader.create_machine builds the machine and
 reports every rejected configuration as a status, a device size and an
 RTC start time included (allium/core-frontend.allium).
+msx.machine_loader.release_machine is its pair, the host's last use of the
+machine.
 """
 from __future__ import annotations
 
@@ -53,7 +59,6 @@ if TYPE_CHECKING:
     from msx.boundary import (
         CpuRegisters,
         FrameOutput,
-        MediaId,
         RgbFrame,
         SlotInfo,
         SlotLayout,
@@ -88,9 +93,9 @@ class CoreApi(Protocol):
 
     # -- media -------------------------------------------------------------------
 
-    def dirty_media(self) -> list[MediaId]: ...
-    def read_media(self, media_id: MediaId) -> bytes: ...  # b"" when absent
-    def mark_persisted(self, media_id: MediaId) -> int: ...
+    def dirty_media(self) -> list[int]: ...  # MediaId values, as plain ints
+    def read_media(self, media_id: int) -> bytes: ...  # b"" when absent
+    def mark_persisted(self, media_id: int) -> int: ...
     def mount_disk(self, drive: int, data: bytes, write_protected: bool) -> int: ...
     def eject_disk(self, drive: int) -> int: ...
     def disk_mounted(self, drive: int) -> bool: ...

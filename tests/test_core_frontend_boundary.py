@@ -264,14 +264,6 @@ def test_no_host_module_imports_a_core_constant_or_table() -> None:
     assert offenders == []
 
 
-def test_the_core_constants_equal_the_boundary() -> None:
-    from msx.boundary import AUDIO_SAMPLE_RATE, OUTPUT_HEIGHT
-    from msx.psg import SAMPLE_RATE
-    from msx.vdp._geometry import OUTPUT_H
-
-    assert (SAMPLE_RATE, OUTPUT_H) == (AUDIO_SAMPLE_RATE, OUTPUT_HEIGHT)
-
-
 def test_the_devices_take_their_media_size_from_the_boundary() -> None:
     # machine-core "The host takes no constant or table from a core module".
     from msx.boundary import FMPAC_SRAM_SIZE, HALNOTE_SRAM_SIZE, RTC_CMOS_SIZE
@@ -294,7 +286,7 @@ _HOST_IMPORTS: dict[str, frozenset[str] | None] = {
     "msx.boundary": None,
     "msx.core_api": None,
     "msx.input": frozenset({"InputFrame"}),
-    "msx.machine_loader": frozenset({"create_machine"}),
+    "msx.machine_loader": frozenset({"create_machine", "release_machine"}),
     "msx.machine_spec": None,
     "msx.machine_config": None,
 }

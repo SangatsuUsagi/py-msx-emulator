@@ -1,6 +1,6 @@
 """Tests for TEXT2 (SCREEN 0, WIDTH 80): MSX-DOS's MODE 80."""
 
-from host.debugger.prompt import _decode_screen_mode
+from host.debugger.vdp_view import decode_screen_mode
 from msx.vdp.v9938 import V9938
 from msx.vdp.v9938_renderer import render_frame
 from tests.render_geometry import active_region
@@ -117,13 +117,13 @@ def test_text2_212_line_variant_renders_only_top_half_of_final_row() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Debugger's `_decode_screen_mode`
+# Debugger's `decode_screen_mode`
 # ---------------------------------------------------------------------------
 
 
 def test_decode_screen_mode_text2() -> None:
     # Exact register values from the MSX-DOS `MODE 80` repro that surfaced this bug.
-    assert _decode_screen_mode(0x04, 0x70) == "SCREEN0 (TEXT2/80col)"
+    assert decode_screen_mode(0x04, 0x70) == "SCREEN0 (TEXT2/80col)"
 
 
 # ---------------------------------------------------------------------------

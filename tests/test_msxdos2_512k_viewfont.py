@@ -194,14 +194,14 @@ def test_build_machine_wires_ram_mapper_kernel_rom_and_view_font_device(
     )
     assert machine.memory.slot2_sub_slot_enabled is True
 
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert len(sub0.ram) == 512 * 1024
 
-    sub1 = machine.memory._mapper2_subslots[1]
+    sub1 = machine.memory.mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
 
-    sub2 = machine.memory._mapper2_subslots[2]
+    sub2 = machine.memory.mapper2_subslots[2]
     assert isinstance(sub2, Ascii8Mapper)
 
 
@@ -214,7 +214,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    sub1 = machine.memory._mapper2_subslots[1]
+    sub1 = machine.memory.mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
     assert sub1.read(0x4000) == 0x42
     assert sub1.read(0x0000) == 0xFF
@@ -235,7 +235,7 @@ def test_view_font_subslot_dispatches_to_ascii8_mapper(tmp_path: Path) -> None:
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    sub2 = machine.memory._mapper2_subslots[2]
+    sub2 = machine.memory.mapper2_subslots[2]
     assert isinstance(sub2, Ascii8Mapper)
     assert sub2.read(0x4000) == 0x00  # window 0, bank 0 (power-on state)
 

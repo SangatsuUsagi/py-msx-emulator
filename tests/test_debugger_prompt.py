@@ -273,22 +273,22 @@ class TestDumpVram:
 class TestBreak:
     def test_list_empty(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "no breakpoints" in out
 
     def test_add_breakpoint(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         assert 0xC000 in m._breakpoints
 
     def test_list_after_add(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         capsys.readouterr()
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "C000" in out
 
@@ -296,14 +296,14 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "C000"])
+        dbg._break_remove(["C000"])
         assert 0xC000 not in m._breakpoints
 
     def test_max_4_enforced(self, capsys):
         m = _make_machine()
         m._breakpoints = frozenset([0x1000, 0x2000, 0x3000, 0x4000])
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "5000"])
+        dbg._break_add(["5000"])
         out = capsys.readouterr().out
         assert "maximum 4" in out
         assert 0x5000 not in m._breakpoints
@@ -313,7 +313,7 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0x0000, 0x4000, 0x8000, 0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         out = capsys.readouterr().out
         assert "Breakpoint set at C000h (4/4)" in out
         assert "maximum" not in out
@@ -322,13 +322,13 @@ class TestBreak:
     def test_remove_unknown_addr(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "DEAD"])
+        dbg._break_remove(["DEAD"])
         out = capsys.readouterr().out
         assert "not in" in out
 
     def test_add_invalid_addr(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["a", "ZZZZ"])
+        dbg._break_add(["ZZZZ"])
         out = capsys.readouterr().out
         assert "invalid" in out.lower()
 
@@ -527,8 +527,8 @@ def _make_slot_memory(
     return Memory(
         rom=b"\x00" * 32768,
         ram=bytearray(0x2000),
-        _mapper=FlatMapper(None),
-        _mapper2=FlatMapper(None),
+        mapper1=FlatMapper(None),
+        mapper2=FlatMapper(None),
         slot_register=slot_register,
         sub_slot_enabled=sub_slot_enabled,
         sub_slot_reg=sub_slot_reg,
@@ -536,11 +536,11 @@ def _make_slot_memory(
         ram_mapper=RamMapper() if with_ram_mapper else None,
         slot1_sub_slot_enabled=slot1_sub_slot_enabled,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
+        mapper1_subslots=mapper1_subslots if mapper1_subslots is not None
         else [None, None, None, None],
         slot2_sub_slot_enabled=slot2_sub_slot_enabled,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
+        mapper2_subslots=mapper2_subslots if mapper2_subslots is not None
         else [None, None, None, None],
     )
 
@@ -624,8 +624,8 @@ class TestSlotActive:
 
     def test_sl_slot2_subslot_shows_its_own_mapper_content(self, capsys):
         """Regression test: an expanded slot 2 (e.g. --extension hbi_j1) must
-        report each page's actual sub-slot mapper via `_mapper2_subslots`,
-        not the flat `_mapper2` (which would misreport "Cartridge (empty)"
+        report each page's actual sub-slot mapper via `mapper2_subslots`,
+        not the flat `mapper2` (which would misreport "Cartridge (empty)"
         regardless of what's really mapped in)."""
         from msx.mapper import FlatMapper as _FlatMapper
 
@@ -860,7 +860,8 @@ def _bank(mapper, page: int) -> str:
 
 def _slot_bank(mem: Memory, primary: int, secondary, page: int) -> str:
     """The sl bank text of a Memory slot's page, through the host formatter."""
-    return slot_bank_text(mem.describe_slot(primary, secondary, page), page)
+    sub = -1 if secondary is None else secondary
+    return slot_bank_text(mem.describe_slot(primary, sub, page), page)
 
 
 class TestSlotRomMapperBank:
@@ -895,7 +896,7 @@ class TestSlotRomMapperBank:
 
     def test_sl_bank_uses_rom_mapper_for_cartridge(self):
         from msx.mapper import Ascii16Mapper
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=Ascii16Mapper(self._rom16(8)))
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=Ascii16Mapper(self._rom16(8)))
         assert _slot_bank(mem, 1, None, 2) == "bank 0 @00000-03FFF"
 
     # -- debug-monitor "sl -- cartridge ROM mapper bank column": the text
@@ -914,7 +915,7 @@ class TestSlotRomMapperBank:
         from msx.mapper import RTypeMapper
         rtype = RTypeMapper(self._rom16(24))
         rtype.write(0x4000, 2)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=rtype)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=rtype)
         assert _slot_bank(mem, 1, None, 1) == "bank 23 @5C000-5FFFF"
         assert _slot_bank(mem, 1, None, 2) == "bank 2 @08000-0BFFF"
 
@@ -924,7 +925,7 @@ class TestSlotRomMapperBank:
         m = FmPac(self._rom16(4), Opll())
         m.write(0x7FF7, 1)  # bank register
         assert _bank(m, 1) == "bank 1 @04000-07FFF"
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=m)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=m)
         assert _slot_bank(mem, 1, None, 1) == "bank 1 @04000-07FFF"
         m.write(0x5FFE, 0x4D)  # SRAM unlock
         m.write(0x5FFF, 0x69)
@@ -985,18 +986,26 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper()
         rm.banks[3] = 2
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
         assert _slot_bank(mem, 3, 2, 3) == "seg=2"
 
+    def test_sl_bank_shows_the_segment_a_short_mapper_maps(self):
+        # memory-ram-mapper "A bank past a non-power-of-two size wraps".
+        from msx.ram_mapper import RamMapper
+        rm = RamMapper(size_kb=48)
+        rm.write_port(0xFC, 0x03)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
+        assert _slot_bank(mem, 3, 2, 0) == "seg=2"
+
     def test_sl_bank_dash_for_bios(self):
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None))
         assert _slot_bank(mem, 0, None, 0) == "-"
 
     def test_slot_size_kb_reflects_configured_ram_mapper_size(self):
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
-        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.describe_slot(3, 2, None).size_kb == 256
+        mem = Memory(rom=b"\x00", ram=bytearray(1), mapper1=FlatMapper(None), ram_mapper=rm)
+        assert mem.describe_slot(3, 2, -1).size_kb == 256
 
 
 # ---------------------------------------------------------------------------
@@ -1140,7 +1149,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = set()
         m._watch_write = set()
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         assert "no watchpoints" in out
 
@@ -1148,7 +1157,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = {0x1234}
         m._watch_write = {0x5678, 0x1234}
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         # 0x1234 is in both sets -> "rw"; 0x5678 write-only -> "w"; sorted ascending
         assert "1234h [rw]" in out
@@ -1190,11 +1199,10 @@ class TestGotoFrame:
         # debug-monitor "gf with a frame number the core rejects".
         m = _make_machine()
         m.vdp.frame_count = 100
-        m.set_frame_breakpoint.return_value = 6  # STATUS_BAD_ARGUMENT
-        m.last_error_text.return_value = b"frame 9223372036854775808 is outside -1 to 2^63 - 1"
         assert Debugger(m)._cmd_goto_frame([str(2**63)]) is False
+        m.set_frame_breakpoint.assert_not_called()
         out = capsys.readouterr().out
-        assert "gf: frame 9223372036854775808 is outside" in out
+        assert "gf: frame 9223372036854775808 is above" in out
         assert "Running" not in out
 
     def test_gf_in_repl_resumes_without_c(self, capsys):

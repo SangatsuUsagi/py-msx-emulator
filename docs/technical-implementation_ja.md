@@ -396,7 +396,7 @@ MSX2 のデフォルトの配置：
 | 0xFE   | 2      | 0x8000–0xBFFF |
 | 0xFF   | 3      | 0xC000–0xFFFF |
 
-レジスタにセグメント番号を書くと、そのページの割り当てがすぐに切り替わる。マッパーは番号を `bank_mask` でマスクする。`bank_mask` はセグメント数を覆う最小の 2 のべき乗から 1 を引いた値（128 KB なら 7）。読み出すと、セグメント番号の使わない上位ビットを 1 にした値が返る。
+レジスタにセグメント番号を書くと、そのページの割り当てがすぐに切り替わる。マッパーは番号を `bank_mask` でマスクする。`bank_mask` はセグメント数を覆う最小の 2 のべき乗から 1 を引いた値（128 KB なら 7）。読み出すと、セグメント番号の使わない上位ビットを 1 にした値が返る。セグメント数が 2 のべき乗でないとき、マスクした番号がセグメント数以上になることがある。その番号は openMSX と同じく、セグメント `番号 & (セグメント数 - 1)` を選ぶ（48 KB なら、番号 3 はセグメント 2 を選ぶ）。
 
 ---
 
@@ -426,7 +426,7 @@ MSX2 のデフォルトの配置：
 
 ## マシンと拡張の YAML スキーマ
 
-`host/machine_config.py` は 3 種類の YAML を読む。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。名前の閉じた集合（マッパー、FDC のコントローラと接続方式、拡張・サブスロット・I/O のデバイス）は `msx/machine_config.py` で定義している。YAML のローダはそれを `_KNOWN_*`/`_SUPPORTED_*` の名前で import し、コアは MachineConfig の文書を解析するときに同じ集合でもう一度調べる。
+`host/machine_config.py` は 3 種類の YAML を読む。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。名前の閉じた集合（マッパー、FDC のコントローラと接続方式、拡張・サブスロット・I/O のデバイス）は `msx/machine_config.py` で定義している。YAML のローダはそれを import し、コアは MachineConfig の文書を解析するときに同じ集合でもう一度調べる。
 
 この節の各フィールドは、ローダの中の明示的な `.get()` 呼び出しに対応する。ローダが読まないキーは、YAML のコメントに何と書いてあっても説明のためだけのもの。各プライマリスロットに何を入れられるかの利用者向けのまとめは、[README_extension_ja.md の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照。この節では、その結果を生む YAML の書き方を説明する。
 
@@ -616,7 +616,7 @@ io_device:
 ```
 
 拡張オーバーレイの `io_device`（後述）と同じ形。マシン自身が持つ、スロットに依存しない
-I/O デバイスを表す。ローダは同じ `_KNOWN_IO_DEVICES`（`kanji_rom` だけ）で検証する。
+I/O デバイスを表す。ローダは同じ `IO_DEVICES`（`kanji_rom` だけ）で検証する。
 今のところ、これを書いている同梱のマシン YAML はない。`kanji_rom` デバイスを持つのは、
 今は `hbi_j1` と `msxdos2_512k_kanjirom` の拡張（`--extension1`/`--extension2`）だけで、
 どちらも拡張オーバーレイの `io_device`（後述）を使う。
@@ -639,7 +639,7 @@ rom: {file: fmpac.rom, size_kb: 64}
 sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
 ```
 
-`device` は `fmpac` か `scc_i_cart`（`_KNOWN_EXTENSION_DEVICES`）でなければならない。
+`device` は `fmpac` か `scc_i_cart`（`EXTENSION_DEVICES`）でなければならない。
 同じ `device` というキーでも、後述の拡張形状のサブスロットのデバイスとは別の名前空間。
 `fmpac` には `rom:` ブロックが要る。`scc_i_cart` には要らない。RAM は空で始まり、
 ローダはファイルを読まないため。フラットなオーバーレイのデバイスは、対象のプライマリ
@@ -667,7 +667,7 @@ io_device:
 `subslots` は必須で、空でないマッピング。キーは `0`〜`3` で、MSX2 のスロット 3 の
 サブスロットと同じ範囲を同じ `_check_subslot_index` で調べる。各エントリの `device` は、
 `halnote`、`flat_rom`、`ram_mapper`、`ascii8`、`ascii16`
-（`_KNOWN_EXPANDED_SUBSLOT_DEVICES`）のどれかでなければならない。
+（`SUBSLOT_DEVICES`）のどれかでなければならない。
 
 | `device` | 必須項目 | 構築されるもの |
 | --- | --- | --- |
@@ -686,7 +686,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 同じポートを使うことになるため。
 
 任意のトップレベルの `io_device` は、*3 つめの*デバイスの名前空間
-`_KNOWN_IO_DEVICES = {kanji_rom}` で検証する。ほかの 2 つとは重ならない。`subslots` で
+`IO_DEVICES = {kanji_rom}` で検証する。ほかの 2 つとは重ならない。`subslots` で
 `device: kanji_rom` は使えず、`io_device` で `device: halnote`（ほかのサブスロットの
 デバイスも）は使えない。マシンの `io_device` と拡張オーバーレイの `io_device` がどちらも
 `kanji_rom` になると、`build_machine` はエラーを出す。ポート 0xD8〜0xDB は、2 つの
@@ -724,6 +724,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 マシンの組み立ては host とコアで分担する。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。解決済みのマシン、カートリッジとそのマッパー、拡張を、1 つの正規化した JSON の文書（`msx/machine_config.py`、`msx/machine_config.schema.json`）に書く。`auto` のマッパーは、先に ROM データベースから決める。文書の中では、ROM はすべて `{name, size, sha1, pages}` の参照。ROM イメージは SHA1 をキーにして文書と一緒に渡す。実行時の入力（保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻）も文書と一緒に渡す。
 
+パーサは、`ram_size_kb` と `flat_ram_size_kb` を 0〜64、`ram_mapper_size_kb` とサブスロットのデバイスの `size_kb` を 0 または 16〜4096 に制限する。`device_io_ports` のデバイス名と、各範囲の最初のポートが最後のポートより大きくないことも確かめる。
+
 `msx/machine_loader.py` の `build_machine(config)` は文書を厳密に解析し、参照された各イメージのサイズと SHA1 を確かめる。そのうえで、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`Machine` は文書の SHA-256 を持ち、スナップショットはそれを記録する（[MachineConfig の文書](#machineconfig-の文書) を参照）。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
@@ -749,7 +751,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はない。デバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）と `--vdp-trace`/`--mapper-trace` のフラグは、コアの API でトレースの種類を設定する。`drain_trace()` が返すイベントは `host/trace.py` が文字列にする。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
 
-このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`）は境界の定数。host は、コアができる前にセーブファイルを作るため。
+このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine` と `release_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`、カートリッジの SRAM マッパーごとの定数）は境界の定数。host は、コアができる前にセーブファイルを作るため。
 
 ### 境界を通る値
 
@@ -834,11 +836,11 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 SRAM と CMOS のイメージ、ディスク、RTC の開始時刻、host 側のすべてのパスは、実行時の入力。文書の外にあるので、文書の同一性には影響しない。この同一性は SHA-256 で表し、対象はコアが文書を解析してからエンコードし直した正規形。したがって、空白やキーの順序だけが違う文書は、同一性も同じになる。`Machine` はこの値を `machine_config_sha256` として持つ。
 
-YAML のローダを持たない移植では、文書を直接書いてもよい。Python の host が作った文書を使うこともできる。`load_machine_config()` でエンコードし、`config.document` と `config.roms` を保存する。
+YAML のローダを持たない移植では、文書を直接書いてもよい。Python の host が作った文書を使うこともできる。`load_machine_config()` でエンコードし、`config.config.document` と `config.config.roms` を保存する。
 
 ### スナップショット
 
-`save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 19）で返す。形は `msx/snapshot.schema.json` に書いてある。オブジェクトはコンポーネントごとに 1 つ（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`）。キーは常にすべてそろい、マシンにない部分の値は `null`。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入る。
+`save_state()` は、マシンの全状態を正規化した JSON（フォーマットバージョン 21）で返す。形は `msx/snapshot.schema.json` に書いてある。オブジェクトはコンポーネントごとに 1 つ（`cpu`、`memory`、`slots`、`vdp`、`psg`、`ppi`、`scc`、`fdc`、`rtc`、`mouse`）。キーは常にすべてそろい、マシンにない部分の値は `null`。バイト列はパディング付きの RFC 4648 base64 の文字列で、整数はどれも ±(2^53 − 1) の範囲に入る。
 
 - `load_state()` は、空白もキーの順序も問わない。浮動小数点数、NaN や Infinity、重複したキー、ほかのフォーマットバージョンは拒否する。
 - 最初にマシンの同一性（マシンの種類、マッパーの種類、スロットの配線、FDC、マウント中のディスク。ディスクはサイズと SHA1 で比べるので、同じ内容なら別のファイルでも同じディスク）を調べる。続いて `machine_config_sha256` を動作中のマシンのハッシュと比べる。このハッシュは、カートリッジの ROM のバイト列も対象に含む。つまり、スナップショットは同じ MachineConfig の文書から作ったコアにしか読み込めない。
@@ -880,7 +882,7 @@ root = Path(".")                                   # リポジトリのルート
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host：YAML とファイル -> MachineConfig
-result = create_machine(config)                    # コア：値だけを使う
+result = create_machine(config.config)             # コア：値だけを使う
 if result.machine is None:                         # STATUS_BAD_CONFIG
     raise SystemExit(result.error_text.decode("utf-8"))
 machine = result.machine
@@ -903,7 +905,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 ### コアの移植
 
-ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。コアが返すバイト列は、同じコアに対する次の呼び出しまで有効で、渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。C の型は、コアがマスク、clamp、拒否するどの値も入る幅にする。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t`。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持たない。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取る。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持つ。
+ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効。渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。C の型は、コアがマスク、clamp、拒否するどの値も入る幅にする。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t`。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持たない。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取る。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持つ。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
@@ -911,7 +913,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ（`target_fps`）。
-- `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
+- `load_machine_config()` は `LoadedMachineConfig` を返す。これは `MachineConfig`（`config`。コアが受け取る部分）と、host の SRAM とディスクのファイルパスを持つ。
 
 移植する側は、次の点も決める必要がある。
 
@@ -975,7 +977,7 @@ V9938 の G4/G6 と G5 の、スキャンラインごとのピクセル展開は
 
 #### フレームタイマーのスピンループ
 
-`FrameTimer.tick()` は、フレームの締め切り前の最後の 1 ミリ秒未満を、`time.perf_counter()` を使った待ちループで待つ。Python には、このループがスピンであることをスケジューラに伝える方法がない。
+`FrameTimer.tick()` は、フレームの締め切り前の最後の 2 ミリ秒を、`time.perf_counter()` を使った待ちループで待つ。Python には、このループがスピンであることをスケジューラに伝える方法がない。
 
 Rust の移植では、同じループに `std::hint::spin_loop()` を入れる。スリープせずに CPU のパイプラインにヒントを出せる。SMT のコアで消費電力を減らし、タイミングのぶれを小さくできることがある。
 

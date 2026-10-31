@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from msx.boundary import STATUS_OK, MediaId, drive_media_id
+from msx.boundary import STATUS_OK, drive_media_id
 
 if TYPE_CHECKING:
     from msx.core_api import CoreApi
@@ -61,22 +61,31 @@ class DiskFiles:
 
 
 def media_paths(
-    machine: CoreApi, sram_paths: Mapping[MediaId, Path], disk_files: DiskFiles
-) -> dict[MediaId, Path]:
+    machine: CoreApi, sram_paths: Mapping[int, Path], disk_files: DiskFiles
+) -> dict[int, Path]:
     """The file each persisted medium is written to, by media id: the SRAM
     files `sram_paths` names (host.machine_config.sram_paths of the
     machine's config) plus the file `disk_files` records for each mounted
     disk."""
-    paths = dict(sram_paths)
+    paths: dict[int, Path] = dict(sram_paths)
     for drive, path in disk_files.items():
         if machine.disk_mounted(drive):
-            paths[drive_media_id(drive)] = path
+            paths[int(drive_media_id(drive))] = path
     return paths
+
+
+def _write_back(machine: CoreApi, media_id: int, path: Path) -> None:
+    """Write a dirty medium to its file and clear its dirty flag. The id came
+    from dirty_media(), so the bytes are there."""
+    data = machine.read_media(media_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    machine.mark_persisted(media_id)
 
 
 def persist_dirty_media(
     machine: CoreApi,
-    sram_paths: Mapping[MediaId, Path] | None = None,
+    sram_paths: Mapping[int, Path] | None = None,
     disk_files: DiskFiles | None = None,
 ) -> None:
     """Write every dirty medium that has a file back to it. Without
@@ -90,10 +99,7 @@ def persist_dirty_media(
         path = paths.get(media_id)
         if path is None:
             continue
-        data = machine.read_media(media_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        machine.mark_persisted(media_id)
+        _write_back(machine, media_id, path)
 
 
 def swap_disk(
@@ -110,11 +116,9 @@ def swap_disk(
     medium = read_disk_medium(full_path) if full_path is not None else None
     outgoing_path = disk_files.path(drive)
     if outgoing_path is not None:
-        media_id = drive_media_id(drive)
+        media_id = int(drive_media_id(drive))
         if media_id in machine.dirty_media():
-            # The id came from dirty_media(), so the bytes are there.
-            outgoing_path.write_bytes(machine.read_media(media_id))
-            machine.mark_persisted(media_id)
+            _write_back(machine, media_id, outgoing_path)
     if medium is None:
         status = machine.eject_disk(drive)
     else:

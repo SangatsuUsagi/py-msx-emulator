@@ -7,7 +7,7 @@ from tests.cpu.flag_helpers import pack, unpack
 
 
 def _make_cpu() -> Z80:
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write)
 
 

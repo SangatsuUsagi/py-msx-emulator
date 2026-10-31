@@ -11,7 +11,7 @@ _NOP_ROM = bytes(32768)
 
 
 def make_ppi(cycle: int = 0) -> PPI:
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     ppi = PPI(memory=mem)
     ppi._clock.cycle = cycle
     return ppi
@@ -84,7 +84,7 @@ def test_clock_set_by_build_machine_msx1() -> None:
     m = make_machine(rom=_NOP_ROM)
     assert m.ppi is not None
     assert m.ppi._clock is m.clock
-    m.cycle_count = 1234
+    m.clock.cycle = 1234
     assert m.ppi._clock.cycle == 1234
 
 
@@ -92,5 +92,5 @@ def test_clock_set_by_build_machine_msx2() -> None:
     m = make_machine_msx2(_NOP_ROM, bytes(0x4000))
     assert m.ppi is not None
     assert m.ppi._clock is m.clock
-    m.cycle_count = 5678
+    m.clock.cycle = 5678
     assert m.ppi._clock.cycle == 5678

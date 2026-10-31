@@ -18,7 +18,7 @@ def _make_mem(rom: bytes | None = None, slot0_ram: bytearray | None = None,
     return Memory(
         rom=rom,
         ram=bytearray(65536),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT0,
         slot0_ram=slot0_ram,
         slot0_ram_page=slot0_ram_page,
@@ -66,7 +66,7 @@ def test_zero_length_slot3_ram_is_pure_open_bus() -> None:
     mem = Memory(
         rom=bytes(32768),
         ram=bytearray(0),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=0xFF,  # every page -> slot 3
         slot0_ram=bytearray(0x4000),
         slot0_ram_page=3,

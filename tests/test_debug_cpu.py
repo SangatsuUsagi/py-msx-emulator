@@ -15,7 +15,7 @@ from msx.trace import TraceLog
 
 def make_cpu(opcodes: list[int], trace: TraceLog | None = None) -> Z80:
     rom = bytes(opcodes + [0x00] * (32768 - len(opcodes)))
-    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=bytearray(32768), mapper1=FlatMapper(None))
     return Z80(read_byte=mem.read, write_byte=mem.write, _trace=trace)
 
 

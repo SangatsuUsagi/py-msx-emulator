@@ -12,9 +12,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from frontend.audio_filter import BiquadLowPass
 from frontend.frame_timer import FrameTimer
 from frontend.sdl2_joystick import (
-    _DEFAULT_GC_BUTTON_BIT,
-    _DEFAULT_GC_TURBO_BUTTON_BIT,
-    TURBO_PERIOD,
     JoystickManager,
 )
 from frontend.sdl2_keyboard import (
@@ -68,7 +65,19 @@ def _target_fps_for(machine: CoreApi) -> float:
     """Real-time pacing target for this machine: 60 fps NTSC, 50 fps PAL
     (VideoStandard.target_fps of the core's int, which the frame timer
     paces in float)."""
-    return float(VideoStandard(machine.video_standard).target_fps)
+    try:
+        return float(VideoStandard(machine.video_standard).target_fps)
+    except ValueError:  # a value this host does not know: pace as NTSC
+        return float(VideoStandard.NTSC.target_fps)
+
+
+def _keyboard_layout(value: int) -> KeyboardLayout:
+    """The core's layout value, or INTERNATIONAL for one this host does not
+    know."""
+    try:
+        return KeyboardLayout(value)
+    except ValueError:
+        return KeyboardLayout.INTERNATIONAL
 
 
 class _InitSdlApi(Protocol):
@@ -76,8 +85,8 @@ class _InitSdlApi(Protocol):
     audio-device creation and the cascading-failure teardown. Narrower than
     the full SDL2 API -- declares only what these two functions call.
     Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing); composed into `SDL2Api`
-    once all stages land.
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing); composed
+    into `SDL2Api`.
     """
     SDL_INIT_VIDEO: int
     SDL_INIT_AUDIO: int
@@ -315,7 +324,7 @@ class _EventApi(Protocol):
     """The `sdl2.*` surface event polling and dispatch use: `_handle_events`,
     `_handle_hotkey_keydown`, `_handle_ctrl_combo_keydown`,
     `_handle_ctrl_combo_keyup`. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_QUIT: int
     SDL_KEYDOWN: int
     SDL_KEYUP: int
@@ -335,8 +344,7 @@ class _EventApi(Protocol):
     SDL_MOUSEBUTTONUP: int
     SDL_BUTTON_LEFT: int
     SDL_BUTTON_RIGHT: int
-    # Joystick/GameController device and input event types (see
-    # _JOYSTICK_EVENT_TYPES_ATTRS below, resolved dynamically via getattr).
+    # Joystick/GameController device and input event types (_handle_events).
     SDL_CONTROLLERDEVICEADDED: int
     SDL_CONTROLLERDEVICEREMOVED: int
     SDL_JOYDEVICEADDED: int
@@ -607,31 +615,6 @@ def _handle_hotkey_keydown(
     return False, running
 
 
-# SDL joystick/GameController device and input event types, all routed to
-# JoystickManager unchanged. Held as attribute *names*, not resolved ints:
-# `sdl2` is only ever imported lazily (see run()), so these can't be resolved
-# into a real tuple of constants at module load time. `_handle_events` below
-# resolves this once per call (not once per polled event) via getattr.
-# PORT-NOTE: held as attribute name strings, resolved via getattr(sdl2, name)
-#   once per _handle_events() call -- purely a Python workaround for `sdl2`
-#   being an optionally, lazily imported module (see run()) whose constants
-#   don't exist at module-import time.
-# Rust equivalent: none needed -- the `sdl2` crate is a statically-linked,
-#   always-present dependency, so a port just references the real constant
-#   names (e.g. sdl2::event::Event::ControllerDeviceAdded) directly.
-# C++ equivalent: same -- SDL2 headers are always available at compile time
-#   in a C++ port, so this name-string indirection has no reason to exist.
-# Kept as-is here because: this whole indirection layer is a Python-only
-#   workaround for the optional-dependency import pattern; it disappears
-#   entirely at port time rather than needing a translated equivalent.
-_JOYSTICK_EVENT_TYPES_ATTRS = (
-    "SDL_CONTROLLERDEVICEADDED", "SDL_CONTROLLERDEVICEREMOVED",
-    "SDL_JOYDEVICEADDED", "SDL_JOYDEVICEREMOVED",
-    "SDL_CONTROLLERBUTTONDOWN", "SDL_CONTROLLERBUTTONUP", "SDL_CONTROLLERAXISMOTION",
-    "SDL_JOYBUTTONDOWN", "SDL_JOYBUTTONUP", "SDL_JOYAXISMOTION", "SDL_JOYHATMOTION",
-)
-
-
 def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     """Return the key identifier `_handle_events` should use for this keysym.
 
@@ -674,21 +657,51 @@ def _resolve_key_sym(sdl2: _EventApi, keysym: _KeysymLike) -> int:
     return keysym.sym
 
 
-def _handle_events(
-    sdl2: _EventApi, event: _EventLike, machine: CoreApi, keyboard: SdlKeyboard,
-    window: object, joy_manager: JoystickManager,
-    ctrl_combo: _CtrlComboState, ctrl_fkey_cells: dict[int, tuple[int, int]],
-    game_title: str, rgb_buf: bytes, tex_w: int, tex_h: int,
-    mouse: _HostMouse | None = None, hotkeys: _HotkeyState | None = None,
-) -> bool:
+@dataclass(frozen=True)
+class _EventContext:
+    """What `_handle_events` reads, fixed for a run. `hotkeys` is None for no
+    bound hotkeys: Shift then goes through the plain path."""
+
+    sdl2: _EventApi
+    event: _EventLike
+    machine: CoreApi
+    keyboard: SdlKeyboard
+    window: object
+    joy_manager: JoystickManager
+    ctrl_combo: _CtrlComboState
+    ctrl_fkey_cells: dict[int, tuple[int, int]]
+    game_title: str
+    mouse: _HostMouse | None = None
+    hotkeys: _HotkeyState | None = None
+
+
+def _handle_events(ctx: _EventContext, rgb_buf: bytes, tex_w: int, tex_h: int) -> bool:
     """Drain the SDL event queue, applying input and hotkeys.
 
-    `hotkeys` (None: no bound hotkeys, Shift goes through the plain path) is
-    checked before every other key handler.
+    Bound hotkeys are checked before every other key handler.
 
     Returns running: False once a quit is requested. rgb_buf/tex_w/tex_h are
     the previous frame's, used by F8 (save state) and F10 (screenshot).
     """
+    sdl2 = ctx.sdl2
+    event = ctx.event
+    machine = ctx.machine
+    keyboard = ctx.keyboard
+    window = ctx.window
+    joy_manager = ctx.joy_manager
+    ctrl_combo = ctx.ctrl_combo
+    ctrl_fkey_cells = ctx.ctrl_fkey_cells
+    game_title = ctx.game_title
+    mouse = ctx.mouse
+    hotkeys = ctx.hotkeys
+    joystick_event_types = frozenset((
+        sdl2.SDL_CONTROLLERDEVICEADDED, sdl2.SDL_CONTROLLERDEVICEREMOVED,
+        sdl2.SDL_JOYDEVICEADDED, sdl2.SDL_JOYDEVICEREMOVED,
+        sdl2.SDL_CONTROLLERBUTTONDOWN, sdl2.SDL_CONTROLLERBUTTONUP,
+        sdl2.SDL_CONTROLLERAXISMOTION,
+        sdl2.SDL_JOYBUTTONDOWN, sdl2.SDL_JOYBUTTONUP, sdl2.SDL_JOYAXISMOTION,
+        sdl2.SDL_JOYHATMOTION,
+    ))
     running = True
     # `event` is typed `_EventLike` for the attribute reads below, but
     # `ctypes.byref` needs a real ctypes type -- both the real `SDL_Event`
@@ -720,7 +733,7 @@ def _handle_events(
                 continue
             if not _handle_ctrl_combo_keyup(sdl2, sym, ctrl_combo, keyboard):
                 keyboard.key_up(sym)
-        elif event.type in (getattr(sdl2, name) for name in _JOYSTICK_EVENT_TYPES_ATTRS):
+        elif event.type in joystick_event_types:
             joy_manager.handle_event(event)
         elif mouse is not None and event.type == sdl2.SDL_MOUSEMOTION:
             # Host motion is negated on both axes when converting to MSX
@@ -747,7 +760,7 @@ class _UploadTextureApi(Protocol):
     (a `CArgObject`) has no clean public type name to declare here -- `object`
     is honest about that rather than asserting a precision this file's own
     call site doesn't rely on. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     def SDL_GetError(self) -> bytes: ...
     def SDL_LockTexture(
         self, texture: object, rect: object, pixels: object, pitch: object
@@ -773,18 +786,22 @@ def _upload_to_texture(
     # contiguous memmove is correct and fastest. Otherwise (driver row padding)
     # copy row-by-row: width*3 source bytes into each pitch-strided destination
     # row, so no source overrun and no padding is overwritten with pixel data.
+    #
+    # The frame goes through a ctypes array first: on PyPy, passing `bytes` to
+    # memmove costs about 2 ms per frame, against about 15 us for this copy.
     row_bytes = tex_w * 3
     dst_pitch = pitch.value
+    src = (ctypes.c_char * len(rgb_buf)).from_buffer_copy(rgb_buf)
     if dst_pitch == row_bytes:
-        ctypes.memmove(pixels_ptr, rgb_buf, len(rgb_buf))
+        ctypes.memmove(pixels_ptr, src, len(rgb_buf))
     else:
         dst_base = pixels_ptr.value
         assert dst_base is not None
+        src_base = ctypes.addressof(src)
         for row in range(tex_h):
-            src_off = row * row_bytes
             ctypes.memmove(
                 dst_base + row * dst_pitch,
-                rgb_buf[src_off:src_off + row_bytes],
+                src_base + row * row_bytes,
                 row_bytes,
             )
     sdl2.SDL_UnlockTexture(texture)
@@ -793,7 +810,7 @@ def _upload_to_texture(
 class _ResizeTextureApi(Protocol):
     """The `sdl2.*` surface `_resize_texture_if_needed` uses: texture
     recreation and window resize. Part of the staged SDL2 FFI Protocol
-    typing (openspec/changes/sdl2-ffi-protocol-typing)."""
+    typing (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_PIXELFORMAT_RGB24: int
     SDL_TEXTUREACCESS_STREAMING: int
 
@@ -869,7 +886,7 @@ class _EventLike(Protocol):
     Structure and `tests/test_sdl2_frontend_hotkeys.py`'s hand-rolled fake
     (a `ctypes.Structure` subclass with fewer fields, satisfying this
     narrower shape). Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     type: int
     key: _KeyEventLike
     motion: _MotionEventLike
@@ -882,7 +899,7 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     members only `run()`/`_run_frame` call directly. Used where a function
     calls into more than one of those groups; each leaf function keeps its
     own narrower Protocol. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_TRUE: int
     SDL_FALSE: int
 
@@ -972,25 +989,44 @@ def _present(sdl2: SDL2Api, renderer: object, texture: object) -> None:
     sdl2.SDL_RenderPresent(renderer)
 
 
-def _run_frame(
-    sdl2: SDL2Api, machine: CoreApi, keyboard: SdlKeyboard, window: object, renderer: object,
-    state: _LoopState, joy_manager: JoystickManager, ctrl_combo: _CtrlComboState,
-    ctrl_fkey_cells: dict[int, tuple[int, int]], game_title: str,
-    mouse: _HostMouse | None, event: _EventLike,
-    rpc_server: DebugServer | None, frame_timer: FrameTimer,
-    frame_skip: str, audio_dev: int, scale: int,
-    hotkeys: _HotkeyState,
-) -> None:
+@dataclass(frozen=True)
+class _RunContext:
+    """What `run()`'s main loop reads, fixed for a run. `_LoopState` holds what
+    changes per frame."""
+
+    events: _EventContext
+    sdl2: SDL2Api
+    machine: CoreApi
+    window: object
+    renderer: object
+    joy_manager: JoystickManager
+    rpc_server: DebugServer | None
+    frame_timer: FrameTimer
+    frame_skip: str
+    audio_dev: int
+    scale: int
+    hotkeys: _HotkeyState
+
+
+def _run_frame(ctx: _RunContext, state: _LoopState) -> None:
     """Run one iteration of `run()`'s main loop: poll/apply events, service the
     RPC pause gate, advance emulation one frame (or redisplay under
     frame-skip), mix/queue audio, and present. Updates `state` in place with
     whatever this iteration changed.
     """
+    sdl2 = ctx.sdl2
+    machine = ctx.machine
+    window = ctx.window
+    renderer = ctx.renderer
+    joy_manager = ctx.joy_manager
+    rpc_server = ctx.rpc_server
+    frame_timer = ctx.frame_timer
+    frame_skip = ctx.frame_skip
+    audio_dev = ctx.audio_dev
+    scale = ctx.scale
+    hotkeys = ctx.hotkeys
     # Process events (input + hotkeys); updates running.
-    state.running = _handle_events(
-        sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
-        game_title, state.rgb_buf, state.tex_w, state.tex_h, mouse, hotkeys,
-    )
+    state.running = _handle_events(ctx.events, state.rgb_buf, state.tex_w, state.tex_h)
     if not state.running:
         return
 
@@ -1029,7 +1065,7 @@ def _run_frame(
     else:
         skip_this_frame = state.skip_counter > 0
     out = machine.step_frame(
-        keyboard.input_state.take_frame(), render_video=not skip_this_frame
+        ctx.events.keyboard.input_state.take_frame(), render_video=not skip_this_frame
     )
     if hotkeys.debugger is not None:
         hotkeys.debugger.drain_trace()
@@ -1141,7 +1177,6 @@ def run(
     """
     try:
         import sdl2
-        import sdl2.ext
     except ImportError:
         print("error: pysdl2 is not installed — run 'pip install pysdl2'", file=sys.stderr)
         sys.exit(1)
@@ -1162,30 +1197,21 @@ def run(
         sdl2, game_title, win_w, win_h, tex_w, tex_h
     )
 
-    # Falls back to the same default tables JoystickManager's own dataclass
-    # fields would use, resolved here (not left to the field defaults)
-    # because an explicit gamepad_map always needs `dict(...)`-copying into
-    # the constructor kwargs below either way.
-    gc_button_bit, gc_turbo_button_bit = (
-        gamepad_map if gamepad_map is not None
-        else (_DEFAULT_GC_BUTTON_BIT, _DEFAULT_GC_TURBO_BUTTON_BIT)
-    )
     # Host input accumulates here and reaches the machine once per frame
     # through step_frame (allium/core-frontend.allium InputHeldForFrame).
     frame_input = InputState()
     if rpc_server is not None:
         rpc_server.input_target = frame_input
-    joy_manager = JoystickManager(
-        _input=frame_input,
-        _sdl=sdl2,
-        _gc_button_bit=dict(gc_button_bit),
-        _gc_turbo_button_bit=dict(gc_turbo_button_bit),
-        _turbo_period=turbo_period if turbo_period is not None else TURBO_PERIOD,
-    )
+    joy_manager = JoystickManager(_input=frame_input, _sdl=sdl2)
+    if gamepad_map is not None:
+        joy_manager._gc_button_bit = dict(gamepad_map[0])
+        joy_manager._gc_turbo_button_bit = dict(gamepad_map[1])
+    if turbo_period is not None:
+        joy_manager._turbo_period = turbo_period
 
     keyboard = SdlKeyboard(
         frame_input, resolve_keyboard_joy_map(keyboard_joystick or {}),
-        keyboard_layout=KeyboardLayout(machine.keyboard_layout),
+        keyboard_layout=_keyboard_layout(machine.keyboard_layout),
     )
 
     mouse: _HostMouse | None = None
@@ -1231,6 +1257,15 @@ def run(
         running=True, texture=texture, tex_w=tex_w, tex_h=tex_h,
         rgb_buf=bytes(_SCREEN_WIDTH * screen_h * 3), skip_counter=0,
     )
+    ctx = _RunContext(
+        events=_EventContext(
+            sdl2, event, machine, keyboard, window, joy_manager, ctrl_combo, ctrl_fkey_cells,
+            game_title, mouse, hotkeys,
+        ),
+        sdl2=sdl2, machine=machine, window=window, renderer=renderer, joy_manager=joy_manager,
+        rpc_server=rpc_server, frame_timer=frame_timer, frame_skip=frame_skip,
+        audio_dev=audio_dev, scale=scale, hotkeys=hotkeys,
+    )
     last_title: str | None = None
     # With a debugger or an RPC server, Ctrl-C in the terminal is a break
     # request (debug-monitor "The REPL opens after the core stops").
@@ -1244,11 +1279,7 @@ def run(
         with breaks:
             while state.running:
                 try:
-                    _run_frame(
-                        sdl2, machine, keyboard, window, renderer, state, joy_manager,
-                        ctrl_combo, ctrl_fkey_cells, game_title, mouse, event, rpc_server,
-                        frame_timer, frame_skip, audio_dev, scale, hotkeys,
-                    )
+                    _run_frame(ctx, state)
                     last_title = _update_window_title(
                         sdl2, window,
                         _window_title(

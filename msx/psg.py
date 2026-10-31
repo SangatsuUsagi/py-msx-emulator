@@ -19,27 +19,9 @@ from msx.snapshot_schema import (
 _REG_IO_PORT_A = 14
 
 PSG_CLOCK: int = 223_722      # AY-3-8910: 3,579,545 Hz / 16
-SAMPLE_RATE: int = AUDIO_SAMPLE_RATE
-SAMPLES_PER_FRAME: int = 735  # 44100 // 60
 # Upper bound on recorded register writes per audio buffer. Far above any real
 # frame's write count; caps memory if generate_samples is never called (headless).
 _MAX_EVENTS: int = 4096
-
-# Generator-state snapshot for sub-frame replay rewind. A NamedTuple (not a bare
-# tuple) so snapshot/restore reference fields by name — order-independent and
-# self-documenting; it maps directly to a plain struct in a Rust/C++ port.
-class _GenState(NamedTuple):
-    tone_cnt: list[int]
-    tone_out: list[int]
-    noise_cnt: int
-    lfsr: int
-    env_cnt: int
-    env_step: int
-    env_attack: int
-    env_alternate: bool
-    env_hold_flag: bool
-    env_holding: bool
-    clk_frac: int
 
 # Which joystick port a mouse (or, in read_port's joystick composition, an
 # InputLines read) targets. IntEnum, not a bare int: its two values are used
@@ -73,7 +55,7 @@ _VOL_TABLE: tuple[int, ...] = (
 
 
 class PsgSynthState(TypedDict):
-    """Save-state schema for PSG.snapshot_synth()/PSG.restore_synth().
+    """Save-state schema for PSG.snapshot_synth()/PSG.apply_synth_state().
 
     Covers only the internal tone/noise/envelope generator state; the
     register file (regs/latch) is captured directly as the snapshot's
@@ -102,6 +84,9 @@ _PSG_SYNTH_KEYS: frozenset[str] = frozenset(PsgSynthState.__annotations__)
 
 @dataclass
 class PSG:
+    """The AY-3-8910 PSG: the register file on ports 0xA0-0xA2, the joystick and
+    mouse ports, and the tone, noise and envelope generators (generate_samples)."""
+
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
     _input: InputLines | None = field(default=None, repr=False)
@@ -118,7 +103,7 @@ class PSG:
     # Kept as a plain tuple here to avoid per-write allocation on the I/O path.
     _events: list[tuple[int, int, int]] = field(default_factory=list, init=False, repr=False)
     _regs_base: list[int] = field(default_factory=list, init=False, repr=False)
-    _gen_base: _GenState | None = field(default=None, init=False, repr=False)
+    _gen_base: PsgSynthState | None = field(default=None, init=False, repr=False)
 
     # --- synthesiser state (not part of __init__) ---
     #
@@ -171,7 +156,7 @@ class PSG:
                 if not self._events:
                     # Frame's first write: snapshot state to rewind to at replay.
                     self._regs_base = self.regs[:]
-                    self._gen_base = self._snapshot_gen()
+                    self._gen_base = self.snapshot_synth()
                 self._events.append((self._clock.cycle, reg, value))
             self.regs[reg] = value
             if reg == 13:
@@ -215,9 +200,7 @@ class PSG:
         self._env_hold_flag = False
         self._env_holding = False
         self._clk_frac = 0
-        self._events = []
-        self._regs_base = []
-        self._gen_base = None
+        self.discard_frame_events()
 
     # ------------------------------------------------------------ save-state
     # PORT-LIBRARY-NOTE: see msx/opll.py's snapshot()/restore() for the
@@ -227,7 +210,7 @@ class PSG:
 
     def snapshot_synth(self) -> PsgSynthState:
         """Capture internal tone/noise/envelope generator state for
-        save-state (paired with restore_synth). The register file
+        save-state (paired with parse_synth_state and apply_synth_state). The register file
         (regs/latch) is captured separately -- see the module-level
         PsgSynthState docstring.
         """
@@ -266,18 +249,15 @@ class PSG:
             "env_alternate": check_bool(state["env_alternate"], f"{label}.env_alternate"),
             "env_hold_flag": check_bool(state["env_hold_flag"], f"{label}.env_hold_flag"),
             "env_holding": check_bool(state["env_holding"], f"{label}.env_holding"),
-            "clk_frac": check_int(state["clk_frac"], f"{label}.clk_frac", 0, SAMPLE_RATE - 1),
+            "clk_frac": check_int(
+                state["clk_frac"], f"{label}.clk_frac", 0, AUDIO_SAMPLE_RATE - 1
+            ),
         }
 
-    def restore_synth(self, state: dict[str, object]) -> None:
-        """Restore internal generator state produced by snapshot_synth().
-        Parses the whole object first, so a rejected state leaves the PSG
-        unchanged.
-        """
-        self.apply_synth_state(self.parse_synth_state(state, "psg.synth"))
-
     def apply_synth_state(self, state: PsgSynthState) -> None:
-        """Assign an already-parsed PsgSynthState (see parse_synth_state)."""
+        """Assign an already-parsed PsgSynthState (see parse_synth_state).
+        Assigns only: the sub-frame rewind uses it too. A state load also
+        calls discard_frame_events."""
         self._tone_cnt = list(state["tone_cnt"])
         self._tone_out = list(state["tone_out"])
         self._noise_cnt = state["noise_cnt"]
@@ -289,6 +269,13 @@ class PSG:
         self._env_hold_flag = state["env_hold_flag"]
         self._env_holding = state["env_holding"]
         self._clk_frac = state["clk_frac"]
+
+    def discard_frame_events(self) -> None:
+        """Drop the frame's recorded writes and rewind base: after a state
+        load, they belong to the state before the load."""
+        self._events = []
+        self._regs_base = []
+        self._gen_base = None
 
     # --------------------------------------------------------- envelope reset
 
@@ -452,8 +439,8 @@ class PSG:
         for i in range(start, end):
             # Advance PSG clock by one sample's worth of ticks (integer arithmetic).
             clk_frac += PSG_CLOCK
-            ticks = clk_frac // SAMPLE_RATE
-            clk_frac %= SAMPLE_RATE
+            ticks = clk_frac // AUDIO_SAMPLE_RATE
+            clk_frac %= AUDIO_SAMPLE_RATE
 
             # tone channels (inline _step_tone).  Integrate the square wave over
             # the sample instead of point-sampling: hi0/hi1/hi2 count the PSG
@@ -611,7 +598,7 @@ class PSG:
         # then render segments split at each write's computed sample position.
         final = self.regs[:]
         self.regs[:] = self._regs_base
-        self._restore_gen(self._gen_base)
+        self.apply_synth_state(self._gen_base)
         span = frame_end - frame_start
         lo = 0
         for cyc, reg, val in events:
@@ -633,27 +620,3 @@ class PSG:
         self._events = []
         self._gen_base = None
         return out
-
-    def _snapshot_gen(self) -> _GenState:
-        """Capture generator state to rewind to for sub-frame replay."""
-        return _GenState(
-            tone_cnt=self._tone_cnt[:], tone_out=self._tone_out[:],
-            noise_cnt=self._noise_cnt, lfsr=self._lfsr,
-            env_cnt=self._env_cnt, env_step=self._env_step,
-            env_attack=self._env_attack, env_alternate=self._env_alternate,
-            env_hold_flag=self._env_hold_flag, env_holding=self._env_holding,
-            clk_frac=self._clk_frac,
-        )
-
-    def _restore_gen(self, snapshot: _GenState) -> None:
-        self._tone_cnt[:] = snapshot.tone_cnt
-        self._tone_out[:] = snapshot.tone_out
-        self._noise_cnt = snapshot.noise_cnt
-        self._lfsr = snapshot.lfsr
-        self._env_cnt = snapshot.env_cnt
-        self._env_step = snapshot.env_step
-        self._env_attack = snapshot.env_attack
-        self._env_alternate = snapshot.env_alternate
-        self._env_hold_flag = snapshot.env_hold_flag
-        self._env_holding = snapshot.env_holding
-        self._clk_frac = snapshot.clk_frac

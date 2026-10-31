@@ -84,3 +84,13 @@ def test_joystick_release_keeps_the_lines_within_six_bits() -> None:
     state.joystick_button_up(0, 6)
     state.keyboard_joystick_up(1, 7)
     assert (state.joy1, state.joy2) == (0x3F, 0x3F)
+
+
+def test_the_frame_clamps_the_mouse_motion_to_int32() -> None:
+    # machine-c-abi "The mouse motion and the frame breakpoint are wide".
+    state = InputState()
+    state.mouse_dx = 2**40
+    state.mouse_dy = -(2**40)
+    frame = state.frame()
+    assert frame.mouse_dx == 0x7FFF_FFFF
+    assert frame.mouse_dy == -0x8000_0000

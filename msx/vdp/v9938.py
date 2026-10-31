@@ -28,7 +28,6 @@ from msx.vdp._v9938_defs import (
     _RegChange,
     display_height_of,
     display_width_of,
-    even_odd_enabled_of,
 )
 from msx.vdp.vdp import FramebufferFormat, Rgb24RowCache
 
@@ -380,6 +379,30 @@ def parse_v9938_state(obj: object, label: str = "vdp.v9938") -> V9938State:
     }
 
 
+@dataclass(frozen=True)
+class _CmdOperands:
+    """A command's operands, decoded once from the command registers when the
+    command starts (R#32-R#46; V9938 data book, section 4)."""
+
+    sx: int
+    sy: int
+    dx: int
+    dy: int
+    nx: int
+    ny: int
+    clr: int
+    arg: int
+    log: int
+    dix: bool
+    diy: bool
+    xs: int
+    ys: int
+    src_ext: bool
+    dst_ext: bool
+    sw: int
+    px_mask: int
+
+
 @dataclass
 class V9938:
     """V9938 VDP for MSX2: 128 KB VRAM, 28 registers, 16-colour palette,
@@ -458,7 +481,6 @@ class V9938:
     # The emulated time (msx/clock.py): increment_frame() advances its
     # frame count. build_machine gives the machine's record.
     _clock: CoreClock = field(default_factory=CoreClock, repr=False)
-    _ie1_warned: bool = field(default=False, init=False, repr=False)
     _status1: int = field(default=0, init=False, repr=False)
     # R#13 blink timer, shared by TEXT2 character blink and GRAPHIC4-7 page
     # alternation: blink_state True = ON period (R#12 colours / even page),
@@ -477,6 +499,10 @@ class V9938:
     # machine loop is a slot load, not a descriptor call. Updated only in
     # update_irq()/reset(); read-only by convention for external consumers.
     irq: bool = field(default=False, init=False, repr=False)
+    # PORT-NOTE: a fixed array holds this log. Each entry takes at least one OUT
+    # (R#17 indirect writes through port 0x9B), and the fastest OUT takes 11
+    # T-states, so a PAL frame (71364 T-states) has at most 6488 entries. The
+    # log is cleared once per frame.
     _reg_write_log: list[_RegChange | _PaletteChange] = field(
         default_factory=list, init=False, repr=False
     )
@@ -557,16 +583,6 @@ class V9938:
     def display_height(self) -> int:
         """192 lines by default; 212 when R#9 bit 7 (LN) is set."""
         return display_height_of(self.regs)
-
-    @property
-    def interlaced(self) -> bool:
-        """R#9 bit 3 (IL): interlace enable."""
-        return bool(self.regs[9] & 0x08)
-
-    @property
-    def even_odd_enabled(self) -> bool:
-        """R#9 bit 2 (EO): automatic even/odd page alternation enable."""
-        return even_odd_enabled_of(self.regs)
 
     @property
     def vblank_start_line(self) -> int:
@@ -1019,7 +1035,30 @@ class V9938:
         persist forever, corrupting every subsequent R#nn / address write.
         """
         self._ctrl_pending = False
-        if self.regs[15] == 2:
+        sel = self.regs[15]
+        if sel == 0:
+            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
+            # sprite number. The renderer already stores the real overflowing
+            # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
+            # `(st.status & 0xA0) | 0x40 | (i & 0x1F)`, committed to vdp.status
+            # by commit_render_status), so preserve it here
+            # when 5S is set. When idle (no 5th/9th sprite this frame), fall
+            # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
+            # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
+            # loop counter.
+            if self.status & 0x40:
+                result = self.status & 0xFF
+            else:
+                result = (self.status & 0xE0) | 0x1F
+            self.status &= ~0xE0  # clear F, 5S and C flags together
+            self.update_irq()
+            return result & 0xFF
+        if sel == 1:
+            result = self._status1
+            self._status1 &= ~_S1_FH  # reading S#1 clears FH
+            self.update_irq()
+            return result & 0xFF
+        if sel == 2:
             # S#2 also reports the live horizontal/vertical retrace flags,
             # which software polls to time mid-screen register changes; bits
             # 2,3 always read as 1.
@@ -1029,7 +1068,27 @@ class V9938:
             if not (0 <= self.display_line < self.display_height):
                 s2 |= _S2_VR
             return s2
-        if self.regs[15] == 7:
+        # S#3-S#6: sprite collision X/Y, as reported by the sprite renderer
+        # (Handbook Sec. 5.3.3). The unused high bits read as 1 (openMSX
+        # VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the V9938 data book
+        # shows S#4 as 1111111X8).
+        if sel == 3:
+            return self.collision_x & 0xFF
+        if sel == 4:
+            return ((self.collision_x >> 8) & 0x01) | 0xFE
+        if sel == 5:
+            result = self.collision_y & 0xFF
+            self.collision_x = 0  # reading S#5 resets the coordinate pair
+            self.collision_y = 0
+            return result
+        if sel == 6:
+            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
+            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
+            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # summary shows; its sprite-collision section, the Handbook and
+            # openMSX give collision Y bit 9 there, which would always be 0.
+            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
+        if sel == 7:
             # S#7 reads back the colour register, which holds the POINT
             # result or the dot an LMCM has staged. The read doubles as the
             # LMCM handshake: taking the dot lets the engine fetch the next
@@ -1043,14 +1102,9 @@ class V9938:
             elif not self._cmd_active:
                 self._status2 &= ~_S2_TR
             return result
-        if self.regs[15] == 1:
-            result = self._status1
-            self._status1 &= ~_S1_FH  # reading S#1 clears FH
-            self.update_irq()
-            return result & 0xFF
-        if self.regs[15] == 8:
+        if sel == 8:
             return self._status8
-        if self.regs[15] == 9:
+        if sel == 9:
             # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
             # readStatusReg case 9 → resetBD); a SRCH that finds nothing
             # leaves the previous flag standing.
@@ -1058,44 +1112,7 @@ class V9938:
             result = self._status9 | 0xFE
             self._status2 &= ~_S2_BD
             return result
-        if self.regs[15] == 3:
-            # S#3-S#6: sprite collision X/Y, as reported by the sprite
-            # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
-            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the
-            # V9938 data book shows S#4 as 1111111X8).
-            return self.collision_x & 0xFF
-        if self.regs[15] == 4:
-            return ((self.collision_x >> 8) & 0x01) | 0xFE
-        if self.regs[15] == 5:
-            result = self.collision_y & 0xFF
-            self.collision_x = 0  # reading S#5 resets the coordinate pair
-            self.collision_y = 0
-            return result
-        if self.regs[15] == 6:
-            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
-            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
-            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
-            # summary shows; its sprite-collision section, the Handbook and
-            # openMSX give collision Y bit 9 there, which would always be 0.
-            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
-        if self.regs[15] >= 10:
-            return 0xFF  # non-existent status register
-        # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
-        # sprite number. The renderer already stores the real overflowing
-        # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
-        # `(st.status & 0xA0) | 0x40 | (i & 0x1F)`, committed to vdp.status
-        # by commit_render_status), so preserve it here
-        # when 5S is set. When idle (no 5th/9th sprite this frame), fall
-        # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
-        # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
-        # loop counter.
-        if self.status & 0x40:
-            result = self.status & 0xFF
-        else:
-            result = (self.status & 0xE0) | 0x1F
-        self.status &= ~0xE0  # clear F, 5S and C flags together
-        self.update_irq()
-        return result & 0xFF
+        return 0xFF  # non-existent status register
 
     # ------------------------------------------------------------------
     # Command engine helpers
@@ -1163,12 +1180,8 @@ class V9938:
     def _dispatch_command(self) -> None:
         """Execute or start the command written to R46 (cmd_regs[14]).
 
-        Decodes the shared register geometry once, then delegates each
-        command's own body to a private `_cmd_*` method below -- kept as a
-        single function until this refactor, which grew to 210 lines/13
-        commands and was hard to navigate; splitting it changes nothing about
-        the accuracy-justifying comments each command body carries, only
-        where they live.
+        Decodes the shared register geometry once into a _CmdOperands record,
+        then delegates each command's own body to a private `_cmd_*` method.
         """
         r46 = self.cmd_regs[14]  # R#46: command byte (high nibble) + logic op (low)
         cmd = (r46 >> 4) & 0xF
@@ -1182,23 +1195,29 @@ class V9938:
         self._cmd_code = cmd
 
         self._cmd_bpl, self._cmd_ppb, self._cmd_bpp = self._cmd_geometry()
-        px_mask = (1 << self._cmd_bpp) - 1
-        sw = self._cmd_bpl * self._cmd_ppb  # screen width in dots
-
-        sx = self.cmd_regs[0] | ((self.cmd_regs[1] & 0x01) << 8)
-        sy = self.cmd_regs[2] | ((self.cmd_regs[3] & 0x03) << 8)
-        dx = self.cmd_regs[4] | ((self.cmd_regs[5] & 0x01) << 8)
-        dy = self.cmd_regs[6] | ((self.cmd_regs[7] & 0x03) << 8)
-        nx = self.cmd_regs[8] | ((self.cmd_regs[9] & 0x03) << 8)
-        ny = self.cmd_regs[10] | ((self.cmd_regs[11] & 0x03) << 8)
-        clr = self.cmd_regs[12]
-        arg = self.cmd_regs[13]
+        regs = self.cmd_regs
+        arg = regs[13]
         dix = bool(arg & _ARG_DIX)
         diy = bool(arg & _ARG_DIY)
-        xs = -1 if dix else 1  # DIX: 1 = leftward
-        ys = -1 if diy else 1  # DIY: 1 = upward
-        src_ext = bool(arg & _ARG_MXS)  # source in (absent) expansion RAM
-        dst_ext = bool(arg & _ARG_MXD)  # destination in (absent) expansion RAM
+        ops = _CmdOperands(
+            sx=regs[0] | ((regs[1] & 0x01) << 8),
+            sy=regs[2] | ((regs[3] & 0x03) << 8),
+            dx=regs[4] | ((regs[5] & 0x01) << 8),
+            dy=regs[6] | ((regs[7] & 0x03) << 8),
+            nx=regs[8] | ((regs[9] & 0x03) << 8),
+            ny=regs[10] | ((regs[11] & 0x03) << 8),
+            clr=regs[12],
+            arg=arg,
+            log=log,
+            dix=dix,
+            diy=diy,
+            xs=-1 if dix else 1,  # DIX: 1 = leftward
+            ys=-1 if diy else 1,  # DIY: 1 = upward
+            src_ext=bool(arg & _ARG_MXS),  # source in (absent) expansion RAM
+            dst_ext=bool(arg & _ARG_MXD),  # destination in (absent) expansion RAM
+            sw=self._cmd_bpl * self._cmd_ppb,  # screen width in dots
+            px_mask=(1 << self._cmd_bpp) - 1,
+        )
 
         self._cmd_active = False
         # A delay left by an overridden HMMC/LMMC must not re-assert TR in the
@@ -1215,31 +1234,34 @@ class V9938:
             return
 
         if cmd == _CMD_POINT:
-            self._cmd_point(sx, sy, src_ext, px_mask)
+            self._cmd_point(ops)
         elif cmd == _CMD_PSET:
-            self._cmd_pset(dx, dy, clr, log, dst_ext, px_mask)
+            self._cmd_pset(ops)
         elif cmd == _CMD_SRCH:
-            self._cmd_srch(sx, sy, clr, arg, xs, sw, src_ext, px_mask)
+            self._cmd_srch(ops)
         elif cmd == _CMD_LINE:
-            self._draw_line(dx, dy, nx, ny & 0x3FF, clr & px_mask, log, arg, xs, ys, sw)
+            self._draw_line(ops)
         elif cmd == _CMD_LMCM:
-            self._cmd_lmcm(sx, sy, nx, ny, dix, diy, xs, ys, sw, src_ext, px_mask)
+            self._cmd_lmcm(ops)
         elif cmd == _CMD_LMMV:
-            self._cmd_lmmv(dx, dy, nx, ny, dix, diy, xs, ys, sw, clr, log, dst_ext, px_mask)
+            self._cmd_lmmv(ops)
         elif cmd == _CMD_LMMM:
-            self._cmd_lmmm(sx, sy, dx, dy, nx, ny, dix, diy, xs, ys, sw, log, src_ext, dst_ext,
-                            px_mask)
+            self._cmd_lmmm(ops)
         elif cmd == _CMD_HMMV:
-            self._cmd_hmmv(dx, dy, nx, ny, dix, diy, xs, ys, clr, dst_ext)
+            self._cmd_hmmv(ops)
         elif cmd == _CMD_HMMM:
-            self._cmd_hmmm(sx, sy, dx, dy, nx, ny, dix, diy, xs, ys, src_ext, dst_ext)
+            self._cmd_hmmm(ops)
         elif cmd == _CMD_YMMM:
-            self._cmd_ymmm(sy, dx, dy, ny, dix, diy, xs, ys, dst_ext)
+            self._cmd_ymmm(ops)
         else:
             # HMMC (0xF) or LMMC (0xB): CPU-feed transfer.
-            self._cmd_cpu_feed(cmd, dx, dy, nx, ny, dix, diy, xs, ys, sw, log, clr)
+            self._cmd_cpu_feed(cmd, ops)
 
-    def _cmd_point(self, sx: int, sy: int, src_ext: bool, px_mask: int) -> None:
+    def _cmd_point(self, ops: _CmdOperands) -> None:
+        sx = ops.sx
+        sy = ops.sy
+        src_ext = ops.src_ext
+        px_mask = ops.px_mask
         # The sampled dot lands in the colour register, where S#7 reads it.
         # An MXS source (absent expansion RAM) reads as the all-ones dot value:
         # on a real SONY HB-F1XD the value is masked to the dot width but its
@@ -1248,12 +1270,25 @@ class V9938:
         # openMSX gives an unmasked 0xFF.
         self.cmd_regs[12] = (0xFF if src_ext else self._vram_pixel_read(sx, sy)) & px_mask
 
-    def _cmd_pset(self, dx: int, dy: int, clr: int, log: int, dst_ext: bool, px_mask: int) -> None:
+    def _cmd_pset(self, ops: _CmdOperands) -> None:
+        dx = ops.dx
+        dy = ops.dy
+        clr = ops.clr
+        log = ops.log
+        dst_ext = ops.dst_ext
+        px_mask = ops.px_mask
         if not dst_ext:
             self._vram_pixel_write(dx, dy, clr & px_mask, log)
 
-    def _cmd_srch(self, sx: int, sy: int, clr: int, arg: int, xs: int, sw: int,
-                  src_ext: bool, px_mask: int) -> None:
+    def _cmd_srch(self, ops: _CmdOperands) -> None:
+        sx = ops.sx
+        sy = ops.sy
+        clr = ops.clr
+        arg = ops.arg
+        xs = ops.xs
+        sw = ops.sw
+        src_ext = ops.src_ext
+        px_mask = ops.px_mask
         stop_on_ne = bool(arg & _ARG_EQ)
         clr_px = clr & px_mask
         x = sx
@@ -1274,8 +1309,18 @@ class V9938:
         if found:
             self._status2 |= _S2_BD
 
-    def _cmd_lmcm(self, sx: int, sy: int, nx: int, ny: int, dix: bool, diy: bool,
-                  xs: int, ys: int, sw: int, src_ext: bool, px_mask: int) -> None:
+    def _cmd_lmcm(self, ops: _CmdOperands) -> None:
+        sx = ops.sx
+        sy = ops.sy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        sw = ops.sw
+        src_ext = ops.src_ext
+        px_mask = ops.px_mask
         self._cmd_sx = sx
         self._cmd_sy = sy
         self._cmd_nx = _clip_nx_dot(sx, nx, dix, sw)
@@ -1294,9 +1339,20 @@ class V9938:
         if self._cmd_nx == 1 and self._cmd_ny == 1:
             self._complete_command()  # one-dot LMCM: the first dot is also the last
 
-    def _cmd_lmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
-                  xs: int, ys: int, sw: int, clr: int, log: int, dst_ext: bool,
-                  px_mask: int) -> None:
+    def _cmd_lmmv(self, ops: _CmdOperands) -> None:
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        sw = ops.sw
+        clr = ops.clr
+        log = ops.log
+        dst_ext = ops.dst_ext
+        px_mask = ops.px_mask
         actual_nx = _clip_nx_dot(dx, nx, dix, sw)
         actual_ny = _clip_ny(dy, ny, diy)
         clr_px = clr & px_mask
@@ -1309,9 +1365,22 @@ class V9938:
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMV_CYCLES_PER_DOT)
 
-    def _cmd_lmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
-                  diy: bool, xs: int, ys: int, sw: int, log: int, src_ext: bool,
-                  dst_ext: bool, px_mask: int) -> None:
+    def _cmd_lmmm(self, ops: _CmdOperands) -> None:
+        sx = ops.sx
+        sy = ops.sy
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        sw = ops.sw
+        log = ops.log
+        src_ext = ops.src_ext
+        dst_ext = ops.dst_ext
+        px_mask = ops.px_mask
         actual_nx = _clip_nx_dot_pair(sx, dx, nx, dix, sw)
         actual_ny = _clip_ny_pair(sy, dy, ny, diy)
         if not dst_ext:
@@ -1326,8 +1395,17 @@ class V9938:
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(actual_nx, actual_ny, _LMMM_CYCLES_PER_DOT)
 
-    def _cmd_hmmv(self, dx: int, dy: int, nx: int, ny: int, dix: bool, diy: bool,
-                  xs: int, ys: int, clr: int, dst_ext: bool) -> None:
+    def _cmd_hmmv(self, ops: _CmdOperands) -> None:
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        clr = ops.clr
+        dst_ext = ops.dst_ext
         # Byte-unit: NX is truncated to whole bytes and the engine walks
         # byte columns, so an NX that is not a multiple of ppb covers fewer
         # dots rather than part-writing an extra byte.
@@ -1343,8 +1421,19 @@ class V9938:
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMV_CYCLES_PER_BYTE)
 
-    def _cmd_hmmm(self, sx: int, sy: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
-                  diy: bool, xs: int, ys: int, src_ext: bool, dst_ext: bool) -> None:
+    def _cmd_hmmm(self, ops: _CmdOperands) -> None:
+        sx = ops.sx
+        sy = ops.sy
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        src_ext = ops.src_ext
+        dst_ext = ops.dst_ext
         byte_cols = _clip_nx_byte_pair(sx, dx, nx, dix, self._cmd_ppb, self._cmd_bpl)
         actual_ny = _clip_ny_pair(sy, dy, ny, diy)
         src_col = sx // self._cmd_ppb
@@ -1361,8 +1450,16 @@ class V9938:
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _HMMM_CYCLES_PER_BYTE)
 
-    def _cmd_ymmm(self, sy: int, dx: int, dy: int, ny: int, dix: bool, diy: bool, xs: int,
-                  ys: int, dst_ext: bool) -> None:
+    def _cmd_ymmm(self, ops: _CmdOperands) -> None:
+        sy = ops.sy
+        dx = ops.dx
+        dy = ops.dy
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        dst_ext = ops.dst_ext
         # Y-direction copy: vertical strip at X=DX (NX ignored, the strip
         # runs to whichever screen edge DIX points at); source row SY →
         # destination row DY, both at the same X.
@@ -1381,8 +1478,18 @@ class V9938:
         self._status2 |= _S2_CE
         self._cmd_remaining = self._cmd_cycles(byte_cols, actual_ny, _YMMM_CYCLES_PER_BYTE)
 
-    def _cmd_cpu_feed(self, cmd: int, dx: int, dy: int, nx: int, ny: int, dix: bool,
-                      diy: bool, xs: int, ys: int, sw: int, log: int, clr: int) -> None:
+    def _cmd_cpu_feed(self, cmd: int, ops: _CmdOperands) -> None:
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny
+        dix = ops.dix
+        diy = ops.diy
+        xs = ops.xs
+        ys = ops.ys
+        sw = ops.sw
+        log = ops.log
+        clr = ops.clr
         # HMMC (0xF) or LMMC (0xB): CPU-feed transfer; tick() must not time out via _cmd_remaining.
         self._cmd_remaining = 0
         self._cmd_active = True
@@ -1414,8 +1521,7 @@ class V9938:
             self._tr_delay = 0
             self._status2 |= _S2_TR
 
-    def _draw_line(self, dx: int, dy: int, nx: int, ny: int, colour: int,
-                   log: int, arg: int, xs: int, ys: int, sw: int) -> None:
+    def _draw_line(self, ops: _CmdOperands) -> None:
         """Bresenham line from (dx, dy), following openMSX executeLine.
 
         NX is always the major (long) side and NY the minor; MAJ (ARG bit 0)
@@ -1423,6 +1529,16 @@ class V9938:
         covers NX + 1 dots and terminates early when X crosses the line width
         or an upward DIY walks Y above the top border.
         """
+        dx = ops.dx
+        dy = ops.dy
+        nx = ops.nx
+        ny = ops.ny & 0x3FF
+        colour = ops.clr & ops.px_mask
+        log = ops.log
+        arg = ops.arg
+        xs = ops.xs
+        ys = ops.ys
+        sw = ops.sw
         maj_y = bool(arg & _ARG_MAJ)
         dst_ext = bool(arg & _ARG_MXD)
         err = (nx - 1) // 2 if nx else 0  # openMSX ASX

@@ -6,13 +6,16 @@ from msx.memory import Memory
 from msx.ram_mapper import RamMapper
 
 
-def _make_memory(slot_register: int = 0xD4, sub_slot_reg: int = 0x00) -> Memory:
+def _make_memory(
+    slot_register: int = 0xD4, sub_slot_reg: int = 0x00, sub0_rom: bytes | None = None
+) -> Memory:
     """Create a Memory with slot3/page3, sub_slot_enabled=True, and RamMapper."""
     rom = bytes(0x8000)  # 32 KB BIOS ROM (0x0000-0x7FFF)
     mem = Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
+        sub0_rom=sub0_rom,
         slot_register=slot_register,
         ram_mapper=RamMapper(),
         sub_slot_reg=sub_slot_reg,
@@ -77,7 +80,7 @@ def test_subslot_ffff_no_intercept_when_disabled() -> None:
     # hold (allium/slots.allium). Falls through to slot 3's normal dispatch,
     # here MSX1 flat RAM (no ram_mapper set).
     mem = Memory(
-        rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+        rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
         slot_register=0xC0,  # page3 = slot3
         sub_slot_enabled=False,
     )
@@ -88,7 +91,7 @@ def test_subslot_ffff_no_intercept_when_disabled() -> None:
 
 def test_subslot_read_ffff_no_intercept_when_disabled() -> None:
     mem = Memory(
-        rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+        rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
         slot_register=0xC0,  # page3 = slot3
         sub_slot_enabled=False,
     )
@@ -104,10 +107,8 @@ def test_subslot_read_ffff_no_intercept_when_disabled() -> None:
 
 def test_subslot0_read_from_sub0_rom() -> None:
     sub_rom = bytes([0x41, 0x42, 0x43] + [0xFF] * (0x4000 - 3))  # 16 KB
-    mem = _make_memory(slot_register=0xC0)  # page3=slot3; but we need page0=slot3
-    # Set page0=slot3: slot_register bits 1:0 = 11
-    mem.set_slot_register(0xC3)  # page3=slot3, page0=slot3
-    mem.set_sub0_rom(sub_rom)
+    # page3=slot3, page0=slot3 (slot_register bits 1:0 = 11)
+    mem = _make_memory(slot_register=0xC3, sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)  # page0 → sub-slot 0
 
     assert mem.read(0x0000) == 0x41
@@ -117,8 +118,7 @@ def test_subslot0_read_from_sub0_rom() -> None:
 
 def test_subslot0_write_ignored() -> None:
     sub_rom = bytearray([0x00] * 0x4000)
-    mem = _make_memory(slot_register=0xC3)
-    mem.set_sub0_rom(bytes(sub_rom))
+    mem = _make_memory(slot_register=0xC3, sub0_rom=bytes(sub_rom))
     mem.set_sub_slot_reg(0x00)
     mem.write(0x0000, 0xFF)
     assert mem.read(0x0000) == 0x00  # unchanged
@@ -127,8 +127,8 @@ def test_subslot0_write_ignored() -> None:
 def test_subslot0_address_out_of_range_returns_ff() -> None:
     sub_rom = bytes([0xAA] * 0x4000)
     # page1 = slot3, sub-slot 0 → but sub0_rom only covers 0x0000-0x3FFF
-    mem = _make_memory(slot_register=0xCC)  # page3=slot3, page2=slot3, page1=slot3, page0=slot0
-    mem.set_sub0_rom(sub_rom)
+    # page3=slot3, page2=slot3, page1=slot3, page0=slot0
+    mem = _make_memory(slot_register=0xCC, sub0_rom=sub_rom)
     mem.set_sub_slot_reg(0x00)  # all pages → sub-slot 0
     # Read at 0x4000 (page1) → sub-slot 0 but addr > 0x3FFF → 0xFF
     assert mem.read(0x4000) == 0xFF
@@ -182,11 +182,11 @@ def _make_memory_slot2(
     return Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=slot_register,
         slot2_sub_slot_enabled=True,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        _mapper2_subslots=mapper2_subslots if mapper2_subslots is not None else [None] * 4,
+        mapper2_subslots=mapper2_subslots if mapper2_subslots is not None else [None] * 4,
     )
 
 
@@ -236,8 +236,8 @@ def test_slot2_sub_slot_enabled_false_preserves_flat_dispatch() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
-        _mapper2=cart,
+        mapper1=FlatMapper(None),
+        mapper2=cart,
         slot_register=0x08,  # page1 -> slot2
         slot2_sub_slot_enabled=False,
     )
@@ -252,11 +252,11 @@ def _make_memory_slot2_intercept(slot_register: int, slot2_sub_slot_reg: int = 0
     return Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=slot_register,
         slot2_sub_slot_enabled=True,
         slot2_sub_slot_reg=slot2_sub_slot_reg,
-        _mapper2_subslots=[None, None, None, None],
+        mapper2_subslots=[None, None, None, None],
     )
 
 
@@ -275,11 +275,11 @@ def test_slot2_ffff_no_intercept_when_slot2_sub_slot_disabled() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=0x80,  # page3=slot2
         slot2_sub_slot_enabled=False,
     )
-    mem.write(0xFFFF, 0xBB)  # falls through to flat _mapper2 (empty -> open bus write, no-op)
+    mem.write(0xFFFF, 0xBB)  # falls through to flat mapper2 (empty -> open bus write, no-op)
     assert mem.read(0xFFFF) == 0xFF
 
 
@@ -290,12 +290,12 @@ def test_both_slot2_and_slot3_expanded_independently() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         ram_mapper=None,
         slot_register=0xC0,  # page3=slot3
         sub_slot_enabled=True,
         slot2_sub_slot_enabled=True,
-        _mapper2_subslots=[None, None, None, None],
+        mapper2_subslots=[None, None, None, None],
     )
     mem.write(0xFFFF, 0x11)
     assert mem.sub_slot_reg == 0x11
@@ -315,13 +315,13 @@ def test_slot2_read_ffff_when_page3_is_slot3_reads_slot3_register() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=0xC0,  # page3=slot3
         sub_slot_enabled=True,
         sub_slot_reg=0x5A,
         slot2_sub_slot_enabled=True,
         slot2_sub_slot_reg=0x11,
-        _mapper2_subslots=[None, None, None, None],
+        mapper2_subslots=[None, None, None, None],
     )
     assert mem.read(0xFFFF) == 0xA5  # ~0x5A & 0xFF -- slot 3's, not ~0x11
 
@@ -341,11 +341,11 @@ def _make_memory_slot1(
     return Memory(
         rom=rom,
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=slot_register,
         slot1_sub_slot_enabled=True,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
-        _mapper1_subslots=mapper1_subslots if mapper1_subslots is not None else [None] * 4,
+        mapper1_subslots=mapper1_subslots if mapper1_subslots is not None else [None] * 4,
     )
 
 
@@ -391,7 +391,7 @@ def test_slot1_sub_slot_enabled_false_preserves_flat_dispatch() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=cart,
+        mapper1=cart,
         slot_register=0x04,  # page1 -> slot1
         slot1_sub_slot_enabled=False,
     )
@@ -402,11 +402,11 @@ def _make_memory_slot1_intercept(slot_register: int, slot1_sub_slot_reg: int = 0
     return Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=slot_register,
         slot1_sub_slot_enabled=True,
         slot1_sub_slot_reg=slot1_sub_slot_reg,
-        _mapper1_subslots=[None, None, None, None],
+        mapper1_subslots=[None, None, None, None],
     )
 
 
@@ -425,11 +425,11 @@ def test_slot1_ffff_no_intercept_when_slot1_sub_slot_disabled() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=0x40,  # page3=slot1
         slot1_sub_slot_enabled=False,
     )
-    mem.write(0xFFFF, 0xBB)  # falls through to flat _mapper (empty -> open bus write, no-op)
+    mem.write(0xFFFF, 0xBB)  # falls through to flat mapper1 (empty -> open bus write, no-op)
     assert mem.read(0xFFFF) == 0xFF
 
 
@@ -441,14 +441,14 @@ def test_all_three_slots_expanded_independently() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         ram_mapper=None,
         slot_register=0xC0,  # page3=slot3
         sub_slot_enabled=True,
         slot1_sub_slot_enabled=True,
         slot2_sub_slot_enabled=True,
-        _mapper1_subslots=[None, None, None, None],
-        _mapper2_subslots=[None, None, None, None],
+        mapper1_subslots=[None, None, None, None],
+        mapper2_subslots=[None, None, None, None],
     )
     mem.write(0xFFFF, 0x11)
     assert mem.sub_slot_reg == 0x11
@@ -472,12 +472,12 @@ def test_slot1_read_ffff_when_page3_is_slot3_reads_slot3_register() -> None:
     mem = Memory(
         rom=bytes(0x8000),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=0xC0,  # page3=slot3
         sub_slot_enabled=True,
         sub_slot_reg=0x5A,
         slot1_sub_slot_enabled=True,
         slot1_sub_slot_reg=0x11,
-        _mapper1_subslots=[None, None, None, None],
+        mapper1_subslots=[None, None, None, None],
     )
     assert mem.read(0xFFFF) == 0xA5  # ~0x5A & 0xFF -- slot 3's, not ~0x11

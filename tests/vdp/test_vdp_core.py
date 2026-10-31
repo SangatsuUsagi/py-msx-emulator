@@ -299,7 +299,7 @@ def test_reset_restores_registers_status_and_address_state() -> None:
     vdp.regs = [0xFF] * 8
     vdp.status = 0xFF
     vdp.addr = 0x1234
-    vdp.latch = 0x55
+    vdp.restore_latch(0x55)
     vdp.read_buf = 0x99
 
     vdp.reset()

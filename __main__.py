@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from host.media import DiskFiles
     from host.rpc_server import DebugServer
     from host.trace import TraceOutput
-    from msx.boundary import MediaId, RtcTime
+    from msx.boundary import RtcTime
     from msx.core_api import CoreApi
     from msx.machine_spec import AnyExtensionOverlay, MachineSpec
 
@@ -196,11 +196,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                              "and report average FPS (no SDL window)")
     parser.add_argument("--break-point", metavar="ADDRS", default=None,
                         dest="break_point",
-                        help="Comma-separated hex breakpoint addresses, max 4 (MSX2 only)")
+                        help="Comma-separated hex breakpoint addresses, max 4")
     parser.add_argument("--watch-point", metavar="ADDRS", default=None,
                         dest="watch_point",
-                        help="Comma-separated watchpoint addresses, max 4 (MSX2 only; "
-                             "breaks on read or write)")
+                        help="Comma-separated watchpoints, each ADDR[,MODE], max 4 "
+                             "(MODE is r, w or rw, default rw)")
     parser.add_argument("--rpc", action="store_const", const=True, default=None,
                         help="Enable the embedded Unix-socket JSON-RPC control server "
                              "(interactive SDL run mode only; off by default)")
@@ -210,8 +210,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 class _ResolvedPaths(NamedTuple):
-    cart_path: Path | None
-    slot2_path: Path | None
     fdd1_paths: list[Path]
     fdd2_path: Path | None
     cartridge: bytes | None
@@ -251,7 +249,7 @@ def _resolve_paths(
 
     cartridge = cart_path.read_bytes() if cart_path else None
     cartridge2 = slot2_path.read_bytes() if slot2_path else None
-    return _ResolvedPaths(cart_path, slot2_path, fdd1_paths, fdd2_path, cartridge, cartridge2)
+    return _ResolvedPaths(fdd1_paths, fdd2_path, cartridge, cartridge2)
 
 
 def _check_identical_cartridges(cartridge: bytes | None, cartridge2: bytes | None) -> None:
@@ -416,7 +414,7 @@ def _run_benchmark(
 def _cleanup(
     machine: "CoreApi | None", rpc_server: "DebugServer | None", log_file: TextIO | None,
     trace_file: TextIO | None, mapper_trace_file: TextIO | None,
-    sram_files: "dict[MediaId, Path]", disk_files: "DiskFiles",
+    sram_files: "dict[int, Path]", disk_files: "DiskFiles",
 ) -> None:
     """Tear down open resources and flush SRAM / disk writes on exit."""
     if rpc_server is not None:
@@ -432,6 +430,8 @@ def _cleanup(
         # FORMAT / file save) back to its file.
         from host.media import persist_dirty_media
         persist_dirty_media(machine, sram_files, disk_files)
+        from msx.machine_loader import release_machine
+        release_machine(machine)
 
 
 class _EffectiveOptions(NamedTuple):
@@ -714,13 +714,13 @@ def main() -> None:
     )
 
     # --- Trace outputs (the kinds are turned on after the build) ---
-    trace_output, _trace_file, _log_file = _open_trace_outputs(args)
-    _mapper_trace_file = None
+    trace_output, trace_file, log_file = _open_trace_outputs(args)
+    mapper_trace_file = None
 
     game_title = (lookup_title(cartridge) if cartridge else None) or "py-msx-emulator"
     machine = None
     rpc_server = None
-    sram_files: "dict[MediaId, Path]" = {}
+    sram_files: "dict[int, Path]" = {}
     from host.media import DiskFiles
     # The file of each drive's disk: one table for the debugger, the RPC
     # server, the frontend and the write-back on exit.
@@ -743,7 +743,7 @@ def main() -> None:
             disk_files = DiskFiles(config.disk_files)
         except MachineLoadError as exc:
             _fail(str(exc))
-        result = create_machine(config)
+        result = create_machine(config.config)
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
@@ -756,7 +756,7 @@ def main() -> None:
 
         _set_break_points(machine, breakpoint_addrs, watchpoint_entries)
 
-        _mapper_trace_file = _start_traces(machine, args, trace_output)
+        mapper_trace_file = _start_traces(machine, args, trace_output)
 
         headless = args.count_frame is not None or args.benchmark is not None
         if headless and opts.mouse_port is not None:
@@ -789,7 +789,7 @@ def main() -> None:
                 debugger=debugger, disk_files=disk_files)
     finally:
         _cleanup(
-            machine, rpc_server, _log_file, _trace_file, _mapper_trace_file, sram_files, disk_files
+            machine, rpc_server, log_file, trace_file, mapper_trace_file, sram_files, disk_files
         )
 
 

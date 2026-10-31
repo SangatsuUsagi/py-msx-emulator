@@ -3,6 +3,12 @@ function-key bindings. No core module uses it (machine-core "The host takes
 no constant or table from a core module")."""
 from __future__ import annotations
 
+# MSX joystick function → its bit in the 6-bit active-low port state: the RPC
+# joystick methods, the keyboard joystick and its py_emulator.yaml section.
+JOY_FUNCTION_BITS: dict[str, int] = {
+    "up": 0, "down": 1, "left": 2, "right": 3, "trigger_a": 4, "trigger_b": 5,
+}
+
 # MSX key name → (row, bit) matrix cell, for programmatic key injection (RPC).
 # Derived directly from the MSX keyboard matrix (map.grauw.nl keymatrix); the
 # names are the layout-independent MSX key labels, so this table is shared by

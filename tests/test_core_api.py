@@ -25,6 +25,7 @@ from msx.boundary import (
     TRACE_DEBUG,
     TRACE_EVENT_LOST,
     TRACE_EVENT_VDP_PORT99,
+    TRACE_LOST_MAX,
     TRACE_MAPPER,
     TRACE_VDP,
     VDP_KIND_TMS9918A,
@@ -40,6 +41,7 @@ from msx.boundary import (
 from msx.core_api import CoreApi
 from msx.input import InputFrame
 from msx.machine import Machine
+from msx.trace import TraceLog
 from tests.factories import make_machine, make_machine_msx2
 
 _ROM = bytes(32 * 1024)  # NOPs
@@ -336,7 +338,7 @@ def test_a_trace_kind_that_is_off_records_nothing() -> None:
     m.io.write_port(0x99, 0x80)
     m.io.read_port(0xA8)
     m.memory.write(0x7000, 3)  # window 1 -> bank 3
-    assert m.memory._mapper.debug_bank(2).window_values[0] == 3
+    assert m.memory.mapper1.debug_bank(2).window_values[0] == 3
     assert m.drain_trace() == ()
 
 
@@ -508,7 +510,7 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     m = _msx1()
     assert call(m) == STATUS_BAD_ARGUMENT
     assert m.breakpoints() == () and m.watchpoints() == ()
-    assert m._stepout_sp is None and m._sp_range is None
+    assert m._stepout_sp == -1 and m._sp_low == -1
 
 
 def test_a_frame_number_above_64_bits_is_rejected() -> None:
@@ -531,7 +533,7 @@ def test_an_inverted_sp_range_is_rejected() -> None:
     m = _msx1()
     m.set_sp_range(0xC000, 0xF000)
     assert m.set_sp_range(0xF000, 0xC000) == STATUS_BAD_ARGUMENT
-    assert m._sp_range == (0xC000, 0xF000)
+    assert (m._sp_low, m._sp_high) == (0xC000, 0xF000)
 
 
 def test_minus_1_clears_a_setting() -> None:
@@ -542,8 +544,8 @@ def test_minus_1_clears_a_setting() -> None:
     assert m.set_temp_breakpoint(-1) == STATUS_OK
     assert m.set_frame_breakpoint(10) == STATUS_OK
     assert m.set_frame_breakpoint(-1) == STATUS_OK
-    assert m._sp_range is None and m._temp_breakpoint is None
-    assert m._frame_breakpoint is None
+    assert m._sp_low == -1 and m._temp_breakpoint == -1
+    assert m._frame_breakpoint == -1
     assert not m._break_conditions_active()
 
 
@@ -552,7 +554,7 @@ def test_one_minus_1_end_is_rejected(ends: tuple[int, int]) -> None:
     m = _msx1()
     m.set_sp_range(0xC000, 0xF000)
     assert m.set_sp_range(*ends) == STATUS_BAD_ARGUMENT
-    assert m._sp_range == (0xC000, 0xF000)
+    assert (m._sp_low, m._sp_high) == (0xC000, 0xF000)
 
 
 def test_a_success_after_a_rejection_clears_the_message() -> None:
@@ -637,3 +639,13 @@ def test_the_sprite_flag_rejects_a_value_other_than_0_and_1() -> None:
     assert m.set_sprites_hidden(2) == STATUS_BAD_ARGUMENT
     assert m.last_error_text() == b"set_sprites_hidden value 2 is not 0 or 1"
     assert m.sprites_hidden() == 0
+
+
+def test_the_lost_count_stops_at_the_int32_limit() -> None:
+    # machine-core "The lost count stops at the int32 limit".
+    log = TraceLog()
+    for _ in range(TRACE_CAPACITY):
+        log.record(TRACE_EVENT_LOST)
+    log.lost = TRACE_LOST_MAX
+    log.record(TRACE_EVENT_LOST)
+    assert log.drain()[-1].a == TRACE_LOST_MAX

@@ -139,9 +139,12 @@
         "size_kb": {
           "anyOf": [
             {
+              "const": 0
+            },
+            {
               "type": "integer",
-              "minimum": 0,
-              "maximum": 1048576
+              "minimum": 16,
+              "maximum": 4096
             },
             {
               "type": "null"
@@ -366,7 +369,7 @@
         "ram_size_kb": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1048576
+          "maximum": 64
         },
         "sub_rom": {
           "anyOf": [
@@ -388,8 +391,15 @@
         },
         "ram_mapper_size_kb": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 1048576
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "minimum": 16,
+              "maximum": 4096
+            }
+          ]
         },
         "flat_ram_subslot": {
           "anyOf": [
@@ -406,7 +416,7 @@
         "flat_ram_size_kb": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1048576
+          "maximum": 64
         },
         "fdc": {
           "anyOf": [
@@ -486,6 +496,17 @@
         },
         "device_io_ports": {
           "type": "object",
+          "description": "The first port of each range is not above the last. JSON Schema cannot state that order; the parser checks it.",
+          "propertyNames": {
+            "enum": [
+              "memory_mapper_standard",
+              "ppi8255",
+              "psg_ay8910",
+              "rtc_rp5c01",
+              "vdp_tms9918a",
+              "vdp_v9938"
+            ]
+          },
           "additionalProperties": {
             "type": "array",
             "items": {

@@ -13,10 +13,12 @@ import pytest
 from frontend.sdl2_frontend import (
     _CtrlComboState,
     _DiskList,
+    _EventContext,
     _handle_events,
     _HotkeyState,
     _LoopState,
     _run_frame,
+    _RunContext,
     _update_window_title,
     _window_title,
 )
@@ -50,16 +52,21 @@ class _Event(ctypes.Structure):
 class _FakeSDL:
     """Just enough SDL2 constant/API surface for `_handle_events`.
 
-    Every constant here is actually read by `_handle_events` while processing
-    a KEYDOWN/KEYUP event (the sequential if/elif chain evaluates each
-    comparison in turn, even when it doesn't match) — this file's tests only
-    ever send KEYDOWN/KEYUP events, so joystick/controller `SDL_*` event-type
-    constants are intentionally omitted: that branch is never reached for
-    these event types, and `window`/`joy_manager` are passed as `None` by
-    `_Harness` on the same basis (only exercised by the fullscreen and
-    joystick branches; the fullscreen tests use `_FullscreenSDL`).
+    _handle_events reads every constant here, the joystick ones when it builds
+    its set. This file's tests only send KEYDOWN/KEYUP events.
     """
 
+    SDL_CONTROLLERDEVICEADDED = 100
+    SDL_CONTROLLERDEVICEREMOVED = 101
+    SDL_JOYDEVICEADDED = 102
+    SDL_JOYDEVICEREMOVED = 103
+    SDL_CONTROLLERBUTTONDOWN = 104
+    SDL_CONTROLLERBUTTONUP = 105
+    SDL_CONTROLLERAXISMOTION = 106
+    SDL_JOYBUTTONDOWN = 107
+    SDL_JOYBUTTONUP = 108
+    SDL_JOYAXISMOTION = 109
+    SDL_JOYHATMOTION = 110
     SDL_QUIT = 1
     SDL_KEYDOWN = 2
     SDL_KEYUP = 3
@@ -176,10 +183,11 @@ class _Harness:
 
     def send(self, script: list[tuple[int, ...]]) -> None:
         sdl = self.sdl_cls(script, self._event)
-        self.running = _handle_events(
+        ctx = _EventContext(
             sdl, self._event, self.machine, self.keyboard, None, None, self.ctrl_combo,
-            _CTRL_FKEY_CELLS, "", b"", 0, 0, None, self.hotkeys,
+            _CTRL_FKEY_CELLS, "", None, self.hotkeys,
         )
+        self.running = _handle_events(ctx, b"", 0, 0)
 
     def keydown(self, sym: int, mod: int = 0, scancode: int = 0, repeat: int = 0) -> None:
         self.send([(_FakeSDL.SDL_KEYDOWN, sym, mod, scancode, repeat)])
@@ -1061,11 +1069,17 @@ class _Loop:
         )
 
     def step(self) -> None:
+        joy = _LoopJoy()
+        events = _EventContext(
+            self.sdl, _Event(), self.machine, SdlKeyboard(self.machine.input), None, joy,
+            _CtrlComboState(), _CTRL_FKEY_CELLS, "", None, self.hotkeys,
+        )
         _run_frame(
-            self.sdl, self.machine, SdlKeyboard(self.machine.input), None, None, self.state,
-            _LoopJoy(), _CtrlComboState(),
-            _CTRL_FKEY_CELLS, "", None, _Event(), self.rpc, self.timer, "auto",
-            self.audio_dev, 3, self.hotkeys,
+            _RunContext(
+                events, self.sdl, self.machine, None, None, joy, self.rpc, self.timer, "auto",
+                self.audio_dev, 3, self.hotkeys,
+            ),
+            self.state,
         )
 
 

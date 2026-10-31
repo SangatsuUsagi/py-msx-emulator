@@ -664,7 +664,10 @@ independently select the visible segment in each CPU page:
 A write of a segment number to a register remaps that page immediately. The
 mapper masks the number with `bank_mask`: the smallest power of two that covers
 the segment count, minus 1 (7 for 128 KB). A read returns the segment number
-with the unused upper bits set to 1.
+with the unused upper bits set to 1. When the segment count is not a power of
+two, a masked number can be at or above the count. Such a number selects
+segment `number & (count - 1)`, as openMSX does (48 KB: number 3 selects
+segment 2).
 
 ---
 
@@ -717,8 +720,7 @@ shapes that the loader validates by hand (`DeviceEntryYaml`,
 `MachineEntryYaml`, `ExtensionOverlayYaml`, and their nested shapes). No
 schema library validates them. The closed sets of names (mappers, FDC
 controllers and connection styles, extension, sub-slot and I/O devices) are
-defined in `msx/machine_config.py`. The YAML loader imports them under its
-`_KNOWN_*`/`_SUPPORTED_*` names, and the core checks the same sets again when
+defined in `msx/machine_config.py`. The YAML loader imports them, and the core checks the same sets again when
 it parses the MachineConfig document.
 
 Each field in this section matches an explicit `.get()` call in the loader. A
@@ -933,7 +935,7 @@ io_device:
 
 This field has the same shape as the `io_device` of an extension overlay
 (below). It is a slot-independent global I/O device that the machine itself
-supplies. The loader validates it against the same `_KNOWN_IO_DEVICES` set,
+supplies. The loader validates it against the same `IO_DEVICES` set,
 which holds only `kanji_rom`. At present, no shipped machine YAML declares
 one. At present, only two extensions supply a `kanji_rom` device: `hbi_j1` and
 `msxdos2_512k_kanjirom` (`--extension1`/`--extension2`). Both do it through the
@@ -957,7 +959,7 @@ rom: {file: fmpac.rom, size_kb: 64}
 sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
 ```
 
-`device` must be `fmpac` or `scc_i_cart` (`_KNOWN_EXTENSION_DEVICES`). This is
+`device` must be `fmpac` or `scc_i_cart` (`EXTENSION_DEVICES`). This is
 a different namespace from the sub-slot devices of the expanded shape below,
 although both use the key `device`. `fmpac` needs a `rom:` block. `scc_i_cart`
 does not need one, because its RAM starts blank and the loader loads no file.
@@ -986,7 +988,7 @@ io_device:
 `subslots` is a necessary, non-empty mapping with keys `0`-`3`. It uses the
 same index range and the same `_check_subslot_index` as an MSX2 slot-3
 sub-slot. The `device` of each entry must be one of `halnote`, `flat_rom`,
-`ram_mapper`, `ascii8`, or `ascii16` (`_KNOWN_EXPANDED_SUBSLOT_DEVICES`):
+`ram_mapper`, `ascii8`, or `ascii16` (`SUBSLOT_DEVICES`):
 
 | `device` | Requires | Constructs |
 | --- | --- | --- |
@@ -1005,7 +1007,7 @@ conflicts with a machine that already has its own slot-3 RAM mapper
 (`has_ram_mapper=True`). The two mappers would use the same ports.
 
 The loader validates the optional top-level `io_device` against a *third*
-device namespace, `_KNOWN_IO_DEVICES = {kanji_rom}`. This namespace has no
+device namespace, `IO_DEVICES = {kanji_rom}`. This namespace has no
 overlap with the other two. `device: kanji_rom` is not valid in `subslots`, and
 `device: halnote` (or any other sub-slot device) is not valid in `io_device`.
 If a machine-level `io_device` and the `io_device` of an overlay both resolve
@@ -1062,6 +1064,11 @@ mapper, it looks up the mapper in the ROM database first. In the document,
 every ROM is a reference `{name, size, sha1, pages}`. The ROM images travel
 beside the document, keyed by SHA1. The run inputs also travel beside it: the
 saved SRAM images, the disk images and the RTC start time.
+
+The parser limits `ram_size_kb` and `flat_ram_size_kb` to 0-64, and
+`ram_mapper_size_kb` and a sub-slot device `size_kb` to 0 or 16-4096. It also
+checks the `device_io_ports` device names and that the first port of each range
+is not above the last.
 
 `build_machine(config)` in `msx/machine_loader.py` parses the document
 strictly and checks the size and SHA1 of every referenced image. It then
@@ -1120,15 +1127,15 @@ port of the core can thus replace the
 
 The test also checks what host code imports from `msx/`. It may import
 `msx/boundary.py`, `msx/core_api.py`, `InputFrame` from `msx/input.py`,
-`create_machine` from `msx/machine_loader.py`, and the public names of the
+`create_machine` and `release_machine` from `msx/machine_loader.py`, and the public names of the
 machine description layer. The description layer is `msx/machine_spec.py`
 and `msx/machine_config.py`: the machine model, the vocabularies, and the
 encoder and parser of the MachineConfig document. It imports no device
 module, so it stays Python when the core is native. The host keeps using
 its encoder, and a native core parses the same document
 (`msx/machine_config.schema.json`) with its own parser. The fixed media
-sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`) are
-boundary constants, because the host creates a save file before the core
+sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`, and one
+constant for each cartridge SRAM mapper) are boundary constants, because the host creates a save file before the core
 exists.
 
 ### Values that cross the boundary
@@ -1263,12 +1270,12 @@ keeps this value as `machine_config_sha256`.
 
 A port that has no YAML loader can write the document directly. It can also
 take one from the Python host: encode it with `load_machine_config()` and save
-`config.document` and `config.roms`.
+`config.config.document` and `config.config.roms`.
 
 ### Snapshots
 
 `save_state()` returns the whole machine state as canonical JSON (format
-version 19). The layout is `msx/snapshot.schema.json`: one object per
+version 21). The layout is `msx/snapshot.schema.json`: one object per
 component (`cpu`, `memory`, `slots`, `vdp`, `psg`, `ppi`, `scc`, `fdc`, `rtc`,
 `mouse`), every key always present, and `null` for a part that the machine
 does not have. Byte arrays are padded RFC 4648 base64 strings, and every
@@ -1361,7 +1368,7 @@ root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host: YAML + files -> MachineConfig
-result = create_machine(config)                    # core: values only
+result = create_machine(config.config)             # core: values only
 if result.machine is None:                         # STATUS_BAD_CONFIG
     raise SystemExit(result.error_text.decode("utf-8"))
 machine = result.machine
@@ -1385,7 +1392,7 @@ Each frame, it passes the frame of its input builder to `step_frame`. It
 uploads `out.video_pixels` when the core rendered the frame (`out.video_width` is not 0). It passes `out.audio`
 through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On
 exit, `__main__.py` calls `persist_dirty_media`. A frontend that has no host
-side of its own can keep `config.document` and `config.roms` from one run,
+side of its own can keep `config.config.document` and `config.config.roms` from one run,
 and build the `MachineConfig` from them directly.
 
 ### Porting the core
@@ -1394,9 +1401,10 @@ and build the `MachineConfig` from them directly.
 implements: one `msx_core_<member>` function for each `CoreApi` member, a
 struct for each boundary record, and every constant with its
 `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and
-the constants equal to the Python code. Bytes that the core returns stay
-valid until the next call on the same core, input is read only during the
-call, and one core is used from one thread at a time. Each C type is wide
+the constants equal to the Python code. The video and audio of a frame output
+stay valid until the next `step_frame`, `reset` or `load_state`. Other bytes
+that the core returns stay valid until the next call on the same core. Input
+is read only during the call, and one core is used from one thread at a time. Each C type is wide
 enough for every value the core masks, clamps or rejects: the mouse motion is
 `int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its
 message into a buffer that the caller passes, so the core keeps no global
@@ -1414,8 +1422,9 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 - `read_media` returns the bytes alone. The write-protect flag stays with
   the mounted image.
 - The frame rate is `VideoStandard` data (`target_fps`), not a method.
-- `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
-  SRAM file paths of the host. The core reads only the `MachineConfig` part.
+- `load_machine_config()` returns a `LoadedMachineConfig`, which holds the
+  `MachineConfig` (`config`, the part the core takes) and the SRAM and disk
+  file paths of the host.
 
 A port must also decide one point:
 
@@ -1560,7 +1569,7 @@ at init, and indexes them directly. Only 32 combinations exist across all
 #### Spin loop in the frame timer
 
 `FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the
-final sub-millisecond period before the frame deadline. Python has no way to
+final 2 ms before the frame deadline. Python has no way to
 tell the scheduler that this loop is a spin.
 
 A Rust port adds `std::hint::spin_loop()` in the same loop. This gives the CPU

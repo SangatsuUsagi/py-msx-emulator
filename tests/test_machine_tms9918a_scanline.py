@@ -12,10 +12,17 @@ from unittest.mock import patch
 import pytest
 
 from host.state_files import load_state, save_state
-from msx.boundary import STOP_BREAKPOINT, STOP_NONE, TRACE_DEBUG, RgbFrame, VideoStandard
+from msx.boundary import (
+    OUTPUT_HEIGHT,
+    STOP_BREAKPOINT,
+    STOP_NONE,
+    TRACE_DEBUG,
+    RgbFrame,
+    VideoStandard,
+)
 from msx.cpu.z80 import Z80
 from msx.machine import Machine
-from msx.vdp._geometry import ACTIVE_H, OUTPUT_H, cycles_per_frame, pad_rows
+from msx.vdp._geometry import ACTIVE_H, cycles_per_frame, pad_rows
 from msx.vdp.renderer import render_frame as vdp_render_frame
 from msx.vdp.vdp import VDP
 from tests.factories import make_machine
@@ -146,7 +153,7 @@ def test_vblank_isr_vram_write_lands_on_the_next_frame() -> None:
     second = machine.run_frame()
 
     top_left = pad_rows(ACTIVE_H) * 256
-    assert len(first) == 256 * OUTPUT_H
+    assert len(first) == 256 * OUTPUT_HEIGHT
     assert first[top_left] == 1
     assert second[top_left] == 15
 
@@ -233,7 +240,7 @@ def test_state_restore_rederives_irq_level(
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x80
-    path = save_state(machine, RgbFrame(256, OUTPUT_H, bytes(256 * OUTPUT_H * 3)), "irq")
+    path = save_state(machine, RgbFrame(256, OUTPUT_HEIGHT, bytes(256 * OUTPUT_HEIGHT * 3)), "irq")
 
     vdp.irq = False  # stale pre-restore value
     load_state(machine, path)
@@ -250,7 +257,8 @@ def test_state_restore_drops_stale_irq_when_f_clear(
     assert isinstance(vdp, VDP)
     vdp.regs[1] = 0x60
     vdp.status = 0x00
-    path = save_state(machine, RgbFrame(256, OUTPUT_H, bytes(256 * OUTPUT_H * 3)), "irq-low")
+    frame = RgbFrame(256, OUTPUT_HEIGHT, bytes(256 * OUTPUT_HEIGHT * 3))
+    path = save_state(machine, frame, "irq-low")
 
     vdp.irq = True  # stale pre-restore value
     load_state(machine, path)

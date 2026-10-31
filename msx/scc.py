@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TypedDict
 
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.clock import CPU_CLOCK_HZ
-from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import check_int, check_int_list, check_list, check_object
 
 SCC_SCALE: int = 6          # per-channel amplitude scale factor
@@ -25,11 +25,11 @@ WAVE_LEN: int = 32          # bytes per waveform bank, and steps per playback cy
 #   Python; the fields are still constant-size in practice, so a plain list
 #   costs nothing extra here versus a hypothetical fixed-array wrapper.
 
-__all__ = ["SCC", "SAMPLES_PER_FRAME", "SccState"]
+__all__ = ["SCC", "SccState"]
 
 
 class SccState(TypedDict):
-    """Save-state schema for SCC.snapshot()/SCC.restore().
+    """Save-state schema for SCC.snapshot()/SCC.apply_state().
 
     Covers all of SCC's persistent state (waveform banks, frequency/volume/
     enable registers, and synthesis phase state) -- unlike PSG, SCC has no
@@ -218,14 +218,10 @@ class SCC:
             "phase_idx": check_int_list(
                 state["phase_idx"], f"{label}.phase_idx", NUM_CHANNELS, 0, WAVE_LEN - 1
             ),
-            "clk_frac": check_int(state["clk_frac"], f"{label}.clk_frac", 0, SAMPLE_RATE - 1),
+            "clk_frac": check_int(
+                state["clk_frac"], f"{label}.clk_frac", 0, AUDIO_SAMPLE_RATE - 1
+            ),
         }
-
-    def restore(self, state: dict[str, object]) -> None:
-        """Restore chip state produced by snapshot(). Parses the whole
-        object first, so a rejected state leaves the chip unchanged.
-        """
-        self.apply_state(self.parse_state(state, "scc"))
 
     def apply_state(self, state: SccState) -> None:
         """Assign an already-parsed SccState (see parse_state)."""
@@ -280,8 +276,8 @@ class SCC:
 
         for i in range(n):
             clk += CPU_CLOCK_HZ
-            ticks = clk // SAMPLE_RATE
-            clk %= SAMPLE_RATE
+            ticks = clk // AUDIO_SAMPLE_RATE
+            clk %= AUDIO_SAMPLE_RATE
 
             sample = 0
 

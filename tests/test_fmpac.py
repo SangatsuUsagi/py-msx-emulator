@@ -20,6 +20,7 @@ from msx.machine_loader import build_machine
 from msx.machine_spec import ExtensionOverlay, MachineLoadError, MachineSpec, RomEntry
 from msx.opll import Opll
 from msx.snapshot_schema import SchemaError
+from tests.factories import restore_state
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG = _ROOT / "config"
@@ -304,7 +305,7 @@ def test_restore_with_missing_key_does_not_partially_mutate() -> None:
 
     del snap["r1fff"]
     with pytest.raises(SchemaError, match="r1fff"):
-        fmpac.restore(snap)
+        restore_state(fmpac, snap)
 
     assert fmpac.sram_image.data() == pre_sram
     assert fmpac._bank == pre_bank
@@ -479,9 +480,9 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
 def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
     config = load_machine_config(_msx1_spec(tmp_path), extension_overlay2=overlay)
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
-    assert machine.memory._mapper2 is machine.fmpac
+    assert machine.memory.mapper2 is machine.fmpac
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path
 
 
@@ -494,9 +495,9 @@ def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
     # _ExtensionWiring, which is slot-agnostic.
     overlay = _make_fmpac_overlay(tmp_path)
     config = load_machine_config(_msx1_spec(tmp_path), extension_overlay1=overlay)
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
-    assert machine.memory._mapper is machine.fmpac
+    assert machine.memory.mapper1 is machine.fmpac
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path
     assert machine.sram_media()[MediaId.FMPAC_SRAM] is machine.fmpac.sram_image
 

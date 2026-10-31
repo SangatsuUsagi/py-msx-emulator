@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import signal
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from types import FrameType
+from typing import TYPE_CHECKING, ContextManager
 
 from msx.boundary import STOP_NONE, STOP_REQUESTED, STOP_WATCHPOINT, WATCH_READ, StopInfo
 
@@ -57,37 +58,33 @@ def handle_stop(
 
 
 @contextmanager
-def sigint_requests_break(machine: CoreApi) -> Iterator[None]:
+def _sigint_handler(handler: Callable[[int, FrameType | None], object]) -> Iterator[None]:
+    """While active, `handler` takes Ctrl-C. Restores the previous handler on
+    exit. Off the main thread (where signal handlers cannot be set) it changes
+    nothing."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGINT, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def sigint_requests_break(machine: CoreApi) -> ContextManager[None]:
     """While active, Ctrl-C asks the core to stop (request_break) instead of
-    raising KeyboardInterrupt. Restores the previous handler on exit. Off
-    the main thread (where signal handlers cannot be set) it changes
-    nothing.
+    raising KeyboardInterrupt.
 
     Python runs the handler only between bytecodes of the main thread. The
     Python core runs as bytecode, so the request can stop the current
     step_frame call at the start of vertical blanking. A native core
     returns to Python only when step_frame returns, so the request stops
     the next call at its start, up to one frame later."""
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    previous = signal.signal(signal.SIGINT, lambda _sig, _frame: machine.request_break())
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, previous)
+    return _sigint_handler(lambda _sig, _frame: machine.request_break())
 
 
-@contextmanager
-def sigint_interrupts() -> Iterator[None]:
+def sigint_interrupts() -> ContextManager[None]:
     """While active, Ctrl-C raises KeyboardInterrupt (the default), e.g. at
-    the REPL prompt. Restores the previous handler on exit. Off the main
-    thread it changes nothing."""
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, previous)
+    the REPL prompt."""
+    return _sigint_handler(signal.default_int_handler)

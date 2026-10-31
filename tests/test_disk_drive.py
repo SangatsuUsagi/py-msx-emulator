@@ -22,6 +22,7 @@ from msx.fdc.disk_image import SECTOR_SIZE
 from msx.snapshot_schema import SchemaError
 from tests.disk_factories import dsk_image
 from tests.disk_factories import make_dsk as _make_dsk
+from tests.factories import restore_state
 
 # --- mount / unmount / has_disk / write_protected, in isolation ----------
 
@@ -42,7 +43,7 @@ def test_mount_sets_has_disk_and_write_protected(tmp_path: Path) -> None:
 
 def test_unmount_clears_disk(tmp_path: Path) -> None:
     drive = DiskDrive(dsk_image(_make_dsk(tmp_path / "d.dsk")))
-    drive.unmount()
+    drive.mount(None)
     assert drive.has_disk is False
     assert drive.read_sector(0, 0, 1) is None
     assert drive.write_sector(0, 0, 1, b"\x00" * SECTOR_SIZE) is False
@@ -59,7 +60,7 @@ def test_restore_with_missing_key_does_not_partially_mutate(tmp_path: Path) -> N
 
     del snap["disk_changed"]
     with pytest.raises(SchemaError, match="missing keys"):
-        drive.restore(snap)
+        restore_state(drive, snap)
 
     assert drive.track == 5
     assert drive.side == 1

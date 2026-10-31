@@ -94,6 +94,7 @@ def test_the_header_states_the_ownership_rule() -> None:
     # One line of words: each comment line's leading "*" dropped.
     lines = [re.sub(r"^\s*\*\s?", "", line) for line in _text().splitlines()]
     text = " ".join(" ".join(lines).split())
+    assert "valid until the next step_frame, reset or load_state" in text
     assert "valid until the next call on the same core" in text
     assert "read only during the call" in text
     assert "one thread at a time" in text
