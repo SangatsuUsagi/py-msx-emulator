@@ -1066,6 +1066,11 @@ every ROM is a reference `{name, size, sha1, pages}`. The ROM images travel
 beside the document, keyed by SHA1. The run inputs also travel beside it: the
 saved SRAM images, the disk images and the RTC start time.
 
+The parser limits `ram_size_kb` and `flat_ram_size_kb` to 0-64, and
+`ram_mapper_size_kb` and a sub-slot device `size_kb` to 0 or 16-4096. It also
+checks the `device_io_ports` device names and that the first port of each range
+is not above the last.
+
 `build_machine(config)` in `msx/machine_loader.py` parses the document
 strictly and checks the size and SHA1 of every referenced image. It then
 constructs the `Machine` from those bytes only. It opens no file and consults
@@ -1123,15 +1128,15 @@ port of the core can thus replace the
 
 The test also checks what host code imports from `msx/`. It may import
 `msx/boundary.py`, `msx/core_api.py`, `InputFrame` from `msx/input.py`,
-`create_machine` from `msx/machine_loader.py`, and the public names of the
+`create_machine` and `release_machine` from `msx/machine_loader.py`, and the public names of the
 machine description layer. The description layer is `msx/machine_spec.py`
 and `msx/machine_config.py`: the machine model, the vocabularies, and the
 encoder and parser of the MachineConfig document. It imports no device
 module, so it stays Python when the core is native. The host keeps using
 its encoder, and a native core parses the same document
 (`msx/machine_config.schema.json`) with its own parser. The fixed media
-sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`) are
-boundary constants, because the host creates a save file before the core
+sizes (`FMPAC_SRAM_SIZE`, `RTC_CMOS_SIZE`, `HALNOTE_SRAM_SIZE`, and one
+constant for each cartridge SRAM mapper) are boundary constants, because the host creates a save file before the core
 exists.
 
 ### Values that cross the boundary
@@ -1266,7 +1271,7 @@ keeps this value as `machine_config_sha256`.
 
 A port that has no YAML loader can write the document directly. It can also
 take one from the Python host: encode it with `load_machine_config()` and save
-`config.document` and `config.roms`.
+`config.config.document` and `config.config.roms`.
 
 ### Snapshots
 
@@ -1364,7 +1369,7 @@ root = Path(".")                                   # the repository root
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host: YAML + files -> MachineConfig
-result = create_machine(config)                    # core: values only
+result = create_machine(config.config)             # core: values only
 if result.machine is None:                         # STATUS_BAD_CONFIG
     raise SystemExit(result.error_text.decode("utf-8"))
 machine = result.machine
@@ -1388,7 +1393,7 @@ Each frame, it passes the frame of its input builder to `step_frame`. It
 uploads `out.video_pixels` when the core rendered the frame (`out.video_width` is not 0). It passes `out.audio`
 through `BiquadLowPass` (`frontend/audio_filter.py`) and queues it to SDL. On
 exit, `__main__.py` calls `persist_dirty_media`. A frontend that has no host
-side of its own can keep `config.document` and `config.roms` from one run,
+side of its own can keep `config.config.document` and `config.config.roms` from one run,
 and build the `MachineConfig` from them directly.
 
 ### Porting the core
@@ -1397,9 +1402,10 @@ and build the `MachineConfig` from them directly.
 implements: one `msx_core_<member>` function for each `CoreApi` member, a
 struct for each boundary record, and every constant with its
 `msx/boundary.py` value. `tests/test_core_c_header.py` keeps the names and
-the constants equal to the Python code. Bytes that the core returns stay
-valid until the next call on the same core, input is read only during the
-call, and one core is used from one thread at a time. Each C type is wide
+the constants equal to the Python code. The video and audio of a frame output
+stay valid until the next `step_frame`, `reset` or `load_state`. Other bytes
+that the core returns stay valid until the next call on the same core. Input
+is read only during the call, and one core is used from one thread at a time. Each C type is wide
 enough for every value the core masks, clamps or rejects: the mouse motion is
 `int32_t` and the frame breakpoint `int64_t`. `msx_core_create` writes its
 message into a buffer that the caller passes, so the core keeps no global
@@ -1417,8 +1423,9 @@ contract in `allium/core-frontend.allium` (its *Status* comment lists them):
 - `read_media` returns the bytes alone. The write-protect flag stays with
   the mounted image.
 - The frame rate is `VideoStandard` data (`target_fps`), not a method.
-- `load_machine_config()` returns a `LoadedMachineConfig`, which adds the
-  SRAM file paths of the host. The core reads only the `MachineConfig` part.
+- `load_machine_config()` returns a `LoadedMachineConfig`, which holds the
+  `MachineConfig` (`config`, the part the core takes) and the SRAM and disk
+  file paths of the host.
 
 A port must also decide one point:
 
