@@ -49,6 +49,18 @@ def _psg_program() -> bytes:
 class _StubSDL:
     """The SDL calls _run_frame makes for an event-free, unpaused frame."""
 
+    SDL_CONTROLLERDEVICEADDED = 100
+    SDL_CONTROLLERDEVICEREMOVED = 101
+    SDL_JOYDEVICEADDED = 102
+    SDL_JOYDEVICEREMOVED = 103
+    SDL_CONTROLLERBUTTONDOWN = 104
+    SDL_CONTROLLERBUTTONUP = 105
+    SDL_CONTROLLERAXISMOTION = 106
+    SDL_JOYBUTTONDOWN = 107
+    SDL_JOYBUTTONUP = 108
+    SDL_JOYAXISMOTION = 109
+    SDL_JOYHATMOTION = 110
+
     def __init__(self) -> None:
         self.queued: list[bytes] = []
 
@@ -100,9 +112,16 @@ def _run_through_frontend(machine: Machine, frames: int) -> list[bytes]:
     event = ctypes.c_int()
     keyboard = SdlKeyboard(InputState())     # the frontend's own input accumulator
     for _ in range(frames):
+        joy = _NoJoystick()
+        events = fe._EventContext(
+            sdl, event, machine, keyboard, None, joy, _CtrlComboState(), {}, "", None, hotkeys,
+        )
         fe._run_frame(
-            sdl, machine, keyboard, None, None, state, _NoJoystick(), _CtrlComboState(),
-            {}, "", None, event, None, _Timer(), "auto", _AUDIO_DEV, 3, hotkeys,
+            fe._RunContext(
+                events, sdl, machine, None, None, joy, None, _Timer(), "auto", _AUDIO_DEV, 3,
+                hotkeys,
+            ),
+            state,
         )
         assert state.running
     return sdl.queued

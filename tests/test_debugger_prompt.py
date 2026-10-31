@@ -273,22 +273,22 @@ class TestDumpVram:
 class TestBreak:
     def test_list_empty(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "no breakpoints" in out
 
     def test_add_breakpoint(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         assert 0xC000 in m._breakpoints
 
     def test_list_after_add(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         capsys.readouterr()
-        dbg._cmd_break(["l"])
+        dbg._break_list()
         out = capsys.readouterr().out
         assert "C000" in out
 
@@ -296,14 +296,14 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "C000"])
+        dbg._break_remove(["C000"])
         assert 0xC000 not in m._breakpoints
 
     def test_max_4_enforced(self, capsys):
         m = _make_machine()
         m._breakpoints = frozenset([0x1000, 0x2000, 0x3000, 0x4000])
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "5000"])
+        dbg._break_add(["5000"])
         out = capsys.readouterr().out
         assert "maximum 4" in out
         assert 0x5000 not in m._breakpoints
@@ -313,7 +313,7 @@ class TestBreak:
         m = _make_machine()
         m._breakpoints = frozenset([0x0000, 0x4000, 0x8000, 0xC000])
         dbg = Debugger(m)
-        dbg._cmd_break(["a", "C000"])
+        dbg._break_add(["C000"])
         out = capsys.readouterr().out
         assert "Breakpoint set at C000h (4/4)" in out
         assert "maximum" not in out
@@ -322,13 +322,13 @@ class TestBreak:
     def test_remove_unknown_addr(self, capsys):
         m = _make_machine()
         dbg = Debugger(m)
-        dbg._cmd_break(["r", "DEAD"])
+        dbg._break_remove(["DEAD"])
         out = capsys.readouterr().out
         assert "not in" in out
 
     def test_add_invalid_addr(self, capsys):
         dbg = Debugger(_make_machine())
-        dbg._cmd_break(["a", "ZZZZ"])
+        dbg._break_add(["ZZZZ"])
         out = capsys.readouterr().out
         assert "invalid" in out.lower()
 
@@ -1149,7 +1149,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = set()
         m._watch_write = set()
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         assert "no watchpoints" in out
 
@@ -1157,7 +1157,7 @@ class TestWatchList:
         m = _make_machine()
         m._watch_read = {0x1234}
         m._watch_write = {0x5678, 0x1234}
-        Debugger(m)._cmd_watch(["l"])
+        Debugger(m)._watch_list()
         out = capsys.readouterr().out
         # 0x1234 is in both sets -> "rw"; 0x5678 write-only -> "w"; sorted ascending
         assert "1234h [rw]" in out
