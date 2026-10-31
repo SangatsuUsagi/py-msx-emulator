@@ -92,7 +92,11 @@ def _require_scc(scc: SCC | None) -> SCC:
 # PORT-NOTE: the build dispatches on strings from the parsed document
 #   (mapper type here, `generation` and the FDC `controller` below). It
 #   runs once per build, not per instruction. A native core maps each
-#   string to an enum once, when it parses the document.
+#   string to an enum once, when it parses the document. The other closed
+#   vocabularies: the ROM roles ("main", "logo", "sub", "disk", "slot<N>.ext",
+#   "slot<N>.<sub-slot>", "slot<N>.io_device"; also composed strings, one image
+#   table key each) and the `device_io_ports` keys (_IO_DEVICES in
+#   msx/machine_config.py).
 # mapper_type -> builder. Each builder receives (cartridge, rom_bytes, sram,
 # scc): `cartridge` is the raw ROM (None when absent), `rom_bytes` the same
 # with None normalised to b"". FlatMapper keeps the None-able cartridge (it

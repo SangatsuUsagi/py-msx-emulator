@@ -650,3 +650,41 @@ def test_the_start_time_admits_no_none() -> None:
     hint = typing.get_type_hints(MachineConfig)["rtc_initial_time"]
     assert hint is not type(None)
     assert type(None) not in typing.get_args(hint)
+
+
+def _edited_document(edit) -> bytes:
+    decoded = json.loads(_document())
+    edit(decoded["machine"])
+    return json.dumps(decoded).encode("utf-8")
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    # machine-loader "A RAM size above the address space is rejected".
+    ("ram_size_kb", 128),
+    ("flat_ram_size_kb", 128),
+    # machine-loader "A RAM mapper above 256 segments is rejected".
+    ("ram_mapper_size_kb", 8192),
+    ("ram_mapper_size_kb", 8),
+])
+def test_a_ram_size_outside_its_limit_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, value: int
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    document = _edited_document(lambda machine: machine.__setitem__(field, value))
+    with pytest.raises(MachineLoadError, match=field):
+        parse_machine_config(document)
+
+
+@pytest.mark.parametrize(("key", "ports"), [
+    # machine-loader "An unknown I/O device is rejected".
+    ("no_such_device", [0xA0, 0xA2]),
+    # machine-loader "A reversed I/O range is rejected".
+    ("psg_ay8910", [0xA2, 0xA0]),
+])
+def test_a_bad_io_range_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, key: str, ports: list[int]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    document = _edited_document(lambda machine: machine["device_io_ports"].__setitem__(key, ports))
+    with pytest.raises(MachineLoadError, match=key):
+        parse_machine_config(document)
