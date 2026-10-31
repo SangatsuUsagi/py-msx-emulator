@@ -1,6 +1,7 @@
 """Tests for msx.vdp.v9938.V9938 core: VRAM, ports, registers, palette."""
 import pytest
 
+from msx.vdp._v9938_defs import even_odd_enabled_of
 from msx.vdp.v9938 import _MSX2_DEFAULT_PALETTE, V9938
 
 # ---------------------------------------------------------------------------
@@ -647,29 +648,14 @@ def test_display_width_256_for_screen8() -> None:
 
 
 # ---------------------------------------------------------------------------
-# interlaced / even_odd_enabled (R#9 IL/EO)
+# even_odd_enabled_of (R#9 EO)
 # ---------------------------------------------------------------------------
 
-def test_interlaced_false_by_default() -> None:
+def test_even_odd_enabled_follows_the_eo_bit() -> None:
     vdp = V9938()
-    assert vdp.interlaced is False
-
-
-def test_interlaced_true_when_il_set() -> None:
-    vdp = V9938()
-    vdp.regs[9] = 0x08  # IL bit
-    assert vdp.interlaced is True
-
-
-def test_even_odd_enabled_false_by_default() -> None:
-    vdp = V9938()
-    assert vdp.even_odd_enabled is False
-
-
-def test_even_odd_enabled_true_when_eo_set() -> None:
-    vdp = V9938()
+    assert even_odd_enabled_of(vdp.regs) is False
     vdp.regs[9] = 0x04  # EO bit
-    assert vdp.even_odd_enabled is True
+    assert even_odd_enabled_of(vdp.regs) is True
 
 
 # ---------------------------------------------------------------------------

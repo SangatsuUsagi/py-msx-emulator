@@ -3,7 +3,8 @@ from __future__ import annotations
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
-from msx.vdp._geometry import OUTPUT_H, ZERO_BYTE, pad_to_output_height
+from msx.boundary import OUTPUT_HEIGHT
+from msx.vdp._geometry import ZERO_BYTE, pad_to_output_height
 
 if TYPE_CHECKING:
     from msx.vdp.vdp import VDP
@@ -76,7 +77,7 @@ def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
             return bytearray(0), status
         # bytearray([b]) * n is a single C-level fill; [b] * n would first build
         # an n-element Python list (≈48× slower on this per-frame path).
-        return bytearray([border]) * (_W * OUTPUT_H), status
+        return bytearray([border]) * (_W * OUTPUT_HEIGHT), status
 
     # M1/M2 (R#1 bits 4/3), M3 (R#0 bit 1): TMS9918A screen-mode select. R#0
     # has no M4 on this chip (TI data manual §2.2.1). M1=1: Text (SCREEN 0).
@@ -109,7 +110,7 @@ def _render(vdp: VDP, skip_render: bool) -> tuple[bytearray, int]:
         if not vdp.debug_disable_sprites:
             status = _render_sprites(vdp, buf, status)
 
-    # Centre the 192-line frame in the constant OUTPUT_H-row buffer (border =
+    # Centre the 192-line frame in the constant OUTPUT_HEIGHT-row buffer (border =
     # R#7 low nibble; the TMS9918A has no SCREEN 8 raw-byte border case).
     return pad_to_output_height(buf, h, _W, bytes((border,))), status
 

@@ -2,7 +2,7 @@ import pytest
 
 from msx.input import InputLines
 from msx.mouse import MouseDevice
-from msx.psg import PSG, PSG_CLOCK, SAMPLE_RATE, JoystickPort, MouseSlot
+from msx.psg import PSG, PSG_CLOCK, JoystickPort, MouseSlot
 
 
 def _press(lines: InputLines, port: int, bit: int) -> None:
@@ -315,10 +315,6 @@ def test_unmapped_data_write_port_read_returns_ff() -> None:
 
 def test_psg_clock_constant() -> None:
     assert PSG_CLOCK == 223722
-
-
-def test_sample_rate_constant() -> None:
-    assert SAMPLE_RATE == 44100
 
 
 def test_max_events_constant() -> None:

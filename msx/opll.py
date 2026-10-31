@@ -35,8 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, TypedDict
 
+from msx.boundary import AUDIO_SAMPLE_RATE
 from msx.clock import CPU_CLOCK_HZ
-from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import (
     check_bytes,
     check_int,
@@ -45,7 +45,7 @@ from msx.snapshot_schema import (
     check_object,
 )
 
-__all__ = ["Opll", "OpllState", "SAMPLE_RATE", "SAMPLES_PER_FRAME"]
+__all__ = ["Opll", "OpllState"]
 
 # --- fixed-point / range constants (emu2413 names) ---
 _DP_BITS = 19
@@ -77,7 +77,6 @@ _DAMP = 4
 
 # --- rhythm slot indices: MOD(ch)=2*ch, CAR(ch)=2*ch+1 ---
 _SLOT_BD1 = 12  # MOD(6)
-_SLOT_BD2 = 13  # CAR(6)
 _SLOT_HH = 14   # MOD(7)
 _SLOT_SD = 15   # CAR(7)
 _SLOT_TOM = 16  # MOD(8)
@@ -1192,7 +1191,7 @@ class Opll:
     # ------------------------------------------------------- sample generation
 
     def generate_samples(self, n: int) -> bytearray:
-        """Return n signed 16-bit little-endian mono PCM samples at SAMPLE_RATE.
+        """Return n signed 16-bit little-endian mono PCM samples at AUDIO_SAMPLE_RATE.
 
         Runs the chip at its native clk/72 rate and decimates to the output
         rate with an accumulate-and-average step (emu2413's OPLL_calc timing,
@@ -1201,7 +1200,7 @@ class Opll:
         """
         out = bytearray(n * 2)
         # The decimator phase, scaled by 72 so it stays an exact integer: a
-        # native tick (CPU_CLOCK_HZ / 72 per second) adds 72 * SAMPLE_RATE,
+        # native tick (CPU_CLOCK_HZ / 72 per second) adds 72 * AUDIO_SAMPLE_RATE,
         # an output sample subtracts CPU_CLOCK_HZ. It stays in
         # [0, _PHASE_PER_TICK), the range parse_state accepts.
         phase = self._resample_phase
@@ -1354,7 +1353,7 @@ class Opll:
 # full scale while a single note is clearly audible.
 _OUTPUT_GAIN = 3
 # generate_samples' integer decimator phase step per native tick (see there).
-_PHASE_PER_TICK = 72 * SAMPLE_RATE
+_PHASE_PER_TICK = 72 * AUDIO_SAMPLE_RATE
 
 # Save-state field helpers for OPLL.snapshot()/apply_state() -- see the
 # PORT-LIBRARY-NOTE on OPLL.snapshot() for the explicit-field-vs-reflection

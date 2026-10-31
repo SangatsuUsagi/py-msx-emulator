@@ -301,7 +301,7 @@ class FrameOutput:
     """
 
     video_width: int     # 256 or 512; 0 when the frame was not rendered
-    video_height: int    # OUTPUT_H (212); 0 when the frame was not rendered
+    video_height: int    # OUTPUT_HEIGHT (212); 0 when the frame was not rendered
     video_pixels: bytes  # packed RGB24, width * height * 3; b"" when not rendered
     audio: bytes         # signed 16-bit LE mono PCM, before any output filter;
                          # b"" for a call that stopped at a break
