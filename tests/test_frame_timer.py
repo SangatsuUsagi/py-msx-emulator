@@ -1,20 +1,48 @@
 import time
 
+import pytest
+
+import frontend.frame_timer
 from frontend.frame_timer import FrameTimer
 
 
-def test_tick_waits_approximately_one_frame_interval() -> None:
+class FakeClock:
+    """Replaces the time module in frame_timer, so host load cannot move a result."""
+
+    def __init__(self) -> None:
+        self.now = 100.0
+        self.slept: list[float] = []
+
+    def perf_counter(self) -> float:
+        # Each read advances the clock, so the spin loop in tick() ends.
+        self.now += 1e-6
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    fake = FakeClock()
+    monkeypatch.setattr(frontend.frame_timer, "time", fake)
+    return fake
+
+
+def test_tick_waits_approximately_one_frame_interval(clock: FakeClock) -> None:
     timer = FrameTimer(fps=60.0, speed=1.0)
-    t0 = time.perf_counter()
+    t0 = clock.now
     timer.tick()
-    elapsed = time.perf_counter() - t0
-    assert 0.010 < elapsed < 0.030, f"expected ~16ms, got {elapsed*1000:.1f}ms"
+    assert clock.now - t0 == pytest.approx(1.0 / 60.0, abs=0.0001)
 
 
-def test_tick_returns_elapsed_seconds() -> None:
+def test_tick_returns_elapsed_seconds(clock: FakeClock) -> None:
     timer = FrameTimer(fps=60.0, speed=1.0)
+    t0 = clock.now
     result = timer.tick()
-    assert 0.010 < result < 0.030
+    assert result == pytest.approx(clock.now - t0, abs=0.0001)
+    assert result == pytest.approx(1.0 / 60.0, abs=0.0001)
 
 
 def test_slowdown_absorption_no_catchup() -> None:
@@ -56,13 +84,12 @@ def test_speed_half_doubles_frame_interval() -> None:
     assert abs(timer._frame_interval - 1.0 / 30.0) < 1e-9
 
 
-def test_tick_at_speed_2x_is_faster() -> None:
+def test_tick_at_speed_2x_is_faster(clock: FakeClock) -> None:
     timer = FrameTimer(fps=60.0, speed=2.0)
-    t0 = time.perf_counter()
+    t0 = clock.now
     timer.tick()
-    elapsed = time.perf_counter() - t0
     # Should wait ~8.3ms, not 16.7ms
-    assert elapsed < 0.015, f"expected <15ms at 2x speed, got {elapsed*1000:.1f}ms"
+    assert clock.now - t0 == pytest.approx(1.0 / 120.0, abs=0.0001)
 
 
 def test_speed_zero_constructs_without_zero_division() -> None:
@@ -80,12 +107,14 @@ def test_speed_multiplier_sets_frame_interval() -> None:
     assert abs(timer._frame_interval - 1.0 / 120.0) < 1e-9
 
 
-def test_tick_unpaced_does_not_wait() -> None:
+def test_tick_unpaced_does_not_wait(clock: FakeClock) -> None:
     timer = FrameTimer(fps=60.0, speed=1.0)
     timer.tick()
-    t0 = time.perf_counter()
+    clock.slept.clear()
+    t0 = clock.now
     timer.tick_unpaced()
-    assert time.perf_counter() - t0 < 0.005
+    assert clock.slept == []
+    assert clock.now - t0 < 0.001
 
 
 def test_tick_unpaced_counts_frames() -> None:
@@ -98,9 +127,9 @@ def test_tick_unpaced_counts_frames() -> None:
     assert 10.0 < timer.fps_measured <= 11.0
 
 
-def test_tick_after_tick_unpaced_waits_a_full_interval() -> None:
+def test_tick_after_tick_unpaced_waits_a_full_interval(clock: FakeClock) -> None:
     timer = FrameTimer(fps=60.0, speed=1.0)
     timer.tick_unpaced()
-    t0 = time.perf_counter()
+    t0 = clock.now
     timer.tick()
-    assert 0.010 < time.perf_counter() - t0 < 0.030
+    assert clock.now - t0 == pytest.approx(1.0 / 60.0, abs=0.0001)
