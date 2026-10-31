@@ -580,6 +580,57 @@ def _wire_flat_overlay(
     )
 
 
+@dataclass
+class _OverlayClaims:
+    """What one slot's overlay has taken, for the other slot's overlay to check:
+    slot 1 is wired first, so a conflict is caught when slot 2 is wired."""
+
+    scc: SCC | None
+    kanji_device: KanjiRom | None
+    fmpac_device: FmPac | None = None
+    ram_mapper_claimed: bool = False
+    halnote_claimed: bool = False
+
+
+@dataclass
+class _SlotOverlay:
+    """How an overlay leaves one slot."""
+
+    mapper_instance: Mapper
+    sub_slot_enabled: bool
+    subslots: list[Mapper | None]
+
+
+def _wire_slot_overlay(
+    config: _ResolvedConfig,
+    slot: int,
+    overlay: AnyExtensionOverlay | None,
+    mapper_instance: Mapper,
+    claims: _OverlayClaims,
+) -> _SlotOverlay:
+    """Wire one slot's overlay, if any. It unconditionally occupies the primary
+    slot, replacing the cartridge mapper resolved for it."""
+    if isinstance(overlay, ExpandedExtensionOverlay):
+        expanded = _wire_expanded_overlay(
+            config, slot, overlay, claims.kanji_device,
+            other_slot_ram_mapper_claimed=claims.ram_mapper_claimed,
+            other_slot_halnote_claimed=claims.halnote_claimed,
+        )
+        claims.kanji_device = expanded.kanji_device
+        claims.ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in expanded.subslots)
+        claims.halnote_claimed = any(_is_halnote_mapper(sub) for sub in expanded.subslots)
+        return _SlotOverlay(mapper_instance, True, expanded.subslots)
+    if overlay is not None:
+        flat = _wire_flat_overlay(
+            config, slot, overlay, claims.scc, existing_fmpac=claims.fmpac_device
+        )
+        claims.scc = flat.scc
+        if flat.fmpac_device is not None:
+            claims.fmpac_device = flat.fmpac_device
+        return _SlotOverlay(flat.mapper_instance, False, _empty_subslots())
+    return _SlotOverlay(mapper_instance, False, _empty_subslots())
+
+
 def _wire_extension_overlay(
     config: _ResolvedConfig,
     mapper1_instance: Mapper,
@@ -615,68 +666,19 @@ def _wire_extension_overlay(
     Raises:
         MachineLoadError: see `_wire_expanded_overlay`/`_wire_flat_overlay`.
     """
-    extension_overlay1 = config.extension_overlay1
-    extension_overlay2 = config.extension_overlay2
-    kanji_device = _wire_machine_io_device(config)
-    slot1_sub_slot_enabled = False
-    mapper1_subslots: list[Mapper | None] = _empty_subslots()
-    slot2_sub_slot_enabled = False
-    mapper2_subslots: list[Mapper | None] = _empty_subslots()
-    fmpac_device: FmPac | None = None
-    slot1_ram_mapper_claimed = False
-    slot1_halnote_claimed = False
-
-    # Slot 1's overlay, if any: unconditionally occupies primary slot 1,
-    # replacing whatever slot-1 cartridge mapper was resolved above. Keep
-    # this block and slot 2's below in sync -- they are structurally
-    # identical (each resolves its own slot's overlay, and this block
-    # additionally records slot1_ram_mapper_claimed/slot1_halnote_claimed
-    # for slot 2's block to pass in as other_slot_ram_mapper_claimed/
-    # other_slot_halnote_claimed), differing only in which slot's
-    # variables they populate. A future third cross-slot conflict type
-    # needs adding to both blocks.
-    if isinstance(extension_overlay1, ExpandedExtensionOverlay):
-        expanded1 = _wire_expanded_overlay(config, 1, extension_overlay1, kanji_device)
-        slot1_sub_slot_enabled = True
-        mapper1_subslots = expanded1.subslots
-        slot1_halnote_claimed = any(_is_halnote_mapper(sub) for sub in mapper1_subslots)
-        kanji_device = expanded1.kanji_device
-        slot1_ram_mapper_claimed = any(_is_ram_mapper(sub) for sub in mapper1_subslots)
-    elif extension_overlay1 is not None:
-        flat1 = _wire_flat_overlay(config, 1, extension_overlay1, scc)
-        mapper1_instance = flat1.mapper_instance
-        scc = flat1.scc
-        if flat1.fmpac_device is not None:
-            fmpac_device = flat1.fmpac_device
-
-    # Slot 2's overlay, if any: unconditionally occupies primary slot 2,
-    # replacing whatever slot-2 cartridge mapper was resolved above.
-    if isinstance(extension_overlay2, ExpandedExtensionOverlay):
-        expanded2 = _wire_expanded_overlay(
-            config, 2, extension_overlay2, kanji_device,
-            other_slot_ram_mapper_claimed=slot1_ram_mapper_claimed,
-            other_slot_halnote_claimed=slot1_halnote_claimed,
-        )
-        slot2_sub_slot_enabled = True
-        mapper2_subslots = expanded2.subslots
-        kanji_device = expanded2.kanji_device
-    elif extension_overlay2 is not None:
-        flat2 = _wire_flat_overlay(config, 2, extension_overlay2, scc, existing_fmpac=fmpac_device)
-        mapper2_instance = flat2.mapper_instance
-        scc = flat2.scc
-        if flat2.fmpac_device is not None:
-            fmpac_device = flat2.fmpac_device
-
+    claims = _OverlayClaims(scc=scc, kanji_device=_wire_machine_io_device(config))
+    slot1 = _wire_slot_overlay(config, 1, config.extension_overlay1, mapper1_instance, claims)
+    slot2 = _wire_slot_overlay(config, 2, config.extension_overlay2, mapper2_instance, claims)
     return _ExtensionWiring(
-        mapper1_instance=mapper1_instance,
-        mapper2_instance=mapper2_instance,
-        scc=scc,
-        slot1_sub_slot_enabled=slot1_sub_slot_enabled,
-        mapper1_subslots=mapper1_subslots,
-        slot2_sub_slot_enabled=slot2_sub_slot_enabled,
-        mapper2_subslots=mapper2_subslots,
-        fmpac_device=fmpac_device,
-        kanji_device=kanji_device,
+        mapper1_instance=slot1.mapper_instance,
+        mapper2_instance=slot2.mapper_instance,
+        scc=claims.scc,
+        slot1_sub_slot_enabled=slot1.sub_slot_enabled,
+        mapper1_subslots=slot1.subslots,
+        slot2_sub_slot_enabled=slot2.sub_slot_enabled,
+        mapper2_subslots=slot2.subslots,
+        fmpac_device=claims.fmpac_device,
+        kanji_device=claims.kanji_device,
     )
 
 

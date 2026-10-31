@@ -1011,7 +1011,30 @@ class V9938:
         persist forever, corrupting every subsequent R#nn / address write.
         """
         self._ctrl_pending = False
-        if self.regs[15] == 2:
+        sel = self.regs[15]
+        if sel == 0:
+            # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
+            # sprite number. The renderer already stores the real overflowing
+            # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
+            # `(st.status & 0xA0) | 0x40 | (i & 0x1F)`, committed to vdp.status
+            # by commit_render_status), so preserve it here
+            # when 5S is set. When idle (no 5th/9th sprite this frame), fall
+            # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
+            # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
+            # loop counter.
+            if self.status & 0x40:
+                result = self.status & 0xFF
+            else:
+                result = (self.status & 0xE0) | 0x1F
+            self.status &= ~0xE0  # clear F, 5S and C flags together
+            self.update_irq()
+            return result & 0xFF
+        if sel == 1:
+            result = self._status1
+            self._status1 &= ~_S1_FH  # reading S#1 clears FH
+            self.update_irq()
+            return result & 0xFF
+        if sel == 2:
             # S#2 also reports the live horizontal/vertical retrace flags,
             # which software polls to time mid-screen register changes; bits
             # 2,3 always read as 1.
@@ -1021,7 +1044,27 @@ class V9938:
             if not (0 <= self.display_line < self.display_height):
                 s2 |= _S2_VR
             return s2
-        if self.regs[15] == 7:
+        # S#3-S#6: sprite collision X/Y, as reported by the sprite renderer
+        # (Handbook Sec. 5.3.3). The unused high bits read as 1 (openMSX
+        # VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the V9938 data book
+        # shows S#4 as 1111111X8).
+        if sel == 3:
+            return self.collision_x & 0xFF
+        if sel == 4:
+            return ((self.collision_x >> 8) & 0x01) | 0xFE
+        if sel == 5:
+            result = self.collision_y & 0xFF
+            self.collision_x = 0  # reading S#5 resets the coordinate pair
+            self.collision_y = 0
+            return result
+        if sel == 6:
+            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
+            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
+            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
+            # summary shows; its sprite-collision section, the Handbook and
+            # openMSX give collision Y bit 9 there, which would always be 0.
+            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
+        if sel == 7:
             # S#7 reads back the colour register, which holds the POINT
             # result or the dot an LMCM has staged. The read doubles as the
             # LMCM handshake: taking the dot lets the engine fetch the next
@@ -1035,14 +1078,9 @@ class V9938:
             elif not self._cmd_active:
                 self._status2 &= ~_S2_TR
             return result
-        if self.regs[15] == 1:
-            result = self._status1
-            self._status1 &= ~_S1_FH  # reading S#1 clears FH
-            self.update_irq()
-            return result & 0xFF
-        if self.regs[15] == 8:
+        if sel == 8:
             return self._status8
-        if self.regs[15] == 9:
+        if sel == 9:
             # Reading S#9 is the only thing that clears BD (openMSX VDP.cc
             # readStatusReg case 9 → resetBD); a SRCH that finds nothing
             # leaves the previous flag standing.
@@ -1050,44 +1088,7 @@ class V9938:
             result = self._status9 | 0xFE
             self._status2 &= ~_S2_BD
             return result
-        if self.regs[15] == 3:
-            # S#3-S#6: sprite collision X/Y, as reported by the sprite
-            # renderer (Handbook Sec. 5.3.3). The unused high bits read as 1
-            # (openMSX VDP::peekStatusReg cases 3-6: `| 0xFE` / `| 0xFC`; the
-            # V9938 data book shows S#4 as 1111111X8).
-            return self.collision_x & 0xFF
-        if self.regs[15] == 4:
-            return ((self.collision_x >> 8) & 0x01) | 0xFE
-        if self.regs[15] == 5:
-            result = self.collision_y & 0xFF
-            self.collision_x = 0  # reading S#5 resets the coordinate pair
-            self.collision_y = 0
-            return result
-        if self.regs[15] == 6:
-            # S#6 = 1 1 1 1 1 1 EO Y8: bit 1 is the display field, the same EO
-            # as S#2 bit 1. A real HB-F1XD reports it with R#8 LP clear
-            # (extras/HB-F1XD/S6EO.BAS), as the data book's status-register
-            # summary shows; its sprite-collision section, the Handbook and
-            # openMSX give collision Y bit 9 there, which would always be 0.
-            return ((self.collision_y >> 8) & 0x01) | (self._status2 & _S2_EO) | 0xFC
-        if self.regs[15] >= 10:
-            return 0xFF  # non-existent status register
-        # S#0: bit7=F (frame flag), bit6=5S, bit5=C, bits4-0 = 5th/9th
-        # sprite number. The renderer already stores the real overflowing
-        # sprite's index in bits 4:0 alongside 5S (see v9938_renderer.py's
-        # `(st.status & 0xA0) | 0x40 | (i & 0x1F)`, committed to vdp.status
-        # by commit_render_status), so preserve it here
-        # when 5S is set. When idle (no 5th/9th sprite this frame), fall
-        # back to 31 (0x1F): returning 0 there stalls MSX2 C-BIOS
-        # cartridge boot, which feeds S#0 bits 4:0 into its cartridge-scan
-        # loop counter.
-        if self.status & 0x40:
-            result = self.status & 0xFF
-        else:
-            result = (self.status & 0xE0) | 0x1F
-        self.status &= ~0xE0  # clear F, 5S and C flags together
-        self.update_irq()
-        return result & 0xFF
+        return 0xFF  # non-existent status register
 
     # ------------------------------------------------------------------
     # Command engine helpers
