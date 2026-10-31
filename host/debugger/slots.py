@@ -64,7 +64,7 @@ def slot_content_text(info: SlotInfo, rom_names: tuple[str, str]) -> str:
     if content == SLOT_CONTENT_SUB_ROM:
         return _rom_text(rom_names[1])
     if content == SLOT_CONTENT_CARTRIDGE:
-        return f"Cartridge {MAPPER_DISPLAY_NAMES[info.mapper]}"
+        return f"Cartridge {MAPPER_DISPLAY_NAMES.get(info.mapper, f'mapper {info.mapper}')}"
     return _FIXED_CONTENT.get(content, "empty")
 
 

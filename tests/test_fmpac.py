@@ -479,7 +479,7 @@ def _msx1_spec(tmp_path: Path) -> MachineSpec:
 def test_build_wires_fmpac_as_slot2_device(tmp_path: Path) -> None:
     overlay = _make_fmpac_overlay(tmp_path)
     config = load_machine_config(_msx1_spec(tmp_path), extension_overlay2=overlay)
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert machine.memory._mapper2 is machine.fmpac
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path
@@ -494,7 +494,7 @@ def test_build_wires_fmpac_as_slot1_device(tmp_path: Path) -> None:
     # _ExtensionWiring, which is slot-agnostic.
     overlay = _make_fmpac_overlay(tmp_path)
     config = load_machine_config(_msx1_spec(tmp_path), extension_overlay1=overlay)
-    machine = build_machine(config)
+    machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert machine.memory._mapper is machine.fmpac
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == overlay.sram_save_path

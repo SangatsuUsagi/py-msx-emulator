@@ -1199,11 +1199,10 @@ class TestGotoFrame:
         # debug-monitor "gf with a frame number the core rejects".
         m = _make_machine()
         m.vdp.frame_count = 100
-        m.set_frame_breakpoint.return_value = 6  # STATUS_BAD_ARGUMENT
-        m.last_error_text.return_value = b"frame 9223372036854775808 is outside -1 to 2^63 - 1"
         assert Debugger(m)._cmd_goto_frame([str(2**63)]) is False
+        m.set_frame_breakpoint.assert_not_called()
         out = capsys.readouterr().out
-        assert "gf: frame 9223372036854775808 is outside" in out
+        assert "gf: frame 9223372036854775808 is above" in out
         assert "Running" not in out
 
     def test_gf_in_repl_resumes_without_c(self, capsys):

@@ -67,6 +67,8 @@ _HISTORY_LENGTH = 500
 # Loop-control commands handled inline in Debugger._repl_loop() (see below), not
 # present in the _COMMANDS dispatch table. Listed here so Tab completion
 # covers them too.
+# The largest frame number, the range of the core's int64_t frame.
+_MAX_FRAME = 0x7FFF_FFFF_FFFF_FFFF
 _INLINE_COMMANDS = ("c", "q", "g", "gf", "so", "reset")
 
 _readline_ready = False
@@ -403,6 +405,9 @@ class Debugger:
         except ValueError:
             print("gf: invalid frame number (decimal expected)")
             return False
+        if target > _MAX_FRAME:
+            print(f"gf: frame {target} is above {_MAX_FRAME}")
+            return False
         current = self._machine.frame_number()
         if target <= current:
             print(f"gf: target frame {target} already reached (current: {current})")
@@ -605,11 +610,7 @@ class Debugger:
         """`ss`: the paused frame as a PNG (CoreApi.render_preview, which
         advances no frame, so it matches the v / dv dumps of this moment)."""
         from host.screenshot import save_screenshot
-        try:
-            frame = self._machine.render_preview()
-        except Exception as exc:  # rendering is best-effort for a debug command
-            print(f"ss: screenshot failed: {exc}")
-            return
+        frame = self._machine.render_preview()
         save_screenshot(frame.pixels, frame.width, frame.height)
 
     def _cmd_state_save(self, args: list[str]) -> None:
@@ -621,11 +622,7 @@ class Debugger:
         from host.state_files import save_state
 
         title = args[0] if args else "msx_dbg_checkpoint"
-        try:
-            frame = self._machine.render_preview()
-        except Exception as exc:  # rendering is best-effort for a debug command
-            print(f"sv: render failed: {exc}")
-            return
+        frame = self._machine.render_preview()
         save_state(self._machine, frame, title, self._disk_files)
 
     def _cmd_state_load(self, args: list[str]) -> None:

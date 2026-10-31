@@ -106,3 +106,9 @@ def test_sub_banks_follow_the_windows() -> None:
     text = _bank(BANK_WINDOWS_8K, (WINDOW_PAGE, WINDOW_PAGE), (5, 6), 1,
                  subs=(0x12, 0x34), offsets=(0x89000, 0x9A000))
     assert text == "w0=b5@0A000  w1=b6@0C000  sub=b18@89000,b52@9A000"
+
+
+def test_an_unknown_mapper_id_has_a_fallback_text() -> None:
+    assert slot_content_text(SlotInfo(SLOT_CONTENT_CARTRIDGE, 999, 0), ("", "")) == (
+        "Cartridge mapper 999"
+    )

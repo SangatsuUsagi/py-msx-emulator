@@ -277,7 +277,8 @@ class DebugServer:
     def on_core_stop(self, stop_reason: int) -> None:
         """Pause for a core stop (a nonzero ``FrameOutput.stop_reason``).
         Runs on the emulator thread, after ``step_frame`` returned."""
-        self.on_pause(_STOP_TO_REASON[stop_reason], self._machine.cpu_registers().PC)
+        reason = _STOP_TO_REASON.get(stop_reason, PauseReason.USER_REQUEST)
+        self.on_pause(reason, self._machine.cpu_registers().PC)
 
     def on_pause(self, reason: str, pc: int) -> None:
         """Record the pause, wake cpu.continue_sync and push a notification.

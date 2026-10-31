@@ -228,3 +228,11 @@ def test_resize_then_upload_chain_matches_run_loop_order() -> None:
     rgb = bytes((i % 256) for i in range(row_bytes * tex_h))
     _upload_to_texture(upload_sdl, texture=1, rgb_buf=rgb, tex_w=tex_w, tex_h=tex_h)
     assert dest.raw[: len(rgb)] == rgb
+
+
+def test_an_unknown_keyboard_layout_falls_back() -> None:
+    from frontend.sdl2_frontend import _keyboard_layout
+    from msx.boundary import KeyboardLayout
+
+    assert _keyboard_layout(KeyboardLayout.JAPANESE) is KeyboardLayout.JAPANESE
+    assert _keyboard_layout(999) is KeyboardLayout.INTERNATIONAL

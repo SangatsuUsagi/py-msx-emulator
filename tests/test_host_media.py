@@ -16,7 +16,11 @@ from msx.fdc.wd2793 import WD2793
 from msx.machine import Machine
 from msx.machine_loader import build_machine
 from msx.mapper import Ascii8Sram2Mapper
-from tests.factories import make_config, make_config_msx2, make_machine
+from tests.factories import (
+    make_loaded_config,
+    make_loaded_config_msx2,
+    make_machine,
+)
 
 _ROM = bytes(32 * 1024)
 _CART = bytes(range(256)) * 32
@@ -40,8 +44,8 @@ def test_dirty_cartridge_sram_is_written_to_its_sha1_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
-    m = build_machine(config)
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
+    m = build_machine(config.config)
     mapper = m.memory._mapper
     assert isinstance(mapper, Ascii8Sram2Mapper)
     mapper.write(0x7000, mapper._sram_enable_bit())
@@ -55,8 +59,8 @@ def test_unchanged_sram_is_not_rewritten(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
-    persist_dirty_media(build_machine(config), sram_paths(config))
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8SRAM2")
+    persist_dirty_media(build_machine(config.config), sram_paths(config))
     assert not (tmp_path / "saves").exists()
 
 
@@ -64,8 +68,8 @@ def test_non_sram_mapper_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config(rom=_ROM, cartridge=_CART, mapper="ASCII8")
-    m = build_machine(config)
+    config = make_loaded_config(rom=_ROM, cartridge=_CART, mapper="ASCII8")
+    m = build_machine(config.config)
     m.memory._mapper.write(0x6000, 1)
     persist_dirty_media(m, sram_paths(config))
     assert not (tmp_path / "saves").exists()
@@ -77,8 +81,8 @@ def test_rtc_file_is_created_on_first_shutdown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    config = make_config_msx2(bytes(32 * 1024), bytes(16 * 1024))
-    m = build_machine(config)
+    config = make_loaded_config_msx2(bytes(32 * 1024), bytes(16 * 1024))
+    m = build_machine(config.config)
     assert m.rtc is not None
     m.rtc.write_port(0xB4, 0x0D)  # mode register
     m.rtc.write_port(0xB5, 0x02)  # select block 2

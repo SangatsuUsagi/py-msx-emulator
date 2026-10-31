@@ -10,7 +10,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from host.machine_config import load_machine_config
+from host.machine_config import LoadedMachineConfig, load_machine_config
 from msx.boundary import MachineConfig
 from msx.machine import Machine
 from msx.machine_loader import build_machine
@@ -71,7 +71,7 @@ def _msx2_spec() -> MachineSpec:
     )
 
 
-def make_config(
+def make_loaded_config(
     rom: bytes,
     cartridge: bytes | None = None,
     mapper: str = "auto",
@@ -80,7 +80,7 @@ def make_config(
     logrom: bytes | None = None,
     extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
     extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
-) -> MachineConfig:
+) -> LoadedMachineConfig:
     return load_machine_config(
         _msx1_spec(),
         cartridge1=cartridge,
@@ -94,7 +94,23 @@ def make_config(
     )
 
 
-def make_config_msx2(
+def make_config(
+    rom: bytes,
+    cartridge: bytes | None = None,
+    mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+    logrom: bytes | None = None,
+    extension_overlay: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+    extension_overlay1: "ExtensionOverlay | ExpandedExtensionOverlay | None" = None,
+) -> MachineConfig:
+    return make_loaded_config(
+        rom, cartridge, mapper, cartridge2, mapper2, logrom,
+        extension_overlay, extension_overlay1,
+    ).config
+
+
+def make_loaded_config_msx2(
     rom: bytes,
     extrom: bytes,
     *,
@@ -103,7 +119,7 @@ def make_config_msx2(
     mapper: str = "auto",
     cartridge2: bytes | None = None,
     mapper2: str = "auto",
-) -> MachineConfig:
+) -> LoadedMachineConfig:
     return load_machine_config(
         _msx2_spec(),
         cartridge1=cartridge,
@@ -114,6 +130,22 @@ def make_config_msx2(
         logo_override=logrom,
         extrom_override=extrom,
     )
+
+
+def make_config_msx2(
+    rom: bytes,
+    extrom: bytes,
+    *,
+    logrom: bytes | None = None,
+    cartridge: bytes | None = None,
+    mapper: str = "auto",
+    cartridge2: bytes | None = None,
+    mapper2: str = "auto",
+) -> MachineConfig:
+    return make_loaded_config_msx2(
+        rom, extrom, logrom=logrom, cartridge=cartridge, mapper=mapper,
+        cartridge2=cartridge2, mapper2=mapper2,
+    ).config
 
 
 def make_machine(

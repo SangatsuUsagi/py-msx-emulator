@@ -745,7 +745,7 @@ def main() -> None:
             disk_files = DiskFiles(config.disk_files)
         except MachineLoadError as exc:
             _fail(str(exc))
-        result = create_machine(config)
+        result = create_machine(config.config)
         if result.machine is None:
             _fail(result.error_text.decode("utf-8"))
         machine = result.machine
