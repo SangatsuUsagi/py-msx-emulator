@@ -1182,5 +1182,5 @@ def _build_msx2(
     )
     if rtc is not None:
         rtc._clock = machine.clock
-        rtc._start_cycle = machine.clock.cycle
+        rtc._base_cycle = machine.clock.cycle
     return machine

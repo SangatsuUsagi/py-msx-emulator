@@ -113,7 +113,7 @@ def test_g_runs_to_address() -> None:
     m.set_temp_breakpoint(0x0003)
     assert _run(m) == STOP_BREAKPOINT
     assert m.cpu.registers.PC == 0x0003
-    assert m._temp_breakpoint is None  # one-shot: cleared on hit
+    assert m._temp_breakpoint == -1  # one-shot: cleared on hit
 
 
 def test_g_does_not_modify_permanent_breakpoints() -> None:
@@ -169,8 +169,8 @@ def test_frame_breakpoint_clears_after_firing() -> None:
     m = _build(rom=bytes(32768))
     m.set_frame_breakpoint(1)
     assert _run(m) == STOP_BREAKPOINT
-    assert m._frame_breakpoint is None
+    assert m._frame_breakpoint == -1
     # Running further frames must not re-trigger the cleared breakpoint.
     assert _run(m) == STOP_NONE
     assert _run(m) == STOP_NONE
-    assert m._stepout_sp is None
+    assert m._stepout_sp == -1

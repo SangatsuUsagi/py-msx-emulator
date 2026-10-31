@@ -38,7 +38,6 @@ from typing import Callable, TypedDict
 from msx.clock import CPU_CLOCK_HZ
 from msx.psg import SAMPLE_RATE, SAMPLES_PER_FRAME
 from msx.snapshot_schema import (
-    SAFE_INT_MAX,
     check_bytes,
     check_int,
     check_int_list,
@@ -948,7 +947,7 @@ class Opll:
         inlining PSG._render/SCC.generate_samples already apply -- this is
         the CLAUDE.md "keep functions short" exception for hot-path code.
         """
-        self._eg_counter += 1
+        self._eg_counter = (self._eg_counter + 1) & 0xFFFFFFFF  # uint32, as emu2413
         eg_counter = self._eg_counter
         test = self._test_flag
         test_eg = test & 1
@@ -1171,7 +1170,7 @@ class Opll:
         """
         self._update_ampm()
         self._update_short_noise()
-        self._eg_counter += 1
+        self._eg_counter = (self._eg_counter + 1) & 0xFFFFFFFF
         pm_col = (self._pm_phase >> 10) & 7
         slots = self._slot
         for i in range(18):
@@ -1217,6 +1216,8 @@ class Opll:
                 acc += tick()
                 cnt += 1
             phase -= CPU_CLOCK_HZ
+            # PORT-NOTE: floor division, also for a negative sum. C, C++, Rust
+            # and Zig `/` truncate; a port needs a floor divide to match by 1 LSB.
             raw = (acc // cnt) if cnt else 0
             scaled = raw * _OUTPUT_GAIN
             if scaled > 32767:
@@ -1302,7 +1303,7 @@ class Opll:
             "slot_key_status": check_int(
                 d["slot_key_status"], f"{label}.slot_key_status", 0, 0x3FFFF
             ),
-            "eg_counter": check_int(d["eg_counter"], f"{label}.eg_counter", 0, SAFE_INT_MAX),
+            "eg_counter": check_int(d["eg_counter"], f"{label}.eg_counter", 0, 0xFFFFFFFF),
             "ch_out": check_int_list(
                 d["ch_out"], f"{label}.ch_out", 14, _OUTPUT_MIN, _OUTPUT_MAX
             ),

@@ -142,3 +142,20 @@ def test_a_resynced_scan_may_hold_a_delta_in_its_last_phase() -> None:
     assert snap.mouse is not None
     snap.mouse.update({"phase": 7, "x_rel": 3})
     _restore_snapshot(_with_mouse_machine(), snap)
+
+
+def test_a_long_session_loads_into_a_fresh_machine() -> None:
+    # machine-state "A long session loads into a fresh machine".
+    from msx import state
+
+    saved = make_machine_msx2(_ROM, _EXTROM)
+    _with_mouse(saved)
+    saved.clock.cycle = 10_000_000
+    data = state.save_state(saved)
+    fresh = make_machine_msx2(_ROM, _EXTROM)
+    fresh_mouse = _with_mouse(fresh)
+    state.load_state(fresh, data)
+    assert fresh.rtc is not None
+    assert fresh.rtc._base_cycle >= 0 and fresh_mouse._base_cycle >= 0
+    assert fresh.rtc._elapsed_cycles() == saved.rtc._elapsed_cycles() == 10_000_000
+    assert state.save_state(fresh) == data

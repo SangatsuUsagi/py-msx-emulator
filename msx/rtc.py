@@ -81,13 +81,17 @@ class RTC:
     # Blocks 2/3 (the BIOS CMOS config), one nibble per byte: the medium the
     # host persists. A write or restore that changes a nibble marks it dirty.
     cmos: SramImage = field(init=False, repr=False)
-    # Time at emulated cycle _start_cycle, supplied once by the host.
+    # Time at elapsed cycle 0, supplied once by the host.
     start: RtcTime = RTC_DEFAULT_START
     # The emulated time (msx/clock.py); build_machine gives the machine's
     # record. A bare RTC reads its own record, which stays at cycle 0, so
     # it stays at its start time.
     _clock: CoreClock = field(default_factory=CoreClock, repr=False)
-    _start_cycle: int = field(default=0, repr=False)
+    # Elapsed cycles are _base_elapsed + (clock.cycle - _base_cycle). Two
+    # fields, so a state with more elapsed cycles than the clock's count
+    # needs no base below zero (an unsigned clock in a native core).
+    _base_cycle: int = field(default=0, repr=False)
+    _base_elapsed: int = field(default=0, repr=False)
 
     def __post_init__(self, sram: bytes | bytearray | None) -> None:
         self.cmos = SramImage.of(RTC_CMOS_SIZE, sram)
@@ -135,7 +139,8 @@ class RTC:
         """Assign an already-parsed RtcState (see parse_state)."""
         y, mo, d, h, mi, sec = state["start"]
         self.start = RtcTime(y, mo, d, h, mi, sec)
-        self._start_cycle = self._clock.cycle - state["elapsed_cycles"]
+        self._base_cycle = self._clock.cycle
+        self._base_elapsed = state["elapsed_cycles"]
         self._addr = state["addr"]
         self._mode = state["mode"]
         self._test = state["test"]
@@ -144,7 +149,7 @@ class RTC:
         self.cmos.restore(bytes(state["regs"][2 * REGS_PER_BLOCK:]))
 
     def _elapsed_cycles(self) -> int:
-        return self._clock.cycle - self._start_cycle
+        return self._base_elapsed + (self._clock.cycle - self._base_cycle)
 
     # Loading a saved image is done by passing it as the `sram=` constructor
     # argument; __post_init__ blanks a wrong-size image.

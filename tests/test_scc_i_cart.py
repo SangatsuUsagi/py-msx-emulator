@@ -249,7 +249,7 @@ def test_power_on_default_bank_assignment() -> None:
     cart = _cart()
     assert cart._banks == [0, 1, 2, 3]
     assert cart._mode_register == 0x00
-    assert cart._scc_window_base is None
+    assert cart._scc_window_base == 0x10000
 
 
 # ---------------------------------------------------------------------------
@@ -317,4 +317,4 @@ def test_snapshot_on_blank_cart_round_trips() -> None:
     fresh.restore(snap)
     assert bytes(fresh.ram) == bytes(cart.ram)
     assert fresh._banks == cart._banks
-    assert fresh._scc_window_base is None
+    assert fresh._scc_window_base == 0x10000

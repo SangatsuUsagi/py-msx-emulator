@@ -1761,6 +1761,7 @@ _SCCI_RAM_BLOCKS = 8
 _SCCI_BANK_MASK = 0x07
 _SCCI_RAM_SIZE = _SCCI_RAM_BLOCKS * _PAGE_8K  # 64 KB
 _SCCI_SCC_WINDOW_LEN = 0x800  # 0x9800-0x9FFF or 0xB800-0xBFFF
+_SCCI_NO_WINDOW = 0x10000  # above every CPU address, so no access matches
 
 
 class SCCICartState(TypedDict):
@@ -1817,9 +1818,9 @@ class SCCICart(BankTracingMapper):
     _window_base: list[int] = field(
         default_factory=lambda: [0, 0, 0, 0], init=False, repr=False
     )
-    # None when the SCC register window is inactive; otherwise the window's
-    # base address (0x9800 classic, 0xB800 Plus).
-    _scc_window_base: int | None = field(default=None, init=False, repr=False)
+    # The SCC register window's base address (0x9800 classic, 0xB800 Plus), or
+    # _SCCI_NO_WINDOW when it is inactive.
+    _scc_window_base: int = field(default=_SCCI_NO_WINDOW, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for window in range(4):
@@ -1831,7 +1832,7 @@ class SCCICart(BankTracingMapper):
 
     def read(self, addr: int) -> int:
         base = self._scc_window_base
-        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+        if base <= addr < base + _SCCI_SCC_WINDOW_LEN:
             return self.scc.read(addr - base)
         if 0x4000 <= addr < 0xC000:
             window = (addr >> 13) - 2
@@ -1862,7 +1863,7 @@ class SCCICart(BankTracingMapper):
             _trace_bank(self, window, old, new, addr)
             return
         base = self._scc_window_base
-        if base is not None and base <= addr < base + _SCCI_SCC_WINDOW_LEN:
+        if base <= addr < base + _SCCI_SCC_WINDOW_LEN:
             self.scc.write(addr - base, value)
         # Writes outside all of the above zones are ignored.
 
@@ -1891,7 +1892,7 @@ class SCCICart(BankTracingMapper):
         elif not (self._mode_register & 0x20) and ((self._banks[2] & 0x3F) == 0x3F):
             self._scc_window_base = 0x9800
         else:
-            self._scc_window_base = None
+            self._scc_window_base = _SCCI_NO_WINDOW
 
     def reset(self) -> None:
         """Restore the four bank registers and the mode register to their

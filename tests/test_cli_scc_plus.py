@@ -201,7 +201,7 @@ def test_machine_reset_restores_scci_cartridge_to_compatible_mode(tmp_path: Path
     assert machine.scc._plus_mode is False
     assert cart._mode_register == 0x00
     assert cart._banks == [0, 1, 2, 3]
-    assert cart._scc_window_base is None
+    assert cart._scc_window_base == 0x10000
 
 
 def test_build_machine_no_extension_preserves_normal_slot2_resolution(tmp_path: Path) -> None:

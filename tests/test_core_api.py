@@ -510,7 +510,7 @@ def test_every_address_setter_rejects_a_value_outside_16_bits(call) -> None:
     m = _msx1()
     assert call(m) == STATUS_BAD_ARGUMENT
     assert m.breakpoints() == () and m.watchpoints() == ()
-    assert m._stepout_sp is None and m._sp_range is None
+    assert m._stepout_sp == -1 and m._sp_low == -1
 
 
 def test_a_frame_number_above_64_bits_is_rejected() -> None:
@@ -533,7 +533,7 @@ def test_an_inverted_sp_range_is_rejected() -> None:
     m = _msx1()
     m.set_sp_range(0xC000, 0xF000)
     assert m.set_sp_range(0xF000, 0xC000) == STATUS_BAD_ARGUMENT
-    assert m._sp_range == (0xC000, 0xF000)
+    assert (m._sp_low, m._sp_high) == (0xC000, 0xF000)
 
 
 def test_minus_1_clears_a_setting() -> None:
@@ -544,8 +544,8 @@ def test_minus_1_clears_a_setting() -> None:
     assert m.set_temp_breakpoint(-1) == STATUS_OK
     assert m.set_frame_breakpoint(10) == STATUS_OK
     assert m.set_frame_breakpoint(-1) == STATUS_OK
-    assert m._sp_range is None and m._temp_breakpoint is None
-    assert m._frame_breakpoint is None
+    assert m._sp_low == -1 and m._temp_breakpoint == -1
+    assert m._frame_breakpoint == -1
     assert not m._break_conditions_active()
 
 
@@ -554,7 +554,7 @@ def test_one_minus_1_end_is_rejected(ends: tuple[int, int]) -> None:
     m = _msx1()
     m.set_sp_range(0xC000, 0xF000)
     assert m.set_sp_range(*ends) == STATUS_BAD_ARGUMENT
-    assert m._sp_range == (0xC000, 0xF000)
+    assert (m._sp_low, m._sp_high) == (0xC000, 0xF000)
 
 
 def test_a_success_after_a_rejection_clears_the_message() -> None:

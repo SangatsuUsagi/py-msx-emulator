@@ -860,7 +860,8 @@ def _bank(mapper, page: int) -> str:
 
 def _slot_bank(mem: Memory, primary: int, secondary, page: int) -> str:
     """The sl bank text of a Memory slot's page, through the host formatter."""
-    return slot_bank_text(mem.describe_slot(primary, secondary, page), page)
+    sub = -1 if secondary is None else secondary
+    return slot_bank_text(mem.describe_slot(primary, sub, page), page)
 
 
 class TestSlotRomMapperBank:
@@ -988,6 +989,14 @@ class TestSlotRomMapperBank:
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
         assert _slot_bank(mem, 3, 2, 3) == "seg=2"
 
+    def test_sl_bank_shows_the_segment_a_short_mapper_maps(self):
+        # memory-ram-mapper "A bank past a non-power-of-two size wraps".
+        from msx.ram_mapper import RamMapper
+        rm = RamMapper(size_kb=48)
+        rm.write_port(0xFC, 0x03)
+        mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
+        assert _slot_bank(mem, 3, 2, 0) == "seg=2"
+
     def test_sl_bank_dash_for_bios(self):
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None))
         assert _slot_bank(mem, 0, None, 0) == "-"
@@ -996,7 +1005,7 @@ class TestSlotRomMapperBank:
         from msx.ram_mapper import RamMapper
         rm = RamMapper(size_kb=256)
         mem = Memory(rom=b"\x00", ram=bytearray(1), _mapper=FlatMapper(None), ram_mapper=rm)
-        assert mem.describe_slot(3, 2, None).size_kb == 256
+        assert mem.describe_slot(3, 2, -1).size_kb == 256
 
 
 # ---------------------------------------------------------------------------

@@ -375,13 +375,13 @@ def test_empty_flat_slot2_roundtrips_without_error(saves_dir):
 def test_load_state_restores_vdp_port_state(machine, saves_dir):
     """A half-written control pair, the VRAM pointer and the read-ahead byte
     survive a save/load round trip."""
-    machine.vdp.latch = 0x56
+    machine.vdp.restore_latch(0x56)
     machine.vdp.addr = 0x1256
     machine.vdp.read_buf = 0xAB
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
-    machine.vdp.latch = None
+    machine.vdp.restore_latch(None)
     machine.vdp.addr = 0
     machine.vdp.read_buf = 0
     load_state_file(machine)
@@ -410,11 +410,11 @@ def test_load_state_rejects_out_of_range_vdp_latch(machine, saves_dir, value):
 
 
 def test_load_state_restores_empty_vdp_latch(machine, saves_dir):
-    machine.vdp.latch = None
+    machine.vdp.restore_latch(None)
     rgb = RgbFrame(256, 192, bytes(256 * 192 * 3))
     save_state(machine, rgb, "test")
 
-    machine.vdp.latch = 0x55
+    machine.vdp.restore_latch(0x55)
     load_state_file(machine)
 
     assert machine.vdp.latch is None

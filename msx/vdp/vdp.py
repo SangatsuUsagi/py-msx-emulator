@@ -292,7 +292,10 @@ class VDP:
     vram: bytearray = field(default_factory=lambda: bytearray(0x4000))
     regs: list[int] = field(default_factory=lambda: [0] * 8)
     addr: int = 0
-    latch: int | None = None
+    # The control port's first byte, valid while _ctrl_pending is set (as in
+    # the V9938).
+    _first_byte: int = field(default=0, repr=False)
+    _ctrl_pending: bool = field(default=False, repr=False)
     status: int = 0
     read_buf: int = 0
     # Level of the /INT line (F && IE0), cached so Machine can sample it every
@@ -340,12 +343,23 @@ class VDP:
     def frame_count(self, value: int) -> None:
         self._clock.frame = value
 
+    @property
+    def latch(self) -> int | None:
+        """Pending control-port first byte, or None: the snapshot's view."""
+        return self._first_byte if self._ctrl_pending else None
+
+    def restore_latch(self, value: int | None) -> None:
+        """Set the control-port latch from the snapshot's view."""
+        self._first_byte = value if value is not None else 0
+        self._ctrl_pending = value is not None
+
     def reset(self) -> None:
         """Restore power-on register/status state (VRAM is retained)."""
         self.regs = [0] * 8
         self.status = 0
         self.addr = 0
-        self.latch = None
+        self._first_byte = 0
+        self._ctrl_pending = False
         self.read_buf = 0
         self.irq = False
 
@@ -397,17 +411,18 @@ class VDP:
             self.addr = (self.addr + 1) & 0x3FFF
             # Any data-port access discards a half-written control pair
             # (openMSX VDP.cc clears registerDataStored here too).
-            self.latch = None
+            self._ctrl_pending = False
         elif port == 0x99:
             trace = self._trace
             if trace is not None and trace.kinds & TRACE_VDP:
                 trace.record(TRACE_EVENT_VDP_PORT99, value & 0xFF)
-            if self.latch is None:
-                self.latch = value
+            if not self._ctrl_pending:
+                self._first_byte = value
+                self._ctrl_pending = True
                 self.addr = (self.addr & 0x3F00) | value
             else:
-                low = self.latch
-                self.latch = None
+                low = self._first_byte
+                self._ctrl_pending = False
                 if value & 0x80:
                     # Register write: second byte = 0x80 | reg_num
                     reg = value & 0x07
@@ -438,7 +453,7 @@ class VDP:
             result = self.read_buf
             self.read_buf = self.vram[self.addr]
             self.addr = (self.addr + 1) & 0x3FFF
-            self.latch = None
+            self._ctrl_pending = False
             return result
         if port == 0x99:
             # Bits 4:0 (5th-sprite index) read as 0x1F (31) when 5S (bit 6)
@@ -468,7 +483,7 @@ class VDP:
             # cleared when the status register is read).
             self.status &= 0x1F
             self.update_irq()     # F is now clear, so the /INT line drops
-            self.latch = None     # reading status resets the address latch
+            self._ctrl_pending = False     # reading status resets the address latch
             return result & 0xFF
         return 0xFF
 
