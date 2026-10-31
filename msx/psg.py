@@ -225,7 +225,7 @@ class PSG:
 
     def snapshot_synth(self) -> PsgSynthState:
         """Capture internal tone/noise/envelope generator state for
-        save-state (paired with restore_synth). The register file
+        save-state (paired with parse_synth_state and apply_synth_state). The register file
         (regs/latch) is captured separately -- see the module-level
         PsgSynthState docstring.
         """
