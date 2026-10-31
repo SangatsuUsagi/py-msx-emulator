@@ -393,7 +393,7 @@ class _WindowedRomMapperMixin:
     """Shared page-resolution behaviour for a bank-switching ROM mapper with N
     fixed-size windows and a raw `_banks: list[int]` register per window.
 
-    Factors out what were previously separate, near-identical copies of
+    Holds the one copy of
     `_num_pages`/`_select_page`/`_sync_window`/`debug_bank` on
     Ascii8Mapper and Ascii16Mapper -- differing only by `_MAPPER_PAGE_SIZE`
     -- so the openMSX `RomBlocks::setRom` two-tier resolution rationale in
@@ -1891,8 +1891,7 @@ class SCCICart(BankTracingMapper):
         window base from the freshly-reset banks, then push mode register
         0 through _set_mode_register -- which itself re-derives Compatible
         mode/the inactive SCC window and pushes scc.set_mode(False), so no
-        separate re-sync step is needed the way resync_scc_mode() used to
-        provide when reset() was a no-op."""
+        separate re-sync step is needed."""
         self._banks[:] = [0, 1, 2, 3]
         for window in range(4):
             self._sync_window_base(window)

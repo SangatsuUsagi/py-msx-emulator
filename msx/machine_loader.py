@@ -383,7 +383,7 @@ def _build_expanded_subslot_device(
 
     Raises:
         MachineLoadError: If `subslot.device` passed load-time validation
-            (`_KNOWN_EXPANDED_SUBSLOT_DEVICES`) but has no construction case
+            (`SUBSLOT_DEVICES`) but has no construction case
             here (an internal consistency error between the two).
     """
     spec = config.spec
@@ -403,7 +403,7 @@ def _build_expanded_subslot_device(
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- expanded overlay sub-slot "
         f"{index} device {subslot.device!r} passed load-time validation "
-        f"(_KNOWN_EXPANDED_SUBSLOT_DEVICES) but has no build_machine "
+        f"(SUBSLOT_DEVICES) but has no build_machine "
         "construction case"
     )
 
@@ -438,7 +438,7 @@ def _wire_expanded_overlay(
             two), or if a sub-slot names a device kind that passed
             load-time validation but has no construction case here (an
             internal consistency error between
-            `_KNOWN_EXPANDED_SUBSLOT_DEVICES` and this function).
+            `SUBSLOT_DEVICES` and this function).
     """
     spec = config.spec
     if spec.generation == "msx1":
@@ -522,7 +522,7 @@ def _wire_flat_overlay(
 
     Raises:
         MachineLoadError: If `extension_overlay.device` passed load-time
-            validation (`_KNOWN_EXTENSION_DEVICES`) but has no construction
+            validation (`EXTENSION_DEVICES`) but has no construction
             case here (an internal consistency error between the two), if
             `scc_i_cart` is selected while a KonamiSCC cartridge mapper or
             another slot's `scc_i_cart` already resolved a chip (see
@@ -576,7 +576,7 @@ def _wire_flat_overlay(
     raise MachineLoadError(
         f"{spec.machine_id}: internal error -- extension overlay device "
         f"{extension_overlay.device!r} passed load-time validation "
-        "(_KNOWN_EXTENSION_DEVICES) but has no build_machine construction case"
+        "(EXTENSION_DEVICES) but has no build_machine construction case"
     )
 
 

@@ -33,7 +33,7 @@ DEFAULT_MOUSE_PORT = 2
 
 # Accepted cartridge mapper names for --mapper (CLI-only; no config-file
 # equivalent, see app-config-file spec). Must stay in sync with
-# machine_loader._SUPPORTED_MAPPERS (plus "auto"); a test asserts the two agree
+# machine_loader.MAPPER_NAMES (plus "auto"); a test asserts the two agree
 # so the lists cannot drift. app_config does not import machine_loader to avoid
 # an import cycle, hence the duplicated literal guarded by that test.
 VALID_MAPPERS: tuple[str, ...] = (

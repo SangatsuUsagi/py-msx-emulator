@@ -329,6 +329,9 @@ def _dump_to_patch(dump: tuple[int, ...] | bytes, off: int = 0) -> tuple[_Patch,
     return mod, car
 
 
+# The noise LFSR's feedback taps (emu2413: update_noise).
+_NOISE_TAPS = 0x800200
+
 # _Slot.type: an operator's role. Bit 0 is set for the carrier and for a rhythm
 # voice (emu2413's slot type).
 _TYPE_MOD = 0
@@ -1067,7 +1070,7 @@ class Opll:
         total += val
         for _ in range(14):  # inlined _update_noise(14)
             if noise & 1:
-                noise ^= 0x800200
+                noise ^= _NOISE_TAPS
             noise >>= 1
 
         if not self._rhythm_mode:
@@ -1100,7 +1103,7 @@ class Opll:
             total += val
         for _ in range(2):  # inlined _update_noise(2)
             if noise & 1:
-                noise ^= 0x800200
+                noise ^= _NOISE_TAPS
             noise >>= 1
 
         if not self._rhythm_mode:
@@ -1124,7 +1127,7 @@ class Opll:
             total += val
         for _ in range(2):  # inlined _update_noise(2)
             if noise & 1:
-                noise ^= 0x800200
+                noise ^= _NOISE_TAPS
             noise >>= 1
 
         self._noise = noise
@@ -1191,7 +1194,7 @@ class Opll:
         noise = self._noise
         for _ in range(18):
             if noise & 1:
-                noise ^= 0x800200
+                noise ^= _NOISE_TAPS
             noise >>= 1
         self._noise = noise
         return 0

@@ -1107,13 +1107,11 @@ class Machine:
             line_end = (line + 1) * cpf // lpf
             while total < line_end:
                 pc = cpu.registers.PC
-                if step_one:
-                    pass  # step(): no breakpoint test
-                elif pc == self._resume_skip_pc:
+                if pc == self._resume_skip_pc and not step_one:
                     # First instruction after a stop or a step: run it
                     # without the breakpoint test.
                     self._resume_skip_pc = -1
-                elif pc in self._breakpoints or pc == self._temp_breakpoint:
+                elif not step_one and (pc in self._breakpoints or pc == self._temp_breakpoint):
                     if pc == self._temp_breakpoint:
                         self._temp_breakpoint = -1
                     self._enter_break(STOP_BREAKPOINT)

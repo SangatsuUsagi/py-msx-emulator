@@ -426,7 +426,7 @@ MSX2 のデフォルトの配置：
 
 ## マシンと拡張の YAML スキーマ
 
-`host/machine_config.py` は 3 種類の YAML を読む。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。名前の閉じた集合（マッパー、FDC のコントローラと接続方式、拡張・サブスロット・I/O のデバイス）は `msx/machine_config.py` で定義している。YAML のローダはそれを `_KNOWN_*`/`_SUPPORTED_*` の名前で import し、コアは MachineConfig の文書を解析するときに同じ集合でもう一度調べる。
+`host/machine_config.py` は 3 種類の YAML を読む。デバイス定義（`config/devices/*.yaml`）、マシン仕様（`config/machines/*.yaml`）、拡張オーバーレイ（`config/extensions/*.yaml`）。3 種類とも、ローダが手で検証する `TypedDict` の形（`DeviceEntryYaml`、`MachineEntryYaml`、`ExtensionOverlayYaml` とその入れ子の形）で、スキーマのライブラリは使わない。名前の閉じた集合（マッパー、FDC のコントローラと接続方式、拡張・サブスロット・I/O のデバイス）は `msx/machine_config.py` で定義している。YAML のローダはそれを import し、コアは MachineConfig の文書を解析するときに同じ集合でもう一度調べる。
 
 この節の各フィールドは、ローダの中の明示的な `.get()` 呼び出しに対応する。ローダが読まないキーは、YAML のコメントに何と書いてあっても説明のためだけのもの。各プライマリスロットに何を入れられるかの利用者向けのまとめは、[README_extension_ja.md の「スロットモデル」節](README_extension_ja.md#スロットモデル)を参照。この節では、その結果を生む YAML の書き方を説明する。
 
@@ -616,7 +616,7 @@ io_device:
 ```
 
 拡張オーバーレイの `io_device`（後述）と同じ形。マシン自身が持つ、スロットに依存しない
-I/O デバイスを表す。ローダは同じ `_KNOWN_IO_DEVICES`（`kanji_rom` だけ）で検証する。
+I/O デバイスを表す。ローダは同じ `IO_DEVICES`（`kanji_rom` だけ）で検証する。
 今のところ、これを書いている同梱のマシン YAML はない。`kanji_rom` デバイスを持つのは、
 今は `hbi_j1` と `msxdos2_512k_kanjirom` の拡張（`--extension1`/`--extension2`）だけで、
 どちらも拡張オーバーレイの `io_device`（後述）を使う。
@@ -639,7 +639,7 @@ rom: {file: fmpac.rom, size_kb: 64}
 sram: {size_kb: 8, save_file: saves/sram/fmpac.sram}
 ```
 
-`device` は `fmpac` か `scc_i_cart`（`_KNOWN_EXTENSION_DEVICES`）でなければならない。
+`device` は `fmpac` か `scc_i_cart`（`EXTENSION_DEVICES`）でなければならない。
 同じ `device` というキーでも、後述の拡張形状のサブスロットのデバイスとは別の名前空間。
 `fmpac` には `rom:` ブロックが要る。`scc_i_cart` には要らない。RAM は空で始まり、
 ローダはファイルを読まないため。フラットなオーバーレイのデバイスは、対象のプライマリ
@@ -667,7 +667,7 @@ io_device:
 `subslots` は必須で、空でないマッピング。キーは `0`〜`3` で、MSX2 のスロット 3 の
 サブスロットと同じ範囲を同じ `_check_subslot_index` で調べる。各エントリの `device` は、
 `halnote`、`flat_rom`、`ram_mapper`、`ascii8`、`ascii16`
-（`_KNOWN_EXPANDED_SUBSLOT_DEVICES`）のどれかでなければならない。
+（`SUBSLOT_DEVICES`）のどれかでなければならない。
 
 | `device` | 必須項目 | 構築されるもの |
 | --- | --- | --- |
@@ -686,7 +686,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 同じポートを使うことになるため。
 
 任意のトップレベルの `io_device` は、*3 つめの*デバイスの名前空間
-`_KNOWN_IO_DEVICES = {kanji_rom}` で検証する。ほかの 2 つとは重ならない。`subslots` で
+`IO_DEVICES = {kanji_rom}` で検証する。ほかの 2 つとは重ならない。`subslots` で
 `device: kanji_rom` は使えず、`io_device` で `device: halnote`（ほかのサブスロットの
 デバイスも）は使えない。マシンの `io_device` と拡張オーバーレイの `io_device` がどちらも
 `kanji_rom` になると、`build_machine` はエラーを出す。ポート 0xD8〜0xDB は、2 つの
