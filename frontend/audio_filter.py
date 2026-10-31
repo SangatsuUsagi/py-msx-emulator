@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import struct
+import sys
+from array import array
 from functools import lru_cache
 
 from msx.boundary import AUDIO_SAMPLE_RATE
@@ -87,7 +89,7 @@ class BiquadLowPass:
         b0, b1, b2, a1, a2 = self.b0, self.b1, self.b2, self.a1, self.a2
         x1, x2, y1, y2 = self._x1, self._x2, self._y1, self._y2
 
-        out = bytearray(n * 2)
+        out = array("h")
         for i in range(n):
             x0 = samples[i]
             y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
@@ -99,8 +101,9 @@ class BiquadLowPass:
                 s = 32767
             elif s < -32768:
                 s = -32768
-            out[i * 2] = s & 0xFF
-            out[i * 2 + 1] = (s >> 8) & 0xFF
+            out.append(s)
 
         self._x1, self._x2, self._y1, self._y2 = x1, x2, y1, y2
-        return bytes(out)
+        if sys.byteorder == "big":
+            out.byteswap()  # the output is little-endian PCM
+        return out.tobytes()
