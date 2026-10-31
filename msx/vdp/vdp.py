@@ -53,8 +53,7 @@ class VdpDevice(Protocol):
     itself is typed as this Protocol rather than the raw `VDP | V9938`
     union.
 
-    Several callers (msx/machine.py, msx/state.py,
-    host/rpc_server.py, host/debugger/prompt.py, msx/machine_loader.py)
+    Core callers (msx/machine.py, msx/state.py, msx/machine_loader.py)
     narrow a `VdpDevice` back to `V9938` via `isinstance(vdp, V9938)` when
     they need MSX2-only state (command engine, 128 KB VRAM, palette,
     `_reg_write_log`). For the Rust/C++ target of that narrowing pattern

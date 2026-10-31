@@ -100,6 +100,9 @@ _PSG_SYNTH_KEYS: frozenset[str] = frozenset(PsgSynthState.__annotations__)
 
 @dataclass
 class PSG:
+    """The AY-3-8910 PSG: the register file on ports 0xA0-0xA2, the joystick and
+    mouse ports, and the tone, noise and envelope generators (generate_samples)."""
+
     regs: list[int] = field(default_factory=lambda: [0] * 16)
     latch: int = 0
     _input: InputLines | None = field(default=None, repr=False)

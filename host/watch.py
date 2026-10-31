@@ -28,8 +28,8 @@ def watch_kind(text: str) -> int | None:
 
 def watch_kind_exact(text: object) -> int | None:
     """The kind of exactly "r", "w" or "rw", or None for any other value (a
-    non-str one included): the RPC and the CLI take only these spellings,
-    the REPL's watch_kind also takes upper case and "wr"."""
+    non-str one included): the RPC takes only these spellings, the CLI lower-cases
+    its text first, and the REPL's watch_kind also takes upper case and "wr"."""
     if text == "r":
         return WATCH_READ
     if text == "w":

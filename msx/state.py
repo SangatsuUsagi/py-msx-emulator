@@ -151,7 +151,7 @@ class StateLoadError(SnapshotError):
         self.producer = producer
 
 
-# The snapshot layout (format 18): one dataclass per JSON object, so
+# The snapshot layout: one dataclass per JSON object, so
 # asdict(MachineSnapshot) is the document and parse_snapshot builds the same
 # tree. Every field is always present in the file; None (JSON null) means the
 # machine has no such part. msx/snapshot.schema.json states the same layout

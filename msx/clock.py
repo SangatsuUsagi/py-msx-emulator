@@ -23,9 +23,14 @@ CPU_CLOCK_HZ = 3_579_545
 
 @dataclass
 class CoreClock:
+    """The emulated time every device reads: the cycle count, the frame count and
+    the address of the current instruction. The Machine owns it, and
+    build_machine gives it to each device."""
+
     # T-states since power-on (Machine.cycle_count). The machine loop adds
-    # to it once per scanline and at a stop, so a device reads the count at
-    # the start of the current scanline's batch.
+    # to it once per scanline and at a stop (once per instruction while
+    # TRACE_DEBUG is on), so a device reads the count at the start of the
+    # current scanline's batch.
     #
     # PORT-NOTE: at 3.58 MHz a u32 wraps in ~20 minutes of emulated run time.
     # Rust/C++ equivalent: u64/uint64_t for this field; the per-frame totals

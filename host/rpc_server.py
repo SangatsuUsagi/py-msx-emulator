@@ -38,7 +38,7 @@ Element mapping: Unix socket -> std `UnixListener` (no crate); JSON -> serde_jso
 request/response struct per RPC method, dispatched via a tagged enum on the
 ``method`` field -- the Python side stays duck-typed at this boundary because
 the wire payload's shape genuinely isn't known until parsed, matching every
-other JSON-boundary module in this codebase (see ``machine_loader.py``'s
+other JSON-boundary module in this codebase (see ``host/machine_config.py``'s
 equivalent note for its YAML config boundary). The ``tools/`` MCP server and
 CLI client are separate processes that speak only the newline-JSON wire protocol,
 so they are language-agnostic and stay as-is under any core port.
@@ -103,7 +103,7 @@ _STOP_TO_REASON: dict[int, PauseReason] = {
 DEFAULT_SOCKET_PATH = "/tmp/py_msx_emu.sock"
 PROTOCOL_VERSION = "1.0"
 
-# JSON-RPC / emulator error codes (see specs/socket-rpc).
+# JSON-RPC / emulator error codes (see openspec/specs/remote-socket-rpc).
 ERR_PARSE = -32700
 ERR_METHOD_NOT_FOUND = -32601
 ERR_INVALID_PARAMS = -32602
@@ -212,11 +212,9 @@ class DebugServer:
         self._next_wp_id = 0
         # Pending named-key auto-releases: (monotonic_deadline, row, bit).
         self._key_releases: list[tuple[float, int, int]] = []
-        # The frontend's per-frame input accumulator, when one runs (set by
-        # frontend.sdl2_frontend.run). Injected input goes to it too, so the
-        # next step_frame keeps it.
         # Where injected input is built: the frontend's own builder when one
-        # runs (it replaces this), so injection carries into its next frame.
+        # runs (frontend.sdl2_frontend.run replaces this), so injection carries
+        # into its next frame.
         self.input_target: InputState = InputState()
         self._register_handlers()
 

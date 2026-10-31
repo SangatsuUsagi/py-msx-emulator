@@ -85,8 +85,8 @@ class _InitSdlApi(Protocol):
     audio-device creation and the cascading-failure teardown. Narrower than
     the full SDL2 API -- declares only what these two functions call.
     Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing); composed into `SDL2Api`
-    once all stages land.
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing); composed
+    into `SDL2Api`.
     """
     SDL_INIT_VIDEO: int
     SDL_INIT_AUDIO: int
@@ -324,7 +324,7 @@ class _EventApi(Protocol):
     """The `sdl2.*` surface event polling and dispatch use: `_handle_events`,
     `_handle_hotkey_keydown`, `_handle_ctrl_combo_keydown`,
     `_handle_ctrl_combo_keyup`. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_QUIT: int
     SDL_KEYDOWN: int
     SDL_KEYUP: int
@@ -756,7 +756,7 @@ class _UploadTextureApi(Protocol):
     (a `CArgObject`) has no clean public type name to declare here -- `object`
     is honest about that rather than asserting a precision this file's own
     call site doesn't rely on. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     def SDL_GetError(self) -> bytes: ...
     def SDL_LockTexture(
         self, texture: object, rect: object, pixels: object, pitch: object
@@ -806,7 +806,7 @@ def _upload_to_texture(
 class _ResizeTextureApi(Protocol):
     """The `sdl2.*` surface `_resize_texture_if_needed` uses: texture
     recreation and window resize. Part of the staged SDL2 FFI Protocol
-    typing (openspec/changes/sdl2-ffi-protocol-typing)."""
+    typing (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_PIXELFORMAT_RGB24: int
     SDL_TEXTUREACCESS_STREAMING: int
 
@@ -882,7 +882,7 @@ class _EventLike(Protocol):
     Structure and `tests/test_sdl2_frontend_hotkeys.py`'s hand-rolled fake
     (a `ctypes.Structure` subclass with fewer fields, satisfying this
     narrower shape). Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     type: int
     key: _KeyEventLike
     motion: _MotionEventLike
@@ -895,7 +895,7 @@ class SDL2Api(_InitSdlApi, _ResizeTextureApi, _UploadTextureApi, _EventApi, Prot
     members only `run()`/`_run_frame` call directly. Used where a function
     calls into more than one of those groups; each leaf function keeps its
     own narrower Protocol. Part of the staged SDL2 FFI Protocol typing
-    (openspec/changes/sdl2-ffi-protocol-typing)."""
+    (openspec/changes/archive/2026-08-15-sdl2-ffi-protocol-typing)."""
     SDL_TRUE: int
     SDL_FALSE: int
 

@@ -202,22 +202,3 @@ class ExpandedExtensionOverlay:
 AnyExtensionOverlay = ExtensionOverlay | ExpandedExtensionOverlay
 
 
-# ---------------------------------------------------------------------------
-# Raw YAML shapes (TypedDict + TypeGuard)
-#
-# One TypedDict per distinct raw-YAML shape this file validates, named
-# `<Thing>Yaml` to stay visually distinct from the *resolved* dataclasses
-# above (e.g. RomEntryYaml vs RomEntry). Every shape is a single
-# `total=False` TypedDict, no field statically required: this file's
-# validation style is per-field `.get()` + immediate raise, inline in the
-# same function that uses the value, not an upstream gate that downstream
-# code could trust -- see design.md Decision 2 for why a required/optional
-# split (the originally-planned approach) doesn't fit that style.
-#
-# Each shape's `_is_<thing>_shape(data: object) -> TypeGuard[<Thing>Yaml]`
-# function performs the same isinstance/.get() checks the corresponding
-# parser already performed before this change -- TypeGuard only tells mypy
-# "trust the narrower type once this returns True", it does not generate or
-# replace runtime validation. See openspec/changes/typed-machine-loader-yaml/
-# design.md for the full rationale.
-# ---------------------------------------------------------------------------

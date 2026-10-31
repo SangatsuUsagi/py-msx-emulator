@@ -939,12 +939,11 @@ class Opll:
         """Advance every slot's envelope (Damp/Attack/Decay/Sustain/Release
         state machine + eg_out level) and phase generator by one chip tick.
 
-        Runs 18 times per sample tick (~49.7 kHz native rate), so the former
-        per-slot _calc_envelope/_step_envelope_rate/_transition_envelope_state/
-        _calc_phase call chain is folded into one loop body here with each
-        slot's touched fields hoisted to locals, matching the hot-path
-        inlining PSG._render/SCC.generate_samples already apply -- this is
-        the CLAUDE.md "keep functions short" exception for hot-path code.
+        Runs once per native tick (~49.7 kHz) and loops over all 18 slots, so
+        the envelope step, state transition and phase step are one loop body,
+        with each slot's fields hoisted to locals, as in
+        PSG._render and SCC.generate_samples. This is the CLAUDE.md "keep
+        functions short" exception for hot-path code.
         """
         self._eg_counter = (self._eg_counter + 1) & 0xFFFFFFFF  # uint32, as emu2413
         eg_counter = self._eg_counter
@@ -1019,10 +1018,8 @@ class Opll:
         channel-output slots. Returns the summed output (formerly a separate
         `_mix()` call).
 
-        Runs once per native tick (~49.7 kHz), so the former per-channel
-        `_calc_slot_mod`/`_calc_slot_car`/`_to_linear` call chain (up to 3
-        bound-method calls per channel pair, ~18/tick) is folded into two
-        module functions -- `_pair` for an ordinary 2-operator FM
+        Runs once per native tick (~49.7 kHz), so the operator math is folded
+        into two module functions -- `_pair` for an ordinary 2-operator FM
         voice (melodic channels, and Bass Drum which stays a true mod/car
         pair in rhythm mode), `_voice` for a rhythm single-operator voice
         (Hi-Hat/Snare/Tom-tom/Top Cymbal, which take no feedback and no

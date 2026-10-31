@@ -80,6 +80,10 @@ HANG_PC_REPEAT_THRESHOLD: int = 1000
 # indices or a borrow of the Machine; in C++ and Zig, plain pointers.
 @dataclass
 class Machine:
+    """The whole emulated machine, and the implementation of the core API
+    (msx/core_api.py): it owns the devices build_machine wires and runs them
+    frame by frame (step_frame)."""
+
     cpu: Z80
     # VDP and V9938 are unrelated classes sharing this structural contract by
     # convention, not inheritance -- see VdpDevice's own docstring.
@@ -1157,7 +1161,7 @@ class Machine:
         # if vdp_tick` tests vanish; (2) cycle_count aggregation — summed
         # into a per-line local and flushed once per scanline instead of
         # once per instruction. Line granularity is the finest flush
-        # allowed: io/dac read cycle_count *within* a frame, so a frame-end
+        # allowed: devices read cycle_count *within* a frame, so a frame-end
         # flush would starve them; a one-scanline lag matches the existing
         # scanline-stepped timing. The duplicated loop body is the
         # readability cost of removing that per-instruction overhead.
