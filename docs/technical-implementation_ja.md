@@ -724,6 +724,8 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 マシンの組み立ては host とコアで分担する。`host/machine_config.py` の `load_machine_config(spec, cartridge1, mapper1, ...)` が、マシンに必要なファイルをすべて読み、`MachineConfig` の値（`msx/boundary.py`）にまとめる。解決済みのマシン、カートリッジとそのマッパー、拡張を、1 つの正規化した JSON の文書（`msx/machine_config.py`、`msx/machine_config.schema.json`）に書く。`auto` のマッパーは、先に ROM データベースから決める。文書の中では、ROM はすべて `{name, size, sha1, pages}` の参照。ROM イメージは SHA1 をキーにして文書と一緒に渡す。実行時の入力（保存済みの SRAM イメージ、ディスクイメージ、RTC の開始時刻）も文書と一緒に渡す。
 
+パーサは、`ram_size_kb` と `flat_ram_size_kb` を 0〜64、`ram_mapper_size_kb` とサブスロットのデバイスの `size_kb` を 0 または 16〜4096 に制限する。`device_io_ports` のデバイス名と、各範囲の最初のポートが最後のポートより大きくないことも確かめる。
+
 `msx/machine_loader.py` の `build_machine(config)` は文書を厳密に解析し、参照された各イメージのサイズと SHA1 を確かめる。そのうえで、そのバイト列だけから `Machine` を作る。ファイルを開かず、データベースも引かないので、同じ設定からは必ず同じマシンができる。`Machine` は文書の SHA-256 を持ち、スナップショットはそれを記録する（[MachineConfig の文書](#machineconfig-の文書) を参照）。`spec.generation` で具体的な型が決まる。
 
 - `"msx1"`：`VDP`（TMS9918A）、フラットなスロット 3 の RAM。RTC と RAM マッパーはない
@@ -749,7 +751,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 同じテストは逆向きも調べる。`host/`、`frontend/`、`tools/`、`__main__.py` のコードは、マシンをコアの API（後述）だけで使う。マシンのコアの部品（`.cpu`、`.vdp`、`.memory`、`.fdc` など）やプライベートなフィールドを読んではならない。例外はない。デバッガのトレース用コマンド（`te`/`td`、`ce`/`cd`）と `--vdp-trace`/`--mapper-trace` のフラグは、コアの API でトレースの種類を設定する。`drain_trace()` が返すイベントは `host/trace.py` が文字列にする。したがって、コアを移植するときは `Machine` を置き換えても、デバッガ、RPC サーバ、フロントエンドはそのまま使える。
 
-このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`）は境界の定数。host は、コアができる前にセーブファイルを作るため。
+このテストは、host のコードが `msx/` から何を import するかも調べる。import してよいのは、`msx/boundary.py`、`msx/core_api.py`、`msx/input.py` の `InputFrame`、`msx/machine_loader.py` の `create_machine` と `release_machine`、マシン記述層の公開された名前だけ。マシン記述層は `msx/machine_spec.py` と `msx/machine_config.py` で、マシンのモデル、語彙、MachineConfig の文書のエンコーダとパーサからなる。デバイスのモジュールを import しないので、コアがネイティブになっても Python のまま残る。host はこのエンコーダを使い続け、ネイティブのコアは同じ文書（`msx/machine_config.schema.json`）を自分のパーサで読む。固定のメディアのサイズ（`FMPAC_SRAM_SIZE`、`RTC_CMOS_SIZE`、`HALNOTE_SRAM_SIZE`、カートリッジの SRAM マッパーごとの定数）は境界の定数。host は、コアができる前にセーブファイルを作るため。
 
 ### 境界を通る値
 
@@ -834,7 +836,7 @@ MSX2 時代のハードウェアを表しているため。`ram_mapper` のサ�
 
 SRAM と CMOS のイメージ、ディスク、RTC の開始時刻、host 側のすべてのパスは、実行時の入力。文書の外にあるので、文書の同一性には影響しない。この同一性は SHA-256 で表し、対象はコアが文書を解析してからエンコードし直した正規形。したがって、空白やキーの順序だけが違う文書は、同一性も同じになる。`Machine` はこの値を `machine_config_sha256` として持つ。
 
-YAML のローダを持たない移植では、文書を直接書いてもよい。Python の host が作った文書を使うこともできる。`load_machine_config()` でエンコードし、`config.document` と `config.roms` を保存する。
+YAML のローダを持たない移植では、文書を直接書いてもよい。Python の host が作った文書を使うこともできる。`load_machine_config()` でエンコードし、`config.config.document` と `config.config.roms` を保存する。
 
 ### スナップショット
 
@@ -880,7 +882,7 @@ root = Path(".")                                   # リポジトリのルート
 registry = load_device_registry(root / "config")
 spec = load_machine_spec("cbios_msx2", root / "config", registry, root)
 config = load_machine_config(spec)                 # host：YAML とファイル -> MachineConfig
-result = create_machine(config)                    # コア：値だけを使う
+result = create_machine(config.config)             # コア：値だけを使う
 if result.machine is None:                         # STATUS_BAD_CONFIG
     raise SystemExit(result.error_text.decode("utf-8"))
 machine = result.machine
@@ -903,7 +905,7 @@ SDL2 フロントエンド（`frontend/sdl2_frontend.py`）も同じ形で動く
 
 ### コアの移植
 
-ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。コアが返すバイト列は、同じコアに対する次の呼び出しまで有効で、渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。C の型は、コアがマスク、clamp、拒否するどの値も入る幅にする。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t`。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持たない。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取る。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持つ。
+ネイティブのコアが実装するコア API の C の形は、`include/msx_core.h` にある。`CoreApi` のメンバーごとに `msx_core_<member>` の関数が 1 つ、境界のレコードごとに構造体が 1 つあり、定数は `msx/boundary.py` と同じ値を持つ。名前と定数が Python のコードと同じであることは、`tests/test_core_c_header.py` が確かめる。フレーム出力の映像と音声は、次の `step_frame`、`reset`、`load_state` まで有効。コアが返すそれ以外のバイト列は、同じコアに対する次の呼び出しまで有効。渡した入力は呼び出しの間だけ読まれる。1 つのコアは、一度に 1 つのスレッドからだけ使う。C の型は、コアがマスク、clamp、拒否するどの値も入る幅にする。マウスの移動量は `int32_t`、フレームのブレークポイントは `int64_t`。`msx_core_create` は呼び出し側が渡したバッファにメッセージを書くので、コアはグローバルな状態を持たない。host は音声のレートとフレームの高さを `msx/boundary.py`（`AUDIO_SAMPLE_RATE`、`OUTPUT_HEIGHT`）から取る。MSX のキー名（`host/key_names.py`）とカートリッジの SRAM のサイズ（`host/machine_config.py`）は、コアのどのモジュールも使わないので、host が持つ。
 
 Python のコードは、`allium/core-frontend.allium` にある言語に依存しない契約と、次の点で違う（同ファイルの *Status* のコメントに一覧がある）。
 
@@ -911,7 +913,7 @@ Python のコードは、`allium/core-frontend.allium` にある言語に依存�
 - 状態を読む操作のレコードは、Python のレジスタ名（`AF`、`AF_`）を使い、パレットをタプルで持つ。
 - `read_media` はバイト列だけを返し、書き込み禁止のフラグはマウント中のイメージが持つ。
 - フレームレートはメソッドではなく、`VideoStandard` のデータ（`target_fps`）。
-- `load_machine_config()` は、host の SRAM ファイルのパスを加えた `LoadedMachineConfig` を返す。コアが読むのは `MachineConfig` の部分だけ。
+- `load_machine_config()` は `LoadedMachineConfig` を返す。これは `MachineConfig`（`config`。コアが受け取る部分）と、host の SRAM とディスクのファイルパスを持つ。
 
 移植する側は、次の点も決める必要がある。
 
