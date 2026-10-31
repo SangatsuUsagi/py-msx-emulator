@@ -26,11 +26,16 @@ from typing import cast
 SAFE_INT_MAX: int = (1 << 53) - 1
 
 
-class SchemaError(ValueError):
+class SnapshotError(ValueError):
+    """A save state the machine does not load. Every rejection is this class
+    or a subclass, so a state load catches one type."""
+
+
+class SchemaError(SnapshotError):
     """A save-state value that does not match its schema."""
 
 
-class SnapshotMismatchError(ValueError):
+class SnapshotMismatchError(SnapshotError):
     """A well-formed save state that does not fit the running machine: a
     different machine type, mapper kind, FDC kind or drive count, slot / FDC /
     SCC wiring, or a different mounted disk."""

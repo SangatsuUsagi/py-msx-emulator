@@ -53,6 +53,7 @@ from msx.mouse import TRIGGER_A_BIT, TRIGGER_B_BIT, MouseDevice
 from msx.ppi import PPI
 from msx.psg import PSG, SAMPLE_RATE, JoystickPort
 from msx.scc import SCC
+from msx.snapshot_schema import SnapshotError
 from msx.sram import Medium, SramImage
 from msx.trace import TraceLog
 from msx.vdp._geometry import OUTPUT_H, cycles_per_frame, lines_per_frame
@@ -821,7 +822,7 @@ class Machine:
 
         try:
             state.load_state(self, data)
-        except ValueError as exc:
+        except SnapshotError as exc:
             return self._fail(STATUS_STATE_REJECTED, str(exc))
         self._drop_frame()
         self._error_text = b""
