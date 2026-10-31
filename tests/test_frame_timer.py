@@ -12,6 +12,7 @@ class FakeClock:
     def __init__(self) -> None:
         self.now = 100.0
         self.slept: list[float] = []
+        self.sleep_overshoot = 0.0
 
     def perf_counter(self) -> float:
         # Each read advances the clock, so the spin loop in tick() ends.
@@ -20,7 +21,7 @@ class FakeClock:
 
     def sleep(self, seconds: float) -> None:
         self.slept.append(seconds)
-        self.now += seconds
+        self.now += seconds + self.sleep_overshoot
 
 
 @pytest.fixture
@@ -56,6 +57,25 @@ def test_slowdown_absorption_no_catchup() -> None:
     timer.tick()
     next_elapsed = time.perf_counter() - t1
     assert next_elapsed > 0.010, f"expected ~16ms wait, got {next_elapsed*1000:.1f}ms"
+
+
+def test_slow_frame_does_not_cause_catch_up_burst(clock: FakeClock) -> None:
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    timer.tick()
+    clock.now += 0.050
+    timer.tick()  # Already past its deadline: returns without a wait
+    t0 = clock.now
+    timer.tick()
+    assert clock.now - t0 == pytest.approx(1.0 / 60.0, abs=0.0001)
+
+
+def test_sleep_overshoot_does_not_lower_the_sustained_rate(clock: FakeClock) -> None:
+    clock.sleep_overshoot = 0.003
+    t0 = clock.now
+    timer = FrameTimer(fps=60.0, speed=1.0)
+    for _ in range(600):
+        timer.tick()
+    assert clock.now - t0 == pytest.approx(10.0, abs=1.0 / 60.0)
 
 
 def test_fps_measured_starts_at_zero() -> None:

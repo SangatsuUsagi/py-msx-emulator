@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-_SPIN_THRESHOLD = 0.001  # switch from sleep to spin 1 ms before deadline
+_SPIN_THRESHOLD = 0.002  # switch from sleep to spin 2 ms before deadline
 
 
 @dataclass
@@ -57,22 +57,28 @@ class FrameTimer:
         #   sub-millisecond deadline accuracy.
         while time.perf_counter() < self._next_deadline:
             pass
-        return self._count_frame()
+        next_deadline = self._next_deadline + self._frame_interval
+        elapsed = self._count_frame()
+        # Keep a late wake-up from lowering the rate, but drop the debt of a
+        # frame that overran the whole next interval.
+        if next_deadline <= self._last_tick_time:
+            next_deadline = self._last_tick_time + self._frame_interval
+        self._next_deadline = next_deadline
+        return elapsed
 
     def tick_unpaced(self) -> float:
         """Count a frame and restart the deadline without waiting (fast-forward).
 
         Returns the real elapsed seconds since the previous tick, like `tick`.
         """
-        return self._count_frame()
+        elapsed = self._count_frame()
+        self._next_deadline = self._last_tick_time + self._frame_interval
+        return elapsed
 
     def _count_frame(self) -> float:
         now = time.perf_counter()
         elapsed = now - self._last_tick_time
         self._last_tick_time = now
-
-        # Clamp to avoid debt accumulation
-        self._next_deadline = now + self._frame_interval
 
         # FPS measurement
         self._fps_frame_count += 1

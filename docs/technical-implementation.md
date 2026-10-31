@@ -1569,7 +1569,7 @@ at init, and indexes them directly. Only 32 combinations exist across all
 #### Spin loop in the frame timer
 
 `FrameTimer.tick()` uses `time.perf_counter()` in a busy-wait loop for the
-final sub-millisecond period before the frame deadline. Python has no way to
+final 2 ms before the frame deadline. Python has no way to
 tell the scheduler that this loop is a spin.
 
 A Rust port adds `std::hint::spin_loop()` in the same loop. This gives the CPU
