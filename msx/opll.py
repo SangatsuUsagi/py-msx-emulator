@@ -384,6 +384,62 @@ _UPDATE_EG = 8
 _UPDATE_ALL = 255
 
 
+def _pair(mod: _Slot, car: _Slot, lfo_am: int) -> int:
+    """One 2-operator FM voice for one tick: the modulator, then the
+    carrier it modulates; returns the carrier output. `lfo_am` is the tick's
+    tremolo level. emu2413: calc_slot_mod + calc_slot_car + to_linear (x2),
+    fused."""
+    if mod.patch.FB > 0:
+        fm = (mod.output[1] + mod.output[0]) >> (9 - mod.patch.FB)
+    else:
+        fm = 0
+    mod_am = lfo_am if mod.patch.AM else 0
+    mod.output[1] = mod.output[0]
+    idx = (mod.pg_out + fm) & (_PG_WIDTH - 1)
+    h = mod.wave_table[idx]
+    if mod.eg_out > _EG_MAX:
+        mod.output[0] = 0
+    else:
+        s = mod.eg_out + mod.tll + mod_am
+        i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+        t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+        res = t >> ((i & 0x7F00) >> 8)
+        if i & 0x8000:
+            res = ~res  # matches emu2413's int16_t arithmetic
+        mod.output[0] = res << 1
+
+    car_am = lfo_am if car.patch.AM else 0
+    car.output[1] = car.output[0]
+    idx = (car.pg_out + 2 * (mod.output[0] >> 1)) & (_PG_WIDTH - 1)
+    h = car.wave_table[idx]
+    if car.eg_out > _EG_MAX:
+        car.output[0] = 0
+    else:
+        s = car.eg_out + car.tll + car_am
+        i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+        t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+        res = t >> ((i & 0x7F00) >> 8)
+        if i & 0x8000:
+            res = ~res
+        car.output[0] = res << 1
+    return car.output[0]
+
+
+def _voice(slot: _Slot, h: int) -> int:
+    """One rhythm voice's single operator for one tick, from wave-table
+    value `h`: no feedback, no tremolo. emu2413: calc_slot_{tom,snare,cym,hat}
+    + to_linear, fused."""
+    if slot.eg_out > _EG_MAX:
+        return 0
+    s = slot.eg_out + slot.tll
+    i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
+    t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
+    res = t >> ((i & 0x7F00) >> 8)
+    if i & 0x8000:
+        res = ~res
+    return res << 1
+
+
 class _PatchState(TypedDict):
     """Save-state schema for one _patch_fields()/_set_patch_fields() pair."""
 
@@ -901,11 +957,11 @@ class Opll:
         lookup_attack_step = self._lookup_attack_step
         lookup_decay_step = self._lookup_decay_step
         start_envelope = self._start_envelope
-        request_update = self._request_update
         commit_slot_update = self._commit_slot_update
+        # The PM table column; nothing in the loop changes _pm_phase.
+        pm_col = (self._pm_phase >> 10) & 7
         for i in range(18):
             slot = slots[i]
-            buddy: _Slot | None = slots[slot.buddy_index] if slot.buddy_index is not None else None
             if slot.update_requests:
                 commit_slot_update(slot)
 
@@ -931,16 +987,18 @@ class Opll:
                     if slot.type & 1:
                         if not slot.pg_keep:
                             slot.pg_phase = 0
-                        if buddy is not None and not buddy.pg_keep:
-                            buddy.pg_phase = 0
+                        if slot.buddy_index is not None:
+                            buddy = slots[slot.buddy_index]
+                            if not buddy.pg_keep:
+                                buddy.pg_phase = 0
             elif eg_state == _ATTACK:
                 if eg_out == 0:
                     eg_state = _DECAY
-                    request_update(slot, _UPDATE_EG)
+                    slot.update_requests |= _UPDATE_EG  # inlined _request_update
             elif eg_state == _DECAY:
                 if (eg_out >> 3) == slot.patch.SL:
                     eg_state = _SUSTAIN
-                    request_update(slot, _UPDATE_EG)
+                    slot.update_requests |= _UPDATE_EG  # inlined _request_update
 
             if test_eg:
                 eg_out = 0
@@ -950,7 +1008,7 @@ class Opll:
 
             # --- phase generator ---
             patch = slot.patch
-            pm = _PM_TABLE[(slot.fnum >> 6) & 7][(self._pm_phase >> 10) & 7] if patch.PM else 0
+            pm = _PM_TABLE[(slot.fnum >> 6) & 7][pm_col] if patch.PM else 0
             pg_phase = 0 if test_reset else slot.pg_phase
             pg_delta = ((slot.fnum & 0x1FF) * 2 + pm) * _ML_TABLE[patch.ML]
             pg_phase = (pg_phase + (pg_delta << slot.blk >> 2)) & (_DP_WIDTH - 1)
@@ -966,14 +1024,12 @@ class Opll:
         Runs once per native tick (~49.7 kHz), so the former per-channel
         `_calc_slot_mod`/`_calc_slot_car`/`_to_linear` call chain (up to 3
         bound-method calls per channel pair, ~18/tick) is folded into two
-        local closures here -- `_pair` for an ordinary 2-operator FM
+        module functions -- `_pair` for an ordinary 2-operator FM
         voice (melodic channels, and Bass Drum which stays a true mod/car
         pair in rhythm mode), `_voice` for a rhythm single-operator voice
         (Hi-Hat/Snare/Tom-tom/Top Cymbal, which take no feedback and no
-        tremolo) -- rather than 9 duplicated inline copies, matching the
-        `_plot`-closure convention `msx/vdp/renderer.py`/
-        `msx/vdp/v9938_renderer.py` already establish for a per-item
-        computation reused from several call sites within one function.
+        tremolo) -- rather than 9 duplicated inline copies. They take every
+        input as an argument, so no closure is built per tick.
         `_update_noise`'s LFSR step is likewise inlined at its 3 fixed
         points (14/2/2 cycles) rather than called, but that specific
         14/2/2 split and interleaving with the rhythm-voice calculations is
@@ -989,68 +1045,18 @@ class Opll:
         short_noise = self._short_noise
         noise = self._noise
 
-        def _pair(mod: _Slot, car: _Slot) -> int:
-            # emu2413: calc_slot_mod + calc_slot_car + to_linear (x2), fused.
-            if mod.patch.FB > 0:
-                fm = (mod.output[1] + mod.output[0]) >> (9 - mod.patch.FB)
-            else:
-                fm = 0
-            mod_am = lfo_am if mod.patch.AM else 0
-            mod.output[1] = mod.output[0]
-            idx = (mod.pg_out + fm) & (_PG_WIDTH - 1)
-            h = mod.wave_table[idx]
-            if mod.eg_out > _EG_MAX:
-                mod.output[0] = 0
-            else:
-                s = mod.eg_out + mod.tll + mod_am
-                i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
-                t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
-                res = t >> ((i & 0x7F00) >> 8)
-                if i & 0x8000:
-                    res = ~res  # matches emu2413's int16_t arithmetic
-                mod.output[0] = res << 1
-
-            car_am = lfo_am if car.patch.AM else 0
-            car.output[1] = car.output[0]
-            idx = (car.pg_out + 2 * (mod.output[0] >> 1)) & (_PG_WIDTH - 1)
-            h = car.wave_table[idx]
-            if car.eg_out > _EG_MAX:
-                car.output[0] = 0
-            else:
-                s = car.eg_out + car.tll + car_am
-                i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
-                t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
-                res = t >> ((i & 0x7F00) >> 8)
-                if i & 0x8000:
-                    res = ~res
-                car.output[0] = res << 1
-            return car.output[0]
-
-        def _voice(slot: _Slot, h: int) -> int:
-            # emu2413: calc_slot_{tom,snare,cym,hat} + to_linear, fused --
-            # a rhythm voice's single operator, no feedback, am always 0.
-            if slot.eg_out > _EG_MAX:
-                return 0
-            s = slot.eg_out + slot.tll
-            i = h + ((_EG_MUTE if s > _EG_MUTE else s) << 4)
-            t = _EXP_TABLE[(i & 0xFF) ^ 0xFF] + 1024
-            res = t >> ((i & 0x7F00) >> 8)
-            if i & 0x8000:
-                res = ~res
-            return res << 1
-
         total = 0
         for i in range(6):
-            val = -_pair(slots[i << 1], slots[(i << 1) | 1]) >> 1
+            val = -_pair(slots[i << 1], slots[(i << 1) | 1], lfo_am) >> 1
             out[i] = val
             total += val
 
         mod6, car6 = slots[12], slots[13]
         if not self._rhythm_mode:
-            val = -_pair(mod6, car6) >> 1
+            val = -_pair(mod6, car6, lfo_am) >> 1
             out[6] = val
         else:
-            val = _pair(mod6, car6)
+            val = _pair(mod6, car6, lfo_am)
             out[9] = val
         total += val
         for _ in range(14):  # inlined _update_noise(14)
@@ -1059,7 +1065,7 @@ class Opll:
             noise >>= 1
 
         if not self._rhythm_mode:
-            val = -_pair(slots[14], slots[15]) >> 1
+            val = -_pair(slots[14], slots[15], lfo_am) >> 1
             out[7] = val
             total += val
         else:
@@ -1092,7 +1098,7 @@ class Opll:
             noise >>= 1
 
         if not self._rhythm_mode:
-            val = -_pair(slots[16], slots[17]) >> 1
+            val = -_pair(slots[16], slots[17], lfo_am) >> 1
             out[8] = val
             total += val
         else:
