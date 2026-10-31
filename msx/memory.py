@@ -38,11 +38,8 @@ class Memory:
 
     rom: bytes
     ram: bytearray
-    # _mapper, _mapper2, _mapper1_subslots and _mapper2_subslots are core-internal:
-    # the build, the state load and Machine read them. No code outside msx/ does
-    # (it uses the core API), so the leading underscore stays.
-    _mapper: Mapper = field(repr=False)
-    _mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
+    mapper1: Mapper = field(repr=False)
+    mapper2: Mapper = field(default_factory=lambda: FlatMapper(None), repr=False)
     # Default: page0+1=slot0(BIOS), page1+2=slot1(cart), page3=slot3(RAM)
     # 0b11_01_01_00 = 0xD4
     slot_register: int = 0xD4
@@ -71,24 +68,24 @@ class Memory:
     slot2_sub_slot_reg: int = 0x00
     slot2_sub_slot_enabled: bool = False
     # Per-sub-slot Mapper for primary slot 1 when slot1_sub_slot_enabled is
-    # True -- the identical mechanism _mapper2_subslots/slot2_sub_slot_enabled
+    # True -- the identical mechanism mapper2_subslots/slot2_sub_slot_enabled
     # provides for slot 2 below, applied independently to slot 1. Fixed
     # length 4, indexed by the 2-bit sub-slot decoded from
     # slot1_sub_slot_reg; None entries read open bus. Construction-time-
-    # fixed, like _mapper/_mapper2/flat_ram_subslot -- no setter. This is a
+    # fixed, like mapper1/mapper2/flat_ram_subslot -- no setter. This is a
     # new, independent dispatch path; it does not reuse or modify slot 2's
     # own sub-slot dispatch or slot 3's role-based sub-slot dispatch
     # (SUB ROM/FDC/flat-RAM) below.
-    _mapper1_subslots: list[Mapper | None] = field(
+    mapper1_subslots: list[Mapper | None] = field(
         default_factory=lambda: [None, None, None, None], repr=False
     )
     # Per-sub-slot Mapper for primary slot 2 when slot2_sub_slot_enabled is
     # True (fixed length 4, indexed by the 2-bit sub-slot decoded from
     # slot2_sub_slot_reg; None entries read open bus). Construction-time-
-    # fixed, like _mapper/_mapper2/flat_ram_subslot -- no setter. This is a
+    # fixed, like mapper1/mapper2/flat_ram_subslot -- no setter. This is a
     # new, independent dispatch path; it does not reuse or modify slot 3's
     # role-based sub-slot dispatch (SUB ROM/FDC/flat-RAM) below.
-    _mapper2_subslots: list[Mapper | None] = field(
+    mapper2_subslots: list[Mapper | None] = field(
         default_factory=lambda: [None, None, None, None], repr=False
     )
     # Data-driven MSX2 slot-3 layout: when set, slot 3 hosts a flat (non-mapper)
@@ -111,7 +108,7 @@ class Memory:
     # resolves them to sub-slot 1 and 2 respectively, its real hardware's
     # 4-independent-secondary-slot layout. fdc_page defaults to 1 (the
     # DISK-ROM window's existing fixed page). Construction-time-fixed, like
-    # flat_ram_subslot/_mapper/_mapper2 -- no code ever reassigns them after
+    # flat_ram_subslot/mapper1/mapper2 -- no code ever reassigns them after
     # construction, so they have no setter (see the "Page-routing cache
     # invalidation happens through explicit setter methods" spec Requirement).
     sub_rom_subslot: int = field(default=0)
@@ -186,7 +183,7 @@ class Memory:
             )
 
     # Explicit setters for the fields that affect page routing and are
-    # reassigned after construction (_mapper/_mapper2/flat_ram_subslot are
+    # reassigned after construction (mapper1/mapper2/flat_ram_subslot are
     # only ever set once, as Memory(...) constructor kwargs, so they have no
     # setter here). Callers outside this class must use these, not direct
     # assignment -- this class has no __setattr__ hook to catch a stray
@@ -218,10 +215,10 @@ class Memory:
         self._ram_len = len(self.ram)
         self._msx1_ram_base = 0x10000 - self._ram_len
         self._slot0_ram_len = len(self.slot0_ram) if self.slot0_ram is not None else 0
-        if len(self._mapper1_subslots) != 4:
-            raise ValueError("Memory: _mapper1_subslots must have exactly 4 entries")
-        if len(self._mapper2_subslots) != 4:
-            raise ValueError("Memory: _mapper2_subslots must have exactly 4 entries")
+        if len(self.mapper1_subslots) != 4:
+            raise ValueError("Memory: mapper1_subslots must have exactly 4 entries")
+        if len(self.mapper2_subslots) != 4:
+            raise ValueError("Memory: mapper2_subslots must have exactly 4 entries")
         if self.slot0_ram is not None and self.slot0_ram_page == 2 and self.extrom is not None:
             raise ValueError(
                 "Memory: slot0_ram_page 2 conflicts with the MSX2 ext ROM overlay (extrom)"
@@ -417,7 +414,7 @@ class Memory:
         expanded (`slot1_sub_slot_enabled`/`slot2_sub_slot_enabled`) -- a
         plain Mapper-per-sub-slot array, no SUB-ROM/FDC/RAM role concepts
         involved (unlike slot 3's role-based dispatch above). The caller
-        passes that slot's own `slot{1,2}_sub_slot_reg`/`_mapper{1,2}_
+        passes that slot's own `slot{1,2}_sub_slot_reg`/`mapper1{1,2}_
         subslots`, so this single implementation serves both slots."""
         sub = (sub_slot_reg >> (page * 2)) & 0x03
         mapper = subslots[sub]
@@ -439,15 +436,15 @@ class Memory:
         if slot == 1:
             if self.slot1_sub_slot_enabled:
                 return self._resolve_expanded_subslot_read_leaf(
-                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                    self.slot1_sub_slot_reg, self.mapper1_subslots, page
                 )
-            return self._mapper.read
+            return self.mapper1.read
         if slot == 2:
             if self.slot2_sub_slot_enabled:
                 return self._resolve_expanded_subslot_read_leaf(
-                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                    self.slot2_sub_slot_reg, self.mapper2_subslots, page
                 )
-            return self._mapper2.read
+            return self.mapper2.read
         return self._resolve_slot3_read_leaf(page)
 
     def _resolve_page_write_leaf(self, page: int) -> Callable[[int, int], None]:
@@ -459,15 +456,15 @@ class Memory:
         if slot == 1:
             if self.slot1_sub_slot_enabled:
                 return self._resolve_expanded_subslot_write_leaf(
-                    self.slot1_sub_slot_reg, self._mapper1_subslots, page
+                    self.slot1_sub_slot_reg, self.mapper1_subslots, page
                 )
-            return self._mapper.write
+            return self.mapper1.write
         if slot == 2:
             if self.slot2_sub_slot_enabled:
                 return self._resolve_expanded_subslot_write_leaf(
-                    self.slot2_sub_slot_reg, self._mapper2_subslots, page
+                    self.slot2_sub_slot_reg, self.mapper2_subslots, page
                 )
-            return self._mapper2.write
+            return self.mapper2.write
         return self._resolve_slot3_write_leaf(page)
 
     def _rebuild_page_cache(self) -> None:
@@ -560,8 +557,8 @@ class Memory:
         shared lookup so the debug helpers below don't each repeat the same
         `primary == 1 ? slot1 : slot2` ternary independently."""
         if primary == 1:
-            return self.slot1_sub_slot_enabled, self._mapper1_subslots, self._mapper
-        return self.slot2_sub_slot_enabled, self._mapper2_subslots, self._mapper2
+            return self.slot1_sub_slot_enabled, self.mapper1_subslots, self.mapper1
+        return self.slot2_sub_slot_enabled, self.mapper2_subslots, self.mapper2
 
     def _describe_slot12(self, primary: int, secondary: int) -> tuple[int, int]:
         """(content, mapper id as a plain int) of cartridge slot 1 or 2."""

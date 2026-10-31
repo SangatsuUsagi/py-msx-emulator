@@ -1,6 +1,6 @@
 """Tests for Machine.reset() wiring added by
 openspec/changes/wire-cartridge-mapper-and-ppi-reset: the two unexpanded
-top-level cartridge-slot mappers (memory._mapper/memory._mapper2), and the
+top-level cartridge-slot mappers (memory.mapper1/memory.mapper2), and the
 PPI. Both were previously never reset at all -- see that change's design.md
 for the audit that found the gap.
 """
@@ -14,7 +14,7 @@ _NOP_ROM = bytes(32768)
 
 def test_machine_reset_restores_unexpanded_slot1_cartridge_bank_state() -> None:
     machine = make_machine(rom=_NOP_ROM, mapper="Konami")
-    cart = machine.memory._mapper
+    cart = machine.memory.mapper1
     assert isinstance(cart, KonamiMapper)
 
     cart.write(0x6000, 1)
@@ -31,7 +31,7 @@ def test_machine_reset_restores_unexpanded_slot1_cartridge_bank_state() -> None:
 
 def test_machine_reset_restores_unexpanded_slot2_cartridge_bank_state() -> None:
     machine = make_machine(rom=_NOP_ROM, cartridge2=_NOP_ROM, mapper2="Konami")
-    cart = machine.memory._mapper2
+    cart = machine.memory.mapper2
     assert isinstance(cart, KonamiMapper)
 
     cart.write(0x6000, 0)

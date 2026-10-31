@@ -39,7 +39,7 @@ class _StubFdc:
 
 def test_primary_slot_switch_msx1_flat() -> None:
     rom = bytes([0xAA] * 0x10000)
-    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None), slot_register=0x00)
+    mem = Memory(rom=rom, ram=bytearray(32768), mapper1=FlatMapper(None), slot_register=0x00)
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
     mem.set_slot_register(0xC0)  # page3 -> slot3 (MSX1 flat RAM)
     mem.write(0xC000, 0x11)
@@ -49,7 +49,7 @@ def test_primary_slot_switch_msx1_flat() -> None:
 def test_primary_slot_switch_ram_mapper() -> None:
     rom = bytes([0xAA] * 0x10000)
     rm = RamMapper()
-    mem = Memory(rom=rom, ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=rom, ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0x00, ram_mapper=rm)
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
     mem.set_slot_register(0xC0)  # page3 -> slot3 (RAM mapper)
@@ -60,7 +60,7 @@ def test_primary_slot_switch_ram_mapper() -> None:
 
 def test_primary_slot_switch_flat_subslot() -> None:
     rom = bytes([0xAA] * 0x10000)
-    mem = Memory(rom=rom, ram=bytearray(65536), _mapper=FlatMapper(None),
+    mem = Memory(rom=rom, ram=bytearray(65536), mapper1=FlatMapper(None),
                  slot_register=0x00, sub_slot_enabled=True, flat_ram_subslot=3,
                  sub_slot_reg=0xC0)  # page3 -> sub-slot 3 once slot3 is selected
     assert mem.read(0xC000) == 0xAA  # page3 -> slot0 (ROM)
@@ -78,7 +78,7 @@ def test_secondary_slot_switch_ram_mapper() -> None:
     sub_rom = bytes([0x41] * 0x4000)
     rm = RamMapper()
     rm.write(0x0000, 0x52)
-    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0xC3,  # page0 -> slot3
                  ram_mapper=rm, sub0_rom=sub_rom, sub_slot_enabled=True, sub_slot_reg=0x00)
     assert mem.read(0x0000) == 0x41  # sub-slot 0 -> SUB-ROM
@@ -87,7 +87,7 @@ def test_secondary_slot_switch_ram_mapper() -> None:
 
 
 def test_secondary_slot_switch_flat_subslot() -> None:
-    mem = Memory(rom=bytes(32768), ram=bytearray(65536), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(32768), ram=bytearray(65536), mapper1=FlatMapper(None),
                  slot_register=_ALL_SLOT3, sub_slot_enabled=True,
                  flat_ram_subslot=3, sub_slot_reg=0x00)
     mem.ram[0x0000] = 0x63
@@ -100,7 +100,7 @@ def test_secondary_slot_switch_msx1_flat_with_sub0_rom() -> None:
     # No ram_mapper, no flat_ram_subslot: legacy "MSX1 flat" fallback branch.
     # A 32 KB flat RAM's base is 0x8000, so page0 falls outside it -> 0xFF.
     sub_rom = bytes([0x41] * 0x4000)
-    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0xC3, sub0_rom=sub_rom, sub_slot_enabled=True, sub_slot_reg=0x00)
     assert mem.read(0x0000) == 0x41  # sub-slot 0 -> SUB-ROM
     mem.set_sub_slot_reg(0x02)  # page0 -> sub-slot 2 -> MSX1 flat RAM fallback (out of range here)
@@ -116,7 +116,7 @@ def test_intercept_write_ffff_switches_ram_mapper() -> None:
     sub_rom = bytes([0x41] * 0x4000)
     rm = RamMapper()
     rm.write(0xC000, 0x66)
-    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0xC0, ram_mapper=rm, sub0_rom=sub_rom,
                  sub_slot_enabled=True, sub_slot_reg=0x00)
     # page3, sub-slot 0: sub0_rom only ever serves page0 -> open bus here
@@ -127,7 +127,7 @@ def test_intercept_write_ffff_switches_ram_mapper() -> None:
 
 
 def test_intercept_write_ffff_switches_flat_subslot() -> None:
-    mem = Memory(rom=bytes(32768), ram=bytearray(65536), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(32768), ram=bytearray(65536), mapper1=FlatMapper(None),
                  slot_register=_ALL_SLOT3, sub_slot_enabled=True, flat_ram_subslot=3,
                  sub_slot_reg=0x00)
     mem.ram[0xC000] = 0x55
@@ -138,7 +138,7 @@ def test_intercept_write_ffff_switches_flat_subslot() -> None:
 
 def test_intercept_write_ffff_switches_msx1_flat() -> None:
     sub_rom = bytes([0x41] * 0x4000)
-    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes(0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0xC0, sub0_rom=sub_rom, sub_slot_enabled=True, sub_slot_reg=0x00)
     mem.ram[0x4000] = 0x77  # MSX1 flat RAM offset for 0xC000 (32 KB RAM, base 0x8000)
     assert mem.read(0xC000) == 0xFF  # page3, sub-slot 0: sub0_rom only serves page0 -> open bus
@@ -151,7 +151,7 @@ def test_intercept_write_ffff_switches_msx1_flat() -> None:
 # ---------------------------------------------------------------------------
 
 def test_repeated_reads_between_switches_are_stable() -> None:
-    mem = Memory(rom=bytes([0xAB] * 0x8000), ram=bytearray(32768), _mapper=FlatMapper(None),
+    mem = Memory(rom=bytes([0xAB] * 0x8000), ram=bytearray(32768), mapper1=FlatMapper(None),
                  slot_register=0xD4)
     first = mem.read(0x0000)
     for _ in range(5):
@@ -309,7 +309,7 @@ def _assert_write_matches(new: Memory, ref: _ReferenceMemory) -> None:
 
 def test_differential_msx1_flat_across_all_slot_registers() -> None:
     for slot_register in range(256):
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), _mapper=FlatMapper(_CART),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper1=FlatMapper(_CART),
                      slot_register=slot_register)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper=FlatMapper(_CART),
                                 mapper2=FlatMapper(None), slot_register=slot_register)
@@ -319,7 +319,7 @@ def test_differential_msx1_flat_across_all_slot_registers() -> None:
 
 def test_differential_msx1_flat_across_all_sub_slot_regs() -> None:
     for sub_slot_reg in range(256):
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), _mapper=FlatMapper(None),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper1=FlatMapper(None),
                      slot_register=_ALL_SLOT3, sub_slot_enabled=True, sub_slot_reg=sub_slot_reg)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper=FlatMapper(None),
                                 mapper2=FlatMapper(None), slot_register=_ALL_SLOT3,
@@ -330,7 +330,7 @@ def test_differential_msx1_flat_across_all_sub_slot_regs() -> None:
 
 def test_differential_ram_mapper_across_all_slot_registers() -> None:
     for slot_register in range(256):
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), _mapper=FlatMapper(None),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper1=FlatMapper(None),
                      slot_register=slot_register, ram_mapper=RamMapper(), sub0_rom=_SUB_ROM,
                      sub_slot_enabled=True, sub_slot_reg=0b01_10_11_00)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper=FlatMapper(None),
@@ -343,7 +343,7 @@ def test_differential_ram_mapper_across_all_slot_registers() -> None:
 
 def test_differential_ram_mapper_across_all_sub_slot_regs() -> None:
     for sub_slot_reg in range(256):
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), _mapper=FlatMapper(None),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper1=FlatMapper(None),
                      slot_register=_ALL_SLOT3, ram_mapper=RamMapper(), sub0_rom=_SUB_ROM,
                      sub_slot_enabled=True, sub_slot_reg=sub_slot_reg)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper=FlatMapper(None),
@@ -357,7 +357,7 @@ def test_differential_ram_mapper_across_all_sub_slot_regs() -> None:
 def test_differential_flat_subslot_across_all_slot_registers() -> None:
     for slot_register in range(256):
         fdc_new, fdc_ref = _StubFdc(), _StubFdc()
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 65536), _mapper=FlatMapper(None),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 65536), mapper1=FlatMapper(None),
                      slot_register=slot_register, sub_slot_enabled=True, flat_ram_subslot=3,
                      sub0_rom=_SUB_ROM, fdc=fdc_new, sub_slot_reg=0b11_10_01_00)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 65536), mapper=FlatMapper(None),
@@ -373,7 +373,7 @@ def test_differential_flat_subslot_across_all_slot_registers() -> None:
 def test_differential_flat_subslot_across_all_sub_slot_regs() -> None:
     for sub_slot_reg in range(256):
         fdc_new, fdc_ref = _StubFdc(), _StubFdc()
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 65536), _mapper=FlatMapper(None),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 65536), mapper1=FlatMapper(None),
                      slot_register=_ALL_SLOT3, sub_slot_enabled=True, flat_ram_subslot=3,
                      sub0_rom=_SUB_ROM, fdc=fdc_new, sub_slot_reg=sub_slot_reg)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 65536), mapper=FlatMapper(None),
@@ -388,7 +388,7 @@ def test_differential_flat_subslot_across_all_sub_slot_regs() -> None:
 
 def test_differential_extrom_across_all_slot_registers() -> None:
     for slot_register in range(256):
-        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), _mapper=FlatMapper(_CART),
+        new = Memory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper1=FlatMapper(_CART),
                      slot_register=slot_register, extrom=_EXTROM)
         ref = _ReferenceMemory(rom=_ROM, ram=bytearray(b"\x33" * 32768), mapper=FlatMapper(_CART),
                                 mapper2=FlatMapper(None), slot_register=slot_register,

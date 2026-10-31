@@ -221,13 +221,13 @@ def test_msx2_roundtrip_mapper1_subslot_content(saves_dir):
     machine.memory.slot1_sub_slot_enabled = True
     original = Ascii8Mapper(bytes(16 * 8192))
     original.write(0x6000, 5)
-    machine.memory._mapper1_subslots[0] = original
+    machine.memory.mapper1_subslots[0] = original
     save_state(machine, _RGB_MSX2, "test")
 
-    machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16 * 8192))
+    machine.memory.mapper1_subslots[0] = Ascii8Mapper(bytes(16 * 8192))
     load_state_file(machine)
 
-    restored = machine.memory._mapper1_subslots[0]
+    restored = machine.memory.mapper1_subslots[0]
     assert isinstance(restored, Ascii8Mapper)
     assert restored._banks[0] == 5
 
@@ -237,10 +237,10 @@ def test_loading_state_with_mismatched_slot1_subslot_kind_raises(saves_dir):
 
     machine = make_machine_msx2(_ROM, _EXTROM)
     machine.memory.slot1_sub_slot_enabled = True
-    machine.memory._mapper1_subslots[0] = FlatMapper(bytes(32768))
+    machine.memory.mapper1_subslots[0] = FlatMapper(bytes(32768))
     save_state(machine, _RGB_MSX2, "test")
 
-    machine.memory._mapper1_subslots[0] = Ascii8Mapper(bytes(16384))
+    machine.memory.mapper1_subslots[0] = Ascii8Mapper(bytes(16384))
     with pytest.raises(ValueError, match="slot 1 sub-slot 0"):
         load_state_file(machine)
 

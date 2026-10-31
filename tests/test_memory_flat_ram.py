@@ -31,7 +31,7 @@ def _make_flat(sub0_rom: bytes | None = None, fdc: object | None = None) -> Memo
     return Memory(
         rom=bytes(32768),
         ram=bytearray(65536),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         sub0_rom=sub0_rom,
@@ -144,7 +144,7 @@ def test_sub_rom_and_fdc_in_independent_subslots() -> None:
     mem = Memory(
         rom=bytes(32768),
         ram=bytearray(65536),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         sub0_rom=sub_rom,
@@ -175,7 +175,7 @@ def test_fdc_at_a_different_page_than_default() -> None:
     mem = Memory(
         rom=bytes(32768),
         ram=bytearray(65536),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
         slot_register=_ALL_SLOT3,
         sub_slot_enabled=True,
         fdc=fdc,  # type: ignore[arg-type]

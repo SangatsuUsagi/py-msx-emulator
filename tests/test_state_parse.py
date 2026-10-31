@@ -253,7 +253,7 @@ def test_unmodified_file_round_trips(tmp_path, monkeypatch, factory) -> None:
 
 def _producer_fingerprint(machine) -> tuple:
     return _fingerprint(machine) + (
-        dict(machine.memory._mapper.snapshot()),
+        dict(machine.memory.mapper1.snapshot()),
         dict(machine.psg.snapshot_synth()),
     )
 
@@ -274,7 +274,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
     machine = make_machine(_ROM, cartridge=bytes(65536), mapper="ASCII8SRAM2")
     state_path = _edited(tmp_path, monkeypatch, machine, edit)
     _disturb(machine)
-    machine.memory._mapper.sram_image.write(0, 0x5A)
+    machine.memory.mapper1.sram_image.write(0, 0x5A)
     before = _producer_fingerprint(machine)
 
     with pytest.raises(StateLoadError) as exc_info:
@@ -282,7 +282,7 @@ def test_malformed_producer_object_leaves_the_machine_unchanged(
 
     assert exc_info.value.producer == producer
     assert _producer_fingerprint(machine) == before
-    assert machine.memory._mapper.sram_image.read(0) == 0x5A
+    assert machine.memory.mapper1.sram_image.read(0) == 0x5A
 
 
 def test_scc_wiring_mismatch_is_rejected(tmp_path, monkeypatch) -> None:
@@ -369,7 +369,7 @@ def test_validate_snapshot_pairs_each_parsed_state_with_its_producer(mapper) -> 
     parsed = _validate_snapshot(machine, snap)
 
     assert [producer for producer, _ in parsed.mappers] == [
-        machine.memory._mapper, machine.memory._mapper2,
+        machine.memory.mapper1, machine.memory.mapper2,
     ]
     assert dict(parsed.psg_synth) == dict(machine.psg.snapshot_synth())
     if machine.scc is None:

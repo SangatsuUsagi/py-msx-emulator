@@ -192,11 +192,11 @@ def test_build_machine_wires_ram_mapper_kernel_rom_and_kanji_device(tmp_path: Pa
     )
     assert machine.memory.slot2_sub_slot_enabled is True
 
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert len(sub0.ram) == 512 * 1024
 
-    sub1 = machine.memory._mapper2_subslots[1]
+    sub1 = machine.memory.mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
 
     assert isinstance(machine.kanji, KanjiRom)
@@ -211,7 +211,7 @@ def test_kernel_rom_subslot_dispatches_to_the_real_rom_bytes(tmp_path: Path) -> 
         _msx2_spec(), bios_override=bytes(32768), extrom_override=bytes(32768),
         extension_overlay2=overlay,
     )
-    sub1 = machine.memory._mapper2_subslots[1]
+    sub1 = machine.memory.mapper2_subslots[1]
     assert isinstance(sub1, FixedPageMapper)
     assert sub1.read(0x4000) == 0x42
     assert sub1.read(0x0000) == 0xFF

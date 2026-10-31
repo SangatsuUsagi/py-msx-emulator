@@ -61,7 +61,7 @@ def test_auto_mapper_is_resolved_before_building(
 
     monkeypatch.setattr(romdb, "lookup", no_lookup)
     machine = build_machine(config)
-    assert type(machine.memory._mapper).__name__ == "KonamiMapper"
+    assert type(machine.memory.mapper1).__name__ == "KonamiMapper"
 
 
 def test_build_reads_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

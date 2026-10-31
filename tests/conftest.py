@@ -61,7 +61,7 @@ def sock_dir() -> Iterator[Path]:
 
 @pytest.fixture
 def bare_memory() -> Memory:
-    return Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    return Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
 
 
 @pytest.fixture

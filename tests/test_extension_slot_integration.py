@@ -115,14 +115,14 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
 
     # Slot 1: HBI-J1's halnote + flat Kanji driver/BASIC ROM.
     assert machine.memory.slot1_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper1_subslots[0], HalnoteMapper)
-    assert isinstance(machine.memory._mapper1_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper1_subslots[0], HalnoteMapper)
+    assert isinstance(machine.memory.mapper1_subslots[1], FixedPageMapper)
 
     # Slot 2: msxdos2_512k's RAM mapper + flat kernel ROM -- no cross-talk
     # with slot 1's devices above.
     assert machine.memory.slot2_sub_slot_enabled is True
-    assert isinstance(machine.memory._mapper2_subslots[0], RamMapper)
-    assert isinstance(machine.memory._mapper2_subslots[1], FixedPageMapper)
+    assert isinstance(machine.memory.mapper2_subslots[0], RamMapper)
+    assert isinstance(machine.memory.mapper2_subslots[1], FixedPageMapper)
 
     # The Kanji-ROM io_device came only from hbi_j1's overlay (msxdos2_512k
     # declares none) -- reachable regardless of which sub-slot is selected.
@@ -133,7 +133,7 @@ def test_two_expanded_overlays_wire_independently_no_cross_talk(tmp_path: Path) 
 
     # Slot 2's RAM mapper still responds on the standard memory-mapper ports.
     machine.io.write_port(0xFF, 0x05)
-    sub0 = machine.memory._mapper2_subslots[0]
+    sub0 = machine.memory.mapper2_subslots[0]
     assert isinstance(sub0, RamMapper)
     assert sub0.banks[3] == 5
 
@@ -302,7 +302,7 @@ def test_fmpac_slot1_and_hbi_j1_slot2_sram_persist_independently(
     machine = build_machine(config.config)
     assert machine.fmpac is not None
     assert sram_paths(config)[MediaId.FMPAC_SRAM] == fmpac_overlay.sram_save_path
-    halnote = machine.memory._mapper2_subslots[0]
+    halnote = machine.memory.mapper2_subslots[0]
     assert isinstance(halnote, HalnoteMapper)
 
     machine.fmpac.write(0x5FFE, 0x4D)  # unlock magic (byte 1/2)

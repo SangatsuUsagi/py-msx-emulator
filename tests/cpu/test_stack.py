@@ -7,7 +7,7 @@ def make_cpu(rom: list[int]) -> Z80:
     mem = Memory(
         rom=bytes(rom + [0] * (32768 - len(rom))),
         ram=bytearray(32768),
-        _mapper=FlatMapper(None),
+        mapper1=FlatMapper(None),
     )
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFF
@@ -71,7 +71,7 @@ def test_ex_sp_hl() -> None:
     ram = bytearray(32768)
     ram[0x7FFE] = 0x34  # 0xFFFE: addr - 0x8000 = 0x7FFE
     ram[0x7FFF] = 0x12
-    mem = Memory(rom=rom, ram=ram, _mapper=FlatMapper(None))
+    mem = Memory(rom=rom, ram=ram, mapper1=FlatMapper(None))
     cpu = Z80(read_byte=mem.read, write_byte=mem.write)
     cpu.registers.SP = 0xFFFE
     cpu.registers.HL = 0xABCD

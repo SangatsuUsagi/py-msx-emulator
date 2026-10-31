@@ -508,12 +508,12 @@ def _snapshot_from_machine(machine: "Machine") -> MachineSnapshot:
         # tied to vdp9938 presence).
         slots=SlotsSnapshot(
             slot1=_snapshot_slot(
-                memory._mapper, memory.slot1_sub_slot_enabled, memory.slot1_sub_slot_reg,
-                memory._mapper1_subslots,
+                memory.mapper1, memory.slot1_sub_slot_enabled, memory.slot1_sub_slot_reg,
+                memory.mapper1_subslots,
             ),
             slot2=_snapshot_slot(
-                memory._mapper2, memory.slot2_sub_slot_enabled, memory.slot2_sub_slot_reg,
-                memory._mapper2_subslots,
+                memory.mapper2, memory.slot2_sub_slot_enabled, memory.slot2_sub_slot_reg,
+                memory.mapper2_subslots,
             ),
             slot3=Slot3Snapshot(slot3_reg),
         ),
@@ -844,8 +844,8 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
             f"machine type mismatch: running {expected_type!r}, "
             f"saved {snap.machine_type!r}"
         )
-    _check_slot_mapper(1, memory._mapper, snap.slots.slot1.mapper)
-    _check_slot_mapper(2, memory._mapper2, snap.slots.slot2.mapper)
+    _check_slot_mapper(1, memory.mapper1, snap.slots.slot1.mapper)
+    _check_slot_mapper(2, memory.mapper2, snap.slots.slot2.mapper)
     ram_len = len(memory.ram)
     if len(snap.memory.ram) != ram_len:
         raise StateLoadError(
@@ -865,10 +865,10 @@ def _validate_snapshot(machine: "Machine", snap: MachineSnapshot) -> _ParsedProd
             )
     _check_optional_wiring("FDC", machine.fdc is not None, snap.fdc)
     _check_expanded_subslots(
-        1, memory.slot1_sub_slot_enabled, memory._mapper1_subslots, snap.slots.slot1.subslots
+        1, memory.slot1_sub_slot_enabled, memory.mapper1_subslots, snap.slots.slot1.subslots
     )
     _check_expanded_subslots(
-        2, memory.slot2_sub_slot_enabled, memory._mapper2_subslots, snap.slots.slot2.subslots
+        2, memory.slot2_sub_slot_enabled, memory.mapper2_subslots, snap.slots.slot2.subslots
     )
     _check_optional_wiring("SCC", machine.scc is not None, snap.scc)
     _check_slot0_ram_wiring(machine, snap.memory.slot0_ram)
@@ -913,12 +913,12 @@ def _mapper_producers(
     assigned sub-slot. _check_expanded_subslots matched every assigned sub-slot
     to an entry."""
     jobs: list[tuple[Mapper, dict[str, object], str]] = [
-        (memory._mapper, slots.slot1.mapper.state, "slots.slot1.mapper.state"),
-        (memory._mapper2, slots.slot2.mapper.state, "slots.slot2.mapper.state"),
+        (memory.mapper1, slots.slot1.mapper.state, "slots.slot1.mapper.state"),
+        (memory.mapper2, slots.slot2.mapper.state, "slots.slot2.mapper.state"),
     ]
     expanded = (
-        ("slots.slot1.subslots", memory._mapper1_subslots, slots.slot1.subslots),
-        ("slots.slot2.subslots", memory._mapper2_subslots, slots.slot2.subslots),
+        ("slots.slot1.subslots", memory.mapper1_subslots, slots.slot1.subslots),
+        ("slots.slot2.subslots", memory.mapper2_subslots, slots.slot2.subslots),
     )
     for label, subslots, saved in expanded:
         if saved is None:

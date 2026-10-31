@@ -11,7 +11,7 @@ _NOP_ROM = bytes(32768)
 
 
 def make_ppi(cycle: int = 0) -> PPI:
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     ppi = PPI(memory=mem)
     ppi._clock.cycle = cycle
     return ppi

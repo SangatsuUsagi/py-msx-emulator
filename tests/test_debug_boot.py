@@ -35,7 +35,7 @@ def _boot_lines(trace: TraceLog) -> list[str]:
 def test_slot_register_direct_write_is_silent(capsys: pytest.CaptureFixture[str]) -> None:
     # Production PPI writes mem.slot_register directly (msx/ppi.py:22); that
     # plain field assignment emits no diagnostic output on its own.
-    mem = Memory(rom=bytes(32768), ram=bytearray(32768), _mapper=FlatMapper(None))
+    mem = Memory(rom=bytes(32768), ram=bytearray(32768), mapper1=FlatMapper(None))
     mem.set_slot_register(0xE0)
     captured = capsys.readouterr()
     assert captured.err == ""

@@ -59,7 +59,7 @@ def _scc_plus_machine(tmp_path: Path, name: str = "m") -> Machine:
 
 def test_roundtrip_preserves_ram(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper2
+    cart = machine.memory.mapper2
     cart.write(0xBFFE, 0x01)  # window 0 RAM-write
     cart.write(0x4000, 0xAB)
     save_state(machine, _RGB, "test")
@@ -72,7 +72,7 @@ def test_roundtrip_preserves_ram(saves_dir: Path, tmp_path: Path) -> None:
 
 def test_roundtrip_preserves_banks_and_mode_register(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper2
+    cart = machine.memory.mapper2
     cart.write(0x7000, 5)  # window 1 -> block 5
     cart.write(0xBFFE, 0x20)  # Plus mode
     cart.write(0xB000, 0x80)  # window 3 enable bit -> SCC+ window active
@@ -93,7 +93,7 @@ def test_roundtrip_preserves_banks_and_mode_register(saves_dir: Path, tmp_path: 
 
 def test_roundtrip_preserves_scc_registers_and_plus_mode(saves_dir: Path, tmp_path: Path) -> None:
     machine = _scc_plus_machine(tmp_path)
-    cart = machine.memory._mapper2
+    cart = machine.memory.mapper2
     cart.write(0xBFFE, 0x20)  # Plus mode
     cart.write(0xB000, 0x80)  # SCC+ window active
     cart.write(0xB880, 0x22)  # channel 5 waveform byte 0 (Plus-mode offset 0x80)
@@ -132,7 +132,7 @@ def test_loading_scc_plus_state_into_plain_machine_raises(
     saves_dir: Path, tmp_path: Path
 ) -> None:
     scc_plus_machine = _scc_plus_machine(tmp_path, name="scc")
-    cart = scc_plus_machine.memory._mapper2
+    cart = scc_plus_machine.memory.mapper2
     cart.write(0xBFFE, 0x01)  # window 0 RAM-write
     cart.write(0x4000, 0xAB)
     save_state(scc_plus_machine, _RGB, "test")

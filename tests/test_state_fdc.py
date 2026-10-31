@@ -296,7 +296,7 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     real_sha1 = DskDiskImage.content_sha1
     real_fdc_parse = type(machine.fdc).parse_state
     real_psg_parse = PSG.parse_synth_state
-    mapper_cls = type(machine.memory._mapper)
+    mapper_cls = type(machine.memory.mapper1)
     real_mapper_parse = mapper_cls.parse_state
 
     def sha1(self):
@@ -326,7 +326,7 @@ def test_load_parses_each_producer_once_and_hashes_each_disk_once(
     assert counts["psg"] == 1
     assert counts["sha1"] == 1  # one mounted disk
     # slot 1 and slot 2 each hold a mapper; count parses of this class's instances
-    same_class = int(type(machine.memory._mapper2) is mapper_cls) + 1
+    same_class = int(type(machine.memory.mapper2) is mapper_cls) + 1
     assert counts["mapper"] == same_class
 
 
